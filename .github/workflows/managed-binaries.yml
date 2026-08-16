@@ -1,0 +1,157 @@
+name: Managed binaries
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "packages/**"
+      - "scripts/sync-managed-binaries.mjs"
+      - "scripts/verify-managed-binaries.mjs"
+      - ".github/workflows/managed-binaries.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.engine }} / ${{ matrix.platform }} / ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              os: macos-14,
+              engine: gitleaks,
+              version: 8.28.0,
+              platform: darwin,
+              arch: arm64,
+            }
+          - {
+              os: macos-15-intel,
+              engine: gitleaks,
+              version: 8.28.0,
+              platform: darwin,
+              arch: x64,
+            }
+          - {
+              os: ubuntu-24.04-arm,
+              engine: gitleaks,
+              version: 8.28.0,
+              platform: linux,
+              arch: arm64,
+            }
+          - {
+              os: ubuntu-24.04,
+              engine: gitleaks,
+              version: 8.28.0,
+              platform: linux,
+              arch: x64,
+            }
+          - {
+              os: windows-2025,
+              engine: gitleaks,
+              version: 8.28.0,
+              platform: win32,
+              arch: x64,
+            }
+          - {
+              os: macos-14,
+              engine: osv-scanner,
+              version: 2.4.0,
+              platform: darwin,
+              arch: arm64,
+            }
+          - {
+              os: macos-15-intel,
+              engine: osv-scanner,
+              version: 2.4.0,
+              platform: darwin,
+              arch: x64,
+            }
+          - {
+              os: ubuntu-24.04-arm,
+              engine: osv-scanner,
+              version: 2.4.0,
+              platform: linux,
+              arch: arm64,
+            }
+          - {
+              os: ubuntu-24.04,
+              engine: osv-scanner,
+              version: 2.4.0,
+              platform: linux,
+              arch: x64,
+            }
+          - {
+              os: windows-2025,
+              engine: osv-scanner,
+              version: 2.4.0,
+              platform: win32,
+              arch: x64,
+            }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - name: Synchronize official release asset
+        run: >-
+          node scripts/sync-managed-binaries.mjs
+          --engine ${{ matrix.engine }}
+          --version ${{ matrix.version }}
+          --platform ${{ matrix.platform }}
+          --arch ${{ matrix.arch }}
+      - name: Verify executable and legal files
+        run: >-
+          node scripts/verify-managed-binaries.mjs
+          --engine ${{ matrix.engine }}
+          --platform ${{ matrix.platform }}
+          --arch ${{ matrix.arch }}
+      - name: Run version canary
+        shell: bash
+        run: |
+          package="packages/${{ matrix.engine }}-${{ matrix.platform }}-${{ matrix.arch }}"
+          executable="$package/vendor/${{ matrix.engine }}"
+          if [[ "${{ matrix.platform }}" == "win32" ]]; then executable="${executable}.exe"; fi
+          "$executable" --version
+      - name: Run detection canary
+        run: >-
+          node scripts/canary-managed-binary.mjs
+          --engine ${{ matrix.engine }}
+          --package packages/${{ matrix.engine }}-${{ matrix.platform }}-${{ matrix.arch }}
+      - name: Prove OSV offline mode opens no internet sockets
+        if: matrix.engine == 'osv-scanner' && matrix.platform == 'linux' && matrix.arch == 'x64'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes strace
+          package="packages/osv-scanner-linux-x64"
+          executable="$package/vendor/osv-scanner"
+          cache="$RUNNER_TEMP/osv-cache"
+          fixture="$RUNNER_TEMP/osv-offline-fixture"
+          mkdir -p "$cache" "$fixture"
+          node --eval 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({name:"offline-canary",lockfileVersion:3,packages:{"":{name:"offline-canary",dependencies:{lodash:"4.17.20"}},"node_modules/lodash":{version:"4.17.20"}}}, null, 2))' "$fixture/package-lock.json"
+          OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$cache" "$executable" scan source --offline-vulnerabilities --download-offline-databases --format=json --recursive "$fixture" >/dev/null || test "$?" -eq 1
+          set +e
+          OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY="$cache" strace -f -e trace=network -o "$RUNNER_TEMP/osv-network.trace" "$executable" scan source --offline --offline-vulnerabilities --format=json --recursive "$fixture" >/dev/null
+          status=$?
+          set -e
+          test "$status" -eq 0 -o "$status" -eq 1
+          if grep -Eq 'socket\(AF_(INET|INET6)|connect\(.*AF_(INET|INET6)' "$RUNNER_TEMP/osv-network.trace"; then
+            echo "OSV-Scanner attempted an internet socket in offline mode."
+            exit 1
+          fi
+      - name: Pack platform package
+        run: npm pack packages/${{ matrix.engine }}-${{ matrix.platform }}-${{ matrix.arch }} --ignore-scripts
+      - name: Install core with matching platform package
+        run: >-
+          node scripts/canary-managed-package-install.mjs
+          --package packages/${{ matrix.engine }}-${{ matrix.platform }}-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.engine }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: "zedbee-*.tgz"

@@ -1,0 +1,22 @@
+{
+  "name": "@zedbee/gitleaks-linux-x64",
+  "version": "0.0.0",
+  "description": "Managed Gitleaks executable for Zedbee on Linux x64",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "vendor/gitleaks",
+    "vendor/gitleaks.toml",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "manifest.json"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

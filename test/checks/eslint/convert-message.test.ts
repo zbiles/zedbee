@@ -1,0 +1,100 @@
+import type { Linter } from "eslint";
+import { describe, expect, it } from "vitest";
+import { convertEslintMessage } from "../../../src/checks/eslint/convert-message.js";
+
+describe("convertEslintMessage", () => {
+  it("normalizes a fatal parser diagnostic without retaining analyzer payloads or snapshot paths", () => {
+    const snapshotRoot = "/private/tmp/zedbee-snapshot-secret/target";
+    const message = {
+      ruleId: null,
+      severity: 2,
+      fatal: true,
+      message: `Parsing failed in ${snapshotRoot}/src/value.ts`,
+      line: 2,
+      column: 3,
+      endLine: 2,
+      endColumn: 4,
+      nodeType: null,
+      source: "const secret = ;",
+      fix: { range: [0, 1], text: "secret" },
+      suggestions: [
+        { desc: "reveal source", fix: { range: [0, 1], text: "secret" } },
+      ],
+    } as unknown as Linter.LintMessage;
+
+    const observation = convertEslintMessage(
+      "src/value.ts",
+      message,
+      snapshotRoot,
+    );
+
+    expect(observation).toMatchObject({
+      check: "lint",
+      rule: "eslint/parsing-error",
+      severity: "error",
+      identity: "eslint/parsing-error:src/value.ts:2:3:2:4",
+      location: {
+        file: "src/value.ts",
+        startLine: 2,
+        startColumn: 3,
+        endLine: 2,
+        endColumn: 4,
+      },
+    });
+    expect(JSON.stringify(observation)).not.toMatch(
+      /zedbee-snapshot-secret|const secret|reveal source|suggestions|fix|source/,
+    );
+  });
+
+  it("uses the rule and range, not mutable message prose, as stable identity", () => {
+    const base = {
+      ruleId: "no-undef",
+      severity: 1,
+      line: 4,
+      column: 2,
+      endLine: 4,
+      endColumn: 9,
+      nodeType: "Identifier",
+    } as Linter.LintMessage;
+
+    const first = convertEslintMessage(
+      "src/value.js",
+      {
+        ...base,
+        message: "First wording",
+      },
+      "/snapshot",
+    );
+    const second = convertEslintMessage(
+      "src/value.js",
+      {
+        ...base,
+        message: "Changed wording",
+      },
+      "/snapshot",
+    );
+
+    expect(first.identity).toBe("no-undef:src/value.js:4:2:4:9");
+    expect(second.identity).toBe(first.identity);
+    expect(first.severity).toBe("warning");
+  });
+
+  it("redacts absolute paths without corrupting an HTTPS documentation URL", () => {
+    const observation = convertEslintMessage(
+      "src/value.ts",
+      {
+        ruleId: "fixture",
+        severity: 2,
+        message:
+          "See https://typescript-eslint.io/rules and C:/temp/secret.ts or /opt/build/value.ts",
+        line: 1,
+        column: 1,
+        nodeType: "Identifier",
+      } as Linter.LintMessage,
+      "/snapshot",
+    );
+
+    expect(observation.message).toContain("https://typescript-eslint.io/rules");
+    expect(observation.message).not.toMatch(/C:|secret|\/opt|build\/value/);
+  });
+});

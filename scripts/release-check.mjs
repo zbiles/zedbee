@@ -1,0 +1,267 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+
+const OWNER_ACTION =
+  "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.";
+
+const LOCAL_STEPS = Object.freeze([
+  { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
+  { id: "tests", command: "npm", args: ["test"] },
+  { id: "build", command: "npm", args: ["run", "build"] },
+  { id: "schema", command: "npm", args: ["run", "schema:check"] },
+  { id: "licenses", command: "npm", args: ["run", "licenses:check"] },
+  {
+    id: "managed-binaries",
+    command: "npm",
+    args: ["run", "managed-binaries:verify"],
+  },
+  { id: "benchmark", command: "npm", args: ["run", "benchmark"] },
+  { id: "package", command: "npm", args: ["run", "package:check"] },
+  {
+    id: "documentation",
+    command: "npm",
+    args: ["test", "--", "test/docs"],
+  },
+  { id: "diff", command: "git", args: ["diff", "--check"] },
+]);
+
+const RELEASE_ARTIFACT_STEPS = Object.freeze([
+  {
+    id: "managed-platform-assets",
+    command: process.execPath,
+    args: ["scripts/verify-managed-binaries.mjs"],
+  },
+  {
+    id: "managed-platform-packages",
+    command: process.execPath,
+    args: ["scripts/check-package-contents.mjs", "--platforms"],
+  },
+]);
+
+export function verificationSteps(mode = "verify") {
+  if (mode !== "verify" && mode !== "release") {
+    throw new TypeError("Unknown release verification mode.");
+  }
+  return LOCAL_STEPS.map((step) =>
+    Object.freeze({ ...step, args: Object.freeze([...step.args]) }),
+  );
+}
+
+export function releaseArtifactSteps() {
+  return RELEASE_ARTIFACT_STEPS.map((step) =>
+    Object.freeze({ ...step, args: Object.freeze([...step.args]) }),
+  );
+}
+
+export function packageManagerInstall(manager, tarball) {
+  if (!["npm", "pnpm", "yarn", "bun"].includes(manager)) {
+    throw new TypeError("Unsupported package manager.");
+  }
+  if (
+    typeof tarball !== "string" ||
+    tarball.length === 0 ||
+    tarball.includes("\0")
+  ) {
+    throw new TypeError("Invalid package tarball path.");
+  }
+  return Object.freeze({
+    command: manager,
+    args: Object.freeze([
+      manager === "npm" ? "install" : "add",
+      "--ignore-scripts",
+      tarball,
+    ]),
+  });
+}
+
+function repositoryUrl(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.url === "string") {
+    return value.url;
+  }
+  return undefined;
+}
+
+function bugsUrl(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.url === "string") {
+    return value.url;
+  }
+  return undefined;
+}
+
+function canonicalHttps(value) {
+  if (typeof value !== "string" || !value.startsWith("https://")) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    if (
+      url.username !== "" ||
+      url.password !== "" ||
+      url.hostname === "example.com" ||
+      url.hostname.endsWith(".example.com") ||
+      /(?:todo|placeholder|your[-_]?org)/iu.test(url.href)
+    ) {
+      return undefined;
+    }
+    return url;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizedRepository(value) {
+  if (typeof value !== "string") return undefined;
+  let normalized = value.trim();
+  const ssh = /^git@([^:]+):(.+)$/u.exec(normalized);
+  if (ssh !== null) normalized = `https://${ssh[1]}/${ssh[2]}`;
+  normalized = normalized.replace(/^git\+/u, "");
+  const url = canonicalHttps(normalized);
+  if (url === undefined || url.search !== "" || url.hash !== "") {
+    return undefined;
+  }
+  url.pathname = url.pathname.replace(/\.git\/?$/u, "").replace(/\/$/u, "");
+  return url;
+}
+
+function sameRepository(left, right) {
+  return left.origin === right.origin && left.pathname === right.pathname;
+}
+
+function repositoryPage(repository, page) {
+  if (page === undefined || page.origin !== repository.origin) return false;
+  return (
+    page.pathname === repository.pathname ||
+    page.pathname.startsWith(`${repository.pathname}/`)
+  );
+}
+
+export function releaseReadiness(packageJson, remoteUrls) {
+  const repository = normalizedRepository(
+    repositoryUrl(packageJson?.repository),
+  );
+  const homepage = canonicalHttps(packageJson?.homepage);
+  const bugs = canonicalHttps(bugsUrl(packageJson?.bugs));
+  const remotes = Array.isArray(remoteUrls)
+    ? remoteUrls.map(normalizedRepository).filter(Boolean)
+    : [];
+  const related =
+    repository !== undefined &&
+    repositoryPage(repository, homepage) &&
+    repositoryPage(repository, bugs) &&
+    remotes.some((remote) => sameRepository(repository, remote));
+  return related
+    ? Object.freeze({ ready: true })
+    : Object.freeze({ ready: false, message: OWNER_ACTION });
+}
+
+function executable(command) {
+  return process.platform === "win32" && command === "npm"
+    ? "npm.cmd"
+    : command;
+}
+
+function run(step, cwd, capture = false) {
+  const environment =
+    step.id === "tests" &&
+    process.env.ZEDBEE_PACKAGE_MANAGER_UNDER_TEST === undefined
+      ? { ...process.env, ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: "npm" }
+      : process.env;
+  const result = spawnSync(executable(step.command), step.args, {
+    cwd,
+    encoding: "utf8",
+    stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
+    env: environment,
+  });
+  if (result.status !== 0) {
+    throw new Error(`Verification failed at ${step.id}.`);
+  }
+  return result.stdout ?? "";
+}
+
+function gitRemotes(cwd) {
+  const names = run(
+    { id: "git-remotes", command: "git", args: ["remote"] },
+    cwd,
+    true,
+  )
+    .split(/\r?\n/u)
+    .filter(Boolean);
+  return names.flatMap((name) => {
+    const result = spawnSync("git", ["remote", "get-url", "--all", name], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return result.status === 0
+      ? result.stdout.split(/\r?\n/u).filter(Boolean)
+      : [];
+  });
+}
+
+function assertReleaseOnlyGates(cwd) {
+  for (const step of releaseArtifactSteps()) run(step, cwd);
+  const sbom = run(
+    {
+      id: "sbom",
+      command: "npm",
+      args: ["sbom", "--sbom-format", "spdx"],
+    },
+    cwd,
+    true,
+  );
+  const parsed = JSON.parse(sbom);
+  if (parsed?.spdxVersion === undefined || parsed?.SPDXID === undefined) {
+    throw new Error("Verification failed at sbom.");
+  }
+  const status = run(
+    { id: "clean-status", command: "git", args: ["status", "--porcelain"] },
+    cwd,
+    true,
+  );
+  if (status !== "") throw new Error("Verification failed at clean-status.");
+  if (process.env.ZEDBEE_CROSS_PLATFORM_CI_EVIDENCE !== "verified") {
+    throw new Error(
+      "Release blocked: successful Node 22/24 Ubuntu, macOS, and Windows release-check CI evidence is required.",
+    );
+  }
+}
+
+export function runVerification(mode, cwd = process.cwd()) {
+  if (mode === "release") {
+    const packageJson = JSON.parse(
+      readFileSync(resolve(cwd, "package.json"), "utf8"),
+    );
+    const readiness = releaseReadiness(packageJson, gitRemotes(cwd));
+    if (!readiness.ready) throw new Error(readiness.message);
+  }
+  for (const step of verificationSteps(mode)) run(step, cwd);
+  if (mode === "release") assertReleaseOnlyGates(cwd);
+}
+
+function main() {
+  const mode = process.argv.includes("--release") ? "release" : "verify";
+  runVerification(mode);
+  process.stdout.write(
+    mode === "release"
+      ? "Release verification passed.\n"
+      : "Local verification passed.\n",
+  );
+}
+
+const entry = process.argv[1]
+  ? pathToFileURL(resolve(process.argv[1])).href
+  : undefined;
+if (entry === import.meta.url) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(
+      `${error instanceof Error ? error.message : "Release verification failed."}\n`,
+    );
+    process.exitCode = 1;
+  }
+}

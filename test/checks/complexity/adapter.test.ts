@@ -1,0 +1,358 @@
+import { describe, expect, it } from "vitest";
+import type {
+  CheckRunContext,
+  CheckTarget,
+} from "../../../src/checks/adapter.js";
+import {
+  collectComplexityObservations,
+  complexityAdapters,
+} from "../../../src/checks/complexity/adapter.js";
+import { observationCheckResult } from "../../../src/checks/observation-result.js";
+import { resolveConfig } from "../../../src/config/profiles.js";
+import type { CheckId } from "../../../src/config/schema.js";
+import type { ChangeSet } from "../../../src/git/change-set.js";
+import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
+import { createInspectionFixture } from "../../inspection/fixture.js";
+
+const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
+
+function changes(): ChangeSet {
+  return {
+    files: new Map([
+      [
+        "src/changed.ts",
+        {
+          path: "src/changed.ts",
+          status: "modified",
+          addedRanges: [{ start: 2, end: 3 }],
+        },
+      ],
+    ]),
+    isEmpty: false,
+    containsAddedLine(file, line) {
+      return file === "src/changed.ts" && line >= 2 && line <= 3;
+    },
+  };
+}
+
+async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
+  const [baseline, staged, live] = await Promise.all([
+    createInspectionFixture(),
+    createInspectionFixture(),
+    createInspectionFixture(),
+  ]);
+  for (const fixture of [baseline, staged, live]) {
+    await fixture.writeJson("package.json", { name: "fixture", private: true });
+    await fixture.write(
+      "src/debt.ts",
+      "export function debt(a: boolean) { if (a) { if (!a) return 1; } return 0; }\n",
+    );
+    await fixture.write(
+      "src/untouched.ts",
+      "export function untouched(a: boolean) { if (a) return 1; return 0; }\n",
+    );
+  }
+  await baseline.write(
+    "src/changed.ts",
+    "export function changed(a: boolean) { if (a) return 1; return 0; }\n",
+  );
+  await staged.write(
+    "src/changed.ts",
+    [
+      "export function changed(a: boolean) {",
+      "  if (a) { if (!a) return 1; }",
+      "  return 0;",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  // The repository working tree is deliberately simpler than the staged snapshot.
+  await live.write(
+    "src/changed.ts",
+    "export function changed() { return 0; }\n",
+  );
+  const config = resolveConfig({
+    schemaVersion: 1,
+    profile: "recommended",
+    checks: { [checkId]: { severity: "error", max: 1, blockWorsening: true } },
+  });
+  return {
+    repositoryRoot: live.root,
+    changeSet: changes(),
+    config,
+    snapshots: {
+      baselineDir: baseline.root,
+      targetDir: staged.root,
+      baselineRef: "HEAD",
+      unsupportedEntries: [],
+    },
+    baselineInspection: await inspectRepository(baseline.root),
+    targetInspection: await inspectRepository(staged.root),
+    target,
+    policy: config.checks[checkId],
+    signal: new AbortController().signal,
+  };
+}
+
+describe("collectComplexityObservations", () => {
+  it("uses canonical member and nested-function entity identities for both metrics", async () => {
+    const observations = await collectComplexityObservations(
+      "src/owners.ts",
+      `class Worker { constructor() { if (ready) work(); } static get value() { return ready ? 1 : 0; } method() { const nested = () => { if (ready) work(); }; } }`,
+    );
+
+    expect(observations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          check: "cyclomaticComplexity",
+          entity: expect.objectContaining({
+            kind: "method",
+            name: "constructor",
+          }),
+          identity: expect.stringContaining("member-role=constructor"),
+        }),
+        expect.objectContaining({
+          check: "readabilityComplexity",
+          entity: expect.objectContaining({ kind: "method", name: "value" }),
+          identity: expect.stringContaining("member-role=get"),
+        }),
+        expect.objectContaining({
+          check: "readabilityComplexity",
+          entity: expect.objectContaining({ kind: "function", name: "nested" }),
+          identity: expect.stringContaining("method=method/function=nested"),
+        }),
+      ]),
+    );
+    expect(observations.every(({ metric }) => metric !== undefined)).toBe(true);
+  });
+
+  it("fails closed when managed parsing cannot produce entity metrics", async () => {
+    await expect(
+      collectComplexityObservations("src/broken.ts", "function broken( {"),
+    ).rejects.toThrow(SyntaxError);
+  });
+
+  it("maps callbacks and class-field arrows one-to-one without duplicate metric identities", async () => {
+    const observations = await collectComplexityObservations(
+      "src/callback.ts",
+      "export function outer(xs: number[]) { return xs.map(x => x ? 1 : 0); } class Worker { task = () => ready ? work() : rest(); }",
+    );
+
+    for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const metrics = observations.filter(
+        (observation) => observation.check === check,
+      );
+      expect(new Set(metrics.map(({ identity }) => identity)).size).toBe(
+        metrics.length,
+      );
+      expect(metrics).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            identity: expect.stringMatching(/function=anonymous%40/u),
+          }),
+          expect.objectContaining({
+            identity: expect.stringContaining(
+              "member-role=field/function=task",
+            ),
+          }),
+        ]),
+      );
+    }
+  });
+
+  it("keeps same-named methods in separate inline objects as distinct metrics", async () => {
+    const observations = await collectComplexityObservations(
+      "src/objects.ts",
+      "consume({ run(){ if (a) work(); } }, { run(){ if (a) { if (b) work(); } } });",
+    );
+    for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const methods = observations.filter(
+        (observation) =>
+          observation.check === check && observation.entity?.name === "run",
+      );
+      expect(methods).toHaveLength(2);
+      expect(new Set(methods.map(({ identity }) => identity)).size).toBe(2);
+    }
+  });
+
+  it("keeps duplicate same-named class-field arrows as distinct metrics", async () => {
+    const observations = await collectComplexityObservations(
+      "src/fields.ts",
+      "class Worker { task = () => a ? 1 : 0; task = () => { if (a) { if (b) return 1; } return 0; }; }",
+    );
+    for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const fields = observations.filter(
+        (observation) =>
+          observation.check === check && observation.entity?.name === "task",
+      );
+      expect(fields).toHaveLength(2);
+      expect(new Set(fields.map(({ identity }) => identity)).size).toBe(2);
+    }
+  });
+
+  it.each(["mjs", "cjs", "mts", "cts"])(
+    "supports the managed .%s source extension",
+    async (extension) => {
+      await expect(
+        collectComplexityObservations(
+          `src/value.${extension}`,
+          "export function value() { return ready ? 1 : 0; }",
+        ),
+      ).resolves.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            check: "readabilityComplexity",
+            identity: expect.stringContaining(`src/value.${extension}`),
+          }),
+        ]),
+      );
+    },
+  );
+
+  it.each(complexityAdapters)(
+    "$id attributes only a worsened changed entity from the staged snapshot",
+    async (adapter) => {
+      const run = await complexityContext(adapter.id as CheckId);
+      await expect(adapter.inspect(run)).resolves.toMatchObject({
+        applies: true,
+        requiresBaseline: true,
+        targets: [target],
+      });
+      const set = await adapter.collect(run);
+      const result = await observationCheckResult(adapter.id, set, run, true);
+      const staged = result.findings.filter(
+        ({ attribution }) => attribution.staged,
+      );
+
+      expect(staged).toHaveLength(1);
+      expect(staged[0]).toMatchObject({
+        check: adapter.id,
+        attribution: {
+          kind: "metric-delta",
+          staged: true,
+          evidence: expect.arrayContaining([
+            expect.stringContaining("function:src/changed.ts:changed"),
+          ]),
+        },
+      });
+      expect(
+        result.findings
+          .filter(({ attribution }) => attribution.staged)
+          .every(
+            ({ attribution }) =>
+              !attribution.evidence.some(
+                (item) => item.includes("debt") || item.includes("untouched"),
+              ),
+          ),
+      ).toBe(true);
+      const changedTarget = set.targetObservations.find(
+        ({ entity }) => entity?.file === "src/changed.ts",
+      );
+      expect(changedTarget?.metric?.value).toBeGreaterThan(1);
+    },
+  );
+
+  it.each(complexityAdapters)(
+    "$id handles the packaged JavaScript complexity shape",
+    async (adapter) => {
+      const [baseline, staged] = await Promise.all([
+        createInspectionFixture(),
+        createInspectionFixture(),
+      ]);
+      const baselineSource = [
+        'eval("1 + 1");',
+        "export function decide(first, second) {",
+        "  return first && second;",
+        "}",
+        "",
+      ].join("\n");
+      const targetSource = [
+        'eval("1 + 1");',
+        "export function decide(first, second) {",
+        "  if (first) {",
+        "    if (second) return true;",
+        "  }",
+        "  return false;",
+        "}",
+        "",
+      ].join("\n");
+      for (const fixture of [baseline, staged]) {
+        await fixture.writeJson("package.json", {
+          name: "fixture",
+          private: true,
+        });
+        await fixture.write(
+          "eslint.config.mjs",
+          'import js from "@eslint/js";\nexport default [js.configs.recommended];\n',
+        );
+      }
+      await baseline.write("src/index.js", baselineSource);
+      await staged.write("src/index.js", targetSource);
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: {
+          [adapter.id]: { severity: "error", max: 1, blockWorsening: true },
+        },
+      });
+      const changed: ChangeSet = {
+        files: new Map([
+          [
+            "src/index.js",
+            {
+              path: "src/index.js",
+              status: "modified",
+              addedRanges: [{ start: 3, end: 6 }],
+            },
+          ],
+        ]),
+        isEmpty: false,
+        containsAddedLine: (file, line) =>
+          file === "src/index.js" && line >= 3 && line <= 6,
+      };
+      const run: CheckRunContext = {
+        repositoryRoot: staged.root,
+        changeSet: changed,
+        config,
+        snapshots: {
+          baselineDir: baseline.root,
+          targetDir: staged.root,
+          baselineRef: "HEAD",
+          unsupportedEntries: [],
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(staged.root),
+        target,
+        policy: config.checks[adapter.id as CheckId],
+        signal: new AbortController().signal,
+      };
+
+      const set = await adapter.collect(run);
+      await expect(
+        observationCheckResult(adapter.id, set, run, true),
+      ).resolves.toMatchObject({
+        findings: [expect.objectContaining({ check: adapter.id })],
+      });
+
+      if (adapter.id === "cyclomaticComplexity") {
+        await expect(
+          Promise.all(
+            complexityAdapters.map(async (candidate) => {
+              const candidateRun = {
+                ...run,
+                policy: config.checks[candidate.id as CheckId],
+              };
+              const candidateSet = await candidate.collect(candidateRun);
+              return observationCheckResult(
+                candidate.id,
+                candidateSet,
+                candidateRun,
+                true,
+              );
+            }),
+          ),
+        ).resolves.toHaveLength(2);
+      }
+    },
+  );
+});

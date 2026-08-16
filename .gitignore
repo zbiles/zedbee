@@ -1,0 +1,10 @@
+.superpowers/
+.worktrees/
+node_modules/
+dist/
+coverage/
+packages/*/vendor/
+.DS_Store
+graphify-out/
+docs/superpowers/
+PRODUCT.md

@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "obligations": [
+    {
+      "name": "axe-core",
+      "version": "4.13.0",
+      "license": "MPL-2.0",
+      "sourceUrl": "https://github.com/dequelabs/axe-core/tree/v4.13.0",
+      "attribution": "Deque Systems, Inc. and axe-core contributors",
+      "changes": "none",
+      "notice": "Zedbee distributes axe-core unmodified. MPL-covered source remains available from the exact upstream source link. MPL-2.0 applies to axe-core files, not Zedbee's separately licensed code."
+    },
+    {
+      "name": "caniuse-lite",
+      "version": "1.0.30001809",
+      "license": "CC-BY-4.0",
+      "sourceUrl": "https://github.com/browserslist/caniuse-lite/tree/369a550d87291e962f64709956f83deb63644711",
+      "attribution": "Ben Briggs and Can I Use database contributors; Browserslist caniuse-lite maintainers",
+      "changes": "none",
+      "notice": "Material is distributed unmodified under CC BY 4.0; license: https://creativecommons.org/licenses/by/4.0/."
+    }
+  ]
+}

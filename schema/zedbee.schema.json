@@ -1,0 +1,1157 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "Optional editor schema reference, usually ./node_modules/zedbee/schema/zedbee.schema.json.",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1,
+      "description": "Configuration format version.",
+      "default": 1
+    },
+    "profile": {
+      "description": "Base check suite. Per-check settings below override the selected profile.",
+      "default": "recommended",
+      "type": "string",
+      "enum": [
+        "fast",
+        "recommended",
+        "thorough"
+      ]
+    },
+    "checks": {
+      "description": "Repository-wide check policies, using severity shorthand or a policy object.",
+      "default": {},
+      "type": "object",
+      "properties": {
+        "formatting": {
+          "description": "Prettier formatting for changed JavaScript and TypeScript files.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "lint": {
+          "description": "ESLint correctness and maintainability findings in changed code.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "types": {
+          "description": "TypeScript type errors attributable to changed code.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "cyclomaticComplexity": {
+          "description": "Cyclomatic branch complexity; max defaults to 20 and can block worsening code.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                },
+                "max": {
+                  "description": "Maximum allowed complexity score.",
+                  "default": 20,
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "blockWorsening": {
+                  "description": "Block newly introduced or increased complexity above the configured maximum.",
+                  "default": true,
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "readabilityComplexity": {
+          "description": "Readability-oriented complexity; max defaults to 15 and can block worsening code.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                },
+                "max": {
+                  "description": "Maximum allowed complexity score.",
+                  "default": 15,
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "blockWorsening": {
+                  "description": "Block newly introduced or increased complexity above the configured maximum.",
+                  "default": true,
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "structuralSecurity": {
+          "description": "Semgrep-style structural security rules for changed code.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "secrets": {
+          "description": "Gitleaks secret detection against the exact staged snapshot.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "duplication": {
+          "description": "Duplicated-code coverage; threshold is a percentage and defaults to 5.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                },
+                "threshold": {
+                  "description": "Maximum allowed duplicated-code percentage from 0 to 100.",
+                  "default": 5,
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 100
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "dependencyArchitecture": {
+          "description": "Dependency-cruiser architecture and import-boundary validation.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "deadCode": {
+          "description": "Unused files, exports, and dependencies reported by Knip.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "reactCorrectness": {
+          "description": "React and Hooks correctness validation for changed components.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "reactAccessibility": {
+          "description": "JSX accessibility validation for changed components.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "vulnerabilities": {
+          "description": "OSV dependency vulnerability scanning; online by default or offline with a local database.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "warn",
+                "error"
+              ],
+              "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+            },
+            {
+              "type": "object",
+              "properties": {
+                "severity": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "warn",
+                    "error"
+                  ],
+                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                },
+                "when": {
+                  "type": "string",
+                  "enum": [
+                    "relevant",
+                    "always"
+                  ],
+                  "description": "Run only when staged changes are relevant, or run for every scan.",
+                  "default": "relevant"
+                },
+                "network": {
+                  "description": "Use the OSV online service or a locally provisioned offline database.",
+                  "default": "online",
+                  "type": "string",
+                  "enum": [
+                    "online",
+                    "offline"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "overrides": {
+      "description": "Ordered file-scoped policy patches. Later matching overrides take precedence.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "minItems": 1,
+            "type": "array",
+            "items": {
+              "description": "Repository-relative forward-slash glob selecting files for this override.",
+              "type": "string",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[^\\\\]*$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!\\/)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?![A-Za-z]:)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!(?:\\.\\/)+$)"
+                }
+              ]
+            },
+            "description": "One or more repository-relative globs."
+          },
+          "checks": {
+            "type": "object",
+            "properties": {
+              "formatting": {
+                "description": "Prettier formatting for changed JavaScript and TypeScript files.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "lint": {
+                "description": "ESLint correctness and maintainability findings in changed code.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "types": {
+                "description": "TypeScript type errors attributable to changed code.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "cyclomaticComplexity": {
+                "description": "Cyclomatic branch complexity; max defaults to 20 and can block worsening code.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      },
+                      "max": {
+                        "description": "Maximum allowed complexity score.",
+                        "default": 20,
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "blockWorsening": {
+                        "description": "Block newly introduced or increased complexity above the configured maximum.",
+                        "default": true,
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "readabilityComplexity": {
+                "description": "Readability-oriented complexity; max defaults to 15 and can block worsening code.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      },
+                      "max": {
+                        "description": "Maximum allowed complexity score.",
+                        "default": 15,
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "blockWorsening": {
+                        "description": "Block newly introduced or increased complexity above the configured maximum.",
+                        "default": true,
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "structuralSecurity": {
+                "description": "Semgrep-style structural security rules for changed code.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "secrets": {
+                "description": "Gitleaks secret detection against the exact staged snapshot.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "duplication": {
+                "description": "Duplicated-code coverage; threshold is a percentage and defaults to 5.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      },
+                      "threshold": {
+                        "description": "Maximum allowed duplicated-code percentage from 0 to 100.",
+                        "default": 5,
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 100
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "dependencyArchitecture": {
+                "description": "Dependency-cruiser architecture and import-boundary validation.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "deadCode": {
+                "description": "Unused files, exports, and dependencies reported by Knip.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "reactCorrectness": {
+                "description": "React and Hooks correctness validation for changed components.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "reactAccessibility": {
+                "description": "JSX accessibility validation for changed components.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              },
+              "vulnerabilities": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "off",
+                      "warn",
+                      "error"
+                    ],
+                    "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "severity": {
+                        "type": "string",
+                        "enum": [
+                          "off",
+                          "warn",
+                          "error"
+                        ],
+                        "description": "Whether a check is disabled, reports a warning, or blocks the commit."
+                      },
+                      "when": {
+                        "type": "string",
+                        "enum": [
+                          "relevant",
+                          "always"
+                        ],
+                        "description": "Run only when staged changes are relevant, or run for every scan.",
+                        "default": "relevant"
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "description": "Per-check policy patches. Vulnerability network mode remains repository-wide."
+          }
+        },
+        "required": [
+          "files",
+          "checks"
+        ],
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "failOnIncomplete": {
+      "description": "Block the commit when a configured check cannot complete reliably.",
+      "default": true,
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schemaVersion"
+  ],
+  "additionalProperties": false,
+  "title": "Zedbee configuration",
+  "description": "Versioned policy for Zedbee diff-aware JavaScript and TypeScript pre-commit scans."
+}

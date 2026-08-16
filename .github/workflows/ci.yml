@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        node:
+          - 22
+          - 24
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+
+      - name: Synchronize matching Gitleaks package
+        run: >-
+          node scripts/sync-managed-binaries.mjs
+          --engine gitleaks
+          --version 8.28.0
+          --platform ${{ runner.os == 'Linux' && 'linux' || runner.os == 'macOS' && 'darwin' || 'win32' }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Synchronize matching OSV-Scanner package
+        run: >-
+          node scripts/sync-managed-binaries.mjs
+          --engine osv-scanner
+          --version 2.4.0
+          --platform ${{ runner.os == 'Linux' && 'linux' || runner.os == 'macOS' && 'darwin' || 'win32' }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+
+      - name: Run complete local verification
+        run: npm run verify
+        env:
+          ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
+
+  package-manager-fixtures:
+    name: package fixture / ${{ matrix.manager }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        manager: [npm, pnpm, yarn, bun]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install pnpm
+        if: matrix.manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.18.0
+      - name: Install Yarn
+        if: matrix.manager == 'yarn'
+        run: corepack enable && corepack prepare yarn@1.22.22 --activate
+      - name: Install Bun
+        if: matrix.manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.23
+      - run: npm ci --ignore-scripts
+      - name: Install and invoke packed Zedbee
+        run: npm test -- test/e2e/package-managers.test.ts
+        env:
+          ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: ${{ matrix.manager }}
+
+  managed-engine-canaries:
+    name: canary / ${{ matrix.os }} / ${{ matrix.engine }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        engine: [gitleaks, osv-scanner]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Synchronize native engine asset
+        run: >-
+          node scripts/sync-managed-binaries.mjs
+          --engine ${{ matrix.engine }}
+          --version ${{ matrix.engine == 'gitleaks' && '8.28.0' || '2.4.0' }}
+          --platform ${{ runner.os == 'Linux' && 'linux' || runner.os == 'macOS' && 'darwin' || 'win32' }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+      - name: Verify native engine package
+        run: >-
+          node scripts/verify-managed-binaries.mjs
+          --engine ${{ matrix.engine }}
+          --platform ${{ runner.os == 'Linux' && 'linux' || runner.os == 'macOS' && 'darwin' || 'win32' }}
+          --arch ${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}
+      - name: Run native detection canary
+        run: >-
+          node scripts/canary-managed-binary.mjs
+          --engine ${{ matrix.engine }}
+          --package packages/${{ matrix.engine }}-${{ runner.os == 'Linux' && 'linux' || runner.os == 'macOS' && 'darwin' || 'win32' }}-${{ runner.arch == 'ARM64' && 'arm64' || 'x64' }}

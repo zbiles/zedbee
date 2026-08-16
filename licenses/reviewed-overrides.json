@@ -1,0 +1,397 @@
+{
+  "schemaVersion": 1,
+  "overrides": [
+    {
+      "name": "@ast-grep/napi-darwin-arm64",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-darwin-x64",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-linux-arm64-gnu",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-linux-arm64-musl",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-linux-x64-gnu",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-linux-x64-musl",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-win32-arm64-msvc",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-win32-ia32-msvc",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@ast-grep/napi-win32-x64-msvc",
+      "version": "0.45.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/ast-grep/ast-grep/0.45.1/LICENSE",
+      "textFile": "licenses/overrides/ast-grep-platform-0.45.1-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-android-arm-eabi",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-android-arm64",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-darwin-arm64",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-darwin-x64",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-freebsd-x64",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-arm-gnueabihf",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-arm-musleabihf",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-arm64-gnu",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-arm64-musl",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-ppc64-gnu",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-riscv64-gnu",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-riscv64-musl",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-s390x-gnu",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-x64-gnu",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-linux-x64-musl",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-openharmony-arm64",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-win32-arm64-msvc",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-win32-ia32-msvc",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-parser/binding-win32-x64-msvc",
+      "version": "0.143.0",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-parser/-/oxc-parser-0.143.0.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-android-arm-eabi",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-android-arm64",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-darwin-arm64",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-darwin-x64",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-freebsd-x64",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-arm-gnueabihf",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-arm-musleabihf",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-arm64-gnu",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-arm64-musl",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-ppc64-gnu",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-riscv64-gnu",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-riscv64-musl",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-s390x-gnu",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-x64-gnu",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-linux-x64-musl",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-openharmony-arm64",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-wasm32-wasi",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-win32-arm64-msvc",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@oxc-resolver/binding-win32-x64-msvc",
+      "version": "11.24.2",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/oxc-resolver/-/oxc-resolver-11.24.2.tgz",
+      "textFile": "licenses/overrides/oxc-parser-platform-0.143.0-LICENSE"
+    },
+    {
+      "name": "@humanfs/types",
+      "version": "0.15.0",
+      "license": "Apache-2.0",
+      "sourceUrl": "https://raw.githubusercontent.com/humanwhocodes/humanfs/85069f193cbacc371c3beb649ce746f8c5a493be/packages/core/LICENSE",
+      "textFile": "licenses/overrides/humanfs-types-0.15.0-LICENSE"
+    },
+    {
+      "name": "jscpd",
+      "version": "5.0.15",
+      "license": "MIT",
+      "sourceUrl": "https://registry.npmjs.org/jscpd-darwin-arm64/-/jscpd-darwin-arm64-5.0.15.tgz",
+      "textFile": "licenses/overrides/jscpd-5.0.15-LICENSE"
+    },
+    {
+      "name": "esrecurse",
+      "version": "4.3.0",
+      "license": "BSD-2-Clause",
+      "sourceUrl": "https://raw.githubusercontent.com/estools/esrecurse/8ceb63797813d9ac69572a671b95cf58ffdf35b6/README.md",
+      "textFile": "licenses/overrides/esrecurse-4.3.0-LICENSE"
+    },
+    {
+      "name": "imurmurhash",
+      "version": "0.1.4",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/jensyt/imurmurhash-js/0.1.4/LICENSE",
+      "textFile": "licenses/overrides/imurmurhash-0.1.4-LICENSE"
+    },
+    {
+      "name": "keyv",
+      "version": "4.5.4",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/jaredwray/keyv/78b247b5b7a8c9b12154fbfae4295d6fb29158cf/LICENSE",
+      "textFile": "licenses/overrides/keyv-4.5.4-LICENSE"
+    },
+    {
+      "name": "language-subtag-registry",
+      "version": "0.3.23",
+      "license": "CC0-1.0",
+      "sourceUrl": "https://spdx.org/licenses/CC0-1.0.txt",
+      "textFile": "licenses/overrides/language-subtag-registry-0.3.23-LICENSE"
+    },
+    {
+      "name": "language-tags",
+      "version": "1.0.9",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/mattcg/language-tags/ea5aa61e53ced2a18e35783ff00bb2a533f6c77d/README.md",
+      "textFile": "licenses/overrides/language-tags-1.0.9-LICENSE"
+    },
+    {
+      "name": "natural-compare",
+      "version": "1.4.0",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/litejs/natural-compare-lite/eec83eee67cfac84d6db30cdd65363f155673770/README.md",
+      "textFile": "licenses/overrides/natural-compare-1.4.0-LICENSE"
+    },
+    {
+      "name": "yoga-layout",
+      "version": "3.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/facebook/yoga/v3.2.1/LICENSE",
+      "textFile": "licenses/overrides/yoga-layout-3.2.1-LICENSE"
+    }
+  ]
+}

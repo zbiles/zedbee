@@ -1,0 +1,32 @@
+# Licensing and Commercial Use
+
+Zedbee's source and core npm package use the PolyForm Small Business License 1.0.0. The complete controlling terms are in [`LICENSE`](../LICENSE). This guide explains the package layout; it is not legal advice and does not replace review by qualified counsel.
+
+## Zedbee license
+
+PolyForm Small Business is source-available, not an OSI-approved open-source license. Its permitted purposes and small-business conditions are defined by the license itself. A user whose use falls outside those permissions needs separate terms from the Zedbee licensor. The project owner may offer a separate commercial license without relicensing third-party components.
+
+Do not describe Zedbee as MIT-licensed, Apache-licensed, or unrestricted open source. `package.json` uses the exact identifier `PolyForm-Small-Business-1.0.0` and the packed core includes the full PolyForm terms.
+
+## Bundled analyzers and npm dependencies
+
+Bundled upstream programs keep their own licenses:
+
+- Gitleaks 8.28.0 is bundled under MIT terms.
+- OSV-Scanner 2.4.0 is bundled under Apache License 2.0 terms.
+
+Each platform package contains the applicable upstream license, notice, locked manifest, and executable. PolyForm is not applied to those upstream binaries. The core package summarizes them in `THIRD_PARTY_NOTICES.md` and ships the reviewed production dependency inventory.
+
+Zedbee's production dependency gate accepts reviewed permissive terms and fails closed on unknown, copyleft, or otherwise unapproved expressions. That engineering control reduces accidental license drift but is not a legal opinion.
+
+## Selling Zedbee
+
+Before a commercial release, the owner should have counsel confirm at least:
+
+1. ownership and contributor rights in Zedbee's original code and brand;
+2. the intended customer terms alongside PolyForm Small Business;
+3. all attribution, notice, source-offer, patent, trademark, and distribution obligations in the exact shipped artifacts;
+4. whether online OSV metadata disclosure needs additional privacy terms;
+5. the canonical publisher identity, repository, support, security contact, and commercial-license channel.
+
+The release gate checks artifact contents, dependency inventory, third-party notices, managed checksums, repository metadata, and SBOM inputs. It intentionally blocks public publication while canonical repository/contact metadata or remote cross-platform evidence is absent.

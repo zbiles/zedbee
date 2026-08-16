@@ -1,0 +1,39 @@
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { onTestFinished } from "vitest";
+
+export interface InspectionFixture {
+  readonly root: string;
+  write(path: string, contents: string): Promise<void>;
+  writeJson(path: string, value: unknown): Promise<void>;
+  symlink(target: string, path: string): Promise<void>;
+}
+
+export async function createInspectionFixture(): Promise<InspectionFixture> {
+  const root = await mkdtemp(join(tmpdir(), "zedbee-inspection-test-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+
+  const write = async (path: string, contents: string): Promise<void> => {
+    const fullPath = join(root, path);
+    await mkdir(dirname(fullPath), { recursive: true });
+    await writeFile(fullPath, contents);
+  };
+
+  return {
+    root,
+    write,
+    writeJson(path, value) {
+      return write(path, `${JSON.stringify(value, null, 2)}\n`);
+    },
+    async symlink(target, path) {
+      const fullPath = join(root, path);
+      await mkdir(dirname(fullPath), { recursive: true });
+      await symlink(
+        target,
+        fullPath,
+        process.platform === "win32" ? "junction" : "dir",
+      );
+    },
+  };
+}

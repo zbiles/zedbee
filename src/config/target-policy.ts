@@ -1,0 +1,63 @@
+import picomatch from "picomatch";
+import type { CheckTarget } from "../checks/adapter.js";
+import type {
+  RepositoryInspection,
+  WorkspaceInspection,
+} from "../inspection/types.js";
+import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
+
+function policyCandidates(
+  target: CheckTarget,
+  inspection: RepositoryInspection,
+): readonly string[] {
+  if (target.kind === "repository" && target.relativeRoot !== ".") {
+    throw new Error(
+      "Repository targets must use the inspected repository root",
+    );
+  }
+  if (target.kind === "repository") {
+    return inspection.workspaces.length === 0
+      ? ["."]
+      : inspection.workspaces.flatMap(workspaceCandidates);
+  }
+  const workspace = inspection.workspaces.find(
+    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
+  );
+  if (workspace === undefined) {
+    throw new Error(`Target ${target.id} is not an inspected workspace`);
+  }
+  return workspaceCandidates(workspace);
+}
+
+function workspaceCandidates(
+  workspace: WorkspaceInspection,
+): readonly string[] {
+  return [
+    workspace.relativeRoot,
+    workspace.manifestPath,
+    ...workspace.sourceFiles,
+    ...workspace.tsconfigPaths,
+  ];
+}
+
+export function resolveTargetPolicy(
+  config: ResolvedConfig,
+  checkId: CheckId,
+  target: CheckTarget,
+  inspection: RepositoryInspection,
+): ResolvedCheckPolicy {
+  let policy: ResolvedCheckPolicy = { ...config.checks[checkId] };
+  const candidates = policyCandidates(target, inspection);
+
+  for (const override of config.overrides) {
+    const patch = override.checks[checkId];
+    if (patch === undefined) continue;
+    const matches = override.files.some((pattern) => {
+      const isMatch = picomatch(pattern, { dot: true });
+      return candidates.some((candidate) => isMatch(candidate));
+    });
+    if (matches) policy = { ...policy, ...patch };
+  }
+
+  return policy;
+}

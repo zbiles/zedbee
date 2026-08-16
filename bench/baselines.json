@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "fixtures": {
+    "small": {
+      "snapshot": {
+        "coldMs": 0.752,
+        "warmMs": 0.6801
+      },
+      "inspection": {
+        "coldMs": 0.5698,
+        "warmMs": 0.4869
+      },
+      "adapter.structuralSecurity.collect": {
+        "coldMs": 2.641,
+        "warmMs": 3.2858
+      },
+      "attribution": {
+        "coldMs": 0.0607,
+        "warmMs": 0.0099
+      },
+      "rendering": {
+        "coldMs": 0.008,
+        "warmMs": 0.0061
+      },
+      "adapter.formatting.execute": {
+        "coldMs": 2.496,
+        "warmMs": 1.7967
+      },
+      "adapter.lint.execute": {
+        "coldMs": 544.959,
+        "warmMs": 514.8498
+      },
+      "adapter.types.execute": {
+        "coldMs": 524.0171,
+        "warmMs": 496.3678
+      },
+      "adapter.cyclomaticComplexity.execute": {
+        "coldMs": 11.7068,
+        "warmMs": 2.6155
+      },
+      "adapter.readabilityComplexity.execute": {
+        "coldMs": 2.3962,
+        "warmMs": 2.0878
+      },
+      "adapter.structuralSecurity.execute": {
+        "coldMs": 2.5558,
+        "warmMs": 2.7932
+      },
+      "adapter.secrets.execute": {
+        "coldMs": 1.5106,
+        "warmMs": 1.3629
+      },
+      "adapter.duplication.execute": {
+        "coldMs": 65.4085,
+        "warmMs": 63.2641
+      },
+      "adapter.dependencyArchitecture.execute": {
+        "coldMs": 9.4142,
+        "warmMs": 8.1687
+      },
+      "adapter.deadCode.execute": {
+        "coldMs": 254.12,
+        "warmMs": 251.3045
+      },
+      "adapter.reactCorrectness.execute": {
+        "coldMs": 6.4753,
+        "warmMs": 2.4984
+      },
+      "adapter.reactAccessibility.execute": {
+        "coldMs": 1.7105,
+        "warmMs": 1.3366
+      },
+      "adapter.vulnerabilities.execute": {
+        "coldMs": 0.0108,
+        "warmMs": 0.0094
+      }
+    },
+    "monorepo": {
+      "snapshot": {
+        "coldMs": 5.1678,
+        "warmMs": 5.3009
+      },
+      "inspection": {
+        "coldMs": 5.0435,
+        "warmMs": 4.8167
+      },
+      "adapter.structuralSecurity.collect": {
+        "coldMs": 5.6025,
+        "warmMs": 5.6527
+      },
+      "attribution": {
+        "coldMs": 0.0382,
+        "warmMs": 0.018
+      },
+      "rendering": {
+        "coldMs": 0.0063,
+        "warmMs": 0.004
+      }
+    }
+  }
+}

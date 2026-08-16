@@ -1,0 +1,1349 @@
+import { describe, expect, expectTypeOf, it } from "vitest";
+import type { CheckResult } from "../../src/core/types.js";
+import type { Observation } from "../../src/core/types.js";
+import type { ResolvedConfig } from "../../src/config/schema.js";
+import { resolveConfig } from "../../src/config/profiles.js";
+import type { ChangeSet } from "../../src/git/change-set.js";
+import type { SnapshotPair } from "../../src/git/snapshot.js";
+import type {
+  CheckAdapter,
+  CheckExecutionResult,
+  CheckRunContext,
+  CheckTarget,
+  ExecutionClass,
+  LegacyCheckResultAdapter,
+  ObservationCheckAdapter,
+} from "../../src/checks/adapter.js";
+import type { RepositoryInspection } from "../../src/inspection/types.js";
+import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import type { ScanEvent } from "../../src/checks/events.js";
+import { evaluatePolicy } from "../../src/policy/evaluate.js";
+
+function createConfig(
+  policies: Readonly<Record<string, "off" | "warn" | "error">>,
+): ResolvedConfig {
+  const resolved = resolveConfig({ schemaVersion: 1, profile: "fast" });
+  return {
+    ...resolved,
+    checks: {
+      ...resolved.checks,
+      ...Object.fromEntries(
+        Object.entries(policies).map(([id, severity]) => [
+          id,
+          { severity, when: "relevant" },
+        ]),
+      ),
+    },
+  };
+}
+
+function createContext(config: ResolvedConfig): CheckRunContext {
+  const changeSet: ChangeSet = {
+    files: new Map(),
+    isEmpty: false,
+    containsAddedLine: () => false,
+  };
+  const snapshots: SnapshotPair = {
+    baselineDir: "/tmp/baseline",
+    targetDir: "/tmp/target",
+    baselineRef: "HEAD",
+    unsupportedEntries: [],
+    cleanup: async () => undefined,
+  };
+  const baselineInspection: RepositoryInspection = {
+    snapshotRoot: snapshots.baselineDir,
+    packageManager: "npm",
+    lockfiles: ["package-lock.json"],
+    workspaces: [
+      ".",
+      "apps/web",
+      "packages/core",
+      ...Array.from({ length: 5 }, (_, index) => `packages/${index}`),
+    ].map((relativeRoot) => ({
+      relativeRoot,
+      manifestPath:
+        relativeRoot === "." ? "package.json" : `${relativeRoot}/package.json`,
+      sourceFiles: [],
+      tsconfigPaths: [],
+      environments: ["javascript"] as const,
+    })),
+  };
+  return {
+    repositoryRoot: "/repo",
+    changeSet,
+    config,
+    snapshots,
+    baselineInspection,
+    targetInspection: {
+      ...baselineInspection,
+      snapshotRoot: snapshots.targetDir,
+    },
+    target: { id: ".", kind: "repository", relativeRoot: "." },
+    policy: config.checks.formatting,
+    signal: new AbortController().signal,
+  };
+}
+
+function completed(checkId: string): CheckResult {
+  return {
+    checkId,
+    status: "completed",
+    durationMs: 0,
+    findings: [],
+  };
+}
+
+function createAdapter(
+  id: string,
+  executionClass: ExecutionClass,
+  run: LegacyCheckResultAdapter["runLegacy"] = async () => completed(id),
+  targets: readonly CheckTarget[] = [
+    { id: ".", kind: "repository", relativeRoot: "." },
+  ],
+): CheckAdapter {
+  return {
+    id,
+    output: "observations",
+    inspect: async () => ({
+      applies: true,
+      executionClass,
+      requiresBaseline: false,
+      targets,
+    }),
+    collect: async (context) => {
+      await run(context);
+      return {
+        checkId: id,
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [],
+      };
+    },
+  };
+}
+
+function createLegacyAdapter(
+  run: LegacyCheckResultAdapter["runLegacy"],
+  targets: readonly CheckTarget[] = [
+    { id: ".", kind: "repository", relativeRoot: "." },
+  ],
+): LegacyCheckResultAdapter {
+  return {
+    id: "formatting",
+    output: "legacy-check-result",
+    inspect: async () => ({
+      applies: true,
+      executionClass: "lightweight",
+      requiresBaseline: false,
+      targets,
+    }),
+    runLegacy: run,
+  };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolvePromise!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    resolvePromise = resolve;
+  });
+  return { promise, resolve: resolvePromise };
+}
+
+const formattingObservation: Observation = {
+  check: "formatting",
+  rule: "fixture-rule",
+  identity: "fixture:repository",
+  severity: "error",
+  message: "Fixture observation",
+};
+
+function observationAdapter(
+  collect: ObservationCheckAdapter["collect"],
+  requiresBaseline = true,
+): ObservationCheckAdapter {
+  return {
+    id: "formatting",
+    output: "observations",
+    inspect: async () => ({
+      applies: true,
+      executionClass: "lightweight",
+      requiresBaseline,
+      targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+    }),
+    collect,
+  };
+}
+
+describe("dispatchChecks", () => {
+  it("reserves the legacy adapter type for formatting", () => {
+    expectTypeOf<
+      LegacyCheckResultAdapter["id"]
+    >().toEqualTypeOf<"formatting">();
+  });
+
+  it("fails closed before running a non-formatting legacy adapter", async () => {
+    let runs = 0;
+    const adapter = {
+      id: "lint",
+      output: "legacy-check-result",
+      inspect: async () => ({
+        applies: true as const,
+        executionClass: "lightweight" as const,
+        requiresBaseline: false,
+        targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
+      }),
+      runLegacy: async () => {
+        runs += 1;
+        return completed("lint");
+      },
+    } as unknown as CheckAdapter;
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(runs).toBe(0);
+    expect(results).toEqual([
+      {
+        result: expect.objectContaining({
+          checkId: "lint",
+          status: "incomplete",
+          findings: [],
+          error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+        }),
+        policy: null,
+      },
+    ]);
+  });
+
+  it("snapshots a stateful adapter before inspection and never enters lint legacy execution", async () => {
+    let outputReads = 0;
+    let observationRuns = 0;
+    let legacyRuns = 0;
+    let unexpectedReads = 0;
+    const adapter = {
+      id: "lint",
+      get output() {
+        outputReads += 1;
+        return outputReads === 1 ? "observations" : "legacy-check-result";
+      },
+      inspect: async () => ({
+        applies: true as const,
+        executionClass: "lightweight" as const,
+        requiresBaseline: false,
+        targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
+      }),
+      collect: async (context: CheckRunContext) => {
+        observationRuns += 1;
+        return {
+          checkId: "lint",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+      runLegacy: async () => {
+        legacyRuns += 1;
+        return completed("lint");
+      },
+      get unexpected() {
+        unexpectedReads += 1;
+        throw new Error("must not be observed");
+      },
+    } as unknown as CheckAdapter;
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(outputReads).toBe(1);
+    expect(observationRuns).toBe(1);
+    expect(legacyRuns).toBe(0);
+    expect(unexpectedReads).toBe(0);
+    expect(results[0]?.result.status).toBe("completed");
+  });
+
+  it("uses the snapshotted observation function when inspect mutates the raw adapter", async () => {
+    let observationRuns = 0;
+    let legacyRuns = 0;
+    const adapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => {
+        adapter.output = "legacy-check-result";
+        adapter.collect = async () => {
+          throw new Error("mutated collect must not run");
+        };
+        return {
+          applies: true as const,
+          executionClass: "lightweight" as const,
+          requiresBaseline: false,
+          targets: [
+            { id: ".", kind: "repository" as const, relativeRoot: "." },
+          ],
+        };
+      },
+      collect: async (context: CheckRunContext) => {
+        observationRuns += 1;
+        return {
+          checkId: "lint",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+      runLegacy: async () => {
+        legacyRuns += 1;
+        return completed("lint");
+      },
+    };
+
+    const results = await dispatchChecks(
+      [adapter as unknown as CheckAdapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(observationRuns).toBe(1);
+    expect(legacyRuns).toBe(0);
+    expect(results[0]?.result.status).toBe("completed");
+  });
+
+  it("fails closed when an allowed adapter getter throws", async () => {
+    const adapter = {
+      id: "lint",
+      get output(): never {
+        throw new Error("sensitive output getter failure");
+      },
+      inspect: async () => ({ applies: false as const, reason: "unused" }),
+    } as unknown as CheckAdapter;
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(results).toEqual([
+      {
+        result: expect.objectContaining({
+          checkId: "lint",
+          status: "incomplete",
+          findings: [],
+          error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+        }),
+        policy: null,
+      },
+    ]);
+    expect(JSON.stringify(results)).not.toContain("sensitive output getter");
+  });
+
+  it.each<
+    [
+      string,
+      {
+        status?: string;
+        severity?: string;
+        attributionKind?: string;
+        staged?: string;
+      },
+    ]
+  >([
+    ["status", { status: "completed.toUpperCase()" }],
+    ["severity", { severity: "error.verbose" }],
+    ["attribution", { attributionKind: "range-overlap.verbose" }],
+    ["staged", { staged: "true" }],
+  ])(
+    "turns an invalid adapter result %s into incomplete",
+    async (_label, mutation) => {
+      const adapter = createLegacyAdapter(
+        async () =>
+          ({
+            checkId: "formatting",
+            status: mutation.status ?? "completed",
+            durationMs: 0,
+            findings: [
+              {
+                id: "unsafe-enum",
+                check: "formatting",
+                rule: "prettier",
+                severity: mutation.severity ?? "error",
+                message: "unsafe enum payload",
+                attribution: {
+                  kind: mutation.attributionKind ?? "syntax-ownership",
+                  staged: mutation.staged ?? true,
+                  evidence: [],
+                },
+              },
+            ],
+          }) as unknown as CheckResult,
+      );
+
+      const results = await dispatchChecks(
+        [adapter],
+        createContext(createConfig({ formatting: "error" })),
+      );
+
+      expect(results[0]?.result).toMatchObject({
+        checkId: "formatting",
+        status: "incomplete",
+        findings: [],
+        error: { code: "ADAPTER_FAILED" },
+      });
+      expect(JSON.stringify(results)).not.toContain("unsafe enum payload");
+    },
+  );
+
+  it("snapshots applicability before target access can mutate later scheduling fields", async () => {
+    const applicability = {
+      applies: true as const,
+      executionClass: "lightweight" as string,
+      requiresBaseline: false,
+      targets: [] as CheckTarget[],
+    };
+    applicability.targets = [
+      {
+        get id() {
+          applicability.executionClass = "corrupted";
+          applicability.requiresBaseline = true;
+          return ".";
+        },
+        kind: "repository",
+        relativeRoot: ".",
+      },
+    ];
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () =>
+        applicability as unknown as Awaited<
+          ReturnType<ObservationCheckAdapter["inspect"]>
+        >,
+      collect: async (context) => ({
+        checkId: "lint",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [],
+      }),
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(applicability.executionClass).toBe("corrupted");
+    expect(applicability.requiresBaseline).toBe(true);
+    expect(results[0]?.result.status).toBe("completed");
+  });
+
+  it("rejects an observation attributed to a sibling workspace", async () => {
+    const target = {
+      id: "apps/web",
+      kind: "workspace" as const,
+      relativeRoot: "apps/web",
+    };
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => ({
+        applies: true,
+        executionClass: "lightweight",
+        requiresBaseline: false,
+        targets: [target],
+      }),
+      collect: async (context) => ({
+        checkId: "lint",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [
+          {
+            check: "lint",
+            rule: "cross-workspace",
+            identity: "cross-workspace:packages/core/src/index.ts:1",
+            severity: "error",
+            message: "Must not be attributed to apps/web",
+            location: {
+              file: "packages/core/src/index.ts",
+              startLine: 1,
+              endLine: 1,
+            },
+          },
+        ],
+      }),
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(results[0]?.result).toMatchObject({
+      checkId: "lint",
+      target: "apps/web",
+      status: "incomplete",
+      findings: [],
+      error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+    });
+    expect(JSON.stringify(results)).not.toContain("Must not be attributed");
+  });
+
+  it.each(["check", "target", "observation"] as const)(
+    "fails closed when an observation set returns a mismatched %s",
+    async (mismatch) => {
+      const adapter = observationAdapter(async (context) => ({
+        checkId: mismatch === "check" ? "types" : "formatting",
+        target:
+          mismatch === "target"
+            ? { id: "elsewhere", kind: "repository", relativeRoot: "." }
+            : context.target,
+        baselineObservations: [],
+        targetObservations: [
+          mismatch === "observation"
+            ? { ...formattingObservation, check: "types" }
+            : formattingObservation,
+        ],
+      }));
+
+      const results = await dispatchChecks(
+        [adapter],
+        createContext(createConfig({ formatting: "error" })),
+      );
+
+      expect(results[0]?.result).toMatchObject({
+        checkId: "formatting",
+        target: ".",
+        status: "incomplete",
+        findings: [],
+        error: { code: "ADAPTER_FAILED", message: "Check formatting failed" },
+      });
+      expect(JSON.stringify(results)).not.toContain("Fixture observation");
+    },
+  );
+
+  it("enforces the adapter's baseline declaration", async () => {
+    const undeclared = observationAdapter(
+      async (context) => ({
+        checkId: "formatting",
+        target: context.target,
+        baselineObservations: [formattingObservation],
+        targetObservations: [],
+      }),
+      false,
+    );
+    const missing = observationAdapter(async (context) => ({
+      checkId: "formatting",
+      target: context.target,
+      baselineObservations: undefined as unknown as readonly Observation[],
+      targetObservations: [],
+    }));
+    const declared = observationAdapter(async (context) => ({
+      checkId: "formatting",
+      target: context.target,
+      baselineObservations: [formattingObservation],
+      targetObservations: [],
+    }));
+    const context = createContext(createConfig({ formatting: "error" }));
+
+    const [undeclaredResult, missingResult, declaredResult] = await Promise.all(
+      [
+        dispatchChecks([undeclared], context),
+        dispatchChecks([missing], context),
+        dispatchChecks([declared], context),
+      ],
+    );
+
+    expect(undeclaredResult[0]?.result.status).toBe("incomplete");
+    expect(missingResult[0]?.result.status).toBe("incomplete");
+    expect(declaredResult[0]?.result.status).toBe("completed");
+  });
+
+  it("copies only public target fields without observing unrelated getters", async () => {
+    let unexpectedReads = 0;
+    const target = {
+      id: "web",
+      kind: "workspace",
+      relativeRoot: "apps/web",
+      adapterSecret: "must not escape",
+      get unexpected() {
+        unexpectedReads += 1;
+        throw new Error("must not be read");
+      },
+    } as unknown as CheckTarget;
+    const events: ScanEvent[] = [];
+
+    const results = await dispatchChecks(
+      [createAdapter("formatting", "lightweight", undefined, [target])],
+      createContext(createConfig({ formatting: "error" })),
+      { onEvent: (event) => events.push(event) },
+    );
+
+    expect(unexpectedReads).toBe(0);
+    expect(results[0]?.target).toEqual({
+      id: "web",
+      kind: "workspace",
+      relativeRoot: "apps/web",
+    });
+    expect(Object.keys(results[0]?.target ?? {})).toEqual([
+      "id",
+      "kind",
+      "relativeRoot",
+    ]);
+    expect(JSON.stringify({ results, events })).not.toMatch(
+      /adapterSecret|unexpected|must not escape/,
+    );
+  });
+
+  it("fails closed when an allowed target field getter throws", async () => {
+    let idReads = 0;
+    const target = {
+      get id(): string {
+        idReads += 1;
+        throw new Error("sensitive target getter failure");
+      },
+      kind: "workspace",
+      relativeRoot: "apps/web",
+    } as CheckTarget;
+
+    const results = await dispatchChecks(
+      [createAdapter("formatting", "lightweight", undefined, [target])],
+      createContext(createConfig({ formatting: "error" })),
+    );
+
+    expect(idReads).toBe(1);
+    expect(results).toEqual([
+      {
+        result: expect.objectContaining({
+          checkId: "formatting",
+          status: "incomplete",
+          findings: [],
+        }),
+        policy: null,
+      },
+    ]);
+    expect(JSON.stringify(results)).not.toContain("sensitive target getter");
+  });
+
+  it("detaches completed event results from the policy execution envelope", async () => {
+    const adapter = createLegacyAdapter(async () => ({
+      checkId: "formatting",
+      status: "completed",
+      durationMs: 0,
+      findings: [
+        {
+          id: "formatting:value.ts:1",
+          check: "formatting",
+          rule: "prettier",
+          severity: "info",
+          message: "Format value.ts",
+          location: { file: "value.ts", startLine: 1 },
+          attribution: {
+            kind: "range-overlap",
+            staged: true,
+            evidence: ["value.ts:1"],
+          },
+        },
+      ],
+    }));
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ formatting: "error" })),
+      {
+        onEvent: (event) => {
+          if (event.type !== "check-completed") return;
+          const finding = event.result.findings[0] as unknown as {
+            message: string;
+            attribution: { evidence: string[] };
+          };
+          finding.message = "observer mutation";
+          finding.attribution.evidence.push("observer evidence");
+          Object.freeze(event.result.findings);
+          Object.freeze(event.result);
+        },
+      },
+    );
+
+    expect(results[0]?.result.findings).toEqual([
+      expect.objectContaining({
+        message: "Format value.ts",
+        attribution: expect.objectContaining({ evidence: ["value.ts:1"] }),
+      }),
+    ]);
+  });
+
+  it("gives inspect and collect exhaustive immutable copies while preserving authoritative policy and changes", async () => {
+    const config = createConfig({ lint: "error" });
+    const context = createContext(config);
+    const authoritativeFile = {
+      path: "src/value.ts",
+      status: "modified" as const,
+      addedRanges: [{ start: 3, end: 4 }],
+    };
+    context.changeSet = {
+      files: new Map([[authoritativeFile.path, authoritativeFile]]),
+      isEmpty: false,
+      containsAddedLine: (file, line) =>
+        file === authoritativeFile.path && line >= 3 && line <= 4,
+    };
+    const mutationFailures: string[] = [];
+    const mutate = (phase: string, adapterContext: CheckRunContext) => {
+      for (const [name, action] of [
+        ["policy", () => (adapterContext.config.checks.lint.severity = "off")],
+        [
+          "files",
+          () =>
+            (
+              adapterContext.changeSet.files as unknown as Map<string, unknown>
+            ).clear(),
+        ],
+        [
+          "range",
+          () =>
+            ((
+              adapterContext.changeSet.files.get("src/value.ts")!
+                .addedRanges[0] as {
+                start: number;
+              }
+            ).start = 99),
+        ],
+        [
+          "workspace",
+          () =>
+            (
+              adapterContext.targetInspection.workspaces as unknown as unknown[]
+            ).push({}),
+        ],
+      ] as const) {
+        try {
+          action();
+        } catch {
+          mutationFailures.push(`${phase}:${name}`);
+        }
+      }
+    };
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async (inspectContext) => {
+        mutate("inspect", inspectContext as CheckRunContext);
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      collect: async (runContext) => {
+        mutate("collect", runContext);
+        expect("cleanup" in runContext.snapshots).toBe(false);
+        expect(runContext.changeSet.containsAddedLine("src/value.ts", 3)).toBe(
+          true,
+        );
+        return {
+          checkId: "lint",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [
+            {
+              check: "lint",
+              rule: "repo-rule",
+              identity: "repo-rule:new",
+              severity: "info",
+              message: "New repository issue",
+            },
+          ],
+        };
+      },
+    };
+
+    const results = await dispatchChecks([adapter], context);
+    const decision = evaluatePolicy(results, config);
+
+    expect(mutationFailures).toEqual([
+      "inspect:policy",
+      "inspect:files",
+      "inspect:range",
+      "inspect:workspace",
+      "collect:policy",
+      "collect:files",
+      "collect:range",
+      "collect:workspace",
+    ]);
+    expect(context.changeSet.files.get("src/value.ts")).toEqual(
+      authoritativeFile,
+    );
+    expect(decision.outcome).toBe("blocked");
+    expect(decision.results[0]?.findings[0]?.severity).toBe("error");
+  });
+
+  it("emits policy-filtered and severity-mapped completed results", async () => {
+    const events: ScanEvent[] = [];
+    const adapter = createLegacyAdapter(async () => ({
+      checkId: "formatting",
+      status: "completed",
+      durationMs: 0,
+      findings: [
+        {
+          id: "baseline-only",
+          check: "formatting",
+          rule: "prettier",
+          severity: "error",
+          message: "Unchanged issue",
+          attribution: { kind: "none", staged: false, evidence: [] },
+        },
+        {
+          id: "staged",
+          check: "formatting",
+          rule: "prettier",
+          severity: "info",
+          message: "Changed issue",
+          attribution: {
+            kind: "transformation-diff",
+            staged: true,
+            evidence: ["staged"],
+          },
+        },
+      ],
+    }));
+    const config = createConfig({ formatting: "warn" });
+    const results = await dispatchChecks([adapter], createContext(config), {
+      onEvent: (event) => events.push(event),
+    });
+    const completedEvent = events.find(
+      (event): event is Extract<ScanEvent, { type: "check-completed" }> =>
+        event.type === "check-completed",
+    );
+
+    expect(completedEvent?.result.findings).toEqual([
+      expect.objectContaining({ id: "staged", severity: "warning" }),
+    ]);
+    expect(completedEvent?.result).toEqual(
+      evaluatePolicy(results, config).results[0],
+    );
+  });
+
+  it("emits a live pass for a completed baseline-only result", async () => {
+    const events: ScanEvent[] = [];
+    const adapter = createLegacyAdapter(async () => ({
+      checkId: "formatting",
+      status: "completed",
+      durationMs: 0,
+      findings: [
+        {
+          id: "baseline-only",
+          check: "formatting",
+          rule: "prettier",
+          severity: "error",
+          message: "Unchanged issue",
+          attribution: { kind: "none", staged: false, evidence: [] },
+        },
+      ],
+    }));
+    await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ formatting: "error" })),
+      { onEvent: (event) => events.push(event) },
+    );
+
+    const completed = events.find((event) => event.type === "check-completed");
+    expect(completed).toMatchObject({
+      result: { status: "completed", findings: [] },
+    });
+  });
+
+  it("keeps an immutable policy envelope when an adapter mutates its run policy", async () => {
+    const targetConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "warn" },
+      overrides: [{ files: ["apps/web/**"], checks: { formatting: "error" } }],
+    });
+    let adapterPolicy: CheckRunContext["policy"] | undefined;
+    const adapter = createLegacyAdapter(
+      async (context) => {
+        adapterPolicy = context.policy;
+        context.policy.severity = "warn";
+        return {
+          checkId: "formatting",
+          status: "completed",
+          durationMs: 0,
+          findings: [
+            {
+              id: "web-format",
+              check: "formatting",
+              rule: "prettier",
+              severity: "info",
+              message: "Format web file",
+              location: { file: "apps/web/value.ts", startLine: 1 },
+              attribution: {
+                kind: "range-overlap",
+                staged: true,
+                evidence: ["apps/web/value.ts:1"],
+              },
+            },
+          ],
+        };
+      },
+      [{ id: "web", kind: "workspace", relativeRoot: "apps/web" }],
+    );
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(targetConfig),
+    );
+    const execution = results[0] as CheckExecutionResult;
+    const decision = evaluatePolicy(results, targetConfig);
+
+    expect(execution.policy).toMatchObject({ severity: "error" });
+    expect(Object.isFrozen(execution.policy)).toBe(true);
+    expect(execution.policy).not.toBe(adapterPolicy);
+    expect(decision).toMatchObject({ outcome: "blocked", exitCode: 1 });
+    expect(decision.results[0]?.findings[0]?.severity).toBe("error");
+  });
+
+  it("uses the most permissive configured timing for inspection and the exact target timing for execution", async () => {
+    const matchingConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { severity: "error", when: "relevant" } },
+      overrides: [
+        { files: ["apps/web/**"], checks: { formatting: { when: "always" } } },
+      ],
+    });
+    const observed: string[] = [];
+    const adapter: CheckAdapter = {
+      id: "formatting",
+      output: "legacy-check-result",
+      inspect: async (context) => {
+        observed.push(`inspect:${context.config.checks.formatting.when}`);
+        return context.config.checks.formatting.when === "always"
+          ? {
+              applies: true,
+              executionClass: "lightweight",
+              requiresBaseline: false,
+              targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+            }
+          : { applies: false, reason: "No relevant files" };
+      },
+      runLegacy: async (context) => {
+        observed.push(`run:${context.policy.when}`);
+        return completed("formatting");
+      },
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(matchingConfig),
+    );
+
+    expect(observed).toEqual(["inspect:always", "run:always"]);
+    expect(results).toHaveLength(1);
+  });
+
+  it("does not let an unmatched timing override change the exact target policy", async () => {
+    const unmatchedConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { severity: "error", when: "relevant" } },
+      overrides: [
+        { files: ["private/**"], checks: { formatting: { when: "always" } } },
+      ],
+    });
+    const observed: string[] = [];
+    const adapter: CheckAdapter = {
+      id: "formatting",
+      output: "legacy-check-result",
+      inspect: async (context) => {
+        observed.push(`inspect:${context.config.checks.formatting.when}`);
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      runLegacy: async (context) => {
+        observed.push(`run:${context.policy.when}`);
+        return completed("formatting");
+      },
+    };
+
+    await dispatchChecks([adapter], createContext(unmatchedConfig));
+
+    expect(observed).toEqual(["inspect:always", "run:relevant"]);
+  });
+
+  it("fails closed on a programmatically injected file-scoped network override", async () => {
+    const base = createConfig({ vulnerabilities: "error" });
+    const unsafeConfig = {
+      ...base,
+      checks: {
+        ...base.checks,
+        vulnerabilities: {
+          ...base.checks.vulnerabilities,
+          network: "offline" as const,
+        },
+      },
+      overrides: [
+        {
+          files: ["package.json"],
+          checks: { vulnerabilities: { network: "online" as const } },
+        },
+      ],
+    };
+    let inspected = false;
+    const adapter: CheckAdapter = {
+      id: "vulnerabilities",
+      output: "observations",
+      inspect: async () => {
+        inspected = true;
+        throw new Error("must not inspect");
+      },
+      collect: async () => {
+        throw new Error("must not collect");
+      },
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(unsafeConfig),
+    );
+
+    expect(inspected).toBe(false);
+    expect(results.map(({ result }) => result)).toEqual([
+      expect.objectContaining({
+        checkId: "vulnerabilities",
+        status: "incomplete",
+      }),
+    ]);
+  });
+
+  it("returns an incomplete result when an applicable adapter produces no targets", async () => {
+    const adapter = createAdapter("lint", "lightweight", undefined, []);
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(results.map(({ result }) => result)).toEqual([
+      expect.objectContaining({
+        checkId: "lint",
+        status: "incomplete",
+        error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+      }),
+    ]);
+  });
+
+  it("emits a complete sanitized lifecycle when target policy resolution fails", async () => {
+    const events: ScanEvent[] = [];
+    const adapter = createAdapter("types", "project-analysis", undefined, [
+      {
+        id: "unknown-target",
+        kind: "workspace",
+        relativeRoot: "missing/workspace",
+      },
+    ]);
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ types: "error" })),
+      { onEvent: (event) => events.push(event) },
+    );
+
+    expect(events.map(({ type }) => type)).toEqual([
+      "check-queued",
+      "check-running",
+      "check-completed",
+    ]);
+    expect(events.every(({ target }) => target === "unknown-target")).toBe(
+      true,
+    );
+    expect(results.map(({ result }) => result)).toEqual([
+      expect.objectContaining({
+        checkId: "types",
+        target: "unknown-target",
+        status: "incomplete",
+      }),
+    ]);
+  });
+
+  it("does not inspect disabled adapters", async () => {
+    let inspections = 0;
+    const adapter: CheckAdapter = {
+      id: "disabled",
+      output: "observations",
+      inspect: async () => {
+        inspections += 1;
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      collect: async (context) => ({
+        checkId: "disabled",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [],
+      }),
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ disabled: "off" })),
+    );
+
+    expect(inspections).toBe(0);
+    expect(results).toEqual([]);
+  });
+
+  it("returns a skipped result when an enabled adapter is irrelevant", async () => {
+    const adapter: CheckAdapter = {
+      id: "irrelevant",
+      output: "observations",
+      inspect: async () => ({
+        applies: false,
+        reason: "No supported staged files",
+      }),
+      collect: async (context) => ({
+        checkId: "irrelevant",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [],
+      }),
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ irrelevant: "error" })),
+    );
+
+    expect(results.map(({ result }) => result)).toEqual([
+      {
+        checkId: "irrelevant",
+        status: "skipped",
+        durationMs: 0,
+        findings: [],
+        skipReason: "No supported staged files",
+      },
+    ]);
+  });
+
+  it("emits queued, running, and completed lifecycle events", async () => {
+    const events: ScanEvent[] = [];
+    let now = 10;
+    const adapter = createAdapter("formatting", "lightweight");
+
+    await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ formatting: "error" })),
+      {
+        clock: () => now++,
+        onEvent: (event) => events.push(event),
+      },
+    );
+
+    expect(events.map((event) => event.type)).toEqual([
+      "check-queued",
+      "check-running",
+      "check-completed",
+    ]);
+    expect(events.map((event) => event.checkId)).toEqual([
+      "formatting",
+      "formatting",
+      "formatting",
+    ]);
+    expect(events.map((event) => event.timestamp)).toEqual([10, 11, 13]);
+    expect(events.map((event) => event.target)).toEqual([".", ".", "."]);
+    expect(events.at(-1)).toMatchObject({
+      type: "check-completed",
+      target: ".",
+      result: { target: "." },
+    });
+  });
+
+  it("expands one adapter into deterministic explicit workspace targets", async () => {
+    const events: ScanEvent[] = [];
+    const adapter = createAdapter(
+      "types",
+      "project-analysis",
+      async (context) => completed(`types:${context.target.id}`),
+      [
+        {
+          id: "packages/core",
+          kind: "workspace",
+          relativeRoot: "packages/core",
+        },
+        { id: "apps/web", kind: "workspace", relativeRoot: "apps/web" },
+      ],
+    );
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ types: "error" })),
+      { onEvent: (event) => events.push(event) },
+    );
+
+    expect(results.map(({ result }) => result.target)).toEqual([
+      "apps/web",
+      "packages/core",
+    ]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "check-running",
+        checkId: "types",
+        target: "packages/core",
+      }),
+    );
+  });
+
+  it("enforces execution-class concurrency globally across expanded targets", async () => {
+    let active = 0;
+    let maximum = 0;
+    const release = deferred();
+    const targets = Array.from({ length: 5 }, (_, index) => ({
+      id: `packages/${index}`,
+      kind: "workspace" as const,
+      relativeRoot: `packages/${index}`,
+    }));
+    const adapter = createAdapter(
+      "lint",
+      "lightweight",
+      async () => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        if (active === 4) release.resolve();
+        await release.promise;
+        active -= 1;
+        return completed("lint");
+      },
+      targets,
+    );
+
+    await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(maximum).toBe(4);
+  });
+
+  it("limits lightweight checks to four concurrent runs", async () => {
+    let active = 0;
+    let maximum = 0;
+    const release = deferred();
+    const adapters = Array.from({ length: 5 }, (_, index) =>
+      createAdapter(`light-${index}`, "lightweight", async () => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        if (active === 4) {
+          release.resolve();
+        }
+        await release.promise;
+        active -= 1;
+        return completed(`light-${index}`);
+      }),
+    );
+
+    await dispatchChecks(
+      adapters,
+      createContext(
+        createConfig(
+          Object.fromEntries(adapters.map((adapter) => [adapter.id, "error"])),
+        ),
+      ),
+    );
+
+    expect(maximum).toBe(4);
+  });
+
+  it.each(["project-analysis", "network"] as const)(
+    "limits %s checks to one concurrent run across expanded targets",
+    async (executionClass) => {
+      let active = 0;
+      let maximum = 0;
+      const adapters = [0, 1].map((index) =>
+        createAdapter(
+          `${executionClass}-${index}`,
+          executionClass,
+          async () => {
+            active += 1;
+            maximum = Math.max(maximum, active);
+            await Promise.resolve();
+            active -= 1;
+            return completed(`${executionClass}-${index}`);
+          },
+          [
+            { id: "packages/0", kind: "workspace", relativeRoot: "packages/0" },
+            { id: "packages/1", kind: "workspace", relativeRoot: "packages/1" },
+          ],
+        ),
+      );
+
+      await dispatchChecks(
+        adapters,
+        createContext(
+          createConfig(
+            Object.fromEntries(
+              adapters.map((adapter) => [adapter.id, "error"]),
+            ),
+          ),
+        ),
+      );
+
+      expect(maximum).toBe(1);
+    },
+  );
+
+  it("sanitizes adapter failures and lets other checks finish", async () => {
+    const broken = createAdapter("broken", "lightweight", async () => {
+      throw new Error("sensitive engine detail");
+    });
+    const healthy = createAdapter("healthy", "lightweight");
+
+    const results = await dispatchChecks(
+      [broken, healthy],
+      createContext(createConfig({ broken: "error", healthy: "error" })),
+    );
+
+    expect(results[0]?.result).toMatchObject({
+      checkId: "broken",
+      status: "incomplete",
+      findings: [],
+      error: { code: "ADAPTER_FAILED", message: "Check broken failed" },
+    });
+    expect(results[1]?.result).toMatchObject({
+      checkId: "healthy",
+      status: "completed",
+    });
+    expect(JSON.stringify(results)).not.toContain("sensitive engine detail");
+  });
+
+  it("returns results in deterministic check ID order instead of adapter or completion order", async () => {
+    const firstRelease = deferred();
+    const secondFinished = deferred();
+    const first = createAdapter("zeta", "lightweight", async () => {
+      await firstRelease.promise;
+      return completed("zeta");
+    });
+    const second = createAdapter("alpha", "lightweight", async () => {
+      secondFinished.resolve();
+      return completed("alpha");
+    });
+
+    const resultPromise = dispatchChecks(
+      [first, second],
+      createContext(createConfig({ zeta: "error", alpha: "error" })),
+    );
+    await secondFinished.promise;
+    firstRelease.resolve();
+
+    expect((await resultPromise).map(({ result }) => result.checkId)).toEqual([
+      "alpha",
+      "zeta",
+    ]);
+  });
+});
