@@ -8,6 +8,7 @@ import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface ScanAppProps {
   events: readonly ScanEvent[];
+  startedAt?: number;
   elapsedMs: number;
   width: number;
   color: boolean;

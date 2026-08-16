@@ -37,7 +37,7 @@ function countLine(report: ScanReport): string {
     return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`;
   }
   if (report.outcome === "incomplete") {
-    return `${passed} passed · ${report.summary.incomplete} incomplete`;
+    return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed · ${report.summary.incomplete} incomplete`;
   }
   return `${passed} passed · ${warnings} ${warningLabel}`;
 }
@@ -59,7 +59,7 @@ function headline(report: ScanReport): string[] {
   }
   return [
     "BEE-UTIFUL",
-    report.checks.length === 0
+    report.stagedFileCount === 0
       ? "No staged changes. Commit allowed."
       : "All checks passed. Commit allowed.",
     countLine(report),

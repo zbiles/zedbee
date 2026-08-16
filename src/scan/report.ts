@@ -14,6 +14,8 @@ export interface ScanReport {
   repositoryRoot: string;
   baseline: "HEAD" | null;
   target: "index";
+  /** Number of paths in the staged index, or null when change discovery failed. */
+  stagedFileCount: number | null;
   startedAt: string;
   durationMs: number;
   networkDisclosures: readonly NetworkDisclosure[];

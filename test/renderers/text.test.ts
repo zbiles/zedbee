@@ -16,6 +16,7 @@ describe("renderText", () => {
 
   it("renders an empty staged change as a successful no-op", () => {
     const report = createReport({
+      stagedFileCount: 0,
       checks: [],
       summary: {
         passed: 0,
@@ -28,6 +29,24 @@ describe("renderText", () => {
 
     expect(renderText(report, { width: 80, color: false })).toContain(
       "No staged changes. Commit allowed.",
+    );
+  });
+
+  it("does not report staged files as empty when every check is disabled", () => {
+    const report = createReport({
+      stagedFileCount: 1,
+      checks: [],
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 0,
+        incomplete: 0,
+        findings: [],
+      },
+    });
+
+    expect(renderText(report, { width: 80, color: false })).toContain(
+      "All checks passed. Commit allowed.",
     );
   });
 
@@ -116,6 +135,24 @@ describe("renderText", () => {
 
     expect(renderText(report, { width: 80, color: false })).toContain(
       "SCAN INCOMPLETE\nA required check could not finish. Commit blocked.",
+    );
+  });
+
+  it("includes every outcome count in incomplete text output", () => {
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 3,
+        warnings: 2,
+        failed: 1,
+        incomplete: 1,
+        findings: [],
+      },
+    });
+
+    expect(renderText(report, { width: 80, color: false })).toContain(
+      "3 passed · 2 warnings · 1 failed · 1 incomplete",
     );
   });
 

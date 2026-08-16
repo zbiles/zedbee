@@ -2,6 +2,11 @@ import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { LiveDashboard } from "../../src/ui/live-dashboard.js";
+import { createFinding } from "../helpers/scan-report.js";
+
+function maxLineWidth(frame: string): number {
+  return Math.max(...frame.split("\n").map((line) => [...line].length));
+}
 
 const events: ScanEvent[] = [
   { type: "check-queued", checkId: "formatting", target: ".", timestamp: 1 },
@@ -28,29 +33,35 @@ describe("LiveDashboard", () => {
     const frame = render(
       <LiveDashboard
         events={events}
+        startedAt={0}
         elapsedMs={18}
-        width={120}
+        width={96}
         color={false}
         animations={false}
       />,
     ).lastFrame()!;
 
-    expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain("██████████  ██████████  ████████");
     expect(frame).toContain("CHECKS");
     expect(frame).toContain("ACTIVITY");
+    expect(frame).toContain("SUMMARY");
     expect(frame).toContain("Formatting");
-    expect(frame).toContain("PASS");
+    expect(frame).toMatch(/Formatting\s+pass/u);
     expect(frame).toContain("TypeScript");
-    expect(frame).toContain("RUNNING");
+    expect(frame).toMatch(/TypeScript\s+running 0\.0s/u);
     expect(frame).toContain("Secrets");
-    expect(frame).toContain("QUEUED");
-    expect(frame).toContain("PROGRESS 1/3");
+    expect(frame).toMatch(/Secrets\s+queued/u);
+    expect(frame).toContain("1 pass");
+    expect(frame).toContain("0 warn");
+    expect(frame).toContain("0 fail");
+    expect(frame).toContain("Formatting: passed");
   });
 
   it("stacks live panels at narrow widths without hiding state labels", () => {
     const frame = render(
       <LiveDashboard
         events={events}
+        startedAt={0}
         elapsedMs={18}
         width={60}
         color={false}
@@ -60,7 +71,27 @@ describe("LiveDashboard", () => {
 
     expect(frame).toContain("CHECKS");
     expect(frame).toContain("ACTIVITY");
-    expect(frame).toContain("RUNNING");
+    expect(frame).toContain("SUMMARY");
+    expect(frame).toMatch(/TypeScript\s+running 0\.0s/u);
+    expect(maxLineWidth(frame)).toBeLessThanOrEqual(60);
+  });
+
+  it("keeps every live row inside the padded outer frame", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const framedRows = frame.split("\n").slice(1, -1);
+
+    expect(framedRows).not.toHaveLength(0);
+    expect(framedRows.every((line) => line.startsWith("│ "))).toBe(true);
+    expect(framedRows.every((line) => line.endsWith(" │"))).toBe(true);
   });
 
   it("tracks and displays separate targets for the same check", () => {
@@ -94,8 +125,9 @@ describe("LiveDashboard", () => {
     const frame = render(
       <LiveDashboard
         events={targetEvents}
+        startedAt={0}
         elapsedMs={18}
-        width={120}
+        width={96}
         color={false}
         animations={false}
       />,
@@ -103,9 +135,200 @@ describe("LiveDashboard", () => {
 
     expect(frame).toContain("TypeScript · apps/web");
     expect(frame).toContain("TypeScript · packages/core");
-    expect(frame).toContain("PROGRESS 0/2");
+    expect(frame).toContain("0 pass");
     expect(
-      frame.match(/TypeScript · (?:apps\/web|packages\/core): running/g),
+      frame.match(/TypeScript · (?:apps\/web|packages\/core): checking…/g),
     ).toHaveLength(2);
+  });
+
+  it("animates the running check and reports its live duration", () => {
+    const runningEvents: ScanEvent[] = [
+      {
+        type: "check-queued",
+        checkId: "types",
+        target: ".",
+        timestamp: 10,
+      },
+      {
+        type: "check-running",
+        checkId: "types",
+        target: ".",
+        timestamp: 20,
+      },
+    ];
+    const frameAt100 = render(
+      <LiveDashboard
+        events={runningEvents}
+        startedAt={0}
+        elapsedMs={100}
+        width={96}
+        color={false}
+        animations
+      />,
+    ).lastFrame()!;
+    const frameAt180 = render(
+      <LiveDashboard
+        events={runningEvents}
+        startedAt={0}
+        elapsedMs={180}
+        width={96}
+        color={false}
+        animations
+      />,
+    ).lastFrame()!;
+    const spinnerAt100 = /([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]).*TypeScript.*0\.1s/u;
+    const spinnerAt180 = /([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]).*TypeScript.*0\.2s/u;
+
+    expect(frameAt100).toMatch(spinnerAt100);
+    expect(frameAt180).toMatch(spinnerAt180);
+    expect(frameAt100.match(spinnerAt100)?.[1]).not.toBe(
+      frameAt180.match(spinnerAt180)?.[1],
+    );
+  });
+
+  it("keeps incomplete checks distinct from warnings in the live summary", () => {
+    const incompleteEvents: ScanEvent[] = [
+      {
+        type: "check-queued",
+        checkId: "secrets",
+        target: ".",
+        timestamp: 1,
+      },
+      {
+        type: "check-running",
+        checkId: "secrets",
+        target: ".",
+        timestamp: 2,
+      },
+      {
+        type: "check-completed",
+        checkId: "secrets",
+        target: ".",
+        timestamp: 3,
+        result: {
+          checkId: "secrets",
+          status: "incomplete",
+          durationMs: 1,
+          findings: [],
+        },
+      },
+    ];
+    const frame = render(
+      <LiveDashboard
+        events={incompleteEvents}
+        startedAt={0}
+        elapsedMs={3}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toMatch(/Secrets\s+incomplete/u);
+    expect(frame).toContain("0 warn");
+    expect(frame).toContain("1 incomplete");
+  });
+
+  it("renders skipped checks neutrally and excludes them from outcome counters", () => {
+    const skippedEvents: ScanEvent[] = [
+      {
+        type: "check-queued",
+        checkId: "reactAccessibility",
+        target: ".",
+        timestamp: 1,
+      },
+      {
+        type: "check-completed",
+        checkId: "reactAccessibility",
+        target: ".",
+        timestamp: 2,
+        result: {
+          checkId: "reactAccessibility",
+          status: "skipped",
+          durationMs: 0,
+          findings: [],
+          skipReason: "No React source files found.",
+        },
+      },
+    ];
+    const frame = render(
+      <LiveDashboard
+        events={skippedEvents}
+        startedAt={0}
+        elapsedMs={2}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toMatch(/React accessibility\s+skipped/u);
+    expect(frame).toContain("React accessibility: skipped");
+    expect(frame).toContain("0 pass");
+  });
+
+  it("reports blocking and warning findings separately in activity", () => {
+    const mixedEvents: ScanEvent[] = [
+      {
+        type: "check-completed",
+        checkId: "lint",
+        target: ".",
+        timestamp: 2,
+        result: {
+          checkId: "lint",
+          status: "completed",
+          durationMs: 1,
+          findings: [
+            createFinding({ severity: "error" }),
+            createFinding({ id: "finding-2", severity: "warning" }),
+          ],
+        },
+      },
+    ];
+    const frame = render(
+      <LiveDashboard
+        events={mixedEvents}
+        startedAt={0}
+        elapsedMs={2}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("Lint: 1 blocking · 1 warning");
+  });
+
+  it("keeps the live interface within a 40-column terminal", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={40}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(maxLineWidth(frame)).toBeLessThanOrEqual(40);
+    expect(frame).toContain("CHECKS");
+    expect(frame).toContain("SUMMARY");
+  });
+
+  it("uses a text brand and remains bounded at 20 columns", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={20}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("ZEDBEE");
+    expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
   });
 });

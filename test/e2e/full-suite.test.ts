@@ -25,6 +25,16 @@ describe("release verification contract", () => {
     ]);
   });
 
+  it("disables Git's pager for diff verification", () => {
+    expect(verificationSteps("verify").find(({ id }) => id === "diff")).toEqual(
+      {
+        id: "diff",
+        command: "git",
+        args: ["--no-pager", "diff", "--check"],
+      },
+    );
+  });
+
   it("makes real managed assets and platform package inspection release-only gates", () => {
     expect(
       releaseArtifactSteps().map(({ id, args }) => ({ id, args })),

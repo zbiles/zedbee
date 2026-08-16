@@ -79,6 +79,7 @@ export function createReport(overrides: Partial<ScanReport> = {}): ScanReport {
     repositoryRoot: "/repo",
     baseline: "HEAD",
     target: "index",
+    stagedFileCount: 1,
     startedAt: "2026-08-15T00:00:00.000Z",
     durationMs: 15,
     networkDisclosures: [],

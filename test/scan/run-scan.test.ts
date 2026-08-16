@@ -586,6 +586,7 @@ describe("runScan", () => {
       outcome: "pass",
       exitCode: 0,
       baseline: "HEAD",
+      stagedFileCount: 0,
       checks: [],
       summary: { passed: 0, warnings: 0, failed: 0, incomplete: 0 },
     });

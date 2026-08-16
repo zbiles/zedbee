@@ -24,7 +24,11 @@ const LOCAL_STEPS = Object.freeze([
     command: "npm",
     args: ["test", "--", "test/docs"],
   },
-  { id: "diff", command: "git", args: ["diff", "--check"] },
+  {
+    id: "diff",
+    command: "git",
+    args: ["--no-pager", "diff", "--check"],
+  },
 ]);
 
 const RELEASE_ARTIFACT_STEPS = Object.freeze([

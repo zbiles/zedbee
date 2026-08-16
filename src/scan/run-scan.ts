@@ -112,6 +112,7 @@ function deepFreeze<T>(value: T): T {
 function incompleteReport(
   repositoryRoot: string,
   baseline: "HEAD" | null,
+  stagedFileCount: number | null,
   startedAt: string,
   durationMs: number,
   networkDisclosures: readonly NetworkDisclosure[],
@@ -133,6 +134,7 @@ function incompleteReport(
     repositoryRoot,
     baseline,
     target: "index",
+    stagedFileCount,
     startedAt,
     durationMs,
     networkDisclosures,
@@ -168,6 +170,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const started = dependencies.clock();
   let snapshots: SnapshotPair | undefined;
   let baseline: "HEAD" | null = null;
+  let stagedFileCount: number | null = null;
   const networkDisclosures: NetworkDisclosure[] = [];
 
   try {
@@ -177,6 +180,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     );
     const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
+    stagedFileCount = changeSet.files.size;
 
     if (changeSet.isEmpty) {
       baseline = await dependencies.baselineForEmptyChange(git);
@@ -187,6 +191,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         repositoryRoot: options.repositoryRoot,
         baseline,
         target: "index",
+        stagedFileCount,
         startedAt,
         durationMs: Math.max(0, dependencies.clock() - started),
         networkDisclosures,
@@ -205,6 +210,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       return incompleteReport(
         options.repositoryRoot,
         baseline,
+        stagedFileCount,
         startedAt,
         Math.max(0, dependencies.clock() - started),
         networkDisclosures,
@@ -246,6 +252,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       repositoryRoot: options.repositoryRoot,
       baseline,
       target: "index",
+      stagedFileCount,
       startedAt,
       durationMs: Math.max(0, dependencies.clock() - started),
       networkDisclosures,
@@ -259,6 +266,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     return incompleteReport(
       options.repositoryRoot,
       baseline,
+      stagedFileCount,
       startedAt,
       Math.max(0, dependencies.clock() - started),
       networkDisclosures,
@@ -271,6 +279,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         return incompleteReport(
           options.repositoryRoot,
           baseline,
+          stagedFileCount,
           startedAt,
           Math.max(0, dependencies.clock() - started),
           networkDisclosures,

@@ -42,6 +42,7 @@ export function renderJson(report: ScanReport): string {
     repositoryRoot: ".",
     baseline: report.baseline,
     target: report.target,
+    stagedFileCount: report.stagedFileCount,
     startedAt: report.startedAt,
     durationMs: report.durationMs,
     networkDisclosures: report.networkDisclosures.map((disclosure) => ({

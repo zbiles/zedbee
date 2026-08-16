@@ -19,12 +19,12 @@ function PixelRow({ row, color }: { row: string; color: boolean }) {
     <Text>
       {[...row].map((pixel, index) =>
         pixel === "0" ? (
-          <Text key={index}>  </Text>
+          <Text key={index}>{"  "}</Text>
         ) : (
           <Text key={index} {...colorProp(color, pixelColor(pixel as Pixel))}>
             ██
           </Text>
-        )
+        ),
       )}
     </Text>
   );
@@ -33,7 +33,7 @@ function PixelRow({ row, color }: { row: string; color: boolean }) {
 export function PixelBee({
   mirrored = false,
   motion = false,
-  color = true
+  color = true,
 }: {
   mirrored?: boolean;
   motion?: boolean;
@@ -46,9 +46,15 @@ export function PixelBee({
     <Box flexDirection="column">
       {bee.map((row, index) => (
         <Box key={index} flexDirection="row">
-          {motion ? <PixelRow row={dashes[index]!} color={color} /> : null}
-          {motion ? <Text>  </Text> : null}
+          {motion && mirrored ? (
+            <PixelRow row={dashes[index]!} color={color} />
+          ) : null}
+          {motion && mirrored ? <Text> </Text> : null}
           <PixelRow row={row} color={color} />
+          {motion && !mirrored ? <Text> </Text> : null}
+          {motion && !mirrored ? (
+            <PixelRow row={dashes[index]!} color={color} />
+          ) : null}
         </Box>
       ))}
     </Box>
