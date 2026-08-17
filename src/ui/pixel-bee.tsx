@@ -40,21 +40,87 @@ function PixelRow({
   );
 }
 
+function SparsePixels({
+  rows,
+  left,
+  color,
+  compact,
+}: {
+  rows: readonly string[];
+  left: number;
+  color: boolean;
+  compact: boolean;
+}) {
+  const cellWidth = compact ? 1 : 2;
+  const filled = compact ? "█" : "██";
+  return rows.flatMap((row, rowIndex) =>
+    [...row].flatMap((pixel, columnIndex) =>
+      pixel === "0" ? (
+        []
+      ) : (
+        <Box
+          key={`${rowIndex}-${columnIndex}`}
+          position="absolute"
+          left={left + columnIndex * cellWidth}
+          top={rowIndex}
+        >
+          <Text {...colorProp(color, pixelColor(pixel as Pixel))}>
+            {filled}
+          </Text>
+        </Box>
+      ),
+    ),
+  );
+}
+
 export function PixelBee({
   mirrored = false,
   motion = false,
   motionPixel = "y",
   compact = false,
+  sparse = false,
   color = true,
 }: {
   mirrored?: boolean;
   motion?: boolean;
   motionPixel?: "y" | "w";
   compact?: boolean;
+  sparse?: boolean;
   color?: boolean;
 }) {
   const bee = mirrored ? mirrorBee(BEE_GRID) : [...BEE_GRID];
   const dashes = motionDashGrid(motionPixel);
+  const cellWidth = compact ? 1 : 2;
+  const beeWidth = bee[0]!.length * cellWidth;
+  const dashWidth = dashes[0]!.length * cellWidth;
+  const motionGap = 1;
+
+  if (sparse) {
+    const beeLeft = motion && mirrored ? dashWidth + motionGap : 0;
+    const dashLeft = mirrored ? 0 : beeWidth + motionGap;
+    return (
+      <Box
+        position="relative"
+        width={beeWidth + (motion ? motionGap + dashWidth : 0)}
+        height={bee.length}
+      >
+        <SparsePixels
+          rows={bee}
+          left={beeLeft}
+          color={color}
+          compact={compact}
+        />
+        {motion ? (
+          <SparsePixels
+            rows={dashes}
+            left={dashLeft}
+            color={color}
+            compact={compact}
+          />
+        ) : null}
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column">

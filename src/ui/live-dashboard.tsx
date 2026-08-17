@@ -331,11 +331,9 @@ function ActivityPanel({
         paddingX={1}
       >
         {activity.map(({ event, text }, index) => (
-          <Text
-            key={`${event.checkId}-${event.target}-${event.type}-${index}`}
-            {...colorProp(color, activityColor(event))}
-          >
-            ● {text}
+          <Text key={`${event.checkId}-${event.target}-${event.type}-${index}`}>
+            <Text {...colorProp(color, activityColor(event))}>●</Text>
+            <Text {...colorProp(color, ZEDBEE_THEME.secondary)}> {text}</Text>
           </Text>
         ))}
       </Box>
@@ -371,7 +369,7 @@ function SummaryPanel({
   const chipWidth = chipsInline
     ? Math.max(7, Math.floor((summaryWidth - 2) / 3))
     : summaryWidth;
-  const progressWidth = Math.max(10, Math.min(32, width - 4));
+  const progressWidth = chipsInline ? chipWidth * 3 + 2 : chipWidth;
   const filled =
     states.length === 0
       ? 0
@@ -405,9 +403,9 @@ function SummaryPanel({
           <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
         </Box>
         <Text>
-          <Text {...colorProp(color, barColor)}>{"━".repeat(filled)}</Text>
+          <Text {...colorProp(color, barColor)}>{"▄".repeat(filled)}</Text>
           <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
-            {"─".repeat(progressWidth - filled)}
+            {(color ? "▄" : "▂").repeat(progressWidth - filled)}
           </Text>
         </Text>
         <Box flexDirection={chipsInline ? "row" : "column"} gap={1}>
@@ -466,7 +464,7 @@ export function LiveDashboard({
   const states = statesFrom(events);
   const now = (startedAt ?? 0) + elapsedMs;
   const wide = width >= 88;
-  const showBrandBee = width >= 68;
+  const showBrandBee = width >= 69;
   const compactBrand = width < 129;
   const contentWidth = Math.max(12, width - 6);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
@@ -506,6 +504,7 @@ export function LiveDashboard({
       <Box
         height={brandHeight}
         position="relative"
+        marginLeft={1}
         marginTop={showBrandBee ? 2 : 1}
         marginBottom={showBrandBee ? 2 : 1}
       >
@@ -522,6 +521,7 @@ export function LiveDashboard({
               motion
               motionPixel="w"
               compact={compactBrand}
+              sparse
               color={color}
             />
           </Box>

@@ -113,21 +113,19 @@ describe("PixelWordmark", () => {
         events: [],
         startedAt: 0,
         elapsedMs: 0,
-        width: 132,
+        width: 96,
         color: true,
         animations: false,
       }),
     ).lastFrame()!;
     const trailLine = frame.split("\n").find((line) => {
       const visible = line.replaceAll(/\u001b\[[0-9;]*m/gu, "");
-      return visible.includes(
-        "████████████████████ ████████    ████████    ████████",
-      );
+      return visible.includes("██████████ ████  ████  ████");
     });
 
     expect(trailLine).toBeDefined();
     const cellColors = [
-      ...trailLine!.matchAll(/\u001b\[38;2;(\d+;\d+;\d+)m██/gu),
+      ...trailLine!.matchAll(/\u001b\[38;2;(\d+;\d+;\d+)m█/gu),
     ].map((match) => match[1]);
     expect(cellColors.slice(-3)).toEqual([
       "243;244;246",
@@ -165,6 +163,73 @@ describe("PixelWordmark", () => {
       .find((line) => line.includes("TypeScript"));
 
     expect(checkLine).toContain("\u001b[38;2;85;207;130m");
+  });
+
+  it("colors Activity bullets by status while keeping their copy gray", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const frame = render(
+      React.createElement(LiveDashboard, {
+        events: [
+          {
+            type: "check-completed",
+            checkId: "formatting",
+            target: ".",
+            timestamp: 1,
+            result: {
+              checkId: "formatting",
+              status: "completed",
+              durationMs: 1,
+              findings: [],
+            },
+          },
+          {
+            type: "check-completed",
+            checkId: "lint",
+            target: ".",
+            timestamp: 2,
+            result: {
+              checkId: "lint",
+              status: "completed",
+              durationMs: 1,
+              findings: [
+                {
+                  id: "lint-warning",
+                  check: "lint",
+                  rule: "fixture",
+                  severity: "warning",
+                  message: "Fixture warning",
+                  attribution: {
+                    kind: "range-overlap",
+                    staged: true,
+                    evidence: [],
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        startedAt: 0,
+        elapsedMs: 3,
+        width: 96,
+        color: true,
+        animations: false,
+      }),
+    ).lastFrame()!;
+    const passLine = frame
+      .split("\n")
+      .find((line) => line.includes("Formatting: passed"));
+    const warningLine = frame
+      .split("\n")
+      .find((line) => line.includes("Lint: 1 finding"));
+
+    expect(passLine).toContain("\u001b[38;2;85;207;130m●");
+    expect(passLine).toContain("\u001b[38;2;146;152;165m Formatting: passed");
+    expect(warningLine).toContain("\u001b[38;2;232;184;76m●");
+    expect(warningLine).toContain("\u001b[38;2;146;152;165m Lint: 1 finding");
   });
 
   it("renders pass, warn, and fail totals as filled summary chips", async () => {

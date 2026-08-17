@@ -52,7 +52,7 @@ describe("LiveDashboard", () => {
     expect(outerTop).toBeGreaterThan(0);
     expect(firstWing).toBeGreaterThanOrEqual(0);
     expect(firstWing).toBeLessThan(outerTop);
-    expect(lines[outerTop]).toMatch(/╭─+.*█+.*─+╮/u);
+    expect(lines[outerTop]).toMatch(/^╭─+███─████─+╮$/u);
     expect(alignedStinger).toBeDefined();
   });
 
@@ -84,7 +84,7 @@ describe("LiveDashboard", () => {
     expect(lines[formattingRow + 1]).toMatch(/├─{42}┤/u);
   });
 
-  it("left-aligns the wordmark and checks stroke", () => {
+  it("optically aligns the wordmark one column inside the checks stroke", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -103,7 +103,7 @@ describe("LiveDashboard", () => {
 
     expect(wordmarkTop).toBeDefined();
     expect(panelsTop).toBeDefined();
-    expect(wordmarkTop!.indexOf("█")).toBe(panelsTop!.indexOf("┌"));
+    expect(wordmarkTop!.indexOf("█")).toBe(panelsTop!.indexOf("┌") + 1);
   });
 
   it("uses visually equal horizontal and vertical panel gaps", () => {
@@ -131,7 +131,7 @@ describe("LiveDashboard", () => {
     expect(summaryTop - activityBottom).toBe(2);
   });
 
-  it("uses a thin progress track instead of block-fill glyphs", () => {
+  it("uses a half-cell progress track as wide as the complete chip row", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -142,12 +142,13 @@ describe("LiveDashboard", () => {
         animations={false}
       />,
     ).lastFrame()!;
-    const progressLine = frame.split("\n").find((line) => line.includes("━"));
+    const progressLine = frame.split("\n").find((line) => line.includes("▄"));
 
     expect(progressLine).toBeDefined();
-    expect(progressLine).toContain("─");
+    expect(progressLine).toMatch(/▄{13}▂{25}/u);
+    expect(progressLine!.match(/[▄▂]/gu)).toHaveLength(38);
+    expect(progressLine).not.toContain("━");
     expect(progressLine).not.toContain("█");
-    expect(progressLine).not.toContain("░");
   });
 
   it("gives elapsed time a three-row pixel hierarchy on roomy terminals", () => {
