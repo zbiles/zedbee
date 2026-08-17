@@ -1,0 +1,12 @@
+{
+  "name": "fixture-v2",
+  "lockfileVersion": 2,
+  "packages": {
+    "": { "name": "fixture-v2", "version": "1.0.0" },
+    "packages/workspace": { "name": "workspace", "version": "1.0.0" },
+    "node_modules/alpha": { "version": "1.0.0" },
+    "node_modules/@scope/direct": { "version": "3.1.0", "optional": true },
+    "node_modules/alpha/node_modules/nested": { "version": "2.0.0" },
+    "node_modules/workspace": { "resolved": "packages/workspace", "link": true }
+  }
+}

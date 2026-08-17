@@ -1,0 +1,8 @@
+{
+  "name": "fixture-shrinkwrap",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "fixture-shrinkwrap", "version": "1.0.0" },
+    "node_modules/production-only": { "version": "4.2.0" }
+  }
+}

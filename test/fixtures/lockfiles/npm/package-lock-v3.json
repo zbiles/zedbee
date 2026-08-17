@@ -1,0 +1,11 @@
+{
+  "name": "fixture-v3",
+  "lockfileVersion": 3,
+  "packages": {
+    "": { "name": "fixture-v3", "version": "1.0.0" },
+    "node_modules/alpha": { "version": "1.0.0" },
+    "node_modules/alpha/node_modules/shared": { "version": "1.5.0" },
+    "node_modules/beta": { "version": "2.0.0" },
+    "node_modules/beta/node_modules/shared": { "version": "2.5.0" }
+  }
+}

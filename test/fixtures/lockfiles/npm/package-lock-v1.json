@@ -1,0 +1,17 @@
+{
+  "name": "fixture-v1",
+  "lockfileVersion": 1,
+  "dependencies": {
+    "alpha": {
+      "version": "1.0.0",
+      "requires": { "nested": "2.0.0" },
+      "dependencies": {
+        "nested": { "version": "2.0.0" }
+      }
+    },
+    "@scope/direct": {
+      "version": "3.1.0",
+      "optional": true
+    }
+  }
+}
