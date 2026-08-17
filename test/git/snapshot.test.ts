@@ -249,7 +249,7 @@ describe("buildSnapshotPair", () => {
     ]);
   });
 
-  it("records intent-to-add entries instead of treating empty index blobs as source", async () => {
+  it("removes intent-to-add placeholders from the target snapshot", async () => {
     const repository = await createGitRepository();
     await repository.write("intent.ts", "export const future = true;\n");
     await repository.git(["add", "--intent-to-add", "--", "intent.ts"]);
@@ -257,9 +257,7 @@ describe("buildSnapshotPair", () => {
     const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
     onTestFinished(snapshots.cleanup);
 
-    expect(snapshots.unsupportedEntries).toContainEqual({
-      path: "intent.ts",
-      kind: "intent-to-add"
-    });
+    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(false);
+    expect(snapshots.unsupportedEntries).toEqual([]);
   });
 });

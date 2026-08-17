@@ -93,19 +93,15 @@ describe("readStagedChangeSet", () => {
     expect(changeSet.containsAddedLine("src\\value.ts", 1)).toBe(true);
   });
 
-  it("represents intent-to-add entries so scan preflight cannot miss them", async () => {
+  it("excludes intent-to-add entries from the staged change set", async () => {
     const repository = await createGitRepository();
-    await repository.write("future file.ts", "export const future = true;\n");
-    await repository.git(["add", "--intent-to-add", "--", "future file.ts"]);
+    await repository.write("intent.ts", "export const unstaged = true;\n");
+    await repository.git(["add", "--intent-to-add", "--", "intent.ts"]);
 
     const changeSet = await readStagedChangeSet(new GitClient(repository.root));
 
-    expect(changeSet.isEmpty).toBe(false);
-    expect(changeSet.files.get("future file.ts")).toEqual({
-      path: "future file.ts",
-      status: "added",
-      addedRanges: [],
-    });
+    expect(changeSet.files.has("intent.ts")).toBe(false);
+    expect(changeSet.isEmpty).toBe(true);
   });
 });
 

@@ -81,18 +81,6 @@ function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
   return { path: to, status: "modified", addedRanges: addedRanges(file) };
 }
 
-function intentToAddPaths(output: string): string[] {
-  const paths: string[] = [];
-  for (const record of output.split("\0")) {
-    if (!record.startsWith("1 ")) continue;
-    const fields = record.split(" ");
-    if (fields[1] === ".A" && fields.length >= 9) {
-      paths.push(fields.slice(8).join(" ").replaceAll("\\", "/"));
-    }
-  }
-  return paths;
-}
-
 export async function readStagedChangeSet(git: GitClient): Promise<ChangeSet> {
   const patch = await git.run([
     "diff",
@@ -104,23 +92,11 @@ export async function readStagedChangeSet(git: GitClient): Promise<ChangeSet> {
     "--src-prefix=a/",
     "--dst-prefix=b/",
   ]);
-  const status = await git.run([
-    "status",
-    "--porcelain=v2",
-    "--untracked-files=no",
-    "-z",
-  ]);
-
   const changedFiles = parseDiff(patch.stdout)
     .map(toChangedFile)
     .filter((file): file is ChangedFile => file !== undefined)
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const files = new Map(changedFiles.map((file) => [file.path, file]));
-  for (const path of intentToAddPaths(status.stdout)) {
-    if (!files.has(path)) {
-      files.set(path, { path, status: "added", addedRanges: [] });
-    }
-  }
   const orderedFiles = new Map(
     [...files].sort(([left], [right]) => compareCodeUnits(left, right)),
   );

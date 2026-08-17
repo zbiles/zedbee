@@ -210,7 +210,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     baseline = snapshots.baselineRef;
     if (
       snapshots.unsupportedEntries.some(
-        ({ kind }) => kind === "git-lfs-pointer" || kind === "intent-to-add",
+        ({ kind }) => kind === "git-lfs-pointer",
       )
     ) {
       return incompleteReport(

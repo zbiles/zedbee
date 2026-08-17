@@ -1,6 +1,14 @@
-import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  realpath,
+  rm,
+  unlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { GitClient } from "./client.js";
 import { compareCodeUnits } from "../core/compare.js";
 import {
@@ -12,7 +20,7 @@ import {
 export { SnapshotError, type SnapshotErrorCode } from "./snapshot-path.js";
 
 export type UnsupportedIndexEntryKind =
-  "binary" | "git-lfs-pointer" | "intent-to-add" | "submodule";
+  "binary" | "git-lfs-pointer" | "submodule";
 
 export interface UnsupportedIndexEntry {
   path: string;
@@ -74,17 +82,12 @@ async function readPrefix(path: string): Promise<Buffer> {
 async function classifyUnsupportedEntries(
   targetDir: string,
   stagedEntries: readonly StagedEntry[],
-  intentToAddPaths: ReadonlySet<string>,
 ): Promise<UnsupportedIndexEntry[]> {
   const unsupported: UnsupportedIndexEntry[] = [];
 
   for (const entry of stagedEntries) {
     if (entry.mode === "160000") {
       unsupported.push({ path: entry.path, kind: "submodule" });
-      continue;
-    }
-    if (intentToAddPaths.has(entry.path)) {
-      unsupported.push({ path: entry.path, kind: "intent-to-add" });
       continue;
     }
     if (entry.mode === "120000") {
@@ -113,6 +116,51 @@ async function classifyUnsupportedEntries(
       compareCodeUnits(left.path, right.path) ||
       compareCodeUnits(left.kind, right.kind),
   );
+}
+
+function containedRepositoryPath(
+  repositoryRoot: string,
+  repositoryPath: string,
+): string | undefined {
+  if (isAbsolute(repositoryPath)) {
+    return undefined;
+  }
+  const candidate = resolve(repositoryRoot, repositoryPath);
+  const fromRoot = relative(repositoryRoot, candidate);
+  if (
+    fromRoot === "" ||
+    isAbsolute(fromRoot) ||
+    fromRoot === ".." ||
+    fromRoot.startsWith(`..${sep}`)
+  ) {
+    return undefined;
+  }
+  return candidate;
+}
+
+async function removeIntentToAddPlaceholders(
+  targetDir: string,
+  intentToAddPaths: ReadonlySet<string>,
+): Promise<void> {
+  for (const repositoryPath of intentToAddPaths) {
+    const targetPath = containedRepositoryPath(targetDir, repositoryPath);
+    if (targetPath === undefined) {
+      throw new Error("Zedbee refused an invalid intent-to-add path.");
+    }
+    let metadata;
+    try {
+      metadata = await lstat(targetPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!metadata.isFile()) {
+      throw new Error("Zedbee refused a non-file intent-to-add placeholder.");
+    }
+    await unlink(targetPath);
+  }
 }
 
 export async function buildSnapshotPair(
@@ -186,10 +234,11 @@ export async function buildSnapshotPair(
       `--prefix=${targetDir}${sep}`,
     ]);
 
+    await removeIntentToAddPlaceholders(targetDir, intentToAddPaths);
+
     const unsupportedEntries = await classifyUnsupportedEntries(
       targetDir,
-      stagedEntries,
-      intentToAddPaths,
+      stagedEntries.filter((entry) => !intentToAddPaths.has(entry.path)),
     );
 
     const head = await git.tryRun(["rev-parse", "--verify", "HEAD"]);

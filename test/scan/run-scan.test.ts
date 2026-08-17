@@ -172,34 +172,46 @@ describe("runScan", () => {
     expect(Object.isFrozen(report.networkDisclosures)).toBe(true);
   });
 
-  it.each(["git-lfs-pointer", "intent-to-add"] as const)(
-    "fails closed before analysis for unsupported %s staged content",
-    async (kind) => {
-      const calls: string[] = [];
-      let dispatched = false;
-      const deps = dependencies(calls, {
+  it("fails closed for LFS but passes an intent-only index without dispatching", async () => {
+    let dispatchCalls = 0;
+    const lfsReport = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
         buildSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
-          unsupportedEntries: [{ path: "asset.dat", kind }],
+          unsupportedEntries: [{ path: "asset.dat", kind: "git-lfs-pointer" }],
           cleanup: async () => undefined,
         }),
         dispatch: async () => {
-          dispatched = true;
+          dispatchCalls += 1;
           return [];
         },
-      });
+      }),
+    });
+    const intentOnlyReport = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        readChangeSet: async () => emptyChangeSet,
+        buildSnapshots: async () => {
+          throw new Error("snapshots must not be built");
+        },
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [];
+        },
+      }),
+    });
 
-      const report = await runScan({
-        repositoryRoot: "/repo",
-        dependencies: deps,
-      });
-
-      expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
-      expect(dispatched).toBe(false);
-    },
-  );
+    expect(lfsReport).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(intentOnlyReport).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      stagedFileCount: 0,
+    });
+    expect(dispatchCalls).toBe(0);
+  });
 
   it("turns snapshot cleanup failure into an incomplete report", async () => {
     const calls: string[] = [];
