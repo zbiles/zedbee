@@ -237,6 +237,37 @@ describe("FindingsList", () => {
     expect(frame).not.toContain("sk-live-seeded-secret");
   });
 
+  it("renders a producer-truncated source excerpt with one terminal ellipsis", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { FindingsList } = await import("../../src/ui/findings-list.js");
+    const frame = render(
+      React.createElement(FindingsList, {
+        findings: [
+          createFinding({
+            location: { file: "src/app.ts", startLine: 42 },
+            sourceExcerpt: {
+              line: 42,
+              text: "const bounded = value…",
+              redacted: false,
+              truncated: true,
+            },
+          }),
+        ],
+        width: 60,
+        color: false,
+      }),
+    ).lastFrame()!;
+    const sourceLine = frame
+      .split("\n")
+      .map(visible)
+      .find((line) => line.includes("const bounded"))!;
+
+    expect(sourceLine).toContain("42 │ const bounded = value…");
+    expect(sourceLine.match(/…/gu)).toHaveLength(1);
+    expect(sourceLine).not.toContain("……");
+  });
+
   it("omits Fix when a finding has no remediation", async () => {
     const React = await import("react");
     const { render } = await import("ink-testing-library");

@@ -65,7 +65,7 @@ export function FindingsList({
             ? undefined
             : finding.check === "secrets" || excerpt.redacted
               ? "[redacted]"
-              : `${excerpt.text ?? ""}${excerpt.truncated ? "…" : ""}`;
+              : (excerpt.text ?? "");
 
         return (
           <Box
