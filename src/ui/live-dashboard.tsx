@@ -90,8 +90,8 @@ function statusIcon(
   index: number,
 ): string {
   if (status === "PASS") return "✓";
-  if (status === "WARN") return "⚠";
-  if (status === "FAIL" || status === "INCOMPLETE") return "✕";
+  if (status === "WARN" || status === "INCOMPLETE") return "!";
+  if (status === "FAIL") return "×";
   if (status === "SKIPPED") return "−";
   if (status === "RUNNING") {
     return animations
@@ -182,20 +182,12 @@ function PanelHeading({
 }) {
   return (
     <Box flexDirection="column">
-      <Box paddingX={1}>
-        <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
-          {label}
-        </Text>
+      <Box paddingX={2}>
+        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>{label}</Text>
       </Box>
       <HorizontalRule width={width} color={color} />
     </Box>
   );
-}
-
-function centeredLabel(value: string, width: number): string {
-  const available = Math.max(value.length, width);
-  const left = Math.floor((available - value.length) / 2);
-  return `${" ".repeat(left)}${value}${" ".repeat(available - value.length - left)}`;
 }
 
 function SummaryChip({
@@ -212,14 +204,17 @@ function SummaryChip({
   color: boolean;
 }) {
   return (
-    <Text
-      bold
-      {...(color
-        ? { backgroundColor: tone, color: ZEDBEE_THEME.beeBlack }
-        : {})}
+    <Box
+      width={width}
+      height={2}
+      alignItems="center"
+      justifyContent="center"
+      {...(color ? { backgroundColor: tone } : {})}
     >
-      {centeredLabel(`${count} ${label}`, width)}
-    </Text>
+      <Text bold {...(color ? { color: ZEDBEE_THEME.beeBlack } : {})}>
+        {count} {label}
+      </Text>
+    </Box>
   );
 }
 
@@ -248,10 +243,12 @@ function CheckPanel({
       <PanelHeading label="CHECKS" width={width} color={color} />
       {states.map((state, index) => (
         <Box key={state.id} flexDirection="column">
-          <Box paddingX={1}>
-            <Text {...colorProp(color, statusColor(state.status))}>
-              {statusIcon(state.status, animations, elapsedMs, index)}{" "}
-            </Text>
+          <Box paddingX={2}>
+            <Box width={3} justifyContent="center">
+              <Text {...colorProp(color, statusColor(state.status))}>
+                {statusIcon(state.status, animations, elapsedMs, index)}
+              </Text>
+            </Box>
             <Text
               {...colorProp(
                 color,
@@ -309,7 +306,7 @@ function ActivityPanel({
         flexDirection="column"
         flexGrow={1}
         justifyContent="flex-end"
-        paddingX={1}
+        paddingX={2}
       >
         {activity.map(({ event, text }, index) => (
           <Text key={`${event.checkId}-${event.target}-${event.type}-${index}`}>
@@ -343,14 +340,19 @@ function SummaryPanel({
     ({ status }) => status === "INCOMPLETE",
   ).length;
   const skipped = completed.filter(({ status }) => status === "SKIPPED").length;
-  const elapsedLabel = `${(elapsedMs / 1000).toFixed(1)}s`;
-  const summaryWidth = Math.max(1, width - 4);
-  const showPixelClock = summaryWidth >= pixelClockWidth(elapsedLabel) + 8;
-  const chipsInline = summaryWidth >= 23;
-  const chipWidth = chipsInline
-    ? Math.max(7, Math.floor((summaryWidth - 2) / 3))
-    : summaryWidth;
-  const progressWidth = chipsInline ? chipWidth * 3 + 2 : chipWidth;
+  const elapsedValue = (elapsedMs / 1000).toFixed(1);
+  const elapsedLabel = `${elapsedValue}s`;
+  const groupWidth = Math.max(1, width - 6);
+  const showPixelClock = groupWidth >= pixelClockWidth(elapsedValue) + 9;
+  const showElapsedCopy = groupWidth >= elapsedLabel.length + "elapsed".length;
+  const chipsInline = groupWidth >= 23;
+  const availableForChips = groupWidth - 2;
+  const base = Math.floor(availableForChips / 3);
+  const remainder = availableForChips % 3;
+  const chipWidths = chipsInline
+    ? [0, 1, 2].map((index) => base + (index < remainder ? 1 : 0))
+    : [groupWidth, groupWidth, groupWidth];
+  const progressWidth = groupWidth;
   const filled =
     states.length === 0
       ? 0
@@ -371,57 +373,56 @@ function SummaryPanel({
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
     >
       <PanelHeading label="SUMMARY" width={width} color={color} />
-      <Box flexDirection="column" paddingX={1} paddingTop={1}>
+      <Box flexDirection="column" paddingX={2} paddingTop={1}>
         <Box alignItems="flex-end">
           {showPixelClock ? (
-            <PixelClock value={elapsedLabel} color={color} />
+            <>
+              <PixelClock value={elapsedValue} color={color} />
+              <Text {...colorProp(color, ZEDBEE_THEME.primary)}>s</Text>
+            </>
           ) : (
             <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
               {elapsedLabel}
             </Text>
           )}
-          <Box flexGrow={1} />
-          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
+          {showElapsedCopy ? (
+            <>
+              <Box flexGrow={1} />
+              <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
+            </>
+          ) : null}
         </Box>
-        <Text>
-          <Text {...colorProp(color, barColor)}>{"▄".repeat(filled)}</Text>
-          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
-            {(color ? "▄" : "▂").repeat(progressWidth - filled)}
+        <Box marginBottom={1}>
+          <Text>
+            <Text {...colorProp(color, barColor)}>{"▄".repeat(filled)}</Text>
+            <Text {...colorProp(color, ZEDBEE_THEME.divider)}>
+              {(color ? "▄" : "▂").repeat(progressWidth - filled)}
+            </Text>
           </Text>
-        </Text>
+        </Box>
         <Box flexDirection={chipsInline ? "row" : "column"} gap={1}>
           <SummaryChip
             count={pass}
             label="pass"
-            width={chipWidth}
+            width={chipWidths[0]!}
             tone={ZEDBEE_THEME.pass}
             color={color}
           />
           <SummaryChip
             count={warn}
             label="warn"
-            width={chipWidth}
+            width={chipWidths[1]!}
             tone={ZEDBEE_THEME.warning}
             color={color}
           />
           <SummaryChip
             count={fail}
             label="fail"
-            width={chipWidth}
+            width={chipWidths[2]!}
             tone={ZEDBEE_THEME.failure}
             color={color}
           />
         </Box>
-        {incomplete > 0 ? (
-          <Text {...colorProp(color, ZEDBEE_THEME.warning)}>
-            {incomplete} incomplete
-          </Text>
-        ) : null}
-        {skipped > 0 ? (
-          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
-            {skipped} skipped
-          </Text>
-        ) : null}
       </Box>
     </Box>
   );
@@ -447,7 +448,7 @@ export function LiveDashboard({
   const wide = width >= 88;
   const showBrandBee = width >= 69;
   const compactBrand = width < 129;
-  const contentWidth = Math.max(12, width - 6);
+  const contentWidth = Math.max(12, width - 7);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
   const brandHeight = width < 40 ? 1 : 5;
   const brandWidth =
@@ -480,7 +481,8 @@ export function LiveDashboard({
       width={width}
       borderStyle="round"
       {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
-      paddingX={1}
+      paddingLeft={2}
+      paddingRight={1}
     >
       <Box
         height={brandHeight}
@@ -512,7 +514,7 @@ export function LiveDashboard({
         <Box flexDirection="row">
           {checks}
           <Box width={2} />
-          <Box flexDirection="column" gap={1}>
+          <Box flexDirection="column" gap={0}>
             {activity}
             {summary}
           </Box>

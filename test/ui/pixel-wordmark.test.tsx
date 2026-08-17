@@ -107,6 +107,32 @@ describe("PixelWordmark", () => {
     expect(checkRule).toContain("\u001b[38;2;50;54;62m");
   });
 
+  it("renders panel headings as regular muted copy", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const frame = render(
+      React.createElement(LiveDashboard, {
+        events: [],
+        startedAt: 0,
+        elapsedMs: 0,
+        width: 96,
+        color: true,
+        animations: false,
+      }),
+    ).lastFrame()!;
+    const headingLine = frame
+      .split("\n")
+      .find((line) => line.includes("CHECKS") && line.includes("ACTIVITY"));
+
+    expect(headingLine).toBeDefined();
+    expect(headingLine).toContain("\u001b[38;2;101;108;120mCHECKS");
+    expect(headingLine).toContain("\u001b[38;2;101;108;120mACTIVITY");
+    expect(headingLine).not.toContain("\u001b[1m");
+  });
+
   it("renders the final mock's white mark instead of the retired purple iteration", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
@@ -331,5 +357,54 @@ describe("PixelWordmark", () => {
     expect(chipLine).toContain("\u001b[48;2;85;207;130m");
     expect(chipLine).toContain("\u001b[48;2;232;184;76m");
     expect(chipLine).toContain("\u001b[48;2;239;101;89m");
+  });
+
+  it("uses the quiet divider tone for the unfilled color progress track", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const frame = render(
+      React.createElement(LiveDashboard, {
+        events: [
+          {
+            type: "check-completed",
+            checkId: "formatting",
+            target: ".",
+            timestamp: 1,
+            result: {
+              checkId: "formatting",
+              status: "completed",
+              durationMs: 1,
+              findings: [],
+            },
+          },
+          {
+            type: "check-running",
+            checkId: "types",
+            target: ".",
+            timestamp: 2,
+          },
+          {
+            type: "check-queued",
+            checkId: "secrets",
+            target: ".",
+            timestamp: 3,
+          },
+        ],
+        startedAt: 0,
+        elapsedMs: 3,
+        width: 96,
+        color: true,
+        animations: false,
+      }),
+    ).lastFrame()!;
+    const progressLine = frame
+      .split("\n")
+      .find((line) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "").includes("▄"));
+
+    expect(progressLine).toBeDefined();
+    expect(progressLine).toContain("\u001b[38;2;50;54;62m");
   });
 });

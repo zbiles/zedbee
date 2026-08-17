@@ -13,7 +13,6 @@ const GLYPHS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   "8": ["111", "101", "111", "101", "111"],
   "9": ["111", "101", "111", "001", "111"],
   ".": ["000", "000", "000", "000", "010"],
-  s: ["111", "100", "111", "001", "111"],
 });
 
 function halfBlock(top: string, bottom: string): string {

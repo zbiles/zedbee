@@ -1,3 +1,4 @@
+import { renderToString } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import type { ScanEvent } from "../../src/checks/events.js";
@@ -88,17 +89,24 @@ describe("LiveDashboard", () => {
     const checksHeading = lines.findIndex(
       (line) => line.includes("CHECKS") && line.includes("ACTIVITY"),
     );
+    const panelsTop = lines.find(
+      (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
+    );
     const summaryHeading = lines.findIndex((line) => line.includes("SUMMARY"));
     const formattingRow = lines.findIndex((line) =>
       line.includes("Formatting"),
     );
 
     expect(checksHeading).toBeGreaterThanOrEqual(0);
-    expect(lines[checksHeading + 1]!.match(/├─{42}┤/gu)).toHaveLength(2);
+    expect(panelsTop).toBeDefined();
+    expect(
+      lines[checksHeading]!.indexOf("CHECKS") - panelsTop!.indexOf("┌"),
+    ).toBe(3);
+    expect(lines[checksHeading + 1]!.match(/├─{41}┤/gu)).toHaveLength(2);
     expect(summaryHeading).toBeGreaterThanOrEqual(0);
-    expect(lines[summaryHeading + 1]).toMatch(/├─{42}┤/u);
+    expect(lines[summaryHeading + 1]).toMatch(/├─{41}┤/u);
     expect(formattingRow).toBeGreaterThanOrEqual(0);
-    expect(lines[formattingRow + 1]).toMatch(/├─{42}┤/u);
+    expect(lines[formattingRow + 1]).toMatch(/├─{41}┤/u);
   });
 
   it("optically aligns the wordmark one column inside the checks stroke", () => {
@@ -113,13 +121,16 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
     const lines = frame.split("\n");
+    const outerTop = lines.find((line) => line.includes("╭"));
     const wordmarkTop = lines.find((line) => line.includes("█████ █████"));
     const panelsTop = lines.find(
       (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
     );
 
+    expect(outerTop).toBeDefined();
     expect(wordmarkTop).toBeDefined();
     expect(panelsTop).toBeDefined();
+    expect(panelsTop!.indexOf("┌") - outerTop!.indexOf("╭")).toBe(3);
     expect(wordmarkTop!.indexOf("█")).toBe(panelsTop!.indexOf("┌") + 1);
   });
 
@@ -145,7 +156,7 @@ describe("LiveDashboard", () => {
 
     expect(panelsTop).toBeDefined();
     expect(activityBottom).toBeGreaterThanOrEqual(0);
-    expect(summaryTop - activityBottom).toBe(2);
+    expect(summaryTop - activityBottom).toBe(1);
   });
 
   it("uses a half-cell progress track as wide as the complete chip row", () => {
@@ -162,11 +173,113 @@ describe("LiveDashboard", () => {
     const progressLine = frame.split("\n").find((line) => line.includes("▄"));
 
     expect(progressLine).toBeDefined();
-    expect(progressLine).toMatch(/▄{13}▂{25}/u);
-    expect(progressLine!.match(/[▄▂]/gu)).toHaveLength(38);
+    expect(progressLine).toMatch(/▄{12}▂{25}/u);
+    expect(progressLine!.match(/[▄▂]/gu)).toHaveLength(37);
     expect(progressLine).not.toContain("━");
     expect(progressLine).not.toContain("█");
+    expect("▄").not.toBe("▂");
   });
+
+  it.each([
+    {
+      width: 88,
+      summaryLeft: 44,
+      summaryRight: 82,
+      groupFirst: 47,
+      groupLast: 79,
+      progress: "▄".repeat(11) + "▂".repeat(22),
+      chips: [
+        [47, 57, "  1 pass   "],
+        [59, 68, "  0 warn  "],
+        [70, 79, "  0 fail  "],
+      ] as const,
+    },
+    {
+      width: 96,
+      summaryLeft: 48,
+      summaryRight: 90,
+      groupFirst: 51,
+      groupLast: 87,
+      progress: "▄".repeat(12) + "▂".repeat(25),
+      chips: [
+        [51, 62, "   1 pass   "],
+        [64, 75, "   0 warn   "],
+        [77, 87, "  0 fail   "],
+      ] as const,
+    },
+    {
+      width: 120,
+      summaryLeft: 60,
+      summaryRight: 114,
+      groupFirst: 63,
+      groupLast: 111,
+      progress: "▄".repeat(16) + "▂".repeat(33),
+      chips: [
+        [63, 78, "     1 pass     "],
+        [80, 95, "     0 warn     "],
+        [97, 111, "    0 fail     "],
+      ] as const,
+    },
+  ])(
+    "right-aligns elapsed, progress, and two-row chips at width $width",
+    ({
+      width,
+      summaryLeft,
+      summaryRight,
+      groupFirst,
+      groupLast,
+      progress,
+      chips,
+    }) => {
+      const frame = renderToString(
+        <LiveDashboard
+          events={events}
+          startedAt={0}
+          elapsedMs={2800}
+          width={width}
+          color={false}
+          animations={false}
+        />,
+        { columns: width },
+      );
+      const lines = frame.split("\n");
+      const elapsedRow = lines.find((line) => line.includes("elapsed"));
+      const progressRowIndex = lines.findIndex((line) => line.includes("▄"));
+      const progressRow = lines[progressRowIndex]!;
+      const chipRowIndex = lines.findIndex(
+        (line) =>
+          line.includes("1 pass") &&
+          line.includes("0 warn") &&
+          line.includes("0 fail"),
+      );
+      const chipRow = lines[chipRowIndex]!;
+      const summaryBottom = lines.findIndex(
+        (line, index) => index > chipRowIndex && line.lastIndexOf("┘") >= 0,
+      );
+
+      expect(elapsedRow).toBeDefined();
+      expect(elapsedRow!.indexOf("elapsed") + 6).toBe(groupLast);
+      expect(progressRow.indexOf(progress)).toBe(groupFirst);
+      expect(progressRow.indexOf(progress) + progress.length - 1).toBe(
+        groupLast,
+      );
+      expect(progressRow[summaryLeft]).toBe("│");
+      expect(progressRow[summaryRight]).toBe("│");
+      expect(groupFirst - summaryLeft - 1).toBe(2);
+      expect(summaryRight - groupLast - 1).toBe(2);
+      for (const [first, last, contents] of chips) {
+        expect(chipRow.slice(first, last + 1)).toBe(contents);
+      }
+      expect(chipRowIndex - progressRowIndex).toBe(2);
+      expect(
+        lines[progressRowIndex + 1]!.slice(groupFirst, groupLast + 1),
+      ).toBe(" ".repeat(groupLast - groupFirst + 1));
+      expect(summaryBottom - chipRowIndex).toBe(2);
+      expect(progress.length).toBe(
+        chips.reduce((total, [first, last]) => total + last - first + 1, 0) + 2,
+      );
+    },
+  );
 
   it("gives elapsed time a three-row pixel hierarchy on roomy terminals", () => {
     const frame = render(
@@ -180,9 +293,9 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
 
-    expect(frame).toContain("▀▀█     █▀█ █▀▀");
-    expect(frame).toContain("█▀▀     █▀█ ▀▀█");
-    expect(frame).toContain("▀▀▀  ▀  ▀▀▀ ▀▀▀");
+    expect(frame).toContain("▀▀█     █▀█");
+    expect(frame).toContain("█▀▀     █▀█");
+    expect(frame).toContain("▀▀▀  ▀  ▀▀▀s");
   });
 
   it("spaces the pixel clock below its heading and aligns elapsed to its bottom row", () => {
@@ -261,6 +374,110 @@ describe("LiveDashboard", () => {
     expect(frame).toContain("0 warn");
     expect(frame).toContain("0 fail");
     expect(frame).toContain("Formatting: passed");
+  });
+
+  it("centers each terminal status glyph in the same three-cell slot", () => {
+    const statusEvents: ScanEvent[] = [
+      {
+        type: "check-completed",
+        checkId: "formatting",
+        target: ".",
+        timestamp: 1,
+        result: {
+          checkId: "formatting",
+          status: "completed",
+          durationMs: 1,
+          findings: [],
+        },
+      },
+      {
+        type: "check-completed",
+        checkId: "lint",
+        target: ".",
+        timestamp: 2,
+        result: {
+          checkId: "lint",
+          status: "completed",
+          durationMs: 1,
+          findings: [createFinding({ severity: "warning" })],
+        },
+      },
+      {
+        type: "check-completed",
+        checkId: "types",
+        target: ".",
+        timestamp: 3,
+        result: {
+          checkId: "types",
+          status: "completed",
+          durationMs: 1,
+          findings: [createFinding({ severity: "error" })],
+        },
+      },
+      {
+        type: "check-completed",
+        checkId: "secrets",
+        target: ".",
+        timestamp: 4,
+        result: {
+          checkId: "secrets",
+          status: "incomplete",
+          durationMs: 1,
+          findings: [],
+        },
+      },
+      {
+        type: "check-completed",
+        checkId: "reactAccessibility",
+        target: ".",
+        timestamp: 5,
+        result: {
+          checkId: "reactAccessibility",
+          status: "skipped",
+          durationMs: 1,
+          findings: [],
+          skipReason: "No React source files found.",
+        },
+      },
+    ];
+    const frame = render(
+      <LiveDashboard
+        events={statusEvents}
+        startedAt={0}
+        elapsedMs={5}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const panelsTop = lines.find(
+      (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
+    );
+    const checksStroke = panelsTop!.indexOf("┌");
+    const activityStroke = panelsTop!.lastIndexOf("┌");
+    const rows = [
+      ["Formatting", "✓", "pass"],
+      ["Lint", "!", "warn"],
+      ["TypeScript", "×", "fail"],
+      ["Secrets", "!", "incomplete"],
+      ["React accessibility", "−", "skipped"],
+    ] as const;
+
+    expect(panelsTop).toBeDefined();
+    for (const [label, glyph, status] of rows) {
+      const row = lines.find((line) => {
+        const checksCells = line.slice(checksStroke, activityStroke);
+        return (
+          checksCells.includes(label) &&
+          new RegExp(`\\s${status}\\s+│`, "u").test(checksCells)
+        );
+      });
+      expect(row).toBeDefined();
+      expect(row!.slice(checksStroke + 3, checksStroke + 6)).toBe(` ${glyph} `);
+      expect(row).toMatch(new RegExp(`${status}\\s*│`, "u"));
+    }
+    expect(frame).not.toContain("⚠");
   });
 
   it("stacks live panels at narrow widths without hiding state labels", () => {
@@ -347,9 +564,7 @@ describe("LiveDashboard", () => {
     expect(frame).toContain("TypeScript · apps/web");
     expect(frame).toContain("TypeScript · packages/core");
     expect(frame).toContain("0 pass");
-    expect(
-      frame.match(/TypeScript · (?:apps\/web|packages\/core): checking…/g),
-    ).toHaveLength(2);
+    expect(frame.match(/checking…/g)).toHaveLength(2);
   });
 
   it("animates the running check and reports its live duration", () => {
@@ -437,7 +652,7 @@ describe("LiveDashboard", () => {
 
     expect(frame).toMatch(/Secrets\s+incomplete/u);
     expect(frame).toContain("0 warn");
-    expect(frame).toContain("1 incomplete");
+    expect(frame).not.toContain("1 incomplete");
   });
 
   it("renders skipped checks neutrally and excludes them from outcome counters", () => {
