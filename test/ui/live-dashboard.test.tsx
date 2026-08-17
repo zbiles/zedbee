@@ -29,6 +29,120 @@ const events: ScanEvent[] = [
 ];
 
 describe("LiveDashboard", () => {
+  it("keeps the compact wordmark, bee, and trails on one line at 96 columns", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const beePattern = "██████████ ████  ████  ████";
+    const brandLine = frame
+      .split("\n")
+      .find((line) => line.includes(beePattern));
+
+    expect(brandLine).toBeDefined();
+    expect(brandLine!.slice(0, brandLine!.indexOf(beePattern))).toContain(
+      "█████",
+    );
+  });
+
+  it("draws full-width rules beneath panel headings and between check rows", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const checksHeading = lines.findIndex(
+      (line) => line.includes("CHECKS") && line.includes("ACTIVITY"),
+    );
+    const summaryHeading = lines.findIndex((line) => line.includes("SUMMARY"));
+    const formattingRow = lines.findIndex((line) =>
+      line.includes("Formatting"),
+    );
+
+    expect(checksHeading).toBeGreaterThanOrEqual(0);
+    expect(lines[checksHeading + 1]!.match(/─{20,}/gu)).toHaveLength(2);
+    expect(summaryHeading).toBeGreaterThanOrEqual(0);
+    expect(lines[summaryHeading + 1]).toMatch(/─{20,}/u);
+    expect(formattingRow).toBeGreaterThanOrEqual(0);
+    expect(lines[formattingRow + 1]).toMatch(/─{20,}/u);
+  });
+
+  it("uses a thin progress track instead of block-fill glyphs", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const progressLine = frame.split("\n").find((line) => line.includes("━"));
+
+    expect(progressLine).toBeDefined();
+    expect(progressLine).toContain("─");
+    expect(progressLine).not.toContain("█");
+    expect(progressLine).not.toContain("░");
+  });
+
+  it("gives elapsed time a three-row pixel hierarchy on roomy terminals", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={2800}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("▀▀█     █▀█ █▀▀");
+    expect(frame).toContain("█▀▀     █▀█ ▀▀█");
+    expect(frame).toContain("▀▀▀  ▀  ▀▀▀ ▀▀▀");
+  });
+
+  it("anchors sparse activity at the bottom of its panel", () => {
+    const frame = render(
+      <LiveDashboard
+        events={[
+          {
+            type: "check-running",
+            checkId: "types",
+            target: ".",
+            timestamp: 0,
+          },
+        ]}
+        startedAt={0}
+        elapsedMs={100}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const heading = lines.findIndex((line) => line.includes("ACTIVITY"));
+    const activity = lines.findIndex((line) =>
+      line.includes("TypeScript: checking…"),
+    );
+
+    expect(heading).toBeGreaterThanOrEqual(0);
+    expect(activity - heading).toBeGreaterThanOrEqual(4);
+  });
+
   it("shows labeled queued, running, and completed states plus recent activity", () => {
     const frame = render(
       <LiveDashboard
@@ -41,7 +155,7 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
 
-    expect(frame).toContain("██████████  ██████████  ████████");
+    expect(frame).toContain("█████ █████ ████");
     expect(frame).toContain("CHECKS");
     expect(frame).toContain("ACTIVITY");
     expect(frame).toContain("SUMMARY");
@@ -91,7 +205,7 @@ describe("LiveDashboard", () => {
 
     expect(framedRows).not.toHaveLength(0);
     expect(framedRows.every((line) => line.startsWith("│ "))).toBe(true);
-    expect(framedRows.every((line) => line.endsWith(" │"))).toBe(true);
+    expect(framedRows.filter((line) => !line.endsWith(" │"))).toEqual([]);
   });
 
   it("tracks and displays separate targets for the same check", () => {
@@ -329,6 +443,7 @@ describe("LiveDashboard", () => {
     ).lastFrame()!;
 
     expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain("0.0s");
     expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
   });
 });

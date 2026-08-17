@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
 import { PixelBee } from "./pixel-bee.js";
+import { PixelClock, pixelClockWidth } from "./pixel-clock.js";
 import { PixelWordmark } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -97,7 +98,7 @@ function statusColor(status: LiveStatus): string {
     return ZEDBEE_THEME.warning;
   }
   if (status === "FAIL") return ZEDBEE_THEME.failure;
-  if (status === "RUNNING") return ZEDBEE_THEME.wordmark;
+  if (status === "RUNNING") return ZEDBEE_THEME.pass;
   return ZEDBEE_THEME.muted;
 }
 
@@ -162,11 +163,71 @@ function activityText(event: ScanEvent): string | undefined {
 
 function activityColor(event: ScanEvent): string {
   if (event.type === "network-disclosure") return ZEDBEE_THEME.warning;
-  if (event.type === "check-running") return ZEDBEE_THEME.wordmark;
+  if (event.type === "check-running") return ZEDBEE_THEME.pass;
   if (event.type === "check-completed") {
     return statusColor(resultStatus(event.result));
   }
   return ZEDBEE_THEME.muted;
+}
+
+function HorizontalRule({ width, color }: { width: number; color: boolean }) {
+  return (
+    <Text {...colorProp(color, ZEDBEE_THEME.border)}>
+      {"─".repeat(Math.max(1, width - 2))}
+    </Text>
+  );
+}
+
+function PanelHeading({
+  label,
+  width,
+  color,
+}: {
+  label: string;
+  width: number;
+  color: boolean;
+}) {
+  return (
+    <Box flexDirection="column">
+      <Box paddingX={1}>
+        <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {label}
+        </Text>
+      </Box>
+      <HorizontalRule width={width} color={color} />
+    </Box>
+  );
+}
+
+function centeredLabel(value: string, width: number): string {
+  const available = Math.max(value.length, width);
+  const left = Math.floor((available - value.length) / 2);
+  return `${" ".repeat(left)}${value}${" ".repeat(available - value.length - left)}`;
+}
+
+function SummaryChip({
+  count,
+  label,
+  width,
+  tone,
+  color,
+}: {
+  count: number;
+  label: string;
+  width: number;
+  tone: string;
+  color: boolean;
+}) {
+  return (
+    <Text
+      bold
+      {...(color
+        ? { backgroundColor: tone, color: ZEDBEE_THEME.beeBlack }
+        : {})}
+    >
+      {centeredLabel(`${count} ${label}`, width)}
+    </Text>
+  );
 }
 
 function CheckPanel({
@@ -190,30 +251,32 @@ function CheckPanel({
       width={width}
       borderStyle="single"
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
-      paddingX={1}
     >
-      <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        CHECKS
-      </Text>
+      <PanelHeading label="CHECKS" width={width} color={color} />
       {states.map((state, index) => (
-        <Box key={state.id}>
-          <Text {...colorProp(color, statusColor(state.status))}>
-            {statusIcon(state.status, animations, elapsedMs, index)}{" "}
-          </Text>
-          <Text
-            {...colorProp(
-              color,
-              state.status === "QUEUED"
-                ? ZEDBEE_THEME.muted
-                : ZEDBEE_THEME.primary,
-            )}
-          >
-            {state.id}
-          </Text>
-          <Box flexGrow={1} />
-          <Text {...colorProp(color, statusColor(state.status))}>
-            {statusText(state, now, animations)}
-          </Text>
+        <Box key={state.id} flexDirection="column">
+          <Box paddingX={1}>
+            <Text {...colorProp(color, statusColor(state.status))}>
+              {statusIcon(state.status, animations, elapsedMs, index)}{" "}
+            </Text>
+            <Text
+              {...colorProp(
+                color,
+                state.status === "QUEUED"
+                  ? ZEDBEE_THEME.muted
+                  : ZEDBEE_THEME.primary,
+              )}
+            >
+              {state.id}
+            </Text>
+            <Box flexGrow={1} />
+            <Text {...colorProp(color, statusColor(state.status))}>
+              {statusText(state, now, animations)}
+            </Text>
+          </Box>
+          {index < states.length - 1 ? (
+            <HorizontalRule width={width} color={color} />
+          ) : null}
         </Box>
       ))}
     </Box>
@@ -242,20 +305,24 @@ function ActivityPanel({
       width={width}
       borderStyle="single"
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
-      paddingX={1}
-      minHeight={6}
+      minHeight={8}
     >
-      <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        ACTIVITY
-      </Text>
-      {activity.map(({ event, text }, index) => (
-        <Text
-          key={`${event.checkId}-${event.target}-${event.type}-${index}`}
-          {...colorProp(color, activityColor(event))}
-        >
-          ● {text}
-        </Text>
-      ))}
+      <PanelHeading label="ACTIVITY" width={width} color={color} />
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        justifyContent="flex-end"
+        paddingX={1}
+      >
+        {activity.map(({ event, text }, index) => (
+          <Text
+            key={`${event.checkId}-${event.target}-${event.type}-${index}`}
+            {...colorProp(color, activityColor(event))}
+          >
+            ● {text}
+          </Text>
+        ))}
+      </Box>
     </Box>
   );
 }
@@ -281,6 +348,13 @@ function SummaryPanel({
     ({ status }) => status === "INCOMPLETE",
   ).length;
   const skipped = completed.filter(({ status }) => status === "SKIPPED").length;
+  const elapsedLabel = `${(elapsedMs / 1000).toFixed(1)}s`;
+  const summaryWidth = Math.max(1, width - 4);
+  const showPixelClock = summaryWidth >= pixelClockWidth(elapsedLabel) + 8;
+  const chipsInline = summaryWidth >= 23;
+  const chipWidth = chipsInline
+    ? Math.max(7, Math.floor((summaryWidth - 2) / 3))
+    : summaryWidth;
   const progressWidth = Math.max(10, Math.min(32, width - 4));
   const filled =
     states.length === 0
@@ -300,35 +374,60 @@ function SummaryPanel({
       width={width}
       borderStyle="single"
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
-      paddingX={1}
     >
-      <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        SUMMARY
-      </Text>
-      <Box>
-        <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-          {(elapsedMs / 1000).toFixed(1)}s
+      <PanelHeading label="SUMMARY" width={width} color={color} />
+      <Box flexDirection="column" paddingX={1}>
+        <Box>
+          {showPixelClock ? (
+            <PixelClock value={elapsedLabel} color={color} />
+          ) : (
+            <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+              {elapsedLabel}
+            </Text>
+          )}
+          <Box flexGrow={1} />
+          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
+        </Box>
+        <Text>
+          <Text {...colorProp(color, barColor)}>{"━".repeat(filled)}</Text>
+          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
+            {"─".repeat(progressWidth - filled)}
+          </Text>
         </Text>
-        <Box flexGrow={1} />
-        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
+        <Box flexDirection={chipsInline ? "row" : "column"} gap={1}>
+          <SummaryChip
+            count={pass}
+            label="pass"
+            width={chipWidth}
+            tone={ZEDBEE_THEME.pass}
+            color={color}
+          />
+          <SummaryChip
+            count={warn}
+            label="warn"
+            width={chipWidth}
+            tone={ZEDBEE_THEME.warning}
+            color={color}
+          />
+          <SummaryChip
+            count={fail}
+            label="fail"
+            width={chipWidth}
+            tone={ZEDBEE_THEME.failure}
+            color={color}
+          />
+        </Box>
+        {incomplete > 0 ? (
+          <Text {...colorProp(color, ZEDBEE_THEME.warning)}>
+            {incomplete} incomplete
+          </Text>
+        ) : null}
+        {skipped > 0 ? (
+          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
+            {skipped} skipped
+          </Text>
+        ) : null}
       </Box>
-      <Text>
-        <Text {...colorProp(color, barColor)}>{"█".repeat(filled)}</Text>
-        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
-          {"░".repeat(progressWidth - filled)}
-        </Text>
-      </Text>
-      <Text>
-        <Text {...colorProp(color, ZEDBEE_THEME.pass)}>{pass} pass</Text>
-        {"  "}
-        <Text {...colorProp(color, ZEDBEE_THEME.warning)}>{warn} warn</Text>
-        {"  "}
-        <Text {...colorProp(color, ZEDBEE_THEME.failure)}>{fail} fail</Text>
-        {"  "}
-        <Text {...colorProp(color, ZEDBEE_THEME.warning)}>
-          {incomplete} incomplete
-        </Text>
-      </Text>
     </Box>
   );
 }
@@ -351,6 +450,8 @@ export function LiveDashboard({
   const states = statesFrom(events);
   const now = (startedAt ?? 0) + elapsedMs;
   const wide = width >= 88;
+  const showBrandBee = width >= 68;
+  const compactBrand = width < 129;
   const contentWidth = Math.max(12, width - 6);
   const panelWidth = wide ? Math.floor((contentWidth - 1) / 2) : contentWidth;
   const checks = (
@@ -383,24 +484,22 @@ export function LiveDashboard({
       {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
       paddingX={1}
     >
-      <Box
-        flexDirection={width >= 132 ? "row" : "column"}
-        alignItems={width >= 132 ? "center" : "flex-start"}
-        marginY={1}
-      >
+      <Box flexDirection="row" alignItems="center" marginY={1}>
         {width < 40 ? (
           <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
             ZEDBEE
           </Text>
         ) : (
-          <PixelWordmark color={color} compact={width < 74} />
+          <PixelWordmark color={color} compact={compactBrand} />
         )}
-        {width >= 60 ? (
-          <Box
-            marginLeft={width >= 132 ? 2 : 0}
-            marginTop={width >= 132 ? 0 : 1}
-          >
-            <PixelBee motion color={color} />
+        {showBrandBee ? (
+          <Box marginLeft={2}>
+            <PixelBee
+              motion
+              motionPixel="w"
+              compact={compactBrand}
+              color={color}
+            />
           </Box>
         ) : null}
       </Box>

@@ -3,7 +3,7 @@ export const ZEDBEE_THEME = {
   secondary: "#9298a5",
   muted: "#656c78",
   border: "#484e59",
-  wordmark: "#b18cf7",
+  wordmark: "#f3f4f6",
   yellow: "#fecd23",
   pass: "#55cf82",
   warning: "#e8b84c",

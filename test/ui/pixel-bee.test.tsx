@@ -18,4 +18,14 @@ describe("PixelBee", () => {
 
     expect(stingerRow).toMatch(/^████████ {4}████████ {4}████████ /u);
   });
+
+  it("uses one terminal column per logical cell in the compact brand", () => {
+    const frame = render(
+      <PixelBee compact motion color={false} />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+
+    expect(lines[0]!.indexOf("█")).toBe(3);
+    expect(lines[7]).toMatch(/^██████████ ████ {2}████ {2}████$/u);
+  });
 });
