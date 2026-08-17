@@ -1,188 +1,80 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-import type { Observation } from "../../core/types.js";
-import { compareCodeUnits } from "../../core/compare.js";
+import { randomBytes } from "node:crypto";
+import { lintSource } from "@secretlint/core";
+import type { SecretLintCoreResult } from "@secretlint/types";
 import type {
   CheckObservationSet,
   CheckRunContext,
   InspectionContext,
   ObservationCheckAdapter,
 } from "../adapter.js";
-import { createManagedOutputDirectory } from "../project/config-boundary.js";
-import { resolveManagedBinary } from "../../managed-binaries/resolve.js";
-import { runManagedBinary } from "../../managed-binaries/run.js";
-import type {
-  ManagedBinary,
-  ManagedRunOptions,
-  ManagedRunResult,
-} from "../../managed-binaries/types.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
+import type { Observation } from "../../core/types.js";
+import { SECRET_LINT_CONFIG } from "./config.js";
 import {
-  parseAndRedactGitleaksReport,
-  type RedactedGitleaksFinding,
-} from "./redact.js";
+  collectSecretSourcePairs,
+  SecretContentError,
+  type SecretTextSource,
+} from "./content.js";
+import { normalizeSecretlintMessages } from "./normalize.js";
 
-const REPORT = "gitleaks.json";
 const TARGET = Object.freeze({
   id: ".",
   kind: "repository" as const,
   relativeRoot: ".",
 });
 
-interface SecretsAdapterDependencies {
-  readonly resolveBinary: typeof resolveManagedBinary;
-  readonly runBinary: (
-    binary: ManagedBinary,
-    args: readonly string[],
-    options: ManagedRunOptions,
-  ) => Promise<ManagedRunResult>;
+export interface SecretsAdapterDependencies {
+  readonly lintSource: typeof lintSource;
+  readonly comparisonKey: () => Uint8Array;
 }
 
 const defaults: SecretsAdapterDependencies = {
-  resolveBinary: resolveManagedBinary,
-  runBinary: runManagedBinary,
+  lintSource,
+  comparisonKey: () => randomBytes(32),
 };
 
-function normalizedFile(snapshotRoot: string, file: string): string {
-  const root = resolve(snapshotRoot);
-  const absolute = isAbsolute(file) ? resolve(file) : resolve(root, file);
-  const path = relative(root, absolute).replaceAll("\\", "/");
-  if (
-    path.length === 0 ||
-    path === ".." ||
-    path.startsWith("../") ||
-    isAbsolute(path)
-  ) {
-    throw new TypeError("Gitleaks returned an invalid report");
-  }
-  return path;
-}
-
-function observation(
-  finding: RedactedGitleaksFinding,
-  snapshotRoot: string,
-  comparisonIdentity: string,
-): Observation {
-  const file = normalizedFile(snapshotRoot, finding.file);
-  const location = {
-    file,
-    startLine: finding.startLine,
-    endLine: finding.endLine,
-    startColumn: finding.startColumn,
-    endColumn: finding.endColumn,
-  };
-  const identity = createHash("sha256")
-    .update(JSON.stringify([finding.ruleId, location]))
-    .digest("hex");
-  return Object.freeze({
-    check: "secrets",
-    rule: finding.ruleId,
-    identity,
-    comparisonIdentity,
-    severity: "error",
-    message: `Potential secret detected by Gitleaks rule ${finding.ruleId}.`,
-    location: Object.freeze(location),
-    remediation:
-      "Remove the secret, rotate the credential, and commit only a safe reference.",
-  });
-}
-
-function contained(root: string, candidate: string): boolean {
-  const path = relative(root, candidate);
-  return (
-    path !== ".." &&
-    !path.startsWith("../") &&
-    !path.startsWith("..\\") &&
-    !isAbsolute(path)
-  );
-}
-
-async function comparisonIdentity(
-  snapshotRoot: string,
-  finding: RedactedGitleaksFinding,
+async function lintText(
+  source: SecretTextSource,
   comparisonKey: Uint8Array,
-): Promise<string> {
-  const file = normalizedFile(snapshotRoot, finding.file);
-  const canonicalRoot = await realpath(snapshotRoot);
-  const candidate = await realpath(resolve(canonicalRoot, file));
-  if (!contained(canonicalRoot, candidate)) {
-    throw new TypeError("Gitleaks returned an invalid report");
-  }
-  const lines = (await readFile(candidate, "utf8")).split(/\r\n|\n|\r/u);
-  const startLine = lines[finding.startLine - 1];
-  const endLine = lines[finding.endLine - 1];
-  if (startLine === undefined || endLine === undefined) {
-    throw new TypeError("Gitleaks returned an invalid report");
-  }
-  const selected = lines
-    .slice(finding.startLine - 1, finding.endLine)
-    .map((line, index, all) => {
-      const codePoints = Array.from(line);
-      const start = index === 0 ? finding.startColumn - 1 : 0;
-      const end =
-        index === all.length - 1 ? finding.endColumn : codePoints.length;
-      if (start > codePoints.length || end > codePoints.length || end < start) {
-        throw new TypeError("Gitleaks returned an invalid report");
-      }
-      return codePoints.slice(start, end).join("");
-    })
-    .join("\n");
-  return createHmac("sha256", comparisonKey)
-    .update(selected, "utf8")
-    .digest("hex");
-}
-
-async function collectSide(
   dependencies: SecretsAdapterDependencies,
-  binary: ManagedBinary,
-  snapshotRoot: string,
-  signal: AbortSignal,
-  comparisonKey: Uint8Array,
 ): Promise<readonly Observation[]> {
-  if (binary.configPath === undefined)
-    throw new Error("Secret analysis failed.");
-  const output = await createManagedOutputDirectory("gitleaks", [REPORT]);
-  try {
-    await dependencies.runBinary(
-      binary,
-      [
-        "dir",
-        "--no-banner",
-        "--redact",
-        "--config",
-        binary.configPath,
-        "--report-format",
-        "json",
-        "--report-path",
-        resolve(output.path, REPORT),
-        snapshotRoot,
-      ],
-      {
-        cwd: snapshotRoot,
-        timeoutMs: 60_000,
-        signal,
-        acceptedExitCodes: [0, 1],
-      },
-    );
-    let rawReport = await output.readText(REPORT);
-    const redacted = parseAndRedactGitleaksReport(rawReport);
-    rawReport = "";
-    return Object.freeze(
-      (
-        await Promise.all(
-          redacted.map(async (finding) =>
-            observation(
-              finding,
-              snapshotRoot,
-              await comparisonIdentity(snapshotRoot, finding, comparisonKey),
-            ),
-          ),
-        )
-      ).sort((left, right) => compareCodeUnits(left.identity, right.identity)),
-    );
-  } finally {
-    await output.cleanup();
+  let result: SecretLintCoreResult | undefined = await dependencies.lintSource({
+    source: {
+      content: source.content,
+      filePath: source.reportPath,
+      contentType: "text",
+    },
+    options: {
+      config: SECRET_LINT_CONFIG,
+      maskSecrets: true,
+      noPhysicFilePath: true,
+    },
+  });
+  const observations = normalizeSecretlintMessages({
+    messages: result.messages,
+    source: source.content,
+    reportPath: source.reportPath,
+    identityPath: source.identityPath,
+    comparisonKey,
+  });
+  result = undefined;
+  return observations;
+}
+
+function safeIncomplete(error: unknown): CheckIncompleteError {
+  if (error instanceof SecretContentError) {
+    return new CheckIncompleteError({
+      code: error.code,
+      message: error.message,
+      path: error.path,
+      remediation: error.remediation,
+    });
   }
+  return new CheckIncompleteError({
+    code: "SECRETLINT_ANALYSIS_FAILED",
+    message: "Secret analysis could not be completed safely.",
+    remediation: "Run zedbee doctor, update Zedbee, and retry the scan.",
+  });
 }
 
 export function createSecretsAdapter(
@@ -207,30 +99,33 @@ export function createSecretsAdapter(
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const binary = await dependencies.resolveBinary("gitleaks");
-        const comparisonKey = randomBytes(32);
-        const baselineObservations = await collectSide(
-          dependencies,
-          binary,
-          context.snapshots.baselineDir,
-          context.signal,
-          comparisonKey,
-        );
-        const targetObservations = await collectSide(
-          dependencies,
-          binary,
-          context.snapshots.targetDir,
-          context.signal,
-          comparisonKey,
-        );
+        const pairs = await collectSecretSourcePairs(context);
+        const comparisonKey = dependencies.comparisonKey();
+        const baselineObservations: Observation[] = [];
+        const targetObservations: Observation[] = [];
+        for (const pair of pairs) {
+          if (context.signal.aborted) {
+            throw new Error("Secret analysis aborted");
+          }
+          if (pair.baseline !== undefined) {
+            baselineObservations.push(
+              ...(await lintText(pair.baseline, comparisonKey, dependencies)),
+            );
+          }
+          if (pair.target !== undefined) {
+            targetObservations.push(
+              ...(await lintText(pair.target, comparisonKey, dependencies)),
+            );
+          }
+        }
         return {
           checkId: "secrets",
           target: context.target,
-          baselineObservations,
-          targetObservations,
+          baselineObservations: Object.freeze(baselineObservations),
+          targetObservations: Object.freeze(targetObservations),
         };
-      } catch {
-        throw new Error("Secret analysis failed.");
+      } catch (error) {
+        throw safeIncomplete(error);
       }
     },
   });

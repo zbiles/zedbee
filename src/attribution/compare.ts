@@ -36,8 +36,15 @@ interface NormalizedTarget {
 }
 
 function comparisonFingerprint(observation: Observation): string {
+  if (observation.comparisonIdentity !== undefined) {
+    return JSON.stringify([
+      observation.check,
+      observation.rule,
+      observation.comparisonIdentity,
+    ]);
+  }
   const fingerprint = fingerprintObservation(observation);
-  return `${fingerprint}:${observation.comparisonIdentity ?? ""}`;
+  return fingerprint;
 }
 
 const NONE: Attribution = Object.freeze({

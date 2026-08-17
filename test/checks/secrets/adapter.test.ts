@@ -1,30 +1,17 @@
-import { access, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import type { SecretLintCoreResult } from "@secretlint/types";
+import { compareObservationSets } from "../../../src/attribution/compare.js";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
-import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { createSecretsAdapter } from "../../../src/checks/secrets/adapter.js";
+import { SECRET_LINT_CONFIG } from "../../../src/checks/secrets/config.js";
+import { MAX_SECRET_FILE_BYTES } from "../../../src/checks/secrets/content.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
-import type { ChangeSet } from "../../../src/git/change-set.js";
-import type { ManagedBinary } from "../../../src/managed-binaries/types.js";
+import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 
-const canary = "zedbee_test_secret_never_expose";
-const binary: ManagedBinary = {
-  engine: "gitleaks",
-  version: "8.28.0",
-  platform: "darwin",
-  arch: "arm64",
-  packageName: "@zedbee/gitleaks-darwin-arm64",
-  packageRoot: "/managed",
-  manifestPath: "/managed/manifest.json",
-  executablePath: "/managed/gitleaks",
-  executableSha256: "0".repeat(64),
-  configPath: "/managed/gitleaks.toml",
-  configSha256: "1".repeat(64),
-};
-
-async function context(): Promise<CheckRunContext> {
+async function context(files: readonly ChangedFile[]): Promise<CheckRunContext> {
   const [baseline, target, live] = await Promise.all([
     createInspectionFixture(),
     createInspectionFixture(),
@@ -32,26 +19,15 @@ async function context(): Promise<CheckRunContext> {
   ]);
   for (const fixture of [baseline, target, live]) {
     await fixture.writeJson("package.json", { name: "fixture" });
+    await mkdir(`${fixture.root}/src`, { recursive: true });
   }
-  await baseline.write("src/secrets.ts", "export const debt = 'old';\n");
-  await target.write(
-    "src/secrets.ts",
-    "export const debt = 'old';\nexport const staged = 'new';\n",
-  );
-  await live.write("src/secrets.ts", "export const live = 'different';\n");
   const changeSet: ChangeSet = {
-    files: new Map([
-      [
-        "src/secrets.ts",
-        {
-          path: "src/secrets.ts",
-          status: "modified",
-          addedRanges: [{ start: 2, end: 2 }],
-        },
-      ],
-    ]),
-    isEmpty: false,
-    containsAddedLine: (file, line) => file === "src/secrets.ts" && line === 2,
+    files: new Map(files.map((file) => [file.path, file])),
+    isEmpty: files.length === 0,
+    containsAddedLine: (path, line) =>
+      files
+        .find((file) => file.path === path)
+        ?.addedRanges.some((range) => line >= range.start && line <= range.end) ?? false,
   };
   const config = resolveConfig({ schemaVersion: 1, profile: "recommended" });
   return {
@@ -72,142 +48,228 @@ async function context(): Promise<CheckRunContext> {
   };
 }
 
-describe("secretsAdapter", () => {
-  it("scans both snapshots and exposes only a new staged location", async () => {
-    const run = await context();
-    const cleanedOutputs: string[] = [];
-    const adapter = createSecretsAdapter({
-      resolveBinary: async () => binary,
-      runBinary: async (_binary, args, options) => {
-        const reportPath = args[args.indexOf("--report-path") + 1]!;
-        cleanedOutputs.push(reportPath);
-        const findings = [
-          {
-            RuleID: "generic-api-key",
-            File: `${options.cwd}/src/secrets.ts`,
-            StartLine: 1,
-            EndLine: 1,
-            StartColumn: 1,
-            EndColumn: 20,
-            Secret: canary,
-            Match: `debt=${canary}`,
-            Fingerprint: `commit:${canary}`,
-          },
-          ...(options.cwd === run.snapshots.targetDir
-            ? [
-                {
-                  RuleID: "generic-api-key",
-                  File: `${options.cwd}/src/secrets.ts`,
-                  StartLine: 2,
-                  EndLine: 2,
-                  StartColumn: 1,
-                  EndColumn: 20,
-                  Secret: canary,
-                  Match: `staged=${canary}`,
-                  Fingerprint: `commit:${canary}:2`,
-                },
-              ]
-            : []),
-        ];
-        await writeFile(reportPath, JSON.stringify(findings));
-        return { stdout: "", stderr: "", exitCode: findings.length ? 1 : 0 };
+function result(filePath: string, sourceContent: string): SecretLintCoreResult {
+  return {
+    filePath,
+    sourceContent,
+    sourceContentType: "text",
+    messages: [
+      {
+        type: "message",
+        ruleId: "@secretlint/secretlint-rule-github",
+        ruleParentId: "@secretlint/secretlint-rule-preset-recommend",
+        message: "masked",
+        messageId: "GITHUB_TOKEN",
+        range: [0, sourceContent.length],
+        loc: {
+          start: { line: 1, column: 0 },
+          end: { line: 1, column: sourceContent.length },
+        },
+        severity: "error",
       },
+    ],
+  };
+}
+
+describe("secretsAdapter", () => {
+  it("passes Zedbee's preset directly to lintSource and scans only changed pairs", async () => {
+    const run = await context([
+      { path: "src/changed.txt", status: "modified", addedRanges: [{ start: 1, end: 1 }] },
+      { path: "src/deleted.txt", status: "deleted", addedRanges: [] },
+    ]);
+    await writeFile(`${run.snapshots.baselineDir}/src/changed.txt`, "old-token");
+    await writeFile(`${run.snapshots.targetDir}/src/changed.txt`, "new-token");
+    await writeFile(`${run.snapshots.baselineDir}/src/deleted.txt`, "deleted-token");
+    const calls: Array<{
+      filePath: string;
+      config: unknown;
+      maskSecrets: boolean | undefined;
+    }> = [];
+    const adapter = createSecretsAdapter({
+      lintSource: async ({ source, options }) => {
+        calls.push({ filePath: source.filePath, config: options.config, maskSecrets: options.maskSecrets });
+        return result(source.filePath, source.content);
+      },
+      comparisonKey: () => new Uint8Array(32).fill(1),
     });
 
-    await expect(adapter.inspect(run)).resolves.toMatchObject({
-      applies: true,
-      executionClass: "project-analysis",
-      requiresBaseline: true,
-      targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-    });
     const collected = await adapter.collect(run);
-    const serialized = JSON.stringify(collected);
-    expect(serialized).not.toContain(canary);
-    expect(serialized).not.toContain("Fingerprint");
-    const result = await observationCheckResult(
-      "secrets",
-      collected,
-      run,
-      true,
-    );
-    expect(
-      result.findings.filter(({ attribution }) => attribution.staged),
-    ).toMatchObject([
+    expect(calls).toHaveLength(2);
+    expect(calls.every(({ config }) => config === SECRET_LINT_CONFIG)).toBe(true);
+    expect(calls.every(({ maskSecrets }) => maskSecrets === true)).toBe(true);
+    expect(calls.map(({ filePath }) => filePath)).toEqual([
+      "src/changed.txt",
+      "src/changed.txt",
+    ]);
+    expect(JSON.stringify(collected)).not.toMatch(/old-token|new-token|deleted-token/);
+  });
+
+  it("uses the previous path for a rename baseline and the staged path for identity", async () => {
+    const run = await context([
       {
-        rule: "generic-api-key",
-        location: { file: "src/secrets.ts", startLine: 2 },
+        path: "src/new-name.txt",
+        previousPath: "src/old-name.txt",
+        status: "renamed",
+        addedRanges: [],
       },
     ]);
-    expect(JSON.stringify(result)).not.toContain(canary);
-    for (const path of cleanedOutputs) {
-      await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
-    }
-  });
-
-  it("fails generically when the managed analyzer cannot run", async () => {
-    const run = await context();
+    await writeFile(`${run.snapshots.baselineDir}/src/old-name.txt`, "same-token");
+    await writeFile(`${run.snapshots.targetDir}/src/new-name.txt`, "same-token");
     const adapter = createSecretsAdapter({
-      resolveBinary: async () => binary,
-      runBinary: async () => {
-        throw new Error(`analyzer leaked ${canary}`);
-      },
+      lintSource: async ({ source }) => result(source.filePath, source.content),
+      comparisonKey: () => new Uint8Array(32).fill(2),
     });
-    try {
-      await adapter.collect(run);
-      throw new Error("expected collection failure");
-    } catch (error) {
-      expect(String(error)).toBe("Error: Secret analysis failed.");
-      expect(JSON.stringify(error)).not.toContain(canary);
-    }
+    const collected = await adapter.collect(run);
+    expect(collected.baselineObservations[0]?.location?.file).toBe("src/old-name.txt");
+    expect(collected.targetObservations[0]?.location?.file).toBe("src/new-name.txt");
+    expect(collected.baselineObservations[0]?.comparisonIdentity).toBe(
+      collected.targetObservations[0]?.comparisonIdentity,
+    );
+    const findings = compareObservationSets(
+      collected.baselineObservations,
+      collected.targetObservations,
+      {
+        changedPaths: ["src/new-name.txt"],
+        changedEntityIdentities: [],
+        repositoryDelta: true,
+      },
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.attribution.staged).toBe(false);
   });
 
-  it("flags a different secret that replaces one at the same rule and location", async () => {
-    const run = await context();
-    const oldSecret = "zedbee_old_secret_never_expose";
-    const newSecret = "zedbee_new_secret_never_expose";
-    await writeFile(
-      `${run.snapshots.baselineDir}/src/secrets.ts`,
-      `export const debt = 'old';\nexport const token = '${oldSecret}';\n`,
-    );
-    await writeFile(
-      `${run.snapshots.targetDir}/src/secrets.ts`,
-      `export const debt = 'old';\nexport const token = '${newSecret}';\n`,
-    );
+  it("attributes a replacement secret at the same location to the staged change", async () => {
+    const run = await context([
+      { path: "src/secret.txt", status: "modified", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${run.snapshots.baselineDir}/src/secret.txt`, "old-secret");
+    await writeFile(`${run.snapshots.targetDir}/src/secret.txt`, "new-secret");
     const adapter = createSecretsAdapter({
-      resolveBinary: async () => binary,
-      runBinary: async (_binary, args, options) => {
-        const reportPath = args[args.indexOf("--report-path") + 1]!;
-        const Secret =
-          options.cwd === run.snapshots.targetDir ? newSecret : oldSecret;
-        await writeFile(
-          reportPath,
-          JSON.stringify([
-            {
-              RuleID: "generic-api-key",
-              File: `${options.cwd}/src/secrets.ts`,
-              StartLine: 2,
-              EndLine: 2,
-              StartColumn: 23,
-              EndColumn: 22 + Secret.length,
-              Secret,
-            },
-          ]),
-        );
-        return { stdout: "", stderr: "", exitCode: 1 };
-      },
+      lintSource: async ({ source }) => result(source.filePath, source.content),
+      comparisonKey: () => new Uint8Array(32).fill(3),
     });
 
     const collected = await adapter.collect(run);
-    const result = await observationCheckResult(
-      "secrets",
-      collected,
-      run,
-      true,
+    const findings = compareObservationSets(
+      collected.baselineObservations,
+      collected.targetObservations,
+      {
+        changedPaths: ["src/secret.txt"],
+        changedEntityIdentities: [],
+        repositoryDelta: true,
+        addedRanges: [{ file: "src/secret.txt", start: 1, end: 1 }],
+      },
     );
 
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0]?.attribution.staged).toBe(true);
-    expect(JSON.stringify({ collected, result })).not.toContain(oldSecret);
-    expect(JSON.stringify({ collected, result })).not.toContain(newSecret);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.attribution).toMatchObject({
+      kind: "range-overlap",
+      staged: true,
+    });
+  });
+
+  it("does not report a secret removed by a staged deletion", async () => {
+    const run = await context([
+      { path: "src/deleted.txt", status: "deleted", addedRanges: [] },
+    ]);
+    await writeFile(`${run.snapshots.baselineDir}/src/deleted.txt`, "deleted-secret");
+    const adapter = createSecretsAdapter({
+      lintSource: async () => {
+        throw new Error("deleted files must not be linted");
+      },
+      comparisonKey: () => new Uint8Array(32),
+    });
+
+    await expect(adapter.collect(run)).resolves.toMatchObject({
+      baselineObservations: [],
+      targetObservations: [],
+    });
+  });
+
+  it("skips binary files and fails safely for invalid UTF-8 and over-limit text", async () => {
+    const binaryRun = await context([
+      { path: "asset.bin", status: "added", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${binaryRun.snapshots.targetDir}/asset.bin`, Buffer.from([0, 1, 2, 3]));
+    const lintSource = async (): Promise<SecretLintCoreResult> => {
+      throw new Error("binary should not be linted");
+    };
+    await expect(
+      createSecretsAdapter({ lintSource, comparisonKey: () => new Uint8Array(32) }).collect(binaryRun),
+    ).resolves.toMatchObject({ targetObservations: [] });
+
+    const invalidRun = await context([
+      { path: "invalid.txt", status: "added", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${invalidRun.snapshots.targetDir}/invalid.txt`, Buffer.from([0xc3, 0x28]));
+    await expect(
+      createSecretsAdapter({ lintSource, comparisonKey: () => new Uint8Array(32) }).collect(invalidRun),
+    ).rejects.toMatchObject({
+      code: "SECRET_FILE_INVALID_UTF8",
+      path: "invalid.txt",
+      remediation: expect.stringContaining("valid UTF-8"),
+    });
+
+    const largeRun = await context([
+      { path: "large.txt", status: "added", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${largeRun.snapshots.targetDir}/large.txt`, "x".repeat(MAX_SECRET_FILE_BYTES + 1));
+    await expect(
+      createSecretsAdapter({ lintSource, comparisonKey: () => new Uint8Array(32) }).collect(largeRun),
+    ).rejects.toMatchObject({
+      code: "SECRET_FILE_TOO_LARGE",
+      path: "large.txt",
+      remediation: expect.stringContaining("1 MiB"),
+    });
+  });
+
+  it("fails safely when a required baseline file is missing or a target is a symlink", async () => {
+    const missingBaselineRun = await context([
+      { path: "src/value.txt", status: "modified", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${missingBaselineRun.snapshots.targetDir}/src/value.txt`, "value");
+    const lintSource = async (): Promise<SecretLintCoreResult> => {
+      throw new Error("unsafe input should not be linted");
+    };
+    await expect(
+      createSecretsAdapter({ lintSource, comparisonKey: () => new Uint8Array(32) }).collect(
+        missingBaselineRun,
+      ),
+    ).rejects.toMatchObject({
+      code: "SECRET_FILE_UNSAFE",
+      path: "src/value.txt",
+    });
+
+    const symlinkRun = await context([
+      { path: "src/link.txt", status: "added", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await symlink("../package.json", `${symlinkRun.snapshots.targetDir}/src/link.txt`);
+    await expect(
+      createSecretsAdapter({ lintSource, comparisonKey: () => new Uint8Array(32) }).collect(
+        symlinkRun,
+      ),
+    ).rejects.toMatchObject({
+      code: "SECRET_FILE_UNSAFE",
+      path: "src/link.txt",
+    });
+  });
+
+  it("turns unknown analyzer failures into one safe incomplete error", async () => {
+    const run = await context([
+      { path: "src/secret.txt", status: "added", addedRanges: [{ start: 1, end: 1 }] },
+    ]);
+    await writeFile(`${run.snapshots.targetDir}/src/secret.txt`, "secret");
+    const adapter = createSecretsAdapter({
+      lintSource: async () => {
+        throw new Error("private analyzer output");
+      },
+      comparisonKey: () => new Uint8Array(32),
+    });
+    const error = await adapter.collect(run).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({
+      code: "SECRETLINT_ANALYSIS_FAILED",
+      message: "Secret analysis could not be completed safely.",
+    });
+    expect(JSON.stringify(error)).not.toContain("private analyzer output");
   });
 });
