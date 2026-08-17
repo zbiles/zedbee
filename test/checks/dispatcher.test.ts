@@ -210,7 +210,12 @@ describe("dispatchChecks", () => {
           checkId: "lint",
           status: "incomplete",
           findings: [],
-          error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+          error: {
+            code: "ADAPTER_INVALID",
+            message: "Lint has an invalid adapter definition.",
+            remediation:
+              "Check the installed Zedbee version and run zedbee doctor.",
+          },
         }),
         policy: null,
       },
@@ -314,7 +319,7 @@ describe("dispatchChecks", () => {
     const adapter = {
       id: "lint",
       get output(): never {
-        throw new Error("sensitive output getter failure");
+        throw new Error("private-token-123");
       },
       inspect: async () => ({ applies: false as const, reason: "unused" }),
     } as unknown as CheckAdapter;
@@ -330,12 +335,48 @@ describe("dispatchChecks", () => {
           checkId: "lint",
           status: "incomplete",
           findings: [],
-          error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+          error: {
+            code: "ADAPTER_INVALID",
+            message: "Lint has an invalid adapter definition.",
+            remediation:
+              "Check the installed Zedbee version and run zedbee doctor.",
+          },
         }),
         policy: null,
       },
     ]);
-    expect(JSON.stringify(results)).not.toContain("sensitive output getter");
+    expect(JSON.stringify(results)).not.toContain("private-token-123");
+  });
+
+  it("reports a safe phase-specific diagnostic when inspection fails", async () => {
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => {
+        throw new Error("private-token-123");
+      },
+      collect: async () => {
+        throw new Error("must not collect");
+      },
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(results[0]?.result).toMatchObject({
+      checkId: "lint",
+      status: "incomplete",
+      findings: [],
+      error: {
+        code: "ADAPTER_INSPECTION_FAILED",
+        message: "Lint could not determine whether it applies.",
+        remediation:
+          "Check the repository configuration and run zedbee doctor.",
+      },
+    });
+    expect(JSON.stringify(results)).not.toContain("private-token-123");
   });
 
   it.each<
@@ -386,9 +427,14 @@ describe("dispatchChecks", () => {
 
       expect(results[0]?.result).toMatchObject({
         checkId: "formatting",
+        target: ".",
         status: "incomplete",
         findings: [],
-        error: { code: "ADAPTER_FAILED" },
+        error: {
+          code: "ADAPTER_RESULT_INVALID",
+          message: "Formatting returned an invalid result for ..",
+          remediation: "Run zedbee doctor and update Zedbee before retrying.",
+        },
       });
       expect(JSON.stringify(results)).not.toContain("unsafe enum payload");
     },
@@ -483,7 +529,11 @@ describe("dispatchChecks", () => {
       target: "apps/web",
       status: "incomplete",
       findings: [],
-      error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+      error: {
+        code: "ADAPTER_RESULT_INVALID",
+        message: "Lint returned an invalid result for apps/web.",
+        remediation: "Run zedbee doctor and update Zedbee before retrying.",
+      },
     });
     expect(JSON.stringify(results)).not.toContain("Must not be attributed");
   });
@@ -515,11 +565,54 @@ describe("dispatchChecks", () => {
         target: ".",
         status: "incomplete",
         findings: [],
-        error: { code: "ADAPTER_FAILED", message: "Check formatting failed" },
+        error: {
+          code: "ADAPTER_RESULT_INVALID",
+          message: "Formatting returned an invalid result for ..",
+          remediation: "Run zedbee doctor and update Zedbee before retrying.",
+        },
       });
       expect(JSON.stringify(results)).not.toContain("Fixture observation");
     },
   );
+
+  it("classifies malformed cacheable observations as invalid adapter output", async () => {
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => ({
+        applies: true,
+        executionClass: "lightweight",
+        requiresBaseline: false,
+        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+      }),
+      collect: async (context) => ({
+        checkId: "types",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [
+          { ...formattingObservation, message: "private-token-123" },
+        ],
+      }),
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+
+    expect(results[0]?.result).toMatchObject({
+      checkId: "lint",
+      target: ".",
+      status: "incomplete",
+      findings: [],
+      error: {
+        code: "ADAPTER_RESULT_INVALID",
+        message: "Lint returned an invalid result for ..",
+        remediation: "Run zedbee doctor and update Zedbee before retrying.",
+      },
+    });
+    expect(JSON.stringify(results)).not.toContain("private-token-123");
+  });
 
   it("enforces the adapter's baseline declaration", async () => {
     const undeclared = observationAdapter(
@@ -617,6 +710,12 @@ describe("dispatchChecks", () => {
           checkId: "formatting",
           status: "incomplete",
           findings: [],
+          error: {
+            code: "ADAPTER_INSPECTION_FAILED",
+            message: "Formatting could not determine whether it applies.",
+            remediation:
+              "Check the repository configuration and run zedbee doctor.",
+          },
         }),
         policy: null,
       },
@@ -1015,6 +1114,12 @@ describe("dispatchChecks", () => {
       expect.objectContaining({
         checkId: "vulnerabilities",
         status: "incomplete",
+        error: {
+          code: "POLICY_RESOLUTION_FAILED",
+          message: "Vulnerabilities could not resolve its repository policy.",
+          remediation:
+            "Check the repository configuration and run zedbee doctor.",
+        },
       }),
     ]);
   });
@@ -1031,7 +1136,12 @@ describe("dispatchChecks", () => {
       expect.objectContaining({
         checkId: "lint",
         status: "incomplete",
-        error: { code: "ADAPTER_FAILED", message: "Check lint failed" },
+        error: {
+          code: "ADAPTER_TARGETS_MISSING",
+          message: "Lint could not determine which staged targets to analyze.",
+          remediation:
+            "Check the staged paths and repository configuration, then retry.",
+        },
       }),
     ]);
   });
@@ -1065,6 +1175,12 @@ describe("dispatchChecks", () => {
         checkId: "types",
         target: "unknown-target",
         status: "incomplete",
+        error: {
+          code: "TARGET_POLICY_FAILED",
+          message: "TypeScript could not resolve policy for unknown-target.",
+          remediation:
+            "Check the target configuration and run zedbee doctor.",
+        },
       }),
     ]);
   });
@@ -1300,7 +1416,7 @@ describe("dispatchChecks", () => {
 
   it("sanitizes adapter failures and lets other checks finish", async () => {
     const broken = createAdapter("broken", "lightweight", async () => {
-      throw new Error("sensitive engine detail");
+      throw new Error("private-token-123");
     });
     const healthy = createAdapter("healthy", "lightweight");
 
@@ -1311,15 +1427,21 @@ describe("dispatchChecks", () => {
 
     expect(results[0]?.result).toMatchObject({
       checkId: "broken",
+      target: ".",
       status: "incomplete",
       findings: [],
-      error: { code: "ADAPTER_FAILED", message: "Check broken failed" },
+      error: {
+        code: "ADAPTER_EXECUTION_FAILED",
+        message: "broken could not analyze ..",
+        remediation:
+          "Check the analyzer installation and staged input, then retry.",
+      },
     });
     expect(results[1]?.result).toMatchObject({
       checkId: "healthy",
       status: "completed",
     });
-    expect(JSON.stringify(results)).not.toContain("sensitive engine detail");
+    expect(JSON.stringify(results)).not.toContain("private-token-123");
   });
 
   it("returns results in deterministic check ID order instead of adapter or completion order", async () => {

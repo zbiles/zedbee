@@ -7,6 +7,7 @@ import type { ChangedFile } from "../../git/change-set.js";
 import { formattingFingerprint } from "./fingerprint.js";
 import { formattingTransformationRanges, intersectRanges } from "./format-diff.js";
 import { compareCodeUnits } from "../../core/compare.js";
+import { incompleteResult } from "../incomplete-result.js";
 
 const PARSERS = {
   ".css": "css",
@@ -146,16 +147,14 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
         const attributed = intersectRanges(transformations, stagedRanges(context, file));
         findings.push(...attributed.map((range) => finding(file, range.start, range.end)));
       } catch {
-        return {
+        return incompleteResult({
           checkId: "formatting",
-          status: "incomplete",
           durationMs: 0,
-          findings: [],
-          error: {
-            code: "PRETTIER_FAILED",
-            message: `Prettier could not analyze ${file}`
-          }
-        };
+          code: "PRETTIER_FAILED",
+          message: `Prettier could not analyze ${file}.`,
+          path: file,
+          remediation: "Fix the parser or file-reading error, then stage the result."
+        });
       }
     }
 

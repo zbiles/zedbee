@@ -242,7 +242,9 @@ describe("prettierAdapter.run", () => {
       findings: [],
       error: {
         code: "PRETTIER_FAILED",
-        message: "Prettier could not analyze broken.json"
+        message: "Prettier could not analyze broken.json.",
+        path: "broken.json",
+        remediation: "Fix the parser or file-reading error, then stage the result."
       }
     });
     expect(JSON.stringify(result)).not.toContain(invalidSource);

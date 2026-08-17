@@ -22,6 +22,7 @@ import type { ScanEvent } from "./events.js";
 import { observationCheckResult } from "./observation-result.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
+import { incompleteResult } from "./incomplete-result.js";
 import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type {
@@ -59,22 +60,24 @@ function checkPolicy(
 
 type DispatchContext = Omit<CheckRunContext, "target" | "policy">;
 
-function incomplete(
-  checkId: string,
-  durationMs: number,
-  target?: string,
-): CheckResult {
-  return {
-    checkId,
-    ...(target === undefined ? {} : { target }),
-    status: "incomplete",
-    durationMs,
-    findings: [],
-    error: {
-      code: "ADAPTER_FAILED",
-      message: `Check ${checkId} failed`,
-    },
-  };
+const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
+  formatting: "Formatting",
+  lint: "Lint",
+  types: "TypeScript",
+  cyclomaticComplexity: "Cyclomatic complexity",
+  readabilityComplexity: "Readability complexity",
+  structuralSecurity: "Structural security",
+  secrets: "Secrets",
+  duplication: "Duplication",
+  dependencyArchitecture: "Dependency architecture",
+  deadCode: "Dead code",
+  reactCorrectness: "React correctness",
+  reactAccessibility: "React accessibility",
+  vulnerabilities: "Vulnerabilities",
+});
+
+function checkLabel(checkId: string): string {
+  return CHECK_LABELS[checkId] ?? checkId;
 }
 
 function immutablePolicy(
@@ -351,9 +354,9 @@ async function collectObservations(
     }
   }
 
-  const collected = sanitizeCacheableObservationSet(
-    await Reflect.apply(adapter.collect, undefined, [runContext]),
-  );
+  const collected = await Reflect.apply(adapter.collect, undefined, [
+    runContext,
+  ]);
   if (
     cacheKey !== undefined &&
     options.cache !== undefined &&
@@ -627,8 +630,21 @@ export async function dispatchChecks(
   const adapterSnapshots = adapters.map(snapshotAdapter);
   for (const snapshot of adapterSnapshots) {
     if (!snapshot.valid) {
+      const label = checkLabel(snapshot.id);
       scheduled.push(
-        Promise.resolve(executionResult(incomplete(snapshot.id, 0), null)),
+        Promise.resolve(
+          executionResult(
+            incompleteResult({
+              checkId: snapshot.id,
+              durationMs: 0,
+              code: "ADAPTER_INVALID",
+              message: `${label} has an invalid adapter definition.`,
+              remediation:
+                "Check the installed Zedbee version and run zedbee doctor.",
+            }),
+            null,
+          ),
+        ),
       );
       continue;
     }
@@ -641,8 +657,21 @@ export async function dispatchChecks(
     try {
       inspectPolicy = inspectionPolicy(context, adapter.id);
     } catch {
+      const label = checkLabel(adapter.id);
       scheduled.push(
-        Promise.resolve(executionResult(incomplete(adapter.id, 0), null)),
+        Promise.resolve(
+          executionResult(
+            incompleteResult({
+              checkId: adapter.id,
+              durationMs: 0,
+              code: "POLICY_RESOLUTION_FAILED",
+              message: `${label} could not resolve its repository policy.`,
+              remediation:
+                "Check the repository configuration and run zedbee doctor.",
+            }),
+            null,
+          ),
+        ),
       );
       continue;
     }
@@ -656,8 +685,21 @@ export async function dispatchChecks(
         ]),
       );
     } catch {
+      const label = checkLabel(adapter.id);
       scheduled.push(
-        Promise.resolve(executionResult(incomplete(adapter.id, 0), null)),
+        Promise.resolve(
+          executionResult(
+            incompleteResult({
+              checkId: adapter.id,
+              durationMs: 0,
+              code: "ADAPTER_INSPECTION_FAILED",
+              message: `${label} could not determine whether it applies.`,
+              remediation:
+                "Check the repository configuration and run zedbee doctor.",
+            }),
+            null,
+          ),
+        ),
       );
       continue;
     }
@@ -682,8 +724,21 @@ export async function dispatchChecks(
 
     const targets = applicability.targets;
     if (targets.length === 0) {
+      const label = checkLabel(adapter.id);
       scheduled.push(
-        Promise.resolve(executionResult(incomplete(adapter.id, 0), null)),
+        Promise.resolve(
+          executionResult(
+            incompleteResult({
+              checkId: adapter.id,
+              durationMs: 0,
+              code: "ADAPTER_TARGETS_MISSING",
+              message: `${label} could not determine which staged targets to analyze.`,
+              remediation:
+                "Check the staged paths and repository configuration, then retry.",
+            }),
+            null,
+          ),
+        ),
       );
       continue;
     }
@@ -697,6 +752,7 @@ export async function dispatchChecks(
           context.targetInspection,
         );
       } catch {
+        const label = checkLabel(adapter.id);
         const queuedAt = clock();
         emit({
           type: "check-queued",
@@ -711,7 +767,15 @@ export async function dispatchChecks(
           target: target.id,
           timestamp: startedAt,
         });
-        const result = incomplete(adapter.id, 0, target.id);
+        const result = incompleteResult({
+          checkId: adapter.id,
+          target: target.id,
+          durationMs: 0,
+          code: "TARGET_POLICY_FAILED",
+          message: `${label} could not resolve policy for ${target.id}.`,
+          remediation:
+            "Check the target configuration and run zedbee doctor.",
+        });
         const execution = executionResult(result, null, target);
         emit({
           type: "check-completed",
@@ -754,6 +818,8 @@ export async function dispatchChecks(
             timestamp: started,
           });
           let result: CheckResult;
+          const durationMs = (): number => Math.max(0, clock() - started);
+          const label = checkLabel(adapter.id);
           try {
             const runContext = scopedContext(
               adapterContext,
@@ -766,28 +832,69 @@ export async function dispatchChecks(
               target,
               policy: executionPolicy,
             };
-            const adapterResult =
-              adapter.output === "observations"
-                ? await observationCheckResult(
-                    adapter.id,
-                    await collectObservations(adapter, runContext, options),
-                    attributionContext,
-                    applicability.requiresBaseline,
-                  )
-                : await Reflect.apply(adapter.runLegacy, undefined, [
-                    runContext,
-                  ]);
-            result = sanitizeCheckResult(adapterResult, {
+            let adapterResult: CheckResult | undefined;
+            if (adapter.output === "observations") {
+              const observations = await collectObservations(
+                adapter,
+                runContext,
+                options,
+              );
+              try {
+                adapterResult = await observationCheckResult(
+                  adapter.id,
+                  observations,
+                  attributionContext,
+                  applicability.requiresBaseline,
+                );
+              } catch {
+                adapterResult = undefined;
+              }
+            } else {
+              adapterResult = await Reflect.apply(
+                adapter.runLegacy,
+                undefined,
+                [runContext],
+              );
+            }
+            if (adapterResult === undefined) {
+              result = incompleteResult({
+                checkId: adapter.id,
+                target: target.id,
+                durationMs: durationMs(),
+                code: "ADAPTER_RESULT_INVALID",
+                message: `${label} returned an invalid result for ${target.id}.`,
+                remediation:
+                  "Run zedbee doctor and update Zedbee before retrying.",
+              });
+            } else {
+              try {
+                result = sanitizeCheckResult(adapterResult, {
+                  checkId: adapter.id,
+                  target: target.id,
+                  durationMs: durationMs(),
+                });
+              } catch {
+                result = incompleteResult({
+                  checkId: adapter.id,
+                  target: target.id,
+                  durationMs: durationMs(),
+                  code: "ADAPTER_RESULT_INVALID",
+                  message: `${label} returned an invalid result for ${target.id}.`,
+                  remediation:
+                    "Run zedbee doctor and update Zedbee before retrying.",
+                });
+              }
+            }
+          } catch {
+            result = incompleteResult({
               checkId: adapter.id,
               target: target.id,
-              durationMs: Math.max(0, clock() - started),
+              durationMs: durationMs(),
+              code: "ADAPTER_EXECUTION_FAILED",
+              message: `${label} could not analyze ${target.id}.`,
+              remediation:
+                "Check the analyzer installation and staged input, then retry.",
             });
-          } catch {
-            result = incomplete(
-              adapter.id,
-              Math.max(0, clock() - started),
-              target.id,
-            );
           }
           const displayResult =
             displayResultForPolicy(result, executionPolicy) ??
