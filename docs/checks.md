@@ -18,6 +18,12 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | `reactAccessibility`     | React DOM JSX accessibility                                 | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                       | Static JSX rules cannot prove runtime accessibility                                                   |
 | `vulnerabilities`        | OSV-Scanner 2.4.0 advisory comparison                       | Compares advisory/package/dependency-path state when lockfiles change or timing is `always`                           | Online mode discloses package metadata; strict offline mode requires a pre-populated local database   |
 
+## Incomplete staged inputs
+
+Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. Materialize the LFS object, stage it again, and rerun the scan. Configurable ignore lists for intentionally unsupported staged paths are deferred beyond v1.
+
+Completed checks report every attributed finding in Ink, text, and JSON. Zedbee does not cap findings or replace the remainder with an X-of-Y summary. It also does not write a report automatically; use an explicit stable format and shell redirection when a report file is required.
+
 ## Profiles
 
 - `fast`: local formatting, lint, complexity, structural security, and applicable React checks.

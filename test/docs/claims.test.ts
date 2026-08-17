@@ -46,4 +46,25 @@ describe("public documentation claims", () => {
     expect(readme).not.toMatch(/planned check|future managed check/i);
     expect(readme).toContain("Node.js 22.13.0 or newer");
   });
+
+  it("publishes runnable source-excerpt and report redirection commands", async () => {
+    const readme = await read("README.md");
+    for (const command of [
+      "npx zedbee scan --include-source",
+      "npx zedbee scan --no-source",
+      "npx zedbee scan --format text --include-source > zedbee-report-with-source.txt",
+    ]) {
+      expect(readme).toContain(command);
+    }
+  });
+
+  it("documents source defaults, secret redaction, and safe cleanup disclosure", async () => {
+    const privacy = await read("docs/privacy.md");
+    expect(privacy).toMatch(/interactive Ink[^.]*source excerpts[^.]*default/i);
+    expect(privacy).toMatch(/redirected text and JSON[^.]*default off/i);
+    expect(privacy).toMatch(/secrets are always redacted/i);
+    expect(privacy).toMatch(
+      /cleanup failure[^.]*disclose one validated Zedbee temporary directory/i,
+    );
+  });
 });

@@ -44,7 +44,9 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 ## Exact staged content
 
-Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome.
+Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome. Source excerpts therefore come from the exact indexed content and line, never from a later working-tree edit.
+
+An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. A staged Git LFS pointer is different: Zedbee cannot inspect the referenced object, so the scan remains incomplete until you materialize the object, stage it again, and rerun. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by staged work.
 
@@ -62,11 +64,14 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "readabilityComplexity": { "max": 15, "blockWorsening": true },
   },
+  "reporting": { "sourceExcerpts": "interactive" },
   "failOnIncomplete": true,
 }
 ```
 
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. The managed defaults are cyclomatic complexity 20 and readability complexity 15; both block a staged increase that remains above the configured limit.
+
+`reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, and JSON. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
 
 The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
 
@@ -103,7 +108,26 @@ npx zedbee scan --no-animations
 NO_COLOR=1 npx zedbee scan
 ```
 
-Status always includes labels or symbols in addition to color. Text and JSON output contain no terminal animation or logo control sequences.
+Status always includes labels or symbols in addition to color. Animated Ink scans remain visible for at least 400ms so the transition can be perceived; `--no-animations` bypasses that minimum instead of adding a delay. A configurable display delay is deferred beyond v1. Text and JSON output contain no terminal animation, delay, or logo control sequences.
+
+Source excerpt controls:
+
+```bash
+npx zedbee scan --include-source
+npx zedbee scan --no-source
+```
+
+Ordinary staged source may be visible in interactive Ink by default to the human or agent that invoked Zedbee. Text and JSON source is opt-in with `--include-source` unless repository policy is `always`. Excerpts come only from the exact Git-index snapshot; secret findings are always redacted regardless of policy or CLI override.
+
+Redirect complete stable reports with normal shell redirection:
+
+```bash
+npx zedbee scan --format text > zedbee-report.txt
+npx zedbee scan --format json > zedbee-report.json
+npx zedbee scan --format text --include-source > zedbee-report-with-source.txt
+```
+
+Ink, text, and JSON print every finding. There is no finding cap, X-of-Y summary that hides remaining findings, or automatic report file; choose text or JSON and redirect it explicitly when you need a saved report.
 
 For coding agents and CI, prefer `zedbee scan --format json`. JSON is versioned, deterministically ordered, ANSI-free, repository-relative, and includes stable finding IDs, attribution evidence, incomplete states, and network disclosures. Agents should treat exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
 
@@ -144,7 +168,9 @@ See [the complete check matrix](docs/checks.md), [privacy and data handling](doc
 
 - Run `npx zedbee doctor` first; JSON mode is useful when sharing sanitized diagnostics.
 - Exit code 2 means a required result is incomplete. Resolve the diagnostic rather than treating it as a pass.
+- For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
 - TypeScript workspaces need a contained staged `tsconfig.json`; Zedbee does not invent compiler options.
+- Intent-to-add entries are excluded as unstaged. A staged Git LFS pointer remains incomplete until its object is materialized and staged again; path-ignore policy is not yet configurable.
 - Offline vulnerability checks need a pre-populated database at `ZEDBEE_OSV_DATABASE`.
 - Unsupported managed-binary platforms fail incomplete. The supported release matrix is Darwin/Linux x64 and arm64, plus Windows x64.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
