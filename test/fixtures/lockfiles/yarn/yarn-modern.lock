@@ -1,0 +1,25 @@
+__metadata:
+  version: 8
+  cacheKey: 10c0
+
+"alpha@npm:^1.0.0":
+  version: 1.0.2
+  resolution: "alpha@npm:1.0.2"
+  dependencies:
+    shared: "npm:^1.0.0"
+
+"@scope/direct@npm:^3.0.0":
+  version: 3.1.0
+  resolution: "@scope/direct@npm:3.1.0"
+
+"alias@npm:@scope/actual@^4.0.0":
+  version: 4.2.0
+  resolution: "@scope/actual@npm:4.2.0"
+
+"shared@npm:^1.0.0":
+  version: 1.5.0
+  resolution: "shared@npm:1.5.0"
+
+"workspace-only@workspace:packages/workspace-only":
+  version: 0.0.0-use.local
+  resolution: "workspace-only@workspace:packages/workspace-only"

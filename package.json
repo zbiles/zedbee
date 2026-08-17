@@ -69,6 +69,7 @@
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
     "@eslint/js": "9.39.5",
+    "@yarnpkg/lockfile": "1.1.0",
     "commander": "15.0.0",
     "dependency-cruiser": "18.2.0",
     "diff": "9.0.0",

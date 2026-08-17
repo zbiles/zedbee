@@ -5,6 +5,9 @@ import { captureSnapshotRegistry } from "../../../inspection/snapshot-registry.j
 import type { RepositoryInspection } from "../../../inspection/types.js";
 import { inventoryError, LockfileInventoryError } from "./errors.js";
 import { parseNpmLockfile } from "./parse-npm.js";
+import { parsePnpmLockfile } from "./parse-pnpm.js";
+import { parseYarnLockfile } from "./parse-yarn.js";
+import { parseBunLockfile } from "./parse-bun.js";
 import type { DependencyInventory } from "./types.js";
 
 export async function parseLockfileInventory(
@@ -27,7 +30,20 @@ export async function parseLockfileInventory(
     );
   }
   const filename = posix.basename(lockfilePath);
-  if (filename !== "package-lock.json" && filename !== "npm-shrinkwrap.json") {
+  if (filename === "bun.lockb") {
+    throw inventoryError(
+      "LOCKFILE_UNSUPPORTED_BINARY",
+      "Bun's legacy binary lockfile cannot be analyzed safely.",
+      "Run bun install --save-text-lockfile --frozen-lockfile --lockfile-only, then remove bun.lockb.",
+    );
+  }
+  if (
+    filename !== "package-lock.json" &&
+    filename !== "npm-shrinkwrap.json" &&
+    filename !== "pnpm-lock.yaml" &&
+    filename !== "yarn.lock" &&
+    filename !== "bun.lock"
+  ) {
     throw inventoryError(
       "LOCKFILE_UNSUPPORTED",
       "The discovered lockfile format is not supported by this parser.",
@@ -36,6 +52,9 @@ export async function parseLockfileInventory(
   try {
     const registry = await captureSnapshotRegistry(inspection.snapshotRoot);
     const contents = await readContainedFile(registry, lockfilePath);
+    if (filename === "pnpm-lock.yaml") return parsePnpmLockfile(contents, lockfilePath);
+    if (filename === "yarn.lock") return parseYarnLockfile(contents, lockfilePath);
+    if (filename === "bun.lock") return parseBunLockfile(contents, lockfilePath);
     return parseNpmLockfile(contents, lockfilePath);
   } catch (error) {
     if (error instanceof LockfileInventoryError) throw error;

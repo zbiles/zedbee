@@ -3,7 +3,6 @@ import {
   type Node as JsonNode,
   type ParseError,
 } from "jsonc-parser";
-import { compareCodeUnits } from "../../../core/compare.js";
 import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprint.js";
 import { inventoryError, LockfileInventoryError } from "./errors.js";
 import {
@@ -17,6 +16,7 @@ import {
   MAX_PACKAGE_VERSION_LENGTH,
 } from "./limits.js";
 import { createSourcePositionIndex } from "./source-position.js";
+import { finalizeDependencyRecords } from "./normalize.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 
 interface JsonProperty {
@@ -164,24 +164,6 @@ function dependencyPathFromPackageKey(packageKey: string): {
   };
 }
 
-function freezeRecord(record: DependencyRecord): DependencyRecord {
-  if (record.dependencyPath !== undefined) Object.freeze(record.dependencyPath);
-  return Object.freeze(record);
-}
-
-function compareRecords(left: DependencyRecord, right: DependencyRecord): number {
-  return (
-    compareCodeUnits(left.name, right.name) ||
-    compareCodeUnits(left.version, right.version) ||
-    compareCodeUnits(left.importer ?? "", right.importer ?? "") ||
-    compareCodeUnits(
-      left.dependencyPath?.join("\0") ?? "",
-      right.dependencyPath?.join("\0") ?? "",
-    ) ||
-    (left.line ?? 0) - (right.line ?? 0)
-  );
-}
-
 function finalize(records: readonly DependencyRecord[]): DependencyInventory {
   if (records.length > MAX_DEPENDENCY_RECORDS) {
     throw inventoryError(
@@ -189,18 +171,7 @@ function finalize(records: readonly DependencyRecord[]): DependencyInventory {
       "The npm lockfile contains too many dependency records.",
     );
   }
-  const deduplicated = new Map<string, DependencyRecord>();
-  for (const record of records) {
-    const key = JSON.stringify([
-      record.name,
-      record.version,
-      record.lockfilePath,
-      record.importer,
-      record.dependencyPath,
-    ]);
-    if (!deduplicated.has(key)) deduplicated.set(key, freezeRecord(record));
-  }
-  return Object.freeze([...deduplicated.values()].sort(compareRecords));
+  return finalizeDependencyRecords(records);
 }
 
 function parseV1(

@@ -1,0 +1,24 @@
+lockfileVersion: '6.0'
+
+dependencies:
+  alpha:
+    specifier: ^1.0.0
+    version: 1.0.0
+  alias:
+    specifier: npm:@scope/actual@^3.0.0
+    version: /@scope/actual@3.1.0
+
+packages:
+  /alpha@1.0.0:
+    resolution: {integrity: sha512-alpha}
+    dependencies:
+      shared: 1.5.0
+  /shared@1.5.0:
+    resolution: {integrity: sha512-shared}
+  /@scope/actual@3.1.0:
+    resolution: {integrity: sha512-actual}
+    optional: true
+  /peerful@2.0.0(react@18.2.0):
+    resolution: {integrity: sha512-peerful}
+    peerDependencies:
+      react: 18.2.0

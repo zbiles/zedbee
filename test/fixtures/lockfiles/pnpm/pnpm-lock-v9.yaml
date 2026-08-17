@@ -1,0 +1,39 @@
+lockfileVersion: '9.0'
+
+importers:
+  .:
+    dependencies:
+      alpha:
+        specifier: ^1.0.0
+        version: 1.0.0
+      local-workspace:
+        specifier: workspace:*
+        version: link:packages/local-workspace
+  apps/web:
+    optionalDependencies:
+      '@scope/direct':
+        specifier: ^3.0.0
+        version: 3.1.0
+
+packages:
+  alpha@1.0.0:
+    resolution: {integrity: sha512-alpha}
+  '@scope/direct@3.1.0':
+    resolution: {integrity: sha512-direct}
+  shared@1.5.0:
+    resolution: {integrity: sha512-shared-one}
+  shared@2.5.0:
+    resolution: {integrity: sha512-shared-two}
+  peerful@2.0.0:
+    resolution: {integrity: sha512-peerful}
+    peerDependencies:
+      react: 18.2.0
+
+snapshots:
+  alpha@1.0.0:
+    dependencies:
+      shared: 1.5.0
+  '@scope/direct@3.1.0': {}
+  shared@1.5.0: {}
+  shared@2.5.0: {}
+  peerful@2.0.0(react@18.2.0): {}

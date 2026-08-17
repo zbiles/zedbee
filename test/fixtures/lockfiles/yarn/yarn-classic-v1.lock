@@ -1,0 +1,23 @@
+# yarn lockfile v1
+
+alpha@^1.0.0, alpha@~1.0.0:
+  version "1.0.2"
+  resolved "https://registry.yarnpkg.com/alpha/-/alpha-1.0.2.tgz"
+  dependencies:
+    shared "^1.0.0"
+
+"@scope/direct@^3.0.0":
+  version "3.1.0"
+  resolved "https://registry.yarnpkg.com/@scope/direct/-/direct-3.1.0.tgz"
+
+"alias@npm:@scope/actual@^4.0.0":
+  version "4.2.0"
+  resolved "https://registry.yarnpkg.com/@scope/actual/-/actual-4.2.0.tgz"
+
+shared@^1.0.0:
+  version "1.5.0"
+  optionalDependencies:
+    optional-child "^2.0.0"
+
+optional-child@^2.0.0:
+  version "2.1.0"

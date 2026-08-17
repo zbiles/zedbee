@@ -1050,6 +1050,18 @@
       ]
     },
     {
+      "name": "@yarnpkg/lockfile",
+      "version": "1.1.0",
+      "license": "BSD-2-Clause",
+      "repository": "https://github.com/yarnpkg/yarn/blob/master/packages/lockfile",
+      "licenseFile": null,
+      "legalFiles": [],
+      "dependencyPath": [
+        "zedbee@0.0.0",
+        "@yarnpkg/lockfile@1.1.0"
+      ]
+    },
+    {
       "name": "acorn",
       "version": "8.18.0",
       "license": "MIT",
