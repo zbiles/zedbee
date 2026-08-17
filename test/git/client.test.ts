@@ -16,7 +16,7 @@ describe("GitClient", () => {
     expect(output).toEqual({
       stdout: `${filename}\0`,
       stderr: "",
-      exitCode: 0
+      exitCode: 0,
     });
   });
 
@@ -24,7 +24,11 @@ describe("GitClient", () => {
     const repository = await createGitRepository();
     const client = new GitClient(repository.root);
 
-    const output = await client.tryRun(["rev-parse", "--verify", "missing-ref"]);
+    const output = await client.tryRun([
+      "rev-parse",
+      "--verify",
+      "missing-ref",
+    ]);
 
     expect(output.exitCode).not.toBe(0);
     expect(output.stdout).toBe("");
@@ -41,7 +45,7 @@ describe("GitClient", () => {
     expect(error).toMatchObject({
       name: "GitCommandError",
       code: "GIT_COMMAND_FAILED",
-      exitCode: 128
+      exitCode: 128,
     });
     expect(String(error)).not.toContain("secret-ref-name");
     expect(String(error)).not.toContain(repository.root);
@@ -68,7 +72,7 @@ describe("GitClient", () => {
 
     expect(error).toMatchObject({
       name: "GitCommandError",
-      code: "GIT_ABORTED"
+      code: "GIT_ABORTED",
     });
   });
 });

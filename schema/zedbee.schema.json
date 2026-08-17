@@ -16,11 +16,7 @@
       "description": "Base check suite. Per-check settings below override the selected profile.",
       "default": "recommended",
       "type": "string",
-      "enum": [
-        "fast",
-        "recommended",
-        "thorough"
-      ]
+      "enum": ["fast", "recommended", "thorough"]
     },
     "checks": {
       "description": "Repository-wide check policies, using severity shorthand or a policy object.",
@@ -32,11 +28,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -44,19 +36,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -70,11 +55,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -82,19 +63,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -108,11 +82,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -120,19 +90,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -146,11 +109,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -158,19 +117,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
@@ -196,11 +148,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -208,19 +156,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
@@ -246,11 +187,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -258,19 +195,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -284,11 +214,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -296,19 +222,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -322,11 +241,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -334,19 +249,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
@@ -367,11 +275,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -379,19 +283,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -405,11 +302,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -417,19 +310,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -443,11 +329,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -455,19 +337,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -481,11 +356,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -493,19 +364,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 }
@@ -519,11 +383,7 @@
           "anyOf": [
             {
               "type": "string",
-              "enum": [
-                "off",
-                "warn",
-                "error"
-              ],
+              "enum": ["off", "warn", "error"],
               "description": "Whether a check is disabled, reports a warning, or blocks the commit."
             },
             {
@@ -531,19 +391,12 @@
               "properties": {
                 "severity": {
                   "type": "string",
-                  "enum": [
-                    "off",
-                    "warn",
-                    "error"
-                  ],
+                  "enum": ["off", "warn", "error"],
                   "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                 },
                 "when": {
                   "type": "string",
-                  "enum": [
-                    "relevant",
-                    "always"
-                  ],
+                  "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
@@ -551,10 +404,7 @@
                   "description": "Use the OSV online service or a locally provisioned offline database.",
                   "default": "online",
                   "type": "string",
-                  "enum": [
-                    "online",
-                    "offline"
-                  ]
+                  "enum": ["online", "offline"]
                 }
               },
               "additionalProperties": false
@@ -610,11 +460,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -622,19 +468,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -648,11 +487,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -660,19 +495,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -686,11 +514,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -698,19 +522,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -724,11 +541,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -736,19 +549,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       },
@@ -774,11 +580,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -786,19 +588,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       },
@@ -824,11 +619,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -836,19 +627,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -862,11 +646,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -874,19 +654,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -900,11 +673,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -912,19 +681,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       },
@@ -945,11 +707,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -957,19 +715,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -983,11 +734,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -995,19 +742,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -1021,11 +761,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -1033,19 +769,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -1059,11 +788,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -1071,19 +796,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -1096,11 +814,7 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "off",
-                      "warn",
-                      "error"
-                    ],
+                    "enum": ["off", "warn", "error"],
                     "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                   },
                   {
@@ -1108,19 +822,12 @@
                     "properties": {
                       "severity": {
                         "type": "string",
-                        "enum": [
-                          "off",
-                          "warn",
-                          "error"
-                        ],
+                        "enum": ["off", "warn", "error"],
                         "description": "Whether a check is disabled, reports a warning, or blocks the commit."
                       },
                       "when": {
                         "type": "string",
-                        "enum": [
-                          "relevant",
-                          "always"
-                        ],
+                        "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
                       }
@@ -1134,10 +841,7 @@
             "description": "Per-check policy patches. Vulnerability network mode remains repository-wide."
           }
         },
-        "required": [
-          "files",
-          "checks"
-        ],
+        "required": ["files", "checks"],
         "additionalProperties": false
       },
       "default": []
@@ -1149,11 +853,7 @@
           "description": "Include exact staged source excerpts never, only in Ink, or in every report format.",
           "default": "interactive",
           "type": "string",
-          "enum": [
-            "never",
-            "interactive",
-            "always"
-          ]
+          "enum": ["never", "interactive", "always"]
         }
       },
       "additionalProperties": false
@@ -1164,9 +864,7 @@
       "type": "boolean"
     }
   },
-  "required": [
-    "schemaVersion"
-  ],
+  "required": ["schemaVersion"],
   "additionalProperties": false,
   "title": "Zedbee configuration",
   "description": "Versioned policy for Zedbee diff-aware JavaScript and TypeScript pre-commit scans."

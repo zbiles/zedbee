@@ -1178,8 +1178,7 @@ describe("dispatchChecks", () => {
         error: {
           code: "TARGET_POLICY_FAILED",
           message: "TypeScript could not resolve policy for unknown-target.",
-          remediation:
-            "Check the target configuration and run zedbee doctor.",
+          remediation: "Check the target configuration and run zedbee doctor.",
         },
       }),
     ]);

@@ -773,8 +773,7 @@ export async function dispatchChecks(
           durationMs: 0,
           code: "TARGET_POLICY_FAILED",
           message: `${label} could not resolve policy for ${target.id}.`,
-          remediation:
-            "Check the target configuration and run zedbee doctor.",
+          remediation: "Check the target configuration and run zedbee doctor.",
         });
         const execution = executionResult(result, null, target);
         emit({

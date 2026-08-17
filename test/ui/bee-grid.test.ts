@@ -4,7 +4,7 @@ import {
   MIRRORED_STINGER_ROW,
   MOTION_DASHES,
   mirrorBee,
-  motionDashGrid
+  motionDashGrid,
 } from "../../src/ui/bee-grid.js";
 
 const expectedBee = [
@@ -18,7 +18,7 @@ const expectedBee = [
   "yyyybybybb",
   "yyyybybyby",
   "0yyybybyb0",
-  "000ybyby00"
+  "000ybyby00",
 ];
 
 describe("Zedbee pixel asset", () => {
@@ -28,7 +28,7 @@ describe("Zedbee pixel asset", () => {
 
   it("mirrors every row without redrawing the asset", () => {
     expect(mirrorBee(BEE_GRID)).toEqual(
-      expectedBee.map((row) => [...row].reverse().join(""))
+      expectedBee.map((row) => [...row].reverse().join("")),
     );
   });
 
@@ -36,10 +36,12 @@ describe("Zedbee pixel asset", () => {
     expect(MOTION_DASHES).toEqual([
       { startColumn: 0, row: 7, cells: 4 },
       { startColumn: 6, row: 7, cells: 4 },
-      { startColumn: 12, row: 7, cells: 4 }
+      { startColumn: 12, row: 7, cells: 4 },
     ]);
     expect(MOTION_DASHES.every((dash) => dash.cells === 4)).toBe(true);
-    expect(MOTION_DASHES.every((dash) => dash.row === MIRRORED_STINGER_ROW)).toBe(true);
+    expect(
+      MOTION_DASHES.every((dash) => dash.row === MIRRORED_STINGER_ROW),
+    ).toBe(true);
     expect(motionDashGrid()[7]).toBe("yyyy00yyyy00yyyy");
   });
 });

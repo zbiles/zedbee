@@ -218,8 +218,7 @@ describe("loadConfig", () => {
     },
     {
       name: "invalid source excerpt reporting policy",
-      source:
-        '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
+      source: '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
     },
     {
       name: "malformed JSONC",

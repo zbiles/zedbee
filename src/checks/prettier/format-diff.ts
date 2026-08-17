@@ -14,7 +14,7 @@ function lineCount(value: string, reportedCount: number | undefined): number {
 
 export function formattingTransformationRanges(
   source: string,
-  formatted: string
+  formatted: string,
 ): LineRange[] {
   if (source === formatted) {
     return [];
@@ -51,7 +51,7 @@ export function formattingTransformationRanges(
 
 export function intersectRanges(
   transformations: readonly LineRange[],
-  staged: readonly LineRange[]
+  staged: readonly LineRange[],
 ): LineRange[] {
   const intersections: LineRange[] = [];
   for (const transformation of transformations) {

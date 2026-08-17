@@ -8,7 +8,7 @@ import {
   realpath,
   rm,
   symlink,
-  writeFile
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
@@ -20,7 +20,7 @@ import { buildSnapshotPair } from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
   validateReportableSnapshotPath,
-  validateSnapshotPath
+  validateSnapshotPath,
 } from "../../src/git/snapshot-path.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
@@ -38,14 +38,19 @@ describe("buildSnapshotPair", () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = 1;\n");
     await repository.git(["add", "--", "value.ts"]);
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
     const snapshotRoot = dirname(snapshots.targetDir);
     const canonicalTempRoot = await realpath(tmpdir());
     expect(isAbsolute(snapshotRoot)).toBe(true);
     expect(await realpath(snapshotRoot)).toBe(snapshotRoot);
-    expect(relative(canonicalTempRoot, snapshotRoot)).not.toMatch(/^\.\.(?:[/\\]|$)/);
+    expect(relative(canonicalTempRoot, snapshotRoot)).not.toMatch(
+      /^\.\.(?:[/\\]|$)/,
+    );
     expect(basename(snapshotRoot)).toMatch(/^zedbee-snapshot-/);
     expect(await validateSnapshotPath(snapshotRoot)).toBe(snapshotRoot);
 
@@ -58,17 +63,17 @@ describe("buildSnapshotPair", () => {
         findings: [],
         error: {
           code: "SNAPSHOT_CLEANUP_FAILED",
-          message: "Zedbee could not remove its temporary snapshot."
-        }
+          message: "Zedbee could not remove its temporary snapshot.",
+        },
       } as CheckResult,
-      { temporaryPath: trustedReportPath }
+      { temporaryPath: trustedReportPath },
     );
     expect(result.error?.temporaryPath).toBe(snapshotRoot);
   });
 
   it.each([
     ["non-Zedbee temp path", "/tmp/not-zedbee"],
-    ["relative path", "."]
+    ["relative path", "."],
   ])("rejects a literal %s", async (_label, path) => {
     await expect(validateSnapshotPath(path)).rejects.toThrow();
     expect(() => validateReportableSnapshotPath(path)).toThrow();
@@ -81,19 +86,22 @@ describe("buildSnapshotPair", () => {
     expect(() => validateReportableSnapshotPath(repository.root)).toThrow();
   });
 
-  it.runIf(process.platform !== "win32")("rejects a snapshot symlink whose realpath identity differs", async () => {
-    const created = await mkdtemp(join(tmpdir(), "zedbee-snapshot-target-"));
-    const canonicalTarget = await realpath(created);
-    const link = `${canonicalTarget}-symlink`;
-    await symlink(canonicalTarget, link, "dir");
-    onTestFinished(async () => {
-      await rm(link);
-      await rm(canonicalTarget, { recursive: true });
-    });
+  it.runIf(process.platform !== "win32")(
+    "rejects a snapshot symlink whose realpath identity differs",
+    async () => {
+      const created = await mkdtemp(join(tmpdir(), "zedbee-snapshot-target-"));
+      const canonicalTarget = await realpath(created);
+      const link = `${canonicalTarget}-symlink`;
+      await symlink(canonicalTarget, link, "dir");
+      onTestFinished(async () => {
+        await rm(link);
+        await rm(canonicalTarget, { recursive: true });
+      });
 
-    await expect(validateSnapshotPath(link)).rejects.toThrow();
-    expect(() => validateReportableSnapshotPath(link)).toThrow();
-  });
+      await expect(validateSnapshotPath(link)).rejects.toThrow();
+      expect(() => validateReportableSnapshotPath(link)).toThrow();
+    },
+  );
 
   it("materializes HEAD and the index without observing later working-tree edits", async () => {
     const repository = await createGitRepository();
@@ -104,21 +112,34 @@ describe("buildSnapshotPair", () => {
     await repository.git(["add", "--", "src/value.ts"]);
     await repository.write("src/value.ts", "export const value = 3;\n");
 
-    const beforeStatus = await repository.git(["status", "--porcelain=v1", "-z"]);
+    const beforeStatus = await repository.git([
+      "status",
+      "--porcelain=v1",
+      "-z",
+    ]);
     const beforeIndex = await readFile(join(repository.root, ".git", "index"));
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
-    expect(await readFile(join(snapshots.baselineDir, "src/value.ts"), "utf8")).toBe(
-      "export const value = 1;\n"
+    expect(
+      await readFile(join(snapshots.baselineDir, "src/value.ts"), "utf8"),
+    ).toBe("export const value = 1;\n");
+    expect(
+      await readFile(join(snapshots.targetDir, "src/value.ts"), "utf8"),
+    ).toBe("export const value = 2;\n");
+    expect(await repository.read("src/value.ts")).toBe(
+      "export const value = 3;\n",
     );
-    expect(await readFile(join(snapshots.targetDir, "src/value.ts"), "utf8")).toBe(
-      "export const value = 2;\n"
-    );
-    expect(await repository.read("src/value.ts")).toBe("export const value = 3;\n");
 
     await snapshots.cleanup();
-    const afterStatus = await repository.git(["status", "--porcelain=v1", "-z"]);
+    const afterStatus = await repository.git([
+      "status",
+      "--porcelain=v1",
+      "-z",
+    ]);
     const afterIndex = await readFile(join(repository.root, ".git", "index"));
     expect(afterStatus.stdout).toBe(beforeStatus.stdout);
     expect(afterIndex).toEqual(beforeIndex);
@@ -129,14 +150,17 @@ describe("buildSnapshotPair", () => {
     await repository.write("new.ts", "export const created = true;\n");
     await repository.git(["add", "--", "new.ts"]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
     expect(snapshots.baselineRef).toBeNull();
     expect(await readdir(snapshots.baselineDir)).toEqual([]);
-    expect(await readFile(join(snapshots.targetDir, "new.ts"), "utf8")).toContain(
-      "created = true"
-    );
+    expect(
+      await readFile(join(snapshots.targetDir, "new.ts"), "utf8"),
+    ).toContain("created = true");
   });
 
   it("represents additions, deletions, renames, modes, and paths with spaces", async () => {
@@ -148,42 +172,75 @@ describe("buildSnapshotPair", () => {
 
     await rm(join(repository.root, "delete.ts"));
     await repository.git(["mv", "rename-old.ts", "rename new.ts"]);
-    await repository.write("path with spaces.ts", "export const spaced = true;\n");
+    await repository.write(
+      "path with spaces.ts",
+      "export const spaced = true;\n",
+    );
     await chmod(join(repository.root, "script.sh"), 0o755);
     await repository.git(["add", "--all"]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
-    expect(await pathExists(join(snapshots.baselineDir, "delete.ts"))).toBe(true);
-    expect(await pathExists(join(snapshots.targetDir, "delete.ts"))).toBe(false);
-    expect(await pathExists(join(snapshots.baselineDir, "rename-old.ts"))).toBe(true);
-    expect(await pathExists(join(snapshots.targetDir, "rename-old.ts"))).toBe(false);
-    expect(await pathExists(join(snapshots.targetDir, "rename new.ts"))).toBe(true);
-    expect(await pathExists(join(snapshots.targetDir, "path with spaces.ts"))).toBe(true);
+    expect(await pathExists(join(snapshots.baselineDir, "delete.ts"))).toBe(
+      true,
+    );
+    expect(await pathExists(join(snapshots.targetDir, "delete.ts"))).toBe(
+      false,
+    );
+    expect(await pathExists(join(snapshots.baselineDir, "rename-old.ts"))).toBe(
+      true,
+    );
+    expect(await pathExists(join(snapshots.targetDir, "rename-old.ts"))).toBe(
+      false,
+    );
+    expect(await pathExists(join(snapshots.targetDir, "rename new.ts"))).toBe(
+      true,
+    );
+    expect(
+      await pathExists(join(snapshots.targetDir, "path with spaces.ts")),
+    ).toBe(true);
     if (process.platform !== "win32") {
-      expect((await lstat(join(snapshots.targetDir, "script.sh"))).mode & 0o111).not.toBe(0);
+      expect(
+        (await lstat(join(snapshots.targetDir, "script.sh"))).mode & 0o111,
+      ).not.toBe(0);
     }
   });
 
-  it.runIf(process.platform !== "win32")("preserves staged symbolic links", async () => {
-    const repository = await createGitRepository();
-    await repository.write("target.txt", "target\n");
-    await symlink("target.txt", join(repository.root, "link.txt"));
-    await repository.git(["add", "--", "target.txt", "link.txt"]);
+  it.runIf(process.platform !== "win32")(
+    "preserves staged symbolic links",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write("target.txt", "target\n");
+      await symlink("target.txt", join(repository.root, "link.txt"));
+      await repository.git(["add", "--", "target.txt", "link.txt"]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
-    onTestFinished(snapshots.cleanup);
+      const snapshots = await buildSnapshotPair(
+        repository.root,
+        new GitClient(repository.root),
+      );
+      onTestFinished(snapshots.cleanup);
 
-    expect((await lstat(join(snapshots.targetDir, "link.txt"))).isSymbolicLink()).toBe(true);
-    expect(await readFile(join(snapshots.targetDir, "link.txt"), "utf8")).toBe("target\n");
-  });
+      expect(
+        (await lstat(join(snapshots.targetDir, "link.txt"))).isSymbolicLink(),
+      ).toBe(true);
+      expect(
+        await readFile(join(snapshots.targetDir, "link.txt"), "utf8"),
+      ).toBe("target\n");
+    },
+  );
 
   it("cleans only its temporary parent and cleanup is idempotent", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = 1;\n");
     await repository.git(["add", "--", "value.ts"]);
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     const temporaryParent = join(snapshots.targetDir, "..");
 
     await snapshots.cleanup();
@@ -207,7 +264,7 @@ describe("buildSnapshotPair", () => {
     expect(merge.exitCode).not.toBe(0);
 
     await expect(
-      buildSnapshotPair(repository.root, new GitClient(repository.root))
+      buildSnapshotPair(repository.root, new GitClient(repository.root)),
     ).rejects.toMatchObject({ code: "UNRESOLVED_INDEX" });
   });
 
@@ -220,15 +277,18 @@ describe("buildSnapshotPair", () => {
       "update-index",
       "--add",
       "--cacheinfo",
-      `160000,${head.stdout},vendor/demo`
+      `160000,${head.stdout},vendor/demo`,
     ]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
     expect(snapshots.unsupportedEntries).toContainEqual({
       path: "vendor/demo",
-      kind: "submodule"
+      kind: "submodule",
     });
   });
 
@@ -236,17 +296,23 @@ describe("buildSnapshotPair", () => {
     const repository = await createGitRepository();
     await repository.write(
       "large.dat",
-      "version https://git-lfs.github.com/spec/v1\noid sha256:0123456789abcdef\nsize 42\n"
+      "version https://git-lfs.github.com/spec/v1\noid sha256:0123456789abcdef\nsize 42\n",
     );
-    await writeFile(join(repository.root, "binary.dat"), Buffer.from([0x7a, 0x00, 0x62]));
+    await writeFile(
+      join(repository.root, "binary.dat"),
+      Buffer.from([0x7a, 0x00, 0x62]),
+    );
     await repository.git(["add", "--", "large.dat", "binary.dat"]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
     expect(snapshots.unsupportedEntries).toEqual([
       { path: "binary.dat", kind: "binary" },
-      { path: "large.dat", kind: "git-lfs-pointer" }
+      { path: "large.dat", kind: "git-lfs-pointer" },
     ]);
   });
 
@@ -255,10 +321,15 @@ describe("buildSnapshotPair", () => {
     await repository.write("intent.ts", "export const future = true;\n");
     await repository.git(["add", "--intent-to-add", "--", "intent.ts"]);
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
 
-    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(false);
+    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(
+      false,
+    );
     expect(snapshots.unsupportedEntries).toEqual([]);
   });
 
@@ -272,17 +343,22 @@ describe("buildSnapshotPair", () => {
     await repository.git(["add", "--intent-to-add", "--", "intent.ts"]);
     await rm(join(repository.root, "intent.ts"));
 
-    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
     onTestFinished(snapshots.cleanup);
     const inspection = await inspectRepository(snapshots.targetDir);
 
     expect(await readFile(join(snapshots.targetDir, "normal.ts"), "utf8")).toBe(
-      "export const staged = true;\n"
+      "export const staged = true;\n",
     );
-    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(false);
-    expect(inspection.workspaces.flatMap(({ sourceFiles }) => sourceFiles)).toEqual([
-      "normal.ts"
-    ]);
+    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(
+      false,
+    );
+    expect(
+      inspection.workspaces.flatMap(({ sourceFiles }) => sourceFiles),
+    ).toEqual(["normal.ts"]);
     expect(snapshots.unsupportedEntries).toEqual([]);
   });
 });

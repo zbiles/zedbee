@@ -184,14 +184,11 @@ const checksSchema = z
 
 const reportingSchema = z
   .object({
-    sourceExcerpts: z
-      .enum(["never", "interactive", "always"])
-      .optional()
-      .meta({
-        description:
-          "Include exact staged source excerpts never, only in Ink, or in every report format.",
-        default: "interactive",
-      }),
+    sourceExcerpts: z.enum(["never", "interactive", "always"]).optional().meta({
+      description:
+        "Include exact staged source excerpts never, only in Ink, or in every report format.",
+      default: "interactive",
+    }),
   })
   .strict();
 

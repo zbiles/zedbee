@@ -41,13 +41,16 @@ export interface ScanCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   scan(options: RunScanOptions): Promise<ScanReport>;
   renderInk(report: ScanReport, options: InkRenderOptions): Promise<void>;
-  scanInk?(options: RunScanOptions, renderOptions: InkRenderOptions): Promise<ScanReport>;
+  scanInk?(
+    options: RunScanOptions,
+    renderOptions: InkRenderOptions,
+  ): Promise<ScanReport>;
 }
 
 export function selectOutputFormat(
   requested: RequestedOutputFormat,
   stdinIsTTY: boolean,
-  stdoutIsTTY: boolean
+  stdoutIsTTY: boolean,
 ): OutputFormat {
   if (requested !== "auto") {
     return requested;
@@ -59,7 +62,10 @@ export function signalExitCode(signal: "SIGINT" | "SIGTERM"): 130 | 143 {
   return signal === "SIGINT" ? 130 : 143;
 }
 
-function validConfigPath(repositoryRoot: string, requested: string): string | undefined {
+function validConfigPath(
+  repositoryRoot: string,
+  requested: string,
+): string | undefined {
   const candidate = resolve(repositoryRoot, requested);
   const fromRoot = relative(repositoryRoot, candidate);
   if (
@@ -76,37 +82,46 @@ function validConfigPath(repositoryRoot: string, requested: string): string | un
 
 const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {
   async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"])).stdout;
+    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
+      .stdout;
   },
   scan: runScan,
   async renderInk(report, options) {
-    process.stdout.write(renderText(report, { width: options.width, color: options.color }));
+    process.stdout.write(
+      renderText(report, { width: options.width, color: options.color }),
+    );
   },
   async scanInk(options, renderOptions) {
     const { runInkScan } = await import("../ui/render-ink.js");
     return runInkScan(options, renderOptions);
-  }
+  },
 };
 
 export async function executeScanCommand(
   options: ScanCommandOptions,
   io: ScanCommandIO,
-  dependencies: ScanCommandDependencies = DEFAULT_DEPENDENCIES
+  dependencies: ScanCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 1 | 2> {
   try {
-    const repositoryRoot = await dependencies.resolveRepositoryRoot(options.cwd);
+    const repositoryRoot = await dependencies.resolveRepositoryRoot(
+      options.cwd,
+    );
     const configPath =
       options.configPath === undefined
         ? undefined
         : validConfigPath(repositoryRoot, options.configPath);
     if (options.configPath !== undefined && configPath === undefined) {
       io.writeStderr(
-        "Zedbee configuration must be a .jsonc file inside the repository.\n"
+        "Zedbee configuration must be a .jsonc file inside the repository.\n",
       );
       return 2;
     }
 
-    const format = selectOutputFormat(options.format, io.stdinIsTTY, io.stdoutIsTTY);
+    const format = selectOutputFormat(
+      options.format,
+      io.stdinIsTTY,
+      io.stdoutIsTTY,
+    );
     const scanOptions: RunScanOptions = {
       repositoryRoot,
       reportingSurface: format,
@@ -114,13 +129,13 @@ export async function executeScanCommand(
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
-      ...(options.signal === undefined ? {} : { signal: options.signal })
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
     const color = options.color && io.env.NO_COLOR === undefined;
     const inkOptions = {
       color,
       animations: options.animations,
-      width: io.width
+      width: io.width,
     };
 
     if (format === "ink" && dependencies.scanInk !== undefined) {

@@ -10,9 +10,7 @@ export interface IncompleteResultInput {
   readonly remediation: string;
 }
 
-export function incompleteResult(
-  input: IncompleteResultInput,
-): CheckResult {
+export function incompleteResult(input: IncompleteResultInput): CheckResult {
   return {
     checkId: input.checkId,
     ...(input.target === undefined ? {} : { target: input.target }),

@@ -1,6 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { format } from "prettier";
 import { z } from "zod";
 import { configFileSchema } from "./schema.js";
 
@@ -29,13 +30,16 @@ export function generateConfigJsonSchema(): ConfigJsonSchema {
   return schema;
 }
 
-export function serializeConfigJsonSchema(): string {
-  return `${JSON.stringify(generateConfigJsonSchema(), null, 2)}\n`;
+export async function serializeConfigJsonSchema(): Promise<string> {
+  return format(JSON.stringify(generateConfigJsonSchema(), null, 2), {
+    parser: "json",
+    endOfLine: "lf",
+  });
 }
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
-  const generated = serializeConfigJsonSchema();
+  const generated = await serializeConfigJsonSchema();
 
   if (mode === "--write") {
     await writeFile(schemaPath, generated, "utf8");

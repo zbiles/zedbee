@@ -4,11 +4,13 @@ import {
   selectOutputFormat,
   signalExitCode,
   type ScanCommandDependencies,
-  type ScanCommandIO
+  type ScanCommandIO,
 } from "../../src/commands/scan.js";
 import { createReport } from "../helpers/scan-report.js";
 
-function io(tty: boolean): ScanCommandIO & { stdout: string[]; stderr: string[] } {
+function io(
+  tty: boolean,
+): ScanCommandIO & { stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];
   const stderr: string[] = [];
   return {
@@ -19,17 +21,17 @@ function io(tty: boolean): ScanCommandIO & { stdout: string[]; stderr: string[] 
     stdout,
     stderr,
     writeStdout: (value) => stdout.push(value),
-    writeStderr: (value) => stderr.push(value)
+    writeStderr: (value) => stderr.push(value),
   };
 }
 
 function dependencies(
-  renderInk: ScanCommandDependencies["renderInk"] = async () => undefined
+  renderInk: ScanCommandDependencies["renderInk"] = async () => undefined,
 ): ScanCommandDependencies {
   return {
     resolveRepositoryRoot: async () => "/repo",
     scan: async () => createReport(),
-    renderInk
+    renderInk,
   };
 }
 
@@ -58,16 +60,16 @@ describe("executeScanCommand", () => {
         cwd: "/repo",
         format: "auto",
         color: false,
-        animations: false
+        animations: false,
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(0);
     expect(renders).toHaveLength(1);
     expect(renders[0]).toMatchObject({
-      options: { color: false, animations: false, width: 80 }
+      options: { color: false, animations: false, width: 80 },
     });
     expect(terminal.stdout).toEqual([]);
   });
@@ -87,13 +89,13 @@ describe("executeScanCommand", () => {
     const exitCode = await executeScanCommand(
       { cwd: "/repo", format: "auto", color: true, animations: false },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(0);
     expect(receivedOptions).toMatchObject({
       scanOptions: { repositoryRoot: "/repo", reportingSurface: "ink" },
-      renderOptions: { color: true, animations: false, width: 80 }
+      renderOptions: { color: true, animations: false, width: 80 },
     });
   });
 
@@ -112,16 +114,16 @@ describe("executeScanCommand", () => {
         format: "auto",
         color: true,
         animations: true,
-        sourceExcerpts: "exclude"
+        sourceExcerpts: "exclude",
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(0);
     expect(received).toMatchObject({
       reportingSurface: "text",
-      sourceExcerpts: "exclude"
+      sourceExcerpts: "exclude",
     });
     expect(terminal.stdout.join("")).toContain("BEE-UTIFUL");
     expect(terminal.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/);
@@ -145,17 +147,17 @@ describe("executeScanCommand", () => {
         format: "json",
         color: true,
         animations: true,
-        sourceExcerpts: "include"
+        sourceExcerpts: "include",
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(1);
     expect(mounted).toBe(false);
     expect(received).toMatchObject({
       reportingSurface: "json",
-      sourceExcerpts: "include"
+      sourceExcerpts: "include",
     });
     expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({ exitCode: 1 });
   });
@@ -170,7 +172,7 @@ describe("executeScanCommand", () => {
       terminal,
       dependencies(async (_report, options) => {
         renders.push(options);
-      })
+      }),
     );
 
     expect(renders).toEqual([{ color: false, animations: true, width: 80 }]);
@@ -191,16 +193,16 @@ describe("executeScanCommand", () => {
         format: "text",
         color: false,
         animations: false,
-        configPath: "../outside.jsonc"
+        configPath: "../outside.jsonc",
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(2);
     expect(scanned).toBe(false);
     expect(terminal.stderr).toEqual([
-      "Zedbee configuration must be a .jsonc file inside the repository.\n"
+      "Zedbee configuration must be a .jsonc file inside the repository.\n",
     ]);
   });
 
@@ -219,10 +221,10 @@ describe("executeScanCommand", () => {
         format: "text",
         color: false,
         animations: false,
-        configPath: "config/zedbee.jsonc"
+        configPath: "config/zedbee.jsonc",
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(exitCode).toBe(0);
@@ -245,10 +247,10 @@ describe("executeScanCommand", () => {
         format: "text",
         color: false,
         animations: false,
-        signal: controller.signal
+        signal: controller.signal,
       },
       terminal,
-      deps
+      deps,
     );
 
     expect(receivedSignal).toBe(controller.signal);

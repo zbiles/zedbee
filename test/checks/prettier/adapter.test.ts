@@ -3,7 +3,10 @@ import type { ResolvedConfig } from "../../../src/config/schema.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import { prettierAdapter } from "../../../src/checks/prettier/adapter.js";
 import { GitClient } from "../../../src/git/client.js";
-import { readStagedChangeSet, type ChangeSet } from "../../../src/git/change-set.js";
+import {
+  readStagedChangeSet,
+  type ChangeSet,
+} from "../../../src/git/change-set.js";
 import { buildSnapshotPair } from "../../../src/git/snapshot.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../../../src/inspection/types.js";
@@ -13,7 +16,7 @@ function config(when: "relevant" | "always" = "relevant"): ResolvedConfig {
   return resolveConfig({
     schemaVersion: 1,
     profile: "recommended",
-    checks: { formatting: { when } }
+    checks: { formatting: { when } },
   });
 }
 
@@ -25,15 +28,17 @@ function changeSet(files: ChangeSet["files"]): ChangeSet {
       return (
         files
           .get(file.replaceAll("\\", "/"))
-          ?.addedRanges.some((range) => line >= range.start && line <= range.end) ?? false
+          ?.addedRanges.some(
+            (range) => line >= range.start && line <= range.end,
+          ) ?? false
       );
-    }
+    },
   };
 }
 
 async function runAdapter(
   repository: Awaited<ReturnType<typeof createGitRepository>>,
-  when: "relevant" | "always" = "relevant"
+  when: "relevant" | "always" = "relevant",
 ) {
   const git = new GitClient(repository.root);
   const stagedChanges = await readStagedChangeSet(git);
@@ -49,7 +54,7 @@ async function runAdapter(
     targetInspection: await inspectRepository(snapshots.targetDir),
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: resolvedConfig.checks.formatting,
-    signal: new AbortController().signal
+    signal: new AbortController().signal,
   });
 }
 
@@ -64,9 +69,9 @@ function inspection(snapshotRoot = "/tmp/snapshot"): RepositoryInspection {
         manifestPath: "package.json",
         sourceFiles: [],
         tsconfigPaths: [],
-        environments: ["javascript"]
-      }
-    ]
+        environments: ["javascript"],
+      },
+    ],
   };
 }
 
@@ -76,7 +81,7 @@ function inspectionContext(changes: ChangeSet, resolvedConfig = config()) {
     changeSet: changes,
     config: resolvedConfig,
     baselineInspection: inspection("/tmp/baseline"),
-    targetInspection: inspection("/tmp/target")
+    targetInspection: inspection("/tmp/target"),
   };
 }
 
@@ -89,25 +94,27 @@ describe("prettierAdapter.inspect", () => {
           {
             path: "src/value.ts",
             status: "modified" as const,
-            addedRanges: [{ start: 1, end: 1 }]
-          }
+            addedRanges: [{ start: 1, end: 1 }],
+          },
         ],
         [
           "src/removed.tsx",
           {
             path: "src/removed.tsx",
             status: "deleted" as const,
-            addedRanges: []
-          }
-        ]
-      ])
+            addedRanges: [],
+          },
+        ],
+      ]),
     );
 
-    await expect(prettierAdapter.inspect(inspectionContext(supported))).resolves.toEqual({
+    await expect(
+      prettierAdapter.inspect(inspectionContext(supported)),
+    ).resolves.toEqual({
       applies: true,
       executionClass: "lightweight",
       requiresBaseline: false,
-      targets: [{ id: ".", kind: "repository", relativeRoot: "." }]
+      targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
     });
 
     const onlyDeletion = changeSet(
@@ -117,43 +124,58 @@ describe("prettierAdapter.inspect", () => {
           {
             path: "src/removed.tsx",
             status: "deleted" as const,
-            addedRanges: []
-          }
-        ]
-      ])
+            addedRanges: [],
+          },
+        ],
+      ]),
     );
-    await expect(prettierAdapter.inspect(inspectionContext(onlyDeletion))).resolves.toEqual({
+    await expect(
+      prettierAdapter.inspect(inspectionContext(onlyDeletion)),
+    ).resolves.toEqual({
       applies: false,
-      reason: "No supported staged files"
+      reason: "No supported staged files",
     });
   });
 
-  it.each(["js", "jsx", "ts", "tsx", "json", "jsonc", "css", "md", "markdown", "yml", "yaml"])(
-    "recognizes .%s files",
-    async (extension) => {
-      const file = `file.${extension}`;
-      const changes = changeSet(
-        new Map([
-          [
-            file,
-            {
-              path: file,
-              status: "added" as const,
-              addedRanges: [{ start: 1, end: 1 }]
-            }
-          ]
-        ])
-      );
+  it.each([
+    "js",
+    "jsx",
+    "ts",
+    "tsx",
+    "json",
+    "jsonc",
+    "css",
+    "md",
+    "markdown",
+    "yml",
+    "yaml",
+  ])("recognizes .%s files", async (extension) => {
+    const file = `file.${extension}`;
+    const changes = changeSet(
+      new Map([
+        [
+          file,
+          {
+            path: file,
+            status: "added" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ],
+      ]),
+    );
 
-      await expect(prettierAdapter.inspect(inspectionContext(changes))).resolves.toMatchObject({
-        applies: true
-      });
-    }
-  );
+    await expect(
+      prettierAdapter.inspect(inspectionContext(changes)),
+    ).resolves.toMatchObject({
+      applies: true,
+    });
+  });
 
   it("applies optimistically under always policy", async () => {
     await expect(
-      prettierAdapter.inspect(inspectionContext(changeSet(new Map()), config("always")))
+      prettierAdapter.inspect(
+        inspectionContext(changeSet(new Map()), config("always")),
+      ),
     ).resolves.toMatchObject({ applies: true });
   });
 });
@@ -163,7 +185,10 @@ describe("prettierAdapter.run", () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "const existing={value:1}\n");
     await repository.commitAll("existing debt");
-    await repository.write("value.ts", "const existing={value:1}\nexport const added = true;\n");
+    await repository.write(
+      "value.ts",
+      "const existing={value:1}\nexport const added = true;\n",
+    );
     await repository.git(["add", "--", "value.ts"]);
 
     const result = await runAdapter(repository);
@@ -177,7 +202,7 @@ describe("prettierAdapter.run", () => {
     await repository.commitAll("formatted base");
     await repository.write(
       "value.ts",
-      "export const existing = true;\nexport const staged={value:1}\n"
+      "export const existing = true;\nexport const staged={value:1}\n",
     );
     await repository.git(["add", "--", "value.ts"]);
 
@@ -193,8 +218,8 @@ describe("prettierAdapter.run", () => {
       attribution: {
         kind: "transformation-diff",
         staged: true,
-        evidence: ["Prettier transformation overlaps staged target lines 2-2"]
-      }
+        evidence: ["Prettier transformation overlaps staged target lines 2-2"],
+      },
     });
     expect(result.findings[0]?.id).toMatch(/^[a-f0-9]{64}$/);
   });
@@ -224,7 +249,7 @@ describe("prettierAdapter.run", () => {
       checkId: "formatting",
       status: "skipped",
       findings: [],
-      skipReason: "No supported target files"
+      skipReason: "No supported target files",
     });
   });
 
@@ -244,8 +269,9 @@ describe("prettierAdapter.run", () => {
         code: "PRETTIER_FAILED",
         message: "Prettier could not analyze broken.json.",
         path: "broken.json",
-        remediation: "Fix the parser or file-reading error, then stage the result."
-      }
+        remediation:
+          "Fix the parser or file-reading error, then stage the result.",
+      },
     });
     expect(JSON.stringify(result)).not.toContain(invalidSource);
     expect(JSON.stringify(result)).not.toContain("do-not-render");

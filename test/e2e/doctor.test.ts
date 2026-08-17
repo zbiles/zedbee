@@ -75,40 +75,32 @@ async function run(root: string, command: "checks" | "doctor") {
 }
 
 describe("diagnostic command surface", () => {
-  it(
-    "invokes doctor without running a scan and emits every deterministic diagnostic",
-    async () => {
-      const fixture = await repository();
-      const result = await run(fixture.root, "doctor");
-      const report = JSON.parse(result.stdout) as {
-        exitCode: number;
-        diagnostics: Array<{ id: string; message: string }>;
-      };
+  it("invokes doctor without running a scan and emits every deterministic diagnostic", async () => {
+    const fixture = await repository();
+    const result = await run(fixture.root, "doctor");
+    const report = JSON.parse(result.stdout) as {
+      exitCode: number;
+      diagnostics: Array<{ id: string; message: string }>;
+    };
 
-      expect(result.exitCode).toBe(report.exitCode);
-      expect(report.diagnostics.map(({ id }) => id)).toEqual(
-        DOCTOR_DIAGNOSTIC_IDS,
-      );
-      expect(JSON.stringify(report)).not.toContain("zedbee-snapshot-");
-      expect(JSON.stringify(report)).not.toContain(fixture.root);
-    },
-    30_000,
-  );
+    expect(result.exitCode).toBe(report.exitCode);
+    expect(report.diagnostics.map(({ id }) => id)).toEqual(
+      DOCTOR_DIAGNOSTIC_IDS,
+    );
+    expect(JSON.stringify(report)).not.toContain("zedbee-snapshot-");
+    expect(JSON.stringify(report)).not.toContain(fixture.root);
+  }, 30_000);
 
-  it(
-    "invokes checks and lists the canonical configured check catalog",
-    async () => {
-      const fixture = await repository();
-      const result = await run(fixture.root, "checks");
-      const report = JSON.parse(result.stdout) as {
-        exitCode: number;
-        checks: Array<{ id: string }>;
-      };
+  it("invokes checks and lists the canonical configured check catalog", async () => {
+    const fixture = await repository();
+    const result = await run(fixture.root, "checks");
+    const report = JSON.parse(result.stdout) as {
+      exitCode: number;
+      checks: Array<{ id: string }>;
+    };
 
-      expect(result.exitCode).toBe(0);
-      expect(report.exitCode).toBe(0);
-      expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
-    },
-    30_000,
-  );
+    expect(result.exitCode).toBe(0);
+    expect(report.exitCode).toBe(0);
+    expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
+  }, 30_000);
 });

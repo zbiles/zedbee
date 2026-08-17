@@ -191,6 +191,6 @@ describe("Zedbee configuration JSON Schema", () => {
       "utf8",
     );
 
-    expect(checkedIn).toBe(serializeConfigJsonSchema());
+    expect(checkedIn).toBe(await serializeConfigJsonSchema());
   });
 });

@@ -20,7 +20,7 @@ export interface TestGitRepository {
 }
 
 export async function createGitRepository(
-  prefix = "zedbee-test-repo-"
+  prefix = "zedbee-test-repo-",
 ): Promise<TestGitRepository> {
   const root = await mkdtemp(join(tmpdir(), prefix));
   let cleaned = false;
@@ -29,12 +29,12 @@ export async function createGitRepository(
     const result = await execa("git", args, {
       cwd: root,
       reject: false,
-      stdin: "ignore"
+      stdin: "ignore",
     });
     return {
       stdout: result.stdout,
       stderr: result.stderr,
-      exitCode: result.exitCode ?? -1
+      exitCode: result.exitCode ?? -1,
     };
   };
 
@@ -61,10 +61,12 @@ export async function createGitRepository(
       await git(["add", "--all"]);
       const result = await git(["commit", "--message", message]);
       if (result.exitCode !== 0) {
-        throw new Error(`Test fixture commit failed with exit ${result.exitCode}.`);
+        throw new Error(
+          `Test fixture commit failed with exit ${result.exitCode}.`,
+        );
       }
     },
-    cleanup
+    cleanup,
   };
 
   await git(["init", "--initial-branch=main"]);

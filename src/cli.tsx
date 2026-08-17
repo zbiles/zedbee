@@ -126,12 +126,15 @@ export async function main(
         .default("auto"),
     )
     .addOption(
-      new Option("--include-source", "include exact staged source excerpts")
-        .conflicts("source"),
+      new Option(
+        "--include-source",
+        "include exact staged source excerpts",
+      ).conflicts("source"),
     )
     .addOption(
-      new Option("--no-source", "omit exact staged source excerpts")
-        .conflicts("includeSource"),
+      new Option("--no-source", "omit exact staged source excerpts").conflicts(
+        "includeSource",
+      ),
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--no-color", "disable color")

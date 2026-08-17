@@ -1,10 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import {
-  parse,
-  printParseErrorCode,
-  type ParseError
-} from "jsonc-parser";
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { resolveConfig } from "./profiles.js";
 import { configFileSchema, type ResolvedConfig } from "./schema.js";
 
@@ -14,7 +10,7 @@ const UNSUPPORTED_CONFIG_FILENAMES = [
   ".zedbeerc.cjs",
   ".zedbeerc.mjs",
   ".zedbeerc.ts",
-  ".zedbeerc.json"
+  ".zedbeerc.json",
 ] as const;
 
 export type ConfigErrorCode = "CONFIG_INVALID" | "CONFIG_UNSUPPORTED";
@@ -29,7 +25,7 @@ export class ConfigError extends Error {
     code: ConfigErrorCode,
     message: string,
     configPath: string,
-    location?: { line: number; column: number }
+    location?: { line: number; column: number },
   ) {
     super(message);
     this.name = "ConfigError";
@@ -51,36 +47,44 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-function lineAndColumn(source: string, offset: number): { line: number; column: number } {
+function lineAndColumn(
+  source: string,
+  offset: number,
+): { line: number; column: number } {
   const before = source.slice(0, offset);
   const lines = before.split("\n");
   return {
     line: lines.length,
-    column: (lines.at(-1)?.length ?? 0) + 1
+    column: (lines.at(-1)?.length ?? 0) + 1,
   };
 }
 
-function invalidJsonc(configPath: string, source: string, error: ParseError): ConfigError {
+function invalidJsonc(
+  configPath: string,
+  source: string,
+  error: ParseError,
+): ConfigError {
   const location = lineAndColumn(source, error.offset);
   return new ConfigError(
     "CONFIG_INVALID",
     `Invalid Zedbee configuration at ${basename(configPath)}:${location.line}:${location.column} (${printParseErrorCode(error.error)}).`,
     configPath,
-    location
+    location,
   );
 }
 
 export async function loadConfig(
   repositoryRoot: string,
-  explicitConfigPath?: string
+  explicitConfigPath?: string,
 ): Promise<ResolvedConfig> {
-  const configPath = explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
+  const configPath =
+    explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
   if (!(await exists(configPath))) {
     if (explicitConfigPath !== undefined) {
       throw new ConfigError(
         "CONFIG_INVALID",
         `Zedbee configuration file ${basename(configPath)} does not exist.`,
-        configPath
+        configPath,
       );
     }
     for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
@@ -89,7 +93,7 @@ export async function loadConfig(
         throw new ConfigError(
           "CONFIG_UNSUPPORTED",
           `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
-          unsupportedPath
+          unsupportedPath,
         );
       }
     }
@@ -100,7 +104,7 @@ export async function loadConfig(
   const parseErrors: ParseError[] = [];
   const value: unknown = parse(source, parseErrors, {
     allowTrailingComma: true,
-    disallowComments: false
+    disallowComments: false,
   });
 
   const firstParseError = parseErrors[0];
@@ -114,7 +118,7 @@ export async function loadConfig(
     throw new ConfigError(
       "CONFIG_INVALID",
       `Invalid Zedbee configuration at ${basename(configPath)} (${issuePath}).`,
-      configPath
+      configPath,
     );
   }
 

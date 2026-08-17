@@ -5,7 +5,10 @@ import type { CheckRunContext, LegacyCheckResultAdapter } from "../adapter.js";
 import type { CheckResult, Finding } from "../../core/types.js";
 import type { ChangedFile } from "../../git/change-set.js";
 import { formattingFingerprint } from "./fingerprint.js";
-import { formattingTransformationRanges, intersectRanges } from "./format-diff.js";
+import {
+  formattingTransformationRanges,
+  intersectRanges,
+} from "./format-diff.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
 
@@ -20,26 +23,35 @@ const PARSERS = {
   ".ts": "typescript",
   ".tsx": "typescript",
   ".yaml": "yaml",
-  ".yml": "yaml"
+  ".yml": "yaml",
 } as const;
 
 type SupportedExtension = keyof typeof PARSERS;
 
-function parserFor(file: string): (typeof PARSERS)[SupportedExtension] | undefined {
+function parserFor(
+  file: string,
+): (typeof PARSERS)[SupportedExtension] | undefined {
   return PARSERS[extname(file).toLowerCase() as SupportedExtension];
 }
 
 function relevantFiles(context: CheckRunContext): string[] {
   return [...context.changeSet.files.values()]
-    .filter((file) => file.status !== "deleted" && parserFor(file.path) !== undefined)
+    .filter(
+      (file) => file.status !== "deleted" && parserFor(file.path) !== undefined,
+    )
     .map((file) => file.path)
     .sort(compareCodeUnits);
 }
 
-async function allSupportedFiles(root: string, directory = root): Promise<string[]> {
+async function allSupportedFiles(
+  root: string,
+  directory = root,
+): Promise<string[]> {
   const files: string[] = [];
   const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries.sort((left, right) => compareCodeUnits(left.name, right.name))) {
+  for (const entry of entries.sort((left, right) =>
+    compareCodeUnits(left.name, right.name),
+  )) {
     const fullPath = join(directory, entry.name);
     if (entry.isDirectory()) {
       files.push(...(await allSupportedFiles(root, fullPath)));
@@ -53,7 +65,10 @@ async function allSupportedFiles(root: string, directory = root): Promise<string
   return files;
 }
 
-function stagedRanges(context: CheckRunContext, file: string): ChangedFile["addedRanges"] {
+function stagedRanges(
+  context: CheckRunContext,
+  file: string,
+): ChangedFile["addedRanges"] {
   return context.changeSet.files.get(file)?.addedRanges ?? [];
 }
 
@@ -65,12 +80,15 @@ function finding(file: string, startLine: number, endLine: number): Finding {
     severity: "error",
     message: "Staged code does not match Zedbee's managed Prettier format.",
     location: { file, startLine, endLine },
-    remediation: "Format the staged lines with Prettier, then stage the result.",
+    remediation:
+      "Format the staged lines with Prettier, then stage the result.",
     attribution: {
       kind: "transformation-diff",
       staged: true,
-      evidence: [`Prettier transformation overlaps staged target lines ${startLine}-${endLine}`]
-    }
+      evidence: [
+        `Prettier transformation overlaps staged target lines ${startLine}-${endLine}`,
+      ],
+    },
   };
 }
 
@@ -80,7 +98,7 @@ function skipped(): CheckResult {
     status: "skipped",
     durationMs: 0,
     findings: [],
-    skipReason: "No supported target files"
+    skipReason: "No supported target files",
   };
 }
 
@@ -96,18 +114,18 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
         applies: true,
         executionClass: "lightweight",
         requiresBaseline: false,
-        targets: [{ id: ".", kind: "repository", relativeRoot: "." }]
+        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
       };
     }
     const applies = [...context.changeSet.files.values()].some(
-      (file) => file.status !== "deleted" && parserFor(file.path) !== undefined
+      (file) => file.status !== "deleted" && parserFor(file.path) !== undefined,
     );
     return applies
       ? {
           applies: true,
           executionClass: "lightweight",
           requiresBaseline: false,
-          targets: [{ id: ".", kind: "repository", relativeRoot: "." }]
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
         }
       : { applies: false, reason: "No supported staged files" };
   },
@@ -117,7 +135,9 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       context.config.checks.formatting.when === "always"
         ? await allSupportedFiles(context.snapshots.targetDir)
         : relevantFiles(context);
-    const unsupported = new Set(context.snapshots.unsupportedEntries.map((entry) => entry.path));
+    const unsupported = new Set(
+      context.snapshots.unsupportedEntries.map((entry) => entry.path),
+    );
     files = files.filter((file) => !unsupported.has(file));
     if (files.length === 0) {
       return skipped();
@@ -141,11 +161,19 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
         }
         const formatted = await prettier.format(source, {
           filepath: file,
-          parser
+          parser,
         });
-        const transformations = formattingTransformationRanges(source, formatted);
-        const attributed = intersectRanges(transformations, stagedRanges(context, file));
-        findings.push(...attributed.map((range) => finding(file, range.start, range.end)));
+        const transformations = formattingTransformationRanges(
+          source,
+          formatted,
+        );
+        const attributed = intersectRanges(
+          transformations,
+          stagedRanges(context, file),
+        );
+        findings.push(
+          ...attributed.map((range) => finding(file, range.start, range.end)),
+        );
       } catch {
         return incompleteResult({
           checkId: "formatting",
@@ -153,7 +181,8 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           code: "PRETTIER_FAILED",
           message: `Prettier could not analyze ${file}.`,
           path: file,
-          remediation: "Fix the parser or file-reading error, then stage the result."
+          remediation:
+            "Fix the parser or file-reading error, then stage the result.",
         });
       }
     }
@@ -162,7 +191,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       checkId: "formatting",
       status: "completed",
       durationMs: 0,
-      findings
+      findings,
     };
-  }
+  },
 };

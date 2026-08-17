@@ -4,10 +4,13 @@ import type { ChangeSet } from "../git/change-set.js";
 const NO_ATTRIBUTION = {
   kind: "none",
   staged: false,
-  evidence: []
+  evidence: [],
 } as const;
 
-export function attributeByRange(finding: Finding, changeSet: ChangeSet): Finding {
+export function attributeByRange(
+  finding: Finding,
+  changeSet: ChangeSet,
+): Finding {
   const location = finding.location;
   if (location === undefined || location.startLine === undefined) {
     return { ...finding, attribution: NO_ATTRIBUTION };
@@ -18,7 +21,7 @@ export function attributeByRange(finding: Finding, changeSet: ChangeSet): Findin
   const endLine = location.endLine ?? startLine;
   const changedFile = changeSet.files.get(path);
   const overlap = changedFile?.addedRanges.find(
-    (range) => startLine <= range.end && endLine >= range.start
+    (range) => startLine <= range.end && endLine >= range.start,
   );
   if (overlap === undefined) {
     return { ...finding, attribution: NO_ATTRIBUTION };
@@ -32,8 +35,8 @@ export function attributeByRange(finding: Finding, changeSet: ChangeSet): Findin
       kind: "range-overlap",
       staged: true,
       evidence: [
-        `${path}:${startLine}-${endLine} overlaps staged lines ${overlapStart}-${overlapEnd}`
-      ]
-    }
+        `${path}:${startLine}-${endLine} overlaps staged lines ${overlapStart}-${overlapEnd}`,
+      ],
+    },
   };
 }
