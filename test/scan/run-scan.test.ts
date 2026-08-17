@@ -1,10 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
 import type { CheckResult } from "../../src/core/types.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import { ConfigError } from "../../src/config/load-config.js";
 import type { GitClient } from "../../src/git/client.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
+import { SnapshotError } from "../../src/git/snapshot.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
@@ -47,6 +52,27 @@ const passing: CheckResult = {
   status: "completed",
   durationMs: 2,
   findings: [],
+};
+
+const blocking: CheckResult = {
+  checkId: "lint",
+  status: "completed",
+  durationMs: 3,
+  findings: [
+    {
+      id: "lint:value.ts:1",
+      check: "lint",
+      rule: "no-debugger",
+      severity: "error",
+      message: "Remove debugger",
+      location: { file: "value.ts", startLine: 1 },
+      attribution: {
+        kind: "range-overlap",
+        staged: true,
+        evidence: ["value.ts:1"],
+      },
+    },
+  ],
 };
 
 function dependencies(
@@ -213,18 +239,48 @@ describe("runScan", () => {
     expect(dispatchCalls).toBe(0);
   });
 
-  it("turns snapshot cleanup failure into an incomplete report", async () => {
+  it("preserves findings and disclosures when snapshot cleanup fails", async () => {
     const calls: string[] = [];
+    const created = await mkdtemp(join(tmpdir(), "zedbee-snapshot-cleanup-"));
+    const canonicalSnapshotRoot = await realpath(created);
+    onTestFinished(() => rm(canonicalSnapshotRoot, { recursive: true }));
+    const cleanupConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      failOnIncomplete: false,
+      checks: { formatting: "error", lint: "error" },
+    });
     const deps = dependencies(calls, {
+      loadConfig: async () => cleanupConfig,
       buildSnapshots: async () => ({
-        baselineDir: "/tmp/baseline",
-        targetDir: "/tmp/target",
+        baselineDir: join(canonicalSnapshotRoot, "baseline"),
+        targetDir: join(canonicalSnapshotRoot, "target"),
         baselineRef: "HEAD",
         unsupportedEntries: [],
         cleanup: async () => {
           throw new Error("sensitive cleanup failure");
         },
       }),
+      dispatch: async (_adapters, _context, options) => {
+        options?.onEvent?.({
+          type: "network-disclosure",
+          checkId: "vulnerabilities",
+          target: ".",
+          timestamp: 1,
+          services: ["api.osv.dev"],
+          metadata: ["package names", "versions"],
+        });
+        return [
+          {
+            result: passing,
+            policy: Object.freeze({ ...cleanupConfig.checks.formatting }),
+          },
+          {
+            result: blocking,
+            policy: Object.freeze({ ...cleanupConfig.checks.lint }),
+          },
+        ];
+      },
     });
 
     const report = await runScan({
@@ -232,8 +288,204 @@ describe("runScan", () => {
       dependencies: deps,
     });
 
-    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: { passed: 1, failed: 1, incomplete: 1 },
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["package names", "versions"],
+        },
+      ],
+    });
+    expect(report.checks.map(({ checkId }) => checkId)).toEqual([
+      "formatting",
+      "lint",
+      "zedbee",
+    ]);
+    expect(report.checks.at(-1)?.error).toMatchObject({
+      code: "SNAPSHOT_CLEANUP_FAILED",
+      temporaryPath: canonicalSnapshotRoot,
+      remediation:
+        "Inspect and remove the listed Zedbee snapshot, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+    });
     expect(JSON.stringify(report)).not.toContain("sensitive cleanup failure");
+  });
+
+  it.each([
+    {
+      phase: "configuration",
+      expected: {
+        code: "CONFIG_INVALID",
+        message: "Zedbee could not load a valid configuration.",
+        remediation: "Fix the Zedbee configuration and run the scan again.",
+      },
+    },
+    {
+      phase: "change discovery",
+      expected: {
+        code: "CHANGE_DISCOVERY_FAILED",
+        message: "Zedbee could not read the staged changes.",
+        remediation: "Resolve the Git index problem and run the scan again.",
+      },
+    },
+    {
+      phase: "unresolved merge entries",
+      expected: {
+        code: "UNRESOLVED_INDEX",
+        message: "Zedbee cannot scan an index with unresolved entries.",
+        remediation: "Resolve the staged merge entries and run the scan again.",
+      },
+    },
+    {
+      phase: "snapshot construction",
+      expected: {
+        code: "SNAPSHOT_CONSTRUCTION_FAILED",
+        message: "Zedbee could not construct the staged snapshots.",
+        remediation:
+          "Check the Git index and temporary-directory permissions, then retry.",
+      },
+    },
+    {
+      phase: "baseline inspection",
+      expected: {
+        code: "BASELINE_INSPECTION_FAILED",
+        message: "Zedbee could not inspect the baseline snapshot.",
+        remediation:
+          "Check the baseline repository metadata and run the scan again.",
+      },
+    },
+    {
+      phase: "target inspection",
+      expected: {
+        code: "TARGET_INSPECTION_FAILED",
+        message: "Zedbee could not inspect the staged snapshot.",
+        remediation:
+          "Check the staged repository metadata and run the scan again.",
+      },
+    },
+    {
+      phase: "dispatch",
+      expected: {
+        code: "CHECK_DISPATCH_FAILED",
+        message: "Zedbee could not dispatch the configured checks.",
+        remediation:
+          "Review the check diagnostics, run zedbee doctor, and retry.",
+      },
+    },
+  ])("reports a safe $phase diagnostic", async ({ phase, expected }) => {
+    const calls: string[] = [];
+    const deps = dependencies(calls, {
+      ...(phase === "configuration"
+        ? {
+            loadConfig: async () => {
+              throw new ConfigError(
+                "CONFIG_INVALID",
+                "private-token-123",
+                "/repo/.zedbeerc.jsonc",
+              );
+            },
+          }
+        : {}),
+      ...(phase === "change discovery"
+        ? {
+            readChangeSet: async () => {
+              throw new Error("private-token-123");
+            },
+          }
+        : {}),
+      ...(phase === "unresolved merge entries"
+        ? {
+            buildSnapshots: async () => {
+              throw new SnapshotError("UNRESOLVED_INDEX", "private-token-123");
+            },
+          }
+        : {}),
+      ...(phase === "snapshot construction"
+        ? {
+            buildSnapshots: async () => {
+              throw new Error("private-token-123");
+            },
+          }
+        : {}),
+      ...(phase === "baseline inspection"
+        ? {
+            inspectRepository: async () => {
+              throw new Error("private-token-123");
+            },
+          }
+        : {}),
+      ...(phase === "target inspection"
+        ? {
+            inspectRepository: async (snapshotRoot: string) => {
+              if (snapshotRoot.endsWith("target")) {
+                throw new Error("private-token-123");
+              }
+              return {
+                snapshotRoot,
+                packageManager: "npm" as const,
+                lockfiles: ["package-lock.json"],
+                workspaces: [],
+              };
+            },
+          }
+        : {}),
+      ...(phase === "dispatch"
+        ? {
+            dispatch: async () => {
+              throw new Error("private-token-123");
+            },
+          }
+        : {}),
+    });
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: deps,
+    });
+
+    expect(report.checks).toMatchObject([
+      {
+        checkId: "zedbee",
+        status: "incomplete",
+        error: expected,
+      },
+    ]);
+    expect(JSON.stringify(report)).not.toContain("private-token-123");
+  });
+
+  it("reports the repository-relative path for a staged Git LFS pointer", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        buildSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          unsupportedEntries: [
+            { path: "assets/large.dat", kind: "git-lfs-pointer" },
+          ],
+          cleanup: async () => undefined,
+        }),
+      }),
+    });
+
+    expect(report.checks).toMatchObject([
+      {
+        checkId: "zedbee",
+        status: "incomplete",
+        error: {
+          code: "GIT_LFS_POINTER",
+          message: "Zedbee cannot inspect a staged Git LFS pointer.",
+          path: "assets/large.dat",
+          remediation:
+            "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
+        },
+      },
+    ]);
   });
 
   it("publishes only documented result fields from an untrusted adapter", async () => {
@@ -630,6 +882,16 @@ describe("runScan", () => {
       });
 
       expect(calls.at(-1)).toBe("clean snapshots");
+      const expectedFailure =
+        failurePoint === "dispatch"
+          ? {
+              code: "CHECK_DISPATCH_FAILED",
+              message: "Zedbee could not dispatch the configured checks.",
+            }
+          : {
+              code: "POLICY_EVALUATION_FAILED",
+              message: "Zedbee could not evaluate the scan policy.",
+            };
       expect(report).toMatchObject({
         outcome: "incomplete",
         exitCode: 2,
@@ -637,10 +899,7 @@ describe("runScan", () => {
           {
             checkId: "zedbee",
             status: "incomplete",
-            error: {
-              code: "SCAN_FAILED",
-              message: "Zedbee could not complete the scan",
-            },
+            error: expectedFailure,
           },
         ],
       });
@@ -680,8 +939,8 @@ describe("runScan", () => {
           checkId: "zedbee",
           status: "incomplete",
           error: {
-            code: "SCAN_FAILED",
-            message: "Zedbee could not complete the scan",
+            code: "BASELINE_INSPECTION_FAILED",
+            message: "Zedbee could not inspect the baseline snapshot.",
           },
         },
       ],
@@ -690,10 +949,20 @@ describe("runScan", () => {
     expect(JSON.stringify(report)).not.toContain("/tmp/baseline");
   });
 
-  it("cleans snapshots before propagating an abort", async () => {
+  it("propagates an abort even when snapshot cleanup also fails", async () => {
     const calls: string[] = [];
     const controller = new AbortController();
     const deps = dependencies(calls, {
+      buildSnapshots: async () => ({
+        baselineDir: "/tmp/baseline",
+        targetDir: "/tmp/target",
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+        cleanup: async () => {
+          calls.push("clean snapshots");
+          throw new Error("sensitive cleanup failure");
+        },
+      }),
       dispatch: async () => {
         calls.push("dispatch checks");
         controller.abort();

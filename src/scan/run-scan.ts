@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import {
   cyclomaticComplexityAdapter,
@@ -16,17 +17,27 @@ import { secretsAdapter } from "../checks/secrets/adapter.js";
 import { structuralSecurityAdapter } from "../checks/structural-security/adapter.js";
 import { typescriptAdapter } from "../checks/typescript/adapter.js";
 import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
-import { loadConfig } from "../config/load-config.js";
+import { ConfigError, loadConfig } from "../config/load-config.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { summarizeChecks } from "../core/summarize.js";
-import type { CheckResult } from "../core/types.js";
 import { readStagedChangeSet, type ChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
-import { buildSnapshotPair, type SnapshotPair } from "../git/snapshot.js";
+import {
+  buildSnapshotPair,
+  SnapshotError,
+  type SnapshotPair,
+} from "../git/snapshot.js";
+import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
 import type { NetworkDisclosure, ScanReport } from "./report.js";
+import {
+  createIncompleteReport,
+  withCleanupFailure,
+  type ScanFailureInput,
+  type ScanReportContext,
+} from "./incomplete-report.js";
 import type {
   ReportingSurface,
   SourceExcerptOverride,
@@ -115,38 +126,102 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function incompleteReport(
-  repositoryRoot: string,
-  baseline: "HEAD" | null,
-  stagedFileCount: number | null,
-  startedAt: string,
-  durationMs: number,
-  networkDisclosures: readonly NetworkDisclosure[],
-): ScanReport {
-  const result: CheckResult = {
-    checkId: "zedbee",
-    status: "incomplete",
-    durationMs,
-    findings: [],
-    error: {
-      code: "SCAN_FAILED",
-      message: "Zedbee could not complete the scan",
-    },
-  };
-  return deepFreeze({
-    schemaVersion: 1,
-    outcome: "incomplete",
-    exitCode: 2,
-    repositoryRoot,
-    baseline,
-    target: "index",
-    stagedFileCount,
-    startedAt,
-    durationMs,
-    networkDisclosures,
-    summary: summarizeChecks([result]),
-    checks: [result],
-  });
+type ActiveScanPhase =
+  | "configuration"
+  | "change-discovery"
+  | "baseline-resolution"
+  | "snapshot-construction"
+  | "lfs-pointer"
+  | "baseline-inspection"
+  | "target-inspection"
+  | "dispatch"
+  | "policy-evaluation";
+
+const PHASE_FAILURES = {
+  configuration: {
+    code: "CONFIGURATION_FAILED",
+    message: "Zedbee could not load the configuration.",
+    remediation: "Check the Zedbee configuration and run the scan again.",
+  },
+  "change-discovery": {
+    code: "CHANGE_DISCOVERY_FAILED",
+    message: "Zedbee could not read the staged changes.",
+    remediation: "Resolve the Git index problem and run the scan again.",
+  },
+  "baseline-resolution": {
+    code: "BASELINE_RESOLUTION_FAILED",
+    message: "Zedbee could not resolve the repository baseline.",
+    remediation: "Check the Git repository state and run the scan again.",
+  },
+  "snapshot-construction": {
+    code: "SNAPSHOT_CONSTRUCTION_FAILED",
+    message: "Zedbee could not construct the staged snapshots.",
+    remediation:
+      "Check the Git index and temporary-directory permissions, then retry.",
+  },
+  "lfs-pointer": {
+    code: "GIT_LFS_POINTER",
+    message: "Zedbee cannot inspect a staged Git LFS pointer.",
+    remediation:
+      "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
+  },
+  "baseline-inspection": {
+    code: "BASELINE_INSPECTION_FAILED",
+    message: "Zedbee could not inspect the baseline snapshot.",
+    remediation:
+      "Check the baseline repository metadata and run the scan again.",
+  },
+  "target-inspection": {
+    code: "TARGET_INSPECTION_FAILED",
+    message: "Zedbee could not inspect the staged snapshot.",
+    remediation: "Check the staged repository metadata and run the scan again.",
+  },
+  dispatch: {
+    code: "CHECK_DISPATCH_FAILED",
+    message: "Zedbee could not dispatch the configured checks.",
+    remediation: "Review the check diagnostics, run zedbee doctor, and retry.",
+  },
+  "policy-evaluation": {
+    code: "POLICY_EVALUATION_FAILED",
+    message: "Zedbee could not evaluate the scan policy.",
+    remediation: "Check the Zedbee policy configuration and retry.",
+  },
+} as const satisfies Readonly<Record<ActiveScanPhase, ScanFailureInput>>;
+
+function phaseFailure(
+  error: unknown,
+  phase: ActiveScanPhase,
+): ScanFailureInput {
+  if (phase === "configuration" && error instanceof ConfigError) {
+    return error.code === "CONFIG_UNSUPPORTED"
+      ? {
+          code: error.code,
+          message: "Zedbee found an unsupported configuration file.",
+          remediation:
+            "Replace it with .zedbeerc.jsonc and run the scan again.",
+        }
+      : {
+          code: error.code,
+          message: "Zedbee could not load a valid configuration.",
+          remediation: "Fix the Zedbee configuration and run the scan again.",
+        };
+  }
+  if (phase === "snapshot-construction" && error instanceof SnapshotError) {
+    return error.code === "UNRESOLVED_INDEX"
+      ? {
+          code: error.code,
+          message: "Zedbee cannot scan an index with unresolved entries.",
+          remediation:
+            "Resolve the staged merge entries and run the scan again.",
+        }
+      : {
+          code: error.code,
+          message: "Zedbee refused an unsafe temporary snapshot path.",
+          remediation:
+            "Verify the system temporary directory and run the scan again.",
+        };
+  }
+  return PHASE_FAILURES[phase];
 }
 
 function dispatchOptions(
@@ -178,19 +253,35 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   let baseline: "HEAD" | null = null;
   let stagedFileCount: number | null = null;
   const networkDisclosures: NetworkDisclosure[] = [];
+  let activePhase: ActiveScanPhase = "configuration";
+  let report: ScanReport | undefined;
+  let abortedError: unknown;
+  let shouldRethrow = false;
+
+  const reportContext = (): ScanReportContext => ({
+    repositoryRoot: options.repositoryRoot,
+    baseline,
+    stagedFileCount,
+    startedAt,
+    durationMs: Math.max(0, dependencies.clock() - started),
+    networkDisclosures,
+  });
 
   try {
+    activePhase = "configuration";
     const config = await dependencies.loadConfig(
       options.repositoryRoot,
       options.configPath,
     );
+    activePhase = "change-discovery";
     const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
     stagedFileCount = changeSet.files.size;
 
     if (changeSet.isEmpty) {
+      activePhase = "baseline-resolution";
       baseline = await dependencies.baselineForEmptyChange(git);
-      return deepFreeze({
+      report = {
         schemaVersion: 1,
         outcome: "pass",
         exitCode: 0,
@@ -203,94 +294,107 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         networkDisclosures,
         summary: summarizeChecks([]),
         checks: [],
-      });
-    }
-
-    snapshots = await dependencies.buildSnapshots(options.repositoryRoot, git);
-    baseline = snapshots.baselineRef;
-    if (
-      snapshots.unsupportedEntries.some(
-        ({ kind }) => kind === "git-lfs-pointer",
-      )
-    ) {
-      return incompleteReport(
+      };
+    } else {
+      activePhase = "snapshot-construction";
+      snapshots = await dependencies.buildSnapshots(
         options.repositoryRoot,
-        baseline,
-        stagedFileCount,
-        startedAt,
-        Math.max(0, dependencies.clock() - started),
-        networkDisclosures,
+        git,
       );
-    }
-    const baselineInspection = await dependencies.inspectRepository(
-      snapshots.baselineDir,
-    );
-    const targetInspection = await dependencies.inspectRepository(
-      snapshots.targetDir,
-    );
-    const controller =
-      options.signal === undefined ? new AbortController() : undefined;
-    const signal = options.signal ?? controller!.signal;
-    const results = await dependencies.dispatch(
-      dependencies.adapters,
-      {
-        repositoryRoot: options.repositoryRoot,
-        changeSet,
-        config,
-        snapshots,
-        baselineInspection,
-        targetInspection,
-        signal,
-      },
-      dispatchOptions(
-        options.onEvent,
-        networkDisclosures,
-        options.cache === false
-          ? undefined
-          : (options.cache ?? dependencies.createObservationCache?.()),
-      ),
-    );
-    const decision = dependencies.evaluate(results, config);
-    return deepFreeze({
-      schemaVersion: 1,
-      outcome: decision.outcome,
-      exitCode: decision.exitCode,
-      repositoryRoot: options.repositoryRoot,
-      baseline,
-      target: "index",
-      stagedFileCount,
-      startedAt,
-      durationMs: Math.max(0, dependencies.clock() - started),
-      networkDisclosures,
-      summary: decision.summary,
-      checks: decision.results,
-    });
-  } catch (error) {
-    if (options.signal?.aborted === true) {
-      throw error;
-    }
-    return incompleteReport(
-      options.repositoryRoot,
-      baseline,
-      stagedFileCount,
-      startedAt,
-      Math.max(0, dependencies.clock() - started),
-      networkDisclosures,
-    );
-  } finally {
-    try {
-      await snapshots?.cleanup();
-    } catch {
-      if (options.signal?.aborted !== true) {
-        return incompleteReport(
-          options.repositoryRoot,
+      baseline = snapshots.baselineRef;
+      const lfsPointer = snapshots.unsupportedEntries.find(
+        ({ kind }) => kind === "git-lfs-pointer",
+      );
+      if (lfsPointer !== undefined) {
+        activePhase = "lfs-pointer";
+        report = createIncompleteReport(reportContext(), {
+          ...PHASE_FAILURES[activePhase],
+          path: lfsPointer.path,
+        });
+      } else {
+        activePhase = "baseline-inspection";
+        const baselineInspection = await dependencies.inspectRepository(
+          snapshots.baselineDir,
+        );
+        activePhase = "target-inspection";
+        const targetInspection = await dependencies.inspectRepository(
+          snapshots.targetDir,
+        );
+        const controller =
+          options.signal === undefined ? new AbortController() : undefined;
+        const signal = options.signal ?? controller!.signal;
+        activePhase = "dispatch";
+        const results = await dependencies.dispatch(
+          dependencies.adapters,
+          {
+            repositoryRoot: options.repositoryRoot,
+            changeSet,
+            config,
+            snapshots,
+            baselineInspection,
+            targetInspection,
+            signal,
+          },
+          dispatchOptions(
+            options.onEvent,
+            networkDisclosures,
+            options.cache === false
+              ? undefined
+              : (options.cache ?? dependencies.createObservationCache?.()),
+          ),
+        );
+        activePhase = "policy-evaluation";
+        const decision = dependencies.evaluate(results, config);
+        report = {
+          schemaVersion: 1,
+          outcome: decision.outcome,
+          exitCode: decision.exitCode,
+          repositoryRoot: options.repositoryRoot,
           baseline,
+          target: "index",
           stagedFileCount,
           startedAt,
-          Math.max(0, dependencies.clock() - started),
+          durationMs: Math.max(0, dependencies.clock() - started),
           networkDisclosures,
-        );
+          summary: decision.summary,
+          checks: decision.results,
+        };
       }
     }
+  } catch (error) {
+    if (options.signal?.aborted === true) {
+      abortedError = error;
+      shouldRethrow = true;
+    } else {
+      report = createIncompleteReport(
+        reportContext(),
+        phaseFailure(error, activePhase),
+      );
+    }
   }
+
+  try {
+    await snapshots?.cleanup();
+  } catch {
+    if (
+      snapshots !== undefined &&
+      report !== undefined &&
+      options.signal?.aborted !== true
+    ) {
+      const snapshotRoot = validateReportableSnapshotPath(
+        dirname(snapshots.targetDir),
+      );
+      report = withCleanupFailure(
+        report,
+        snapshotRoot,
+        Math.max(0, dependencies.clock() - started),
+      );
+    }
+  }
+
+  if (shouldRethrow) throw abortedError;
+  if (report === undefined) {
+    throw new TypeError("Zedbee scan completed without a report.");
+  }
+  return deepFreeze(report);
 }
