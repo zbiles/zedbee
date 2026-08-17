@@ -92,21 +92,37 @@ describe("executeScanCommand", () => {
 
     expect(exitCode).toBe(0);
     expect(receivedOptions).toMatchObject({
-      scanOptions: { repositoryRoot: "/repo" },
+      scanOptions: { repositoryRoot: "/repo", reportingSurface: "ink" },
       renderOptions: { color: true, animations: false, width: 80 }
     });
   });
 
   it("uses deterministic text when auto output is piped", async () => {
     const terminal = io(false);
+    let received: unknown;
+    const deps = dependencies();
+    deps.scan = async (options) => {
+      received = options;
+      return createReport();
+    };
 
     const exitCode = await executeScanCommand(
-      { cwd: "/repo", format: "auto", color: true, animations: true },
+      {
+        cwd: "/repo",
+        format: "auto",
+        color: true,
+        animations: true,
+        sourceExcerpts: "exclude"
+      },
       terminal,
-      dependencies()
+      deps
     );
 
     expect(exitCode).toBe(0);
+    expect(received).toMatchObject({
+      reportingSurface: "text",
+      sourceExcerpts: "exclude"
+    });
     expect(terminal.stdout.join("")).toContain("BEE-UTIFUL");
     expect(terminal.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/);
   });
@@ -117,16 +133,30 @@ describe("executeScanCommand", () => {
     const deps = dependencies(async () => {
       mounted = true;
     });
-    deps.scan = async () => createReport({ outcome: "blocked", exitCode: 1 });
+    let received: unknown;
+    deps.scan = async (options) => {
+      received = options;
+      return createReport({ outcome: "blocked", exitCode: 1 });
+    };
 
     const exitCode = await executeScanCommand(
-      { cwd: "/repo", format: "json", color: true, animations: true },
+      {
+        cwd: "/repo",
+        format: "json",
+        color: true,
+        animations: true,
+        sourceExcerpts: "include"
+      },
       terminal,
       deps
     );
 
     expect(exitCode).toBe(1);
     expect(mounted).toBe(false);
+    expect(received).toMatchObject({
+      reportingSurface: "json",
+      sourceExcerpts: "include"
+    });
     expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({ exitCode: 1 });
   });
 

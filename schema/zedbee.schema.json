@@ -1142,6 +1142,22 @@
       },
       "default": []
     },
+    "reporting": {
+      "type": "object",
+      "properties": {
+        "sourceExcerpts": {
+          "description": "Include exact staged source excerpts never, only in Ink, or in every report format.",
+          "default": "interactive",
+          "type": "string",
+          "enum": [
+            "never",
+            "interactive",
+            "always"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "failOnIncomplete": {
       "description": "Block the commit when a configured check cannot complete reliably.",
       "default": true,

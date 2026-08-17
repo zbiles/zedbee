@@ -21,6 +21,11 @@ export type CheckId = (typeof CHECK_IDS)[number];
 export type ProfileId = (typeof PROFILE_IDS)[number];
 export type CheckSeverity = "off" | "warn" | "error";
 export type CheckTiming = "relevant" | "always";
+export type SourceExcerptPolicy = "never" | "interactive" | "always";
+
+export interface ResolvedReportingPolicy {
+  readonly sourceExcerpts: SourceExcerptPolicy;
+}
 
 export interface ResolvedCheckPolicy {
   severity: CheckSeverity;
@@ -43,6 +48,7 @@ export interface ResolvedConfig {
   profile: ProfileId;
   checks: Readonly<Record<CheckId, ResolvedCheckPolicy>>;
   overrides: readonly ResolvedPolicyOverride[];
+  reporting: ResolvedReportingPolicy;
   failOnIncomplete: boolean;
   configPath?: string;
 }
@@ -176,6 +182,19 @@ const checksSchema = z
   })
   .strict();
 
+const reportingSchema = z
+  .object({
+    sourceExcerpts: z
+      .enum(["never", "interactive", "always"])
+      .optional()
+      .meta({
+        description:
+          "Include exact staged source excerpts never, only in Ink, or in every report format.",
+        default: "interactive",
+      }),
+  })
+  .strict();
+
 // Network behavior is repository-wide because a file-scoped privacy override
 // cannot safely determine the execution class before target dispatch.
 const overrideChecksSchema = checksSchema.extend({
@@ -240,6 +259,7 @@ export const configFileSchema = z
         "Ordered file-scoped policy patches. Later matching overrides take precedence.",
       default: [],
     }),
+    reporting: reportingSchema.optional(),
     failOnIncomplete: z.boolean().optional().meta({
       description:
         "Block the commit when a configured check cannot complete reliably.",

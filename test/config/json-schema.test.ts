@@ -41,6 +41,8 @@ const validExamples = [
   },
 ] as const;
 
+const validSourceExcerptPolicies = ["never", "interactive", "always"] as const;
+
 function validator() {
   const ajv = new Ajv({ allErrors: true });
   return ajv.compile(generateConfigJsonSchema());
@@ -64,6 +66,19 @@ describe("Zedbee configuration JSON Schema", () => {
     expect(validate(input), validate.errors?.map(String).join("\n")).toBe(true);
   });
 
+  it.each(validSourceExcerptPolicies)(
+    "accepts the %s source excerpt policy in both validators",
+    (sourceExcerpts) => {
+      const input = { schemaVersion: 1, reporting: { sourceExcerpts } };
+      const validate = validator();
+
+      expect(configFileSchema.safeParse(input).success).toBe(true);
+      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+    },
+  );
+
   it.each([
     {
       name: "unknown root key",
@@ -72,6 +87,10 @@ describe("Zedbee configuration JSON Schema", () => {
     {
       name: "unknown check",
       input: { schemaVersion: 1, checks: { mystery: "error" } },
+    },
+    {
+      name: "unknown reporting key",
+      input: { schemaVersion: 1, reporting: { surprise: true } },
     },
     {
       name: "file-scoped network policy",
@@ -129,6 +148,9 @@ describe("Zedbee configuration JSON Schema", () => {
           };
         };
         overrides: { default: unknown[]; description: string };
+        reporting: {
+          properties: { sourceExcerpts: { default: string } };
+        };
         failOnIncomplete: { default: boolean; description: string };
       };
     };
@@ -140,6 +162,9 @@ describe("Zedbee configuration JSON Schema", () => {
         profile: { default: "recommended" },
         checks: { default: {} },
         overrides: { default: [] },
+        reporting: {
+          properties: { sourceExcerpts: { default: "interactive" } },
+        },
         failOnIncomplete: { default: true },
       },
     });

@@ -27,6 +27,10 @@ import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
 import type { NetworkDisclosure, ScanReport } from "./report.js";
+import type {
+  ReportingSurface,
+  SourceExcerptOverride,
+} from "./reporting-options.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -57,6 +61,8 @@ export interface RunScanDependencies {
 export interface RunScanOptions {
   repositoryRoot: string;
   configPath?: string;
+  reportingSurface?: ReportingSurface;
+  sourceExcerpts?: SourceExcerptOverride;
   signal?: AbortSignal;
   onEvent?: (event: ScanEvent) => void;
   dependencies?: RunScanDependencies;

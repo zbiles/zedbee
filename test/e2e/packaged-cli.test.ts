@@ -69,6 +69,7 @@ async function createInstalledRepository() {
 async function runZedbee(
   repositoryRoot: string,
   format: "json" | "text" = "json",
+  extraArguments: readonly string[] = [],
 ) {
   return execa(
     process.execPath,
@@ -77,12 +78,26 @@ async function runZedbee(
       "scan",
       "--format",
       format,
+      ...extraArguments,
     ],
     { cwd: repositoryRoot, reject: false, stdin: "ignore" },
   );
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("rejects conflicting source excerpt overrides before scanning", async () => {
+    const repository = await createInstalledRepository();
+
+    const result = await runZedbee(repository.root, "json", [
+      "--include-source",
+      "--no-source",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toMatch(/cannot be used with option/i);
+    expect(result.stdout).toBe("");
+  }, 30_000);
+
   it("passes formatted staged code and leaves Git state unchanged", async () => {
     const repository = await createInstalledRepository();
     await repository.write("value.ts", "export const value = 1;\n");

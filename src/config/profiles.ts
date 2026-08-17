@@ -129,6 +129,9 @@ export function resolveConfig(
     profile,
     checks,
     overrides: resolveOverrides(file),
+    reporting: {
+      sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
+    },
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };
 

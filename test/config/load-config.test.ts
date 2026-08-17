@@ -33,6 +33,21 @@ describe("loadConfig", () => {
     });
     expect(config.failOnIncomplete).toBe(true);
     expect(config.overrides).toEqual([]);
+    expect(config.reporting).toEqual({
+      sourceExcerpts: "interactive",
+    });
+  });
+
+  it("applies the configured source excerpt reporting policy", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always"}}',
+    );
+
+    expect((await loadConfig(root)).reporting).toEqual({
+      sourceExcerpts: "always",
+    });
   });
 
   it("parses comments and applies per-check overrides", async () => {
@@ -200,6 +215,11 @@ describe("loadConfig", () => {
       name: "unknown per-check option",
       source:
         '{"schemaVersion":1,"checks":{"cyclomaticComplexity":{"severity":"error","maximum":20}}}',
+    },
+    {
+      name: "invalid source excerpt reporting policy",
+      source:
+        '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
     },
     {
       name: "malformed JSONC",

@@ -240,6 +240,7 @@ function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
       ),
     ) as ResolvedConfig["checks"],
     overrides: Object.freeze(config.overrides.map(snapshotOverride)),
+    reporting: Object.freeze({ ...config.reporting }),
     failOnIncomplete: config.failOnIncomplete,
     ...(config.configPath === undefined
       ? {}

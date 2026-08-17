@@ -16,6 +16,8 @@ import {
 interface CommanderScanOptions {
   format: RequestedOutputFormat;
   config?: string;
+  includeSource?: boolean;
+  source: boolean;
   color: boolean;
   animations: boolean;
 }
@@ -123,6 +125,14 @@ export async function main(
         .choices(["auto", "ink", "text", "json"])
         .default("auto"),
     )
+    .addOption(
+      new Option("--include-source", "include exact staged source excerpts")
+        .conflicts("source"),
+    )
+    .addOption(
+      new Option("--no-source", "omit exact staged source excerpts")
+        .conflicts("includeSource"),
+    )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
@@ -136,6 +146,11 @@ export async function main(
           ...(options.config === undefined
             ? {}
             : { configPath: options.config }),
+          ...(options.includeSource === true
+            ? { sourceExcerpts: "include" as const }
+            : options.source === false
+              ? { sourceExcerpts: "exclude" as const }
+              : {}),
           signal: controller.signal,
         },
         {

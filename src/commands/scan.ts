@@ -4,9 +4,13 @@ import { renderJson } from "../renderers/json.js";
 import { renderText } from "../renderers/text.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
+import type {
+  ReportingSurface,
+  SourceExcerptOverride,
+} from "../scan/reporting-options.js";
 
 export type RequestedOutputFormat = "auto" | "ink" | "text" | "json";
-export type OutputFormat = Exclude<RequestedOutputFormat, "auto">;
+export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
   cwd: string;
@@ -14,6 +18,7 @@ export interface ScanCommandOptions {
   color: boolean;
   animations: boolean;
   configPath?: string;
+  sourceExcerpts?: SourceExcerptOverride;
   signal?: AbortSignal;
 }
 
@@ -101,12 +106,16 @@ export async function executeScanCommand(
       return 2;
     }
 
+    const format = selectOutputFormat(options.format, io.stdinIsTTY, io.stdoutIsTTY);
     const scanOptions: RunScanOptions = {
       repositoryRoot,
+      reportingSurface: format,
+      ...(options.sourceExcerpts === undefined
+        ? {}
+        : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
       ...(options.signal === undefined ? {} : { signal: options.signal })
     };
-    const format = selectOutputFormat(options.format, io.stdinIsTTY, io.stdoutIsTTY);
     const color = options.color && io.env.NO_COLOR === undefined;
     const inkOptions = {
       color,
