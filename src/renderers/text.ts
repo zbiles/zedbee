@@ -138,12 +138,12 @@ export function renderText(
   report: ScanReport,
   options: TextRendererOptions,
 ): string {
-  validateReportDisplayStrings(report);
+  const sanitized = validateReportDisplayStrings(report);
   const width = Math.max(20, options.width);
   const lines = [
     ...headline(report),
     ...groupedFindings(
-      report.summary.findings,
+      sanitized.summaryFindings,
       width,
       options.verbose === true,
     ),

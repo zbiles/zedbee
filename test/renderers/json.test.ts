@@ -101,8 +101,9 @@ describe("renderJson", () => {
       rule: "generic-api-key",
       sourceExcerpt: {
         line: 2,
-        redacted: true,
-        truncated: false,
+        text: "SECRET-MUST-NOT-LEAK",
+        redacted: false,
+        truncated: true,
       },
     });
     const report = createReport({
@@ -160,6 +161,45 @@ describe("renderJson", () => {
         "text",
       ),
     ).toBe(false);
+    expect(JSON.stringify(parsed)).not.toContain("SECRET-MUST-NOT-LEAK");
+  });
+
+  it("serializes the sanitized copies of raw report fields", () => {
+    const finding = createFinding({
+      sourceExcerpt: {
+        line: 2,
+        text: "  const value =\u001b[31m 1;",
+        redacted: false,
+        truncated: false,
+      },
+    });
+    const report = createReport({
+      checks: [
+        {
+          checkId: "formatting",
+          status: "incomplete",
+          durationMs: 4,
+          findings: [finding],
+          error: {
+            code: "PRETTIER_FAILED",
+            message: "Prettier could not analyze the staged file.",
+            path: "src\\value.ts",
+          },
+        },
+      ],
+    });
+
+    const parsed = JSON.parse(renderJson(report)) as {
+      checks: Array<{
+        error: { path: string };
+        findings: Array<{ sourceExcerpt: { text: string } }>;
+      }>;
+    };
+
+    expect(parsed.checks[0]?.error.path).toBe("src/value.ts");
+    expect(parsed.checks[0]?.findings[0]?.sourceExcerpt.text).toBe(
+      "  const value =�[31m 1;",
+    );
   });
 
   it("serializes only a validated Zedbee-owned temporary path", async () => {

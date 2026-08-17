@@ -6,7 +6,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, relative, sep } from "node:path";
 
-const SNAPSHOT_PREFIX = "zedbee-snapshot-";
+export const SNAPSHOT_PREFIX = "zedbee-snapshot-";
 
 declare const validatedSnapshotPath: unique symbol;
 export type ValidatedSnapshotPath = string & {

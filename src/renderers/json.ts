@@ -51,7 +51,7 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
 }
 
 export function renderJson(report: ScanReport): string {
-  validateReportDisplayStrings(report);
+  const sanitized = validateReportDisplayStrings(report);
   const payload = {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
@@ -74,7 +74,7 @@ export function renderJson(report: ScanReport): string {
       failed: report.summary.failed,
       incomplete: report.summary.incomplete,
     },
-    checks: [...report.checks]
+    checks: [...sanitized.checks]
       .sort(
         (left, right) =>
           compareCodeUnits(left.checkId, right.checkId) ||

@@ -163,6 +163,42 @@ describe("public result sanitizer contract", () => {
     });
   });
 
+  it("redacts source text based on the secrets finding identity", () => {
+    const result = sanitizeCheckResult({
+      checkId: "secrets",
+      status: "completed",
+      durationMs: 1,
+      findings: [
+        {
+          id: "secrets:src/value.ts:2",
+          check: "secrets",
+          rule: "generic-api-key",
+          severity: "error",
+          message: "A staged secret was detected.",
+          location: { file: "src/value.ts", startLine: 2, endLine: 2 },
+          sourceExcerpt: {
+            line: 2,
+            text: "SECRET-MUST-NOT-LEAK",
+            redacted: false,
+            truncated: true,
+          },
+          attribution: {
+            kind: "range-overlap",
+            staged: true,
+            evidence: [],
+          },
+        },
+      ],
+    });
+
+    expect(result.findings[0]?.sourceExcerpt).toEqual({
+      line: 2,
+      redacted: true,
+      truncated: false,
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET-MUST-NOT-LEAK");
+  });
+
   it.each([
     ["mismatched line", { line: 3, text: "const value = 1;" }],
     ["oversized text", { line: 2, text: "x".repeat(501) }],

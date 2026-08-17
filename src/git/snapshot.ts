@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { GitClient } from "./client.js";
 import { compareCodeUnits } from "../core/compare.js";
-import { SnapshotError, validateSnapshotPath } from "./snapshot-path.js";
+import {
+  SNAPSHOT_PREFIX,
+  SnapshotError,
+  validateSnapshotPath,
+} from "./snapshot-path.js";
 
 export { SnapshotError, type SnapshotErrorCode } from "./snapshot-path.js";
-
-const SNAPSHOT_PREFIX = "zedbee-snapshot-";
 
 export type UnsupportedIndexEntryKind =
   "binary" | "git-lfs-pointer" | "intent-to-add" | "submodule";

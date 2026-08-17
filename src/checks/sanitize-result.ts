@@ -138,6 +138,7 @@ function sanitizeAttribution(attribution: Attribution): Attribution {
 function sanitizeSourceExcerpt(
   excerpt: SourceExcerpt,
   location: SourceLocation | undefined,
+  secret: boolean,
 ): SourceExcerpt {
   const line = excerpt.line;
   if (
@@ -155,6 +156,10 @@ function sanitizeSourceExcerpt(
   const truncated = excerpt.truncated;
   if (typeof redacted !== "boolean" || typeof truncated !== "boolean") {
     throw new TypeError("Expected valid source excerpt flags");
+  }
+
+  if (secret) {
+    return { line, redacted: true, truncated: false };
   }
 
   const text = excerpt.text;
@@ -179,13 +184,14 @@ function sanitizeSourceExcerpt(
 }
 
 function sanitizeFinding(finding: Finding): Finding {
+  const check = displayLabel(finding.check, "check label");
   const location =
     finding.location === undefined
       ? undefined
       : sanitizeLocation(finding.location);
   return {
     id: displayLabel(finding.id, "finding id"),
-    check: displayLabel(finding.check, "check label"),
+    check,
     rule: displayLabel(finding.rule, "rule label"),
     severity: sanitizeSeverity(finding.severity),
     message: displayProse(finding.message, "finding message", {
@@ -202,7 +208,11 @@ function sanitizeFinding(finding: Finding): Finding {
     ...(finding.sourceExcerpt === undefined
       ? {}
       : {
-          sourceExcerpt: sanitizeSourceExcerpt(finding.sourceExcerpt, location),
+          sourceExcerpt: sanitizeSourceExcerpt(
+            finding.sourceExcerpt,
+            location,
+            check === "secrets",
+          ),
         }),
     attribution: sanitizeAttribution(finding.attribution),
   };
@@ -273,10 +283,13 @@ export function sanitizeCheckResult(
 export function validateReportDisplayStrings(report: {
   readonly checks: readonly CheckResult[];
   readonly summary: { readonly findings: readonly Finding[] };
-}): void {
-  for (const check of report.checks) {
+}): {
+  readonly checks: readonly CheckResult[];
+  readonly summaryFindings: readonly Finding[];
+} {
+  const checks = report.checks.map((check) => {
     const temporaryPath = check.error?.temporaryPath;
-    sanitizeCheckResult(
+    return sanitizeCheckResult(
       check,
       temporaryPath === undefined
         ? {}
@@ -284,11 +297,12 @@ export function validateReportDisplayStrings(report: {
             temporaryPath: validateReportableSnapshotPath(temporaryPath),
           },
     );
-  }
-  sanitizeCheckResult({
+  });
+  const summary = sanitizeCheckResult({
     checkId: "summary",
     status: "completed",
     durationMs: 0,
     findings: report.summary.findings,
   });
+  return { checks, summaryFindings: summary.findings };
 }
