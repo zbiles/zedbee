@@ -12,6 +12,74 @@ afterEach(() => {
 });
 
 describe("PixelWordmark", () => {
+  it("fills the rounded scan container with the mock's dark surface", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+
+    const frame = render(
+      React.createElement(LiveDashboard, {
+        events: [],
+        startedAt: 0,
+        elapsedMs: 0,
+        width: 96,
+        color: true,
+        animations: false,
+      }),
+    ).lastFrame()!;
+
+    expect(frame).toContain("\u001b[48;2;17;19;24m");
+  });
+
+  it("renders check-row dividers with less contrast than panel and heading strokes", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const frame = render(
+      React.createElement(LiveDashboard, {
+        events: [
+          {
+            type: "check-completed",
+            checkId: "formatting",
+            target: ".",
+            timestamp: 1,
+            result: {
+              checkId: "formatting",
+              status: "completed",
+              durationMs: 1,
+              findings: [],
+            },
+          },
+          {
+            type: "check-running",
+            checkId: "types",
+            target: ".",
+            timestamp: 2,
+          },
+        ],
+        startedAt: 0,
+        elapsedMs: 3,
+        width: 96,
+        color: true,
+        animations: false,
+      }),
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const visible = (line: string) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    const headingRule = lines.find((line) => visible(line).includes("├"));
+    const formatting = lines.findIndex((line) =>
+      visible(line).includes("Formatting"),
+    );
+    const checkRule = lines[formatting + 1];
+
+    expect(headingRule).toContain("\u001b[38;2;72;78;89m");
+    expect(checkRule).toContain("\u001b[38;2;50;54;62m");
+  });
+
   it("renders the final mock's white mark instead of the retired purple iteration", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();

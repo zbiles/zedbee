@@ -16,6 +16,10 @@ export const WORDMARK_GRID = Object.freeze(
   ),
 );
 
+export function pixelWordmarkWidth(compact: boolean): number {
+  return WORDMARK_GRID[0]!.length * (compact ? 1 : 2);
+}
+
 export function PixelWordmark({
   color,
   compact = false,

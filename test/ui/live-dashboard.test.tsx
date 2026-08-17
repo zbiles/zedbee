@@ -29,7 +29,7 @@ const events: ScanEvent[] = [
 ];
 
 describe("LiveDashboard", () => {
-  it("keeps the compact wordmark, bee, and trails on one line at 96 columns", () => {
+  it("aligns the bee's stinger with the wordmark middle while its wings cross the rounded frame", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -40,18 +40,23 @@ describe("LiveDashboard", () => {
         animations={false}
       />,
     ).lastFrame()!;
-    const beePattern = "██████████ ████  ████  ████";
-    const brandLine = frame
-      .split("\n")
-      .find((line) => line.includes(beePattern));
-
-    expect(brandLine).toBeDefined();
-    expect(brandLine!.slice(0, brandLine!.indexOf(beePattern))).toContain(
-      "█████",
+    const lines = frame.split("\n");
+    const outerTop = lines.findIndex((line) => line.includes("╭"));
+    const firstWing = lines.findIndex((line) => line.includes("██  ██"));
+    const alignedStinger = lines.find(
+      (line) =>
+        line.includes("█████ ████  █   █ ████  ████  ████") &&
+        line.includes("██████████ ████  ████  ████"),
     );
+
+    expect(outerTop).toBeGreaterThan(0);
+    expect(firstWing).toBeGreaterThanOrEqual(0);
+    expect(firstWing).toBeLessThan(outerTop);
+    expect(lines[outerTop]).toMatch(/╭─+.*█+.*─+╮/u);
+    expect(alignedStinger).toBeDefined();
   });
 
-  it("draws full-width rules beneath panel headings and between check rows", () => {
+  it("connects heading rules to both panel strokes and spans their full width", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -72,11 +77,58 @@ describe("LiveDashboard", () => {
     );
 
     expect(checksHeading).toBeGreaterThanOrEqual(0);
-    expect(lines[checksHeading + 1]!.match(/─{20,}/gu)).toHaveLength(2);
+    expect(lines[checksHeading + 1]!.match(/├─{42}┤/gu)).toHaveLength(2);
     expect(summaryHeading).toBeGreaterThanOrEqual(0);
-    expect(lines[summaryHeading + 1]).toMatch(/─{20,}/u);
+    expect(lines[summaryHeading + 1]).toMatch(/├─{42}┤/u);
     expect(formattingRow).toBeGreaterThanOrEqual(0);
-    expect(lines[formattingRow + 1]).toMatch(/─{20,}/u);
+    expect(lines[formattingRow + 1]).toMatch(/├─{42}┤/u);
+  });
+
+  it("left-aligns the wordmark and checks stroke", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const wordmarkTop = lines.find((line) => line.includes("█████ █████"));
+    const panelsTop = lines.find(
+      (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
+    );
+
+    expect(wordmarkTop).toBeDefined();
+    expect(panelsTop).toBeDefined();
+    expect(wordmarkTop!.indexOf("█")).toBe(panelsTop!.indexOf("┌"));
+  });
+
+  it("uses visually equal horizontal and vertical panel gaps", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const panelsTop = lines.find((line) => /┐ {2}┌/u.test(line));
+    const activityBottom = lines.findIndex(
+      (line) => line.match(/└/gu)?.length === 1 && line.includes("┘"),
+    );
+    const summaryTop = lines.findIndex(
+      (line, index) => index > activityBottom && line.includes("┌"),
+    );
+
+    expect(panelsTop).toBeDefined();
+    expect(activityBottom).toBeGreaterThanOrEqual(0);
+    expect(summaryTop - activityBottom).toBe(2);
   });
 
   it("uses a thin progress track instead of block-fill glyphs", () => {
@@ -113,6 +165,28 @@ describe("LiveDashboard", () => {
     expect(frame).toContain("▀▀█     █▀█ █▀▀");
     expect(frame).toContain("█▀▀     █▀█ ▀▀█");
     expect(frame).toContain("▀▀▀  ▀  ▀▀▀ ▀▀▀");
+  });
+
+  it("spaces the pixel clock below its heading and aligns elapsed to its bottom row", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={2800}
+        width={96}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const summaryHeading = lines.findIndex((line) => line.includes("SUMMARY"));
+    const firstClockRow = lines.findIndex((line) => line.includes("▀▀█"));
+    const lastClockRow = lines.findIndex((line) => line.includes("▀▀▀  ▀"));
+
+    expect(summaryHeading).toBeGreaterThanOrEqual(0);
+    expect(firstClockRow - summaryHeading).toBe(3);
+    expect(lines[firstClockRow]).not.toContain("elapsed");
+    expect(lines[lastClockRow]).toContain("elapsed");
   });
 
   it("anchors sparse activity at the bottom of its panel", () => {
@@ -201,8 +275,13 @@ describe("LiveDashboard", () => {
         animations={false}
       />,
     ).lastFrame()!;
-    const framedRows = frame.split("\n").slice(1, -1);
+    const lines = frame.split("\n");
+    const outerTop = lines.findIndex((line) => line.includes("╭"));
+    const outerBottom = lines.findIndex((line) => line.includes("╰"));
+    const framedRows = lines.slice(outerTop + 1, outerBottom);
 
+    expect(outerTop).toBeGreaterThanOrEqual(0);
+    expect(outerBottom).toBeGreaterThan(outerTop);
     expect(framedRows).not.toHaveLength(0);
     expect(framedRows.every((line) => line.startsWith("│ "))).toBe(true);
     expect(framedRows.filter((line) => !line.endsWith(" │"))).toEqual([]);

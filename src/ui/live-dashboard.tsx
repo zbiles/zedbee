@@ -3,7 +3,7 @@ import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
 import { PixelBee } from "./pixel-bee.js";
 import { PixelClock, pixelClockWidth } from "./pixel-clock.js";
-import { PixelWordmark } from "./pixel-wordmark.js";
+import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 type LiveStatus =
@@ -170,11 +170,23 @@ function activityColor(event: ScanEvent): string {
   return ZEDBEE_THEME.muted;
 }
 
-function HorizontalRule({ width, color }: { width: number; color: boolean }) {
+function HorizontalRule({
+  width,
+  color,
+  tone = ZEDBEE_THEME.border,
+}: {
+  width: number;
+  color: boolean;
+  tone?: string;
+}) {
   return (
-    <Text {...colorProp(color, ZEDBEE_THEME.border)}>
-      {"─".repeat(Math.max(1, width - 2))}
-    </Text>
+    <Box marginX={-1}>
+      <Text {...colorProp(color, ZEDBEE_THEME.border)}>├</Text>
+      <Text {...colorProp(color, tone)}>
+        {"─".repeat(Math.max(1, width - 2))}
+      </Text>
+      <Text {...colorProp(color, ZEDBEE_THEME.border)}>┤</Text>
+    </Box>
   );
 }
 
@@ -275,7 +287,11 @@ function CheckPanel({
             </Text>
           </Box>
           {index < states.length - 1 ? (
-            <HorizontalRule width={width} color={color} />
+            <HorizontalRule
+              width={width}
+              color={color}
+              tone={ZEDBEE_THEME.divider}
+            />
           ) : null}
         </Box>
       ))}
@@ -376,8 +392,8 @@ function SummaryPanel({
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
     >
       <PanelHeading label="SUMMARY" width={width} color={color} />
-      <Box flexDirection="column" paddingX={1}>
-        <Box>
+      <Box flexDirection="column" paddingX={1} paddingTop={1}>
+        <Box alignItems="flex-end">
           {showPixelClock ? (
             <PixelClock value={elapsedLabel} color={color} />
           ) : (
@@ -453,7 +469,10 @@ export function LiveDashboard({
   const showBrandBee = width >= 68;
   const compactBrand = width < 129;
   const contentWidth = Math.max(12, width - 6);
-  const panelWidth = wide ? Math.floor((contentWidth - 1) / 2) : contentWidth;
+  const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
+  const brandHeight = width < 40 ? 1 : 5;
+  const brandWidth =
+    width < 40 ? "ZEDBEE".length : pixelWordmarkWidth(compactBrand);
   const checks = (
     <CheckPanel
       states={states}
@@ -476,15 +495,25 @@ export function LiveDashboard({
     />
   );
 
-  return (
+  const dashboard = (
     <Box
       flexDirection="column"
       width={width}
-      borderStyle="single"
-      {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
+      borderStyle="round"
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.yellow,
+            backgroundColor: ZEDBEE_THEME.surface,
+          }
+        : {})}
       paddingX={1}
     >
-      <Box flexDirection="row" alignItems="center" marginY={1}>
+      <Box
+        height={brandHeight}
+        position="relative"
+        marginTop={showBrandBee ? 2 : 1}
+        marginBottom={showBrandBee ? 2 : 1}
+      >
         {width < 40 ? (
           <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
             ZEDBEE
@@ -493,7 +522,7 @@ export function LiveDashboard({
           <PixelWordmark color={color} compact={compactBrand} />
         )}
         {showBrandBee ? (
-          <Box marginLeft={2}>
+          <Box position="absolute" left={brandWidth + 2} top={-5}>
             <PixelBee
               motion
               motionPixel="w"
@@ -506,12 +535,11 @@ export function LiveDashboard({
       {wide ? (
         <Box flexDirection="row">
           {checks}
-          <Text> </Text>
+          <Box width={2} />
           <Box flexDirection="column" gap={1}>
             {activity}
             {summary}
           </Box>
-          <Text> </Text>
         </Box>
       ) : (
         <Box flexDirection="column" gap={1}>
@@ -530,5 +558,13 @@ export function LiveDashboard({
         </Box>
       )}
     </Box>
+  );
+
+  return showBrandBee ? (
+    <Box flexDirection="column" width={width} paddingTop={2}>
+      {dashboard}
+    </Box>
+  ) : (
+    dashboard
   );
 }
