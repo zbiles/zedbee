@@ -35,6 +35,7 @@ import type { NetworkDisclosure, ScanReport } from "./report.js";
 import {
   createIncompleteReport,
   withCleanupFailure,
+  withUnreportableCleanupFailure,
   type ScanFailureInput,
   type ScanReportContext,
 } from "./incomplete-report.js";
@@ -376,19 +377,21 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   try {
     await snapshots?.cleanup();
   } catch {
-    if (
-      snapshots !== undefined &&
-      report !== undefined &&
-      options.signal?.aborted !== true
-    ) {
-      const snapshotRoot = validateReportableSnapshotPath(
-        dirname(snapshots.targetDir),
-      );
-      report = withCleanupFailure(
-        report,
-        snapshotRoot,
-        Math.max(0, dependencies.clock() - started),
-      );
+    if (options.signal?.aborted === true) {
+      if (!shouldRethrow) {
+        abortedError = options.signal.reason;
+        shouldRethrow = true;
+      }
+    } else if (snapshots !== undefined && report !== undefined) {
+      const durationMs = Math.max(0, dependencies.clock() - started);
+      try {
+        const snapshotRoot = validateReportableSnapshotPath(
+          dirname(snapshots.targetDir),
+        );
+        report = withCleanupFailure(report, snapshotRoot, durationMs);
+      } catch {
+        report = withUnreportableCleanupFailure(report, durationMs);
+      }
     }
   }
 

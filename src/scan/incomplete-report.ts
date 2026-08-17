@@ -59,10 +59,11 @@ export function createIncompleteReport(
   };
 }
 
-export function withCleanupFailure(
+function appendCleanupFailure(
   report: ScanReport,
-  snapshotRoot: ValidatedSnapshotPath,
   durationMs: number,
+  failure: Readonly<{ message: string; remediation: string }>,
+  snapshotRoot?: ValidatedSnapshotPath,
 ): ScanReport {
   const cleanupResult = sanitizeCheckResult(
     {
@@ -72,12 +73,11 @@ export function withCleanupFailure(
       findings: [],
       error: {
         code: "SNAPSHOT_CLEANUP_FAILED",
-        message: "Zedbee could not remove its temporary snapshot.",
-        remediation:
-          "Inspect and remove the listed Zedbee snapshot, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+        message: failure.message,
+        remediation: failure.remediation,
       },
     },
-    { temporaryPath: snapshotRoot },
+    snapshotRoot === undefined ? {} : { temporaryPath: snapshotRoot },
   );
   const checks = [...report.checks, cleanupResult];
   return {
@@ -88,4 +88,33 @@ export function withCleanupFailure(
     summary: summarizeChecks(checks),
     checks,
   };
+}
+
+export function withCleanupFailure(
+  report: ScanReport,
+  snapshotRoot: ValidatedSnapshotPath,
+  durationMs: number,
+): ScanReport {
+  return appendCleanupFailure(
+    report,
+    durationMs,
+    {
+      message: "Zedbee could not remove its temporary snapshot.",
+      remediation:
+        "Inspect and remove the listed Zedbee snapshot, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+    },
+    snapshotRoot,
+  );
+}
+
+export function withUnreportableCleanupFailure(
+  report: ScanReport,
+  durationMs: number,
+): ScanReport {
+  return appendCleanupFailure(report, durationMs, {
+    message:
+      "Zedbee could not remove its temporary snapshot or safely identify the remaining directory.",
+    remediation:
+      "Inspect the OS temporary directory for zedbee-snapshot-* directories and remove any stale Zedbee snapshots, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+  });
 }

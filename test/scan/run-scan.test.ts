@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -313,6 +313,105 @@ describe("runScan", () => {
         "Inspect and remove the listed Zedbee snapshot, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
     });
     expect(JSON.stringify(report)).not.toContain("sensitive cleanup failure");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "preserves findings without exposing a snapshot path when cleanup validation fails",
+    async () => {
+      const calls: string[] = [];
+      const created = await mkdtemp(
+        join(tmpdir(), "zedbee-snapshot-identity-"),
+      );
+      const canonicalSnapshotRoot = await realpath(created);
+      const movedSnapshotRoot = `${canonicalSnapshotRoot}-moved`;
+      onTestFinished(async () => {
+        await rm(canonicalSnapshotRoot, { force: true });
+        await rm(movedSnapshotRoot, { recursive: true, force: true });
+      });
+      const cleanupConfig = resolveConfig({
+        schemaVersion: 1,
+        profile: "recommended",
+        failOnIncomplete: false,
+        checks: { formatting: "error", lint: "error" },
+      });
+      const deps = dependencies(calls, {
+        loadConfig: async () => cleanupConfig,
+        buildSnapshots: async () => ({
+          baselineDir: join(canonicalSnapshotRoot, "baseline"),
+          targetDir: join(canonicalSnapshotRoot, "target"),
+          baselineRef: "HEAD",
+          unsupportedEntries: [],
+          cleanup: async () => {
+            await rename(canonicalSnapshotRoot, movedSnapshotRoot);
+            await symlink(movedSnapshotRoot, canonicalSnapshotRoot, "dir");
+            throw new Error("sensitive cleanup identity failure");
+          },
+        }),
+        dispatch: async () => [
+          {
+            result: passing,
+            policy: Object.freeze({ ...cleanupConfig.checks.formatting }),
+          },
+          {
+            result: blocking,
+            policy: Object.freeze({ ...cleanupConfig.checks.lint }),
+          },
+        ],
+      });
+
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        dependencies: deps,
+      });
+
+      expect(report).toMatchObject({
+        outcome: "incomplete",
+        exitCode: 2,
+        summary: { passed: 1, failed: 1, incomplete: 1 },
+      });
+      expect(report.checks.map(({ checkId }) => checkId)).toEqual([
+        "formatting",
+        "lint",
+        "zedbee",
+      ]);
+      expect(report.checks.at(-1)?.error).toEqual({
+        code: "SNAPSHOT_CLEANUP_FAILED",
+        message:
+          "Zedbee could not remove its temporary snapshot or safely identify the remaining directory.",
+        remediation:
+          "Inspect the OS temporary directory for zedbee-snapshot-* directories and remove any stale Zedbee snapshots, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+      });
+      const serialized = JSON.stringify(report);
+      expect(serialized).not.toContain("sensitive cleanup identity failure");
+      expect(serialized).not.toContain(canonicalSnapshotRoot);
+      expect(serialized).not.toContain(movedSnapshotRoot);
+    },
+  );
+
+  it("rejects with the abort reason when cancellation occurs during failed cleanup", async () => {
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const abortReason = new DOMException("scan cancelled", "AbortError");
+    const deps = dependencies(calls, {
+      buildSnapshots: async () => ({
+        baselineDir: "/tmp/baseline",
+        targetDir: "/tmp/target",
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+        cleanup: async () => {
+          controller.abort(abortReason);
+          throw new Error("sensitive cleanup failure");
+        },
+      }),
+    });
+
+    await expect(
+      runScan({
+        repositoryRoot: "/repo",
+        signal: controller.signal,
+        dependencies: deps,
+      }),
+    ).rejects.toBe(abortReason);
   });
 
   it.each([
