@@ -414,6 +414,34 @@ describe("runScan", () => {
     ).rejects.toBe(abortReason);
   });
 
+  it("rejects with the abort reason when cancellation occurs during successful cleanup", async () => {
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const abortReason = new DOMException(
+      "cleanup completed after cancellation",
+      "AbortError",
+    );
+    const deps = dependencies(calls, {
+      buildSnapshots: async () => ({
+        baselineDir: "/tmp/baseline",
+        targetDir: "/tmp/target",
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+        cleanup: async () => {
+          controller.abort(abortReason);
+        },
+      }),
+    });
+
+    await expect(
+      runScan({
+        repositoryRoot: "/repo",
+        signal: controller.signal,
+        dependencies: deps,
+      }),
+    ).rejects.toBe(abortReason);
+  });
+
   it.each([
     {
       phase: "configuration",

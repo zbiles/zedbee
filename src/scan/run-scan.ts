@@ -377,12 +377,11 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   try {
     await snapshots?.cleanup();
   } catch {
-    if (options.signal?.aborted === true) {
-      if (!shouldRethrow) {
-        abortedError = options.signal.reason;
-        shouldRethrow = true;
-      }
-    } else if (snapshots !== undefined && report !== undefined) {
+    if (
+      options.signal?.aborted !== true &&
+      snapshots !== undefined &&
+      report !== undefined
+    ) {
       const durationMs = Math.max(0, dependencies.clock() - started);
       try {
         const snapshotRoot = validateReportableSnapshotPath(
@@ -393,6 +392,11 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         report = withUnreportableCleanupFailure(report, durationMs);
       }
     }
+  }
+
+  if (!shouldRethrow && options.signal?.aborted === true) {
+    abortedError = options.signal.reason;
+    shouldRethrow = true;
   }
 
   if (shouldRethrow) throw abortedError;
