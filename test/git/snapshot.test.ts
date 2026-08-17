@@ -6,6 +6,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -249,6 +250,113 @@ describe("buildSnapshotPair", () => {
     expect(await pathExists(temporaryParent)).toBe(false);
     expect(await pathExists(repository.root)).toBe(true);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "preserves a safe construction failure and validated path when construction cleanup also fails",
+    async () => {
+      let snapshotRoot: string | undefined;
+      const rawFailure =
+        "RAW-CONSTRUCTION-FAILURE /private/unsafe/repository/path";
+      const git = {
+        async run(args: readonly string[]) {
+          if (args[0] === "checkout-index") {
+            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+            const targetDir = prefix
+              .slice("--prefix=".length)
+              .replace(/[/\\]+$/u, "");
+            snapshotRoot = dirname(targetDir);
+            await chmod(snapshotRoot, 0o500);
+            throw new Error(rawFailure);
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async tryRun() {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        },
+      } as unknown as GitClient;
+      onTestFinished(async () => {
+        if (snapshotRoot !== undefined) {
+          await chmod(snapshotRoot, 0o700).catch(() => undefined);
+          await rm(snapshotRoot, { recursive: true, force: true });
+        }
+      });
+
+      let failure: unknown;
+      try {
+        await buildSnapshotPair("/repo", git);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toMatchObject({
+        name: "SnapshotConstructionCleanupError",
+        constructionError: {
+          code: "SNAPSHOT_CONSTRUCTION_FAILED",
+        },
+        temporaryPath: snapshotRoot,
+      });
+      expect(String(failure)).not.toContain(rawFailure);
+      expect(JSON.stringify(failure)).not.toContain(rawFailure);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "omits an unreportable path when construction cleanup finds changed identity",
+    async () => {
+      let snapshotRoot: string | undefined;
+      let movedSnapshotRoot: string | undefined;
+      const rawFailure =
+        "RAW-CONSTRUCTION-IDENTITY-FAILURE /private/unsafe/path";
+      const git = {
+        async run(args: readonly string[]) {
+          if (args[0] === "checkout-index") {
+            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+            const targetDir = prefix
+              .slice("--prefix=".length)
+              .replace(/[/\\]+$/u, "");
+            snapshotRoot = dirname(targetDir);
+            movedSnapshotRoot = `${snapshotRoot}-moved`;
+            await rename(snapshotRoot, movedSnapshotRoot);
+            await symlink(movedSnapshotRoot, snapshotRoot, "dir");
+            throw new Error(rawFailure);
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async tryRun() {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        },
+      } as unknown as GitClient;
+      onTestFinished(async () => {
+        if (snapshotRoot !== undefined) {
+          await rm(snapshotRoot, { force: true });
+        }
+        if (movedSnapshotRoot !== undefined) {
+          await rm(movedSnapshotRoot, { recursive: true, force: true });
+        }
+      });
+
+      let failure: unknown;
+      try {
+        await buildSnapshotPair("/repo", git);
+      } catch (error) {
+        failure = error;
+      }
+
+      expect(failure).toMatchObject({
+        name: "SnapshotConstructionCleanupError",
+        constructionError: {
+          code: "SNAPSHOT_CONSTRUCTION_FAILED",
+        },
+      });
+      expect(
+        (failure as { temporaryPath?: string }).temporaryPath,
+      ).toBeUndefined();
+      const serialized = `${String(failure)}${JSON.stringify(failure)}`;
+      expect(serialized).not.toContain(rawFailure);
+      expect(serialized).not.toContain(snapshotRoot);
+      expect(serialized).not.toContain(movedSnapshotRoot);
+    },
+  );
 
   it("rejects unresolved index stages", async () => {
     const repository = await createGitRepository();

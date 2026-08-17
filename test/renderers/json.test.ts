@@ -241,7 +241,7 @@ describe("renderJson", () => {
     const finding = createFinding({
       sourceExcerpt: {
         line: 2,
-        text: "  const value =\u001b[31m 1;",
+        text: "  const BIDI_MARKER = 'before\u202eafter';\u001b[31m",
         redacted: false,
         truncated: false,
       },
@@ -271,8 +271,9 @@ describe("renderJson", () => {
 
     expect(parsed.checks[0]?.error.path).toBe("src/value.ts");
     expect(parsed.checks[0]?.findings[0]?.sourceExcerpt.text).toBe(
-      "  const value =�[31m 1;",
+      "  const BIDI_MARKER = 'before�after';�[31m",
     );
+    expect(renderJson(report)).not.toContain("\u202e");
   });
 
   it("serializes only a validated Zedbee-owned temporary path", async () => {

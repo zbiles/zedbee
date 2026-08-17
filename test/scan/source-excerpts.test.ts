@@ -102,7 +102,7 @@ describe("shouldIncludeSourceExcerpts", () => {
 describe("enrichSourceExcerpts", () => {
   it("normalizes tabs and terminal controls on the selected source line", async () => {
     const snapshotRoot = await sourceSnapshot(
-      "one\ntwo\nthree\n\tconst value = 1;\u001b\u0085\n",
+      "one\ntwo\nthree\n\tconst BIDI_MARKER = 'before\u202eafter';\u001b\u0085\n",
     );
 
     const [result] = await enrichSourceExcerpts([completed([finding()])], {
@@ -111,7 +111,7 @@ describe("enrichSourceExcerpts", () => {
 
     expect(result?.findings[0]?.sourceExcerpt).toEqual({
       line: 4,
-      text: "  const value = 1;��",
+      text: "  const BIDI_MARKER = 'before�after';��",
       redacted: false,
       truncated: false,
     });
@@ -250,5 +250,41 @@ describe("enrichSourceExcerpts", () => {
     });
     expect(containedFileReads).toEqual([]);
     expect(JSON.stringify(results)).not.toContain("SECRET-MUST-NOT-LEAK");
+  });
+
+  it("redacts a non-secret finding whose line overlaps a secret range before reading source", async () => {
+    containedFileReads.length = 0;
+    const snapshotRoot = await sourceSnapshot(
+      "one\ntwo\nthree\nRECOGNIZABLE-STAGED-SECRET\nfive\n",
+    );
+    const secret = finding({
+      id: "secret:src/value.ts:3-5",
+      check: "secrets",
+      rule: "generic-api-key",
+      message: "A secret was detected.",
+      location: { file: "src\\value.ts", startLine: 3, endLine: 5 },
+    });
+    const lint = finding({
+      id: "lint:src/value.ts:4",
+      location: { file: "src/value.ts", startLine: 4, endLine: 4 },
+    });
+
+    const results = await enrichSourceExcerpts(
+      [completed([lint]), completed([secret])],
+      { snapshotRoot },
+    );
+
+    expect(results[0]?.findings[0]?.sourceExcerpt).toEqual({
+      line: 4,
+      redacted: true,
+      truncated: false,
+    });
+    expect(results[1]?.findings[0]?.sourceExcerpt).toEqual({
+      line: 3,
+      redacted: true,
+      truncated: false,
+    });
+    expect(containedFileReads).toEqual([]);
+    expect(JSON.stringify(results)).not.toContain("RECOGNIZABLE-STAGED-SECRET");
   });
 });

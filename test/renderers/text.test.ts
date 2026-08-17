@@ -7,6 +7,34 @@ import { validateReportableSnapshotPath } from "../../src/git/snapshot-path.js";
 import { renderText } from "../../src/renderers/text.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
+const fixtureGraphemes = new Intl.Segmenter("en", {
+  granularity: "grapheme",
+});
+
+function fixtureTerminalWidth(value: string): number {
+  let width = 0;
+  for (const { segment } of fixtureGraphemes.segment(value)) {
+    if (/\p{Extended_Pictographic}/u.test(segment)) {
+      width += 2;
+      continue;
+    }
+    for (const point of segment) {
+      const codePoint = point.codePointAt(0)!;
+      if (/\p{Mark}/u.test(point)) continue;
+      width +=
+        (codePoint >= 0x1100 && codePoint <= 0x115f) ||
+        (codePoint >= 0x2e80 && codePoint <= 0xa4cf) ||
+        (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+        (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+        (codePoint >= 0xff01 && codePoint <= 0xff60) ||
+        (codePoint >= 0xffe0 && codePoint <= 0xffe6)
+          ? 2
+          : 1;
+    }
+  }
+  return width;
+}
+
 describe("renderText", () => {
   it("renders a concise passing report", () => {
     expect(renderText(createReport(), { width: 80, color: false })).toBe(
@@ -354,6 +382,33 @@ describe("renderText", () => {
     ).toBeLessThanOrEqual(44);
   });
 
+  it("replaces a bidi format control before rendering source text", () => {
+    const finding = createFinding({
+      sourceExcerpt: {
+        line: 2,
+        text: "const BIDI_MARKER = 'before\u202eafter';",
+        redacted: false,
+        truncated: false,
+      },
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const output = renderText(report, { width: 80, color: false });
+
+    expect(output).toContain("BIDI_MARKER = 'before�after'");
+    expect(output).not.toContain("\u202e");
+  });
+
   it("bounds every text line at the minimum 20-column width", () => {
     const finding = createFinding({
       check: "dependencyArchitecture",
@@ -388,6 +443,87 @@ describe("renderText", () => {
       Math.max(...output.split("\n").map((line) => [...line].length)),
     ).toBeLessThanOrEqual(20);
     expect(output).not.toMatch(/\u001B\[[0-9;]*m/u);
+  });
+
+  it.each([20, 40])(
+    "bounds CJK, combining, and emoji report content to %i terminal cells",
+    (width) => {
+      const finding = createFinding({
+        check: "lint",
+        rule: "界面-rule",
+        message: "修复界面 cafe\u0301 与 emoji 🚀 message now.",
+        location: { file: "src/界面/组件.ts", startLine: 42 },
+        remediation: "修复配置并重试 cafe\u0301 🚀 safely.",
+        sourceExcerpt: {
+          line: 42,
+          text: "cafe\u0301 🚀 界面 source",
+          redacted: false,
+          truncated: false,
+        },
+      });
+      const report = createReport({
+        outcome: "incomplete",
+        exitCode: 2,
+        checks: [
+          {
+            checkId: "lint",
+            status: "incomplete",
+            durationMs: 1,
+            findings: [],
+            error: {
+              code: "ANALYSIS_FAILED",
+              message: "界面检查无法完成 cafe\u0301 🚀 message.",
+              path: "src/界面/组件.ts",
+              remediation: "修复配置并重试 cafe\u0301 🚀 safely.",
+            },
+          },
+        ],
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 1,
+          incomplete: 1,
+          findings: [finding],
+        },
+      });
+
+      const output = renderText(report, { width, color: false });
+
+      expect(output).toContain("cafe\u0301");
+      expect(output).toContain("🚀");
+      expect(
+        Math.max(...output.split("\n").map(fixtureTerminalWidth)),
+      ).toBeLessThanOrEqual(width);
+      expect(output).not.toMatch(/e\n\u0301/u);
+    },
+  );
+
+  it("consumes a producer-truncated excerpt without duplicating its ellipsis", () => {
+    const finding = createFinding({
+      sourceExcerpt: {
+        line: 2,
+        text: "const bounded = value…",
+        redacted: false,
+        truncated: true,
+      },
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const output = renderText(report, { width: 60, color: false });
+
+    expect(output).toContain("2 │ const bounded = value…");
+    expect(output.match(/…/gu)).toHaveLength(1);
+    expect(output).not.toContain("……");
   });
 
   it("shows sorted sanitized attribution evidence only in verbose output", () => {

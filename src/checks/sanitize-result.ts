@@ -10,6 +10,7 @@ import { displayLabel, displayProse } from "../core/display-text.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
+import { sanitizeSourceLine } from "../reporting/source-line.js";
 
 const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
   "range-overlap",
@@ -21,8 +22,6 @@ const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
 ]);
 
 export const SOURCE_EXCERPT_MAX_CODE_POINTS = 500;
-
-const UNSAFE_CODE_LINE_CHARACTER = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 
 function sanitizeStatus(value: unknown): CheckResult["status"] {
   if (value !== "completed" && value !== "skipped" && value !== "incomplete") {
@@ -177,7 +176,7 @@ function sanitizeSourceExcerpt(
   }
   return {
     line,
-    text: text.replaceAll(UNSAFE_CODE_LINE_CHARACTER, "�"),
+    text: sanitizeSourceLine(text),
     redacted,
     truncated,
   };

@@ -24,6 +24,7 @@ import { readStagedChangeSet, type ChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
 import {
   buildSnapshotPair,
+  SnapshotConstructionCleanupError,
   SnapshotError,
   type SnapshotPair,
 } from "../git/snapshot.js";
@@ -210,19 +211,22 @@ function phaseFailure(
         };
   }
   if (phase === "snapshot-construction" && error instanceof SnapshotError) {
-    return error.code === "UNRESOLVED_INDEX"
-      ? {
-          code: error.code,
-          message: "Zedbee cannot scan an index with unresolved entries.",
-          remediation:
-            "Resolve the staged merge entries and run the scan again.",
-        }
-      : {
-          code: error.code,
-          message: "Zedbee refused an unsafe temporary snapshot path.",
-          remediation:
-            "Verify the system temporary directory and run the scan again.",
-        };
+    if (error.code === "UNRESOLVED_INDEX") {
+      return {
+        code: error.code,
+        message: "Zedbee cannot scan an index with unresolved entries.",
+        remediation: "Resolve the staged merge entries and run the scan again.",
+      };
+    }
+    if (error.code === "INVALID_TEMP_PATH") {
+      return {
+        code: error.code,
+        message: "Zedbee refused an unsafe temporary snapshot path.",
+        remediation:
+          "Verify the system temporary directory and run the scan again.",
+      };
+    }
+    return PHASE_FAILURES[phase];
   }
   return PHASE_FAILURES[phase];
 }
@@ -376,10 +380,26 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       abortedError = error;
       shouldRethrow = true;
     } else {
+      const constructionCleanupFailure =
+        error instanceof SnapshotConstructionCleanupError ? error : undefined;
       report = createIncompleteReport(
         reportContext(),
-        phaseFailure(error, activePhase),
+        phaseFailure(
+          constructionCleanupFailure?.constructionError ?? error,
+          activePhase,
+        ),
       );
+      if (constructionCleanupFailure !== undefined) {
+        const durationMs = Math.max(0, dependencies.clock() - started);
+        try {
+          const snapshotRoot = validateReportableSnapshotPath(
+            constructionCleanupFailure.temporaryPath ?? "",
+          );
+          report = withCleanupFailure(report, snapshotRoot, durationMs);
+        } catch {
+          report = withUnreportableCleanupFailure(report, durationMs);
+        }
+      }
     }
   }
 

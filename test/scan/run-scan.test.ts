@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   realpath,
@@ -8,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { CheckResult } from "../../src/core/types.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
@@ -17,7 +18,7 @@ import { ConfigError } from "../../src/config/load-config.js";
 import type { GitClient } from "../../src/git/client.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
-import { SnapshotError } from "../../src/git/snapshot.js";
+import { buildSnapshotPair, SnapshotError } from "../../src/git/snapshot.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
@@ -393,6 +394,81 @@ describe("runScan", () => {
       expect(serialized).not.toContain("sensitive cleanup identity failure");
       expect(serialized).not.toContain(canonicalSnapshotRoot);
       expect(serialized).not.toContain(movedSnapshotRoot);
+    },
+  );
+
+  it
+    .runIf(process.platform !== "win32")
+    .each(["validated", "unreportable"] as const)(
+    "reports construction and %s construction-cleanup failures together",
+    async (pathMode) => {
+      let snapshotRoot: string | undefined;
+      let movedSnapshotRoot: string | undefined;
+      const rawFailure = `RAW-CONSTRUCTION-${pathMode} /private/unsafe/path`;
+      const git = {
+        async run(args: readonly string[]) {
+          if (args[0] === "checkout-index") {
+            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+            const targetDir = prefix
+              .slice("--prefix=".length)
+              .replace(/[/\\]+$/u, "");
+            snapshotRoot = dirname(targetDir);
+            if (pathMode === "validated") {
+              await chmod(snapshotRoot, 0o500);
+            } else {
+              movedSnapshotRoot = `${snapshotRoot}-moved`;
+              await rename(snapshotRoot, movedSnapshotRoot);
+              await symlink(movedSnapshotRoot, snapshotRoot, "dir");
+            }
+            throw new Error(rawFailure);
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async tryRun() {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        },
+      } as unknown as GitClient;
+      onTestFinished(async () => {
+        if (snapshotRoot !== undefined) {
+          await chmod(snapshotRoot, 0o700).catch(() => undefined);
+          await rm(snapshotRoot, { recursive: true, force: true });
+        }
+        if (movedSnapshotRoot !== undefined) {
+          await rm(movedSnapshotRoot, { recursive: true, force: true });
+        }
+      });
+      const deps = dependencies([], {
+        createGitClient: () => git,
+        buildSnapshots: buildSnapshotPair,
+      });
+
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        dependencies: deps,
+      });
+
+      expect(report).toMatchObject({
+        outcome: "incomplete",
+        exitCode: 2,
+        stagedFileCount: 1,
+        summary: { incomplete: 2 },
+      });
+      expect(report.checks.map(({ error }) => error?.code)).toEqual([
+        "SNAPSHOT_CONSTRUCTION_FAILED",
+        "SNAPSHOT_CLEANUP_FAILED",
+      ]);
+      if (pathMode === "validated") {
+        expect(report.checks[1]?.error?.temporaryPath).toBe(snapshotRoot);
+      } else {
+        expect(report.checks[1]?.error).not.toHaveProperty("temporaryPath");
+      }
+      const serialized = JSON.stringify(report);
+      expect(serialized).not.toContain(rawFailure);
+      expect(serialized).not.toContain("/private/unsafe/path");
+      if (pathMode === "unreportable") {
+        expect(serialized).not.toContain(snapshotRoot);
+        expect(serialized).not.toContain(movedSnapshotRoot);
+      }
     },
   );
 

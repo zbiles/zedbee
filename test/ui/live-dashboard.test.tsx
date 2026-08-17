@@ -189,9 +189,9 @@ describe("LiveDashboard", () => {
       groupLast: 79,
       progress: "▄".repeat(11) + "▂".repeat(22),
       chips: [
-        [47, 57, "  1 pass   "],
-        [59, 68, "  0 warn  "],
-        [70, 79, "  0 fail  "],
+        [47, 57, "[ 1 pass  ]", "[         ]"],
+        [59, 68, "[ 0 warn ]", "[        ]"],
+        [70, 79, "[ 0 fail ]", "[        ]"],
       ] as const,
     },
     {
@@ -202,9 +202,9 @@ describe("LiveDashboard", () => {
       groupLast: 87,
       progress: "▄".repeat(12) + "▂".repeat(25),
       chips: [
-        [51, 62, "   1 pass   "],
-        [64, 75, "   0 warn   "],
-        [77, 87, "  0 fail   "],
+        [51, 62, "[  1 pass  ]", "[          ]"],
+        [64, 75, "[  0 warn  ]", "[          ]"],
+        [77, 87, "[ 0 fail  ]", "[         ]"],
       ] as const,
     },
     {
@@ -215,9 +215,9 @@ describe("LiveDashboard", () => {
       groupLast: 111,
       progress: "▄".repeat(16) + "▂".repeat(33),
       chips: [
-        [63, 78, "     1 pass     "],
-        [80, 95, "     0 warn     "],
-        [97, 111, "    0 fail     "],
+        [63, 78, "[    1 pass    ]", "[              ]"],
+        [80, 95, "[    0 warn    ]", "[              ]"],
+        [97, 111, "[   0 fail    ]", "[             ]"],
       ] as const,
     },
   ])(
@@ -253,6 +253,7 @@ describe("LiveDashboard", () => {
           line.includes("0 fail"),
       );
       const chipRow = lines[chipRowIndex]!;
+      const chipBottomRow = lines[chipRowIndex + 1]!;
       const summaryBottom = lines.findIndex(
         (line, index) => index > chipRowIndex && line.lastIndexOf("┘") >= 0,
       );
@@ -267,9 +268,12 @@ describe("LiveDashboard", () => {
       expect(progressRow[summaryRight]).toBe("│");
       expect(groupFirst - summaryLeft - 1).toBe(2);
       expect(summaryRight - groupLast - 1).toBe(2);
-      for (const [first, last, contents] of chips) {
+      for (const [first, last, contents, bottomContents] of chips) {
         expect(chipRow.slice(first, last + 1)).toBe(contents);
+        expect(chipBottomRow.slice(first, last + 1)).toBe(bottomContents);
       }
+      expect(chipRow.match(/\[/gu)).toHaveLength(3);
+      expect(chipRow.match(/\]/gu)).toHaveLength(3);
       expect(chipRowIndex - progressRowIndex).toBe(2);
       expect(
         lines[progressRowIndex + 1]!.slice(groupFirst, groupLast + 1),

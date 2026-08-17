@@ -142,7 +142,7 @@ describe("public result sanitizer contract", () => {
           location: { file: "src/value.ts", startLine: 2, endLine: 2 },
           sourceExcerpt: {
             line: 2,
-            text: "  const value =\u001b[31m 1;",
+            text: "  const BIDI_MARKER = 'before\u202eafter';\u001b[31m",
             redacted: false,
             truncated: false,
           },
@@ -157,7 +157,7 @@ describe("public result sanitizer contract", () => {
 
     expect(result.findings[0]?.sourceExcerpt).toEqual({
       line: 2,
-      text: "  const value =�[31m 1;",
+      text: "  const BIDI_MARKER = 'before�after';�[31m",
       redacted: false,
       truncated: false,
     });

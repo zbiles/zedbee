@@ -14,6 +14,7 @@ import { compareCodeUnits } from "../core/compare.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
+  type ValidatedSnapshotPath,
   validateSnapshotPath,
 } from "./snapshot-path.js";
 
@@ -33,6 +34,40 @@ export interface SnapshotPair {
   baselineRef: "HEAD" | null;
   unsupportedEntries: readonly UnsupportedIndexEntry[];
   cleanup(): Promise<void>;
+}
+
+export class SnapshotConstructionCleanupError extends Error {
+  readonly constructionError: SnapshotError;
+  readonly temporaryPath?: ValidatedSnapshotPath;
+
+  constructor(
+    constructionError: SnapshotError,
+    temporaryPath?: ValidatedSnapshotPath,
+  ) {
+    super("Zedbee snapshot construction and cleanup both failed.");
+    this.name = "SnapshotConstructionCleanupError";
+    this.constructionError = constructionError;
+    if (temporaryPath !== undefined) this.temporaryPath = temporaryPath;
+  }
+}
+
+function safeConstructionError(error: unknown): SnapshotError {
+  if (error instanceof SnapshotError && error.code === "INVALID_TEMP_PATH") {
+    return new SnapshotError(
+      error.code,
+      "Zedbee refused an unsafe temporary snapshot path.",
+    );
+  }
+  if (error instanceof SnapshotError && error.code === "UNRESOLVED_INDEX") {
+    return new SnapshotError(
+      error.code,
+      "Zedbee cannot build snapshots for an unresolved index.",
+    );
+  }
+  return new SnapshotError(
+    "SNAPSHOT_CONSTRUCTION_FAILED",
+    "Zedbee could not construct the staged snapshots.",
+  );
 }
 
 interface StagedEntry {
@@ -266,7 +301,20 @@ export async function buildSnapshotPair(
       cleanup,
     };
   } catch (error) {
-    await cleanup();
+    try {
+      await cleanup();
+    } catch {
+      let temporaryPath: ValidatedSnapshotPath | undefined;
+      try {
+        temporaryPath = await validateSnapshotPath(canonicalParent);
+      } catch {
+        // Changed or inaccessible identities are intentionally unreportable.
+      }
+      throw new SnapshotConstructionCleanupError(
+        safeConstructionError(error),
+        temporaryPath,
+      );
+    }
     throw error;
   }
 }

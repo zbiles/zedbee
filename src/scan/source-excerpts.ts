@@ -1,19 +1,76 @@
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
 import type { CheckResult, Finding, SourceExcerpt } from "../core/types.js";
+import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedFile } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
   type SnapshotRegistry,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
+import { sanitizeSourceLine } from "../reporting/source-line.js";
 
 const SOURCE_LINE_ENDING = /\r\n|[\n\r\u2028\u2029]/u;
-const TERMINAL_CONTROL = /[\u0000-\u001f\u007f-\u009f]/gu;
+
+interface SecretRange {
+  readonly startLine: number;
+  readonly endLine: number;
+}
+
+function normalizedPath(file: string): string | undefined {
+  try {
+    return normalizeRepositoryRelativePath(file);
+  } catch {
+    return undefined;
+  }
+}
+
+function secretRangeIndex(
+  checks: readonly CheckResult[],
+): ReadonlyMap<string, readonly SecretRange[]> {
+  const ranges = new Map<string, SecretRange[]>();
+  for (const check of checks) {
+    for (const finding of check.findings) {
+      if (finding.check !== "secrets") continue;
+      const location = finding.location;
+      const startLine = location?.startLine;
+      if (
+        location === undefined ||
+        startLine === undefined ||
+        !Number.isSafeInteger(startLine) ||
+        startLine < 1
+      ) {
+        continue;
+      }
+      const file = normalizedPath(location.file);
+      if (file === undefined) continue;
+      const endLine =
+        Number.isSafeInteger(location.endLine) &&
+        location.endLine !== undefined &&
+        location.endLine >= startLine
+          ? location.endLine
+          : startLine;
+      const fileRanges = ranges.get(file) ?? [];
+      fileRanges.push({ startLine, endLine });
+      ranges.set(file, fileRanges);
+    }
+  }
+  return ranges;
+}
+
+function overlapsSecretLine(
+  index: ReadonlyMap<string, readonly SecretRange[]>,
+  file: string,
+  line: number,
+): boolean {
+  const normalized = normalizedPath(file);
+  if (normalized === undefined) return false;
+  return (index.get(normalized) ?? []).some(
+    ({ startLine, endLine }) => line >= startLine && line <= endLine,
+  );
+}
 
 function excerptLine(line: string, lineNumber: number): SourceExcerpt {
-  const normalized = line
-    .replaceAll("\t", "  ")
-    .replaceAll(TERMINAL_CONTROL, "�");
+  const normalized = sanitizeSourceLine(line);
   const codePoints = Array.from(normalized);
   if (codePoints.length <= SOURCE_EXCERPT_MAX_CODE_POINTS) {
     return Object.freeze({
@@ -94,6 +151,7 @@ export async function enrichSourceExcerpts(
   checks: readonly CheckResult[],
   snapshot: Pick<RepositoryInspection, "snapshotRoot">,
 ): Promise<readonly CheckResult[]> {
+  const secretRanges = secretRangeIndex(checks);
   const registry = await captureRegistry(snapshot.snapshotRoot);
   const sourceLines = new Map<string, Promise<readonly string[] | undefined>>();
 
@@ -118,7 +176,11 @@ export async function enrichSourceExcerpts(
           if (!Number.isSafeInteger(line) || line === undefined || line < 1) {
             return copyFinding(finding, undefined);
           }
-          if (finding.check === "secrets") {
+          const file = finding.location?.file;
+          if (
+            finding.check === "secrets" ||
+            (file !== undefined && overlapsSecretLine(secretRanges, file, line))
+          ) {
             return copyFinding(
               finding,
               Object.freeze({
@@ -128,7 +190,6 @@ export async function enrichSourceExcerpts(
               }),
             );
           }
-          const file = finding.location?.file;
           if (file === undefined) return copyFinding(finding, undefined);
           const lines = await readLines(file);
           const sourceLine = lines?.[line - 1];

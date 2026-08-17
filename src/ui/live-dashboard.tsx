@@ -203,15 +203,28 @@ function SummaryChip({
   tone: string;
   color: boolean;
 }) {
+  if (!color) {
+    const interiorWidth = Math.max(0, width - 2);
+    const value = `${count} ${label}`.slice(0, interiorWidth);
+    const remaining = Math.max(0, interiorWidth - value.length);
+    const left = Math.floor(remaining / 2);
+    const right = remaining - left;
+    return (
+      <Box width={width} height={2} flexDirection="column">
+        <Text bold>{`[${" ".repeat(left)}${value}${" ".repeat(right)}]`}</Text>
+        <Text>{`[${" ".repeat(interiorWidth)}]`}</Text>
+      </Box>
+    );
+  }
   return (
     <Box
       width={width}
       height={2}
       alignItems="center"
       justifyContent="center"
-      {...(color ? { backgroundColor: tone } : {})}
+      backgroundColor={tone}
     >
-      <Text bold {...(color ? { color: ZEDBEE_THEME.beeBlack } : {})}>
+      <Text bold color={ZEDBEE_THEME.beeBlack}>
         {count} {label}
       </Text>
     </Box>

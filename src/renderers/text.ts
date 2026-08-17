@@ -4,6 +4,13 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import { incompleteSectionLines } from "./incomplete.js";
+import {
+  chunkTerminalCells,
+  padStartTerminalCells,
+  terminalCellWidth,
+  truncateTerminalCells,
+  wrapTerminalWords,
+} from "./terminal-cells.js";
 
 export interface TextRendererOptions {
   width: number;
@@ -11,36 +18,9 @@ export interface TextRendererOptions {
   verbose?: boolean;
 }
 
-function visibleLength(value: string): number {
-  return Array.from(value).length;
-}
-
-function chunks(value: string, width: number): string[] {
-  const points = Array.from(value);
-  const lines: string[] = [];
-  for (let index = 0; index < points.length; index += width) {
-    lines.push(points.slice(index, index + width).join(""));
-  }
-  return lines.length === 0 ? [""] : lines;
-}
-
 function wrapWords(value: string, width: number, indent = ""): string[] {
-  const available = Math.max(1, width - visibleLength(indent));
-  const words = value.trim().split(/\s+/u).filter(Boolean);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words.flatMap((item) => chunks(item, available))) {
-    if (current === "") {
-      current = word;
-    } else if (visibleLength(current) + 1 + visibleLength(word) <= available) {
-      current += ` ${word}`;
-    } else {
-      lines.push(`${indent}${current}`);
-      current = word;
-    }
-  }
-  if (current !== "" || lines.length === 0) lines.push(`${indent}${current}`);
-  return lines;
+  const available = Math.max(1, width - terminalCellWidth(indent));
+  return wrapTerminalWords(value, available).map((line) => `${indent}${line}`);
 }
 
 function descriptionLines(
@@ -50,17 +30,11 @@ function descriptionLines(
 ): string[] {
   const indent = label === "Attribution" ? "    " : "       ";
   const prefix = `${indent}${label}: `;
-  const continuation = " ".repeat(visibleLength(prefix));
-  return wrapWords(value, Math.max(1, width - visibleLength(prefix))).map(
+  const prefixWidth = terminalCellWidth(prefix);
+  const continuation = " ".repeat(prefixWidth);
+  return wrapWords(value, Math.max(1, width - prefixWidth)).map(
     (line, index) => `${index === 0 ? prefix : continuation}${line}`,
   );
-}
-
-function truncateLine(value: string, width: number): string {
-  const points = Array.from(value);
-  if (points.length <= width) return value;
-  if (width === 1) return "…";
-  return `${points.slice(0, width - 1).join("")}…`;
 }
 
 function countLine(report: ScanReport): string {
@@ -102,13 +76,15 @@ function headline(report: ScanReport): string[] {
 function findingHeader(finding: Finding, width: number): string[] {
   const left = `${findingCheckLabel(finding.check)}  ${finding.rule}`;
   const location = finding.location;
-  if (location === undefined) return chunks(left, width);
+  if (location === undefined) return chunkTerminalCells(left, width);
   const right = `${location.file}:${location.startLine ?? 1}`;
-  const gap = width - visibleLength(left) - visibleLength(right);
+  const gap = width - terminalCellWidth(left) - terminalCellWidth(right);
   if (gap >= 8) return [`${left}${" ".repeat(gap)}${right}`];
   return [
-    ...chunks(left, width),
-    ...chunks(right, width).map((line) => line.padStart(width)),
+    ...chunkTerminalCells(left, width),
+    ...chunkTerminalCells(right, width).map((line) =>
+      padStartTerminalCells(line, width),
+    ),
   ];
 }
 
@@ -116,9 +92,8 @@ function sourceLine(finding: Finding, width: number): string | undefined {
   const excerpt = finding.sourceExcerpt;
   if (excerpt === undefined) return undefined;
   const text = excerpt.redacted ? "[redacted]" : (excerpt.text ?? "");
-  const suffix = excerpt.truncated && !excerpt.redacted ? "…" : "";
-  return truncateLine(
-    `${String(excerpt.line).padStart(4)} │ ${text}${suffix}`,
+  return truncateTerminalCells(
+    `${String(excerpt.line).padStart(4)} │ ${text}`,
     width,
   );
 }

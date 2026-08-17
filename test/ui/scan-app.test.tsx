@@ -1,6 +1,7 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import type { ScanEvent } from "../../src/checks/events.js";
+import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import { ScanApp } from "../../src/ui/scan-app.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
@@ -81,6 +82,50 @@ describe("ScanApp", () => {
     expect(frame).toContain(
       "Fix: Format the staged lines, then stage the result.",
     );
+  });
+
+  it("renders a sanitized bidi-control source fixture in real Ink", () => {
+    const [finding] = sanitizeCheckResult({
+      checkId: "lint",
+      status: "completed",
+      durationMs: 1,
+      findings: [
+        createFinding({
+          check: "lint",
+          sourceExcerpt: {
+            line: 2,
+            text: "const BIDI_MARKER = 'before\u202eafter';",
+            redacted: false,
+            truncated: false,
+          },
+        }),
+      ],
+    }).findings;
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding!],
+      },
+    });
+
+    const frame = render(
+      <ScanApp
+        events={events}
+        elapsedMs={15}
+        width={120}
+        color={false}
+        animations={false}
+        report={report}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("BIDI_MARKER = 'before�after'");
+    expect(frame).not.toContain("\u202e");
   });
 
   it("places incomplete diagnostics before retained findings", () => {

@@ -13,7 +13,8 @@ export type ValidatedSnapshotPath = string & {
   readonly [validatedSnapshotPath]: true;
 };
 
-export type SnapshotErrorCode = "INVALID_TEMP_PATH" | "UNRESOLVED_INDEX";
+export type SnapshotErrorCode =
+  "INVALID_TEMP_PATH" | "UNRESOLVED_INDEX" | "SNAPSHOT_CONSTRUCTION_FAILED";
 
 export class SnapshotError extends Error {
   readonly code: SnapshotErrorCode;
