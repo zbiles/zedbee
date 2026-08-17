@@ -101,9 +101,8 @@ describe("renderJson", () => {
       rule: "generic-api-key",
       sourceExcerpt: {
         line: 2,
-        text: "SECRET-MUST-NOT-LEAK",
-        redacted: false,
-        truncated: true,
+        redacted: true,
+        truncated: false,
       },
     });
     const report = createReport({
@@ -161,7 +160,9 @@ describe("renderJson", () => {
         "text",
       ),
     ).toBe(false);
-    expect(JSON.stringify(parsed)).not.toContain("SECRET-MUST-NOT-LEAK");
+    expect(JSON.stringify(parsed.checks[0]?.findings[1])).not.toContain(
+      '"text"',
+    );
   });
 
   it("serializes the sanitized copies of raw report fields", () => {

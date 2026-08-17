@@ -1,4 +1,12 @@
-import { mkdtemp, realpath, rename, rm, symlink } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -949,6 +957,119 @@ describe("runScan", () => {
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
     expect(Object.isFrozen(report.summary.findings)).toBe(true);
+  });
+
+  it("enriches policy results before cleanup and keeps the summary aligned", async () => {
+    const calls: string[] = [];
+    const created = await mkdtemp(join(tmpdir(), "zedbee-snapshot-excerpts-"));
+    const snapshotRoot = await realpath(created);
+    const baselineDir = join(snapshotRoot, "baseline");
+    const targetDir = join(snapshotRoot, "target");
+    await mkdir(baselineDir);
+    await mkdir(join(targetDir, "src"), { recursive: true });
+    await writeFile(
+      join(targetDir, "src/value.ts"),
+      "one\ntwo\nthree\nexport const staged = true;\n",
+    );
+    onTestFinished(() => rm(snapshotRoot, { recursive: true, force: true }));
+
+    const excerptConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: "error" },
+      reporting: { sourceExcerpts: "interactive" },
+    });
+    const deps = dependencies(calls, {
+      loadConfig: async () => {
+        calls.push("load config");
+        return excerptConfig;
+      },
+      buildSnapshots: async () => {
+        calls.push("build snapshots");
+        return {
+          baselineDir,
+          targetDir,
+          baselineRef: "HEAD",
+          unsupportedEntries: [],
+          cleanup: async () => {
+            calls.push("clean snapshots");
+            await rm(snapshotRoot, { recursive: true });
+          },
+        };
+      },
+      dispatch: async () => {
+        calls.push("dispatch checks");
+        return [
+          {
+            result: {
+              ...blocking,
+              findings: [
+                {
+                  ...blocking.findings[0]!,
+                  location: { file: "src/value.ts", startLine: 4 },
+                },
+              ],
+            },
+            policy: Object.freeze({ ...excerptConfig.checks.lint }),
+          },
+        ];
+      },
+      evaluate: (results, resolvedConfig) => {
+        calls.push("evaluate policy");
+        return evaluatePolicy(results, resolvedConfig);
+      },
+    });
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      reportingSurface: "ink",
+      dependencies: deps,
+    });
+
+    const expectedExcerpt = {
+      line: 4,
+      text: "export const staged = true;",
+      redacted: false,
+      truncated: false,
+    };
+    expect(report.checks[0]?.findings[0]?.sourceExcerpt).toEqual(
+      expectedExcerpt,
+    );
+    expect(report.summary.findings[0]?.sourceExcerpt).toEqual(expectedExcerpt);
+    expect(calls.indexOf("evaluate policy")).toBeLessThan(
+      calls.indexOf("clean snapshots"),
+    );
+  });
+
+  it("omits adapter excerpts from library reports without a surface", async () => {
+    const resultWithExcerpt: CheckResult = {
+      ...blocking,
+      findings: [
+        {
+          ...blocking.findings[0]!,
+          sourceExcerpt: {
+            line: 1,
+            text: "adapter-controlled source",
+            redacted: false,
+            truncated: false,
+          },
+        },
+      ],
+    };
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        dispatch: async () => [
+          {
+            result: resultWithExcerpt,
+            policy: Object.freeze({ ...config.checks.lint }),
+          },
+        ],
+      }),
+    });
+
+    expect(report.checks[0]?.findings[0]?.sourceExcerpt).toBeUndefined();
+    expect(report.summary.findings[0]?.sourceExcerpt).toBeUndefined();
   });
 
   it("returns a successful no-op without creating snapshots for an empty index", async () => {

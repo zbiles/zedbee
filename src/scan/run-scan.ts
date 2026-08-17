@@ -43,6 +43,8 @@ import type {
   ReportingSurface,
   SourceExcerptOverride,
 } from "./reporting-options.js";
+import { shouldIncludeSourceExcerpts } from "./reporting-options.js";
+import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -346,6 +348,13 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         );
         activePhase = "policy-evaluation";
         const decision = dependencies.evaluate(results, config);
+        const reportedResults = shouldIncludeSourceExcerpts(
+          config.reporting.sourceExcerpts,
+          options.reportingSurface,
+          options.sourceExcerpts,
+        )
+          ? await enrichSourceExcerpts(decision.results, targetInspection)
+          : omitSourceExcerpts(decision.results);
         report = {
           schemaVersion: 1,
           outcome: decision.outcome,
@@ -357,8 +366,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           startedAt,
           durationMs: Math.max(0, dependencies.clock() - started),
           networkDisclosures,
-          summary: decision.summary,
-          checks: decision.results,
+          summary: summarizeChecks(reportedResults),
+          checks: reportedResults,
         };
       }
     }
