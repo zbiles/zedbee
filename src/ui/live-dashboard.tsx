@@ -1,8 +1,8 @@
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
-import { PixelBee } from "./pixel-bee.js";
-import { PixelClock, pixelClockWidth } from "./pixel-clock.js";
+import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
+import { PixelClock, pixelClockRows } from "./pixel-clock.js";
 import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { checkLabel } from "../reporting/check-label.js";
@@ -203,30 +203,36 @@ function SummaryChip({
   tone: string;
   color: boolean;
 }) {
+  const countRows = pixelClockRows(String(count));
   if (!color) {
     const interiorWidth = Math.max(0, width - 2);
-    const value = `${count} ${label}`.slice(0, interiorWidth);
-    const remaining = Math.max(0, interiorWidth - value.length);
-    const left = Math.floor(remaining / 2);
-    const right = remaining - left;
+    const framedRow = (value: string): string => {
+      const clipped = value.slice(0, interiorWidth);
+      const remaining = Math.max(0, interiorWidth - clipped.length);
+      const left = Math.floor(remaining / 2);
+      const right = remaining - left;
+      return `[${" ".repeat(left)}${clipped}${" ".repeat(right)}]`;
+    };
     return (
-      <Box width={width} height={2} flexDirection="column">
-        <Text bold>{`[${" ".repeat(left)}${value}${" ".repeat(right)}]`}</Text>
-        <Text>{`[${" ".repeat(interiorWidth)}]`}</Text>
-      </Box>
+      <Text bold>
+        {["", ...countRows, label, ""].map(framedRow).join("\n")}
+      </Text>
     );
   }
   return (
     <Box
       width={width}
-      height={2}
+      height={6}
+      flexDirection="column"
       alignItems="center"
-      justifyContent="center"
       backgroundColor={tone}
     >
+      <Box height={1} />
+      <PixelClock value={String(count)} color tone={ZEDBEE_THEME.beeBlack} />
       <Text bold color={ZEDBEE_THEME.beeBlack}>
-        {count} {label}
+        {label}
       </Text>
+      <Box height={1} />
     </Box>
   );
 }
@@ -246,6 +252,9 @@ function CheckPanel({
   color: boolean;
   width: number;
 }) {
+  const elapsedLabel = `${(elapsedMs / 1000).toFixed(1)}s`;
+  const fullHeading = `CHECKS (${elapsedLabel})`;
+  const heading = width >= fullHeading.length + 6 ? fullHeading : "CHECKS";
   return (
     <Box
       flexDirection="column"
@@ -253,7 +262,7 @@ function CheckPanel({
       borderStyle="single"
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
     >
-      <PanelHeading label="CHECKS" width={width} color={color} />
+      <PanelHeading label={heading} width={width} color={color} />
       {states.map((state, index) => (
         <Box key={state.id} flexDirection="column">
           <Box paddingX={2}>
@@ -334,12 +343,10 @@ function ActivityPanel({
 
 function SummaryPanel({
   states,
-  elapsedMs,
   color,
   width,
 }: {
   states: readonly CheckState[];
-  elapsedMs: number;
   color: boolean;
   width: number;
 }) {
@@ -353,12 +360,7 @@ function SummaryPanel({
     ({ status }) => status === "INCOMPLETE",
   ).length;
   const skipped = completed.filter(({ status }) => status === "SKIPPED").length;
-  const elapsedValue = (elapsedMs / 1000).toFixed(1);
-  const elapsedLabel = `${elapsedValue}s`;
   const groupWidth = Math.max(1, width - 6);
-  const showPixelClock = groupWidth >= pixelClockWidth(elapsedValue) + 9;
-  const showElapsedCopy =
-    groupWidth >= elapsedLabel.length + 1 + "elapsed".length;
   const chipsInline = groupWidth >= 23;
   const availableForChips = groupWidth - 2;
   const base = Math.floor(availableForChips / 3);
@@ -387,25 +389,7 @@ function SummaryPanel({
       {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
     >
       <PanelHeading label="SUMMARY" width={width} color={color} />
-      <Box flexDirection="column" paddingX={2} paddingTop={1}>
-        <Box alignItems="flex-end">
-          {showPixelClock ? (
-            <>
-              <PixelClock value={elapsedValue} color={color} />
-              <Text {...colorProp(color, ZEDBEE_THEME.primary)}>s</Text>
-            </>
-          ) : (
-            <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-              {elapsedLabel}
-            </Text>
-          )}
-          {showElapsedCopy ? (
-            <>
-              <Box flexGrow={1} />
-              <Text {...colorProp(color, ZEDBEE_THEME.muted)}>elapsed</Text>
-            </>
-          ) : null}
-        </Box>
+      <Box flexDirection="column" paddingX={2}>
         <Box marginBottom={1}>
           <Text>
             <Text {...colorProp(color, barColor)}>{"▄".repeat(filled)}</Text>
@@ -467,6 +451,8 @@ export function LiveDashboard({
   const brandHeight = width < 40 ? 1 : 5;
   const brandWidth =
     width < 40 ? "ZEDBEE".length : pixelWordmarkWidth(compactBrand);
+  const brandGroupWidth =
+    brandWidth + (showBrandBee ? 2 + pixelBeeWidth(compactBrand) : 0);
   const checks = (
     <CheckPanel
       states={states}
@@ -481,12 +467,7 @@ export function LiveDashboard({
     <ActivityPanel events={events} color={color} width={panelWidth} />
   );
   const summary = (
-    <SummaryPanel
-      states={states}
-      elapsedMs={elapsedMs}
-      color={color}
-      width={panelWidth}
-    />
+    <SummaryPanel states={states} color={color} width={panelWidth} />
   );
 
   const dashboard = (
@@ -500,29 +481,24 @@ export function LiveDashboard({
     >
       <Box
         height={brandHeight}
-        position="relative"
-        marginLeft={1}
+        justifyContent="center"
         marginTop={showBrandBee ? 2 : 1}
         marginBottom={showBrandBee ? 2 : 1}
       >
-        {width < 40 ? (
-          <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
-            ZEDBEE
-          </Text>
-        ) : (
-          <PixelWordmark color={color} compact={compactBrand} />
-        )}
-        {showBrandBee ? (
-          <Box position="absolute" left={brandWidth + 2} top={-5}>
-            <PixelBee
-              motion
-              motionPixel="w"
-              compact={compactBrand}
-              sparse
-              color={color}
-            />
-          </Box>
-        ) : null}
+        <Box position="relative" width={brandGroupWidth} height={brandHeight}>
+          {width < 40 ? (
+            <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
+              ZEDBEE
+            </Text>
+          ) : (
+            <PixelWordmark color={color} compact={compactBrand} />
+          )}
+          {showBrandBee ? (
+            <Box position="absolute" left={brandWidth + 2} top={-5}>
+              <PixelBee compact={compactBrand} sparse color={color} />
+            </Box>
+          ) : null}
+        </Box>
       </Box>
       {wide ? (
         <Box flexDirection="row">

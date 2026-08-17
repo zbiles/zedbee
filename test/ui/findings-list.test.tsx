@@ -71,6 +71,9 @@ describe("FindingsList", () => {
       "Issue: Variable is assigned but never used.",
     );
     expect(lines[fix]).toContain("Fix: Remove it or use the value.");
+    expect(lines[source]!.indexOf("42 │")).toBe(3);
+    expect(lines[issue]!.indexOf("Issue:")).toBe(3);
+    expect(lines[fix]!.indexOf("Fix:")).toBe(3);
     expect(header).toBeLessThan(source);
     expect(source).toBeLessThan(issue);
     expect(issue).toBeLessThan(fix);
@@ -204,9 +207,9 @@ describe("FindingsList", () => {
     const issue = lines.findIndex((line) => line.includes("Issue:"));
     const fix = lines.findIndex((line) => line.includes("Fix:"));
 
-    expect(lines[source + 1]).toMatch(/^ {7}\S/u);
-    expect(lines[issue + 1]).toMatch(/^ {7}\S/u);
-    expect(lines[fix + 1]).toMatch(/^ {5}\S/u);
+    expect(lines[source + 1]).toMatch(/^ {9}\S/u);
+    expect(lines[issue + 1]).toMatch(/^ {10}\S/u);
+    expect(lines[fix + 1]).toMatch(/^ {9}\S/u);
   });
 
   it("redacts secret source even if an upstream excerpt contains raw text", async () => {

@@ -148,7 +148,7 @@ describe("PixelWordmark", () => {
     expect(frame).not.toContain("\u001b[38;2;177;140;247m");
   });
 
-  it("renders the live bee's motion trails in the final mock's white", async () => {
+  it("omits motion trails from the centered live bee", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
@@ -165,20 +165,10 @@ describe("PixelWordmark", () => {
         animations: false,
       }),
     ).lastFrame()!;
-    const trailLine = frame.split("\n").find((line) => {
-      const visible = line.replaceAll(/\u001b\[[0-9;]*m/gu, "");
-      return visible.includes("██████████ ████  ████  ████");
-    });
+    const visible = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
 
-    expect(trailLine).toBeDefined();
-    const cellColors = [
-      ...trailLine!.matchAll(/\u001b\[38;2;(\d+;\d+;\d+)m█/gu),
-    ].map((match) => match[1]);
-    expect(cellColors.slice(-3)).toEqual([
-      "243;244;246",
-      "243;244;246",
-      "243;244;246",
-    ]);
+    expect(visible).toContain("██████████");
+    expect(visible).not.toContain("██████████ ████  ████  ████");
   });
 
   it("uses the mock's green information color for running checks", async () => {
@@ -349,9 +339,9 @@ describe("PixelWordmark", () => {
       .split("\n")
       .find(
         (line) =>
-          line.includes("1 pass") &&
-          line.includes("1 warn") &&
-          line.includes("1 fail"),
+          line.includes("pass") &&
+          line.includes("warn") &&
+          line.includes("fail"),
       );
 
     expect(chipLine).toContain("\u001b[48;2;85;207;130m");

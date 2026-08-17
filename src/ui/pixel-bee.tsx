@@ -14,6 +14,10 @@ function pixelColor(pixel: Pixel): string {
   return ZEDBEE_THEME.beeBlack;
 }
 
+export function pixelBeeWidth(compact: boolean): number {
+  return BEE_GRID[0]!.length * (compact ? 1 : 2);
+}
+
 function PixelRow({
   row,
   color,
@@ -91,7 +95,7 @@ export function PixelBee({
   const bee = mirrored ? mirrorBee(BEE_GRID) : [...BEE_GRID];
   const dashes = motionDashGrid(motionPixel);
   const cellWidth = compact ? 1 : 2;
-  const beeWidth = bee[0]!.length * cellWidth;
+  const beeWidth = pixelBeeWidth(compact);
   const dashWidth = dashes[0]!.length * cellWidth;
   const motionGap = 1;
 

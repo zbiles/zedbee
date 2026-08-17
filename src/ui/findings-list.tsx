@@ -3,6 +3,16 @@ import type { Finding } from "../core/types.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
+const DETAIL_INDENT = 3;
+
+function detailGeometry(width: number): {
+  indent: number;
+  contentWidth: number;
+} {
+  const indent = Math.min(DETAIL_INDENT, Math.max(0, width - 1));
+  return { indent, contentWidth: Math.max(1, width - indent) };
+}
+
 function severityColor(finding: Finding): string {
   return finding.severity === "error"
     ? ZEDBEE_THEME.failure
@@ -23,17 +33,24 @@ function DetailRow({
   boldLabel?: boolean;
 }) {
   const labelWidth = Array.from(label).length;
+  const { indent, contentWidth } = detailGeometry(width);
   return (
     <Box width={width}>
-      <Box width={labelWidth} flexShrink={0}>
-        <Text bold={boldLabel} {...colorProp(color, ZEDBEE_THEME.primary)}>
-          {label}
-        </Text>
-      </Box>
-      <Box width={Math.max(1, width - labelWidth)} flexDirection="column">
-        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
-          {value}
-        </Text>
+      <Box width={indent} flexShrink={0} />
+      <Box width={contentWidth}>
+        <Box width={labelWidth} flexShrink={0}>
+          <Text bold={boldLabel} {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {label}
+          </Text>
+        </Box>
+        <Box
+          width={Math.max(1, contentWidth - labelWidth)}
+          flexDirection="column"
+        >
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {value}
+          </Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -66,6 +83,9 @@ export function FindingsList({
             : finding.check === "secrets" || excerpt.redacted
               ? "[redacted]"
               : (excerpt.text ?? "");
+        const sourceLabel =
+          excerpt === undefined ? undefined : `${excerpt.line} │ `;
+        const { indent, contentWidth } = detailGeometry(width);
 
         return (
           <Box
@@ -102,18 +122,24 @@ export function FindingsList({
             )}
             {excerpt === undefined ? null : (
               <Box width={width}>
-                <Box width={7} flexShrink={0}>
-                  <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
-                    {String(excerpt.line).padStart(4)} │{" "}
-                  </Text>
-                </Box>
-                <Box width={Math.max(1, width - 7)} flexDirection="column">
-                  <Text
-                    wrap="wrap"
-                    {...colorProp(color, ZEDBEE_THEME.secondary)}
+                <Box width={indent} flexShrink={0} />
+                <Box width={contentWidth}>
+                  <Box width={sourceLabel!.length} flexShrink={0}>
+                    <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                      {sourceLabel}
+                    </Text>
+                  </Box>
+                  <Box
+                    width={Math.max(1, contentWidth - sourceLabel!.length)}
+                    flexDirection="column"
                   >
-                    {source}
-                  </Text>
+                    <Text
+                      wrap="wrap"
+                      {...colorProp(color, ZEDBEE_THEME.secondary)}
+                    >
+                      {source}
+                    </Text>
+                  </Box>
                 </Box>
               </Box>
             )}

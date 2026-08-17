@@ -26,7 +26,7 @@ export function pixelClockWidth(value: string): number {
   return Math.max(0, value.length * 4 - 1);
 }
 
-function clockRows(value: string): string[] {
+export function pixelClockRows(value: string): string[] {
   const glyphs = [...value].map(
     (character) => GLYPHS[character] ?? GLYPHS["0"]!,
   );
@@ -46,13 +46,15 @@ function clockRows(value: string): string[] {
 export function PixelClock({
   value,
   color,
+  tone = ZEDBEE_THEME.primary,
 }: {
   value: string;
   color: boolean;
+  tone?: string;
 }) {
   return (
-    <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-      {clockRows(value).join("\n")}
+    <Text bold {...colorProp(color, tone)}>
+      {pixelClockRows(value).join("\n")}
     </Text>
   );
 }
