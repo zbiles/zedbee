@@ -41,7 +41,6 @@ export interface ObservationCacheKeyInput {
   readonly baselineRoot: string;
   readonly targetRoot: string;
   readonly relevantConfig?: unknown;
-  readonly managedBinarySha256?: string;
   readonly nodeVersion?: string;
   readonly platform?: string;
   readonly arch?: string;
@@ -99,7 +98,6 @@ export async function createObservationCacheKey(
     baseline,
     targetSnapshot: target,
     relevantConfig: input.relevantConfig,
-    managedBinarySha256: input.managedBinarySha256,
     nodeVersion: input.nodeVersion ?? process.versions.node,
     platform: input.platform ?? process.platform,
     arch: input.arch ?? process.arch,

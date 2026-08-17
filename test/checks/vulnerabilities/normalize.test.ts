@@ -1,96 +1,96 @@
 import { describe, expect, it } from "vitest";
-import { normalizeOsvReport } from "../../../src/checks/vulnerabilities/normalize.js";
+import { normalizeOsvInventory } from "../../../src/checks/vulnerabilities/normalize.js";
+import { osvQueryKey } from "../../../src/checks/vulnerabilities/osv/client.js";
+import type { OsvAdvisory } from "../../../src/checks/vulnerabilities/osv/types.js";
 
-const targetRoot = "/tmp/zedbee-target";
+const dependency = {
+  name: "lodash",
+  version: "4.17.20",
+  ecosystem: "npm" as const,
+  lockfilePath: "packages/web/package-lock.json",
+  line: 42,
+  importer: "packages/web",
+  dependencyPath: ["web", "lodash"],
+};
 
-function report(version = "4.17.20", score = "8.1"): string {
-  return JSON.stringify({
-    results: [
+function advisory(score = "8.1"): OsvAdvisory {
+  return {
+    id: "GHSA-35jh-r3h4-6jhm",
+    aliases: [],
+    affected: [
       {
-        source: {
-          path: `${targetRoot}/packages/web/package-lock.json`,
-          type: "lockfile",
-        },
-        packages: [
+        package: { name: "lodash", ecosystem: "npm" },
+        ranges: [
           {
-            package: { name: "lodash", version, ecosystem: "npm" },
-            vulnerabilities: [
-              {
-                id: "GHSA-35jh-r3h4-6jhm",
-                severity: [{ type: "CVSS_V3", score }],
-                affected: [
-                  {
-                    package: { name: "lodash", ecosystem: "npm" },
-                    ranges: [
-                      {
-                        type: "SEMVER",
-                        events: [{ introduced: "0" }, { fixed: "4.17.21" }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
+            type: "SEMVER",
+            events: [{ introduced: "0" }, { fixed: "4.17.21" }],
           },
         ],
+        versions: [],
       },
     ],
-  });
+    severity: [{ type: "CVSS_V3", score }],
+    references: [],
+  };
 }
 
-describe("normalizeOsvReport", () => {
-  it("creates safe, actionable vulnerability observations", () => {
-    expect(normalizeOsvReport(report(), targetRoot)).toEqual([
+describe("normalizeOsvInventory", () => {
+  it("creates safe, actionable, line-attributed observations", () => {
+    const observations = normalizeOsvInventory(
+      [dependency],
+      new Map([[osvQueryKey(dependency), [advisory()]]]),
+    );
+    expect(observations).toEqual([
       {
         check: "vulnerabilities",
         rule: "GHSA-35jh-r3h4-6jhm",
         identity:
-          '["GHSA-35jh-r3h4-6jhm","npm","lodash","packages/web/package-lock.json"]',
+          '["GHSA-35jh-r3h4-6jhm","npm","lodash","4.17.20","packages/web/package-lock.json","packages/web",["web","lodash"]]',
         severity: "error",
         message:
           "GHSA-35jh-r3h4-6jhm affects npm package lodash@4.17.20; fixed in 4.17.21 (https://osv.dev/GHSA-35jh-r3h4-6jhm)",
-        location: { file: "packages/web/package-lock.json" },
+        location: { file: "packages/web/package-lock.json", startLine: 42 },
         metric: { name: "cvss", value: 8.1 },
         remediation: "Upgrade lodash to 4.17.21 or later.",
       },
     ]);
   });
 
-  it("keeps identity stable when the vulnerable version changes", () => {
-    const before = normalizeOsvReport(report("4.17.19"), targetRoot)[0];
-    const after = normalizeOsvReport(report("4.17.20"), targetRoot)[0];
-
-    expect(after?.identity).toBe(before?.identity);
-    expect(after?.message).not.toBe(before?.message);
-  });
-
-  it("uses the maximum numeric severity and omits invalid numeric data", () => {
-    const multiple = JSON.parse(report()) as {
-      results: Array<{
-        packages: Array<{
-          vulnerabilities: Array<{ severity: Array<unknown> }>;
-        }>;
-      }>;
-    };
-    multiple.results[0]!.packages[0]!.vulnerabilities[0]!.severity = [
-      { type: "CVSS_V2", score: "5.5" },
-      { type: "CVSS_V3", score: "9.8" },
-      { type: "CVSS_V4", score: "not-a-number" },
-    ];
+  it("changes identity for version and dependency context changes", () => {
+    const first = normalizeOsvInventory(
+      [dependency],
+      new Map([[osvQueryKey(dependency), [advisory()]]]),
+    )[0];
+    const upgraded = { ...dependency, version: "4.17.21" };
+    const moved = { ...dependency, dependencyPath: ["other", "lodash"] };
     expect(
-      normalizeOsvReport(JSON.stringify(multiple), targetRoot)[0]?.metric,
-    ).toEqual({ name: "cvss", value: 9.8 });
+      normalizeOsvInventory(
+        [upgraded],
+        new Map([[osvQueryKey(upgraded), [advisory()]]]),
+      )[0]?.identity,
+    ).not.toBe(first?.identity);
+    expect(
+      normalizeOsvInventory(
+        [moved],
+        new Map([[osvQueryKey(moved), [advisory()]]]),
+      )[0]?.identity,
+    ).not.toBe(first?.identity);
   });
 
-  it("rejects source paths outside the snapshot without exposing them", () => {
-    const outside = report().replaceAll(targetRoot, "/private/sensitive");
-    expect(() => normalizeOsvReport(outside, targetRoot)).toThrow(
-      "OSV-Scanner returned an invalid report",
-    );
-    try {
-      normalizeOsvReport(outside, targetRoot);
-    } catch (error) {
-      expect(String(error)).not.toContain("/private/sensitive");
-    }
+  it("uses the maximum valid numeric CVSS value and ignores invalid values", () => {
+    const multiple = {
+      ...advisory(),
+      severity: [
+        { type: "CVSS_V2", score: "5.5" },
+        { type: "CVSS_V3", score: "9.8" },
+        { type: "CVSS_V4", score: "not-a-number" },
+      ],
+    };
+    expect(
+      normalizeOsvInventory(
+        [dependency],
+        new Map([[osvQueryKey(dependency), [multiple]]]),
+      )[0]?.metric,
+    ).toEqual({ name: "cvss", value: 9.8 });
   });
 });

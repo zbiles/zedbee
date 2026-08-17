@@ -1,106 +1,77 @@
-import { isAbsolute, relative, resolve } from "node:path";
-import type { Observation } from "../../core/types.js";
 import { compareCodeUnits } from "../../core/compare.js";
-import { osvReportSchema, type OsvVulnerability } from "./osv-schema.js";
+import type { Observation } from "../../core/types.js";
+import type { DependencyRecord } from "./inventory/types.js";
+import { osvQueryKey } from "./osv/client.js";
+import type { OsvAdvisory } from "./osv/types.js";
 
-const INVALID_REPORT = "OSV-Scanner returned an invalid report";
-
-function relativeSourcePath(snapshotRoot: string, sourcePath: string): string {
-  const canonicalRoot = resolve(snapshotRoot);
-  const canonicalSource = isAbsolute(sourcePath)
-    ? resolve(sourcePath)
-    : resolve(canonicalRoot, sourcePath);
-  const result = relative(canonicalRoot, canonicalSource).replaceAll("\\", "/");
-  if (
-    result.length === 0 ||
-    result === ".." ||
-    result.startsWith("../") ||
-    isAbsolute(result)
-  ) {
-    throw new TypeError(INVALID_REPORT);
-  }
-  return result;
-}
-
-function maximumNumericSeverity(
-  vulnerability: OsvVulnerability,
-): number | undefined {
-  const values = (vulnerability.severity ?? [])
+function maximumNumericSeverity(advisory: OsvAdvisory): number | undefined {
+  const values = advisory.severity
     .map(({ score }) => Number(score))
     .filter((value) => Number.isFinite(value) && value >= 0 && value <= 10);
   return values.length === 0 ? undefined : Math.max(...values);
 }
 
 function fixedVersion(
-  vulnerability: OsvVulnerability,
-  ecosystem: string,
-  packageName: string,
+  advisory: OsvAdvisory,
+  dependency: DependencyRecord,
 ): string | undefined {
-  const fixed = (vulnerability.affected ?? [])
+  return advisory.affected
     .filter(
       (affected) =>
-        (affected.package?.ecosystem === undefined ||
-          affected.package.ecosystem === ecosystem) &&
-        (affected.package?.name === undefined ||
-          affected.package.name === packageName),
+        affected.package.ecosystem.toLowerCase() === "npm" &&
+        affected.package.name === dependency.name,
     )
-    .flatMap((affected) => affected.ranges ?? [])
-    .flatMap((range) => range.events ?? [])
-    .map((event) => event.fixed)
-    .filter((candidate): candidate is string => candidate !== undefined)
-    .sort(compareCodeUnits);
-  return fixed[0];
+    .flatMap(({ ranges }) => ranges)
+    .flatMap(({ events }) => events)
+    .flatMap(({ fixed }) => (fixed === undefined ? [] : [fixed]))
+    .sort(compareCodeUnits)[0];
 }
 
-export function normalizeOsvReport(
-  rawReport: string,
-  snapshotRoot: string,
+export function normalizeOsvInventory(
+  inventory: readonly DependencyRecord[],
+  advisoriesByQuery: ReadonlyMap<string, readonly OsvAdvisory[]>,
 ): readonly Observation[] {
-  try {
-    const parsed: unknown = JSON.parse(rawReport);
-    rawReport = "";
-    const report = osvReportSchema.parse(parsed);
-    const observations: Observation[] = [];
-    for (const result of report.results) {
-      const dependencyPath = relativeSourcePath(
-        snapshotRoot,
-        result.source.path,
-      );
-      for (const item of result.packages) {
-        const { ecosystem, name, version } = item.package;
-        for (const vulnerability of item.vulnerabilities ?? []) {
-          const fixed = fixedVersion(vulnerability, ecosystem, name);
-          const score = maximumNumericSeverity(vulnerability);
-          const reference = `https://osv.dev/${encodeURIComponent(vulnerability.id)}`;
-          observations.push({
-            check: "vulnerabilities",
-            rule: vulnerability.id,
-            identity: JSON.stringify([
-              vulnerability.id,
-              ecosystem,
-              name,
-              dependencyPath,
-            ]),
-            severity: "error",
-            message: `${vulnerability.id} affects ${ecosystem} package ${name}@${version}${fixed === undefined ? "" : `; fixed in ${fixed}`} (${reference})`,
-            location: { file: dependencyPath },
-            ...(score === undefined
-              ? {}
-              : { metric: { name: "cvss", value: score } }),
-            ...(fixed === undefined
-              ? {}
-              : { remediation: `Upgrade ${name} to ${fixed} or later.` }),
-          });
-        }
-      }
+  const observations: Observation[] = [];
+  for (const dependency of inventory) {
+    const advisories = advisoriesByQuery.get(osvQueryKey(dependency)) ?? [];
+    for (const advisory of advisories) {
+      const fixed = fixedVersion(advisory, dependency);
+      const score = maximumNumericSeverity(advisory);
+      const reference = `https://osv.dev/${encodeURIComponent(advisory.id)}`;
+      observations.push({
+        check: "vulnerabilities",
+        rule: advisory.id,
+        identity: JSON.stringify([
+          advisory.id,
+          dependency.ecosystem,
+          dependency.name,
+          dependency.version,
+          dependency.lockfilePath,
+          dependency.importer ?? null,
+          dependency.dependencyPath ?? null,
+        ]),
+        severity: "error",
+        message: `${advisory.id} affects npm package ${dependency.name}@${dependency.version}${fixed === undefined ? "" : `; fixed in ${fixed}`} (${reference})`,
+        location: {
+          file: dependency.lockfilePath,
+          ...(dependency.line === undefined
+            ? {}
+            : { startLine: dependency.line }),
+        },
+        ...(score === undefined
+          ? {}
+          : { metric: { name: "cvss", value: score } }),
+        ...(fixed === undefined
+          ? {}
+          : {
+              remediation: `Upgrade ${dependency.name} to ${fixed} or later.`,
+            }),
+      });
     }
-    return Object.freeze(
-      observations.sort((left, right) =>
-        compareCodeUnits(left.identity, right.identity),
-      ),
-    );
-  } catch {
-    rawReport = "";
-    throw new TypeError(INVALID_REPORT);
   }
+  return Object.freeze(
+    observations.sort((left, right) =>
+      compareCodeUnits(left.identity, right.identity),
+    ),
+  );
 }

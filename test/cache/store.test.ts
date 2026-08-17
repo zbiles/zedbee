@@ -10,7 +10,6 @@ async function key(options: {
   targetSource?: string;
   max?: number;
   engine?: string;
-  managedBinarySha256?: string;
   relevantConfig?: Readonly<Record<string, unknown>>;
   nodeVersion?: string;
   platform?: string;
@@ -43,9 +42,6 @@ async function key(options: {
     target: { id: ".", kind: "repository", relativeRoot: "." },
     baselineRoot: baseline.root,
     targetRoot: target.root,
-    ...(options.managedBinarySha256 === undefined
-      ? {}
-      : { managedBinarySha256: options.managedBinarySha256 }),
     relevantConfig: options.relevantConfig ?? {
       packageManager: "npm",
       workspace: ".",
@@ -72,9 +68,6 @@ describe("observation cache", () => {
     );
     expect(await key({ max: 21 })).not.toBe(original);
     expect(await key({ engine: "zedbee-cyclomatic-v2" })).not.toBe(original);
-    expect(await key({ managedBinarySha256: "b".repeat(64) })).not.toBe(
-      original,
-    );
     expect(await key({ relevantConfig: { packageManager: "pnpm" } })).not.toBe(
       original,
     );
