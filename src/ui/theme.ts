@@ -4,7 +4,6 @@ export const ZEDBEE_THEME = {
   muted: "#656c78",
   border: "#484e59",
   divider: "#32363e",
-  surface: "#111318",
   wordmark: "#f3f4f6",
   yellow: "#fecd23",
   pass: "#55cf82",

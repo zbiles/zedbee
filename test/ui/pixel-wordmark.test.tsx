@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("PixelWordmark", () => {
-  it("fills the rounded scan container with the mock's dark surface", async () => {
+  it("leaves the frame and protruding brand transparent to the terminal", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
@@ -30,7 +30,13 @@ describe("PixelWordmark", () => {
       }),
     ).lastFrame()!;
 
-    expect(frame).toContain("\u001b[48;2;17;19;24m");
+    const lines = frame.split("\n");
+    const visible = (line: string) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    const panelsTop = lines.findIndex((line) => visible(line).includes("┌"));
+    const brandAndFrame = lines.slice(0, panelsTop).join("\n");
+
+    expect(panelsTop).toBeGreaterThan(0);
+    expect(brandAndFrame).not.toMatch(/\u001b\[48;/u);
   });
 
   it("renders check-row dividers with less contrast than panel and heading strokes", async () => {

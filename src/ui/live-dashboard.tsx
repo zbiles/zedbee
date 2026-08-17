@@ -500,12 +500,7 @@ export function LiveDashboard({
       flexDirection="column"
       width={width}
       borderStyle="round"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.yellow,
-            backgroundColor: ZEDBEE_THEME.surface,
-          }
-        : {})}
+      {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
       paddingX={1}
     >
       <Box
