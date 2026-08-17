@@ -21,13 +21,13 @@ const FINDING_CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   cyclomaticComplexity: "ESLint",
   readabilityComplexity: "ESLint",
   structuralSecurity: "ast-grep",
-  secrets: "Gitleaks",
+  secrets: "Secretlint",
   duplication: "jscpd",
   dependencyArchitecture: "dependency-cruiser",
   deadCode: "Knip",
   reactCorrectness: "ESLint",
   reactAccessibility: "ESLint",
-  vulnerabilities: "OSV Scanner",
+  vulnerabilities: "OSV",
   zedbee: "Zedbee",
 });
 

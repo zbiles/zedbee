@@ -6,7 +6,7 @@ import { executeChecksCommand } from "./commands/checks.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
-import type { InitHookChoice } from "./init/types.js";
+import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
 import {
   executeScanCommand,
   signalExitCode,
@@ -31,6 +31,7 @@ interface CommanderInitOptions {
   profile: ProfileId;
   hook: InitHookChoice;
   checks?: readonly CheckId[];
+  osvUnavailable: InitOsvUnavailable;
   yes: boolean;
   format: "text" | "json";
   color: boolean;
@@ -83,6 +84,14 @@ export async function main(
         .default("auto"),
     )
     .addOption(
+      new Option(
+        "--osv-unavailable <policy>",
+        "commit policy when the online OSV service is unavailable",
+      )
+        .choices(["block", "warn"])
+        .default("block"),
+    )
+    .addOption(
       new Option("--format <format>", "output format")
         .choices(["text", "json"])
         .default("text"),
@@ -101,6 +110,7 @@ export async function main(
           profile: options.profile,
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
+          osvUnavailable: options.osvUnavailable,
           yes: options.yes,
           format: options.format,
           color: options.color,

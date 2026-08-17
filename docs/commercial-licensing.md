@@ -8,14 +8,14 @@ PolyForm Small Business is source-available, not an OSI-approved open-source lic
 
 Do not describe Zedbee as MIT-licensed, Apache-licensed, or unrestricted open source. `package.json` uses the exact identifier `PolyForm-Small-Business-1.0.0` and the packed core includes the full PolyForm terms.
 
-## Bundled analyzers and npm dependencies
+## Analyzer libraries and npm dependencies
 
-Bundled upstream programs keep their own licenses:
+Third-party npm packages keep their own licenses. In particular:
 
-- Gitleaks 8.28.0 is bundled under MIT terms.
-- OSV-Scanner 2.4.0 is bundled under Apache License 2.0 terms.
+- Secretlint 13.0.4 and its recommended preset are installed as npm dependencies under MIT terms.
+- The lockfile parsers and other analyzer dependencies retain the exact licenses recorded in `licenses/production-inventory.json` and `THIRD_PARTY_NOTICES.md`.
 
-Each platform package contains the applicable upstream license, notice, locked manifest, and executable. PolyForm is not applied to those upstream binaries. The core package summarizes them in `THIRD_PARTY_NOTICES.md` and ships the reviewed production dependency inventory.
+Zedbee does not redistribute Gitleaks or OSV-Scanner executables. The bounded OSV API client is Zedbee's own code and is covered by Zedbee's PolyForm Small Business terms; the remote OSV service is contacted but not distributed. The core package ships its reviewed production dependency inventory and third-party notices.
 
 Zedbee's production dependency gate accepts reviewed permissive terms and fails closed on unknown, copyleft, or otherwise unapproved expressions. That engineering control reduces accidental license drift but is not a legal opinion.
 
@@ -25,8 +25,8 @@ Before a commercial release, the owner should have counsel confirm at least:
 
 1. ownership and contributor rights in Zedbee's original code and brand;
 2. the intended customer terms alongside PolyForm Small Business;
-3. all attribution, notice, source-offer, patent, trademark, and distribution obligations in the exact shipped artifacts;
+3. all attribution, notice, source-offer, patent, trademark, and distribution obligations in the exact shipped npm artifact;
 4. whether online OSV metadata disclosure needs additional privacy terms;
 5. the canonical publisher identity, repository, support, security contact, and commercial-license channel.
 
-The release gate checks artifact contents, dependency inventory, third-party notices, managed checksums, repository metadata, and SBOM inputs. It intentionally blocks public publication while canonical repository/contact metadata or remote cross-platform evidence is absent.
+The release gate checks artifact contents, dependency inventory, third-party notices, repository metadata, and SBOM inputs. It intentionally blocks public publication while canonical repository/contact metadata or remote cross-platform evidence is absent.

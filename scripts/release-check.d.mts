@@ -11,8 +11,6 @@ export function verificationSteps(
   mode?: VerificationMode,
 ): readonly VerificationStep[];
 
-export function releaseArtifactSteps(): readonly VerificationStep[];
-
 export function packageManagerInstall(
   manager: PackageManager,
   tarball: string,

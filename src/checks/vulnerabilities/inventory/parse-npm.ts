@@ -30,7 +30,8 @@ function invalid(message: string): never {
 }
 
 function properties(node: JsonNode, field: string): readonly JsonProperty[] {
-  if (node.type !== "object") invalid(`The npm lockfile ${field} must be an object.`);
+  if (node.type !== "object")
+    invalid(`The npm lockfile ${field} must be an object.`);
   return (node.children ?? []).map((property) => {
     const [keyNode, valueNode] = property.children ?? [];
     if (
@@ -100,7 +101,10 @@ function packageName(value: string): string {
       value.length > MAX_PACKAGE_NAME_LENGTH
         ? "LOCKFILE_LIMIT_EXCEEDED"
         : "LOCKFILE_INVALID";
-    throw inventoryError(code, "The npm lockfile contains an invalid package name.");
+    throw inventoryError(
+      code,
+      "The npm lockfile contains an invalid package name.",
+    );
   }
   return value;
 }
@@ -128,10 +132,12 @@ function exactVersion(node: JsonNode | undefined): string {
   return value;
 }
 
-function dependencyPathFromPackageKey(packageKey: string): {
-  readonly importer?: string;
-  readonly dependencyPath: readonly string[];
-} | undefined {
+function dependencyPathFromPackageKey(packageKey: string):
+  | {
+      readonly importer?: string;
+      readonly dependencyPath: readonly string[];
+    }
+  | undefined {
   const marker = "node_modules/";
   const first = packageKey.indexOf(marker);
   if (first < 0) return undefined;
@@ -217,14 +223,24 @@ function parseModern(
   lineAt: (offset: number) => number,
 ): DependencyInventory {
   const packages = property(root, "packages");
-  if (packages === undefined) invalid("The npm lockfile is missing its packages inventory.");
+  if (packages === undefined)
+    invalid("The npm lockfile is missing its packages inventory.");
   const records: DependencyRecord[] = [];
   for (const entry of properties(packages, "packages")) {
     const context = dependencyPathFromPackageKey(entry.key);
-    if (context === undefined || booleanValue(property(entry.valueNode, "link")) === true) {
+    if (
+      context === undefined ||
+      booleanValue(property(entry.valueNode, "link")) === true
+    ) {
       continue;
     }
     const versionNode = property(entry.valueNode, "version");
+    if (
+      versionNode === undefined &&
+      booleanValue(property(entry.valueNode, "optional")) === true
+    ) {
+      continue;
+    }
     const explicitName = stringValue(property(entry.valueNode, "name"));
     const installedName = context.dependencyPath.at(-1);
     const name = packageName(explicitName ?? installedName ?? "");
@@ -272,12 +288,16 @@ export function parseNpmLockfile(
     disallowComments: true,
   });
   if (root === undefined || errors.length > 0 || root.type !== "object") {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not parse the npm lockfile.");
+    throw inventoryError(
+      "LOCKFILE_INVALID",
+      "Zedbee could not parse the npm lockfile.",
+    );
   }
   try {
     validateTree(root);
     const versionNode = property(root, "lockfileVersion");
-    const version = versionNode?.type === "number" ? versionNode.value : undefined;
+    const version =
+      versionNode?.type === "number" ? versionNode.value : undefined;
     if (version !== 1 && version !== 2 && version !== 3) {
       throw inventoryError(
         "LOCKFILE_VERSION_UNSUPPORTED",
@@ -290,6 +310,9 @@ export function parseNpmLockfile(
       : parseModern(root, lockfilePath, positions.lineAt);
   } catch (error) {
     if (error instanceof LockfileInventoryError) throw error;
-    throw inventoryError("LOCKFILE_INVALID", "The npm lockfile has invalid structure.");
+    throw inventoryError(
+      "LOCKFILE_INVALID",
+      "The npm lockfile has invalid structure.",
+    );
   }
 }

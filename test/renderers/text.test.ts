@@ -89,14 +89,18 @@ describe("renderText", () => {
         {
           checkId: "vulnerabilities",
           target: ".",
-          services: ["api.osv.dev", "api.deps.dev"],
-          metadata: ["package names", "versions"],
+          services: ["api.osv.dev"],
+          metadata: [
+            "package names",
+            "exact versions",
+            "ecosystem identifiers",
+          ],
         },
       ],
     });
 
     expect(renderText(report, { width: 80, color: false })).toContain(
-      "NETWORK DISCLOSURE\n  vulnerabilities sent package names, versions to api.osv.dev, api.deps.dev.",
+      "NETWORK DISCLOSURE\n  vulnerabilities sent package names, exact versions, ecosystem identifiers to\n  api.osv.dev.",
     );
   });
 

@@ -22,13 +22,15 @@ async function fixture(name: string): Promise<string> {
 }
 
 function compact(records: ReturnType<typeof parseNpmLockfile>) {
-  return records.map(({ name, version, lockfilePath, line, dependencyPath }) => ({
-    name,
-    version,
-    lockfilePath,
-    line,
-    dependencyPath,
-  }));
+  return records.map(
+    ({ name, version, lockfilePath, line, dependencyPath }) => ({
+      name,
+      version,
+      lockfilePath,
+      line,
+      dependencyPath,
+    }),
+  );
 }
 
 describe("parseNpmLockfile", () => {
@@ -127,9 +129,24 @@ describe("parseNpmLockfile", () => {
         "node_modules/alpha": { version: "2.0.0" },
       },
     });
-    expect(parseNpmLockfile(contents, "package-lock.json").map((r) => r.name)).toEqual([
-      "alpha",
-      "zeta",
+    expect(
+      parseNpmLockfile(contents, "package-lock.json").map((r) => r.name),
+    ).toEqual(["alpha", "zeta"]);
+  });
+
+  it("ignores unresolved optional platform placeholders without versions", () => {
+    const contents = JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "node_modules/native-engine": { version: "1.0.0" },
+        "node_modules/native-engine/node_modules/native-engine-linux-x64": {
+          optional: true,
+        },
+      },
+    });
+
+    expect(compact(parseNpmLockfile(contents, "package-lock.json"))).toEqual([
+      expect.objectContaining({ name: "native-engine", version: "1.0.0" }),
     ]);
   });
 
@@ -164,11 +181,14 @@ describe("parseNpmLockfile", () => {
       }),
       "LOCKFILE_INVALID",
     ],
-  ] as const)("rejects %s without returning a partial inventory", (_label, input, code) => {
-    expect(() => parseNpmLockfile(input, "package-lock.json")).toThrowError(
-      expect.objectContaining({ code }),
-    );
-  });
+  ] as const)(
+    "rejects %s without returning a partial inventory",
+    (_label, input, code) => {
+      expect(() => parseNpmLockfile(input, "package-lock.json")).toThrowError(
+        expect.objectContaining({ code }),
+      );
+    },
+  );
 
   it("rejects unsafe lockfile paths", async () => {
     const contents = await fixture("package-lock-v3.json");
@@ -180,7 +200,9 @@ describe("parseNpmLockfile", () => {
   it("enforces byte, record, nesting, and package-name limits", () => {
     expect(() =>
       parseNpmLockfile(" ".repeat(MAX_LOCKFILE_BYTES + 1), "package-lock.json"),
-    ).toThrowError(expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }));
+    ).toThrowError(
+      expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
+    );
 
     const packages = Object.fromEntries(
       Array.from({ length: MAX_DEPENDENCY_RECORDS + 1 }, (_, index) => [
@@ -193,7 +215,9 @@ describe("parseNpmLockfile", () => {
         JSON.stringify({ lockfileVersion: 3, packages }),
         "package-lock.json",
       ),
-    ).toThrowError(expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }));
+    ).toThrowError(
+      expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
+    );
 
     const nested = `${'{"value":'.repeat(MAX_LOCKFILE_NESTING + 1)}null${"}".repeat(MAX_LOCKFILE_NESTING + 1)}`;
     expect(() => parseNpmLockfile(nested, "package-lock.json")).toThrowError(
@@ -209,7 +233,9 @@ describe("parseNpmLockfile", () => {
         }),
         "package-lock.json",
       ),
-    ).toThrowError(expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }));
+    ).toThrowError(
+      expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
+    );
   });
 });
 
@@ -221,7 +247,10 @@ describe("parseLockfileInventory", () => {
       "package-lock.json",
       await fixture("package-lock-v3.json"),
     );
-    await repository.write("not-discovered.json", await fixture("package-lock-v3.json"));
+    await repository.write(
+      "not-discovered.json",
+      await fixture("package-lock-v3.json"),
+    );
     const inspection = await inspectRepository(repository.root);
 
     await expect(
@@ -229,9 +258,13 @@ describe("parseLockfileInventory", () => {
     ).resolves.toHaveLength(4);
     await expect(
       parseLockfileInventory(inspection, "not-discovered.json"),
-    ).rejects.toThrowError(expect.objectContaining({ code: "LOCKFILE_NOT_DISCOVERED" }));
+    ).rejects.toThrowError(
+      expect.objectContaining({ code: "LOCKFILE_NOT_DISCOVERED" }),
+    );
     await expect(
       parseLockfileInventory(inspection, "/tmp/package-lock.json"),
-    ).rejects.toThrowError(expect.objectContaining({ code: "LOCKFILE_NOT_DISCOVERED" }));
+    ).rejects.toThrowError(
+      expect.objectContaining({ code: "LOCKFILE_NOT_DISCOVERED" }),
+    );
   });
 });

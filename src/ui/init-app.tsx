@@ -3,11 +3,15 @@ import { Box, Text, render, useApp, useInput } from "ink";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
 import type { InitPromptOptions } from "../commands/init.js";
 import type { InitProposal } from "../init/types.js";
+import type { InitOsvUnavailable } from "../init/types.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
-  readonly proposalForChecks: (checks: readonly CheckId[]) => InitProposal;
+  readonly proposalForChecks: (
+    checks: readonly CheckId[],
+    osvUnavailable: InitOsvUnavailable,
+  ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
 }
 
@@ -28,12 +32,16 @@ export function InitApp({
   const [selected, setSelected] = useState(
     () => new Set<CheckId>(proposal.recommendedChecks),
   );
+  const [osvUnavailable, setOsvUnavailable] = useState<InitOsvUnavailable>(
+    proposal.osvUnavailable,
+  );
   const reviewedProposal = useMemo(
     () =>
       proposalForChecks(
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
+        osvUnavailable,
       ),
-    [proposalForChecks, selected],
+    [osvUnavailable, proposalForChecks, selected],
   );
   useInput((input, key) => {
     if (input.toLowerCase() === "y" || key.return) {
@@ -56,6 +64,11 @@ export function InitApp({
           return next;
         });
       }
+    } else if (
+      proposal.vulnerabilityScanningAvailable &&
+      (input.toLowerCase() === "b" || input.toLowerCase() === "w")
+    ) {
+      setOsvUnavailable(input.toLowerCase() === "b" ? "block" : "warn");
     }
   });
   return (
@@ -85,6 +98,9 @@ export function InitApp({
           {check}
         </Text>
       ))}
+      {proposal.vulnerabilityScanningAvailable ? (
+        <Text>OSV unavailable: {osvUnavailable} ([B] block · [W] warn)</Text>
+      ) : null}
       {reviewedProposal.networkChecks.map((check) => (
         <Text key={check.id} {...colorProp(color, ZEDBEE_THEME.warning)}>
           Network disclosure: {check.disclosure}
@@ -105,7 +121,10 @@ export function InitApp({
 export async function runInitPrompt(
   proposal: InitProposal,
   options: InitPromptOptions,
-  proposalForChecks: (checks: readonly CheckId[]) => InitProposal,
+  proposalForChecks: (
+    checks: readonly CheckId[],
+    osvUnavailable: InitOsvUnavailable,
+  ) => InitProposal,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
   const app = render(

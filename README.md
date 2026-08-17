@@ -33,14 +33,14 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 ## Commands
 
-| Command         | Purpose                                                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zedbee init`   | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration              |
-| `zedbee scan`   | Scan the exact staged snapshot and return pass, blocked, or incomplete                                                                     |
-| `zedbee checks` | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis               |
-| `zedbee doctor` | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, managed engines/checksums, licenses, and OSV setup without running a scan |
+| Command         | Purpose                                                                                                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `zedbee init`   | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
+| `zedbee scan`   | Scan the exact staged snapshot and return pass, blocked, or incomplete                                                                                       |
+| `zedbee checks` | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
+| `zedbee doctor` | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, Secretlint, lockfile parsing, licenses, and bounded OSV connectivity without running a scan |
 
-`init` supports `--profile fast|recommended|thorough`, `--hook auto|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--yes`, and text/JSON output. `scan`, `checks`, and `doctor` accept `--config <path>`.
+`init` supports `--profile fast|recommended|thorough`, `--hook auto|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--yes`, and text/JSON output. Interactive setup exposes the same check toggles and OSV outage choice without requiring documentation lookup. `scan`, `checks`, and `doctor` accept `--config <path>`.
 
 ## Exact staged content
 
@@ -63,6 +63,7 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
     "formatting": { "severity": "error", "when": "relevant" },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "readabilityComplexity": { "max": 15, "blockWorsening": true },
+    "vulnerabilities": { "severity": "error", "onUnavailable": "block" },
   },
   "reporting": { "sourceExcerpts": "interactive" },
   "failOnIncomplete": true,
@@ -77,7 +78,7 @@ The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.j
 
 ## Managed analyzer boundary
 
-Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Babel, parser, plugin, or executable analyzer configuration. TypeScript configuration is parsed as staged data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. A workspace containing TypeScript source must provide a contained `tsconfig.json`; otherwise typed lint and type analysis fail closed. This is stricter than tools that silently invent compiler options, but avoids validating staged code under settings different from the project.
+Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. TypeScript configuration is parsed as staged data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. A workspace containing TypeScript source must provide a contained `tsconfig.json`; otherwise typed lint and type analysis fail closed. This is stricter than tools that silently invent compiler options, but avoids validating staged code under settings different from the project.
 
 Project checks inspect a workspace as a whole, then compare the isolated `HEAD` and index snapshots so existing debt remains non-blocking. This roughly doubles analyzer work. Knip runs as a managed shell-free subprocess because it has no supported analysis API; all framework plugins are disabled so repository configs cannot execute. That safety choice is less framework-aware than a normal Knip setup, and dynamic imports, framework conventions, wildcard package exports, and TypeScript path aliases may need future managed profiles. jscpd also runs as a subprocess and receives an exact source-file list; exceptionally large workspaces can exceed the operating system argument limit and fail incomplete. Dependency Cruiser runs through its public API.
 
@@ -149,7 +150,7 @@ Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected 
 
 ## Cache and performance
 
-Zedbee may cache content-addressed, normalized observations for deterministic local analyzers. Cache keys include the staged snapshots, policy, workspace/config inputs, engine identity, and runtime platform. Cache failures and corruption are misses and never reduce coverage. Source, raw analyzer output, Gitleaks observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
+Zedbee may cache content-addressed, normalized observations for deterministic local analyzers. Cache keys include the staged snapshots, policy, workspace/config inputs, engine identity, and runtime platform. Cache failures and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
 
 ## Current coverage
 
@@ -158,11 +159,11 @@ The managed suite currently includes:
 1. Prettier formatting, ESLint and typescript-eslint lint, TypeScript diagnostics, both complexity metrics, original ast-grep security checks, React correctness, and React DOM accessibility.
 2. jscpd duplication, Dependency Cruiser architecture validation, and Knip dead-code/package-hygiene analysis across npm, pnpm, Yarn, and Bun workspaces.
 3. Exact staged snapshots, baseline comparison, changed-range and syntax-entity attribution, stable text/JSON output, and the approved live Ink progress display.
-4. Checksum-verified Gitleaks secret scanning with irreversible redaction, plus OSV-Scanner vulnerability comparison in disclosed online or strict offline mode.
+4. Direct Secretlint scanning with irreversible redaction, plus the bounded Zedbee OSV API client for disclosed online vulnerability comparison.
 
-Optional Semgrep is not part of the v1 managed suite and is not silently approximated by the current structural rules. Managed binaries currently support Darwin and Linux on x64/arm64 and Windows on x64; other platforms report incomplete analysis. Online vulnerability scanning sends package names, versions, ecosystems, and supported file hashes to OSV/deps.dev, but never source code. Set `checks.vulnerabilities.network` to `offline` and provide `ZEDBEE_OSV_DATABASE` to use a pre-populated local database without network access.
+Optional Semgrep is not part of the v1 managed suite and is not silently approximated by the current structural rules. Online vulnerability scanning sends package names, exact versions, and the npm ecosystem identifier to `api.osv.dev`; source code and file hashes are not sent. There is no offline database mode. Choose whether an OSV outage blocks or warns with `checks.vulnerabilities.onUnavailable` or guided `zedbee init`.
 
-See [the complete check matrix](docs/checks.md), [privacy and data handling](docs/privacy.md), and [security policy](SECURITY.md).
+See [the complete check matrix](docs/checks.md), [support matrix](docs/support.md), [privacy and data handling](docs/privacy.md), and [security policy](SECURITY.md).
 
 ## Troubleshooting
 
@@ -171,8 +172,7 @@ See [the complete check matrix](docs/checks.md), [privacy and data handling](doc
 - For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
 - TypeScript workspaces need a contained staged `tsconfig.json`; Zedbee does not invent compiler options.
 - Intent-to-add entries are excluded as unstaged. A staged Git LFS pointer remains incomplete until its object is materialized and staged again; path-ignore policy is not yet configurable.
-- Offline vulnerability checks need a pre-populated database at `ZEDBEE_OSV_DATABASE`.
-- Unsupported managed-binary platforms fail incomplete. The supported release matrix is Darwin/Linux x64 and arm64, plus Windows x64.
+- OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.
 
@@ -180,4 +180,4 @@ See [the complete check matrix](docs/checks.md), [privacy and data handling](doc
 
 Zedbee is distributed under the [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0). The npm SPDX identifier is `PolyForm-Small-Business-1.0.0`. See [LICENSE](LICENSE) for the complete terms.
 
-PolyForm applies to Zedbee's own code; bundled tools and npm dependencies retain their separate licenses, including Gitleaks under MIT and OSV-Scanner under Apache License 2.0. Uses outside PolyForm's permissions require separate terms from the licensor. See [commercial use and third-party licensing](docs/commercial-licensing.md). This documentation is not legal advice; commercial distribution should receive qualified legal review.
+PolyForm applies to Zedbee's own code, including its OSV API client. npm dependencies retain their separate licenses; Secretlint is distributed under MIT terms. Uses outside PolyForm's permissions require separate terms from the licensor. See [commercial use and third-party licensing](docs/commercial-licensing.md). This documentation is not legal advice; commercial distribution should receive qualified legal review.

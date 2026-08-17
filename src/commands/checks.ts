@@ -44,8 +44,7 @@ export interface CheckDescription {
   readonly applicability: "applicable" | "not-applicable";
   readonly targets: readonly string[];
   readonly executionClass: ExecutionClass;
-  readonly network:
-    "none" | "online-package-metadata-only";
+  readonly network: "none" | "online-package-metadata-only";
   readonly engine: {
     readonly name: string;
     readonly version: string;
@@ -125,10 +124,10 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
   },
   secrets: {
     description: "Finds secrets in the exact staged snapshot.",
-    engine: { name: "Gitleaks", version: "8.28.0", license: "MIT" },
+    engine: { name: "Secretlint", version: "13.0.4", license: "MIT" },
     executionClass: "project-analysis",
     limitation:
-      "High-entropy and pattern matching can require human confirmation.",
+      "Scans changed regular UTF-8 files up to 1 MiB, not repository history; pattern matches can require human confirmation.",
   },
   duplication: {
     description: "Detects new and enlarged code clones.",
@@ -175,10 +174,14 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
   },
   vulnerabilities: {
     description: "Checks dependency lockfiles for known vulnerabilities.",
-    engine: { name: "OSV-Scanner", version: "2.4.0", license: "Apache-2.0" },
+    engine: {
+      name: "Zedbee OSV API client",
+      version: "v1",
+      license: "PolyForm-Small-Business-1.0.0",
+    },
     executionClass: "network",
     limitation:
-      "Results depend on advisory data freshness and package ecosystem metadata.",
+      "Online-only results depend on OSV availability, advisory freshness, and supported JavaScript lockfile data.",
   },
 });
 
@@ -284,9 +287,7 @@ export async function executeChecksCommand(
           targets: Object.freeze([...runtime.targets]),
           executionClass: runtime.executionClass,
           network:
-            id !== "vulnerabilities"
-              ? "none"
-              : "online-package-metadata-only",
+            id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
           engine: Object.freeze({ ...CATALOG[id].engine }),
           limitation: CATALOG[id].limitation,
           ...(runtime.reason === undefined ? {} : { reason: runtime.reason }),

@@ -210,7 +210,7 @@
           ]
         },
         "secrets": {
-          "description": "Gitleaks secret detection against the exact staged snapshot.",
+          "description": "Secretlint secret detection against the exact staged snapshot.",
           "anyOf": [
             {
               "type": "string",
@@ -379,7 +379,7 @@
           ]
         },
         "vulnerabilities": {
-          "description": "OSV dependency vulnerability scanning; online by default or offline with a local database.",
+          "description": "Online OSV dependency vulnerability scanning with configurable outage handling.",
           "anyOf": [
             {
               "type": "string",
@@ -400,11 +400,11 @@
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
-                "network": {
-                  "description": "Use the OSV online service or a locally provisioned offline database.",
-                  "default": "online",
+                "onUnavailable": {
+                  "description": "Block the commit or warn when the OSV service is temporarily unavailable.",
+                  "default": "block",
                   "type": "string",
-                  "enum": ["online", "offline"]
+                  "enum": ["block", "warn"]
                 }
               },
               "additionalProperties": false
@@ -642,7 +642,7 @@
                 ]
               },
               "secrets": {
-                "description": "Gitleaks secret detection against the exact staged snapshot.",
+                "description": "Secretlint secret detection against the exact staged snapshot.",
                 "anyOf": [
                   {
                     "type": "string",
@@ -838,7 +838,7 @@
               }
             },
             "additionalProperties": false,
-            "description": "Per-check policy patches. Vulnerability network mode remains repository-wide."
+            "description": "Per-check policy patches. Vulnerability availability handling remains repository-wide."
           }
         },
         "required": ["files", "checks"],

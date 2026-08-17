@@ -66,13 +66,21 @@ describe("executeChecksCommand", () => {
           limitation: expect.any(String),
         }),
         expect.objectContaining({
+          id: "secrets",
+          engine: expect.objectContaining({
+            name: "Secretlint",
+            version: "13.0.4",
+            license: "MIT",
+          }),
+        }),
+        expect.objectContaining({
           id: "vulnerabilities",
           executionClass: "network",
           network: "online-package-metadata-only",
           engine: expect.objectContaining({
-            name: "OSV-Scanner",
-            version: "2.4.0",
-            license: "Apache-2.0",
+            name: "Zedbee OSV API client",
+            version: "v1",
+            license: "PolyForm-Small-Business-1.0.0",
           }),
         }),
       ]),

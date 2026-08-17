@@ -26,7 +26,7 @@ const validExamples = [
         blockWorsening: true,
       },
       duplication: { threshold: 3.5 },
-      vulnerabilities: { network: "offline" },
+      vulnerabilities: { onUnavailable: "warn" },
     },
     overrides: [
       {
@@ -93,13 +93,13 @@ describe("Zedbee configuration JSON Schema", () => {
       input: { schemaVersion: 1, reporting: { surprise: true } },
     },
     {
-      name: "file-scoped network policy",
+      name: "file-scoped OSV availability policy",
       input: {
         schemaVersion: 1,
         overrides: [
           {
             files: ["packages/web/**"],
-            checks: { vulnerabilities: { network: "offline" } },
+            checks: { vulnerabilities: { onUnavailable: "warn" } },
           },
         ],
       },
@@ -177,7 +177,7 @@ describe("Zedbee configuration JSON Schema", () => {
     ).toContain("threshold");
     expect(
       schema.properties.checks.properties.vulnerabilities.description,
-    ).toContain("online");
+    ).toMatch(/online/i);
     expect(schema.properties.overrides.description).not.toBe("");
     expect(schema.properties.failOnIncomplete.description).not.toBe("");
     expect(configFileSchema.parse({ schemaVersion: 1 })).toEqual({

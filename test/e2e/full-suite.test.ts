@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
 import { execa } from "execa";
 import {
-  releaseArtifactSteps,
   releaseReadiness,
   verificationSteps,
 } from "../../scripts/release-check.mjs";
@@ -17,7 +16,6 @@ describe("release verification contract", () => {
       "build",
       "schema",
       "licenses",
-      "managed-binaries",
       "benchmark",
       "package",
       "documentation",
@@ -33,21 +31,6 @@ describe("release verification contract", () => {
         args: ["--no-pager", "diff", "--check"],
       },
     );
-  });
-
-  it("makes real managed assets and platform package inspection release-only gates", () => {
-    expect(
-      releaseArtifactSteps().map(({ id, args }) => ({ id, args })),
-    ).toEqual([
-      {
-        id: "managed-platform-assets",
-        args: ["scripts/verify-managed-binaries.mjs"],
-      },
-      {
-        id: "managed-platform-packages",
-        args: ["scripts/check-package-contents.mjs", "--platforms"],
-      },
-    ]);
   });
 
   it("blocks release with the exact owner action when canonical metadata is absent", () => {
@@ -112,7 +95,7 @@ describe("release verification contract", () => {
     },
   );
 
-  it("packs and inspects the core package without requiring downloaded platform assets", async () => {
+  it("packs and inspects the Node-native core package", async () => {
     const result = await execa(
       process.execPath,
       [resolve(root, "scripts/check-package-contents.mjs")],

@@ -12,11 +12,6 @@ const LOCAL_STEPS = Object.freeze([
   { id: "build", command: "npm", args: ["run", "build"] },
   { id: "schema", command: "npm", args: ["run", "schema:check"] },
   { id: "licenses", command: "npm", args: ["run", "licenses:check"] },
-  {
-    id: "managed-binaries",
-    command: "npm",
-    args: ["run", "managed-binaries:verify"],
-  },
   { id: "benchmark", command: "npm", args: ["run", "benchmark"] },
   { id: "package", command: "npm", args: ["run", "package:check"] },
   {
@@ -31,30 +26,11 @@ const LOCAL_STEPS = Object.freeze([
   },
 ]);
 
-const RELEASE_ARTIFACT_STEPS = Object.freeze([
-  {
-    id: "managed-platform-assets",
-    command: process.execPath,
-    args: ["scripts/verify-managed-binaries.mjs"],
-  },
-  {
-    id: "managed-platform-packages",
-    command: process.execPath,
-    args: ["scripts/check-package-contents.mjs", "--platforms"],
-  },
-]);
-
 export function verificationSteps(mode = "verify") {
   if (mode !== "verify" && mode !== "release") {
     throw new TypeError("Unknown release verification mode.");
   }
   return LOCAL_STEPS.map((step) =>
-    Object.freeze({ ...step, args: Object.freeze([...step.args]) }),
-  );
-}
-
-export function releaseArtifactSteps() {
-  return RELEASE_ARTIFACT_STEPS.map((step) =>
     Object.freeze({ ...step, args: Object.freeze([...step.args]) }),
   );
 }
@@ -207,7 +183,6 @@ function gitRemotes(cwd) {
 }
 
 function assertReleaseOnlyGates(cwd) {
-  for (const step of releaseArtifactSteps()) run(step, cwd);
   const sbom = run(
     {
       id: "sbom",

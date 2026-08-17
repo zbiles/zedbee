@@ -96,38 +96,22 @@ async function writeFixture(
   }
 }
 
-const fakeBinary = Object.freeze({
-  engine: "gitleaks",
-  version: "benchmark",
-  platform: process.platform,
-  arch: process.arch,
-  packageName: "@zedbee/benchmark",
-  packageRoot: "/managed",
-  manifestPath: "/managed/manifest.json",
-  executablePath: "/managed/engine",
-  executableSha256: "0".repeat(64),
-  configPath: "/managed/config",
-  configSha256: "1".repeat(64),
-});
-
 const benchmarkSecrets = createSecretsAdapter({
-  resolveBinary: async () => fakeBinary,
-  runBinary: async (_binary, args) => {
-    const report = args[args.indexOf("--report-path") + 1];
-    if (report === undefined) throw new Error("Missing benchmark report path.");
-    await writeFile(report, "[]");
-    return { stdout: "", stderr: "", exitCode: 0 };
-  },
+  lintSource: async ({ source }) => ({
+    filePath: source.filePath,
+    sourceContent: source.content,
+    sourceContentType: "text",
+    messages: [],
+  }),
+  comparisonKey: () => new Uint8Array(32),
 });
 
 const benchmarkVulnerabilities = createVulnerabilitiesAdapter({
-  resolveBinary: async () => ({ ...fakeBinary, engine: "osv-scanner" }),
-  runBinary: async () => ({
-    stdout: JSON.stringify({ results: [] }),
-    stderr: "",
-    exitCode: 0,
-  }),
-  offlineDatabasePath: () => undefined,
+  parseInventory: async () => [],
+  client: {
+    query: async () => new Map(),
+    probe: async () => undefined,
+  },
 });
 
 const benchmarkAdapters = DEFAULT_CHECK_ADAPTERS.map((adapter) =>

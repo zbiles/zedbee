@@ -1,9 +1,0 @@
-{
-  "schemaVersion": 1,
-  "engine": "osv-scanner",
-  "version": "2.4.0",
-  "platform": "linux",
-  "arch": "x64",
-  "executablePath": "vendor/osv-scanner",
-  "executableSha256": "15314940c10d26af9c6649f150b8a47c1262e8fc7e17b1d1029b0e479e8ed8a0"
-}

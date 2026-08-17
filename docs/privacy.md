@@ -10,20 +10,19 @@ Local analyzers receive only protected snapshot paths and managed inert configur
 
 ## Secrets
 
-Secrets are always redacted, including when source excerpts are enabled by repository policy or CLI override. Gitleaks runs with redacted JSON output. Raw secret text, match text, entropy material, author data, source lines, and upstream fingerprints never enter Zedbee findings, events, text, JSON, or stable IDs. To distinguish a different secret replacing existing debt at the same rule and location, Zedbee computes a per-scan HMAC over the exact source range with a random key. The digest and key are ephemeral and are not rendered or persisted.
+Secrets are always redacted, including when source excerpts are enabled by repository policy or CLI override. Zedbee passes changed snapshot text directly to Secretlint's in-process API with its own fixed preset; it never loads `.secretlintrc` or executable project configuration. Secretlint results are immediately reduced to rule and location metadata. Raw secret text, match text, upstream messages, author data, and source lines never cross into Zedbee findings, events, text, JSON, source excerpts, or stable IDs. To distinguish a different secret replacing existing debt at the same rule and location, Zedbee computes a per-scan HMAC over the exact source range with a random key. The digest and key are ephemeral and are not rendered, cached, or persisted.
 
 ## Online vulnerability scanning
 
-Online OSV-Scanner execution can send these metadata categories to `api.osv.dev` and `api.deps.dev`:
+Zedbee's online-only OSV API client sends these metadata categories to `api.osv.dev`:
 
 - package names;
-- versions;
-- ecosystems;
-- supported file hashes.
+- exact versions;
+- the npm ecosystem identifier.
 
-It does not send repository source code. Zedbee emits the service/category disclosure before scheduling online execution and persists it in Ink, text, and JSON results. File-scoped network overrides are rejected.
+Repository source code and file hashes are not sent. Zedbee emits the service/category disclosure before scheduling online execution and persists it in Ink, text, and JSON results. File-scoped availability overrides are rejected.
 
-For strict offline operation, configure `checks.vulnerabilities.network` as `offline` and set `ZEDBEE_OSV_DATABASE` to a verified pre-populated OSV cache. Offline execution uses both OSV's network-disabling and local-vulnerability flags. CI traces the real Linux process and fails if it opens an IPv4 or IPv6 socket.
+There is no offline database mode. `checks.vulnerabilities.onUnavailable` controls an actual OSV outage or offline machine: `block` fails closed with an incomplete scan, while `warn` reports the incomplete check and permits the commit if no other policy blocks it. `zedbee init` asks for this choice whenever vulnerability scanning is available.
 
 ## Cache
 

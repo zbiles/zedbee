@@ -242,6 +242,8 @@ describe("applyInitProposal", () => {
       hook: "husky",
       detectedEnvironments: [],
       recommendedChecks: [],
+      vulnerabilityScanningAvailable: false,
+      osvUnavailable: "block",
       networkChecks: [],
       limitations: [],
       hookActivation: {
@@ -322,6 +324,8 @@ function proposalFor(
     hook: "none",
     detectedEnvironments: [],
     recommendedChecks: [],
+    vulnerabilityScanningAvailable: false,
+    osvUnavailable: "block",
     networkChecks: [],
     limitations: [],
     hookActivation: {

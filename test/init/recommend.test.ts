@@ -72,10 +72,39 @@ describe("createInitProposal", () => {
       expect.objectContaining({
         id: "vulnerabilities",
         usesNetwork: true,
+        onUnavailable: "block",
         disclosure:
-          "Online vulnerability checks send package names, versions, ecosystems, and supported file hashes to api.osv.dev and api.deps.dev; source code is not sent.",
+          "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.",
       }),
     ]);
+    expect(proposal.files[0]?.after).toContain('"onUnavailable": "block"');
+  });
+
+  it("writes the selected OSV outage behavior and omits disclosure when vulnerability scanning is off", () => {
+    const warn = createInitProposal(
+      inspection(["javascript"], { lockfile: true }),
+      {
+        repositoryRoot: "/repo",
+        profile: "thorough",
+        hook: "none",
+        osvUnavailable: "warn",
+      },
+    );
+    expect(warn.osvUnavailable).toBe("warn");
+    expect(warn.files[0]?.after).toContain('"onUnavailable": "warn"');
+
+    const disabled = createInitProposal(
+      inspection(["javascript"], { lockfile: true }),
+      {
+        repositoryRoot: "/repo",
+        profile: "thorough",
+        hook: "none",
+        checks: ["lint"],
+        osvUnavailable: "warn",
+      },
+    );
+    expect(disabled.networkChecks).toEqual([]);
+    expect(disabled.files[0]?.after).not.toContain("onUnavailable");
   });
 
   it("produces deterministic config content, hashes, and an exact preview", () => {
@@ -118,6 +147,44 @@ describe("createInitProposal", () => {
     );
     expect(proposal.files[0]?.after).toContain('"secrets": "off"');
     expect(proposal.files[0]?.after).toContain('"profile": "thorough"');
+  });
+
+  it("preserves shorthand vulnerability severity while adding outage policy", () => {
+    const before = [
+      "{",
+      '  "schemaVersion": 1,',
+      '  "profile": "thorough",',
+      '  "checks": { "vulnerabilities": "warn" }',
+      "}",
+      "",
+    ].join("\n");
+
+    const proposal = createInitProposal(
+      inspection(["javascript"], { lockfile: true }),
+      {
+        repositoryRoot: "/repo",
+        profile: "thorough",
+        hook: "none",
+        osvUnavailable: "warn",
+        configBefore: before,
+      },
+    );
+
+    expect(proposal.files[0]?.after).toContain(
+      '"vulnerabilities": {\n      "severity": "warn",\n      "onUnavailable": "warn"',
+    );
+
+    const disabled = createInitProposal(
+      inspection(["javascript"], { lockfile: true }),
+      {
+        repositoryRoot: "/repo",
+        profile: "thorough",
+        hook: "none",
+        configBefore: before.replace('"warn"', '"off"'),
+      },
+    );
+    expect(disabled.networkChecks).toEqual([]);
+    expect(disabled.files[0]?.after).toContain('"vulnerabilities": "off"');
   });
 
   it("serializes explicit check toggles for the non-interactive equivalent", () => {

@@ -8,6 +8,7 @@ import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
   InitHookChoice,
+  InitOsvUnavailable,
   InitProposal,
 } from "../init/types.js";
 import { applyInitProposal } from "../init/write-config.js";
@@ -18,6 +19,7 @@ export interface InitCommandOptions {
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
+  readonly osvUnavailable?: InitOsvUnavailable;
   readonly yes: boolean;
   readonly format: "text" | "json";
   readonly color: boolean;
@@ -45,7 +47,10 @@ export interface InitCommandDependencies {
   confirm(
     proposal: InitProposal,
     options: InitPromptOptions,
-    proposalForChecks: (checks: readonly CheckId[]) => InitProposal,
+    proposalForChecks: (
+      checks: readonly CheckId[],
+      osvUnavailable: InitOsvUnavailable,
+    ) => InitProposal,
   ): Promise<false | InitProposal>;
 }
 
@@ -82,6 +87,8 @@ function publicProposal(proposal: InitProposal) {
     hookActivation: proposal.hookActivation,
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
+    vulnerabilityScanningAvailable: proposal.vulnerabilityScanningAvailable,
+    osvUnavailable: proposal.osvUnavailable,
     networkChecks: proposal.networkChecks,
     limitations: proposal.limitations,
     files: proposal.files.map(
@@ -106,6 +113,9 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
+    ...(proposal.vulnerabilityScanningAvailable
+      ? [`OSV unavailable: ${proposal.osvUnavailable}`]
+      : []),
   ];
   for (const network of proposal.networkChecks) {
     lines.push(`Network: ${network.disclosure}`);
@@ -139,6 +149,9 @@ export async function executeInitCommand(
       profile: options.profile,
       hook: hookIntegration.hook,
       ...(options.checks === undefined ? {} : { checks: options.checks }),
+      ...(options.osvUnavailable === undefined
+        ? {}
+        : { osvUnavailable: options.osvUnavailable }),
       configBefore,
       ...(hookIntegration.change === undefined
         ? {}
@@ -161,10 +174,11 @@ export async function executeInitCommand(
           color,
           animations: options.animations && io.env.NO_COLOR === undefined,
         },
-        (checks) =>
+        (checks, osvUnavailable) =>
           createInitProposal(inspection, {
             ...proposalOptions,
             checks,
+            osvUnavailable,
           }),
       );
       if (decision !== false) {

@@ -179,8 +179,12 @@ describe("runScan", () => {
           checkId: "vulnerabilities",
           target: ".",
           timestamp: 1,
-          services: ["api.osv.dev", "api.deps.dev"],
-          metadata: ["package names", "versions"],
+          services: ["api.osv.dev"],
+          metadata: [
+            "package names",
+            "exact versions",
+            "ecosystem identifiers",
+          ],
         });
         return [
           {
@@ -200,8 +204,8 @@ describe("runScan", () => {
       {
         checkId: "vulnerabilities",
         target: ".",
-        services: ["api.osv.dev", "api.deps.dev"],
-        metadata: ["package names", "versions"],
+        services: ["api.osv.dev"],
+        metadata: ["package names", "exact versions", "ecosystem identifiers"],
       },
     ]);
     expect(Object.isFrozen(report.networkDisclosures)).toBe(true);

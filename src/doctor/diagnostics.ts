@@ -1,11 +1,20 @@
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { lstat, readFile } from "node:fs/promises";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lintSource } from "@secretlint/core";
+import { SECRET_LINT_CONFIG } from "../checks/secrets/config.js";
+import { LockfileInventoryError } from "../checks/vulnerabilities/inventory/errors.js";
+import { parseLockfileInventory } from "../checks/vulnerabilities/inventory/parse-lockfile.js";
+import { createOsvClient } from "../checks/vulnerabilities/osv/client.js";
+import {
+  OsvAnalysisError,
+  OsvUnavailableError,
+} from "../checks/vulnerabilities/osv/errors.js";
+import type { OsvClient } from "../checks/vulnerabilities/osv/types.js";
 import { loadConfig } from "../config/load-config.js";
 import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
-import { resolveManagedBinary } from "../managed-binaries/resolve.js";
 import { hasZedbeeScanCommand } from "../hooks/husky.js";
 import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
@@ -17,11 +26,11 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "node",
   "snapshot-creation",
   "workspace-inspection",
-  "managed-engines",
-  "managed-engine-checksums",
+  "secretlint-readiness",
+  "lockfile-support",
+  "osv-connectivity",
   "license-inventory",
   "hook-state",
-  "offline-database",
   "online-service-disclosure",
 ] as const;
 
@@ -212,149 +221,243 @@ async function inventoryIsValid(): Promise<boolean> {
   );
 }
 
-function contained(root: string, candidate: string): boolean {
-  const path = relative(root, candidate);
-  return (
-    path !== ".." &&
-    !isAbsolute(path) &&
-    !path.startsWith("../") &&
-    !path.startsWith("..\\")
+export interface DefaultDiagnosticDependencies {
+  readonly lintSource: typeof lintSource;
+  readonly parseLockfileInventory: typeof parseLockfileInventory;
+  readonly osvClient: OsvClient;
+}
+
+const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
+  lintSource,
+  parseLockfileInventory,
+  osvClient: createOsvClient({ timeoutMs: 5_000, retries: 0 }),
+};
+
+function analyzableLockfiles(lockfiles: readonly string[]): readonly string[] {
+  const hasTextBunLock = lockfiles.some(
+    (path) => path.split("/").at(-1) === "bun.lock",
+  );
+  return lockfiles.filter(
+    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
   );
 }
 
-async function defaultProbe(
-  id: DiagnosticId,
-  context: DiagnosticContext,
-): Promise<Diagnostic> {
-  switch (id) {
-    case "git": {
-      await new GitClient(context.cwd).run(["--version"]);
-      await repositoryRoot(context.cwd);
-      return {
-        id,
-        status: "pass",
-        message: "Git and the repository are available.",
-      };
-    }
-    case "config": {
-      const root = await repositoryRoot(context.cwd);
-      await loadConfig(root, context.configPath);
-      return {
-        id,
-        status: "pass",
-        message: "The Zedbee configuration is valid.",
-      };
-    }
-    case "node":
-      return nodeSupported(process.versions.node)
-        ? {
+export function createDefaultDiagnosticProbe(
+  overrides: Partial<DefaultDiagnosticDependencies> = {},
+): DiagnosticProbe {
+  const dependencies = { ...DEFAULT_PROBE_DEPENDENCIES, ...overrides };
+  return async (id, context) => {
+    switch (id) {
+      case "git": {
+        await new GitClient(context.cwd).run(["--version"]);
+        await repositoryRoot(context.cwd);
+        return {
+          id,
+          status: "pass",
+          message: "Git and the repository are available.",
+        };
+      }
+      case "config": {
+        const root = await repositoryRoot(context.cwd);
+        await loadConfig(root, context.configPath);
+        return {
+          id,
+          status: "pass",
+          message: "The Zedbee configuration is valid.",
+        };
+      }
+      case "node":
+        return nodeSupported(process.versions.node)
+          ? {
+              id,
+              status: "pass",
+              message: "Node.js satisfies the 22.13.0 minimum.",
+            }
+          : {
+              id,
+              status: "fail",
+              message: "Node.js is below the 22.13.0 minimum.",
+              remediation: "Install Node.js 22.13.0 or newer.",
+            };
+      case "snapshot-creation":
+        await withSnapshots(context.cwd, async () => undefined);
+        return {
+          id,
+          status: "pass",
+          message: "The staged Git snapshot can be created and cleaned up.",
+        };
+      case "workspace-inspection": {
+        const count = await withSnapshots(
+          context.cwd,
+          async (targetDir) =>
+            (await inspectRepository(targetDir)).workspaces.length,
+        );
+        return {
+          id,
+          status: "pass",
+          message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}.`,
+        };
+      }
+      case "secretlint-readiness": {
+        try {
+          const result = await dependencies.lintSource({
+            source: {
+              content: "export const zedbeeSecretlintProbe = true;\n",
+              filePath: "zedbee-secretlint-probe.js",
+              contentType: "text",
+            },
+            options: {
+              config: SECRET_LINT_CONFIG,
+              maskSecrets: true,
+              noPhysicFilePath: true,
+            },
+          });
+          if (!Array.isArray(result.messages)) throw new TypeError();
+          return {
             id,
             status: "pass",
-            message: "Node.js satisfies the 22.13.0 minimum.",
-          }
-        : {
+            message:
+              "The Node-native Secretlint engine and fixed recommended preset are ready.",
+          };
+        } catch {
+          return {
             id,
             status: "fail",
-            message: "Node.js is below the 22.13.0 minimum.",
-            remediation: "Install Node.js 22.13.0 or newer.",
+            message:
+              "The Node-native Secretlint engine could not analyze safe text.",
+            remediation:
+              "Reinstall Zedbee from a verified package and run zedbee doctor again.",
           };
-    case "snapshot-creation":
-      await withSnapshots(context.cwd, async () => undefined);
-      return {
-        id,
-        status: "pass",
-        message: "The staged Git snapshot can be created and cleaned up.",
-      };
-    case "workspace-inspection": {
-      const count = await withSnapshots(
-        context.cwd,
-        async (targetDir) =>
-          (await inspectRepository(targetDir)).workspaces.length,
-      );
-      return {
-        id,
-        status: "pass",
-        message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}.`,
-      };
-    }
-    case "managed-engines": {
-      const engines = await Promise.all([
-        resolveManagedBinary("gitleaks"),
-        resolveManagedBinary("osv-scanner"),
-      ]);
-      return {
-        id,
-        status: "pass",
-        message: `Managed engines are available (Gitleaks ${engines[0].version}, OSV-Scanner ${engines[1].version}).`,
-      };
-    }
-    case "managed-engine-checksums":
-      await Promise.all([
-        resolveManagedBinary("gitleaks"),
-        resolveManagedBinary("osv-scanner"),
-      ]);
-      return {
-        id,
-        status: "pass",
-        message: "Managed executable and configuration checksums are valid.",
-      };
-    case "license-inventory":
-      return (await inventoryIsValid())
-        ? {
+        }
+      }
+      case "lockfile-support":
+        return withSnapshots(context.cwd, async (targetDir) => {
+          const inspection = await inspectRepository(targetDir);
+          const lockfiles = analyzableLockfiles(inspection.lockfiles);
+          if (lockfiles.length === 0) {
+            return {
+              id,
+              status: "pass",
+              message:
+                "No supported JavaScript lockfile is present; vulnerability scanning has no dependency inventory.",
+            };
+          }
+          try {
+            const inventories = await Promise.all(
+              lockfiles.map((path) =>
+                dependencies.parseLockfileInventory(inspection, path),
+              ),
+            );
+            const count = inventories.reduce(
+              (total, inventory) => total + inventory.length,
+              0,
+            );
+            return {
+              id,
+              status: "pass",
+              message: `Lockfile analysis supports ${lockfiles.join(", ")} (${count} resolved dependenc${count === 1 ? "y" : "ies"}).`,
+            };
+          } catch (error) {
+            if (error instanceof LockfileInventoryError) {
+              return {
+                id,
+                status: "fail",
+                message: error.message,
+                remediation:
+                  error.remediation ??
+                  "Regenerate the lockfile with a supported package manager and retry.",
+              };
+            }
+            throw error;
+          }
+        });
+      case "osv-connectivity": {
+        const root = await repositoryRoot(context.cwd);
+        const config = await loadConfig(root, context.configPath);
+        const policy = config.checks.vulnerabilities;
+        if (policy.severity === "off") {
+          return {
             id,
             status: "pass",
-            message: "The production license inventory is present and valid.",
+            message:
+              "OSV connectivity is not required because vulnerability scanning is disabled.",
+          };
+        }
+        try {
+          await dependencies.osvClient.probe(new AbortController().signal);
+          return {
+            id,
+            status: "pass",
+            message:
+              "OSV is reachable using Zedbee's constant synthetic connectivity probe.",
+          };
+        } catch (error) {
+          if (error instanceof OsvUnavailableError) {
+            return {
+              id,
+              status: policy.onUnavailable === "warn" ? "warning" : "fail",
+              message: error.message,
+              remediation:
+                policy.onUnavailable === "warn"
+                  ? "Zedbee will warn and allow commits during this outage. Set checks.vulnerabilities.onUnavailable to block for fail-closed behavior."
+                  : "Restore OSV connectivity or set checks.vulnerabilities.onUnavailable to warn if commits may continue during outages.",
+            };
           }
-        : {
+          if (error instanceof OsvAnalysisError) {
+            return {
+              id,
+              status: "fail",
+              message: error.message,
+              remediation: "Update Zedbee and run zedbee doctor again.",
+            };
+          }
+          return {
             id,
             status: "fail",
-            message: "The production license inventory is invalid.",
-            remediation: "Reinstall Zedbee from a verified package.",
+            message:
+              "Zedbee could not safely complete the OSV connectivity probe.",
+            remediation: "Check network access to api.osv.dev and retry.",
           };
-    case "hook-state": {
-      const root = await repositoryRoot(context.cwd);
-      return hookStateDiagnostic(root);
-    }
-    case "offline-database": {
-      const configured = context.environment.ZEDBEE_OSV_DATABASE;
-      if (configured === undefined || configured.trim() === "") {
+        }
+      }
+      case "license-inventory":
+        return (await inventoryIsValid())
+          ? {
+              id,
+              status: "pass",
+              message: "The production license inventory is present and valid.",
+            }
+          : {
+              id,
+              status: "fail",
+              message: "The production license inventory is invalid.",
+              remediation: "Reinstall Zedbee from a verified package.",
+            };
+      case "hook-state": {
+        const root = await repositoryRoot(context.cwd);
+        return hookStateDiagnostic(root);
+      }
+      case "online-service-disclosure": {
+        const root = await repositoryRoot(context.cwd);
+        const policy = (await loadConfig(root, context.configPath)).checks
+          .vulnerabilities;
+        if (policy.severity === "off") {
+          return {
+            id,
+            status: "pass",
+            message:
+              "Online vulnerability scanning is disabled; Zedbee will not contact OSV.",
+          };
+        }
         return {
           id,
           status: "warning",
-          message: "No offline OSV database is configured.",
-          remediation:
-            "Set ZEDBEE_OSV_DATABASE before selecting offline vulnerability checks.",
+          message: `Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent. OSV outages currently ${policy.onUnavailable === "warn" ? "warn and allow commits" : "block commits"}.`,
         };
       }
-      const rootMetadata = await lstat(configured);
-      const resolved = await realpath(configured);
-      if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
-        throw new Error("unsupported database entry");
-      }
-      const databasePath = join(resolved, "osv-scanner", "npm", "all.zip");
-      const databaseMetadata = await lstat(databasePath);
-      const database = await realpath(databasePath);
-      if (
-        databaseMetadata.isSymbolicLink() ||
-        !databaseMetadata.isFile() ||
-        !contained(resolved, database)
-      ) {
-        throw new Error("unsupported database entry");
-      }
-      return {
-        id,
-        status: "pass",
-        message: "The configured offline OSV database is accessible.",
-      };
     }
-    case "online-service-disclosure":
-      return {
-        id,
-        status: "warning",
-        message:
-          "Online vulnerability checks disclose package names, versions, ecosystems, and supported file hashes to OSV or deps.dev; source code is not sent.",
-      };
-  }
+  };
 }
 
-export const defaultDiagnosticProbe: DiagnosticProbe = defaultProbe;
+export const defaultDiagnosticProbe: DiagnosticProbe =
+  createDefaultDiagnosticProbe();

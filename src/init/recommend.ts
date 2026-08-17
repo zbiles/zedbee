@@ -6,6 +6,7 @@ import type {
   CreateInitProposalOptions,
   InitFileChange,
   InitHookActivation,
+  InitOsvUnavailable,
   InitProposal,
   ResolvedHookChoice,
 } from "./types.js";
@@ -133,6 +134,8 @@ function configContents(
   profile: CreateInitProposalOptions["profile"],
   before: string | null,
   checks: readonly CheckId[] | undefined,
+  vulnerabilitiesEnabled: boolean,
+  osvUnavailable: InitOsvUnavailable,
 ): string {
   const configuredChecks =
     checks === undefined
@@ -140,16 +143,25 @@ function configContents(
       : Object.fromEntries(
           CHECK_IDS.map((check) => [
             check,
-            checks.includes(check) ? "error" : "off",
+            checks.includes(check)
+              ? check === "vulnerabilities"
+                ? { severity: "error", onUnavailable: osvUnavailable }
+                : "error"
+              : "off",
           ]),
         );
+  const initialChecks =
+    configuredChecks ??
+    (vulnerabilitiesEnabled
+      ? { vulnerabilities: { onUnavailable: osvUnavailable } }
+      : undefined);
   if (before === null) {
     return `${JSON.stringify(
       {
         $schema: "./node_modules/zedbee/schema/zedbee.schema.json",
         schemaVersion: 1,
         profile,
-        ...(configuredChecks === undefined ? {} : { checks: configuredChecks }),
+        ...(initialChecks === undefined ? {} : { checks: initialChecks }),
       },
       null,
       2,
@@ -187,8 +199,66 @@ function configContents(
       updated,
       modify(updated, ["checks"], configuredChecks, options),
     );
+  } else if (vulnerabilitiesEnabled) {
+    const root = parsed as Record<string, unknown>;
+    const checksValue = root.checks;
+    const existingVulnerability =
+      typeof checksValue === "object" &&
+      checksValue !== null &&
+      !Array.isArray(checksValue)
+        ? (checksValue as Record<string, unknown>).vulnerabilities
+        : undefined;
+    if (existingVulnerability !== "off") {
+      const value =
+        existingVulnerability === "error" || existingVulnerability === "warn"
+          ? {
+              severity: existingVulnerability,
+              onUnavailable: osvUnavailable,
+            }
+          : osvUnavailable;
+      const path =
+        typeof value === "string"
+          ? ["checks", "vulnerabilities", "onUnavailable"]
+          : ["checks", "vulnerabilities"];
+      updated = applyEdits(updated, modify(updated, path, value, options));
+    }
   }
   return updated.endsWith("\n") ? updated : `${updated}\n`;
+}
+
+function existingVulnerabilitySeverity(
+  before: string | null,
+): "off" | "warn" | "error" | undefined {
+  if (before === null) return undefined;
+  const errors: ParseError[] = [];
+  const root: unknown = parse(before, errors, { allowTrailingComma: true });
+  if (
+    errors.length > 0 ||
+    typeof root !== "object" ||
+    root === null ||
+    Array.isArray(root)
+  ) {
+    return undefined;
+  }
+  const checks = (root as Record<string, unknown>).checks;
+  if (typeof checks !== "object" || checks === null || Array.isArray(checks)) {
+    return undefined;
+  }
+  const vulnerability = (checks as Record<string, unknown>).vulnerabilities;
+  if (["off", "warn", "error"].includes(vulnerability as string)) {
+    return vulnerability as "off" | "warn" | "error";
+  }
+  if (
+    typeof vulnerability === "object" &&
+    vulnerability !== null &&
+    !Array.isArray(vulnerability)
+  ) {
+    const severity = (vulnerability as Record<string, unknown>).severity;
+    if (["off", "warn", "error"].includes(severity as string)) {
+      return severity as "off" | "warn" | "error";
+    }
+  }
+  return undefined;
 }
 
 function environments(
@@ -243,10 +313,26 @@ export function createInitProposal(
       : Object.freeze(
           CHECK_IDS.filter((check) => options.checks?.includes(check)),
         );
+  const vulnerabilityScanningAvailable = inspection.lockfiles.length > 0;
+  const configuredVulnerabilitySeverity = existingVulnerabilitySeverity(before);
+  const vulnerabilitiesEnabled =
+    vulnerabilityScanningAvailable &&
+    (options.checks === undefined
+      ? configuredVulnerabilitySeverity === undefined
+        ? selectedChecks.includes("vulnerabilities")
+        : configuredVulnerabilitySeverity !== "off"
+      : selectedChecks.includes("vulnerabilities"));
+  const osvUnavailable = options.osvUnavailable ?? "block";
   const config = initFileChange(
     ".zedbeerc.jsonc",
     before,
-    configContents(options.profile, before, options.checks),
+    configContents(
+      options.profile,
+      before,
+      options.checks,
+      vulnerabilitiesEnabled,
+      osvUnavailable,
+    ),
     0o644,
   );
   const hook: ResolvedHookChoice =
@@ -263,17 +349,19 @@ export function createInitProposal(
     hookActivation,
     detectedEnvironments: detected,
     recommendedChecks: selectedChecks,
-    networkChecks:
-      inspection.lockfiles.length === 0
-        ? Object.freeze([])
-        : Object.freeze([
-            Object.freeze({
-              id: "vulnerabilities" as const,
-              usesNetwork: true,
-              disclosure:
-                "Online vulnerability checks send package names, versions, ecosystems, and supported file hashes to api.osv.dev and api.deps.dev; source code is not sent.",
-            }),
-          ]),
+    vulnerabilityScanningAvailable,
+    osvUnavailable,
+    networkChecks: !vulnerabilitiesEnabled
+      ? Object.freeze([])
+      : Object.freeze([
+          Object.freeze({
+            id: "vulnerabilities" as const,
+            usesNetwork: true,
+            onUnavailable: osvUnavailable,
+            disclosure:
+              "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.",
+          }),
+        ]),
     limitations: Object.freeze([
       "Recommendations are based on inspected manifests, source extensions, workspaces, and lockfiles; review the exact proposal before applying it.",
       "Initialization never installs packages or runs project lifecycle scripts.",

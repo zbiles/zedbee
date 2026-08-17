@@ -10,6 +10,8 @@ const proposal: InitProposal = {
   hook: "none",
   detectedEnvironments: ["javascript", "typescript"],
   recommendedChecks: ["formatting", "lint", "types"],
+  vulnerabilityScanningAvailable: true,
+  osvUnavailable: "block",
   networkChecks: [],
   limitations: [],
   hookActivation: {
@@ -22,21 +24,27 @@ const proposal: InitProposal = {
 describe("InitApp", () => {
   it("previews and returns the exact proposal rebuilt from toggled checks", async () => {
     const onDecision = vi.fn();
-    const proposalForChecks = vi.fn((checks: readonly CheckId[]) => ({
-      ...proposal,
-      recommendedChecks: checks,
-      files: [
-        {
-          relativePath: ".zedbeerc.jsonc",
-          before: null,
-          after: checks.join(","),
-          beforeHash: null,
-          afterHash: "hash",
-          diff: `exact:${checks.join(",")}`,
-          mode: 0o644,
-        },
-      ],
-    })) as unknown as (checks: readonly CheckId[]) => InitProposal;
+    const proposalForChecks = vi.fn(
+      (checks: readonly CheckId[], osvUnavailable: "block" | "warn") => ({
+        ...proposal,
+        recommendedChecks: checks,
+        osvUnavailable,
+        files: [
+          {
+            relativePath: ".zedbeerc.jsonc",
+            before: null,
+            after: checks.join(","),
+            beforeHash: null,
+            afterHash: "hash",
+            diff: `exact:${checks.join(",")}`,
+            mode: 0o644,
+          },
+        ],
+      }),
+    ) as unknown as (
+      checks: readonly CheckId[],
+      osvUnavailable: "block" | "warn",
+    ) => InitProposal;
     const view = render(
       <InitApp
         proposal={proposal}
@@ -50,17 +58,22 @@ describe("InitApp", () => {
 
     expect(view.lastFrame()).toContain("Check toggles (Up/Down, Space)");
     expect(view.lastFrame()).toContain("[x] formatting");
+    expect(view.lastFrame()).toContain("OSV unavailable: block");
     expect(view.lastFrame()).toContain("[Y/Enter] yes · [N/Esc] no");
 
     view.stdin.write(" ");
     await new Promise((resolve) => setImmediate(resolve));
     expect(view.lastFrame()).toContain("exact:lint,types");
+    view.stdin.write("w");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("OSV unavailable: warn");
     view.stdin.write("y");
     await new Promise((resolve) => setImmediate(resolve));
 
     expect(onDecision).toHaveBeenCalledWith(
       expect.objectContaining({
         recommendedChecks: ["lint", "types"],
+        osvUnavailable: "warn",
         files: [expect.objectContaining({ diff: "exact:lint,types" })],
       }),
     );

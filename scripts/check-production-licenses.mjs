@@ -306,66 +306,13 @@ async function noticesForInventory(root, inventory) {
 export async function generateThirdPartyNotices(root) {
   const canonicalRoot = await realpath(root);
   const inventory = await buildProductionInventory(canonicalRoot);
-  return appendManagedBinaryNotices(
-    await noticesForInventory(canonicalRoot, inventory),
-    await managedBinaryNoticeSections(canonicalRoot),
-  );
-}
-
-async function managedBinaryNoticeSections(root) {
-  let manifest;
-  try {
-    manifest = JSON.parse(
-      await readFile(
-        join(root, "packages", "managed-binary", "manifest.json"),
-        "utf8",
-      ),
-    );
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-  const engines = new Map();
-  for (const entry of manifest.entries ?? []) {
-    engines.set(entry.engine, entry.version);
-  }
-  return [...engines]
-    .map(([engine, version]) => {
-      if (engine === "gitleaks") {
-        return [
-          `## Gitleaks@${version} (managed executable)`,
-          "",
-          "License: MIT",
-          "Repository: https://github.com/gitleaks/gitleaks",
-          "Distribution: complete MIT terms are included in every @zedbee/gitleaks-* platform package.",
-        ].join("\n");
-      }
-      if (engine === "osv-scanner") {
-        return [
-          `## OSV-Scanner@${version} (managed executable)`,
-          "",
-          "License: Apache-2.0",
-          "Repository: https://github.com/google/osv-scanner",
-          "Distribution: complete Apache-2.0 terms and attribution are included in every @zedbee/osv-scanner-* platform package.",
-        ].join("\n");
-      }
-      throw new Error(`unknown managed binary notice engine: ${engine}`);
-    })
-    .sort(compareText);
-}
-
-function appendManagedBinaryNotices(notices, sections) {
-  if (sections.length === 0) return notices;
-  return `${notices.replace(/\n+$/u, "")}\n\n---\n\n${sections.join("\n\n---\n\n")}\n`;
+  return noticesForInventory(canonicalRoot, inventory);
 }
 
 export async function buildProductionLicenseArtifacts(root) {
   const canonicalRoot = await realpath(root);
   const inventory = await buildProductionInventory(canonicalRoot);
-  const notices = appendManagedBinaryNotices(
-    await noticesForInventory(canonicalRoot, inventory),
-    await managedBinaryNoticeSections(canonicalRoot),
-  );
+  const notices = await noticesForInventory(canonicalRoot, inventory);
   const denied = inventory.packages.flatMap((packageMetadata) => {
     const result = evaluateLicense(packageMetadata.license ?? undefined);
     return result.allowed ? [] : [{ packageMetadata, reason: result.reason }];

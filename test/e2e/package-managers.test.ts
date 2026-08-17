@@ -30,19 +30,9 @@ const available = (manager: PackageManager) =>
   ).status === 0;
 let scratch: string;
 let tarball: string;
-let platformPackageResolutions: Readonly<Record<string, string>>;
 
 beforeAll(async () => {
   scratch = await mkdtemp(join(tmpdir(), "zedbee-managers-"));
-  const rootManifest = JSON.parse(
-    await readFile(join(root, "package.json"), "utf8"),
-  ) as { optionalDependencies: Record<string, string> };
-  platformPackageResolutions = Object.fromEntries(
-    Object.keys(rootManifest.optionalDependencies).map((name) => [
-      name,
-      `file:${join(root, "packages", name.replace("@zedbee/", ""))}`,
-    ]),
-  );
   const build = await execa("npm", ["run", "build"], {
     cwd: root,
     reject: false,
@@ -95,7 +85,6 @@ describe("package-manager fixture commands", () => {
               preinstall:
                 "node -e \"require('node:fs').writeFileSync('lifecycle-ran','bad')\"",
             },
-            resolutions: platformPackageResolutions,
           }),
         );
         await repository.write(".gitignore", "node_modules/\nlifecycle-ran\n");
@@ -145,7 +134,7 @@ describe("package-manager fixture commands", () => {
             join(repository.root, "node_modules/zedbee/THIRD_PARTY_NOTICES.md"),
             "utf8",
           ),
-        ).toContain("Gitleaks");
+        ).toContain("@secretlint/core@13.0.4");
 
         await repository.commitAll("installed package");
         const before = await repository.git(["status", "--porcelain=v1", "-z"]);

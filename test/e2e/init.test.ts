@@ -114,4 +114,103 @@ describe("packaged init command", () => {
     expect(hook.match(/zedbee scan/gu) ?? []).toHaveLength(1);
     expect((await stat(hookPath)).mode & 0o777).toBe(0o751);
   }, 60_000);
+
+  it("initializes, diagnoses, and scans with the packaged Node-native security stack", async () => {
+    const repository = await createGitRepository("zedbee-native-security-");
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "native-security-fixture", version: "1.0.0", private: true })}\n`,
+    );
+    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write("src/index.ts", "export const ready = true;\n");
+    await repository.commitAll("fixture");
+    await installPackedFixture(
+      tarballPath,
+      packageRoot,
+      repository.root,
+      join(packDirectory, "native-security-install-cache"),
+    );
+    await repository.commitAll("installed package");
+
+    const cli = join(repository.root, "node_modules/zedbee/dist/cli.js");
+    const invoke = (args: readonly string[]) =>
+      execa(process.execPath, [cli, ...args], {
+        cwd: repository.root,
+        reject: false,
+        stdin: "ignore",
+      });
+    const initialized = await invoke([
+      "init",
+      "--profile",
+      "recommended",
+      "--hook",
+      "raw",
+      "--checks",
+      "secrets",
+      "--yes",
+      "--format",
+      "json",
+      "--no-color",
+      "--no-animations",
+    ]);
+
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    expect(
+      await readFile(join(repository.root, ".git/hooks/pre-commit"), "utf8"),
+    ).toContain("zedbee scan");
+
+    const diagnosed = await invoke(["doctor", "--format", "json"]);
+    expect(diagnosed.exitCode, `${diagnosed.stderr}\n${diagnosed.stdout}`).toBe(
+      0,
+    );
+    const doctor = JSON.parse(diagnosed.stdout) as {
+      diagnostics: Array<{ id: string; status: string; message: string }>;
+    };
+    expect(doctor.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "secretlint-readiness", status: "pass" }),
+        expect.objectContaining({ id: "lockfile-support", status: "pass" }),
+        expect.objectContaining({ id: "osv-connectivity", status: "pass" }),
+        expect.objectContaining({ id: "hook-state", status: "pass" }),
+      ]),
+    );
+    expect(JSON.stringify(doctor)).not.toMatch(
+      /managed-engine|gitleaks|osv-scanner|offline-database/iu,
+    );
+
+    const canary = `ghp_${"a".repeat(36)}`;
+    await repository.write(
+      "src/credential.ts",
+      `export const credential = ${JSON.stringify(canary)};\n`,
+    );
+    expect((await repository.git(["add", "src/credential.ts"])).exitCode).toBe(
+      0,
+    );
+    const scanned = await invoke([
+      "scan",
+      "--format",
+      "json",
+      "--no-source",
+      "--no-color",
+      "--no-animations",
+    ]);
+    expect(scanned.exitCode, `${scanned.stderr}\n${scanned.stdout}`).toBe(1);
+    const report = JSON.parse(scanned.stdout) as {
+      outcome: string;
+      checks: Array<{
+        checkId: string;
+        status: string;
+        findings: Array<{ rule: string }>;
+      }>;
+    };
+    const secrets = report.checks.find(({ checkId }) => checkId === "secrets");
+    expect(report.outcome).toBe("blocked");
+    expect(secrets).toMatchObject({ status: "completed" });
+    expect(
+      secrets?.findings.some(({ rule }) =>
+        rule.includes("secretlint-rule-github"),
+      ),
+    ).toBe(true);
+    expect(scanned.stdout).not.toContain(canary);
+  }, 60_000);
 });

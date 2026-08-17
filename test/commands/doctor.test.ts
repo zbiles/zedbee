@@ -6,11 +6,13 @@ import {
   type DoctorCommandIO,
 } from "../../src/commands/doctor.js";
 import {
+  createDefaultDiagnosticProbe,
   DOCTOR_DIAGNOSTIC_IDS,
   defaultDiagnosticProbe,
   runDiagnostics,
   type DiagnosticProbe,
 } from "../../src/doctor/diagnostics.js";
+import { OsvUnavailableError } from "../../src/checks/vulnerabilities/osv/errors.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const passProbe: DiagnosticProbe = async (id) => ({
@@ -31,6 +33,23 @@ function terminal(): DoctorCommandIO & { stdout: string[]; stderr: string[] } {
 }
 
 describe("doctor diagnostics", () => {
+  it("uses Node-native security and connectivity diagnostics only", () => {
+    expect(DOCTOR_DIAGNOSTIC_IDS).toEqual(
+      expect.arrayContaining([
+        "secretlint-readiness",
+        "lockfile-support",
+        "osv-connectivity",
+      ]),
+    );
+    expect(DOCTOR_DIAGNOSTIC_IDS).not.toEqual(
+      expect.arrayContaining([
+        "managed-engines",
+        "managed-engine-checksums",
+        "offline-database",
+      ]),
+    );
+  });
+
   it("runs every setup diagnostic without invoking a scan", async () => {
     const visited: string[] = [];
     const diagnostics = await runDiagnostics(
@@ -49,23 +68,180 @@ describe("doctor diagnostics", () => {
   it("converts probe crashes into sanitized failures", async () => {
     const diagnostics = await runDiagnostics(
       async (id) => {
-        if (id === "managed-engine-checksums")
+        if (id === "secretlint-readiness")
           throw new Error("token=/private/tmp/secret");
         return passProbe(id, { cwd: "/repo", environment: {} });
       },
       { cwd: "/repo", environment: {} },
     );
 
-    expect(
-      diagnostics.find(({ id }) => id === "managed-engine-checksums"),
-    ).toEqual({
-      id: "managed-engine-checksums",
-      status: "fail",
-      message: "The diagnostic could not be completed.",
-      remediation:
-        "Run zedbee doctor again after correcting the reported setup issue.",
+    expect(diagnostics.find(({ id }) => id === "secretlint-readiness")).toEqual(
+      {
+        id: "secretlint-readiness",
+        status: "fail",
+        message: "The diagnostic could not be completed.",
+        remediation:
+          "Run zedbee doctor again after correcting the reported setup issue.",
+      },
+    );
+    expect(JSON.stringify(diagnostics)).not.toContain(
+      "token=/private/tmp/secret",
+    );
+  });
+
+  it("validates Secretlint directly without a managed executable", async () => {
+    await expect(
+      defaultDiagnosticProbe("secretlint-readiness", {
+        cwd: "/repo",
+        environment: {},
+      }),
+    ).resolves.toMatchObject({
+      id: "secretlint-readiness",
+      status: "pass",
+      message: expect.stringContaining("Secretlint"),
     });
-    expect(JSON.stringify(diagnostics)).not.toContain("secret");
+  });
+
+  it("parses the staged JavaScript lockfile inventory", async () => {
+    const repository = await createGitRepository("zedbee-doctor-lockfile-");
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", dependencies: { lodash: "4.17.21" } })}\n`,
+    );
+    await repository.write(
+      "package-lock.json",
+      `${JSON.stringify({
+        name: "fixture",
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { lodash: "4.17.21" } },
+          "node_modules/lodash": { version: "4.17.21" },
+        },
+      })}\n`,
+    );
+    await repository.commitAll("fixture");
+
+    await expect(
+      defaultDiagnosticProbe("lockfile-support", {
+        cwd: repository.root,
+        environment: {},
+      }),
+    ).resolves.toMatchObject({
+      status: "pass",
+      message: expect.stringContaining("package-lock.json"),
+    });
+  });
+
+  it.each([
+    ["block", "fail"],
+    ["warn", "warning"],
+  ] as const)(
+    "applies the configured OSV %s outage policy to connectivity",
+    async (onUnavailable, expectedStatus) => {
+      const repository = await createGitRepository("zedbee-doctor-osv-");
+      await repository.write(
+        "package.json",
+        `${JSON.stringify({ name: "fixture" })}\n`,
+      );
+      await repository.write(
+        ".zedbeerc.jsonc",
+        `${JSON.stringify({
+          schemaVersion: 1,
+          checks: {
+            vulnerabilities: { severity: "error", onUnavailable },
+          },
+        })}\n`,
+      );
+      await repository.commitAll("fixture");
+      const probe = createDefaultDiagnosticProbe({
+        osvClient: {
+          query: async () => new Map(),
+          probe: async () => {
+            throw new OsvUnavailableError(
+              "OSV_NETWORK_UNAVAILABLE",
+              "Zedbee could not connect to OSV.",
+            );
+          },
+        },
+      });
+
+      await expect(
+        probe("osv-connectivity", {
+          cwd: repository.root,
+          environment: {},
+        }),
+      ).resolves.toMatchObject({
+        status: expectedStatus,
+        message: "Zedbee could not connect to OSV.",
+        remediation: expect.stringContaining("onUnavailable"),
+      });
+    },
+  );
+
+  it("uses a constant synthetic OSV probe and sends no repository inventory", async () => {
+    const repository = await createGitRepository("zedbee-doctor-osv-");
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture" })}\n`,
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        checks: { vulnerabilities: "error" },
+      })}\n`,
+    );
+    await repository.commitAll("fixture");
+    let probes = 0;
+    const probe = createDefaultDiagnosticProbe({
+      osvClient: {
+        query: async () => {
+          throw new Error("doctor must not submit a repository inventory");
+        },
+        probe: async () => {
+          probes += 1;
+        },
+      },
+    });
+
+    await expect(
+      probe("osv-connectivity", {
+        cwd: repository.root,
+        environment: {},
+      }),
+    ).resolves.toMatchObject({ status: "pass" });
+    expect(probes).toBe(1);
+  });
+
+  it("describes the exact OSV disclosure and configured outage behavior", async () => {
+    const repository = await createGitRepository("zedbee-doctor-disclosure-");
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture" })}\n`,
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        checks: {
+          vulnerabilities: { severity: "error", onUnavailable: "warn" },
+        },
+      })}\n`,
+    );
+    await repository.commitAll("fixture");
+
+    const diagnostic = await defaultDiagnosticProbe(
+      "online-service-disclosure",
+      { cwd: repository.root, environment: {} },
+    );
+
+    expect(diagnostic).toMatchObject({ status: "warning" });
+    expect(diagnostic.message).toContain(
+      "package names, exact versions, and ecosystem identifiers",
+    );
+    expect(diagnostic.message).toContain("warn and allow commits");
+    expect(diagnostic.message).toContain("file hashes are not sent");
+    expect(diagnostic.message).not.toContain("deps.dev");
   });
 
   it("warns when an unrelated pre-commit hook exists", async () => {

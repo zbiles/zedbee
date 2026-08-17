@@ -43,8 +43,8 @@ describe("LiveDashboard", () => {
     expect(findingCheckLabel("lint")).toBe("ESLint");
     expect(findingCheckLabel("cyclomaticComplexity")).toBe("ESLint");
     expect(findingCheckLabel("readabilityComplexity")).toBe("ESLint");
-    expect(findingCheckLabel("secrets")).toBe("Gitleaks");
-    expect(findingCheckLabel("vulnerabilities")).toBe("OSV Scanner");
+    expect(findingCheckLabel("secrets")).toBe("Secretlint");
+    expect(findingCheckLabel("vulnerabilities")).toBe("OSV");
   });
 
   it("centers the wordmark and dashless bee while its wings cross the rounded frame", () => {

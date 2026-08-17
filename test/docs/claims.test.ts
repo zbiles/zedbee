@@ -16,29 +16,39 @@ describe("public documentation claims", () => {
     expect(checks).toMatch(/not Sonar Cognitive Complexity/i);
   });
 
-  it("documents exact managed engines, licenses, platforms, and privacy", async () => {
-    const [readme, privacy, licensing] = await Promise.all([
+  it("documents Node-native security engines, support, licensing, and privacy", async () => {
+    const [readme, privacy, licensing, support] = await Promise.all([
       read("README.md"),
       read("docs/privacy.md"),
       read("docs/commercial-licensing.md"),
+      read("docs/support.md"),
     ]);
-    expect(readme).toContain("Gitleaks");
-    expect(readme).toContain("OSV-Scanner");
+    expect(readme).toContain("Secretlint");
+    expect(readme).toContain("Zedbee OSV API client");
     expect(privacy).toContain("api.osv.dev");
-    expect(privacy).toContain("api.deps.dev");
     for (const category of [
       "package names",
-      "versions",
-      "ecosystems",
-      "supported file hashes",
+      "exact versions",
+      "ecosystem identifier",
     ]) {
       expect(privacy).toContain(category);
     }
-    expect(licensing).toContain("Gitleaks 8.28.0");
+    expect(privacy).toMatch(/source code and file hashes are not sent/i);
+    expect(privacy).not.toContain("api.deps.dev");
+    expect(licensing).toContain("Secretlint 13.0.4");
     expect(licensing).toContain("MIT");
-    expect(licensing).toContain("OSV-Scanner 2.4.0");
-    expect(licensing).toContain("Apache License 2.0");
+    expect(licensing).toMatch(/OSV API client[^.]*Zedbee's own code/i);
     expect(licensing).toContain("PolyForm Small Business");
+    for (const lockfile of [
+      "package-lock.json",
+      "npm-shrinkwrap.json",
+      "pnpm-lock.yaml",
+      "yarn.lock",
+      "bun.lock",
+    ]) {
+      expect(support).toContain(`\`${lockfile}\``);
+    }
+    expect(support).toMatch(/bun\.lockb[^.]*not supported/i);
   });
 
   it("keeps current coverage free of roadmap wording", async () => {

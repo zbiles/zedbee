@@ -122,9 +122,10 @@ describe("executeInitCommand", () => {
     const received: unknown[] = [];
     const deps = dependencies(root);
     deps.confirm = async (proposal, options, proposalForChecks) => {
-      const reviewed = proposalForChecks(["lint", "types"]);
+      const reviewed = proposalForChecks(["lint", "types"], "warn");
       received.push({ proposal, options });
       expect(reviewed.recommendedChecks).toEqual(["lint", "types"]);
+      expect(reviewed.osvUnavailable).toBe("warn");
       expect(reviewed.files[0]?.diff).toContain('"formatting": "off"');
       return reviewed;
     };
@@ -190,6 +191,46 @@ describe("executeInitCommand", () => {
     });
   });
 
+  it("writes the non-interactive OSV outage choice and disclosure", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "package-lock.json"),
+      `${JSON.stringify({ lockfileVersion: 3, packages: {} })}\n`,
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: root,
+        profile: "thorough",
+        hook: "none",
+        osvUnavailable: "warn",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(root),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(await readFile(join(root, ".zedbeerc.jsonc"), "utf8")).toContain(
+      '"onUnavailable": "warn"',
+    );
+    expect(JSON.parse(io.stdout.join(""))).toMatchObject({
+      proposal: {
+        osvUnavailable: "warn",
+        networkChecks: [
+          {
+            id: "vulnerabilities",
+            onUnavailable: "warn",
+          },
+        ],
+      },
+    });
+  });
+
   it("makes an interactive selection byte-equivalent to non-interactive --checks", async () => {
     const interactiveRoot = await fixture();
     const nonInteractiveRoot = await fixture();
@@ -200,7 +241,7 @@ describe("executeInitCommand", () => {
       _proposal,
       _options,
       proposalForChecks,
-    ) => proposalForChecks(["lint", "types"]);
+    ) => proposalForChecks(["lint", "types"], "block");
 
     const baseOptions = {
       profile: "recommended" as const,

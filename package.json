@@ -18,6 +18,7 @@
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
+    "docs",
     "schema",
     "licenses/production-inventory.json",
     "licenses/reviewed-overrides.json",
@@ -34,7 +35,6 @@
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
-    "managed-binaries:verify": "node scripts/verify-managed-binaries.mjs --metadata-only",
     "package:check": "npm run build && node scripts/check-package-contents.mjs",
     "prepack": "npm run build && npm run licenses:check",
     "schema:generate": "npm run build && node dist/config/json-schema.js --write",
@@ -54,18 +54,6 @@
     "ai-assisted-development"
   ],
   "license": "PolyForm-Small-Business-1.0.0",
-  "optionalDependencies": {
-    "@zedbee/gitleaks-darwin-arm64": "0.0.0",
-    "@zedbee/gitleaks-darwin-x64": "0.0.0",
-    "@zedbee/gitleaks-linux-arm64": "0.0.0",
-    "@zedbee/gitleaks-linux-x64": "0.0.0",
-    "@zedbee/gitleaks-win32-x64": "0.0.0",
-    "@zedbee/osv-scanner-darwin-arm64": "0.0.0",
-    "@zedbee/osv-scanner-darwin-x64": "0.0.0",
-    "@zedbee/osv-scanner-linux-arm64": "0.0.0",
-    "@zedbee/osv-scanner-linux-x64": "0.0.0",
-    "@zedbee/osv-scanner-win32-x64": "0.0.0"
-  },
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
     "@eslint/js": "9.39.5",

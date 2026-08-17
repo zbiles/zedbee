@@ -5,6 +5,7 @@ export type InitHookChoice =
   "auto" | "husky" | "lefthook" | "simple-git-hooks" | "raw" | "none";
 
 export type ResolvedHookChoice = Exclude<InitHookChoice, "auto">;
+export type InitOsvUnavailable = "block" | "warn";
 
 export interface InitHookActivation {
   readonly status: "active" | "pending" | "not-requested";
@@ -16,6 +17,7 @@ export interface InitNetworkCheck {
   readonly id: "vulnerabilities";
   readonly usesNetwork: boolean;
   readonly disclosure: string;
+  readonly onUnavailable: InitOsvUnavailable;
 }
 
 export interface InitFileChange {
@@ -37,6 +39,8 @@ export interface InitProposal {
   readonly hookActivation: InitHookActivation;
   readonly detectedEnvironments: readonly Environment[];
   readonly recommendedChecks: readonly CheckId[];
+  readonly vulnerabilityScanningAvailable: boolean;
+  readonly osvUnavailable: InitOsvUnavailable;
   readonly networkChecks: readonly InitNetworkCheck[];
   readonly limitations: readonly string[];
   readonly files: readonly InitFileChange[];
@@ -47,6 +51,7 @@ export interface CreateInitProposalOptions {
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
+  readonly osvUnavailable?: InitOsvUnavailable;
   readonly configBefore?: string | null;
   readonly hookChange?: InitFileChange;
   readonly hookActivation?: InitHookActivation;
