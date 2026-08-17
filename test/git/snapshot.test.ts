@@ -17,6 +17,7 @@ import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
 import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
   validateReportableSnapshotPath,
   validateSnapshotPath
@@ -258,6 +259,30 @@ describe("buildSnapshotPair", () => {
     onTestFinished(snapshots.cleanup);
 
     expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(false);
+    expect(snapshots.unsupportedEntries).toEqual([]);
+  });
+
+  it("removes a deleted intent-to-add placeholder while preserving staged source", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("base");
+    await repository.write("normal.ts", "export const staged = true;\n");
+    await repository.write("intent.ts", "export const unstaged = true;\n");
+    await repository.git(["add", "--", "normal.ts"]);
+    await repository.git(["add", "--intent-to-add", "--", "intent.ts"]);
+    await rm(join(repository.root, "intent.ts"));
+
+    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    onTestFinished(snapshots.cleanup);
+    const inspection = await inspectRepository(snapshots.targetDir);
+
+    expect(await readFile(join(snapshots.targetDir, "normal.ts"), "utf8")).toBe(
+      "export const staged = true;\n"
+    );
+    expect(await pathExists(join(snapshots.targetDir, "intent.ts"))).toBe(false);
+    expect(inspection.workspaces.flatMap(({ sourceFiles }) => sourceFiles)).toEqual([
+      "normal.ts"
+    ]);
     expect(snapshots.unsupportedEntries).toEqual([]);
   });
 });

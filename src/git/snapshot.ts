@@ -54,16 +54,29 @@ function parseStagedEntries(output: string): StagedEntry[] {
     });
 }
 
+const INTENT_TO_ADD_FLAG = 0x20000000;
+const INDEX_DEBUG_METADATA =
+  /^  ctime: \d+:\d+\n  mtime: \d+:\d+\n  dev: \d+\tino: \d+\n  uid: \d+\tgid: \d+\n  size: \d+\tflags: ([\da-f]+)(?:\n|$)/;
+
 function parseIntentToAddPaths(output: string): Set<string> {
   const paths = new Set<string>();
-  for (const record of output.split("\0")) {
-    if (!record.startsWith("1 ")) {
-      continue;
+  let remaining = output;
+  while (remaining !== "") {
+    const pathEnd = remaining.indexOf("\0");
+    if (pathEnd === -1) {
+      throw new Error("Git returned invalid index debug metadata.");
     }
-    const fields = record.split(" ");
-    if (fields[1] === ".A" && fields.length >= 9) {
-      paths.add(fields.slice(8).join(" "));
+    const path = remaining.slice(0, pathEnd);
+    const metadata = remaining.slice(pathEnd + 1);
+    const match = INDEX_DEBUG_METADATA.exec(metadata);
+    if (match === null) {
+      throw new Error("Git returned invalid index debug metadata.");
     }
+    const flags = Number.parseInt(match[1]!, 16);
+    if ((flags & INTENT_TO_ADD_FLAG) !== 0) {
+      paths.add(path);
+    }
+    remaining = metadata.slice(match[0].length);
   }
   return paths;
 }
@@ -217,14 +230,7 @@ export async function buildSnapshotPair(
       (await git.run(["ls-files", "--stage", "-z"])).stdout,
     );
     const intentToAddPaths = parseIntentToAddPaths(
-      (
-        await git.run([
-          "status",
-          "--porcelain=v2",
-          "--untracked-files=no",
-          "-z",
-        ])
-      ).stdout,
+      (await git.run(["ls-files", "--debug", "-z"])).stdout,
     );
 
     await git.run([
