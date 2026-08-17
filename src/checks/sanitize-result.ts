@@ -3,6 +3,7 @@ import type {
   CheckError,
   CheckResult,
   Finding,
+  IncompleteDisposition,
   SourceExcerpt,
   SourceLocation,
 } from "../core/types.js";
@@ -26,6 +27,22 @@ export const SOURCE_EXCERPT_MAX_CODE_POINTS = 500;
 function sanitizeStatus(value: unknown): CheckResult["status"] {
   if (value !== "completed" && value !== "skipped" && value !== "incomplete") {
     throw new TypeError("Adapter returned an invalid check status");
+  }
+  return value;
+}
+
+function sanitizeIncompleteDisposition(
+  value: unknown,
+  status: CheckResult["status"],
+): IncompleteDisposition | undefined {
+  if (value === undefined) return undefined;
+  if (status !== "incomplete") {
+    throw new TypeError(
+      "Adapter returned an incomplete disposition for a completed check",
+    );
+  }
+  if (value !== "block" && value !== "warn") {
+    throw new TypeError("Adapter returned an invalid incomplete disposition");
   }
   return value;
 }
@@ -54,6 +71,7 @@ export const PUBLIC_CHECK_RESULT_FIELDS = {
   findings: true,
   error: true,
   skipReason: true,
+  incompleteDisposition: true,
 } as const satisfies Readonly<Record<keyof CheckResult, true>>;
 
 export const PUBLIC_FINDING_FIELDS = {
@@ -256,13 +274,18 @@ export function sanitizeCheckResult(
       ? undefined
       : displayLabel(targetValue, "result target");
   const durationMs = overrides.durationMs ?? result.durationMs;
+  const status = sanitizeStatus(result.status);
+  const incompleteDisposition = sanitizeIncompleteDisposition(
+    result.incompleteDisposition,
+    status,
+  );
   return {
     checkId: displayLabel(
       overrides.checkId ?? result.checkId,
       "result check id",
     ),
     ...(target === undefined ? {} : { target }),
-    status: sanitizeStatus(result.status),
+    status,
     durationMs,
     findings: Array.from(result.findings, sanitizeFinding),
     ...(result.error === undefined
@@ -275,6 +298,9 @@ export function sanitizeCheckResult(
             allowEmpty: true,
           }),
         }),
+    ...(incompleteDisposition === undefined
+      ? {}
+      : { incompleteDisposition }),
   };
 }
 

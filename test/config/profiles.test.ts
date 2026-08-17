@@ -95,7 +95,7 @@ describe("managed check profiles", () => {
       checks: {
         duplication: { severity: "warn", threshold: 5 },
         cyclomaticComplexity: { max: 20, blockWorsening: true },
-        vulnerabilities: { network: "offline" },
+        vulnerabilities: { onUnavailable: "warn" },
       },
     });
 
@@ -113,7 +113,17 @@ describe("managed check profiles", () => {
     expect(config.checks.vulnerabilities).toEqual({
       severity: "off",
       when: "relevant",
-      network: "offline",
+      onUnavailable: "warn",
+    });
+  });
+
+  it("defaults online vulnerability availability failures to blocking", () => {
+    const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+
+    expect(config.checks.vulnerabilities).toEqual({
+      severity: "error",
+      when: "relevant",
+      onUnavailable: "block",
     });
   });
 

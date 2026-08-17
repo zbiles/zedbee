@@ -1,4 +1,7 @@
-import type { CheckResult } from "../core/types.js";
+import type {
+  CheckResult,
+  IncompleteDisposition,
+} from "../core/types.js";
 
 export interface IncompleteResultInput {
   readonly checkId: string;
@@ -8,6 +11,7 @@ export interface IncompleteResultInput {
   readonly target?: string;
   readonly path?: string;
   readonly remediation: string;
+  readonly disposition?: IncompleteDisposition;
 }
 
 export function incompleteResult(input: IncompleteResultInput): CheckResult {
@@ -17,6 +21,9 @@ export function incompleteResult(input: IncompleteResultInput): CheckResult {
     status: "incomplete",
     durationMs: input.durationMs,
     findings: [],
+    ...(input.disposition === undefined
+      ? {}
+      : { incompleteDisposition: input.disposition }),
     error: {
       code: input.code,
       message: input.message,

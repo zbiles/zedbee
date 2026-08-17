@@ -41,6 +41,19 @@ export function incompleteDiagnosticLines(
   if (error.remediation !== undefined) {
     lines.push(...fieldLines("Fix", error.remediation, width));
   }
+  if (check.incompleteDisposition !== undefined) {
+    const action =
+      check.incompleteDisposition === "block"
+        ? "commit blocked"
+        : "commit allowed";
+    lines.push(
+      ...fieldLines(
+        "Availability",
+        `${action} (onUnavailable: ${check.incompleteDisposition})`,
+        width,
+      ),
+    );
+  }
   return lines;
 }
 

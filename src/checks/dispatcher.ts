@@ -23,6 +23,7 @@ import { observationCheckResult } from "./observation-result.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
 import { incompleteResult } from "./incomplete-result.js";
+import { CheckIncompleteError } from "./incomplete-error.js";
 import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type {
@@ -120,8 +121,10 @@ function inspectionPolicy(
   const patches = context.config.overrides
     .map((override) => override.checks[checkId as CheckId])
     .filter((patch) => patch !== undefined);
-  if (patches.some((patch) => patch.network !== undefined)) {
-    throw new TypeError("Network policy cannot be overridden by file scope");
+  if (patches.some((patch) => patch.onUnavailable !== undefined)) {
+    throw new TypeError(
+      "Vulnerability availability policy cannot be overridden by file scope",
+    );
   }
   const severities = [
     root.severity,
@@ -884,16 +887,30 @@ export async function dispatchChecks(
                 });
               }
             }
-          } catch {
-            result = incompleteResult({
-              checkId: adapter.id,
-              target: target.id,
-              durationMs: durationMs(),
-              code: "ADAPTER_EXECUTION_FAILED",
-              message: `${label} could not analyze ${target.id}.`,
-              remediation:
-                "Check the analyzer installation and staged input, then retry.",
-            });
+          } catch (error) {
+            result =
+              error instanceof CheckIncompleteError
+                ? incompleteResult({
+                    checkId: adapter.id,
+                    target: target.id,
+                    durationMs: durationMs(),
+                    code: error.code,
+                    message: error.message,
+                    remediation: error.remediation,
+                    ...(error.path === undefined ? {} : { path: error.path }),
+                    ...(error.disposition === undefined
+                      ? {}
+                      : { disposition: error.disposition }),
+                  })
+                : incompleteResult({
+                    checkId: adapter.id,
+                    target: target.id,
+                    durationMs: durationMs(),
+                    code: "ADAPTER_EXECUTION_FAILED",
+                    message: `${label} could not analyze ${target.id}.`,
+                    remediation:
+                      "Check the analyzer installation and staged input, then retry.",
+                  });
           }
           const displayResult =
             displayResultForPolicy(result, executionPolicy) ??

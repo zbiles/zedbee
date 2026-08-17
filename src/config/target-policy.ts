@@ -52,6 +52,11 @@ export function resolveTargetPolicy(
   for (const override of config.overrides) {
     const patch = override.checks[checkId];
     if (patch === undefined) continue;
+    if (patch.onUnavailable !== undefined) {
+      throw new TypeError(
+        "Vulnerability availability policy cannot be overridden by file scope",
+      );
+    }
     const matches = override.files.some((pattern) => {
       const isMatch = picomatch(pattern, { dot: true });
       return candidates.some((candidate) => isMatch(candidate));

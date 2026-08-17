@@ -33,7 +33,7 @@ export interface ResolvedCheckPolicy {
   max?: number;
   threshold?: number;
   blockWorsening?: boolean;
-  network?: "online" | "offline";
+  onUnavailable?: "block" | "warn";
 }
 
 export type ResolvedCheckPolicyPatch = Readonly<Partial<ResolvedCheckPolicy>>;
@@ -99,10 +99,10 @@ const duplicationPolicyObjectSchema = z
 const vulnerabilityPolicyObjectSchema = z
   .object({
     ...commonPolicyFields,
-    network: z.enum(["online", "offline"]).optional().meta({
+    onUnavailable: z.enum(["block", "warn"]).optional().meta({
       description:
-        "Use the OSV online service or a locally provisioned offline database.",
-      default: "online",
+        "Block the commit or warn when the OSV service is temporarily unavailable.",
+      default: "block",
     }),
   })
   .strict();
@@ -153,7 +153,7 @@ const checksSchema = z
     ),
     secrets: describedPolicy(
       simplePolicySchema,
-      "Gitleaks secret detection against the exact staged snapshot.",
+      "Secretlint secret detection against the exact staged snapshot.",
     ),
     duplication: describedPolicy(
       duplicationPolicySchema,
@@ -177,7 +177,7 @@ const checksSchema = z
     ),
     vulnerabilities: describedPolicy(
       vulnerabilityPolicySchema,
-      "OSV dependency vulnerability scanning; online by default or offline with a local database.",
+      "Online OSV dependency vulnerability scanning with configurable outage handling.",
     ),
   })
   .strict();
@@ -192,8 +192,8 @@ const reportingSchema = z
   })
   .strict();
 
-// Network behavior is repository-wide because a file-scoped privacy override
-// cannot safely determine the execution class before target dispatch.
+// Availability behavior is repository-wide because an outage affects the
+// repository-wide OSV request rather than an individual file target.
 const overrideChecksSchema = checksSchema.extend({
   vulnerabilities: simplePolicySchema.optional(),
 });
@@ -223,7 +223,7 @@ const policyOverrideSchema = z
     }),
     checks: overrideChecksSchema.meta({
       description:
-        "Per-check policy patches. Vulnerability network mode remains repository-wide.",
+        "Per-check policy patches. Vulnerability availability handling remains repository-wide.",
     }),
   })
   .strict();

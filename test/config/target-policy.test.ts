@@ -108,6 +108,28 @@ describe("resolveTargetPolicy", () => {
     ).toEqual(config.checks.formatting);
   });
 
+  it("rejects a programmatically injected file-scoped availability policy", () => {
+    const base = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+    const config = {
+      ...base,
+      overrides: [
+        {
+          files: ["package.json"],
+          checks: { vulnerabilities: { onUnavailable: "warn" as const } },
+        },
+      ],
+    };
+
+    expect(() =>
+      resolveTargetPolicy(
+        config,
+        "vulnerabilities",
+        { id: ".", kind: "repository", relativeRoot: "." },
+        inspection,
+      ),
+    ).toThrow("availability policy cannot be overridden");
+  });
+
   it("matches repository targets against every inspector-produced workspace path", () => {
     const config = resolveConfig({
       schemaVersion: 1,

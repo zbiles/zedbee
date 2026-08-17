@@ -131,7 +131,7 @@ describe("loadConfig", () => {
             blockWorsening: false,
           },
           duplication: { threshold: 5 },
-          vulnerabilities: { network: "offline" },
+          vulnerabilities: { onUnavailable: "warn" },
         },
       }),
     );
@@ -159,7 +159,7 @@ describe("loadConfig", () => {
     expect(config.checks.vulnerabilities).toEqual({
       severity: "off",
       when: "relevant",
-      network: "offline",
+      onUnavailable: "warn",
     });
   });
 
@@ -202,14 +202,19 @@ describe("loadConfig", () => {
         '{"schemaVersion":1,"checks":{"lint":{"severity":"error","threshold":5}}}',
     },
     {
-      name: "invalid vulnerability network mode",
+      name: "invalid vulnerability availability mode",
       source:
-        '{"schemaVersion":1,"checks":{"vulnerabilities":{"severity":"error","network":"sometimes"}}}',
+        '{"schemaVersion":1,"checks":{"vulnerabilities":{"severity":"error","onUnavailable":"sometimes"}}}',
     },
     {
-      name: "network mode on a non-vulnerability check",
+      name: "obsolete offline vulnerability mode",
       source:
-        '{"schemaVersion":1,"checks":{"structuralSecurity":{"severity":"error","network":"offline"}}}',
+        '{"schemaVersion":1,"checks":{"vulnerabilities":{"severity":"error","network":"offline"}}}',
+    },
+    {
+      name: "availability mode on a non-vulnerability check",
+      source:
+        '{"schemaVersion":1,"checks":{"structuralSecurity":{"severity":"error","onUnavailable":"warn"}}}',
     },
     {
       name: "unknown per-check option",
@@ -275,10 +280,10 @@ describe("loadConfig", () => {
       override: { files: ["packages/web/**"], checks: { mystery: "warn" } },
     },
     {
-      name: "file-scoped network policy",
+      name: "file-scoped availability policy",
       override: {
         files: ["packages/web/**"],
-        checks: { vulnerabilities: { network: "online" } },
+        checks: { vulnerabilities: { onUnavailable: "warn" } },
       },
     },
   ])("rejects an override with $name", async ({ override }) => {

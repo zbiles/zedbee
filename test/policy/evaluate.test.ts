@@ -207,4 +207,46 @@ describe("evaluatePolicy", () => {
       summary: { incomplete: 1 },
     });
   });
+
+  it("blocks an explicitly blocking incomplete result even when the global default is open", () => {
+    const decision = evaluatePolicy(
+      [
+        execution({
+          ...incomplete,
+          incompleteDisposition: "block",
+        } as CheckResult),
+      ],
+      config("error", false),
+    );
+
+    expect(decision).toMatchObject({
+      exitCode: 2,
+      outcome: "incomplete",
+      summary: { incomplete: 1 },
+    });
+  });
+
+  it("keeps an explicitly non-blocking incomplete result visible under a strict global default", () => {
+    const decision = evaluatePolicy(
+      [
+        execution({
+          ...incomplete,
+          incompleteDisposition: "warn",
+        } as CheckResult),
+      ],
+      config("error", true),
+    );
+
+    expect(decision).toMatchObject({
+      exitCode: 0,
+      outcome: "pass",
+      summary: { passed: 0, warnings: 0, failed: 0, incomplete: 1 },
+      results: [
+        expect.objectContaining({
+          status: "incomplete",
+          incompleteDisposition: "warn",
+        }),
+      ],
+    });
+  });
 });

@@ -323,6 +323,7 @@ describe("renderText", () => {
         {
           checkId: "formatting",
           status: "incomplete",
+          incompleteDisposition: "block",
           durationMs: 2,
           findings: [],
           error: {
@@ -336,6 +337,42 @@ describe("renderText", () => {
     expect(renderText(report, { width: 80, color: false })).toContain(
       "SCAN INCOMPLETE\nA required check could not finish. Commit blocked.",
     );
+    expect(renderText(report, { width: 80, color: false })).toContain(
+      "Availability: commit blocked (onUnavailable: block)",
+    );
+  });
+
+  it("explains a non-blocking incomplete availability result", () => {
+    const report = createReport({
+      outcome: "pass",
+      exitCode: 0,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 0,
+        incomplete: 1,
+        findings: [],
+      },
+      checks: [
+        {
+          checkId: "vulnerabilities",
+          status: "incomplete",
+          incompleteDisposition: "warn",
+          durationMs: 2,
+          findings: [],
+          error: {
+            code: "OSV_UNAVAILABLE",
+            message: "OSV is temporarily unavailable.",
+          },
+        },
+      ],
+    });
+
+    const output = renderText(report, { width: 80, color: false });
+    expect(output).toContain(
+      "Availability: commit allowed (onUnavailable: warn)",
+    );
+    expect(output).not.toContain("1 incomplete");
   });
 
   it("omits incomplete from visual outcome counts", () => {

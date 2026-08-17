@@ -26,6 +26,7 @@ describe("public result sanitizer contract", () => {
       "findings",
       "error",
       "skipReason",
+      "incompleteDisposition",
     ]);
     expect(Object.keys(PUBLIC_FINDING_FIELDS)).toEqual([
       "id",
@@ -90,6 +91,39 @@ describe("public result sanitizer contract", () => {
       path: "src/value.ts",
       remediation: "Fix the parser error and stage the result.",
     });
+  });
+
+  it.each(["block", "warn"] as const)(
+    "preserves the exact incomplete disposition %s",
+    (incompleteDisposition) => {
+      const result = sanitizeCheckResult({
+        checkId: "vulnerabilities",
+        status: "incomplete",
+        durationMs: 1,
+        findings: [],
+        incompleteDisposition,
+        error: {
+          code: "OSV_UNAVAILABLE",
+          message: "OSV is unavailable.",
+          remediation: "Retry when connectivity is restored.",
+        },
+      } as CheckResult);
+
+      expect(result.incompleteDisposition).toBe(incompleteDisposition);
+      expect(result.status).toBe("incomplete");
+    },
+  );
+
+  it("rejects incomplete disposition on a completed result", () => {
+    expect(() =>
+      sanitizeCheckResult({
+        checkId: "vulnerabilities",
+        status: "completed",
+        durationMs: 1,
+        findings: [],
+        incompleteDisposition: "warn",
+      } as CheckResult),
+    ).toThrow(/incomplete disposition/i);
   });
 
   it.each(["/repo/src/value.ts", "../outside.ts", "src/unsafe\u001b.ts"])(

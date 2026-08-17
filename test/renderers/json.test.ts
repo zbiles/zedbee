@@ -110,6 +110,7 @@ describe("renderJson", () => {
         {
           checkId: "formatting",
           status: "incomplete",
+          incompleteDisposition: "warn",
           durationMs: 4,
           findings: [sourceFinding, secretFinding],
           error: {
@@ -134,6 +135,10 @@ describe("renderJson", () => {
       message: "Prettier could not analyze the staged file.",
       path: "src/value.ts",
       remediation: "Fix the parser error and stage the result.",
+    });
+    expect(parsed.checks[0]).toMatchObject({
+      status: "incomplete",
+      incompleteDisposition: "warn",
     });
     expect(parsed.checks[0]?.findings).toEqual([
       expect.objectContaining({

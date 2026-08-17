@@ -58,6 +58,9 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
     findings: [...check.findings].sort(compareFindings).map(serializeFinding),
     ...(error === undefined ? {} : { error }),
     ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
+    ...(check.incompleteDisposition === undefined
+      ? {}
+      : { incompleteDisposition: check.incompleteDisposition }),
   };
 }
 

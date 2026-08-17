@@ -1,5 +1,6 @@
 export type Severity = "info" | "warning" | "error";
 export type CheckStatus = "completed" | "skipped" | "incomplete";
+export type IncompleteDisposition = "block" | "warn";
 
 export interface SourceLocation {
   file: string;
@@ -120,6 +121,7 @@ export interface CheckResult {
   findings: readonly Finding[];
   error?: CheckError;
   skipReason?: string;
+  incompleteDisposition?: IncompleteDisposition;
 }
 
 export interface RunSummary {

@@ -52,7 +52,7 @@ function baseChecks(profile: ProfileId): Record<CheckId, ResolvedCheckPolicy> {
         return [checkId, { ...common, threshold: 5 }];
       }
       if (checkId === "vulnerabilities") {
-        return [checkId, { ...common, network: "online" as const }];
+        return [checkId, { ...common, onUnavailable: "block" as const }];
       }
       return [checkId, common];
     }),
@@ -74,7 +74,9 @@ function policyPatch(input: CheckPolicyInput): ResolvedCheckPolicyPatch {
   if (objectInput.blockWorsening !== undefined) {
     patch.blockWorsening = objectInput.blockWorsening;
   }
-  if (objectInput.network !== undefined) patch.network = objectInput.network;
+  if (objectInput.onUnavailable !== undefined) {
+    patch.onUnavailable = objectInput.onUnavailable;
+  }
   return patch;
 }
 

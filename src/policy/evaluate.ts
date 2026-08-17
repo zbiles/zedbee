@@ -44,7 +44,15 @@ export function evaluatePolicy(
   });
   const summary = summarizeChecks(evaluated);
 
-  if (config.failOnIncomplete && summary.incomplete > 0) {
+  const hasBlockingIncomplete = evaluated.some(
+    (result) =>
+      result.status === "incomplete" &&
+      (result.incompleteDisposition === "block" ||
+        (result.incompleteDisposition === undefined &&
+          config.failOnIncomplete)),
+  );
+
+  if (hasBlockingIncomplete) {
     return { exitCode: 2, outcome: "incomplete", results: evaluated, summary };
   }
   if (summary.failed > 0) {

@@ -18,6 +18,7 @@ import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
+import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -1073,7 +1074,7 @@ describe("dispatchChecks", () => {
     expect(observed).toEqual(["inspect:always", "run:relevant"]);
   });
 
-  it("fails closed on a programmatically injected file-scoped network override", async () => {
+  it("fails closed on a programmatically injected file-scoped availability override", async () => {
     const base = createConfig({ vulnerabilities: "error" });
     const unsafeConfig = {
       ...base,
@@ -1081,13 +1082,13 @@ describe("dispatchChecks", () => {
         ...base.checks,
         vulnerabilities: {
           ...base.checks.vulnerabilities,
-          network: "offline" as const,
+          onUnavailable: "block" as const,
         },
       },
       overrides: [
         {
           files: ["package.json"],
-          checks: { vulnerabilities: { network: "online" as const } },
+          checks: { vulnerabilities: { onUnavailable: "warn" as const } },
         },
       ],
     };
@@ -1441,6 +1442,35 @@ describe("dispatchChecks", () => {
       status: "completed",
     });
     expect(JSON.stringify(results)).not.toContain("private-token-123");
+  });
+
+  it("preserves safe details and disposition from a known incomplete error", async () => {
+    const unavailable = createAdapter("vulnerabilities", "network", async () => {
+      throw new CheckIncompleteError({
+        code: "OSV_UNAVAILABLE",
+        message: "OSV did not respond before the request deadline.",
+        remediation: "Retry the scan or set onUnavailable to warn.",
+        path: "package-lock.json",
+        disposition: "warn",
+      });
+    });
+
+    const [execution] = await dispatchChecks(
+      [unavailable],
+      createContext(createConfig({ vulnerabilities: "error" })),
+    );
+
+    expect(execution?.result).toMatchObject({
+      checkId: "vulnerabilities",
+      status: "incomplete",
+      incompleteDisposition: "warn",
+      error: {
+        code: "OSV_UNAVAILABLE",
+        message: "OSV did not respond before the request deadline.",
+        remediation: "Retry the scan or set onUnavailable to warn.",
+        path: "package-lock.json",
+      },
+    });
   });
 
   it("returns results in deterministic check ID order instead of adapter or completion order", async () => {
