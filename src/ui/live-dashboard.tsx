@@ -5,6 +5,7 @@ import { PixelBee } from "./pixel-bee.js";
 import { PixelClock, pixelClockWidth } from "./pixel-clock.js";
 import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
+import { checkLabel } from "../reporting/check-label.js";
 
 type LiveStatus =
   "QUEUED" | "RUNNING" | "PASS" | "WARN" | "FAIL" | "SKIPPED" | "INCOMPLETE";
@@ -15,22 +16,6 @@ interface CheckState {
   startedAt?: number;
   result?: CheckResult;
 }
-
-const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  formatting: "Formatting",
-  lint: "Lint",
-  types: "TypeScript",
-  cyclomaticComplexity: "Cyclomatic complexity",
-  readabilityComplexity: "Readability complexity",
-  structuralSecurity: "Structural security",
-  secrets: "Secrets",
-  duplication: "Duplication",
-  dependencyArchitecture: "Dependency architecture",
-  deadCode: "Dead code",
-  reactCorrectness: "React correctness",
-  reactAccessibility: "React accessibility",
-  vulnerabilities: "Vulnerabilities",
-});
 
 const SPINNER_FRAMES = [
   "⠋",
@@ -44,10 +29,6 @@ const SPINNER_FRAMES = [
   "⠇",
   "⠏",
 ] as const;
-
-export function checkLabel(checkId: string): string {
-  return CHECK_LABELS[checkId] ?? checkId;
-}
 
 function resultStatus(result: CheckResult): LiveStatus {
   if (result.status === "skipped") return "SKIPPED";

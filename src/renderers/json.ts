@@ -5,17 +5,28 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 
 function serializeFinding(finding: Finding): Record<string, unknown> {
+  const sourceExcerpt =
+    finding.sourceExcerpt === undefined
+      ? undefined
+      : {
+          line: finding.sourceExcerpt.line,
+          ...(finding.sourceExcerpt.text === undefined
+            ? {}
+            : { text: finding.sourceExcerpt.text }),
+          redacted: finding.sourceExcerpt.redacted,
+          truncated: finding.sourceExcerpt.truncated,
+        };
   return {
     id: finding.id,
     check: finding.check,
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
-    location: finding.location,
-    remediation: finding.remediation,
-    ...(finding.sourceExcerpt === undefined
+    ...(finding.location === undefined ? {} : { location: finding.location }),
+    ...(finding.remediation === undefined
       ? {}
-      : { sourceExcerpt: finding.sourceExcerpt }),
+      : { remediation: finding.remediation }),
+    ...(sourceExcerpt === undefined ? {} : { sourceExcerpt }),
     attribution: {
       kind: finding.attribution.kind,
       staged: finding.attribution.staged,
@@ -41,12 +52,12 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
         };
   return {
     checkId: check.checkId,
-    target: check.target,
+    ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
     durationMs: check.durationMs,
     findings: [...check.findings].sort(compareFindings).map(serializeFinding),
     ...(error === undefined ? {} : { error }),
-    skipReason: check.skipReason,
+    ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
   };
 }
 

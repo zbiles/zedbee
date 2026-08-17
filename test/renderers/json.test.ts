@@ -163,6 +163,78 @@ describe("renderJson", () => {
     expect(JSON.stringify(parsed.checks[0]?.findings[1])).not.toContain(
       '"text"',
     );
+    expect(Object.hasOwn(parsed.checks[0]!, "skipReason")).toBe(false);
+    expect(Object.hasOwn(parsed.checks[0]?.findings[1]!, "remediation")).toBe(
+      true,
+    );
+  });
+
+  it("omits every absent optional field and retains incomplete summary data", () => {
+    const {
+      location: _location,
+      remediation: _remediation,
+      sourceExcerpt: _sourceExcerpt,
+      ...finding
+    } = createFinding();
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 1,
+        findings: [finding],
+      },
+      checks: [
+        {
+          checkId: "formatting",
+          status: "incomplete",
+          durationMs: 4,
+          findings: [finding],
+          error: {
+            code: "PRETTIER_FAILED",
+            message: "Prettier could not analyze the staged file.",
+          },
+        },
+      ],
+    });
+
+    const parsed = JSON.parse(renderJson(report)) as {
+      summary: Record<string, unknown>;
+      checks: Array<{
+        skipReason?: string;
+        error: Record<string, unknown>;
+        findings: Array<Record<string, unknown>>;
+      }>;
+    };
+    const serializedFinding = parsed.checks[0]!.findings[0]!;
+
+    expect(parsed.summary.incomplete).toBe(1);
+    expect(Object.hasOwn(parsed.checks[0]!, "skipReason")).toBe(false);
+    expect(Object.keys(parsed.checks[0]!.error)).toEqual(["code", "message"]);
+    expect(Object.hasOwn(serializedFinding, "location")).toBe(false);
+    expect(Object.hasOwn(serializedFinding, "remediation")).toBe(false);
+    expect(Object.hasOwn(serializedFinding, "sourceExcerpt")).toBe(false);
+  });
+
+  it("rejects unsafe raw diagnostic control text", () => {
+    const report = createReport({
+      checks: [
+        {
+          checkId: "formatting",
+          status: "incomplete",
+          durationMs: 4,
+          findings: [],
+          error: {
+            code: "PRETTIER_FAILED",
+            message: "unsafe\u001b[2Jdiagnostic",
+          },
+        },
+      ],
+    });
+
+    expect(() => renderJson(report)).toThrow(/display text/i);
   });
 
   it("serializes the sanitized copies of raw report fields", () => {

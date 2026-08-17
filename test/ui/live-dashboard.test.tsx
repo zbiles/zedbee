@@ -1,6 +1,10 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import type { ScanEvent } from "../../src/checks/events.js";
+import {
+  checkLabel,
+  findingCheckLabel,
+} from "../../src/reporting/check-label.js";
 import { LiveDashboard } from "../../src/ui/live-dashboard.js";
 import { createFinding } from "../helpers/scan-report.js";
 
@@ -29,6 +33,19 @@ const events: ScanEvent[] = [
 ];
 
 describe("LiveDashboard", () => {
+  it("keeps friendly live labels separate from final engine labels", () => {
+    expect(checkLabel("formatting")).toBe("Formatting");
+    expect(checkLabel("lint")).toBe("Lint");
+    expect(checkLabel("secrets")).toBe("Secrets");
+    expect(checkLabel("vulnerabilities")).toBe("Vulnerabilities");
+    expect(findingCheckLabel("formatting")).toBe("Prettier");
+    expect(findingCheckLabel("lint")).toBe("ESLint");
+    expect(findingCheckLabel("cyclomaticComplexity")).toBe("ESLint");
+    expect(findingCheckLabel("readabilityComplexity")).toBe("ESLint");
+    expect(findingCheckLabel("secrets")).toBe("Gitleaks");
+    expect(findingCheckLabel("vulnerabilities")).toBe("OSV Scanner");
+  });
+
   it("aligns the bee's stinger with the wordmark middle while its wings cross the rounded frame", () => {
     const frame = render(
       <LiveDashboard
