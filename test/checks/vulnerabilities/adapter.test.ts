@@ -1,6 +1,3 @@
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
@@ -57,7 +54,6 @@ async function context(
   options: {
     changed?: boolean;
     when?: "relevant" | "always";
-    network?: "online" | "offline";
   } = {},
 ): Promise<CheckRunContext> {
   const [baseline, target, live] = await Promise.all([
@@ -95,7 +91,7 @@ async function context(
       vulnerabilities: {
         severity: "error",
         when: options.when ?? "relevant",
-        network: options.network ?? "online",
+        onUnavailable: "block",
       },
     },
   });
@@ -123,7 +119,6 @@ describe("vulnerabilitiesAdapter", () => {
     const adapter = createVulnerabilitiesAdapter({
       resolveBinary: async () => binary,
       runBinary: async () => ({ stdout: "{}", stderr: "", exitCode: 0 }),
-      offlineDatabasePath: () => undefined,
     });
     await expect(adapter.inspect(relevant)).resolves.toEqual({
       applies: false,
@@ -150,7 +145,6 @@ describe("vulnerabilitiesAdapter", () => {
           exitCode: 1,
         };
       },
-      offlineDatabasePath: () => undefined,
     });
     await expect(adapter.inspect(run)).resolves.toMatchObject({
       applies: true,
@@ -183,51 +177,4 @@ describe("vulnerabilitiesAdapter", () => {
     ).toBe(false);
   });
 
-  it("uses a verified local database in strict offline mode", async () => {
-    const run = await context({ network: "offline" });
-    const database = await mkdtemp(join(tmpdir(), "zedbee-osv-db-"));
-    await mkdir(join(database, "osv-scanner/npm"), { recursive: true });
-    await writeFile(join(database, "osv-scanner/npm/all.zip"), "fixture");
-    const canonicalDatabase = await realpath(database);
-    let calls = 0;
-    const adapter = createVulnerabilitiesAdapter({
-      resolveBinary: async () => binary,
-      runBinary: async (_binary, args, options) => {
-        calls += 1;
-        expect(args.slice(0, 4)).toEqual([
-          "scan",
-          "source",
-          "--offline",
-          "--offline-vulnerabilities",
-        ]);
-        expect(options.environment).toEqual({
-          OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: canonicalDatabase,
-        });
-        return { stdout: osv(options.cwd, false), stderr: "", exitCode: 1 };
-      },
-      offlineDatabasePath: () => database,
-    });
-    const applicability = await adapter.inspect(run);
-    expect(applicability).toMatchObject({
-      applies: true,
-      executionClass: "project-analysis",
-    });
-    expect(applicability).not.toHaveProperty("networkDisclosure");
-    await adapter.collect(run);
-    expect(calls).toBe(2);
-  });
-
-  it("is incomplete when offline mode has no verified database", async () => {
-    const run = await context({ network: "offline" });
-    const adapter = createVulnerabilitiesAdapter({
-      resolveBinary: async () => binary,
-      runBinary: async () => {
-        throw new Error("must not run");
-      },
-      offlineDatabasePath: () => undefined,
-    });
-    await expect(adapter.collect(run)).rejects.toThrow(
-      "Vulnerability analysis failed.",
-    );
-  });
 });

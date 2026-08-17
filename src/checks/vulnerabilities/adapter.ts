@@ -1,5 +1,3 @@
-import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
 import type {
   CheckObservationSet,
   CheckRunContext,
@@ -37,13 +35,11 @@ interface VulnerabilitiesAdapterDependencies {
     args: readonly string[],
     options: ManagedRunOptions,
   ) => Promise<ManagedRunResult>;
-  readonly offlineDatabasePath: () => string | undefined;
 }
 
 const defaults: VulnerabilitiesAdapterDependencies = {
   resolveBinary: resolveManagedBinary,
   runBinary: runManagedBinary,
-  offlineDatabasePath: () => process.env.ZEDBEE_OSV_DATABASE,
 };
 
 function dependencyStatePaths(context: InspectionContext): ReadonlySet<string> {
@@ -60,52 +56,15 @@ function hasDependencyStateDelta(context: InspectionContext): boolean {
   );
 }
 
-function contained(root: string, path: string): boolean {
-  const candidate = relative(root, path);
-  return (
-    candidate !== ".." &&
-    !isAbsolute(candidate) &&
-    !candidate.startsWith("../") &&
-    !candidate.startsWith("..\\")
-  );
-}
-
-async function verifiedOfflineDatabase(
-  configured: string | undefined,
-): Promise<string> {
-  if (configured === undefined || configured.trim().length === 0) {
-    throw new Error("Vulnerability analysis failed.");
-  }
-  const rootMetadata = await lstat(configured);
-  const root = await realpath(configured);
-  if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) {
-    throw new Error("Vulnerability analysis failed.");
-  }
-  const npmDatabase = join(root, "osv-scanner", "npm", "all.zip");
-  const databaseMetadata = await lstat(npmDatabase);
-  const database = await realpath(npmDatabase);
-  if (
-    databaseMetadata.isSymbolicLink() ||
-    !databaseMetadata.isFile() ||
-    !contained(root, database)
-  ) {
-    throw new Error("Vulnerability analysis failed.");
-  }
-  return root;
-}
-
 async function collectSide(
   dependencies: VulnerabilitiesAdapterDependencies,
   binary: ManagedBinary,
   snapshotRoot: string,
-  mode: "online" | "offline",
-  database: string | undefined,
   signal: AbortSignal,
 ) {
   const args = [
     "scan",
     "source",
-    ...(mode === "offline" ? ["--offline", "--offline-vulnerabilities"] : []),
     "--format=json",
     "--recursive",
     snapshotRoot,
@@ -115,13 +74,6 @@ async function collectSide(
     timeoutMs: 120_000,
     signal,
     acceptedExitCodes: [0, 1],
-    ...(database === undefined
-      ? {}
-      : {
-          environment: {
-            OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY: database,
-          },
-        }),
   });
   let rawReport = result.stdout;
   const normalized = normalizeOsvReport(rawReport, snapshotRoot);
@@ -145,41 +97,27 @@ export function createVulnerabilitiesAdapter(
           reason: "No staged dependency state changes",
         };
       }
-      const online =
-        (context.config.checks.vulnerabilities.network ?? "online") ===
-        "online";
       return {
         applies: true as const,
-        executionClass: online
-          ? ("network" as const)
-          : ("project-analysis" as const),
+        executionClass: "network" as const,
         requiresBaseline: true,
         targets: [TARGET],
-        ...(online ? { networkDisclosure: DISCLOSURE } : {}),
+        networkDisclosure: DISCLOSURE,
       };
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const mode = context.policy.network ?? "online";
-        const database =
-          mode === "offline"
-            ? await verifiedOfflineDatabase(dependencies.offlineDatabasePath())
-            : undefined;
         const binary = await dependencies.resolveBinary("osv-scanner");
         const baselineObservations = await collectSide(
           dependencies,
           binary,
           context.snapshots.baselineDir,
-          mode,
-          database,
           context.signal,
         );
         const targetObservations = await collectSide(
           dependencies,
           binary,
           context.snapshots.targetDir,
-          mode,
-          database,
           context.signal,
         );
         return {

@@ -45,7 +45,7 @@ export interface CheckDescription {
   readonly targets: readonly string[];
   readonly executionClass: ExecutionClass;
   readonly network:
-    "none" | "online-package-metadata-only" | "offline-database";
+    "none" | "online-package-metadata-only";
   readonly engine: {
     readonly name: string;
     readonly version: string;
@@ -286,9 +286,7 @@ export async function executeChecksCommand(
           network:
             id !== "vulnerabilities"
               ? "none"
-              : policy.network === "offline"
-                ? "offline-database"
-                : "online-package-metadata-only",
+              : "online-package-metadata-only",
           engine: Object.freeze({ ...CATALOG[id].engine }),
           limitation: CATALOG[id].limitation,
           ...(runtime.reason === undefined ? {} : { reason: runtime.reason }),

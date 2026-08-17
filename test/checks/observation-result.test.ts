@@ -317,7 +317,7 @@ describe("observationCheckResult", () => {
     const runContext = await context(
       "vulnerabilities",
       target,
-      { severity: "error", when: "relevant", network: "online" },
+      { severity: "error", when: "relevant", onUnavailable: "block" },
       changeSet,
     );
     const vulnerability: Observation = {
