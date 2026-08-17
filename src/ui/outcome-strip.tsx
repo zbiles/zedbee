@@ -22,7 +22,7 @@ function copyFor(
       narrow
         ? "Commit blocked."
         : "A required check could not finish. Commit blocked.",
-      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed · ${report.summary.incomplete} incomplete`,
+      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
     ];
   }
   if (report.stagedFileCount === 0) {

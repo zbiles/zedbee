@@ -141,7 +141,7 @@ describe("OutcomeStrip", () => {
     expect(maxLineWidth(frame)).toBeLessThanOrEqual(60);
   });
 
-  it("includes every outcome count when a scan is incomplete", () => {
+  it("retains pass, warning, and failure counts without a visual incomplete count", () => {
     const frame = render(
       <OutcomeStrip
         report={createReport({
@@ -160,6 +160,11 @@ describe("OutcomeStrip", () => {
       />,
     ).lastFrame()!;
 
-    expect(frame).toContain("3 passed · 2 warnings · 1 failed · 1 incomplete");
+    expect(frame).toContain("SCAN INCOMPLETE");
+    expect(frame).toContain(
+      "A required check could not finish. Commit blocked.",
+    );
+    expect(frame).toContain("3 passed · 2 warnings · 1 failed");
+    expect(frame).not.toContain("1 incomplete");
   });
 });

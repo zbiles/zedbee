@@ -39,6 +39,27 @@ describe("PixelWordmark", () => {
     expect(brandAndFrame).not.toMatch(/\u001b\[48;/u);
   });
 
+  it("leaves the complete final report transparent to the terminal", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { ScanApp } = await import("../../src/ui/scan-app.js");
+    const { createReport } = await import("../helpers/scan-report.js");
+    const frame = render(
+      React.createElement(ScanApp, {
+        events: [],
+        elapsedMs: 0,
+        width: 96,
+        color: true,
+        animations: false,
+        report: createReport(),
+      }),
+    ).lastFrame()!;
+
+    expect(frame).not.toMatch(/\u001b\[48;/u);
+  });
+
   it("renders check-row dividers with less contrast than panel and heading strokes", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();

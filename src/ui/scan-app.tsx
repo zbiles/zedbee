@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
 import { FindingsList } from "./findings-list.js";
+import { IncompleteList } from "./incomplete-list.js";
 import { LiveDashboard } from "./live-dashboard.js";
 import { OutcomeStrip } from "./outcome-strip.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
@@ -31,6 +32,11 @@ export function ScanApp(props: ScanAppProps) {
     <Box flexDirection="column" width={props.width}>
       <OutcomeStrip
         report={props.report}
+        width={props.width}
+        color={props.color}
+      />
+      <IncompleteList
+        checks={props.report.checks}
         width={props.width}
         color={props.color}
       />
