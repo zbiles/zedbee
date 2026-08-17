@@ -244,7 +244,7 @@ function CheckPanel({
       {states.map((state, index) => (
         <Box key={state.id} flexDirection="column">
           <Box paddingX={2}>
-            <Box width={3} justifyContent="center">
+            <Box width={3} flexShrink={0} justifyContent="center">
               <Text {...colorProp(color, statusColor(state.status))}>
                 {statusIcon(state.status, animations, elapsedMs, index)}
               </Text>
@@ -344,7 +344,8 @@ function SummaryPanel({
   const elapsedLabel = `${elapsedValue}s`;
   const groupWidth = Math.max(1, width - 6);
   const showPixelClock = groupWidth >= pixelClockWidth(elapsedValue) + 9;
-  const showElapsedCopy = groupWidth >= elapsedLabel.length + "elapsed".length;
+  const showElapsedCopy =
+    groupWidth >= elapsedLabel.length + 1 + "elapsed".length;
   const chipsInline = groupWidth >= 23;
   const availableForChips = groupWidth - 2;
   const base = Math.floor(availableForChips / 3);

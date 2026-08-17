@@ -758,4 +758,59 @@ describe("LiveDashboard", () => {
     expect(frame).toContain("0.0s");
     expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
   });
+
+  it("preserves the complete centered status slot under narrow row pressure", () => {
+    const frame = render(
+      <LiveDashboard
+        events={[
+          {
+            type: "check-completed",
+            checkId: "reactAccessibility",
+            target: ".",
+            timestamp: 1,
+            result: {
+              checkId: "reactAccessibility",
+              status: "skipped",
+              durationMs: 0,
+              findings: [],
+              skipReason: "No React source files found.",
+            },
+          },
+        ]}
+        startedAt={0}
+        elapsedMs={2800}
+        width={20}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const checkRow = frame.split("\n").find((line) => line.includes("−"));
+
+    expect(checkRow).toBeDefined();
+    expect(checkRow).toContain("│   − Re");
+    expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
+  });
+
+  it("shows elapsed copy only when a separator cell also fits", () => {
+    const renderAt = (width: number) =>
+      render(
+        <LiveDashboard
+          events={[]}
+          startedAt={0}
+          elapsedMs={2800}
+          width={width}
+          color={false}
+          animations={false}
+        />,
+      ).lastFrame()!;
+    const compact = renderAt(24);
+    const separated = renderAt(25);
+
+    expect(compact).toContain("2.8s");
+    expect(compact).not.toContain("2.8selapsed");
+    expect(compact).not.toContain("elapsed");
+    expect(separated).toContain("2.8s elapsed");
+    expect(maxLineWidth(compact)).toBeLessThanOrEqual(24);
+    expect(maxLineWidth(separated)).toBeLessThanOrEqual(25);
+  });
 });
