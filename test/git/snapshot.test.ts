@@ -2,16 +2,25 @@ import {
   access,
   chmod,
   lstat,
+  mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   symlink,
   writeFile
 } from "node:fs/promises";
-import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
+import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
 import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import {
+  validateReportableSnapshotPath,
+  validateSnapshotPath
+} from "../../src/git/snapshot-path.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 async function pathExists(path: string): Promise<boolean> {
@@ -24,6 +33,67 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe("buildSnapshotPair", () => {
+  it("creates a canonical trusted snapshot root below the canonical OS temp root", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.git(["add", "--", "value.ts"]);
+    const snapshots = await buildSnapshotPair(repository.root, new GitClient(repository.root));
+    onTestFinished(snapshots.cleanup);
+
+    const snapshotRoot = dirname(snapshots.targetDir);
+    const canonicalTempRoot = await realpath(tmpdir());
+    expect(isAbsolute(snapshotRoot)).toBe(true);
+    expect(await realpath(snapshotRoot)).toBe(snapshotRoot);
+    expect(relative(canonicalTempRoot, snapshotRoot)).not.toMatch(/^\.\.(?:[/\\]|$)/);
+    expect(basename(snapshotRoot)).toMatch(/^zedbee-snapshot-/);
+    expect(await validateSnapshotPath(snapshotRoot)).toBe(snapshotRoot);
+
+    const trustedReportPath = validateReportableSnapshotPath(snapshotRoot);
+    const result = sanitizeCheckResult(
+      {
+        checkId: "snapshot-cleanup",
+        status: "incomplete",
+        durationMs: 0,
+        findings: [],
+        error: {
+          code: "SNAPSHOT_CLEANUP_FAILED",
+          message: "Zedbee could not remove its temporary snapshot."
+        }
+      } as CheckResult,
+      { temporaryPath: trustedReportPath }
+    );
+    expect(result.error?.temporaryPath).toBe(snapshotRoot);
+  });
+
+  it.each([
+    ["non-Zedbee temp path", "/tmp/not-zedbee"],
+    ["relative path", "."]
+  ])("rejects a literal %s", async (_label, path) => {
+    await expect(validateSnapshotPath(path)).rejects.toThrow();
+    expect(() => validateReportableSnapshotPath(path)).toThrow();
+  });
+
+  it("rejects an existing directory outside the canonical temp root", async () => {
+    const repository = await createGitRepository();
+
+    await expect(validateSnapshotPath(repository.root)).rejects.toThrow();
+    expect(() => validateReportableSnapshotPath(repository.root)).toThrow();
+  });
+
+  it.runIf(process.platform !== "win32")("rejects a snapshot symlink whose realpath identity differs", async () => {
+    const created = await mkdtemp(join(tmpdir(), "zedbee-snapshot-target-"));
+    const canonicalTarget = await realpath(created);
+    const link = `${canonicalTarget}-symlink`;
+    await symlink(canonicalTarget, link, "dir");
+    onTestFinished(async () => {
+      await rm(link);
+      await rm(canonicalTarget, { recursive: true });
+    });
+
+    await expect(validateSnapshotPath(link)).rejects.toThrow();
+    expect(() => validateReportableSnapshotPath(link)).toThrow();
+  });
+
   it("materializes HEAD and the index without observing later working-tree edits", async () => {
     const repository = await createGitRepository();
     await repository.write("src/value.ts", "export const value = 1;\n");

@@ -21,6 +21,13 @@ export interface Attribution {
   evidence: readonly string[];
 }
 
+export interface SourceExcerpt {
+  readonly line: number;
+  readonly text?: string;
+  readonly redacted: boolean;
+  readonly truncated: boolean;
+}
+
 export interface Finding {
   id: string;
   check: string;
@@ -29,6 +36,7 @@ export interface Finding {
   message: string;
   location?: SourceLocation;
   remediation?: string;
+  sourceExcerpt?: SourceExcerpt;
   attribution: Attribution;
 }
 
@@ -99,6 +107,9 @@ export interface FindingIdentity {
 export interface CheckError {
   code: string;
   message: string;
+  path?: string;
+  temporaryPath?: string;
+  remediation?: string;
 }
 
 export interface CheckResult {

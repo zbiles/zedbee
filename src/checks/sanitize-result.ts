@@ -3,10 +3,13 @@ import type {
   CheckError,
   CheckResult,
   Finding,
+  SourceExcerpt,
   SourceLocation,
 } from "../core/types.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
+import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 
 const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
   "range-overlap",
@@ -16,6 +19,10 @@ const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
   "metric-delta",
   "none",
 ]);
+
+export const SOURCE_EXCERPT_MAX_CODE_POINTS = 500;
+
+const UNSAFE_CODE_LINE_CHARACTER = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 
 function sanitizeStatus(value: unknown): CheckResult["status"] {
   if (value !== "completed" && value !== "skipped" && value !== "incomplete") {
@@ -58,6 +65,7 @@ export const PUBLIC_FINDING_FIELDS = {
   message: true,
   location: true,
   remediation: true,
+  sourceExcerpt: true,
   attribution: true,
 } as const satisfies Readonly<Record<keyof Finding, true>>;
 
@@ -75,15 +83,26 @@ export const PUBLIC_ATTRIBUTION_FIELDS = {
   evidence: true,
 } as const satisfies Readonly<Record<keyof Attribution, true>>;
 
+export const PUBLIC_SOURCE_EXCERPT_FIELDS = {
+  line: true,
+  text: true,
+  redacted: true,
+  truncated: true,
+} as const satisfies Readonly<Record<keyof SourceExcerpt, true>>;
+
 export const PUBLIC_CHECK_ERROR_FIELDS = {
   code: true,
   message: true,
+  path: true,
+  temporaryPath: true,
+  remediation: true,
 } as const satisfies Readonly<Record<keyof CheckError, true>>;
 
 interface CheckResultOverrides {
   readonly checkId?: string;
   readonly target?: string;
   readonly durationMs?: number;
+  readonly temporaryPath?: ValidatedSnapshotPath;
 }
 
 function sanitizeLocation(location: SourceLocation): SourceLocation {
@@ -116,7 +135,54 @@ function sanitizeAttribution(attribution: Attribution): Attribution {
   };
 }
 
+function sanitizeSourceExcerpt(
+  excerpt: SourceExcerpt,
+  location: SourceLocation | undefined,
+): SourceExcerpt {
+  const line = excerpt.line;
+  if (
+    !Number.isSafeInteger(line) ||
+    line < 1 ||
+    location?.startLine === undefined ||
+    line !== location.startLine
+  ) {
+    throw new TypeError(
+      "Expected source excerpt line to match the finding start line",
+    );
+  }
+
+  const redacted = excerpt.redacted;
+  const truncated = excerpt.truncated;
+  if (typeof redacted !== "boolean" || typeof truncated !== "boolean") {
+    throw new TypeError("Expected valid source excerpt flags");
+  }
+
+  const text = excerpt.text;
+  if (redacted) {
+    if (text !== undefined) {
+      throw new TypeError("Expected a redacted source excerpt without text");
+    }
+    return { line, redacted, truncated };
+  }
+  if (
+    typeof text !== "string" ||
+    Array.from(text).length > SOURCE_EXCERPT_MAX_CODE_POINTS
+  ) {
+    throw new TypeError("Expected bounded source excerpt text");
+  }
+  return {
+    line,
+    text: text.replaceAll(UNSAFE_CODE_LINE_CHARACTER, "�"),
+    redacted,
+    truncated,
+  };
+}
+
 function sanitizeFinding(finding: Finding): Finding {
+  const location =
+    finding.location === undefined
+      ? undefined
+      : sanitizeLocation(finding.location);
   return {
     id: displayLabel(finding.id, "finding id"),
     check: displayLabel(finding.check, "check label"),
@@ -125,9 +191,7 @@ function sanitizeFinding(finding: Finding): Finding {
     message: displayProse(finding.message, "finding message", {
       allowEmpty: true,
     }),
-    ...(finding.location === undefined
-      ? {}
-      : { location: sanitizeLocation(finding.location) }),
+    ...(location === undefined ? {} : { location }),
     ...(finding.remediation === undefined
       ? {}
       : {
@@ -135,16 +199,41 @@ function sanitizeFinding(finding: Finding): Finding {
             allowEmpty: true,
           }),
         }),
+    ...(finding.sourceExcerpt === undefined
+      ? {}
+      : {
+          sourceExcerpt: sanitizeSourceExcerpt(finding.sourceExcerpt, location),
+        }),
     attribution: sanitizeAttribution(finding.attribution),
   };
 }
 
-function sanitizeError(error: CheckError): CheckError {
+function sanitizeError(
+  error: CheckError,
+  temporaryPath: ValidatedSnapshotPath | undefined,
+): CheckError {
+  if (
+    error.temporaryPath !== undefined &&
+    (temporaryPath === undefined || error.temporaryPath !== temporaryPath)
+  ) {
+    throw new TypeError("Adapter returned an untrusted temporary path");
+  }
   return {
     code: displayLabel(error.code, "error code"),
     message: displayProse(error.message, "error message", {
       allowEmpty: true,
     }),
+    ...(error.path === undefined
+      ? {}
+      : { path: normalizeRepositoryRelativePath(error.path) }),
+    ...(temporaryPath === undefined ? {} : { temporaryPath }),
+    ...(error.remediation === undefined
+      ? {}
+      : {
+          remediation: displayProse(error.remediation, "error remediation", {
+            allowEmpty: true,
+          }),
+        }),
   };
 }
 
@@ -169,7 +258,7 @@ export function sanitizeCheckResult(
     findings: Array.from(result.findings, sanitizeFinding),
     ...(result.error === undefined
       ? {}
-      : { error: sanitizeError(result.error) }),
+      : { error: sanitizeError(result.error, overrides.temporaryPath) }),
     ...(result.skipReason === undefined
       ? {}
       : {
@@ -185,7 +274,17 @@ export function validateReportDisplayStrings(report: {
   readonly checks: readonly CheckResult[];
   readonly summary: { readonly findings: readonly Finding[] };
 }): void {
-  for (const check of report.checks) sanitizeCheckResult(check);
+  for (const check of report.checks) {
+    const temporaryPath = check.error?.temporaryPath;
+    sanitizeCheckResult(
+      check,
+      temporaryPath === undefined
+        ? {}
+        : {
+            temporaryPath: validateReportableSnapshotPath(temporaryPath),
+          },
+    );
+  }
   sanitizeCheckResult({
     checkId: "summary",
     status: "completed",

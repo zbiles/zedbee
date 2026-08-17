@@ -1,22 +1,13 @@
 import { lstat, mkdir, mkdtemp, open, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { join, sep } from "node:path";
 import type { GitClient } from "./client.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { SnapshotError, validateSnapshotPath } from "./snapshot-path.js";
+
+export { SnapshotError, type SnapshotErrorCode } from "./snapshot-path.js";
 
 const SNAPSHOT_PREFIX = "zedbee-snapshot-";
-
-export type SnapshotErrorCode = "INVALID_TEMP_PATH" | "UNRESOLVED_INDEX";
-
-export class SnapshotError extends Error {
-  readonly code: SnapshotErrorCode;
-
-  constructor(code: SnapshotErrorCode, message: string) {
-    super(message);
-    this.name = "SnapshotError";
-    this.code = code;
-  }
-}
 
 export type UnsupportedIndexEntryKind =
   "binary" | "git-lfs-pointer" | "intent-to-add" | "submodule";
@@ -37,31 +28,6 @@ export interface SnapshotPair {
 interface StagedEntry {
   mode: string;
   path: string;
-}
-
-function isContainedBy(parent: string, child: string): boolean {
-  const pathFromParent = relative(parent, child);
-  return (
-    pathFromParent !== "" &&
-    !isAbsolute(pathFromParent) &&
-    pathFromParent !== ".." &&
-    !pathFromParent.startsWith(`..${sep}`)
-  );
-}
-
-async function validateTemporaryParent(path: string): Promise<string> {
-  const canonicalTempRoot = await realpath(tmpdir());
-  const canonicalParent = await realpath(path);
-  if (
-    !isContainedBy(canonicalTempRoot, canonicalParent) ||
-    !basename(canonicalParent).startsWith(SNAPSHOT_PREFIX)
-  ) {
-    throw new SnapshotError(
-      "INVALID_TEMP_PATH",
-      "Zedbee refused to use a temporary snapshot path outside its managed directory.",
-    );
-  }
-  return canonicalParent;
 }
 
 function parseStagedEntries(output: string): StagedEntry[] {
@@ -160,7 +126,9 @@ export async function buildSnapshotPair(
   }
 
   const temporaryParent = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
-  const canonicalParent = await validateTemporaryParent(temporaryParent);
+  const canonicalParent = await validateSnapshotPath(
+    await realpath(temporaryParent),
+  );
   const baselineDir = join(canonicalParent, "baseline");
   const targetDir = join(canonicalParent, "target");
   const alternateIndex = join(canonicalParent, "baseline-index");
@@ -180,7 +148,7 @@ export async function buildSnapshotPair(
       throw error;
     }
 
-    const validatedParent = await validateTemporaryParent(canonicalParent);
+    const validatedParent = await validateSnapshotPath(canonicalParent);
     if (validatedParent !== canonicalParent) {
       throw new SnapshotError(
         "INVALID_TEMP_PATH",

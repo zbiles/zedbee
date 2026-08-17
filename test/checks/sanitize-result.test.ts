@@ -5,6 +5,7 @@ import {
   PUBLIC_CHECK_RESULT_FIELDS,
   PUBLIC_FINDING_FIELDS,
   PUBLIC_LOCATION_FIELDS,
+  PUBLIC_SOURCE_EXCERPT_FIELDS,
 } from "../../src/checks/sanitize-result.js";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import {
@@ -34,6 +35,7 @@ describe("public result sanitizer contract", () => {
       "message",
       "location",
       "remediation",
+      "sourceExcerpt",
       "attribution",
     ]);
     expect(Object.keys(PUBLIC_LOCATION_FIELDS)).toEqual([
@@ -48,12 +50,150 @@ describe("public result sanitizer contract", () => {
       "staged",
       "evidence",
     ]);
-    expect(Object.keys(PUBLIC_CHECK_ERROR_FIELDS)).toEqual(["code", "message"]);
+    expect(Object.keys(PUBLIC_SOURCE_EXCERPT_FIELDS)).toEqual([
+      "line",
+      "text",
+      "redacted",
+      "truncated",
+    ]);
+    expect(Object.keys(PUBLIC_CHECK_ERROR_FIELDS)).toEqual([
+      "code",
+      "message",
+      "path",
+      "temporaryPath",
+      "remediation",
+    ]);
     expect(Object.keys(PUBLIC_CHECK_TARGET_FIELDS)).toEqual([
       "id",
       "kind",
       "relativeRoot",
     ]);
+  });
+
+  it("preserves actionable safe error fields", () => {
+    const result = sanitizeCheckResult({
+      checkId: "formatting",
+      status: "incomplete",
+      durationMs: 1,
+      findings: [],
+      error: {
+        code: "PRETTIER_FAILED",
+        message: "Prettier could not analyze the staged file.",
+        path: "src/value.ts",
+        remediation: "Fix the parser error and stage the result.",
+      },
+    } as CheckResult);
+
+    expect(result.error).toEqual({
+      code: "PRETTIER_FAILED",
+      message: "Prettier could not analyze the staged file.",
+      path: "src/value.ts",
+      remediation: "Fix the parser error and stage the result.",
+    });
+  });
+
+  it.each(["/repo/src/value.ts", "../outside.ts", "src/unsafe\u001b.ts"])(
+    "rejects an unsafe repository error path %j",
+    (path) => {
+      expect(() =>
+        sanitizeCheckResult({
+          checkId: "formatting",
+          status: "incomplete",
+          durationMs: 1,
+          findings: [],
+          error: {
+            code: "PRETTIER_FAILED",
+            message: "Prettier failed.",
+            path,
+          },
+        } as CheckResult),
+      ).toThrow(/repository-relative path/i);
+    },
+  );
+
+  it("rejects an adapter-supplied temporary path", () => {
+    expect(() =>
+      sanitizeCheckResult({
+        checkId: "formatting",
+        status: "incomplete",
+        durationMs: 1,
+        findings: [],
+        error: {
+          code: "PRETTIER_FAILED",
+          message: "Prettier failed.",
+          temporaryPath: "/tmp/adapter-controlled",
+        },
+      } as CheckResult),
+    ).toThrow(/temporary path/i);
+  });
+
+  it("sanitizes a source excerpt without collapsing code indentation", () => {
+    const result = sanitizeCheckResult({
+      checkId: "formatting",
+      status: "completed",
+      durationMs: 1,
+      findings: [
+        {
+          id: "formatting:src/value.ts:2",
+          check: "formatting",
+          rule: "prettier",
+          severity: "error",
+          message: "Formatting differs.",
+          location: { file: "src/value.ts", startLine: 2, endLine: 2 },
+          sourceExcerpt: {
+            line: 2,
+            text: "  const value =\u001b[31m 1;",
+            redacted: false,
+            truncated: false,
+          },
+          attribution: {
+            kind: "transformation-diff",
+            staged: true,
+            evidence: [],
+          },
+        },
+      ],
+    } as CheckResult);
+
+    expect(result.findings[0]?.sourceExcerpt).toEqual({
+      line: 2,
+      text: "  const value =�[31m 1;",
+      redacted: false,
+      truncated: false,
+    });
+  });
+
+  it.each([
+    ["mismatched line", { line: 3, text: "const value = 1;" }],
+    ["oversized text", { line: 2, text: "x".repeat(501) }],
+  ])("rejects a source excerpt with %s", (_label, excerpt) => {
+    expect(() =>
+      sanitizeCheckResult({
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 1,
+        findings: [
+          {
+            id: "formatting:src/value.ts:2",
+            check: "formatting",
+            rule: "prettier",
+            severity: "error",
+            message: "Formatting differs.",
+            location: { file: "src/value.ts", startLine: 2, endLine: 2 },
+            sourceExcerpt: {
+              ...excerpt,
+              redacted: false,
+              truncated: false,
+            },
+            attribution: {
+              kind: "transformation-diff",
+              staged: true,
+              evidence: [],
+            },
+          },
+        ],
+      } as CheckResult),
+    ).toThrow(/source excerpt/i);
   });
 
   it.each([

@@ -13,6 +13,9 @@ function serializeFinding(finding: Finding): Record<string, unknown> {
     message: finding.message,
     location: finding.location,
     remediation: finding.remediation,
+    ...(finding.sourceExcerpt === undefined
+      ? {}
+      : { sourceExcerpt: finding.sourceExcerpt }),
     attribution: {
       kind: finding.attribution.kind,
       staged: finding.attribution.staged,
@@ -22,13 +25,27 @@ function serializeFinding(finding: Finding): Record<string, unknown> {
 }
 
 function serializeCheck(check: CheckResult): Record<string, unknown> {
+  const error =
+    check.error === undefined
+      ? undefined
+      : {
+          code: check.error.code,
+          message: check.error.message,
+          ...(check.error.path === undefined ? {} : { path: check.error.path }),
+          ...(check.error.temporaryPath === undefined
+            ? {}
+            : { temporaryPath: check.error.temporaryPath }),
+          ...(check.error.remediation === undefined
+            ? {}
+            : { remediation: check.error.remediation }),
+        };
   return {
     checkId: check.checkId,
     target: check.target,
     status: check.status,
     durationMs: check.durationMs,
     findings: [...check.findings].sort(compareFindings).map(serializeFinding),
-    error: check.error,
+    ...(error === undefined ? {} : { error }),
     skipReason: check.skipReason,
   };
 }
