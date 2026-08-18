@@ -5,6 +5,10 @@ import {
   releaseReadiness,
   verificationSteps,
 } from "../../scripts/release-check.mjs";
+import {
+  assertAllowedPackageFiles,
+  assertPackMetadata,
+} from "../../scripts/check-package-contents.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -117,4 +121,64 @@ describe("release verification contract", () => {
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toBe("Core package contents passed.");
   }, 30_000);
+
+  it.each([
+    "docs/superpowers/plans/private.md",
+    "PRODUCT.md",
+    "test/fixture.ts",
+    "src/internal.ts",
+    "dist/unexpected-private-note.md",
+    "dist/unexpected.js",
+  ])("rejects an unapproved package path: %s", (unapproved) => {
+    expect(() =>
+      assertAllowedPackageFiles(["package.json", unapproved], {
+        sourcePaths: ["src/index.ts"],
+        reviewedOverridePaths: [],
+      }),
+    ).toThrow(/unapproved files/u);
+  });
+
+  it("accepts only declared public assets and source-derived build outputs", () => {
+    expect(() =>
+      assertAllowedPackageFiles(
+        [
+          "package.json",
+          "README.md",
+          "LICENSE",
+          "THIRD_PARTY_NOTICES.md",
+          "docs/support.md",
+          "schema/zedbee.schema.json",
+          "licenses/production-inventory.json",
+          "licenses/reviewed-overrides.json",
+          "licenses/reviewed-obligations.json",
+          "licenses/overrides/example-LICENSE",
+          "dist/index.js",
+          "dist/index.js.map",
+          "dist/index.d.ts",
+          "dist/index.d.ts.map",
+        ],
+        {
+          sourcePaths: ["src/index.ts"],
+          reviewedOverridePaths: ["licenses/overrides/example-LICENSE"],
+        },
+      ),
+    ).not.toThrow();
+  });
+
+  it("rejects bundled dependencies and mismatched pack identity", () => {
+    expect(() =>
+      assertPackMetadata(
+        JSON.stringify([
+          { name: "zedbee", version: "0.1.0", bundled: ["eslint"] },
+        ]),
+        "0.1.0",
+      ),
+    ).toThrow(/bundled dependencies/u);
+    expect(() =>
+      assertPackMetadata(
+        JSON.stringify([{ name: "zedbee", version: "0.1.1", bundled: [] }]),
+        "0.1.0",
+      ),
+    ).toThrow(/identity/u);
+  });
 });

@@ -3,12 +3,13 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   statSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 
@@ -21,6 +22,29 @@ const reviewedOverrides = JSON.parse(
 const reviewedOverrideTexts = [
   ...new Set(reviewedOverrides.overrides.map((override) => override.textFile)),
 ].sort();
+
+const PUBLIC_DOCS = Object.freeze([
+  "docs/checks.md",
+  "docs/commercial-licensing.md",
+  "docs/dependency-license-obligations.md",
+  "docs/privacy.md",
+  "docs/react-analysis.md",
+  "docs/readability-complexity.md",
+  "docs/structural-security-coverage.md",
+  "docs/support.md",
+]);
+
+const FIXED_PACKAGE_FILES = Object.freeze([
+  "LICENSE",
+  "README.md",
+  "THIRD_PARTY_NOTICES.md",
+  "package.json",
+  "schema/zedbee.schema.json",
+  ...PUBLIC_DOCS,
+  "licenses/production-inventory.json",
+  "licenses/reviewed-overrides.json",
+  "licenses/reviewed-obligations.json",
+]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "LICENSE",
@@ -40,10 +64,82 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "dist/index.d.ts",
 ]);
 
+function normalizedPackagePath(path) {
+  return path.replaceAll("\\", "/").replace(/^package\//u, "");
+}
+
+function buildOutputPaths(sourcePaths) {
+  return sourcePaths.flatMap((path) => {
+    const normalized = normalizedPackagePath(path);
+    if (
+      !normalized.startsWith("src/") ||
+      !/\.(?:ts|tsx)$/u.test(normalized) ||
+      normalized.endsWith(".d.ts")
+    ) {
+      throw new TypeError(`Invalid source module path: ${normalized}`);
+    }
+    const stem = `dist/${normalized.slice("src/".length).replace(/\.(?:ts|tsx)$/u, "")}`;
+    return [`${stem}.js`, `${stem}.js.map`, `${stem}.d.ts`, `${stem}.d.ts.map`];
+  });
+}
+
+export function assertAllowedPackageFiles(paths, options) {
+  const allowed = new Set([
+    ...FIXED_PACKAGE_FILES,
+    ...options.reviewedOverridePaths.map(normalizedPackagePath),
+    ...buildOutputPaths(options.sourcePaths),
+  ]);
+  const unexpected = paths
+    .map(normalizedPackagePath)
+    .filter((path) => !allowed.has(path));
+  if (unexpected.length > 0) {
+    throw new Error(
+      `Package contains unapproved files: ${unexpected.join(", ")}`,
+    );
+  }
+}
+
+export function assertPackMetadata(packOutput, expectedVersion) {
+  const parsed = JSON.parse(packOutput);
+  const record = parsed[0];
+  if (
+    !Array.isArray(parsed) ||
+    parsed.length !== 1 ||
+    record?.name !== "zedbee" ||
+    record?.version !== expectedVersion
+  ) {
+    throw new Error("Package identity does not match the release manifest.");
+  }
+  if (!Array.isArray(record.bundled) || record.bundled.length > 0) {
+    throw new Error("Package must not contain bundled dependencies.");
+  }
+}
+
+function sourceModulePaths(root) {
+  const sourceRoot = join(root, "src");
+  const paths = [];
+  const visit = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        visit(path);
+      } else if (
+        entry.isFile() &&
+        /\.(?:ts|tsx)$/u.test(entry.name) &&
+        !entry.name.endsWith(".d.ts")
+      ) {
+        paths.push(relative(root, path).replaceAll("\\", "/"));
+      } else if (entry.isSymbolicLink()) {
+        throw new Error("Source modules must not contain symbolic links.");
+      }
+    }
+  };
+  visit(sourceRoot);
+  return paths.sort();
+}
+
 export function assertRequiredPackageFiles(paths) {
-  const normalizedPaths = paths.map((path) =>
-    path.replaceAll("\\", "/").replace(/^package\//u, ""),
-  );
+  const normalizedPaths = paths.map(normalizedPackagePath);
   const normalized = new Set(normalizedPaths);
   const missing = REQUIRED_PACKAGE_FILES.filter(
     (path) => !normalized.has(path),
@@ -118,10 +214,16 @@ function main() {
       return packed.stdout;
     };
     const coreOutput = pack(root);
-    assertRequiredPackageFiles(packageFilePaths(coreOutput));
+    const packagePaths = packageFilePaths(coreOutput);
+    assertRequiredPackageFiles(packagePaths);
+    assertAllowedPackageFiles(packagePaths, {
+      sourcePaths: sourceModulePaths(root),
+      reviewedOverridePaths: reviewedOverrideTexts,
+    });
     const corePackage = JSON.parse(
       readFileSync(resolve(root, "package.json"), "utf8"),
     );
+    assertPackMetadata(coreOutput, corePackage.version);
     if (corePackage.license !== "PolyForm-Small-Business-1.0.0") {
       throw new Error(
         "Core package must declare PolyForm-Small-Business-1.0.0.",
