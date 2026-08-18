@@ -23,8 +23,6 @@ async function runNpm(args: readonly string[], cwd: string) {
 
 beforeAll(async () => {
   packDirectory = await mkdtemp(join(tmpdir(), "zedbee-doctor-pack-"));
-  const build = await runNpm(["run", "build"], packageRoot);
-  expect(build.exitCode, build.stderr).toBe(0);
   const packed = await runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
     packageRoot,

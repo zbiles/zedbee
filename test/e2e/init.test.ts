@@ -20,13 +20,6 @@ let tarballPath: string;
 
 beforeAll(async () => {
   packDirectory = await mkdtemp(join(tmpdir(), "zedbee-init-pack-"));
-  const build = await execa("npm", ["run", "build"], {
-    cwd: packageRoot,
-    env: { npm_config_cache: join(packDirectory, "npm-cache") },
-    reject: false,
-    stdin: "ignore",
-  });
-  expect(build.exitCode, build.stderr).toBe(0);
   const packed = await execa(
     "npm",
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],

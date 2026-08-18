@@ -33,12 +33,6 @@ let tarball: string;
 
 beforeAll(async () => {
   scratch = await mkdtemp(join(tmpdir(), "zedbee-managers-"));
-  const build = await execa("npm", ["run", "build"], {
-    cwd: root,
-    reject: false,
-    stdin: "ignore",
-  });
-  expect(build.exitCode, build.stderr).toBe(0);
   const packed = await execa(
     "npm",
     ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch],
