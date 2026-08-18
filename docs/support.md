@@ -24,7 +24,11 @@ This document distinguishes implemented coverage from unsupported or deferred be
 | Bun             | `bun.lock`            | The text lockfile is parsed locally.                                       |
 | Bun legacy      | `bun.lockb`           | The binary format is not supported. Generate and stage `bun.lock` instead. |
 
-Text lockfiles are limited to 8 MiB and are rejected before an oversized body is loaded into memory. Parsed structure, nesting, strings, dependency records, and OSV query counts have additional fixed safety limits.
+Text lockfiles are limited to 8 MiB and are rejected before an oversized body is loaded into memory. Parsed structure, nesting, strings, dependency records, and OSV query counts have additional fixed safety limits. pnpm and modern Yarn YAML alias references—including anchor-based reuse—are deliberately rejected rather than expanded, so the vulnerability check reports incomplete. Regenerate the lockfile with the package manager instead of hand-authoring reusable YAML nodes.
+
+## Project-analysis resolution boundary
+
+Managed Knip analysis does not permit an imported package beneath `node_modules` to be supplied by the staged snapshot or by an ancestor directory. This prevents repository-controlled package code from entering analyzer module resolution. A repository that commits such a package receives an incomplete `deadCode` result; remove the committed package and restore dependencies through the package manager and lockfile. Ordinary ignored, locally installed dependencies remain supported.
 
 When enabled, vulnerability analysis sends package name, exact version, and the npm ecosystem identifier to `api.osv.dev`. It is online only. Configure `checks.vulnerabilities.onUnavailable` as `block` or `warn`; `zedbee init` presents that choice and its disclosure.
 

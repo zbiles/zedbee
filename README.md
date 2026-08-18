@@ -174,6 +174,8 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 - Intent-to-add entries are excluded as unstaged. Staged Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete with every affected path reported; path-ignore policy is not yet configurable.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
+- pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.
+- If a repository commits a package beneath `node_modules` and source code imports it, managed Knip analysis is incomplete. Zedbee refuses to let snapshot-controlled packages participate in analyzer module resolution; remove the committed package and restore dependencies through the package manager and lockfile.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.
 
 ## License
