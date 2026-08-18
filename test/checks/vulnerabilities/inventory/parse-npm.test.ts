@@ -267,4 +267,18 @@ describe("parseLockfileInventory", () => {
       expect.objectContaining({ code: "LOCKFILE_NOT_DISCOVERED" }),
     );
   });
+
+  it("reports an oversized snapshot lockfile as a safety-limit failure", async () => {
+    const repository = await createInspectionFixture();
+    await repository.writeJson("package.json", { name: "fixture" });
+    await repository.write(
+      "package-lock.json",
+      " ".repeat(MAX_LOCKFILE_BYTES + 1),
+    );
+    const inspection = await inspectRepository(repository.root);
+
+    await expect(
+      parseLockfileInventory(inspection, "package-lock.json"),
+    ).rejects.toMatchObject({ code: "LOCKFILE_LIMIT_EXCEEDED" });
+  });
 });

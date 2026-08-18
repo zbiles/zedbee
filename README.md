@@ -46,7 +46,7 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome. Source excerpts therefore come from the exact indexed content and line, never from a later working-tree edit.
 
-An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. A staged Git LFS pointer is different: Zedbee cannot inspect the referenced object, so the scan remains incomplete until you materialize the object, stage it again, and rerun. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
+An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by staged work.
 
@@ -171,7 +171,7 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 - Exit code 2 means a required result is incomplete. Resolve the diagnostic rather than treating it as a pass.
 - For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
 - TypeScript workspaces need a contained staged `tsconfig.json`; Zedbee does not invent compiler options.
-- Intent-to-add entries are excluded as unstaged. A staged Git LFS pointer remains incomplete until its object is materialized and staged again; path-ignore policy is not yet configurable.
+- Intent-to-add entries are excluded as unstaged. Staged Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete with every affected path reported; path-ignore policy is not yet configurable.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.

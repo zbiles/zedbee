@@ -83,6 +83,24 @@ export interface ContainedFileReadHooks {
   afterOpen?(context: { readonly canonicalPath: string }): Promise<void> | void;
 }
 
+export interface ContainedFileReadOptions extends ContainedFileReadHooks {
+  readonly maxBytes?: number;
+}
+
+export class ContainedFileSizeError extends Error {
+  readonly code = "FILE_SIZE_LIMIT_EXCEEDED";
+  readonly path: string;
+  readonly maxBytes: number;
+
+  constructor(repositoryPath: string, maxBytes: number) {
+    super("Zedbee refused to read a file that exceeds its size limit.");
+    this.name = "ContainedFileSizeError";
+    this.path = normalizeRepositoryPath(repositoryPath);
+    this.maxBytes = maxBytes;
+    Object.freeze(this);
+  }
+}
+
 const NO_FOLLOW_UNSUPPORTED_CODES = new Set([
   "EINVAL",
   "ENOTSUP",
@@ -132,16 +150,23 @@ async function openWithoutFollowing(
 export async function readContainedFile(
   registry: SnapshotRegistry,
   repositoryPath: string,
-  hooks: ContainedFileReadHooks = {},
+  options: ContainedFileReadOptions = {},
 ): Promise<string> {
+  const maxBytes = options.maxBytes;
+  if (
+    maxBytes !== undefined &&
+    (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+  ) {
+    throw new TypeError("Expected a non-negative safe file-size limit");
+  }
   const registeredTarget = registry.resolve(repositoryPath);
   if (registeredTarget?.targetKind !== "file") {
     throw unreadablePath(repositoryPath);
   }
   const canonicalPath = registeredTarget.canonicalPath;
-  await hooks.afterCanonicalize?.({ canonicalPath });
+  await options.afterCanonicalize?.({ canonicalPath });
 
-  await hooks.beforeOpen?.({ canonicalPath });
+  await options.beforeOpen?.({ canonicalPath });
 
   let handle: FileHandle;
   try {
@@ -154,7 +179,7 @@ export async function readContainedFile(
   }
 
   try {
-    await hooks.afterOpen?.({ canonicalPath });
+    await options.afterOpen?.({ canonicalPath });
     const openedIdentity = await handle.stat({ bigint: true });
     if (
       !openedIdentity.isFile() ||
@@ -162,7 +187,6 @@ export async function readContainedFile(
     ) {
       throw unsafePath();
     }
-
     const components = normalizeRepositoryPath(repositoryPath).split("/");
     const ancestors = [
       ".",
@@ -189,9 +213,31 @@ export async function readContainedFile(
     if (currentCanonicalPath !== registeredTarget.canonicalPath) {
       throw unsafePath();
     }
-    return await handle.readFile({ encoding: "utf8" });
+    if (maxBytes !== undefined && openedIdentity.size > BigInt(maxBytes)) {
+      throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    }
+    if (maxBytes === undefined) {
+      return await handle.readFile({ encoding: "utf8" });
+    }
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (true) {
+      const remaining = maxBytes - total;
+      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      total += bytesRead;
+      if (total > maxBytes) {
+        throw new ContainedFileSizeError(repositoryPath, maxBytes);
+      }
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, total).toString("utf8");
   } catch (error) {
-    if (error instanceof RepositoryInspectionError) {
+    if (
+      error instanceof RepositoryInspectionError ||
+      error instanceof ContainedFileSizeError
+    ) {
       throw error;
     }
     throw unreadablePath(repositoryPath);

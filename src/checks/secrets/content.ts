@@ -1,7 +1,10 @@
 import { compareCodeUnits } from "../../core/compare.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import type { CheckRunContext } from "../adapter.js";
-import { readContainedFile } from "../../inspection/read-json.js";
+import {
+  ContainedFileSizeError,
+  readContainedFile,
+} from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
   type SnapshotRegistry,
@@ -10,9 +13,7 @@ import {
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 
 export type SecretContentErrorCode =
-  | "SECRET_FILE_INVALID_UTF8"
-  | "SECRET_FILE_TOO_LARGE"
-  | "SECRET_FILE_UNSAFE";
+  "SECRET_FILE_INVALID_UTF8" | "SECRET_FILE_TOO_LARGE" | "SECRET_FILE_UNSAFE";
 
 export class SecretContentError extends Error {
   readonly code: SecretContentErrorCode;
@@ -71,7 +72,21 @@ async function readTextSource(
         "Stage a regular file at this path or remove it from the staged change, then retry.",
     });
   }
-  const content = await readContainedFile(registry, repositoryPath);
+  let content: string;
+  try {
+    content = await readContainedFile(registry, repositoryPath, {
+      maxBytes: MAX_SECRET_FILE_BYTES,
+    });
+  } catch (error) {
+    if (!(error instanceof ContainedFileSizeError)) throw error;
+    throw new SecretContentError({
+      code: "SECRET_FILE_TOO_LARGE",
+      message: "A changed file exceeds the Secretlint file-size safety limit.",
+      path: repositoryPath,
+      remediation:
+        "Reduce the staged file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
+    });
+  }
   if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
     throw new SecretContentError({
       code: "SECRET_FILE_TOO_LARGE",
@@ -85,7 +100,8 @@ async function readTextSource(
   if (content.includes("\ufffd")) {
     throw new SecretContentError({
       code: "SECRET_FILE_INVALID_UTF8",
-      message: "A changed file is not valid UTF-8 and cannot be scanned safely.",
+      message:
+        "A changed file is not valid UTF-8 and cannot be scanned safely.",
       path: repositoryPath,
       remediation:
         "Convert the staged file to valid UTF-8 text, stage it again, and retry.",
@@ -114,12 +130,7 @@ export async function collectSecretSourcePairs(
     const [baseline, target] = await Promise.all([
       baselinePath === undefined
         ? undefined
-        : readTextSource(
-            baselineRegistry,
-            baselinePath,
-            targetPath,
-            true,
-          ),
+        : readTextSource(baselineRegistry, baselinePath, targetPath, true),
       readTextSource(targetRegistry, targetPath, targetPath, true),
     ]);
     if (baseline === undefined && target === undefined) continue;

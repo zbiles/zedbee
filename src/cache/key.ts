@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
-import { readFile, readlink, realpath } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readlink, realpath } from "node:fs/promises";
+import pLimit from "p-limit";
 import type { CheckTarget } from "../checks/adapter.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -62,23 +64,30 @@ async function snapshotIdentity(root: string): Promise<readonly unknown[]> {
   const entries = [...registry.entries()].sort((left, right) =>
     compareCodeUnits(left.repositoryPath, right.repositoryPath),
   );
+  const limit = pLimit(8);
   return Promise.all(
-    entries.map(async (entry) => {
-      if (entry.kind === "directory") {
-        return { path: entry.repositoryPath, kind: "directory" } as const;
-      }
-      if (entry.kind === "symlink") {
-        return {
-          path: entry.repositoryPath,
-          kind: "symlink",
-          target: await readlink(entry.absolutePath),
-        } as const;
-      }
-      const digest = createHash("sha256")
-        .update(await readFile(entry.canonicalPath))
-        .digest("hex");
-      return { path: entry.repositoryPath, kind: "file", digest } as const;
-    }),
+    entries.map((entry) =>
+      limit(async () => {
+        if (entry.kind === "directory") {
+          return { path: entry.repositoryPath, kind: "directory" } as const;
+        }
+        if (entry.kind === "symlink") {
+          return {
+            path: entry.repositoryPath,
+            kind: "symlink",
+            target: await readlink(entry.absolutePath),
+          } as const;
+        }
+        const hash = createHash("sha256");
+        for await (const chunk of createReadStream(entry.canonicalPath, {
+          highWaterMark: 64 * 1024,
+        })) {
+          hash.update(chunk as Buffer);
+        }
+        const digest = hash.digest("hex");
+        return { path: entry.repositoryPath, kind: "file", digest } as const;
+      }),
+    ),
   );
 }
 

@@ -46,6 +46,7 @@ import type {
 } from "./reporting-options.js";
 import { shouldIncludeSourceExcerpts } from "./reporting-options.js";
 import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
+import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -135,7 +136,6 @@ type ActiveScanPhase =
   | "change-discovery"
   | "baseline-resolution"
   | "snapshot-construction"
-  | "lfs-pointer"
   | "baseline-inspection"
   | "target-inspection"
   | "dispatch"
@@ -162,12 +162,6 @@ const PHASE_FAILURES = {
     message: "Zedbee could not construct the staged snapshots.",
     remediation:
       "Check the Git index and temporary-directory permissions, then retry.",
-  },
-  "lfs-pointer": {
-    code: "GIT_LFS_POINTER",
-    message: "Zedbee cannot inspect a staged Git LFS pointer.",
-    remediation:
-      "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
   },
   "baseline-inspection": {
     code: "BASELINE_INSPECTION_FAILED",
@@ -309,15 +303,13 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         git,
       );
       baseline = snapshots.baselineRef;
-      const lfsPointer = snapshots.unsupportedEntries.find(
-        ({ kind }) => kind === "git-lfs-pointer",
+      const unsupportedFailures = unsupportedEntryFailures(
+        snapshots.unsupportedEntries,
+        config,
+        new Set(changeSet.files.keys()),
       );
-      if (lfsPointer !== undefined) {
-        activePhase = "lfs-pointer";
-        report = createIncompleteReport(reportContext(), {
-          ...PHASE_FAILURES[activePhase],
-          path: lfsPointer.path,
-        });
+      if (unsupportedFailures.length > 0) {
+        report = createIncompleteReport(reportContext(), unsupportedFailures);
       } else {
         activePhase = "baseline-inspection";
         const baselineInspection = await dependencies.inspectRepository(

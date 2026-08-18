@@ -21,6 +21,69 @@ describe("advanced staged Git states", () => {
     expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
   });
 
+  it("returns incomplete for staged binary JavaScript", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("base");
+    await writeFile(
+      join(repository.root, "binary.js"),
+      Buffer.from([0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x00, 0x78]),
+    );
+    await repository.git(["add", "--", "binary.js"]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report.checks).toMatchObject([
+      {
+        error: {
+          code: "UNSUPPORTED_BINARY_INPUT",
+          path: "binary.js",
+        },
+      },
+    ]);
+  });
+
+  it("allows an ordinary staged binary asset", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("base");
+    await writeFile(
+      join(repository.root, "asset.png"),
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]),
+    );
+    await repository.git(["add", "--", "asset.png"]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+  });
+
+  it("returns incomplete for a staged submodule pointer", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("base");
+    const head = await repository.git(["rev-parse", "HEAD"]);
+    await repository.git([
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${head.stdout},vendor/demo`,
+    ]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report.checks).toMatchObject([
+      {
+        error: {
+          code: "GIT_SUBMODULE_UNAVAILABLE",
+          path: "vendor/demo",
+        },
+      },
+    ]);
+  });
+
   it("scans and commits exactly the staged file when another path is intent-to-add", async () => {
     const repository = await createGitRepository();
     await repository.write("package.json", '{"name":"fixture"}\n');

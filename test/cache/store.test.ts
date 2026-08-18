@@ -82,6 +82,16 @@ describe("observation cache", () => {
     ).not.toBe(original);
   });
 
+  it("keys multi-chunk snapshot files deterministically", async () => {
+    const largeSource = "x".repeat(200_000);
+    const original = await key({ targetSource: largeSource });
+
+    expect(await key({ targetSource: largeSource })).toBe(original);
+    expect(
+      await key({ targetSource: `${largeSource.slice(0, -1)}y` }),
+    ).not.toBe(original);
+  });
+
   it("stores only validated observations and treats corruption as a miss", async () => {
     const root = await cacheRoot("zedbee-cache-test-");
     const store = new ObservationCacheStore({

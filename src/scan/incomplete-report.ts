@@ -40,9 +40,12 @@ function incompleteCheck(
 
 export function createIncompleteReport(
   context: ScanReportContext,
-  failure: ScanFailureInput,
+  failure: ScanFailureInput | readonly ScanFailureInput[],
 ): ScanReport {
-  const result = incompleteCheck(failure, context.durationMs);
+  const failures = Array.isArray(failure) ? failure : [failure];
+  const results = failures.map((item) =>
+    incompleteCheck(item, context.durationMs),
+  );
   return {
     schemaVersion: 1,
     outcome: "incomplete",
@@ -54,8 +57,8 @@ export function createIncompleteReport(
     startedAt: context.startedAt,
     durationMs: context.durationMs,
     networkDisclosures: context.networkDisclosures,
-    summary: summarizeChecks([result]),
-    checks: [result],
+    summary: summarizeChecks(results),
+    checks: results,
   };
 }
 

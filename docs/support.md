@@ -4,14 +4,14 @@ This document distinguishes implemented coverage from unsupported or deferred be
 
 ## Runtime and project support
 
-| Area              | Supported                                                    | Notes                                                                                                                                     |
-| ----------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime           | Node.js 22.13.0 and newer                                    | CI verifies current Node 22 and 24 releases.                                                                                              |
-| Operating systems | Linux, macOS, and Windows                                    | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform. |
-| Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` | Zedbee targets JavaScript and TypeScript initially.                                                                                       |
-| Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces               | Discovery uses staged manifests and workspace declarations without running lifecycle scripts.                                             |
-| React             | React, React DOM, Ink, Next.js, and Remix correctness        | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink.                                                                    |
-| Git input         | Exact staged index against committed `HEAD`                  | Intent-to-add entries have no staged content and are excluded as unstaged.                                                                |
+| Area              | Supported                                                    | Notes                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime           | Node.js 22.13.0 and newer                                    | CI verifies current Node 22 and 24 releases.                                                                                                   |
+| Operating systems | Linux, macOS, and Windows                                    | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform.      |
+| Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` | Zedbee targets JavaScript and TypeScript initially.                                                                                            |
+| Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces               | Discovery uses staged manifests and workspace declarations without running lifecycle scripts.                                                  |
+| React             | React, React DOM, Ink, Next.js, and Remix correctness        | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink.                                                                         |
+| Git input         | Exact staged index against committed `HEAD`                  | Intent-to-add entries are excluded. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete. |
 
 ## Dependency vulnerability inventories
 
@@ -23,6 +23,8 @@ This document distinguishes implemented coverage from unsupported or deferred be
 | Yarn Classic    | `yarn.lock`           | Parsed locally through the pinned `@yarnpkg/lockfile` package.             |
 | Bun             | `bun.lock`            | The text lockfile is parsed locally.                                       |
 | Bun legacy      | `bun.lockb`           | The binary format is not supported. Generate and stage `bun.lock` instead. |
+
+Text lockfiles are limited to 8 MiB and are rejected before an oversized body is loaded into memory. Parsed structure, nesting, strings, dependency records, and OSV query counts have additional fixed safety limits.
 
 When enabled, vulnerability analysis sends package name, exact version, and the npm ecosystem identifier to `api.osv.dev`. It is online only. Configure `checks.vulnerabilities.onUnavailable` as `block` or `warn`; `zedbee init` presents that choice and its disclosure.
 

@@ -56,6 +56,23 @@ const emptyChangeSet: ChangeSet = {
   containsAddedLine: () => false,
 };
 
+function addedChangeSet(...paths: readonly string[]): ChangeSet {
+  return {
+    files: new Map(
+      paths.map((path) => [
+        path,
+        {
+          path,
+          status: "added" as const,
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
+    ),
+    isEmpty: paths.length === 0,
+    containsAddedLine: (file, line) => paths.includes(file) && line === 1,
+  };
+}
+
 const passing: CheckResult = {
   checkId: "formatting",
   status: "completed",
@@ -216,6 +233,7 @@ describe("runScan", () => {
     const lfsReport = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
+        readChangeSet: async () => addedChangeSet("asset.dat"),
         buildSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
@@ -250,6 +268,188 @@ describe("runScan", () => {
       stagedFileCount: 0,
     });
     expect(dispatchCalls).toBe(0);
+  });
+
+  it("reports every unsupported staged path relevant to enabled checks", async () => {
+    let dispatchCalls = 0;
+    const unsupportedPaths = [
+      "vendor/demo",
+      "src/generated.js",
+      "assets/photo.png",
+      "assets/first.dat",
+      "assets/second.dat",
+    ];
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        readChangeSet: async () => ({
+          files: new Map(
+            unsupportedPaths.map((path) => [
+              path,
+              {
+                path,
+                status: "added" as const,
+                addedRanges: [{ start: 1, end: 1 }],
+              },
+            ]),
+          ),
+          isEmpty: false,
+          containsAddedLine: () => true,
+        }),
+        buildSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          unsupportedEntries: [
+            { path: "vendor/demo", kind: "submodule" },
+            { path: "src/generated.js", kind: "binary" },
+            { path: "assets/photo.png", kind: "binary" },
+            { path: "assets/first.dat", kind: "git-lfs-pointer" },
+            { path: "assets/second.dat", kind: "git-lfs-pointer" },
+          ],
+          cleanup: async () => undefined,
+        }),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: { incomplete: 4 },
+    });
+    expect(report.checks.map(({ error }) => error)).toMatchObject([
+      { code: "GIT_LFS_POINTER", path: "assets/first.dat" },
+      { code: "GIT_LFS_POINTER", path: "assets/second.dat" },
+      { code: "UNSUPPORTED_BINARY_INPUT", path: "src/generated.js" },
+      { code: "GIT_SUBMODULE_UNAVAILABLE", path: "vendor/demo" },
+    ]);
+    expect(JSON.stringify(report)).not.toContain("assets/photo.png");
+    expect(dispatchCalls).toBe(0);
+  });
+
+  it("does not report an unchanged unsupported index entry", async () => {
+    let dispatchCalls = 0;
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        buildSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          unsupportedEntries: [{ path: "legacy/binary.js", kind: "binary" }],
+          cleanup: async () => undefined,
+        }),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [
+            {
+              result: passing,
+              policy: Object.freeze({ ...config.checks.formatting }),
+            },
+          ];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(dispatchCalls).toBe(1);
+  });
+
+  it("treats a file-scoped enabled check as relevant to binary input", async () => {
+    const overrideConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "off",
+        lint: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+      },
+      overrides: [{ files: ["binary.js"], checks: { lint: "error" } }],
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => overrideConfig,
+        readChangeSet: async () => ({
+          files: new Map([
+            [
+              "binary.js",
+              {
+                path: "binary.js",
+                status: "added",
+                addedRanges: [{ start: 1, end: 1 }],
+              },
+            ],
+          ]),
+          isEmpty: false,
+          containsAddedLine: () => true,
+        }),
+        buildSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          unsupportedEntries: [{ path: "binary.js", kind: "binary" }],
+          cleanup: async () => undefined,
+        }),
+      }),
+    });
+
+    expect(report.checks).toMatchObject([
+      {
+        status: "incomplete",
+        error: { code: "UNSUPPORTED_BINARY_INPUT", path: "binary.js" },
+      },
+    ]);
+  });
+
+  it("allows ordinary binary assets to proceed to configured checks", async () => {
+    let dispatchCalls = 0;
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        readChangeSet: async () => ({
+          files: new Map([
+            [
+              "assets/photo.png",
+              {
+                path: "assets/photo.png",
+                status: "added",
+                addedRanges: [],
+              },
+            ],
+          ]),
+          isEmpty: false,
+          containsAddedLine: () => false,
+        }),
+        buildSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          unsupportedEntries: [{ path: "assets/photo.png", kind: "binary" }],
+          cleanup: async () => undefined,
+        }),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [
+            {
+              result: passing,
+              policy: Object.freeze({ ...config.checks.formatting }),
+            },
+          ];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(dispatchCalls).toBe(1);
   });
 
   it("preserves findings and disclosures when snapshot cleanup fails", async () => {
@@ -676,6 +876,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
+        readChangeSet: async () => addedChangeSet("assets/large.dat"),
         buildSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
