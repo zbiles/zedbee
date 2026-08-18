@@ -212,6 +212,14 @@ function phaseFailure(
         remediation: "Resolve the staged merge entries and run the scan again.",
       };
     }
+    if (error.code === "INVALID_INDEX_PATH") {
+      return {
+        code: error.code,
+        message: "Zedbee refused an invalid staged repository path.",
+        remediation:
+          "Repair or remove the invalid Git index entry and run the scan again.",
+      };
+    }
     if (error.code === "INVALID_TEMP_PATH") {
       return {
         code: error.code,

@@ -52,6 +52,12 @@ export class SnapshotConstructionCleanupError extends Error {
 }
 
 function safeConstructionError(error: unknown): SnapshotError {
+  if (error instanceof SnapshotError && error.code === "INVALID_INDEX_PATH") {
+    return new SnapshotError(
+      error.code,
+      "Zedbee refused an invalid staged repository path.",
+    );
+  }
   if (error instanceof SnapshotError && error.code === "INVALID_TEMP_PATH") {
     return new SnapshotError(
       error.code,
@@ -186,6 +192,20 @@ function containedRepositoryPath(
   return candidate;
 }
 
+function validateStagedEntryPaths(
+  repositoryRoot: string,
+  stagedEntries: readonly StagedEntry[],
+): void {
+  for (const entry of stagedEntries) {
+    if (containedRepositoryPath(repositoryRoot, entry.path) === undefined) {
+      throw new SnapshotError(
+        "INVALID_INDEX_PATH",
+        "Zedbee refused an invalid staged repository path.",
+      );
+    }
+  }
+}
+
 async function removeIntentToAddPlaceholders(
   targetDir: string,
   intentToAddPaths: ReadonlySet<string>,
@@ -264,6 +284,7 @@ export async function buildSnapshotPair(
     const stagedEntries = parseStagedEntries(
       (await git.run(["ls-files", "--stage", "-z"])).stdout,
     );
+    validateStagedEntryPaths(repositoryRoot, stagedEntries);
     const intentToAddPaths = parseIntentToAddPaths(
       (await git.run(["ls-files", "--debug", "-z"])).stdout,
     );

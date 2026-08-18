@@ -376,6 +376,40 @@ describe("buildSnapshotPair", () => {
     ).rejects.toMatchObject({ code: "UNRESOLVED_INDEX" });
   });
 
+  it.each(["../outside.ts", "/absolute/outside.ts", ""])(
+    "rejects an invalid staged path before checkout-index: %j",
+    async (invalidPath) => {
+      const calls: readonly string[][] = [];
+      const mutableCalls = calls as string[][];
+      const git = {
+        async run(args: readonly string[]) {
+          mutableCalls.push([...args]);
+          if (args[0] === "ls-files" && args[1] === "--stage") {
+            return {
+              stdout: `100644 0123456789012345678901234567890123456789 0\t${invalidPath}\0`,
+              stderr: "",
+              exitCode: 0,
+            };
+          }
+          if (args[0] === "checkout-index") {
+            throw new Error("checkout-index must not receive an invalid path");
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async tryRun() {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        },
+      } as unknown as GitClient;
+
+      await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({
+        code: "INVALID_INDEX_PATH",
+      });
+      expect(
+        mutableCalls.some(([command]) => command === "checkout-index"),
+      ).toBe(false);
+    },
+  );
+
   it("records submodule gitlinks as unsupported index entries", async () => {
     const repository = await createGitRepository();
     await repository.write("root.ts", "export const root = true;\n");

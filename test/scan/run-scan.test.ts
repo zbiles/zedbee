@@ -756,6 +756,15 @@ describe("runScan", () => {
       },
     },
     {
+      phase: "invalid index path",
+      expected: {
+        code: "INVALID_INDEX_PATH",
+        message: "Zedbee refused an invalid staged repository path.",
+        remediation:
+          "Repair or remove the invalid Git index entry and run the scan again.",
+      },
+    },
+    {
       phase: "snapshot construction",
       expected: {
         code: "SNAPSHOT_CONSTRUCTION_FAILED",
@@ -816,6 +825,16 @@ describe("runScan", () => {
         ? {
             buildSnapshots: async () => {
               throw new SnapshotError("UNRESOLVED_INDEX", "private-token-123");
+            },
+          }
+        : {}),
+      ...(phase === "invalid index path"
+        ? {
+            buildSnapshots: async () => {
+              throw new SnapshotError(
+                "INVALID_INDEX_PATH",
+                "private-token-123 /outside/repository",
+              );
             },
           }
         : {}),
