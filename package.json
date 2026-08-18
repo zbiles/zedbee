@@ -50,7 +50,7 @@
   "scripts": {
     "benchmark": "npm run build && node --experimental-strip-types bench/run.mts",
     "benchmark:update": "npm run build && node --experimental-strip-types bench/run.mts --update",
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/clean-build-output.mjs && tsc -p tsconfig.build.json",
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
@@ -61,8 +61,8 @@
     "schema:check": "npm run build && node dist/config/json-schema.js --check",
     "verify": "node scripts/release-check.mjs --verify",
     "release:check": "node scripts/release-check.mjs --release",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "npm run build && vitest run",
+    "test:watch": "npm run build && vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [
