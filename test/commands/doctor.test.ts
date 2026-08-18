@@ -132,6 +132,42 @@ describe("doctor diagnostics", () => {
     });
   });
 
+  it("ignores lockfile fixtures outside project roots", async () => {
+    const repository = await createGitRepository(
+      "zedbee-doctor-fixture-lockfile-",
+    );
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", dependencies: { lodash: "4.17.21" } })}\n`,
+    );
+    await repository.write(
+      "package-lock.json",
+      `${JSON.stringify({
+        name: "fixture",
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { lodash: "4.17.21" } },
+          "node_modules/lodash": { version: "4.17.21" },
+        },
+      })}\n`,
+    );
+    await repository.write(
+      "test/fixtures/lockfiles/bun/bun.lockb",
+      "intentional binary-lockfile fixture\n",
+    );
+    await repository.commitAll("fixture");
+
+    await expect(
+      defaultDiagnosticProbe("lockfile-support", {
+        cwd: repository.root,
+        environment: {},
+      }),
+    ).resolves.toMatchObject({
+      status: "pass",
+      message: expect.stringContaining("package-lock.json"),
+    });
+  });
+
   it.each([
     ["block", "fail"],
     ["warn", "warning"],

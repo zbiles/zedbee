@@ -108,6 +108,43 @@ describe("inspectRepository", () => {
     ]);
   });
 
+  it("ignores lockfiles outside the Git root and declared workspace roots", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "root" });
+    await fixture.write("package-lock.json", "{}\n");
+    await fixture.write(
+      "test/fixtures/lockfiles/bun/bun.lockb",
+      "intentional binary-lockfile fixture\n",
+    );
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(inspection.packageManager).toBe("npm");
+    expect(inspection.lockfiles).toEqual(["package-lock.json"]);
+  });
+
+  it("includes lockfiles located directly in declared workspace roots", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      workspaces: ["packages/*"],
+    });
+    await fixture.write("package-lock.json", "{}\n");
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write("packages/app/bun.lock", "lockfile fixture\n");
+    await fixture.write(
+      "packages/app/test/fixtures/yarn.lock",
+      "fixture nested beneath a workspace\n",
+    );
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(inspection.lockfiles).toEqual([
+      "package-lock.json",
+      "packages/app/bun.lock",
+    ]);
+  });
+
   it("returns unknown without a root manifest or supported lockfile", async () => {
     const fixture = await createInspectionFixture();
     await fixture.write("README.md", "fixture\n");

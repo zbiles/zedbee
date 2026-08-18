@@ -92,6 +92,18 @@ function discoverRepositoryFiles(
     .sort(compareCodeUnits);
 }
 
+function lockfilesAtProjectRoots(
+  lockfiles: readonly string[],
+  workspaces: readonly DiscoveredWorkspace[],
+): readonly string[] {
+  const projectRoots = new Set<string>(["."]);
+  for (const workspace of workspaces) {
+    projectRoots.add(workspace.relativeRoot);
+    projectRoots.add(workspace.canonicalRelativeRoot);
+  }
+  return lockfiles.filter((path) => projectRoots.has(posix.dirname(path)));
+}
+
 function ownsPath(workspaceRoot: string, path: string): boolean {
   return workspaceRoot === "." || path.startsWith(`${workspaceRoot}/`);
 }
@@ -186,9 +198,12 @@ export async function inspectRepository(
   const tsconfigPaths = discoverRepositoryFiles(registry, (path) =>
     TSCONFIG_NAME.test(posix.basename(path)),
   );
-  const discoveredLockfiles = discoverRepositoryFiles(
-    registry,
-    (path) => posix.basename(path) in LOCKFILE_MANAGERS,
+  const discoveredLockfiles = lockfilesAtProjectRoots(
+    discoverRepositoryFiles(
+      registry,
+      (path) => posix.basename(path) in LOCKFILE_MANAGERS,
+    ),
+    workspaces,
   );
 
   const sourcesByWorkspace = new Map<DiscoveredWorkspace, string[]>();
