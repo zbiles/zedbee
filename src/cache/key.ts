@@ -5,6 +5,7 @@ import pLimit from "p-limit";
 import type { CheckTarget } from "../checks/adapter.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 
 const ENGINE_IDENTITIES = Object.freeze({
@@ -46,6 +47,7 @@ export interface ObservationCacheKeyInput {
   readonly nodeVersion?: string;
   readonly platform?: string;
   readonly arch?: string;
+  readonly zedbeeVersion?: string;
 }
 
 function stable(value: unknown): unknown {
@@ -110,6 +112,7 @@ export async function createObservationCacheKey(
     nodeVersion: input.nodeVersion ?? process.versions.node,
     platform: input.platform ?? process.platform,
     arch: input.arch ?? process.arch,
+    zedbeeVersion: input.zedbeeVersion ?? ZEDBEE_VERSION,
   });
   return createHash("sha256")
     .update(JSON.stringify(payload), "utf8")

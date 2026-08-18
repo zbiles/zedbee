@@ -14,6 +14,7 @@ async function key(options: {
   nodeVersion?: string;
   platform?: string;
   arch?: string;
+  zedbeeVersion?: string;
   lockfileSource?: string;
 }) {
   const [baseline, target] = await Promise.all([
@@ -50,6 +51,7 @@ async function key(options: {
     nodeVersion: options.nodeVersion ?? "24.0.0",
     platform: options.platform ?? "linux",
     arch: options.arch ?? "x64",
+    zedbeeVersion: options.zedbeeVersion ?? "0.1.0",
   });
 }
 
@@ -74,6 +76,7 @@ describe("observation cache", () => {
     expect(await key({ nodeVersion: "25.0.0" })).not.toBe(original);
     expect(await key({ platform: "darwin" })).not.toBe(original);
     expect(await key({ arch: "arm64" })).not.toBe(original);
+    expect(await key({ zedbeeVersion: "0.1.1" })).not.toBe(original);
     expect(
       await key({
         lockfileSource:

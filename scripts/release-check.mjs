@@ -5,6 +5,10 @@ import { pathToFileURL } from "node:url";
 
 const OWNER_ACTION =
   "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.";
+const PACKAGE_ACTION =
+  "Release blocked: package name, version, access, and registry must identify the public zedbee release.";
+const RELEASE_VERSION =
+  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 
 const LOCAL_STEPS = Object.freeze([
   { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
@@ -120,6 +124,17 @@ function repositoryPage(repository, page) {
 }
 
 export function releaseReadiness(packageJson, remoteUrls) {
+  const publishConfig = packageJson?.publishConfig;
+  if (
+    packageJson?.name !== "zedbee" ||
+    typeof packageJson?.version !== "string" ||
+    packageJson.version === "0.0.0" ||
+    !RELEASE_VERSION.test(packageJson.version) ||
+    publishConfig?.access !== "public" ||
+    publishConfig?.registry !== "https://registry.npmjs.org/"
+  ) {
+    return Object.freeze({ ready: false, message: PACKAGE_ACTION });
+  }
   const repository = normalizedRepository(
     repositoryUrl(packageJson?.repository),
   );

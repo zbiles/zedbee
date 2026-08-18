@@ -33,11 +33,11 @@ describe("release verification contract", () => {
     );
   });
 
-  it("blocks release with the exact owner action when canonical metadata is absent", () => {
+  it("blocks release while the package still has placeholder publication identity", () => {
     expect(releaseReadiness({ name: "zedbee", version: "0.0.0" }, [])).toEqual({
       ready: false,
       message:
-        "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.",
+        "Release blocked: package name, version, access, and registry must identify the public zedbee release.",
     });
   });
 
@@ -45,6 +45,12 @@ describe("release verification contract", () => {
     expect(
       releaseReadiness(
         {
+          name: "zedbee",
+          version: "0.1.0",
+          publishConfig: {
+            access: "public",
+            registry: "https://registry.npmjs.org/",
+          },
           repository: { url: "https://github.com/owner/zedbee.git" },
           homepage: "https://github.com/owner/zedbee#readme",
           bugs: { url: "https://github.com/owner/zedbee/issues" },
@@ -85,6 +91,12 @@ describe("release verification contract", () => {
       expect(
         releaseReadiness(
           {
+            name: "zedbee",
+            version: "0.1.0",
+            publishConfig: {
+              access: "public",
+              registry: "https://registry.npmjs.org/",
+            },
             repository: { url: repository },
             homepage,
             bugs: { url: bugs },
