@@ -84,7 +84,73 @@ async function runZedbee(
   );
 }
 
+async function runPackagedCli(
+  repositoryRoot: string,
+  arguments_: readonly string[],
+) {
+  return execa(
+    process.execPath,
+    [
+      join(repositoryRoot, "node_modules", "zedbee", "dist", "cli.js"),
+      ...arguments_,
+    ],
+    { cwd: repositoryRoot, reject: false, stdin: "ignore" },
+  );
+}
+
 describe("packaged Zedbee CLI", () => {
+  it("exposes the installed CLI help and command set", async () => {
+    const repository = await createInstalledRepository();
+
+    const result = await runPackagedCli(repository.root, ["--help"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("Usage: zedbee");
+    for (const command of ["init", "scan", "checks", "doctor"]) {
+      expect(result.stdout).toContain(command);
+    }
+  }, 30_000);
+
+  it("runs doctor from the installed package", async () => {
+    const repository = await createInstalledRepository();
+
+    const result = await runPackagedCli(repository.root, [
+      "doctor",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 0 });
+  }, 30_000);
+
+  it("initializes a raw hook non-interactively from the installed package", async () => {
+    const repository = await createInstalledRepository();
+    await rm(join(repository.root, ".zedbeerc.jsonc"));
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--profile",
+      "fast",
+      "--hook",
+      "raw",
+      "--yes",
+      "--format",
+      "json",
+      "--no-color",
+      "--no-animations",
+    ]);
+
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ applied: true });
+    expect(await repository.read(".zedbeerc.jsonc")).toContain(
+      '"profile": "fast"',
+    );
+    expect(await repository.read(".git/hooks/pre-commit")).toContain(
+      "npx --no-install zedbee scan",
+    );
+  }, 30_000);
+
   it("rejects conflicting source excerpt overrides before scanning", async () => {
     const repository = await createInstalledRepository();
 

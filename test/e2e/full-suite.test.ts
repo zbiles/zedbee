@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { execa } from "execa";
 import {
   releaseReadiness,
@@ -9,6 +10,7 @@ import {
   assertAllowedPackageFiles,
   assertPackMetadata,
 } from "../../scripts/check-package-contents.mjs";
+import { releaseArtifactFilename } from "../../scripts/prepare-release-artifact.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -180,5 +182,49 @@ describe("release verification contract", () => {
         "0.1.0",
       ),
     ).toThrow(/identity/u);
+  });
+
+  it("accepts only the canonical tarball emitted for the release manifest", () => {
+    expect(
+      releaseArtifactFilename(
+        JSON.stringify([
+          { name: "zedbee", version: "0.1.0", filename: "zedbee-0.1.0.tgz" },
+        ]),
+        { name: "zedbee", version: "0.1.0" },
+      ),
+    ).toBe("zedbee-0.1.0.tgz");
+
+    for (const output of [
+      JSON.stringify([
+        { name: "zedbee", version: "0.1.0", filename: "../escape.tgz" },
+      ]),
+      JSON.stringify([
+        { name: "other", version: "0.1.0", filename: "other-0.1.0.tgz" },
+      ]),
+      JSON.stringify([
+        { name: "zedbee", version: "0.1.1", filename: "zedbee-0.1.1.tgz" },
+      ]),
+    ]) {
+      expect(() =>
+        releaseArtifactFilename(output, {
+          name: "zedbee",
+          version: "0.1.0",
+        }),
+      ).toThrow(/release artifact/u);
+    }
+  });
+
+  it("uploads the smoke-tested tarball without publishing it", async () => {
+    const workflow = await readFile(
+      resolve(root, ".github/workflows/release-check.yml"),
+      "utf8",
+    );
+    const prepare = workflow.indexOf("npm run artifact:prepare");
+    const upload = workflow.indexOf("actions/upload-artifact@v4");
+
+    expect(prepare).toBeGreaterThan(-1);
+    expect(upload).toBeGreaterThan(prepare);
+    expect(workflow).toContain("release-artifacts/*.tgz");
+    expect(workflow).not.toMatch(/npm\s+publish/u);
   });
 });

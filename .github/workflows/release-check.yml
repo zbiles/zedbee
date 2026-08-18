@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   cross-platform:
@@ -50,3 +49,11 @@ jobs:
         run: npm run release:check
         env:
           ZEDBEE_CROSS_PLATFORM_CI_EVIDENCE: verified
+      - name: Prepare and smoke-test the exact npm tarball
+        run: npm run artifact:prepare
+      - name: Upload the tested npm tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: zedbee-npm-${{ github.ref_name }}
+          path: release-artifacts/*.tgz
+          if-no-files-found: error

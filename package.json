@@ -54,6 +54,7 @@
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
+    "artifact:prepare": "npm run package:check && node scripts/prepare-release-artifact.mjs",
     "package:check": "npm run build && node scripts/check-package-contents.mjs",
     "prepack": "npm run build && npm run licenses:check",
     "schema:generate": "npm run build && node dist/config/json-schema.js --write",
