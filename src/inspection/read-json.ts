@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
 
@@ -87,6 +88,10 @@ export interface ContainedFileReadOptions extends ContainedFileReadHooks {
   readonly maxBytes?: number;
 }
 
+export interface ContainedLineReadOptions extends ContainedFileReadHooks {
+  readonly maxCodePoints: number;
+}
+
 export class ContainedFileSizeError extends Error {
   readonly code = "FILE_SIZE_LIMIT_EXCEEDED";
   readonly path: string;
@@ -147,26 +152,19 @@ async function openWithoutFollowing(
   }
 }
 
-export async function readContainedFile(
+async function withValidatedContainedFile<T>(
   registry: SnapshotRegistry,
   repositoryPath: string,
-  options: ContainedFileReadOptions = {},
-): Promise<string> {
-  const maxBytes = options.maxBytes;
-  if (
-    maxBytes !== undefined &&
-    (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
-  ) {
-    throw new TypeError("Expected a non-negative safe file-size limit");
-  }
+  hooks: ContainedFileReadHooks,
+  use: (handle: FileHandle, size: bigint) => Promise<T>,
+): Promise<T> {
   const registeredTarget = registry.resolve(repositoryPath);
   if (registeredTarget?.targetKind !== "file") {
     throw unreadablePath(repositoryPath);
   }
   const canonicalPath = registeredTarget.canonicalPath;
-  await options.afterCanonicalize?.({ canonicalPath });
-
-  await options.beforeOpen?.({ canonicalPath });
+  await hooks.afterCanonicalize?.({ canonicalPath });
+  await hooks.beforeOpen?.({ canonicalPath });
 
   let handle: FileHandle;
   try {
@@ -179,7 +177,7 @@ export async function readContainedFile(
   }
 
   try {
-    await options.afterOpen?.({ canonicalPath });
+    await hooks.afterOpen?.({ canonicalPath });
     const openedIdentity = await handle.stat({ bigint: true });
     if (
       !openedIdentity.isFile() ||
@@ -213,26 +211,7 @@ export async function readContainedFile(
     if (currentCanonicalPath !== registeredTarget.canonicalPath) {
       throw unsafePath();
     }
-    if (maxBytes !== undefined && openedIdentity.size > BigInt(maxBytes)) {
-      throw new ContainedFileSizeError(repositoryPath, maxBytes);
-    }
-    if (maxBytes === undefined) {
-      return await handle.readFile({ encoding: "utf8" });
-    }
-    const chunks: Buffer[] = [];
-    let total = 0;
-    while (true) {
-      const remaining = maxBytes - total;
-      const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
-      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-      if (bytesRead === 0) break;
-      total += bytesRead;
-      if (total > maxBytes) {
-        throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      }
-      chunks.push(buffer.subarray(0, bytesRead));
-    }
-    return Buffer.concat(chunks, total).toString("utf8");
+    return await use(handle, openedIdentity.size);
   } catch (error) {
     if (
       error instanceof RepositoryInspectionError ||
@@ -244,6 +223,136 @@ export async function readContainedFile(
   } finally {
     await handle.close().catch(() => undefined);
   }
+}
+
+export async function readContainedFile(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  options: ContainedFileReadOptions = {},
+): Promise<string> {
+  const maxBytes = options.maxBytes;
+  if (
+    maxBytes !== undefined &&
+    (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+  ) {
+    throw new TypeError("Expected a non-negative safe file-size limit");
+  }
+  return withValidatedContainedFile(
+    registry,
+    repositoryPath,
+    options,
+    async (handle, size) => {
+      if (maxBytes !== undefined && size > BigInt(maxBytes)) {
+        throw new ContainedFileSizeError(repositoryPath, maxBytes);
+      }
+      if (maxBytes === undefined) {
+        return handle.readFile({ encoding: "utf8" });
+      }
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (true) {
+        const remaining = maxBytes - total;
+        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        total += bytesRead;
+        if (total > maxBytes) {
+          throw new ContainedFileSizeError(repositoryPath, maxBytes);
+        }
+        chunks.push(buffer.subarray(0, bytesRead));
+      }
+      return Buffer.concat(chunks, total).toString("utf8");
+    },
+  );
+}
+
+export async function readContainedLines(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  lineNumbers: readonly number[],
+  options: ContainedLineReadOptions,
+): Promise<ReadonlyMap<number, string>> {
+  if (
+    !Number.isSafeInteger(options.maxCodePoints) ||
+    options.maxCodePoints < 0
+  ) {
+    throw new TypeError("Expected a non-negative safe code-point limit");
+  }
+  if (lineNumbers.some((line) => !Number.isSafeInteger(line) || line < 1)) {
+    throw new TypeError("Expected positive safe line numbers");
+  }
+  const requestedLines = [...new Set(lineNumbers)].sort(
+    (left, right) => left - right,
+  );
+  if (requestedLines.length === 0) return new Map();
+  const requested = new Set(requestedLines);
+  const lastRequested = requestedLines.at(-1)!;
+
+  return withValidatedContainedFile(
+    registry,
+    repositoryPath,
+    options,
+    async (handle) => {
+      const result = new Map<number, string>();
+      const decoder = new StringDecoder("utf8");
+      let line = 1;
+      let retained: string[] = [];
+      let retainedCodePoints = 0;
+      let skipLineFeed = false;
+      let finished = false;
+
+      const finishLine = (): void => {
+        if (requested.has(line)) result.set(line, retained.join(""));
+        if (line >= lastRequested) {
+          finished = true;
+          return;
+        }
+        line += 1;
+        retained = [];
+        retainedCodePoints = 0;
+      };
+
+      const consume = (text: string): void => {
+        for (const codePoint of text) {
+          if (skipLineFeed) {
+            skipLineFeed = false;
+            if (codePoint === "\n") continue;
+          }
+          if (codePoint === "\r") {
+            finishLine();
+            skipLineFeed = true;
+          } else if (
+            codePoint === "\n" ||
+            codePoint === "\u2028" ||
+            codePoint === "\u2029"
+          ) {
+            finishLine();
+          } else if (
+            requested.has(line) &&
+            retainedCodePoints < options.maxCodePoints
+          ) {
+            retained.push(codePoint);
+            retainedCodePoints += 1;
+          }
+          if (finished) return;
+        }
+      };
+
+      while (!finished) {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        consume(decoder.write(buffer.subarray(0, bytesRead)));
+      }
+      if (!finished) {
+        consume(decoder.end());
+        if (!finished && requested.has(line)) {
+          result.set(line, retained.join(""));
+        }
+      }
+      return result;
+    },
+  );
 }
 
 export async function readJsonData(

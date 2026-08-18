@@ -8,7 +8,10 @@ import type {
   SourceLocation,
 } from "../../src/core/types.js";
 
-const containedFileReads = vi.hoisted(() => [] as string[]);
+const readBoundary = vi.hoisted(() => ({
+  containedFileReads: [] as string[],
+  forbidWholeFileReads: false,
+}));
 
 vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
   const original =
@@ -18,7 +21,10 @@ vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
     async readContainedFile(
       ...args: Parameters<typeof original.readContainedFile>
     ) {
-      containedFileReads.push(args[1]);
+      readBoundary.containedFileReads.push(args[1]);
+      if (readBoundary.forbidWholeFileReads) {
+        throw new Error("whole-file source excerpt reads are forbidden");
+      }
       return original.readContainedFile(...args);
     },
   };
@@ -156,6 +162,35 @@ describe("enrichSourceExcerpts", () => {
     expect(Array.from(excerpt?.text ?? "")).toHaveLength(500);
   });
 
+  it("streams a late excerpt without using the whole-file reader", async () => {
+    readBoundary.containedFileReads.length = 0;
+    readBoundary.forbidWholeFileReads = true;
+    const snapshotRoot = await sourceSnapshot(
+      `${"x".repeat(2_000_000)}\nexport const streamed = true;\n`,
+    );
+    const lateFinding = finding({
+      id: "lint:src/value.ts:2",
+      location: { file: "src/value.ts", startLine: 2 },
+    });
+
+    try {
+      const [result] = await enrichSourceExcerpts(
+        [completed([lateFinding, lateFinding])],
+        { snapshotRoot },
+      );
+
+      expect(
+        result?.findings.map(({ sourceExcerpt }) => sourceExcerpt?.text),
+      ).toEqual([
+        "export const streamed = true;",
+        "export const streamed = true;",
+      ]);
+      expect(readBoundary.containedFileReads).toEqual([]);
+    } finally {
+      readBoundary.forbidWholeFileReads = false;
+    }
+  });
+
   it("omits unavailable and repository-level excerpts without changing findings", async () => {
     const snapshotRoot = await sourceSnapshot("export const value = 1;\n");
     const input = completed([
@@ -228,7 +263,7 @@ describe("enrichSourceExcerpts", () => {
   });
 
   it("redacts secret findings without invoking the source reader", async () => {
-    containedFileReads.length = 0;
+    readBoundary.containedFileReads.length = 0;
     const snapshotRoot = await sourceSnapshot(
       "one\ntwo\nthree\nSECRET-MUST-NOT-LEAK\n",
     );
@@ -248,12 +283,12 @@ describe("enrichSourceExcerpts", () => {
       redacted: true,
       truncated: false,
     });
-    expect(containedFileReads).toEqual([]);
+    expect(readBoundary.containedFileReads).toEqual([]);
     expect(JSON.stringify(results)).not.toContain("SECRET-MUST-NOT-LEAK");
   });
 
   it("redacts a non-secret finding whose line overlaps a secret range before reading source", async () => {
-    containedFileReads.length = 0;
+    readBoundary.containedFileReads.length = 0;
     const snapshotRoot = await sourceSnapshot(
       "one\ntwo\nthree\nRECOGNIZABLE-STAGED-SECRET\nfive\n",
     );
@@ -284,7 +319,7 @@ describe("enrichSourceExcerpts", () => {
       redacted: true,
       truncated: false,
     });
-    expect(containedFileReads).toEqual([]);
+    expect(readBoundary.containedFileReads).toEqual([]);
     expect(JSON.stringify(results)).not.toContain("RECOGNIZABLE-STAGED-SECRET");
   });
 });

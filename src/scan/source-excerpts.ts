@@ -1,15 +1,13 @@
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
 import type { CheckResult, Finding, SourceExcerpt } from "../core/types.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
-import { readContainedFile } from "../inspection/read-json.js";
+import { readContainedLines } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
   type SnapshotRegistry,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
-
-const SOURCE_LINE_ENDING = /\r\n|[\n\r\u2028\u2029]/u;
 
 interface SecretRange {
   readonly startLine: number;
@@ -153,20 +151,40 @@ export async function enrichSourceExcerpts(
 ): Promise<readonly CheckResult[]> {
   const secretRanges = secretRangeIndex(checks);
   const registry = await captureRegistry(snapshot.snapshotRoot);
-  const sourceLines = new Map<string, Promise<readonly string[] | undefined>>();
-
-  const readLines = (
-    repositoryPath: string,
-  ): Promise<readonly string[] | undefined> => {
-    if (registry === undefined) return Promise.resolve(undefined);
-    const cached = sourceLines.get(repositoryPath);
-    if (cached !== undefined) return cached;
-    const read = readContainedFile(registry, repositoryPath)
-      .then((source) => source.split(SOURCE_LINE_ENDING))
-      .catch(() => undefined);
-    sourceLines.set(repositoryPath, read);
-    return read;
-  };
+  const requestedLines = new Map<string, Set<number>>();
+  for (const check of checks) {
+    for (const finding of check.findings) {
+      const line = finding.location?.startLine;
+      const file = finding.location?.file;
+      if (
+        finding.check === "secrets" ||
+        file === undefined ||
+        line === undefined ||
+        !Number.isSafeInteger(line) ||
+        line < 1 ||
+        overlapsSecretLine(secretRanges, file, line)
+      ) {
+        continue;
+      }
+      const lines = requestedLines.get(file) ?? new Set<number>();
+      lines.add(line);
+      requestedLines.set(file, lines);
+    }
+  }
+  const sourceLines = new Map<
+    string,
+    Promise<ReadonlyMap<number, string> | undefined>
+  >();
+  if (registry !== undefined) {
+    for (const [file, lines] of requestedLines) {
+      sourceLines.set(
+        file,
+        readContainedLines(registry, file, [...lines], {
+          maxCodePoints: SOURCE_EXCERPT_MAX_CODE_POINTS + 1,
+        }).catch(() => undefined),
+      );
+    }
+  }
 
   const enrichedChecks = await Promise.all(
     checks.map(async (check) => {
@@ -191,8 +209,8 @@ export async function enrichSourceExcerpts(
             );
           }
           if (file === undefined) return copyFinding(finding, undefined);
-          const lines = await readLines(file);
-          const sourceLine = lines?.[line - 1];
+          const lines = await sourceLines.get(file);
+          const sourceLine = lines?.get(line);
           return copyFinding(
             finding,
             sourceLine === undefined
