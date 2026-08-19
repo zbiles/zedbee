@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import { minVersion, satisfies, valid, validRange } from "semver";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import type {
@@ -83,14 +84,36 @@ function resolveManifestVersion(
   };
 }
 
-function normalizedImporter(importer: string | undefined): string | undefined {
-  if (importer === undefined) return undefined;
-  if (importer === ".") return ".";
+function normalizedRoot(path: string): string {
+  return path === "." ? "." : normalizeRepositoryRelativePath(path);
+}
+
+function lockfileRoot(lockfilePath: string): string {
+  return normalizedRoot(posix.dirname(lockfilePath));
+}
+
+function normalizedImporter(record: DependencyRecord): string | undefined {
+  if (record.importer === undefined) return undefined;
   try {
-    return normalizeRepositoryRelativePath(importer);
+    const importer = normalizedRoot(record.importer);
+    const root = lockfileRoot(record.lockfilePath);
+    return importer === "." ? root : normalizedRoot(posix.join(root, importer));
   } catch {
     return undefined;
   }
+}
+
+function globalRecordOwnsWorkspace(
+  record: DependencyRecord,
+  workspaceRoot: string,
+): boolean {
+  if (record.importer !== undefined) return false;
+  const root = lockfileRoot(record.lockfilePath);
+  return (
+    root === "." ||
+    workspaceRoot === root ||
+    workspaceRoot.startsWith(`${root}/`)
+  );
 }
 
 function uniqueLockedVersion(
@@ -130,15 +153,16 @@ export async function resolveReactVersion(
     throw error;
   }
 
-  const workspaceRoot =
-    workspace.relativeRoot === "."
-      ? "."
-      : normalizeRepositoryRelativePath(workspace.relativeRoot);
+  const workspaceRoot = normalizedRoot(workspace.relativeRoot);
   const importerRecords = directRecords.filter(
-    ({ importer }) => normalizedImporter(importer) === workspaceRoot,
+    (record) => normalizedImporter(record) === workspaceRoot,
   );
   const candidates =
-    importerRecords.length > 0 ? importerRecords : directRecords;
+    importerRecords.length > 0
+      ? importerRecords
+      : directRecords.filter((record) =>
+          globalRecordOwnsWorkspace(record, workspaceRoot),
+        );
   const version = uniqueLockedVersion(candidates);
   return version === undefined
     ? manifest.resolution

@@ -148,6 +148,88 @@ function inspectedWorkspace(
 }
 
 describe("resolveReactVersion lockfile association", () => {
+  it("scopes workspace-local importers to their lockfile directories", async () => {
+    const currentInspection = await inspectFixture(
+      { private: true, workspaces: ["packages/*"] },
+      {
+        "packages/app/package.json": {
+          name: "app",
+          dependencies: { react: ">=18 <20" },
+        },
+        "packages/app/pnpm-lock.yaml": [
+          "lockfileVersion: '9.0'",
+          "importers:",
+          "  .:",
+          "    dependencies:",
+          "      react:",
+          "        specifier: ^18.0.0",
+          "        version: 18.3.1",
+          "packages:",
+          "  react@18.3.1: {}",
+          "",
+        ].join("\n"),
+        "packages/admin/package.json": {
+          name: "admin",
+          dependencies: { react: ">=18 <20" },
+        },
+        "packages/admin/pnpm-lock.yaml": [
+          "lockfileVersion: '9.0'",
+          "importers:",
+          "  .:",
+          "    dependencies:",
+          "      react:",
+          "        specifier: ^19.0.0",
+          "        version: 19.2.0",
+          "packages:",
+          "  react@19.2.0: {}",
+          "",
+        ].join("\n"),
+      },
+    );
+
+    await expect(
+      resolveReactVersion(
+        currentInspection,
+        inspectedWorkspace(currentInspection, "packages/app"),
+      ),
+    ).resolves.toEqual({ version: "18.3.1", source: "lockfile" });
+    await expect(
+      resolveReactVersion(
+        currentInspection,
+        inspectedWorkspace(currentInspection, "packages/admin"),
+      ),
+    ).resolves.toEqual({ version: "19.2.0", source: "lockfile" });
+  });
+
+  it("does not attribute a sibling workspace's global lockfile record", async () => {
+    const currentInspection = await inspectFixture(
+      { private: true, workspaces: ["packages/*"] },
+      {
+        "packages/app/package.json": {
+          name: "app",
+          dependencies: { react: ">=18 <20" },
+        },
+        "packages/admin/package.json": {
+          name: "admin",
+        },
+        "packages/admin/yarn.lock": [
+          "# yarn lockfile v1",
+          "",
+          "react@^19.0.0:",
+          '  version "19.2.0"',
+          "",
+        ].join("\n"),
+      },
+    );
+
+    await expect(
+      resolveReactVersion(
+        currentInspection,
+        inspectedWorkspace(currentInspection, "packages/app"),
+      ),
+    ).resolves.toEqual({ version: "18.0.0", source: "manifest" });
+  });
+
   it("prefers an npm direct importer match over another compatible version", async () => {
     const currentInspection = await inspectFixture(
       { private: true, workspaces: ["packages/*"] },
