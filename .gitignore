@@ -9,3 +9,4 @@ packages/*/vendor/
 graphify-out/
 docs/superpowers/
 PRODUCT.md
+.claude/
