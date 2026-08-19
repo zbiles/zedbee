@@ -14,6 +14,7 @@ const inspection: RepositoryInspection = {
       sourceFiles: ["src/root.ts"],
       tsconfigPaths: ["tsconfig.json"],
       environments: ["javascript", "typescript"],
+      dependencyDeclarations: [],
     },
     {
       relativeRoot: "apps/web",
@@ -21,6 +22,7 @@ const inspection: RepositoryInspection = {
       sourceFiles: ["apps/web/src/app.tsx", "apps/web/test/app.test.tsx"],
       tsconfigPaths: ["apps/web/tsconfig.json"],
       environments: ["javascript", "typescript", "react", "react-dom"],
+      dependencyDeclarations: [],
     },
   ],
 };

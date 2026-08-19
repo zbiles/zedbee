@@ -3,9 +3,66 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import { parsePackageManifest } from "../../src/inspection/workspaces.js";
 import { createInspectionFixture } from "./fixture.js";
 
 describe("workspace discovery", () => {
+  it("retains dependency declarations in fixed section precedence", () => {
+    expect(
+      parsePackageManifest(
+        {
+          dependencies: { react: "^18.2.0" },
+          devDependencies: { vitest: "4.1.10" },
+          peerDependencies: { "react-dom": ">=18" },
+        },
+        "package.json",
+      ).dependencyDeclarations,
+    ).toEqual([
+      { name: "react", specifier: "^18.2.0", section: "dependencies" },
+      { name: "vitest", specifier: "4.1.10", section: "devDependencies" },
+      { name: "react-dom", specifier: ">=18", section: "peerDependencies" },
+    ]);
+  });
+
+  it("rejects a non-string dependency declaration", () => {
+    expect(() =>
+      parsePackageManifest(
+        { dependencies: { react: { version: "19.2.0" } } },
+        "package.json",
+      ),
+    ).toThrowError(/invalid repository data/u);
+  });
+
+  it("orders and freezes dependency declarations across all manifest sections", () => {
+    const declarations = parsePackageManifest(
+      {
+        dependencies: { zebra: "1.0.0", alpha: "2.0.0" },
+        optionalDependencies: { optional: "3.0.0" },
+        devDependencies: { development: "4.0.0" },
+        peerDependencies: { peer: "5.0.0" },
+      },
+      "package.json",
+    ).dependencyDeclarations;
+
+    expect(declarations).toEqual([
+      { name: "alpha", specifier: "2.0.0", section: "dependencies" },
+      { name: "zebra", specifier: "1.0.0", section: "dependencies" },
+      {
+        name: "optional",
+        specifier: "3.0.0",
+        section: "optionalDependencies",
+      },
+      {
+        name: "development",
+        specifier: "4.0.0",
+        section: "devDependencies",
+      },
+      { name: "peer", specifier: "5.0.0", section: "peerDependencies" },
+    ]);
+    expect(Object.isFrozen(declarations)).toBe(true);
+    expect(Object.isFrozen(declarations[0])).toBe(true);
+  });
+
   it("discovers array-form workspaces in deterministic root-first order", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {

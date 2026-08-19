@@ -70,6 +70,7 @@ function inspection(snapshotRoot = "/tmp/snapshot"): RepositoryInspection {
         sourceFiles: [],
         tsconfigPaths: [],
         environments: ["javascript"],
+        dependencyDeclarations: [],
       },
     ],
   };

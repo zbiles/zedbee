@@ -125,6 +125,7 @@ function dependencies(
         sourceFiles: ["value.ts"],
         tsconfigPaths: [],
         environments: ["javascript", "typescript"],
+        dependencyDeclarations: [],
       },
     ],
   });
@@ -1096,6 +1097,7 @@ describe("runScan", () => {
             sourceFiles: [],
             tsconfigPaths: [],
             environments: ["javascript"],
+            dependencyDeclarations: [],
           },
           {
             relativeRoot: "apps/web",
@@ -1103,6 +1105,7 @@ describe("runScan", () => {
             sourceFiles: ["apps/web/value.ts"],
             tsconfigPaths: ["apps/web/tsconfig.json"],
             environments: ["javascript", "typescript"],
+            dependencyDeclarations: [],
           },
         ],
       }),
@@ -1183,6 +1186,7 @@ describe("runScan", () => {
             sourceFiles: ["apps/web/value.ts"],
             tsconfigPaths: [],
             environments: ["javascript", "typescript"],
+            dependencyDeclarations: [],
           },
         ],
       }),

@@ -48,6 +48,33 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe("inspectRepository", () => {
+  it("carries staged dependency declarations into the inspected workspace", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      dependencies: { react: "^18.2.0" },
+      optionalDependencies: { "react-dom": "^18.2.0" },
+      devDependencies: { vitest: "4.1.10" },
+      peerDependencies: { "@types/react": "^18.3.0" },
+    });
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(inspection.workspaces[0]?.dependencyDeclarations).toEqual([
+      { name: "react", specifier: "^18.2.0", section: "dependencies" },
+      {
+        name: "react-dom",
+        specifier: "^18.2.0",
+        section: "optionalDependencies",
+      },
+      { name: "vitest", specifier: "4.1.10", section: "devDependencies" },
+      {
+        name: "@types/react",
+        specifier: "^18.3.0",
+        section: "peerDependencies",
+      },
+    ]);
+  });
+
   it.each([
     ["npm@11.4.0", "package-lock.json", "npm"],
     ["pnpm@10.15.0", "pnpm-lock.yaml", "pnpm"],

@@ -173,6 +173,7 @@ function freezeWorkspace(workspace: WorkspaceInspection): WorkspaceInspection {
   Object.freeze(workspace.sourceFiles);
   Object.freeze(workspace.tsconfigPaths);
   Object.freeze(workspace.environments);
+  Object.freeze(workspace.dependencyDeclarations);
   if (workspace.productionDependencies !== undefined) {
     Object.freeze(workspace.productionDependencies);
   }
@@ -266,6 +267,7 @@ export async function inspectRepository(
       environments: [
         ...inferEnvironments(workspace, workspaceSources, workspaceConfigs),
       ],
+      dependencyDeclarations: workspace.manifest.dependencyDeclarations,
       productionDependencies: [
         ...workspace.manifest.productionDependencyNames,
       ].sort(compareCodeUnits),

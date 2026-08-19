@@ -270,6 +270,15 @@ function snapshotInspection(
           sourceFiles: Object.freeze([...workspace.sourceFiles]),
           tsconfigPaths: Object.freeze([...workspace.tsconfigPaths]),
           environments: Object.freeze([...workspace.environments]),
+          dependencyDeclarations: Object.freeze(
+            workspace.dependencyDeclarations.map((declaration) =>
+              Object.freeze({
+                name: declaration.name,
+                specifier: declaration.specifier,
+                section: declaration.section,
+              }),
+            ),
+          ),
         }),
       ),
     ),
@@ -293,6 +302,7 @@ function cacheInspection(
       sourceFiles: workspace.sourceFiles,
       tsconfigPaths: workspace.tsconfigPaths,
       environments: workspace.environments,
+      dependencyDeclarations: workspace.dependencyDeclarations,
       productionDependencies: workspace.productionDependencies,
       developmentDependencies: workspace.developmentDependencies,
     }));

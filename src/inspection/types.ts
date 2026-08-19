@@ -12,6 +12,18 @@ export type Environment =
   | "jest"
   | "testing-library";
 
+export type DependencySection =
+  | "dependencies"
+  | "optionalDependencies"
+  | "devDependencies"
+  | "peerDependencies";
+
+export interface DependencyDeclaration {
+  readonly name: string;
+  readonly specifier: string;
+  readonly section: DependencySection;
+}
+
 export interface WorkspaceInspection {
   readonly name?: string;
   readonly relativeRoot: string;
@@ -19,6 +31,7 @@ export interface WorkspaceInspection {
   readonly sourceFiles: readonly string[];
   readonly tsconfigPaths: readonly string[];
   readonly environments: readonly Environment[];
+  readonly dependencyDeclarations: readonly DependencyDeclaration[];
   readonly productionDependencies?: readonly string[];
   readonly developmentDependencies?: readonly string[];
 }

@@ -15,6 +15,7 @@ function inspection(
       ? [`${relativeRoot === "." ? "" : `${relativeRoot}/`}tsconfig.json`]
       : [],
     environments,
+    dependencyDeclarations: [],
   });
   return {
     snapshotRoot: "/repo",

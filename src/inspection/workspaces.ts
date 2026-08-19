@@ -8,15 +8,19 @@ import {
   type ContainedFileReadHooks,
 } from "./read-json.js";
 import type { SnapshotRegistry } from "./snapshot-registry.js";
-import { RepositoryInspectionError } from "./types.js";
+import {
+  RepositoryInspectionError,
+  type DependencyDeclaration,
+  type DependencySection,
+} from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
 
 const DEPENDENCY_SECTIONS = [
   "dependencies",
+  "optionalDependencies",
   "devDependencies",
   "peerDependencies",
-  "optionalDependencies",
-] as const;
+] as const satisfies readonly DependencySection[];
 
 export interface PackageManifest {
   readonly name?: string;
@@ -25,6 +29,7 @@ export interface PackageManifest {
   readonly dependencyNames: ReadonlySet<string>;
   readonly productionDependencyNames: ReadonlySet<string>;
   readonly developmentDependencyNames: ReadonlySet<string>;
+  readonly dependencyDeclarations: readonly DependencyDeclaration[];
 }
 
 export interface DiscoveredWorkspace {
@@ -90,6 +95,7 @@ export function parsePackageManifest(
   const dependencyNames = new Set<string>();
   const productionDependencyNames = new Set<string>();
   const developmentDependencyNames = new Set<string>();
+  const dependencyDeclarations: DependencyDeclaration[] = [];
   for (const section of DEPENDENCY_SECTIONS) {
     const dependencies = value[section];
     if (dependencies === undefined) {
@@ -98,13 +104,22 @@ export function parsePackageManifest(
     if (!isRecord(dependencies)) {
       throw invalidData(path);
     }
-    for (const dependencyName of Object.keys(dependencies)) {
+    for (const dependencyName of Object.keys(dependencies).sort(
+      compareCodeUnits,
+    )) {
+      const specifier = dependencies[dependencyName];
+      if (typeof specifier !== "string") {
+        throw invalidData(path);
+      }
       dependencyNames.add(dependencyName);
       if (section === "devDependencies") {
         developmentDependencyNames.add(dependencyName);
       } else {
         productionDependencyNames.add(dependencyName);
       }
+      dependencyDeclarations.push(
+        Object.freeze({ name: dependencyName, specifier, section }),
+      );
     }
   }
 
@@ -117,6 +132,7 @@ export function parsePackageManifest(
     dependencyNames,
     productionDependencyNames,
     developmentDependencyNames,
+    dependencyDeclarations: Object.freeze(dependencyDeclarations),
   };
 }
 

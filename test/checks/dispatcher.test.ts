@@ -67,6 +67,7 @@ function createContext(config: ResolvedConfig): CheckRunContext {
       sourceFiles: [],
       tsconfigPaths: [],
       environments: ["javascript"] as const,
+      dependencyDeclarations: [],
     })),
   };
   return {
