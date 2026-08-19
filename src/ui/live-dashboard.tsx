@@ -2,7 +2,12 @@ import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
-import { PixelClock, pixelClockRows } from "./pixel-clock.js";
+import {
+  PixelClock,
+  pixelClockRows,
+  pixelTextRows,
+  type PixelLabel,
+} from "./pixel-clock.js";
 import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { checkLabel } from "../reporting/check-label.js";
@@ -198,7 +203,7 @@ function SummaryChip({
   color,
 }: {
   count: number;
-  label: string;
+  label: PixelLabel;
   width: number;
   tone: string;
   color: boolean;
@@ -219,10 +224,12 @@ function SummaryChip({
       </Text>
     );
   }
+  const labelRows = pixelTextRows(label);
+  const usePixelLabel = (labelRows[0]?.length ?? 0) <= width;
   return (
     <Box
       width={width}
-      height={6}
+      height={countRows.length + (usePixelLabel ? labelRows.length : 1) + 2}
       flexDirection="column"
       alignItems="center"
       backgroundColor={tone}
@@ -230,7 +237,7 @@ function SummaryChip({
       <Box height={1} />
       <PixelClock value={String(count)} color tone={ZEDBEE_THEME.beeBlack} />
       <Text bold color={ZEDBEE_THEME.beeBlack}>
-        {label}
+        {usePixelLabel ? labelRows.join("\n") : label}
       </Text>
       <Box height={1} />
     </Box>
@@ -260,7 +267,12 @@ function CheckPanel({
       flexDirection="column"
       width={width}
       borderStyle="single"
-      {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.border,
+            borderBackgroundColor: "#000000",
+          }
+        : {})}
     >
       <PanelHeading label={heading} width={width} color={color} />
       {states.map((state, index) => (
@@ -281,7 +293,9 @@ function CheckPanel({
             >
               {state.id}
             </Text>
-            <Box flexGrow={1} />
+            <Box flexGrow={1} minWidth={1}>
+              <Text> </Text>
+            </Box>
             <Text {...colorProp(color, statusColor(state.status))}>
               {statusText(state, now, animations)}
             </Text>
@@ -295,6 +309,9 @@ function CheckPanel({
           ) : null}
         </Box>
       ))}
+      <Box paddingX={2}>
+        <Text> </Text>
+      </Box>
     </Box>
   );
 }
@@ -320,7 +337,12 @@ function ActivityPanel({
       flexDirection="column"
       width={width}
       borderStyle="single"
-      {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.border,
+            borderBackgroundColor: "#000000",
+          }
+        : {})}
       minHeight={8}
     >
       <PanelHeading label="ACTIVITY" width={width} color={color} />
@@ -332,7 +354,7 @@ function ActivityPanel({
       >
         {activity.map(({ event, text }, index) => (
           <Text key={`${event.checkId}-${event.target}-${event.type}-${index}`}>
-            <Text {...colorProp(color, activityColor(event))}>●</Text>
+            <Text {...colorProp(color, activityColor(event))}>■</Text>
             <Text {...colorProp(color, ZEDBEE_THEME.secondary)}> {text}</Text>
           </Text>
         ))}
@@ -386,7 +408,12 @@ function SummaryPanel({
       flexDirection="column"
       width={width}
       borderStyle="single"
-      {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.border,
+            borderBackgroundColor: "#000000",
+          }
+        : {})}
     >
       <PanelHeading label="SUMMARY" width={width} color={color} />
       <Box flexDirection="column" paddingX={2}>
@@ -421,6 +448,9 @@ function SummaryPanel({
             color={color}
           />
         </Box>
+        <Box paddingX={2}>
+          <Text> </Text>
+        </Box>
       </Box>
     </Box>
   );
@@ -443,14 +473,18 @@ export function LiveDashboard({
 }) {
   const states = statesFrom(events);
   const now = (startedAt ?? 0) + elapsedMs;
+  const frameWidth = Math.max(1, width - 2);
   const wide = width >= 88;
   const showBrandBee = width >= 69;
   const compactBrand = width < 129;
-  const contentWidth = Math.max(12, width - 7);
+  const narrowFrame = frameWidth < 40;
+  const horizontalPadding = narrowFrame ? 1 : 3;
+  const contentWidth = Math.max(1, frameWidth - 4 - horizontalPadding);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
-  const brandHeight = width < 40 ? 1 : 5;
-  const brandWidth =
-    width < 40 ? "ZEDBEE".length : pixelWordmarkWidth(compactBrand);
+  const brandHeight = narrowFrame ? 1 : 5;
+  const brandWidth = narrowFrame
+    ? "ZEDBEE".length
+    : pixelWordmarkWidth(compactBrand);
   const brandGroupWidth =
     brandWidth + (showBrandBee ? 2 + pixelBeeWidth(compactBrand) : 0);
   const checks = (
@@ -463,76 +497,109 @@ export function LiveDashboard({
       width={panelWidth}
     />
   );
+  const activitySummaryWidth = Math.max(1, panelWidth - 1);
   const activity = (
-    <ActivityPanel events={events} color={color} width={panelWidth} />
+    <ActivityPanel events={events} color={color} width={activitySummaryWidth} />
   );
   const summary = (
-    <SummaryPanel states={states} color={color} width={panelWidth} />
+    <SummaryPanel states={states} color={color} width={activitySummaryWidth} />
   );
-
+  const solidBorder = {
+    top: "█",
+    bottom: "█",
+    left: "█",
+    right: "█",
+    topLeft: "█",
+    topRight: "█",
+    bottomLeft: "█",
+    bottomRight: "█",
+  };
   const dashboard = (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="round"
-      {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
-      paddingLeft={2}
-      paddingRight={1}
-    >
+    <Box width={frameWidth} {...(color ? { backgroundColor: "#000000" } : {})}>
       <Box
-        height={brandHeight}
-        justifyContent="center"
-        marginTop={showBrandBee ? 2 : 1}
-        marginBottom={showBrandBee ? 2 : 1}
+        flexDirection="column"
+        width={frameWidth}
+        borderStyle={solidBorder}
+        {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
+        borderBackgroundColor="#000000"
       >
-        <Box position="relative" width={brandGroupWidth} height={brandHeight}>
-          {width < 40 ? (
-            <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
-              ZEDBEE
-            </Text>
-          ) : (
-            <PixelWordmark color={color} compact={compactBrand} />
-          )}
-          {showBrandBee ? (
-            <Box position="absolute" left={brandWidth + 2} top={-5}>
-              <PixelBee compact={compactBrand} sparse color={color} />
+        <Box
+          flexDirection="column"
+          width={frameWidth - 2}
+          borderStyle={solidBorder}
+          borderTop={false}
+          borderBottom={false}
+          {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
+          paddingLeft={narrowFrame ? 1 : 2}
+          paddingRight={narrowFrame ? 0 : 1}
+          paddingBottom={1}
+        >
+          <Box
+            height={brandHeight}
+            justifyContent="center"
+            marginTop={showBrandBee ? 2 : 1}
+            marginBottom={showBrandBee ? 2 : 1}
+          >
+            <Box
+              position="relative"
+              width={brandGroupWidth}
+              height={brandHeight}
+            >
+              {narrowFrame ? (
+                <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
+                  ZEDBEE
+                </Text>
+              ) : (
+                <PixelWordmark color={color} compact={compactBrand} />
+              )}
+              {showBrandBee ? (
+                <Box position="absolute" left={brandWidth + 2} top={-5}>
+                  <PixelBee compact={compactBrand} sparse color={color} />
+                </Box>
+              ) : null}
             </Box>
-          ) : null}
+          </Box>
+          {wide ? (
+            <Box flexDirection="row">
+              {checks}
+              <Box width={2} />
+              <Box flexDirection="column" gap={0}>
+                {activity}
+                {summary}
+              </Box>
+            </Box>
+          ) : (
+            <Box flexDirection="column" gap={1}>
+              <Box>
+                {checks}
+                <Text> </Text>
+              </Box>
+              <Box>
+                {activity}
+                <Text> </Text>
+              </Box>
+              <Box>
+                {summary}
+                <Text> </Text>
+              </Box>
+            </Box>
+          )}
         </Box>
       </Box>
-      {wide ? (
-        <Box flexDirection="row">
-          {checks}
-          <Box width={2} />
-          <Box flexDirection="column" gap={0}>
-            {activity}
-            {summary}
-          </Box>
-        </Box>
-      ) : (
-        <Box flexDirection="column" gap={1}>
-          <Box>
-            {checks}
-            <Text> </Text>
-          </Box>
-          <Box>
-            {activity}
-            <Text> </Text>
-          </Box>
-          <Box>
-            {summary}
-            <Text> </Text>
-          </Box>
-        </Box>
-      )}
     </Box>
   );
 
-  return showBrandBee ? (
-    <Box flexDirection="column" width={width} paddingTop={2}>
+  const outer = showBrandBee ? (
+    <Box flexDirection="column" width={frameWidth} paddingTop={2}>
       {dashboard}
     </Box>
   ) : (
     dashboard
+  );
+
+  return (
+    <Box width={width} paddingLeft={1} paddingRight={1}>
+      {outer}
+    </Box>
   );
 }

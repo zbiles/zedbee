@@ -1,6 +1,7 @@
 .superpowers/
 .worktrees/
 node_modules/
+.pnpm-store/
 dist/
 release-artifacts/
 coverage/

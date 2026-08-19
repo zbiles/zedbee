@@ -47,7 +47,7 @@ describe("LiveDashboard", () => {
     expect(findingCheckLabel("vulnerabilities")).toBe("OSV");
   });
 
-  it("centers the wordmark and dashless bee while its wings cross the rounded frame", () => {
+  it("centers the wordmark and dashless bee while its wings cross the heavy frame", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -59,15 +59,15 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
     const lines = frame.split("\n");
-    const outerTop = lines.findIndex((line) => line.includes("╭"));
+    const outerTop = lines.findIndex((line) => line === ` ${"█".repeat(94)}`);
     const firstWing = lines.findIndex((line) => line.includes("██  ██"));
     const brandMiddle = lines.find(
       (line) =>
         line.includes("█████ ████  █   █ ████  ████  ████") &&
         line.includes("██████████"),
     );
-    const outerLeft = lines[outerTop]!.indexOf("╭");
-    const outerRight = lines[outerTop]!.lastIndexOf("╮");
+    const outerLeft = lines[outerTop]!.indexOf("█");
+    const outerRight = lines[outerTop]!.lastIndexOf("█");
     const groupLeft = brandMiddle?.indexOf("█") ?? -1;
     const groupRight = brandMiddle?.lastIndexOf("█") ?? -1;
 
@@ -109,11 +109,11 @@ describe("LiveDashboard", () => {
     expect(
       lines[checksHeading]!.indexOf("CHECKS") - panelsTop!.indexOf("┌"),
     ).toBe(3);
-    expect(lines[checksHeading + 1]!.match(/├─{41}┤/gu)).toHaveLength(2);
+    expect(lines[checksHeading + 1]!.match(/├─+┤/gu)).toHaveLength(2);
     expect(summaryHeading).toBeGreaterThanOrEqual(0);
-    expect(lines[summaryHeading + 1]).toMatch(/├─{41}┤/u);
+    expect(lines[summaryHeading + 1]).toMatch(/├─+┤/u);
     expect(formattingRow).toBeGreaterThanOrEqual(0);
-    expect(lines[formattingRow + 1]).toMatch(/├─{41}┤/u);
+    expect(lines[formattingRow + 1]).toMatch(/├─+┤/u);
   });
 
   it("keeps the panel grid aligned inside the outer frame", () => {
@@ -128,14 +128,14 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
     const lines = frame.split("\n");
-    const outerTop = lines.find((line) => line.includes("╭"));
+    const outerTop = lines.find((line) => line === ` ${"█".repeat(94)}`);
     const panelsTop = lines.find(
       (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
     );
 
     expect(outerTop).toBeDefined();
     expect(panelsTop).toBeDefined();
-    expect(panelsTop!.indexOf("┌") - outerTop!.indexOf("╭")).toBe(3);
+    expect(panelsTop!.indexOf("┌") - outerTop!.indexOf("█")).toBe(4);
   });
 
   it("uses visually equal horizontal and vertical panel gaps", () => {
@@ -177,10 +177,26 @@ describe("LiveDashboard", () => {
     const progressLine = frame.split("\n").find((line) => line.includes("▄"));
 
     expect(progressLine).toBeDefined();
-    expect(progressLine).toMatch(/▄{12}▂{25}/u);
-    expect(progressLine!.match(/[▄▂]/gu)).toHaveLength(37);
+    const chipLine = frame
+      .split("\n")
+      .find(
+        (line) =>
+          line.includes("pass") &&
+          line.includes("warn") &&
+          line.includes("fail"),
+      )!;
+    const progressStart = progressLine!.search(/[▄▂]/u);
+    const progressEnd = Math.max(
+      progressLine!.lastIndexOf("▄"),
+      progressLine!.lastIndexOf("▂"),
+    );
+
+    expect(progressStart).toBe(chipLine.indexOf("["));
+    expect(progressEnd).toBe(chipLine.lastIndexOf("]"));
     expect(progressLine).not.toContain("━");
-    expect(progressLine).not.toContain("█");
+    expect(progressLine!.slice(progressStart, progressEnd + 1)).not.toContain(
+      "█",
+    );
     expect("▄").not.toBe("▂");
   });
 
@@ -205,57 +221,9 @@ describe("LiveDashboard", () => {
     expect(progressRow - summaryHeading).toBe(2);
   });
 
-  it.each([
-    {
-      width: 88,
-      summaryLeft: 44,
-      summaryRight: 82,
-      groupFirst: 47,
-      groupLast: 79,
-      progress: "▄".repeat(11) + "▂".repeat(22),
-      chips: [
-        [47, 57, "[  pass   ]", "[         ]"],
-        [59, 68, "[  warn  ]", "[        ]"],
-        [70, 79, "[  fail  ]", "[        ]"],
-      ] as const,
-    },
-    {
-      width: 96,
-      summaryLeft: 48,
-      summaryRight: 90,
-      groupFirst: 51,
-      groupLast: 87,
-      progress: "▄".repeat(12) + "▂".repeat(25),
-      chips: [
-        [51, 62, "[   pass   ]", "[          ]"],
-        [64, 75, "[   warn   ]", "[          ]"],
-        [77, 87, "[  fail   ]", "[         ]"],
-      ] as const,
-    },
-    {
-      width: 120,
-      summaryLeft: 60,
-      summaryRight: 114,
-      groupFirst: 63,
-      groupLast: 111,
-      progress: "▄".repeat(16) + "▂".repeat(33),
-      chips: [
-        [63, 78, "[     pass     ]", "[              ]"],
-        [80, 95, "[     warn     ]", "[              ]"],
-        [97, 111, "[    fail     ]", "[             ]"],
-      ] as const,
-    },
-  ])(
-    "aligns progress and vertically padded pixel chips at width $width",
-    ({
-      width,
-      summaryLeft,
-      summaryRight,
-      groupFirst,
-      groupLast,
-      progress,
-      chips,
-    }) => {
+  it.each([88, 96, 120])(
+    "aligns progress and vertically padded summary chips at width %i",
+    (width) => {
       const frame = renderToString(
         <LiveDashboard
           events={events}
@@ -283,28 +251,28 @@ describe("LiveDashboard", () => {
         (line, index) => index > chipRowIndex && line.lastIndexOf("┘") >= 0,
       );
 
-      expect(progressRow.indexOf(progress)).toBe(groupFirst);
-      expect(progressRow.indexOf(progress) + progress.length - 1).toBe(
-        groupLast,
+      const groupFirst = chipRow.indexOf("[");
+      const groupLast = chipRow.lastIndexOf("]");
+      const progressFirst = progressRow.search(/[▄▂]/u);
+      const progressLast = Math.max(
+        progressRow.lastIndexOf("▄"),
+        progressRow.lastIndexOf("▂"),
       );
-      expect(progressRow[summaryLeft]).toBe("│");
-      expect(progressRow[summaryRight]).toBe("│");
-      expect(groupFirst - summaryLeft - 1).toBe(2);
-      expect(summaryRight - groupLast - 1).toBe(2);
-      for (const [first, last, contents, bottomContents] of chips) {
-        expect(chipRow.slice(first, last + 1)).toBe(contents);
-        expect(chipTopRow.slice(first, last + 1)).toBe(bottomContents);
-        expect(chipBottomRow.slice(first, last + 1)).toBe(bottomContents);
-      }
+
+      expect(progressFirst).toBe(groupFirst);
+      expect(progressLast).toBe(groupLast);
       expect(chipRow.match(/\[/gu)).toHaveLength(3);
       expect(chipRow.match(/\]/gu)).toHaveLength(3);
       expect(chipRowIndex - progressRowIndex).toBe(6);
       expect(
         lines[progressRowIndex + 1]!.slice(groupFirst, groupLast + 1),
       ).toBe(" ".repeat(groupLast - groupFirst + 1));
-      expect(summaryBottom - chipRowIndex).toBe(2);
-      expect(progress.length).toBe(
-        chips.reduce((total, [first, last]) => total + last - first + 1, 0) + 2,
+      expect(summaryBottom - chipRowIndex).toBe(3);
+      expect(chipTopRow.slice(groupFirst, groupLast + 1)).toMatch(
+        /^\[\s+\] \[\s+\] \[\s+\]$/u,
+      );
+      expect(chipBottomRow.slice(groupFirst, groupLast + 1)).toMatch(
+        /^\[\s+\] \[\s+\] \[\s+\]$/u,
       );
     },
   );
@@ -548,15 +516,16 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
     const lines = frame.split("\n");
-    const outerTop = lines.findIndex((line) => line.includes("╭"));
-    const outerBottom = lines.findIndex((line) => line.includes("╰"));
+    const fullFrameRow = ` ${"█".repeat(94)}`;
+    const outerTop = lines.findIndex((line) => line === fullFrameRow);
+    const outerBottom = lines.findLastIndex((line) => line === fullFrameRow);
     const framedRows = lines.slice(outerTop + 1, outerBottom);
 
     expect(outerTop).toBeGreaterThanOrEqual(0);
     expect(outerBottom).toBeGreaterThan(outerTop);
     expect(framedRows).not.toHaveLength(0);
-    expect(framedRows.every((line) => line.startsWith("│ "))).toBe(true);
-    expect(framedRows.filter((line) => !line.endsWith(" │"))).toEqual([]);
+    expect(framedRows.every((line) => line.startsWith(" ██"))).toBe(true);
+    expect(framedRows.filter((line) => !line.endsWith("██"))).toEqual([]);
   });
 
   it("tracks and displays separate targets for the same check", () => {
@@ -823,7 +792,7 @@ describe("LiveDashboard", () => {
     const checkRow = frame.split("\n").find((line) => line.includes("−"));
 
     expect(checkRow).toBeDefined();
-    expect(checkRow).toContain("│   − Re");
+    expect(checkRow).toContain("│   − R ");
     expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
   });
 
@@ -840,12 +809,12 @@ describe("LiveDashboard", () => {
         />,
       ).lastFrame()!;
     const compact = renderAt(25);
-    const roomy = renderAt(26);
+    const roomy = renderAt(27);
 
     expect(compact).toContain("CHECKS");
     expect(compact).not.toContain("CHECKS (2.8s)");
     expect(roomy).toContain("CHECKS (2.8s)");
     expect(maxLineWidth(compact)).toBeLessThanOrEqual(25);
-    expect(maxLineWidth(roomy)).toBeLessThanOrEqual(26);
+    expect(maxLineWidth(roomy)).toBeLessThanOrEqual(27);
   });
 });

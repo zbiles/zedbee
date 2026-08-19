@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("PixelWordmark", () => {
-  it("leaves the frame and protruding brand transparent to the terminal", async () => {
+  it("applies the black live-dashboard surface behind the frame and brand", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
@@ -36,7 +36,7 @@ describe("PixelWordmark", () => {
     const brandAndFrame = lines.slice(0, panelsTop).join("\n");
 
     expect(panelsTop).toBeGreaterThan(0);
-    expect(brandAndFrame).not.toMatch(/\u001b\[48;/u);
+    expect(brandAndFrame).toContain("\u001b[48;2;0;0;0m");
   });
 
   it("leaves the complete final report transparent to the terminal", async () => {
@@ -263,13 +263,13 @@ describe("PixelWordmark", () => {
       .split("\n")
       .find((line) => line.includes("Lint: 1 finding"));
 
-    expect(passLine).toContain("\u001b[38;2;85;207;130m●");
+    expect(passLine).toContain("\u001b[38;2;85;207;130m■");
     expect(passLine).toContain("\u001b[38;2;146;152;165m Formatting: passed");
-    expect(warningLine).toContain("\u001b[38;2;232;184;76m●");
+    expect(warningLine).toContain("\u001b[38;2;232;184;76m■");
     expect(warningLine).toContain("\u001b[38;2;146;152;165m Lint: 1 finding");
   });
 
-  it("renders pass, warn, and fail totals as filled summary chips", async () => {
+  it("uses plain labels when filled summary chips are too narrow for pixel labels", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
