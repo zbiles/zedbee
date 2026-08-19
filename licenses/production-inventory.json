@@ -6212,7 +6212,7 @@
     },
     {
       "name": "semver",
-      "version": "7.7.3",
+      "version": "7.8.5",
       "license": "ISC",
       "repository": {
         "type": "git",
@@ -6224,24 +6224,6 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "semver@7.7.3"
-      ]
-    },
-    {
-      "name": "semver",
-      "version": "7.8.5",
-      "license": "ISC",
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/npm/node-semver.git"
-      },
-      "licenseFile": "node_modules/dependency-cruiser/node_modules/semver/LICENSE",
-      "legalFiles": [
-        "node_modules/dependency-cruiser/node_modules/semver/LICENSE"
-      ],
-      "dependencyPath": [
-        "zedbee@0.1.0",
-        "dependency-cruiser@18.2.0",
         "semver@7.8.5"
       ]
     },
