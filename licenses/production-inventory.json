@@ -6141,14 +6141,90 @@
         "type": "git",
         "url": "https://github.com/npm/node-semver.git"
       },
+      "licenseFile": "node_modules/@babel/helper-compilation-targets/node_modules/semver/LICENSE",
+      "legalFiles": [
+        "node_modules/@babel/helper-compilation-targets/node_modules/semver/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0",
+        "eslint-plugin-react-hooks@7.1.1",
+        "@babel/core@7.29.7",
+        "@babel/helper-compilation-targets@7.29.7",
+        "semver@6.3.1"
+      ]
+    },
+    {
+      "name": "semver",
+      "version": "6.3.1",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/npm/node-semver.git"
+      },
+      "licenseFile": "node_modules/@babel/core/node_modules/semver/LICENSE",
+      "legalFiles": [
+        "node_modules/@babel/core/node_modules/semver/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0",
+        "eslint-plugin-react-hooks@7.1.1",
+        "@babel/core@7.29.7",
+        "semver@6.3.1"
+      ]
+    },
+    {
+      "name": "semver",
+      "version": "6.3.1",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/npm/node-semver.git"
+      },
+      "licenseFile": "node_modules/node-exports-info/node_modules/semver/LICENSE",
+      "legalFiles": [
+        "node_modules/node-exports-info/node_modules/semver/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0",
+        "eslint-plugin-react@7.37.5",
+        "resolve@2.0.0-next.7",
+        "node-exports-info@1.6.2",
+        "semver@6.3.1"
+      ]
+    },
+    {
+      "name": "semver",
+      "version": "6.3.1",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/npm/node-semver.git"
+      },
+      "licenseFile": "node_modules/eslint-plugin-react/node_modules/semver/LICENSE",
+      "legalFiles": [
+        "node_modules/eslint-plugin-react/node_modules/semver/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0",
+        "eslint-plugin-react@7.37.5",
+        "semver@6.3.1"
+      ]
+    },
+    {
+      "name": "semver",
+      "version": "7.7.3",
+      "license": "ISC",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/npm/node-semver.git"
+      },
       "licenseFile": "node_modules/semver/LICENSE",
       "legalFiles": [
         "node_modules/semver/LICENSE"
       ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "eslint-plugin-react@7.37.5",
-        "semver@6.3.1"
+        "semver@7.7.3"
       ]
     },
     {
@@ -6166,25 +6242,6 @@
       "dependencyPath": [
         "zedbee@0.1.0",
         "dependency-cruiser@18.2.0",
-        "semver@7.8.5"
-      ]
-    },
-    {
-      "name": "semver",
-      "version": "7.8.5",
-      "license": "ISC",
-      "repository": {
-        "type": "git",
-        "url": "git+https://github.com/npm/node-semver.git"
-      },
-      "licenseFile": "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/LICENSE",
-      "legalFiles": [
-        "node_modules/@typescript-eslint/typescript-estree/node_modules/semver/LICENSE"
-      ],
-      "dependencyPath": [
-        "zedbee@0.1.0",
-        "typescript-eslint@8.67.0",
-        "@typescript-eslint/typescript-estree@8.67.0",
         "semver@7.8.5"
       ]
     },
