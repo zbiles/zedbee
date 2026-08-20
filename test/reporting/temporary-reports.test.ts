@@ -7,6 +7,7 @@ import {
   readFile,
   readdir,
   realpath,
+  rename,
   rm,
   stat,
   symlink,
@@ -16,13 +17,30 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { createTemporaryReportStore } from "../../src/reporting/temporary-reports.js";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import {
+  createTemporaryReportStore,
+  syncTemporaryReportDirectory,
+} from "../../src/reporting/temporary-reports.js";
+
+const uuidControl = vi.hoisted(() => ({ values: [] as string[] }));
+
+vi.mock("node:crypto", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...original,
+    randomUUID: () => uuidControl.values.shift() ?? original.randomUUID(),
+  };
+});
 
 const REPORT_NAME =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
 const LOCK_FILE_NAME = ".lifecycle.lock";
 const execFileAsync = promisify(execFile);
+
+afterEach(() => {
+  uuidControl.values.length = 0;
+});
 
 async function fixture(): Promise<{
   repositoryRoot: string;
@@ -73,6 +91,18 @@ async function repositoryDirectory(
 }
 
 describe("temporary report store", () => {
+  it("skips unsupported Windows directory fsync without masking POSIX errors", async () => {
+    const { temporaryRoot } = await fixture();
+    const missingDirectory = join(temporaryRoot, "does-not-exist");
+
+    await expect(
+      syncTemporaryReportDirectory(missingDirectory, "win32"),
+    ).resolves.toBeUndefined();
+    await expect(
+      syncTemporaryReportDirectory(missingDirectory, "darwin"),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes exact JSON into a hashed private layout", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const canonicalRepositoryRoot = await realpath(repositoryRoot);
@@ -139,6 +169,93 @@ describe("temporary report store", () => {
       "second\n",
     );
   });
+
+  it("never overwrites a destination introduced while a report is being published", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const store = createTemporaryReportStore({ temporaryRoot });
+    await store.maintain({ repositoryRoot, retentionRuns: 5 });
+    const managedDirectory = await repositoryDirectory(
+      repositoryRoot,
+      temporaryRoot,
+    );
+    const firstUuid = "11111111-1111-4111-8111-111111111111";
+    const secondUuid = "22222222-2222-4222-8222-222222222222";
+    const successfulUuid = "33333333-3333-4333-8333-333333333333";
+    const stateWriteUuid = "44444444-4444-4444-8444-444444444444";
+    uuidControl.values.push(
+      firstUuid,
+      secondUuid,
+      successfulUuid,
+      stateWriteUuid,
+    );
+    const racerContents = "destination owned by racing writer\n";
+    const racerTemporary = join(managedDirectory, ".racer.tmp");
+    const json = `${"report payload".repeat(350_000)}\n`;
+    const maintenance = store.maintain({
+      repositoryRoot,
+      retentionRuns: 5,
+      json,
+    });
+    const collision = (async (): Promise<string> => {
+      const deadline = Date.now() + 2_000;
+      const replacingRenameTemporary = `.write-${secondUuid}.tmp`;
+      const exclusiveLinkTemporary = `.report-${firstUuid}.tmp`;
+      while (Date.now() < deadline) {
+        const entries = await readdir(managedDirectory);
+        const temporaryName = entries.find(
+          (entry) =>
+            entry === replacingRenameTemporary ||
+            entry === exclusiveLinkTemporary,
+        );
+        if (temporaryName !== undefined) {
+          const collisionUuid =
+            temporaryName === replacingRenameTemporary ? firstUuid : secondUuid;
+          const collisionPath = join(managedDirectory, `${collisionUuid}.json`);
+          await writeFile(racerTemporary, racerContents, {
+            flag: "wx",
+            mode: 0o600,
+          });
+          await rename(racerTemporary, collisionPath);
+          return collisionPath;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      throw new Error("Report publication race was not reached");
+    })();
+
+    try {
+      const collisionPath = await collision;
+      const maintained = await maintenance;
+
+      expect(maintained.reportPath).not.toBe(collisionPath);
+      await expect(readFile(collisionPath, "utf8")).resolves.toBe(
+        racerContents,
+      );
+      expect(maintained.reportPath).toBe(
+        join(managedDirectory, `${successfulUuid}.json`),
+      );
+      await expect(readFile(maintained.reportPath!, "utf8")).resolves.toBe(
+        json,
+      );
+      expect((await storedState(maintained.reportPath!)).value).toEqual({
+        schemaVersion: 1,
+        generation: 2,
+        reports: [
+          {
+            fileName: `${successfulUuid}.json`,
+            createdGeneration: 2,
+          },
+        ],
+      });
+      expect(
+        (await readdir(managedDirectory)).some((entry) =>
+          entry.endsWith(".tmp"),
+        ),
+      ).toBe(false);
+    } finally {
+      await maintenance.catch(() => undefined);
+    }
+  }, 8_000);
 
   it("expires a report on the fifth subsequent retained generation", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
@@ -465,7 +582,7 @@ describe("temporary report store", () => {
   });
 
   it.skipIf(process.platform !== "darwin")(
-    "reports an unlink permission failure only with the validated report path",
+    "retains a permission-denied report for successful cleanup retry",
     async () => {
       const { repositoryRoot, temporaryRoot } = await fixture();
       const store = createTemporaryReportStore({ temporaryRoot });
@@ -491,12 +608,33 @@ describe("temporary report store", () => {
         await expect(readFile(created.reportPath!, "utf8")).resolves.toBe(
           "immutable report\n",
         );
+        expect((await storedState(created.reportPath!)).value.reports).toEqual([
+          {
+            fileName: basename(created.reportPath!),
+            createdGeneration: 1,
+          },
+        ]);
       } finally {
         await execFileAsync("/usr/bin/chflags", [
           "nouchg",
           created.reportPath!,
         ]);
       }
+
+      const retried = await store.maintain({
+        repositoryRoot,
+        retentionRuns: 1,
+      });
+
+      expect(retried.warnings).toEqual([]);
+      await expect(stat(created.reportPath!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      expect((await storedState(created.reportPath!)).value).toEqual({
+        schemaVersion: 1,
+        generation: 3,
+        reports: [],
+      });
     },
   );
 

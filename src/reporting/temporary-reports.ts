@@ -1,6 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, mkdir, open, realpath, rename, unlink } from "node:fs/promises";
+import {
+  link,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  rename,
+  unlink,
+} from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -126,7 +134,11 @@ async function ensureManagedDirectory(
   }
 }
 
-async function syncDirectory(directory: string): Promise<void> {
+export async function syncTemporaryReportDirectory(
+  directory: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  if (platform === "win32") return;
   const handle = await open(directory, "r");
   try {
     await handle.sync();
@@ -135,7 +147,7 @@ async function syncDirectory(directory: string): Promise<void> {
   }
 }
 
-async function atomicWrite(
+async function atomicReplace(
   directory: string,
   destination: string,
   contents: string,
@@ -152,7 +164,7 @@ async function atomicWrite(
     handle = undefined;
     await rename(temporary, destination);
     renamed = true;
-    await syncDirectory(directory);
+    await syncTemporaryReportDirectory(directory);
   } finally {
     await handle?.close().catch((error: unknown) => {
       warnings.push(
@@ -267,7 +279,7 @@ async function releaseLock(
       throw new TypeError("Temporary-report lock identity changed");
     }
     await unlink(lock.path);
-    await syncDirectory(dirname(lock.path));
+    await syncTemporaryReportDirectory(dirname(lock.path));
   } catch (error) {
     warnings.push(
       warning(
@@ -432,7 +444,7 @@ async function rollbackReport(
   }
   try {
     await unlink(reportPath);
-    await syncDirectory(dirname(reportPath));
+    await syncTemporaryReportDirectory(dirname(reportPath));
   } catch (error) {
     warnings.push(
       warning(
@@ -449,37 +461,84 @@ async function writeUniqueReport(
   json: string,
   warnings: ReportMaintenanceWarning[],
 ): Promise<{ readonly fileName: string; readonly path: string }> {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const fileName = `${randomUUID()}.json`;
-    const path = trackedReportPath(repositoryDirectory, fileName);
-    if (path === undefined)
-      throw new TypeError("Invalid generated report name");
-    let reservation: FileHandle;
-    try {
-      reservation = await open(path, "wx", 0o600);
-    } catch (error) {
-      if (errorCode(error) === "EEXIST") continue;
-      throw error;
-    }
-    try {
-      await reservation.chmod(0o600);
-      await reservation.close();
-      await atomicWrite(repositoryDirectory, path, json, warnings);
+  const temporary = join(repositoryDirectory, `.report-${randomUUID()}.tmp`);
+  let handle: FileHandle | undefined = await open(temporary, "wx", 0o600);
+  let publishedPath: string | undefined;
+  let cleanupAttempted = false;
+  try {
+    await handle.chmod(0o600);
+    await handle.writeFile(json, "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const fileName = `${randomUUID()}.json`;
+      const path = trackedReportPath(repositoryDirectory, fileName);
+      if (path === undefined) {
+        throw new TypeError("Invalid generated report name");
+      }
+      try {
+        await link(temporary, path);
+      } catch (error) {
+        if (errorCode(error) === "EEXIST") continue;
+        throw error;
+      }
+      publishedPath = path;
+      await syncTemporaryReportDirectory(repositoryDirectory);
+      cleanupAttempted = true;
+      await removeReportTemporary(temporary, repositoryDirectory, warnings);
       return { fileName, path };
-    } catch (error) {
-      await reservation.close().catch((closeError: unknown) => {
-        warnings.push(
-          warning(
-            "TEMP_REPORT_CLEANUP_FAILED",
-            `A failed report reservation could not be closed (${errorCode(closeError)}).`,
-          ),
-        );
-      });
-      await rollbackReport(path, warnings);
-      throw error;
+    }
+    throw new Error("Unable to allocate a unique temporary-report name");
+  } catch (error) {
+    if (publishedPath !== undefined) {
+      await rollbackReport(publishedPath, warnings);
+    }
+    throw error;
+  } finally {
+    await handle?.close().catch((closeError: unknown) => {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `A report temporary file could not be closed (${errorCode(closeError)}).`,
+        ),
+      );
+    });
+    if (!cleanupAttempted) {
+      await removeReportTemporary(temporary, repositoryDirectory, warnings);
     }
   }
-  throw new Error("Unable to allocate a unique temporary-report name");
+}
+
+async function removeReportTemporary(
+  temporary: string,
+  repositoryDirectory: string,
+  warnings: ReportMaintenanceWarning[],
+): Promise<void> {
+  try {
+    await unlink(temporary);
+  } catch (error) {
+    if (errorCode(error) !== "ENOENT") {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `A report temporary file could not be removed (${errorCode(error)}).`,
+        ),
+      );
+    }
+    return;
+  }
+  try {
+    await syncTemporaryReportDirectory(repositoryDirectory);
+  } catch (error) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `A report temporary-file removal could not be synchronized (${errorCode(error)}).`,
+      ),
+    );
+  }
 }
 
 function trackedReportPath(
@@ -539,12 +598,24 @@ async function removeExpiredReports(
     }
     try {
       await unlink(path);
-      await syncDirectory(repositoryDirectory);
     } catch (error) {
       warnings.push(
         warning(
           "TEMP_REPORT_CLEANUP_FAILED",
           `A validated tracked report could not be removed (${errorCode(error)}).`,
+          path,
+        ),
+      );
+      retained.push(report);
+      continue;
+    }
+    try {
+      await syncTemporaryReportDirectory(repositoryDirectory);
+    } catch (error) {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `A removed report's directory could not be synchronized (${errorCode(error)}).`,
           path,
         ),
       );
@@ -655,7 +726,7 @@ export function createTemporaryReportStore(options?: {
           reports,
         };
         try {
-          await atomicWrite(
+          await atomicReplace(
             repositoryDirectory,
             join(repositoryDirectory, STATE_FILE_NAME),
             serializeState(nextState),
