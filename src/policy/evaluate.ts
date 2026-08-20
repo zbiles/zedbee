@@ -40,16 +40,23 @@ export function evaluatePolicy(
 ): PolicyDecision {
   const evaluated = executions.flatMap(({ result, policy }): CheckResult[] => {
     const displayed = displayResultForPolicy(result, policy);
-    return displayed === undefined ? [] : [displayed];
+    if (displayed === undefined) return [];
+    if (displayed.status !== "incomplete") return [displayed];
+    return [
+      {
+        ...displayed,
+        incompleteDisposition:
+          displayed.incompleteDisposition ??
+          (config.failOnIncomplete ? "block" : "warn"),
+      },
+    ];
   });
   const summary = summarizeChecks(evaluated);
 
   const hasBlockingIncomplete = evaluated.some(
     (result) =>
       result.status === "incomplete" &&
-      (result.incompleteDisposition === "block" ||
-        (result.incompleteDisposition === undefined &&
-          config.failOnIncomplete)),
+      result.incompleteDisposition === "block",
   );
 
   if (hasBlockingIncomplete) {

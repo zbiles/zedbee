@@ -195,7 +195,17 @@ describe("evaluatePolicy", () => {
         [execution(completed([finding(true)])), execution(incomplete)],
         config("error"),
       ),
-    ).toMatchObject({ exitCode: 2, outcome: "incomplete" });
+    ).toMatchObject({
+      exitCode: 2,
+      outcome: "incomplete",
+      results: [
+        expect.objectContaining({ status: "completed" }),
+        expect.objectContaining({
+          status: "incomplete",
+          incompleteDisposition: "block",
+        }),
+      ],
+    });
   });
 
   it("can report incomplete analysis without failing solely because of it", () => {
@@ -205,6 +215,12 @@ describe("evaluatePolicy", () => {
       exitCode: 0,
       outcome: "pass",
       summary: { incomplete: 1 },
+      results: [
+        expect.objectContaining({
+          status: "incomplete",
+          incompleteDisposition: "warn",
+        }),
+      ],
     });
   });
 
@@ -223,6 +239,12 @@ describe("evaluatePolicy", () => {
       exitCode: 2,
       outcome: "incomplete",
       summary: { incomplete: 1 },
+      results: [
+        expect.objectContaining({
+          status: "incomplete",
+          incompleteDisposition: "block",
+        }),
+      ],
     });
   });
 

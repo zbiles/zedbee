@@ -72,7 +72,7 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. The managed defaults are cyclomatic complexity 20 and readability complexity 15; both block a staged increase that remains above the configured limit.
 
-`reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, and JSON. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
+`reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, JSON, and SARIF. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
 
 The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
 
@@ -119,7 +119,7 @@ npx zedbee scan --include-source
 npx zedbee scan --no-source
 ```
 
-Ordinary staged source may be visible in interactive Ink by default to the human or agent that invoked Zedbee. Text and JSON source is opt-in with `--include-source` unless repository policy is `always`. Excerpts come only from the exact Git-index snapshot; secret findings are always redacted regardless of policy or CLI override.
+Ordinary staged source may be visible in interactive Ink by default to the human or agent that invoked Zedbee. Text, JSON, and SARIF source is opt-in with `--include-source` unless repository policy is `always`. Excerpts come only from the exact Git-index snapshot; secret findings are always redacted regardless of policy or CLI override.
 
 Redirect complete stable reports with normal shell redirection:
 

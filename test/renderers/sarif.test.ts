@@ -1,9 +1,51 @@
 import { describe, expect, it } from "vitest";
+import type { CheckExecutionResult } from "../../src/checks/adapter.js";
+import { resolveConfig } from "../../src/config/profiles.js";
 import { ZEDBEE_VERSION } from "../../src/core/package-version.js";
+import type { IncompleteDisposition } from "../../src/core/types.js";
+import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { renderJson } from "../../src/renderers/json.js";
 import { renderSarif } from "../../src/renderers/sarif.js";
 import { renderText } from "../../src/renderers/text.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
+
+function reportFromIncompletePolicy(
+  failOnIncomplete: boolean,
+  inputs: readonly {
+    readonly checkId: string;
+    readonly code: string;
+    readonly disposition?: IncompleteDisposition;
+  }[],
+) {
+  const config = resolveConfig({
+    schemaVersion: 1,
+    profile: "recommended",
+    failOnIncomplete,
+  });
+  const executions: readonly CheckExecutionResult[] = inputs.map((input) => ({
+    result: {
+      checkId: input.checkId,
+      status: "incomplete",
+      durationMs: 2,
+      findings: [],
+      ...(input.disposition === undefined
+        ? {}
+        : { incompleteDisposition: input.disposition }),
+      error: {
+        code: input.code,
+        message: `${input.checkId} could not complete.`,
+      },
+    },
+    policy: config.checks.formatting,
+  }));
+  const decision = evaluatePolicy(executions, config);
+  return createReport({
+    outcome: decision.outcome,
+    exitCode: decision.exitCode,
+    summary: decision.summary,
+    checks: decision.results,
+  });
+}
 
 describe("renderSarif", () => {
   it("renders a deterministic SARIF 2.1.0 document envelope", () => {
@@ -423,6 +465,97 @@ describe("renderSarif", () => {
         },
       },
     ]);
+  });
+
+  it("renders a default fail-open incomplete check as a warning with warn disposition", () => {
+    const report = reportFromIncompletePolicy(false, [
+      { checkId: "formatting", code: "PRETTIER_FAILED" },
+    ]);
+
+    const document = JSON.parse(renderSarif(report)) as {
+      runs: Array<{ invocations: Array<Record<string, any>> }>;
+    };
+    const invocation = document.runs[0]!.invocations[0]!;
+
+    expect(invocation).toMatchObject({
+      executionSuccessful: true,
+      properties: { outcome: "pass", exitCode: 0 },
+      toolExecutionNotifications: [
+        {
+          level: "warning",
+          properties: {
+            checkId: "formatting",
+            disposition: "warn",
+          },
+        },
+      ],
+    });
+  });
+
+  it("renders a default fail-closed incomplete check as an error with block disposition", () => {
+    const report = reportFromIncompletePolicy(true, [
+      { checkId: "formatting", code: "PRETTIER_FAILED" },
+    ]);
+
+    const document = JSON.parse(renderSarif(report)) as {
+      runs: Array<{ invocations: Array<Record<string, any>> }>;
+    };
+    const invocation = document.runs[0]!.invocations[0]!;
+
+    expect(invocation).toMatchObject({
+      executionSuccessful: false,
+      properties: { outcome: "incomplete", exitCode: 2 },
+      toolExecutionNotifications: [
+        {
+          level: "error",
+          properties: {
+            checkId: "formatting",
+            disposition: "block",
+          },
+        },
+      ],
+    });
+  });
+
+  it("preserves mixed explicit block and warn dispositions through policy evaluation", () => {
+    const report = reportFromIncompletePolicy(false, [
+      {
+        checkId: "vulnerabilities",
+        code: "OSV_UNAVAILABLE",
+        disposition: "warn",
+      },
+      {
+        checkId: "formatting",
+        code: "PRETTIER_FAILED",
+        disposition: "block",
+      },
+    ]);
+
+    const document = JSON.parse(renderSarif(report)) as {
+      runs: Array<{ invocations: Array<Record<string, any>> }>;
+    };
+    const invocation = document.runs[0]!.invocations[0]!;
+
+    expect(invocation).toMatchObject({
+      executionSuccessful: false,
+      properties: { outcome: "incomplete", exitCode: 2 },
+      toolExecutionNotifications: [
+        {
+          level: "error",
+          properties: {
+            checkId: "formatting",
+            disposition: "block",
+          },
+        },
+        {
+          level: "warning",
+          properties: {
+            checkId: "vulnerabilities",
+            disposition: "warn",
+          },
+        },
+      ],
+    });
   });
 
   it("rejects unsafe display text consistently with the JSON and text renderers", () => {
