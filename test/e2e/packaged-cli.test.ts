@@ -124,6 +124,48 @@ describe("packaged Zedbee CLI", () => {
     expect(result.stderr).toBe("");
   }, 30_000);
 
+  it("exports every blocked fixture finding as a complete SARIF report", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write("value.ts", "export const value={answer:42}\n");
+    await repository.git(["add", "--", "value.ts"]);
+
+    const result = await runZedbee(repository.root, "sarif");
+    const report = JSON.parse(result.stdout) as {
+      readonly version: string;
+      readonly runs: readonly [
+        {
+          readonly results: readonly {
+            readonly ruleId: string;
+            readonly properties: { readonly checkId: string };
+          }[];
+          readonly invocations: readonly [
+            {
+              readonly executionSuccessful: boolean;
+              readonly toolExecutionNotifications: readonly unknown[];
+              readonly properties: {
+                readonly outcome: string;
+                readonly exitCode: number;
+              };
+            },
+          ];
+        },
+      ];
+    };
+
+    expect(result.exitCode).toBe(1);
+    expect(report.version).toBe("2.1.0");
+    expect(report.runs[0].results).toHaveLength(1);
+    expect(report.runs[0].results[0]).toMatchObject({
+      ruleId: "formatting/prettier",
+      properties: { checkId: "formatting" },
+    });
+    expect(report.runs[0].invocations[0]).toMatchObject({
+      executionSuccessful: true,
+      toolExecutionNotifications: [],
+      properties: { outcome: "blocked", exitCode: 1 },
+    });
+  }, 30_000);
+
   it("runs doctor from the installed package", async () => {
     const repository = await createInstalledRepository();
 
@@ -258,19 +300,47 @@ describe("packaged Zedbee CLI", () => {
     });
   }, 30_000);
 
-  it("returns exit code 2 and valid JSON for malformed configuration", async () => {
+  it("reports incomplete packaged scans in SARIF notifications", async () => {
     const repository = await createInstalledRepository();
     await repository.write("value.ts", "export const value = 1;\n");
     await repository.git(["add", "--", "value.ts"]);
     await repository.write(".zedbeerc.jsonc", '{"schemaVersion":');
 
-    const result = await runZedbee(repository.root);
+    const result = await runZedbee(repository.root, "sarif");
+    const report = JSON.parse(result.stdout) as {
+      readonly version: string;
+      readonly runs: readonly [
+        {
+          readonly results: readonly unknown[];
+          readonly invocations: readonly [
+            {
+              readonly executionSuccessful: boolean;
+              readonly toolExecutionNotifications: readonly {
+                readonly descriptor: { readonly id: string };
+              }[];
+              readonly properties: {
+                readonly outcome: string;
+                readonly exitCode: number;
+              };
+            },
+          ];
+        },
+      ];
+    };
 
     expect(result.exitCode).toBe(2);
-    expect(JSON.parse(result.stdout)).toMatchObject({
-      schemaVersion: 1,
-      outcome: "incomplete",
-      exitCode: 2,
+    expect(report.version).toBe("2.1.0");
+    expect(report.runs[0].results).toEqual([]);
+    expect(report.runs[0].invocations[0]).toMatchObject({
+      executionSuccessful: false,
+      properties: { outcome: "incomplete", exitCode: 2 },
     });
+    expect(
+      report.runs[0].invocations[0].toolExecutionNotifications,
+    ).toHaveLength(1);
+    expect(
+      report.runs[0].invocations[0].toolExecutionNotifications[0]?.descriptor
+        .id,
+    ).toBe("CONFIG_INVALID");
   }, 30_000);
 });

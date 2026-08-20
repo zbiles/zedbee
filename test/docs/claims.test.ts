@@ -75,10 +75,30 @@ describe("public documentation claims", () => {
     }
   });
 
+  it("documents complete SARIF export behavior for enterprise ingestion", async () => {
+    const [readme, reporting, support, privacy] = await Promise.all([
+      read("README.md"),
+      read("docs/reporting.md"),
+      read("docs/support.md"),
+      read("docs/privacy.md"),
+    ]);
+
+    expect(readme).toContain("--format sarif");
+    expect(readme).toContain("docs/reporting.md");
+    expect(reporting).toContain("--format sarif");
+    expect(reporting).toContain("SARIF 2.1.0");
+    expect(reporting).toMatch(/complete report/i);
+    expect(reporting).toMatch(/normal exit status/i);
+    expect(support).toMatch(/SARIF[^.]*complete/i);
+    expect(privacy).toMatch(/SARIF[^.]*source-excerpt policy/i);
+  });
+
   it("documents source defaults, secret redaction, and safe cleanup disclosure", async () => {
     const privacy = await read("docs/privacy.md");
     expect(privacy).toMatch(/interactive Ink[^.]*source excerpts[^.]*default/i);
-    expect(privacy).toMatch(/redirected text and JSON[^.]*default off/i);
+    expect(privacy).toMatch(
+      /redirected text, JSON, and SARIF[^.]*default off/i,
+    );
     expect(privacy).toMatch(/secrets are always redacted/i);
     expect(privacy).toMatch(
       /cleanup failure[^.]*disclose one validated Zedbee temporary directory/i,

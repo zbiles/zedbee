@@ -30,6 +30,7 @@ const PUBLIC_DOCS = Object.freeze([
   "docs/privacy.md",
   "docs/react-analysis.md",
   "docs/readability-complexity.md",
+  "docs/reporting.md",
   "docs/structural-security-coverage.md",
   "docs/support.md",
 ]);
@@ -53,6 +54,7 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "schema/zedbee.schema.json",
   "docs/checks.md",
   "docs/privacy.md",
+  "docs/reporting.md",
   "docs/support.md",
   "docs/commercial-licensing.md",
   "licenses/production-inventory.json",

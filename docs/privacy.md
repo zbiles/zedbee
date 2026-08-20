@@ -30,8 +30,8 @@ When enabled, the content-addressed cache stores only schema-validated normalize
 
 ## Report source visibility
 
-Interactive Ink shows ordinary staged source excerpts by default. Redirected text and JSON source excerpts are default off. This means ordinary indexed source may be visible to the human or agent that invokes an interactive scan; use `--no-source` to suppress it. Use `--include-source` to opt text or JSON in, or set repository policy to `always`; an explicit CLI choice overrides repository policy for that scan.
+Interactive Ink shows ordinary staged source excerpts by default. Redirected text, JSON, and SARIF source excerpts are default off. This means ordinary indexed source may be visible to the human or agent that invokes an interactive scan; use `--no-source` to suppress it. Use `--include-source` to opt text, JSON, or SARIF in, or set repository policy to `always`; an explicit CLI choice overrides repository policy for that scan. SARIF follows the same source-excerpt policy and never exposes secret finding content.
 
 ## Agent and CI output
 
-`--format json` is the stable machine surface. It uses repository-relative paths, deterministic ordering, stable finding IDs, explicit attribution evidence, and the same online disclosures as the interactive experience. ANSI decoration and animation are never included. Every finding is emitted; Zedbee does not hide findings behind a cap or create an automatic report file.
+`--format json` and `--format sarif` are stable machine surfaces. SARIF is emitted as a complete SARIF 2.1.0 report for enterprise ingestion. Both formats use repository-relative paths, deterministic ordering, stable finding IDs, explicit attribution evidence, and the same online disclosures as the interactive experience. ANSI decoration and animation are never included. Every finding and incomplete notification is emitted; Zedbee does not hide findings behind a cap or create an automatic report file.

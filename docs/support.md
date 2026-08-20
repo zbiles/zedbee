@@ -4,14 +4,14 @@ This document distinguishes implemented coverage from unsupported or deferred be
 
 ## Runtime and project support
 
-| Area              | Supported                                                    | Notes                                                                                                                                          |
-| ----------------- | ------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime           | Node.js 22.13.0 and newer                                    | CI verifies current Node 22 and 24 releases.                                                                                                   |
-| Operating systems | Linux, macOS, and Windows                                    | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform.      |
-| Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` | Zedbee targets JavaScript and TypeScript initially.                                                                                            |
-| Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces               | Discovery uses staged manifests and workspace declarations without running lifecycle scripts.                                                  |
+| Area              | Supported                                                    | Notes                                                                                                                                                    |
+| ----------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime           | Node.js 22.13.0 and newer                                    | CI verifies current Node 22 and 24 releases.                                                                                                             |
+| Operating systems | Linux, macOS, and Windows                                    | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform.                |
+| Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` | Zedbee targets JavaScript and TypeScript initially.                                                                                                      |
+| Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces               | Discovery uses staged manifests and workspace declarations without running lifecycle scripts.                                                            |
 | React             | React, React DOM, Ink, Next.js, and Remix correctness        | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink. React correctness calibrates each snapshot/workspace from staged dependency data. |
-| Git input         | Exact staged index against committed `HEAD`                  | Intent-to-add entries are excluded. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete. |
+| Git input         | Exact staged index against committed `HEAD`                  | Intent-to-add entries are excluded. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete.           |
 
 ## Dependency vulnerability inventories
 
@@ -51,14 +51,15 @@ Secret findings and overlapping source excerpts are always redacted. Zedbee neve
 
 ## Reports and automation
 
-Ink is the interactive human interface. Stable text and versioned JSON are suitable for redirection, agents, and CI. All three surfaces include every finding; there is no finding cap and no automatic report file.
+Ink is the interactive human interface. Stable text, versioned JSON, and SARIF 2.1.0 are suitable for redirection, agents, and CI. Every explicit structured export is a complete report: it includes every finding and incomplete-scan notification, has no finding cap, and creates no automatic report file.
 
 ```bash
 npx zedbee scan --format text > zedbee-report.txt
 npx zedbee scan --format json > zedbee-report.json
+npx zedbee scan --format sarif > zedbee.sarif
 ```
 
-Exit code 0 allows the commit, 1 indicates completed blocking findings, and 2 indicates incomplete required analysis. An OSV outage configured as `warn` remains visible as incomplete but does not by itself block.
+SARIF remains non-interactive and retains the normal scan exit status: exit code 0 allows the commit, 1 indicates completed blocking findings, and 2 indicates incomplete required analysis. An OSV outage configured as `warn` remains visible as incomplete but does not by itself block. Terminal presentation and explicit structured exports have separate contracts, so terminal finding limits never abbreviate an explicitly requested JSON or SARIF export.
 
 ## Not currently supported
 

@@ -99,6 +99,7 @@ npx zedbee scan --config config/zedbee.jsonc
 --format ink    Live Ink progress and the compact Zedbee result
 --format text   Stable human-readable output
 --format json   Versioned structured output for CI and agents
+--format sarif  SARIF 2.1.0 structured output for enterprise ingestion
 ```
 
 Accessibility controls:
@@ -125,12 +126,13 @@ Redirect complete stable reports with normal shell redirection:
 ```bash
 npx zedbee scan --format text > zedbee-report.txt
 npx zedbee scan --format json > zedbee-report.json
+npx zedbee scan --format sarif > zedbee.sarif
 npx zedbee scan --format text --include-source > zedbee-report-with-source.txt
 ```
 
-Ink, text, and JSON print every finding. There is no finding cap, X-of-Y summary that hides remaining findings, or automatic report file; choose text or JSON and redirect it explicitly when you need a saved report.
+Ink, text, JSON, and SARIF print every finding. There is no finding cap, X-of-Y summary that hides remaining findings, or automatic report file; choose a non-interactive format and redirect it explicitly when you need a saved report. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](docs/reporting.md) for its complete contract, including incomplete-scan notifications and source-excerpt behavior.
 
-For coding agents and CI, prefer `zedbee scan --format json`. JSON is versioned, deterministically ordered, ANSI-free, repository-relative, and includes stable finding IDs, attribution evidence, incomplete states, and network disclosures. Agents should treat exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
+For coding agents and CI, prefer `zedbee scan --format json` or `zedbee scan --format sarif` when the receiving system ingests SARIF. Both are versioned, deterministically ordered, ANSI-free, repository-relative, and include stable finding IDs, attribution evidence, incomplete states, and network disclosures. Agents should treat exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
 
 ## Exit codes
 

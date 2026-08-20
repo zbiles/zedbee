@@ -149,6 +149,7 @@ describe("release verification contract", () => {
           "LICENSE",
           "THIRD_PARTY_NOTICES.md",
           "docs/support.md",
+          "docs/reporting.md",
           "schema/zedbee.schema.json",
           "licenses/production-inventory.json",
           "licenses/reviewed-overrides.json",
