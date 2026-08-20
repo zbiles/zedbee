@@ -668,12 +668,14 @@ async function removeExpiredReports(
     try {
       metadata = await lstat(path);
     } catch (error) {
+      if (errorCode(error) === "ENOENT") continue;
       warnings.push(
         warning(
           "TEMP_REPORT_CLEANUP_FAILED",
           `A tracked report could not be validated and was left untouched (${errorCode(error)}).`,
         ),
       );
+      retained.push(report);
       continue;
     }
     if (!metadata.isFile() || metadata.isSymbolicLink()) {
@@ -683,6 +685,7 @@ async function removeExpiredReports(
           "A tracked report was not a regular file and was left untouched.",
         ),
       );
+      retained.push(report);
       continue;
     }
     try {

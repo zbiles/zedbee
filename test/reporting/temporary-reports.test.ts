@@ -26,12 +26,36 @@ import {
 } from "../../src/reporting/temporary-reports.js";
 
 const uuidControl = vi.hoisted(() => ({ values: [] as string[] }));
+const filesystemControl = vi.hoisted(() => ({
+  lstatFailures: new Map<string, string>(),
+}));
 
 vi.mock("node:crypto", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:crypto")>();
   return {
     ...original,
     randomUUID: () => uuidControl.values.shift() ?? original.randomUUID(),
+  };
+});
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...original,
+    async lstat(
+      path: Parameters<typeof original.lstat>[0],
+      options?: Parameters<typeof original.lstat>[1],
+    ) {
+      const key = String(path);
+      const code = filesystemControl.lstatFailures.get(key);
+      if (code !== undefined) {
+        filesystemControl.lstatFailures.delete(key);
+        throw Object.assign(new Error(`Injected lstat failure: ${code}`), {
+          code,
+        });
+      }
+      return original.lstat(path, options as never);
+    },
   };
 });
 
@@ -42,6 +66,7 @@ const execFileAsync = promisify(execFile);
 
 afterEach(() => {
   uuidControl.values.length = 0;
+  filesystemControl.lstatFailures.clear();
 });
 
 async function fixture(): Promise<{
@@ -683,10 +708,16 @@ describe("temporary report store", () => {
           ? replacementMetadata.isSymbolicLink()
           : replacementMetadata.isDirectory(),
       ).toBe(true);
+      expect((await storedState(created.reportPath!)).value.reports).toEqual([
+        {
+          fileName: basename(created.reportPath!),
+          createdGeneration: 1,
+        },
+      ]);
     },
   );
 
-  it("does not present a missing tracked file as a validated cleanup target", async () => {
+  it("drops a missing tracked file without presenting it as a cleanup failure", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
@@ -701,10 +732,52 @@ describe("temporary report store", () => {
       retentionRuns: 1,
     });
 
-    expect(maintained.warnings).not.toHaveLength(0);
-    expect(maintained.warnings.every((item) => item.path === undefined)).toBe(
-      true,
+    expect(maintained.warnings).toEqual([]);
+    expect((await storedState(created.reportPath!)).value.reports).toEqual([]);
+  });
+
+  it("retains a tracked report after a transient lstat failure and retries later", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const store = createTemporaryReportStore({ temporaryRoot });
+    const created = await store.maintain({
+      repositoryRoot,
+      retentionRuns: 1,
+      json: "retry validation\n",
+    });
+    filesystemControl.lstatFailures.set(created.reportPath!, "EIO");
+
+    const failed = await store.maintain({
+      repositoryRoot,
+      retentionRuns: 1,
+    });
+
+    expect(failed.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "TEMP_REPORT_CLEANUP_FAILED",
+        message: expect.stringContaining("could not be validated"),
+      }),
     );
+    expect(failed.warnings.every((item) => item.path === undefined)).toBe(true);
+    await expect(readFile(created.reportPath!, "utf8")).resolves.toBe(
+      "retry validation\n",
+    );
+    expect((await storedState(created.reportPath!)).value.reports).toEqual([
+      {
+        fileName: basename(created.reportPath!),
+        createdGeneration: 1,
+      },
+    ]);
+
+    const retried = await store.maintain({
+      repositoryRoot,
+      retentionRuns: 1,
+    });
+
+    expect(retried.warnings).toEqual([]);
+    await expect(lstat(created.reportPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect((await storedState(created.reportPath!)).value.reports).toEqual([]);
   });
 
   it.skipIf(process.platform !== "darwin")(

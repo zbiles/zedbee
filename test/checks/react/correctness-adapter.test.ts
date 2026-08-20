@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import type { ESLint, Linter } from "eslint";
 import { describe, expect, it } from "vitest";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
@@ -9,10 +9,14 @@ import { observationCheckResult } from "../../../src/checks/observation-result.j
 import { createReactAdapter } from "../../../src/checks/react/adapter.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
 import { reactCorrectnessAdapter } from "../../../src/checks/react/correctness-adapter.js";
-import { resolveReactVersion } from "../../../src/checks/react/version.js";
+import {
+  createReactVersionResolver,
+  resolveReactVersion,
+} from "../../../src/checks/react/version.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
+import type { RepositoryInspection } from "../../../src/inspection/types.js";
 import {
   createInspectionFixture,
   type InspectionFixture,
@@ -121,6 +125,154 @@ async function reactContext(
 }
 
 describe("reactCorrectnessAdapter", () => {
+  it("parses each lockfile once per immutable snapshot across many workspaces", async () => {
+    const workspaceCount = 8;
+    const [baseline, target, live] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    const fixtures = [baseline, target, live] as const;
+    for (const fixture of fixtures) {
+      await fixture.writeJson("package.json", {
+        private: true,
+        workspaces: ["packages/*"],
+      });
+      for (let index = 0; index < workspaceCount; index += 1) {
+        const root = `packages/app-${index}`;
+        await fixture.writeJson(`${root}/package.json`, {
+          name: `app-${index}`,
+          dependencies: { react: ">=18 <20", "react-dom": ">=18 <20" },
+        });
+        await fixture.write(
+          `${root}/src/app.tsx`,
+          "export const App = () => <main />;\n",
+        );
+        await fixture.writeJson(`${root}/package-lock.json`, {
+          lockfileVersion: 3,
+          packages: {},
+        });
+      }
+    }
+    const [baselineInspection, targetInspection] = await Promise.all([
+      inspectRepository(baseline.root),
+      inspectRepository(target.root),
+    ]);
+    const parseCounts = new Map<string, number>();
+    const resolverInspections: RepositoryInspection[] = [];
+    const resolverFactory = (inspection: RepositoryInspection) => {
+      resolverInspections.push(inspection);
+      return createReactVersionResolver(
+        inspection,
+        async (current, lockfile) => {
+          const key = `${current.snapshotRoot}\0${lockfile}`;
+          parseCounts.set(key, (parseCounts.get(key) ?? 0) + 1);
+          return Object.freeze([
+            Object.freeze({
+              name: "react",
+              version: current === baselineInspection ? "18.3.1" : "19.2.0",
+              ecosystem: "npm" as const,
+              lockfilePath: lockfile,
+              importer: ".",
+              dependencyPath: Object.freeze(["react"]),
+            }),
+          ]);
+        },
+      );
+    };
+    const configuredVersions: {
+      readonly cwd: string;
+      readonly version?: string;
+    }[] = [];
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => {
+        configuredVersions.push({
+          cwd: options.cwd,
+          ...(options.reactVersion === undefined
+            ? {}
+            : { version: options.reactVersion }),
+        });
+        return {
+          async lintFiles() {
+            return [];
+          },
+        };
+      },
+      resolverFactory,
+    );
+    const config = resolveConfig({ schemaVersion: 1, profile: "recommended" });
+    const changedFiles = new Map<string, ChangedFile>();
+    for (let index = 0; index < workspaceCount; index += 1) {
+      const path = `packages/app-${index}/src/app.tsx`;
+      changedFiles.set(path, {
+        path,
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      });
+    }
+    const changeSet: ChangeSet = {
+      files: changedFiles,
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+
+    await Promise.all(
+      targetInspection.workspaces
+        .filter(({ relativeRoot }) => relativeRoot !== ".")
+        .map((workspace) =>
+          adapter.collect({
+            repositoryRoot: live.root,
+            changeSet,
+            config,
+            snapshots: {
+              baselineDir: baseline.root,
+              targetDir: target.root,
+              baselineRef: "HEAD",
+              unsupportedEntries: [],
+            },
+            baselineInspection,
+            targetInspection,
+            target: {
+              id: workspace.relativeRoot,
+              kind: "workspace",
+              relativeRoot: workspace.relativeRoot,
+            },
+            policy: config.checks.reactCorrectness,
+            signal: new AbortController().signal,
+          }),
+        ),
+    );
+
+    expect(resolverInspections).toHaveLength(2);
+    expect(new Set(resolverInspections)).toEqual(
+      new Set([baselineInspection, targetInspection]),
+    );
+    expect(parseCounts.size).toBe(
+      baselineInspection.lockfiles.length + targetInspection.lockfiles.length,
+    );
+    expect([...parseCounts.values()].every((count) => count === 1)).toBe(true);
+    expect(
+      configuredVersions.filter(
+        ({ cwd, version }) =>
+          cwd === baselineInspection.snapshotRoot && version === "18.3.1",
+      ),
+    ).toHaveLength(workspaceCount);
+    expect(
+      configuredVersions.filter(
+        ({ cwd, version }) =>
+          cwd === targetInspection.snapshotRoot && version === "19.2.0",
+      ),
+    ).toHaveLength(workspaceCount);
+    expect(
+      targetInspection.lockfiles.every((lockfile) =>
+        posix.dirname(lockfile).startsWith("packages/app-"),
+      ),
+    ).toBe(true);
+  });
+
   it("calibration resolves baseline and target React versions independently", async () => {
     const { fixtures, run } = await reactContext("react");
     await writeReactResolutionFixture(fixtures.baseline, "18.3.1");

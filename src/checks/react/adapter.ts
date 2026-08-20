@@ -24,7 +24,10 @@ import type {
   ReactCorrectnessConfigFactory,
 } from "../eslint/managed-config.js";
 import { managedReactCorrectnessConfig } from "./config.js";
-import { resolveReactVersion } from "./version.js";
+import {
+  createReactVersionResolver,
+  type ReactVersionResolver,
+} from "./version.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const REACT_ENVIRONMENTS = new Set<Environment>([
@@ -41,6 +44,15 @@ type ReactEslintEngineFactory = (
 ) => Pick<ESLint, "lintFiles">;
 
 type PreparedSide = () => Promise<readonly Observation[]>;
+
+type ReactVersionResolverFactory = (
+  inspection: RepositoryInspection,
+) => Promise<ReactVersionResolver>;
+
+type ResolveWorkspaceReactVersion = (
+  inspection: RepositoryInspection,
+  workspace: WorkspaceInspection,
+) => Promise<string>;
 
 function targetFor(workspace: WorkspaceInspection): CheckTarget {
   return {
@@ -74,6 +86,7 @@ async function prepareSide(
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
   engineFactory: ReactEslintEngineFactory,
+  resolveWorkspaceReactVersion: ResolveWorkspaceReactVersion,
 ): Promise<PreparedSide> {
   const failure =
     id === "reactCorrectness"
@@ -95,7 +108,7 @@ async function prepareSide(
 
     const reactVersion =
       mode === "react-correctness"
-        ? (await resolveReactVersion(inspection, workspace)).version
+        ? await resolveWorkspaceReactVersion(inspection, workspace)
         : undefined;
 
     const engine = engineFactory({
@@ -143,7 +156,35 @@ export function createReactAdapter(
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory = managedReactCorrectnessConfig,
   engineFactory: ReactEslintEngineFactory = createManagedEslint,
+  reactVersionResolverFactory: ReactVersionResolverFactory = createReactVersionResolver,
 ): ObservationCheckAdapter {
+  const baselineVersionResolvers = new WeakMap<
+    RepositoryInspection,
+    Promise<ReactVersionResolver>
+  >();
+  const targetVersionResolvers = new WeakMap<
+    RepositoryInspection,
+    Promise<ReactVersionResolver>
+  >();
+  const cachedWorkspaceResolver = (
+    resolvers: WeakMap<RepositoryInspection, Promise<ReactVersionResolver>>,
+  ): ResolveWorkspaceReactVersion => {
+    return async (inspection, workspace) => {
+      let resolver = resolvers.get(inspection);
+      if (resolver === undefined) {
+        resolver = reactVersionResolverFactory(inspection);
+        resolvers.set(inspection, resolver);
+      }
+      const resolveVersion = await resolver;
+      return (await resolveVersion(workspace)).version;
+    };
+  };
+  const resolveBaselineReactVersion = cachedWorkspaceResolver(
+    baselineVersionResolvers,
+  );
+  const resolveTargetReactVersion = cachedWorkspaceResolver(
+    targetVersionResolvers,
+  );
   const environments =
     id === "reactAccessibility" ? DOM_ENVIRONMENTS : REACT_ENVIRONMENTS;
   return {
@@ -193,6 +234,7 @@ export function createReactAdapter(
         mode,
         reactCorrectnessConfigFactory,
         engineFactory,
+        resolveBaselineReactVersion,
       );
       const collectTarget = await prepareSide(
         context.snapshots.targetDir,
@@ -202,6 +244,7 @@ export function createReactAdapter(
         mode,
         reactCorrectnessConfigFactory,
         engineFactory,
+        resolveTargetReactVersion,
       );
       const [baselineObservations, targetObservations] = await Promise.all([
         collectBaseline(),

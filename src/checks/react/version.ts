@@ -16,7 +16,10 @@ import type {
 } from "../../inspection/types.js";
 import { LockfileInventoryError } from "../vulnerabilities/inventory/errors.js";
 import { parseLockfileInventory } from "../vulnerabilities/inventory/parse-lockfile.js";
-import type { DependencyRecord } from "../vulnerabilities/inventory/types.js";
+import type {
+  DependencyInventory,
+  DependencyRecord,
+} from "../vulnerabilities/inventory/types.js";
 
 export const MANAGED_REACT_VERSION = "19.2.0";
 
@@ -26,6 +29,15 @@ export interface ReactVersionResolution {
   readonly version: string;
   readonly source: ReactVersionSource;
 }
+
+export type ReactVersionResolver = (
+  workspace: WorkspaceInspection,
+) => Promise<ReactVersionResolution>;
+
+export type ReactLockfileInventoryParser = (
+  inspection: RepositoryInspection,
+  lockfile: string,
+) => Promise<DependencyInventory>;
 
 const REACT_SECTION_PRECEDENCE = [
   "dependencies",
@@ -147,47 +159,85 @@ function uniqueLockedVersion(
   return versions.size === 1 ? ([...versions][0] ?? undefined) : undefined;
 }
 
+function snapshotRecord(record: DependencyRecord): DependencyRecord {
+  return Object.freeze({
+    name: record.name,
+    version: record.version,
+    ecosystem: record.ecosystem,
+    lockfilePath: record.lockfilePath,
+    ...(record.line === undefined ? {} : { line: record.line }),
+    ...(record.importer === undefined ? {} : { importer: record.importer }),
+    ...(record.dependencyPath === undefined
+      ? {}
+      : { dependencyPath: Object.freeze([...record.dependencyPath]) }),
+  });
+}
+
+export async function createReactVersionResolver(
+  inspection: RepositoryInspection,
+  inventoryParser: ReactLockfileInventoryParser = parseLockfileInventory,
+): Promise<ReactVersionResolver> {
+  let directRecordsPromise:
+    Promise<readonly DependencyRecord[] | undefined> | undefined;
+  const loadDirectRecords = async (): Promise<
+    readonly DependencyRecord[] | undefined
+  > => {
+    const parsed: DependencyRecord[] = [];
+    try {
+      for (const lockfile of inspection.lockfiles) {
+        const inventory = await inventoryParser(inspection, lockfile);
+        parsed.push(
+          ...inventory
+            .filter(
+              ({ dependencyPath, name, version }) =>
+                name === "react" &&
+                dependencyPath?.length === 1 &&
+                dependencyPath[0] === "react" &&
+                valid(version) !== null,
+            )
+            .map(snapshotRecord),
+        );
+      }
+      return Object.freeze(parsed);
+    } catch (error) {
+      if (!(error instanceof LockfileInventoryError)) throw error;
+      return undefined;
+    }
+  };
+
+  return Object.freeze(async (workspace: WorkspaceInspection) => {
+    const manifest = resolveManifestVersion(workspace);
+    if (manifest.range === undefined) {
+      return manifest.resolution;
+    }
+    directRecordsPromise ??= loadDirectRecords();
+    const directRecords = await directRecordsPromise;
+    if (directRecords === undefined) return manifest.resolution;
+    const compatibleRecords = directRecords.filter(({ version }) =>
+      satisfies(version, manifest.range ?? ""),
+    );
+    const workspaceRoot = normalizedRoot(workspace.relativeRoot);
+    const importerRecords = compatibleRecords.filter(
+      (record) => normalizedImporter(record) === workspaceRoot,
+    );
+    const candidates =
+      importerRecords.length > 0
+        ? importerRecords
+        : compatibleRecords.filter((record) =>
+            globalRecordOwnsWorkspace(record, workspaceRoot),
+          );
+    const version = uniqueLockedVersion(candidates);
+    return version === undefined
+      ? manifest.resolution
+      : { version, source: "lockfile" };
+  });
+}
+
 export async function resolveReactVersion(
   inspection: RepositoryInspection,
   workspace: WorkspaceInspection,
 ): Promise<ReactVersionResolution> {
-  const manifest = resolveManifestVersion(workspace);
-  if (manifest.range === undefined) return manifest.resolution;
-
-  const directRecords: DependencyRecord[] = [];
-  try {
-    for (const lockfile of inspection.lockfiles) {
-      const inventory = await parseLockfileInventory(inspection, lockfile);
-      directRecords.push(
-        ...inventory.filter(({ dependencyPath, name, version }) => {
-          const exactVersion = valid(version);
-          return (
-            name === "react" &&
-            dependencyPath?.length === 1 &&
-            dependencyPath[0] === "react" &&
-            exactVersion !== null &&
-            satisfies(exactVersion, manifest.range ?? "")
-          );
-        }),
-      );
-    }
-  } catch (error) {
-    if (error instanceof LockfileInventoryError) return manifest.resolution;
-    throw error;
-  }
-
-  const workspaceRoot = normalizedRoot(workspace.relativeRoot);
-  const importerRecords = directRecords.filter(
-    (record) => normalizedImporter(record) === workspaceRoot,
-  );
-  const candidates =
-    importerRecords.length > 0
-      ? importerRecords
-      : directRecords.filter((record) =>
-          globalRecordOwnsWorkspace(record, workspaceRoot),
-        );
-  const version = uniqueLockedVersion(candidates);
-  return version === undefined
-    ? manifest.resolution
-    : { version, source: "lockfile" };
+  return await (
+    await createReactVersionResolver(inspection)
+  )(workspace);
 }

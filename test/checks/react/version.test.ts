@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createReactVersionResolver,
   MANAGED_REACT_VERSION,
   resolveReactVersion,
 } from "../../../src/checks/react/version.js";
@@ -139,6 +140,27 @@ describe("resolveReactVersion manifest fallback", () => {
 
   it("exports the managed React version used by fallback resolution", () => {
     expect(MANAGED_REACT_VERSION).toBe("19.2.0");
+  });
+
+  it("does not parse lockfiles when the manifest cannot admit a stable React version", async () => {
+    const current = workspace([
+      declaration("dependencies", "npm:preact@10.27.0"),
+    ]);
+    let parseCount = 0;
+    const resolver = await createReactVersionResolver(
+      { ...inspection(current), lockfiles: ["package-lock.json"] },
+      async () => {
+        parseCount += 1;
+        throw new Error("The parser should remain lazy.");
+      },
+    );
+
+    await expect(resolver(current)).resolves.toEqual({
+      version: "19.2.0",
+      source: "fallback",
+    });
+    expect(parseCount).toBe(0);
+    expect(Object.isFrozen(resolver)).toBe(true);
   });
 });
 
