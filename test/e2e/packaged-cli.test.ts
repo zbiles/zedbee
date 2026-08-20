@@ -134,6 +134,25 @@ async function runAutomaticScan(repositoryRoot: string) {
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("runs through the executable npm bin launcher", async () => {
+    const repository = await createInstalledRepository();
+    const launcher = join(
+      repository.root,
+      "node_modules",
+      ".bin",
+      process.platform === "win32" ? "zedbee.cmd" : "zedbee",
+    );
+
+    const result = await execa(launcher, ["--help"], {
+      cwd: repository.root,
+      reject: false,
+      stdin: "ignore",
+    });
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Usage: zedbee");
+  }, 30_000);
+
   it("bounds automatic piped findings and persists the complete JSON report", async () => {
     const repository = await createInstalledRepository();
     for (let index = 1; index <= 26; index += 1) {

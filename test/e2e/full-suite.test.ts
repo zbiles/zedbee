@@ -185,6 +185,25 @@ describe("release verification contract", () => {
     ).toThrow(/identity/u);
   });
 
+  it.skipIf(process.platform === "win32")(
+    "rejects a package whose CLI entrypoint is not executable",
+    () => {
+      expect(() =>
+        assertPackMetadata(
+          JSON.stringify([
+            {
+              name: "zedbee",
+              version: "0.1.0",
+              bundled: [],
+              files: [{ path: "dist/cli.js", mode: 0o644 }],
+            },
+          ]),
+          "0.1.0",
+        ),
+      ).toThrow(/CLI entrypoint must be executable/u);
+    },
+  );
+
   it("accepts only the canonical tarball emitted for the release manifest", () => {
     expect(
       releaseArtifactFilename(

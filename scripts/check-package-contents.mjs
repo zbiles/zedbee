@@ -115,6 +115,17 @@ export function assertPackMetadata(packOutput, expectedVersion) {
   if (!Array.isArray(record.bundled) || record.bundled.length > 0) {
     throw new Error("Package must not contain bundled dependencies.");
   }
+  const cli = Array.isArray(record.files)
+    ? record.files.find((file) => file?.path === "dist/cli.js")
+    : undefined;
+  if (
+    process.platform !== "win32" &&
+    (typeof cli?.mode !== "number" ||
+      !Number.isInteger(cli.mode) ||
+      (cli.mode & 0o111) === 0)
+  ) {
+    throw new Error("Package CLI entrypoint must be executable.");
+  }
 }
 
 function sourceModulePaths(root) {
