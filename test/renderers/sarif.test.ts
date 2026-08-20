@@ -188,6 +188,132 @@ describe("renderSarif", () => {
     expect((run as any).invocations[0].executionSuccessful).toBe(true);
   });
 
+  it.each([
+    {
+      name: "an infinite start line",
+      location: {
+        file: "src/infinite.ts",
+        startLine: Number.POSITIVE_INFINITY,
+        startColumn: 2,
+        endLine: 5,
+        endColumn: 4,
+      },
+      expectedRegion: undefined,
+    },
+    {
+      name: "fractional and infinite optional coordinates",
+      location: {
+        file: "src/fractional.ts",
+        startLine: 3,
+        startColumn: 2.5,
+        endLine: 4.25,
+        endColumn: Number.POSITIVE_INFINITY,
+      },
+      expectedRegion: { startLine: 3 },
+    },
+    {
+      name: "an end line before the start line",
+      location: {
+        file: "src/reversed-lines.ts",
+        startLine: 8,
+        startColumn: 4,
+        endLine: 7,
+        endColumn: 10,
+      },
+      expectedRegion: { startLine: 8, startColumn: 4 },
+    },
+    {
+      name: "a reversed same-line column range",
+      location: {
+        file: "src/reversed-columns.ts",
+        startLine: 10,
+        startColumn: 8,
+        endLine: 10,
+        endColumn: 3,
+      },
+      expectedRegion: { startLine: 10, startColumn: 8, endLine: 10 },
+    },
+  ])(
+    "omits invalid SARIF coordinates for $name",
+    ({ location, expectedRegion }) => {
+      const finding = createFinding({ location });
+      const report = createReport({
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 1,
+          incomplete: 0,
+          findings: [finding],
+        },
+      });
+
+      const document = JSON.parse(renderSarif(report)) as {
+        runs: Array<{
+          results: Array<{
+            locations: Array<{
+              physicalLocation: Record<string, unknown>;
+            }>;
+          }>;
+        }>;
+      };
+      const physicalLocation =
+        document.runs[0]!.results[0]!.locations[0]!.physicalLocation;
+
+      if (expectedRegion === undefined) {
+        expect(Object.hasOwn(physicalLocation, "region")).toBe(false);
+      } else {
+        expect(physicalLocation.region).toEqual(expectedRegion);
+      }
+    },
+  );
+
+  it("preserves coherent multiline coordinates and a valid snippet", () => {
+    const finding = createFinding({
+      location: {
+        file: "src/multiline.ts",
+        startLine: 12,
+        startColumn: 9,
+        endLine: 14,
+        endColumn: 3,
+      },
+      sourceExcerpt: {
+        line: 12,
+        text: "const value = beginCall(",
+        redacted: false,
+        truncated: false,
+      },
+    });
+    const report = createReport({
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const document = JSON.parse(renderSarif(report)) as {
+      runs: Array<{
+        results: Array<{
+          locations: Array<{
+            physicalLocation: { region: Record<string, unknown> };
+          }>;
+        }>;
+      }>;
+    };
+
+    expect(
+      document.runs[0]!.results[0]!.locations[0]!.physicalLocation.region,
+    ).toEqual({
+      startLine: 12,
+      startColumn: 9,
+      endLine: 14,
+      endColumn: 3,
+      snippet: { text: "const value = beginCall(" },
+    });
+  });
+
   it("maps incomplete checks to ordered invocation notifications and canonical metadata", () => {
     const report = createReport({
       outcome: "incomplete",

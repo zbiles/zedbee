@@ -64,20 +64,37 @@ function artifactUri(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
-function positive(value: number | undefined): number | undefined {
-  return value !== undefined && value > 0 ? value : undefined;
+function positiveSafeInteger(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
 }
 
 function createRegion(
   location: SourceLocation,
   finding: Finding,
 ): Record<string, unknown> | undefined {
-  const startLine = positive(location.startLine);
+  const startLine = positiveSafeInteger(location.startLine);
   if (startLine === undefined) return undefined;
 
-  const startColumn = positive(location.startColumn);
-  const endLine = positive(location.endLine);
-  const endColumn = positive(location.endColumn);
+  const startColumn = positiveSafeInteger(location.startColumn);
+  const candidateEndLine = positiveSafeInteger(location.endLine);
+  const endLine =
+    candidateEndLine !== undefined && candidateEndLine >= startLine
+      ? candidateEndLine
+      : undefined;
+  const rejectedEndLine =
+    location.endLine !== undefined && endLine === undefined;
+  const candidateEndColumn = positiveSafeInteger(location.endColumn);
+  const sameEffectiveLine = endLine === undefined || endLine === startLine;
+  const endColumn =
+    candidateEndColumn !== undefined &&
+    !rejectedEndLine &&
+    (!sameEffectiveLine ||
+      startColumn === undefined ||
+      candidateEndColumn >= startColumn)
+      ? candidateEndColumn
+      : undefined;
   const excerpt = finding.sourceExcerpt;
   const snippet =
     excerpt !== undefined && !excerpt.redacted && excerpt.text !== undefined
