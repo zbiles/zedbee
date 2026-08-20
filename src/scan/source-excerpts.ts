@@ -1,4 +1,5 @@
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
+import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, SourceExcerpt } from "../core/types.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedLines } from "../inspection/read-json.js";
@@ -8,6 +9,7 @@ import {
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
+import type { ScanReport } from "./report.js";
 
 interface SecretRange {
   readonly startLine: number;
@@ -98,12 +100,19 @@ function copyFinding(
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
-    ...(finding.location === undefined ? {} : { location: finding.location }),
+    ...(finding.location === undefined
+      ? {}
+      : { location: Object.freeze({ ...finding.location }) }),
     ...(finding.remediation === undefined
       ? {}
       : { remediation: finding.remediation }),
-    ...(sourceExcerpt === undefined ? {} : { sourceExcerpt }),
-    attribution: finding.attribution,
+    ...(sourceExcerpt === undefined
+      ? {}
+      : { sourceExcerpt: Object.freeze({ ...sourceExcerpt }) }),
+    attribution: Object.freeze({
+      ...finding.attribution,
+      evidence: Object.freeze([...finding.attribution.evidence]),
+    }),
   });
 }
 
@@ -117,8 +126,13 @@ function copyCheck(
     status: check.status,
     durationMs: check.durationMs,
     findings: Object.freeze([...findings]),
-    ...(check.error === undefined ? {} : { error: check.error }),
+    ...(check.error === undefined
+      ? {}
+      : { error: Object.freeze({ ...check.error }) }),
     ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
+    ...(check.incompleteDisposition === undefined
+      ? {}
+      : { incompleteDisposition: check.incompleteDisposition }),
   });
 }
 
@@ -133,6 +147,60 @@ export function omitSourceExcerpts(
       ),
     ),
   );
+}
+
+function redactedMarker(
+  sourceExcerpt: SourceExcerpt | undefined,
+): SourceExcerpt | undefined {
+  if (sourceExcerpt?.redacted !== true) return undefined;
+  return Object.freeze({
+    line: sourceExcerpt.line,
+    redacted: true,
+    truncated: sourceExcerpt.truncated,
+  });
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const nested of Object.values(value)) {
+      deepFreeze(nested);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
+  const checks = Object.freeze(
+    report.checks.map((check) =>
+      copyCheck(
+        check,
+        check.findings.map((finding) =>
+          copyFinding(finding, redactedMarker(finding.sourceExcerpt)),
+        ),
+      ),
+    ),
+  );
+  return deepFreeze({
+    schemaVersion: report.schemaVersion,
+    outcome: report.outcome,
+    exitCode: report.exitCode,
+    repositoryRoot: report.repositoryRoot,
+    baseline: report.baseline,
+    target: report.target,
+    stagedFileCount: report.stagedFileCount,
+    startedAt: report.startedAt,
+    durationMs: report.durationMs,
+    networkDisclosures: report.networkDisclosures.map((disclosure) => ({
+      checkId: disclosure.checkId,
+      target: disclosure.target,
+      services: [...disclosure.services],
+      metadata: [...disclosure.metadata],
+    })),
+    presentationPolicy: { ...report.presentationPolicy },
+    summary: summarizeChecks(checks),
+    checks,
+  });
 }
 
 async function captureRegistry(

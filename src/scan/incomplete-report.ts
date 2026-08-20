@@ -2,7 +2,11 @@ import { sanitizeCheckResult } from "../checks/sanitize-result.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult } from "../core/types.js";
 import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
-import type { NetworkDisclosure, ScanReport } from "./report.js";
+import type {
+  NetworkDisclosure,
+  ScanPresentationPolicy,
+  ScanReport,
+} from "./report.js";
 
 export interface ScanFailureInput {
   readonly code: string;
@@ -18,6 +22,7 @@ export interface ScanReportContext {
   readonly startedAt: string;
   readonly durationMs: number;
   readonly networkDisclosures: readonly NetworkDisclosure[];
+  readonly presentationPolicy: ScanPresentationPolicy;
 }
 
 function incompleteCheck(
@@ -57,6 +62,7 @@ export function createIncompleteReport(
     startedAt: context.startedAt,
     durationMs: context.durationMs,
     networkDisclosures: context.networkDisclosures,
+    presentationPolicy: context.presentationPolicy,
     summary: summarizeChecks(results),
     checks: results,
   };

@@ -19,6 +19,11 @@ describe("renderJson", () => {
     const report = createReport({
       outcome: "blocked",
       exitCode: 1,
+      presentationPolicy: {
+        terminalFindingLimit: "all",
+        temporaryReportRetention: 9,
+        persistSourceExcerpts: true,
+      },
       summary: {
         passed: 0,
         warnings: 0,
@@ -42,6 +47,57 @@ describe("renderJson", () => {
     const parsed = JSON.parse(first) as Record<string, unknown>;
 
     expect(first).toBe(second);
+    expect(first).toBe(`{
+  "schemaVersion": 1,
+  "outcome": "blocked",
+  "exitCode": 1,
+  "repositoryRoot": ".",
+  "baseline": "HEAD",
+  "target": "index",
+  "stagedFileCount": 1,
+  "startedAt": "2026-08-15T00:00:00.000Z",
+  "durationMs": 15,
+  "networkDisclosures": [],
+  "summary": {
+    "passed": 0,
+    "warnings": 0,
+    "failed": 1,
+    "incomplete": 0
+  },
+  "checks": [
+    {
+      "checkId": "formatting",
+      "target": "apps/web",
+      "status": "completed",
+      "durationMs": 4,
+      "findings": [
+        {
+          "id": "finding-1",
+          "check": "formatting",
+          "rule": "prettier",
+          "severity": "error",
+          "message": "Staged code does not match the managed format.",
+          "location": {
+            "file": "src/value.ts",
+            "startLine": 2,
+            "endLine": 2
+          },
+          "remediation": "Format the staged lines, then stage the result.",
+          "attribution": {
+            "kind": "range-overlap",
+            "staged": true,
+            "evidence": [
+              "a-evidence",
+              "z-evidence"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+`);
+    expect(first).not.toContain("presentationPolicy");
     expect(Object.keys(parsed)).toEqual([
       "schemaVersion",
       "outcome",

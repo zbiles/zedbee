@@ -49,11 +49,19 @@ function reportFromIncompletePolicy(
 
 describe("renderSarif", () => {
   it("renders a deterministic SARIF 2.1.0 document envelope", () => {
-    const first = renderSarif(createReport());
-    const second = renderSarif(createReport());
+    const report = createReport({
+      presentationPolicy: {
+        terminalFindingLimit: "all",
+        temporaryReportRetention: 9,
+        persistSourceExcerpts: true,
+      },
+    });
+    const first = renderSarif(report);
+    const second = renderSarif(report);
     const document = JSON.parse(first) as Record<string, unknown>;
 
     expect(first).toBe(second);
+    expect(first).not.toContain("presentationPolicy");
     expect(document).toMatchObject({
       $schema: "https://json.schemastore.org/sarif-2.1.0.json",
       version: "2.1.0",

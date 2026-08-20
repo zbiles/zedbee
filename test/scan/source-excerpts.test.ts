@@ -7,6 +7,7 @@ import type {
   Finding,
   SourceLocation,
 } from "../../src/core/types.js";
+import { createReport } from "../helpers/scan-report.js";
 
 const readBoundary = vi.hoisted(() => ({
   containedFileReads: [] as string[],
@@ -31,7 +32,10 @@ vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
 });
 
 import { shouldIncludeSourceExcerpts } from "../../src/scan/reporting-options.js";
-import { enrichSourceExcerpts } from "../../src/scan/source-excerpts.js";
+import {
+  enrichSourceExcerpts,
+  omitReportSourceExcerpts,
+} from "../../src/scan/source-excerpts.js";
 
 function finding(
   overrides: Omit<Partial<Finding>, "location"> & {
@@ -103,6 +107,157 @@ describe("shouldIncludeSourceExcerpts", () => {
       );
     },
   );
+});
+
+describe("omitReportSourceExcerpts", () => {
+  it("immutably removes ordinary source while preserving redaction markers and report metadata", () => {
+    const ordinary = finding({
+      sourceExcerpt: {
+        line: 4,
+        text: "export const visible = true;",
+        redacted: false,
+        truncated: false,
+      },
+    });
+    const secret = finding({
+      id: "secret:src/value.ts:8",
+      check: "secrets",
+      rule: "generic-api-key",
+      message: "A secret was detected.",
+      location: { file: "src/value.ts", startLine: 8 },
+      sourceExcerpt: {
+        line: 8,
+        text: "SECRET-MUST-NOT-SURVIVE",
+        redacted: true,
+        truncated: false,
+      },
+    });
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["exact versions"],
+        },
+      ],
+      presentationPolicy: {
+        terminalFindingLimit: "all",
+        temporaryReportRetention: 9,
+        persistSourceExcerpts: true,
+      },
+      checks: [
+        {
+          checkId: "lint",
+          target: "workspace",
+          status: "incomplete",
+          durationMs: 7,
+          findings: [ordinary, secret],
+          error: {
+            code: "LINT_FAILED",
+            message: "Lint could not complete.",
+            remediation: "Run lint directly.",
+          },
+          incompleteDisposition: "warn",
+        },
+      ],
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 2,
+        incomplete: 1,
+        findings: [{ ...ordinary }, { ...secret }],
+      },
+    });
+    const inputJson = JSON.stringify(report);
+    const omitted = omitReportSourceExcerpts(report);
+
+    expect(
+      omitted.checks[0]?.findings.map(({ sourceExcerpt }) => sourceExcerpt),
+    ).toEqual([
+      undefined,
+      { line: 8, redacted: true, truncated: false },
+    ]);
+    expect(
+      omitted.summary.findings.map(({ sourceExcerpt }) => sourceExcerpt),
+    ).toEqual([
+      undefined,
+      { line: 8, redacted: true, truncated: false },
+    ]);
+    expect(omitted.summary.findings[0]).toBe(
+      omitted.checks[0]?.findings[0],
+    );
+    expect(omitted.summary.findings[1]).toBe(
+      omitted.checks[0]?.findings[1],
+    );
+
+    const withoutSource = ({
+      sourceExcerpt: _sourceExcerpt,
+      ...rest
+    }: Finding): Omit<Finding, "sourceExcerpt"> => rest;
+    expect(omitted.checks[0]).toMatchObject({
+      checkId: "lint",
+      target: "workspace",
+      status: "incomplete",
+      durationMs: 7,
+      error: {
+        code: "LINT_FAILED",
+        message: "Lint could not complete.",
+        remediation: "Run lint directly.",
+      },
+      incompleteDisposition: "warn",
+    });
+    expect(omitted.checks[0]?.findings.map(withoutSource)).toEqual(
+      report.checks[0]?.findings.map(withoutSource),
+    );
+    expect({
+      schemaVersion: omitted.schemaVersion,
+      outcome: omitted.outcome,
+      exitCode: omitted.exitCode,
+      repositoryRoot: omitted.repositoryRoot,
+      baseline: omitted.baseline,
+      target: omitted.target,
+      stagedFileCount: omitted.stagedFileCount,
+      startedAt: omitted.startedAt,
+      durationMs: omitted.durationMs,
+      networkDisclosures: omitted.networkDisclosures,
+      presentationPolicy: omitted.presentationPolicy,
+    }).toEqual({
+      schemaVersion: 1,
+      outcome: "incomplete",
+      exitCode: 2,
+      repositoryRoot: "/repo",
+      baseline: "HEAD",
+      target: "index",
+      stagedFileCount: 1,
+      startedAt: "2026-08-15T00:00:00.000Z",
+      durationMs: 15,
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["exact versions"],
+        },
+      ],
+      presentationPolicy: {
+        terminalFindingLimit: "all",
+        temporaryReportRetention: 9,
+        persistSourceExcerpts: true,
+      },
+    });
+    expect(JSON.stringify(report)).toBe(inputJson);
+    expect(Object.isFrozen(report.presentationPolicy)).toBe(false);
+    expect(Object.isFrozen(report.checks[0]?.findings[0])).toBe(false);
+    expect(omitted).not.toBe(report);
+    expect(Object.isFrozen(omitted)).toBe(true);
+    expect(Object.isFrozen(omitted.presentationPolicy)).toBe(true);
+    expect(Object.isFrozen(omitted.networkDisclosures[0]?.services)).toBe(true);
+    expect(Object.isFrozen(omitted.checks[0]?.error)).toBe(true);
+    expect(Object.isFrozen(omitted.summary.findings)).toBe(true);
+  });
 });
 
 describe("enrichSourceExcerpts", () => {

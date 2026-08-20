@@ -7,6 +7,12 @@ export interface NetworkDisclosure {
   readonly metadata: readonly string[];
 }
 
+export interface ScanPresentationPolicy {
+  readonly terminalFindingLimit: number | "all";
+  readonly temporaryReportRetention: number;
+  readonly persistSourceExcerpts: boolean;
+}
+
 export interface ScanReport {
   schemaVersion: 1;
   outcome: "pass" | "blocked" | "incomplete";
@@ -19,6 +25,7 @@ export interface ScanReport {
   startedAt: string;
   durationMs: number;
   networkDisclosures: readonly NetworkDisclosure[];
+  readonly presentationPolicy: ScanPresentationPolicy;
   summary: RunSummary;
   checks: readonly CheckResult[];
 }

@@ -32,7 +32,11 @@ import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
-import type { NetworkDisclosure, ScanReport } from "./report.js";
+import type {
+  NetworkDisclosure,
+  ScanPresentationPolicy,
+  ScanReport,
+} from "./report.js";
 import {
   createIncompleteReport,
   withCleanupFailure,
@@ -266,6 +270,11 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   let report: ScanReport | undefined;
   let abortedError: unknown;
   let shouldRethrow = false;
+  let presentationPolicy: ScanPresentationPolicy = Object.freeze({
+    terminalFindingLimit: 25,
+    temporaryReportRetention: 5,
+    persistSourceExcerpts: false,
+  });
 
   const reportContext = (): ScanReportContext => ({
     repositoryRoot: options.repositoryRoot,
@@ -274,6 +283,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     startedAt,
     durationMs: Math.max(0, dependencies.clock() - started),
     networkDisclosures,
+    presentationPolicy,
   });
 
   try {
@@ -282,6 +292,15 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       options.repositoryRoot,
       options.configPath,
     );
+    presentationPolicy = Object.freeze({
+      terminalFindingLimit: config.reporting.terminalFindingLimit,
+      temporaryReportRetention: config.reporting.temporaryReportRetention,
+      persistSourceExcerpts: shouldIncludeSourceExcerpts(
+        config.reporting.sourceExcerpts,
+        options.reportingSurface,
+        options.sourceExcerpts,
+      ),
+    });
     activePhase = "change-discovery";
     const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
@@ -301,6 +320,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         startedAt,
         durationMs: Math.max(0, dependencies.clock() - started),
         networkDisclosures,
+        presentationPolicy,
         summary: summarizeChecks([]),
         checks: [],
       };
@@ -352,11 +372,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         );
         activePhase = "policy-evaluation";
         const decision = dependencies.evaluate(results, config);
-        const reportedResults = shouldIncludeSourceExcerpts(
-          config.reporting.sourceExcerpts,
-          options.reportingSurface,
-          options.sourceExcerpts,
-        )
+        const reportedResults = presentationPolicy.persistSourceExcerpts
           ? await enrichSourceExcerpts(decision.results, targetInspection)
           : omitSourceExcerpts(decision.results);
         report = {
@@ -370,6 +386,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           startedAt,
           durationMs: Math.max(0, dependencies.clock() - started),
           networkDisclosures,
+          presentationPolicy,
           summary: summarizeChecks(reportedResults),
           checks: reportedResults,
         };

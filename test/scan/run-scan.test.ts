@@ -889,6 +889,12 @@ describe("runScan", () => {
         error: expected,
       },
     ]);
+    expect(report.presentationPolicy).toEqual({
+      terminalFindingLimit: 25,
+      temporaryReportRetention: 5,
+      persistSourceExcerpts: false,
+    });
+    expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
     expect(JSON.stringify(report)).not.toContain("private-token-123");
   });
 
@@ -1071,9 +1077,13 @@ describe("runScan", () => {
       target: "workspace",
       findings: [{ severity: "error" }],
     });
-    expect(JSON.stringify({ completedEvent, report })).not.toMatch(
-      /policy|unexpected/i,
-    );
+    expect(
+      JSON.stringify({
+        completedEvent,
+        checks: report.checks,
+        summary: report.summary,
+      }),
+    ).not.toMatch(/policy|unexpected/i);
   });
 
   it("blocks with a target error override even when the root check only warns", async () => {
@@ -1261,6 +1271,120 @@ describe("runScan", () => {
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
     expect(Object.isFrozen(report.summary.findings)).toBe(true);
+  });
+
+  it.each([
+    {
+      name: "documented defaults",
+      reporting: undefined,
+      reportingSurface: "text" as const,
+      sourceExcerpts: undefined,
+      expected: {
+        terminalFindingLimit: 25,
+        temporaryReportRetention: 5,
+        persistSourceExcerpts: false,
+      },
+    },
+    {
+      name: "always policy",
+      reporting: {
+        sourceExcerpts: "always" as const,
+        terminalFindingLimit: "all" as const,
+        temporaryReportRetention: 9,
+      },
+      reportingSurface: "json" as const,
+      sourceExcerpts: undefined,
+      expected: {
+        terminalFindingLimit: "all" as const,
+        temporaryReportRetention: 9,
+        persistSourceExcerpts: true,
+      },
+    },
+    {
+      name: "--include-source over interactive",
+      reporting: {
+        sourceExcerpts: "interactive" as const,
+        terminalFindingLimit: 11,
+        temporaryReportRetention: 3,
+      },
+      reportingSurface: "text" as const,
+      sourceExcerpts: "include" as const,
+      expected: {
+        terminalFindingLimit: 11,
+        temporaryReportRetention: 3,
+        persistSourceExcerpts: true,
+      },
+    },
+    {
+      name: "--no-source over always",
+      reporting: {
+        sourceExcerpts: "always" as const,
+        terminalFindingLimit: 7,
+        temporaryReportRetention: 2,
+      },
+      reportingSurface: "ink" as const,
+      sourceExcerpts: "exclude" as const,
+      expected: {
+        terminalFindingLimit: 7,
+        temporaryReportRetention: 2,
+        persistSourceExcerpts: false,
+      },
+    },
+  ])(
+    "retains the resolved presentation policy for $name",
+    async ({
+      reporting,
+      reportingSurface,
+      sourceExcerpts,
+      expected,
+    }) => {
+      const resolved = resolveConfig({
+        schemaVersion: 1,
+        profile: "recommended",
+        ...(reporting === undefined ? {} : { reporting }),
+      });
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        reportingSurface,
+        ...(sourceExcerpts === undefined ? {} : { sourceExcerpts }),
+        dependencies: dependencies([], {
+          loadConfig: async () => resolved,
+        }),
+      });
+
+      expect(report.presentationPolicy).toEqual(expected);
+      expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
+    },
+  );
+
+  it("retains resolved presentation policy on a fail-closed report", async () => {
+    const resolved = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      reporting: {
+        sourceExcerpts: "always",
+        terminalFindingLimit: "all",
+        temporaryReportRetention: 8,
+      },
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      reportingSurface: "sarif",
+      dependencies: dependencies([], {
+        loadConfig: async () => resolved,
+        dispatch: async () => {
+          throw new Error("sensitive adapter failure");
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report.presentationPolicy).toEqual({
+      terminalFindingLimit: "all",
+      temporaryReportRetention: 8,
+      persistSourceExcerpts: true,
+    });
+    expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
   });
 
   it("enriches policy results before cleanup and keeps the summary aligned", async () => {

@@ -83,6 +83,11 @@ export function createReport(overrides: Partial<ScanReport> = {}): ScanReport {
     startedAt: "2026-08-15T00:00:00.000Z",
     durationMs: 15,
     networkDisclosures: [],
+    presentationPolicy: {
+      terminalFindingLimit: 25,
+      temporaryReportRetention: 5,
+      persistSourceExcerpts: false,
+    },
     summary,
     checks,
     ...overrides,
