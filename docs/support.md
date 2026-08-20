@@ -51,9 +51,9 @@ Secret findings and overlapping source excerpts are always redacted. Zedbee neve
 
 ## Reports and automation
 
-Ink is the interactive human interface. Automatic Ink or text output is limited to 25 findings by default. When there are more, Zedbee writes a complete JSON report to protected operating-system temporary storage and prints its path with `NEXT STEPS`; `reporting.terminalFindingLimit: "all"` disables abbreviation. The default `temporaryReportRetention` is 5 subsequent runs, although the operating system may delete temporary files earlier.
+Ink is the interactive human interface. Both automatically selected Ink/text output and explicit `--format ink` are limited to 25 findings by default. When there are more, Zedbee writes a complete JSON report to protected operating-system temporary storage and prints its path with `NEXT STEPS`; `reporting.terminalFindingLimit: "all"` disables abbreviation. The default `temporaryReportRetention` is 5 subsequent runs, although the operating system may delete temporary files earlier.
 
-Stable text, versioned JSON, and SARIF 2.1.0 are suitable for redirection, coding tools, and CI. Every explicit text, JSON, and SARIF export is complete: it includes every finding and incomplete-scan notification, has no finding cap, and creates no automatic report file.
+Stable text, versioned JSON, and SARIF 2.1.0 are suitable for redirection, coding tools, and CI. Every explicit text, JSON, and SARIF export is complete: it includes every finding and incomplete-scan notification, has no finding cap, and creates no automatic report file. Forced Ink remains a bounded preview rather than a complete export.
 
 ```bash
 npx zedbee scan --format text > zedbee-report.txt

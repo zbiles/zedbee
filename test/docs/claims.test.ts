@@ -121,13 +121,25 @@ describe("public documentation claims", () => {
     expect(publicDocs).toMatch(
       /temporaryReportRetention[^.]*default[^.]*5 subsequent runs/i,
     );
-    expect(reporting).toMatch(/explicit text, JSON, and SARIF[^.]*complete/i);
+    expect(reporting).toMatch(
+      /explicit text \(`--format text`\), JSON \(`--format json`\), and SARIF \(`--format sarif`\)[^.]*complete/i,
+    );
     expect(reporting).toMatch(
       /path[^.]*printed only after[^.]*complete report[^.]*exists/i,
     );
     expect(reporting).toMatch(/fixing only[^.]*preview[^.]*insufficient/i);
+    expect(reporting).toMatch(
+      /explicit `?--format ink`?[^.]*bounded[^.]*preview/i,
+    );
     expect(privacy).toMatch(/protected operating-system temporary storage/i);
     expect(privacy).toMatch(/operating system[^.]*delete[^.]*early/i);
+    expect(privacy).toMatch(
+      /owner-only POSIX permissions[^.]*where supported/i,
+    );
+    expect(privacy).toMatch(/user-specific OS temporary[^.]*other platforms/i);
+    expect(privacy).not.toMatch(
+      /each managed directory is restricted to the current OS user/i,
+    );
     expect(privacy).toMatch(
       /interactive[^.]*source excerpts[^.]*disk[^.]*source-excerpt policy/i,
     );

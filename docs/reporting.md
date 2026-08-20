@@ -2,7 +2,7 @@
 
 ## Automatic terminal output
 
-An automatic scan (`zedbee scan` or `zedbee scan --format auto`) uses Ink in an interactive terminal and text when redirected. Automatic output shows up to 25 findings by default. If a scan has more, Zedbee saves the complete versioned JSON report in protected operating-system temporary storage before it prints a `NEXT STEPS` preview. The path is printed only after a complete report exists. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
+An automatic scan (`zedbee scan` or `zedbee scan --format auto`) uses Ink in an interactive terminal and text when redirected. Automatically selected output shows up to 25 findings by default. Explicit `--format ink` uses the same bounded terminal preview even when Ink is forced. If either surface has more findings, Zedbee saves the complete versioned JSON report in protected operating-system temporary storage before it prints a `NEXT STEPS` preview. The path is printed only after a complete report exists. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
 
 Configure the limit and run-based retention without making any lockfile changes:
 
@@ -25,7 +25,7 @@ Cleanup and write warnings are non-blocking report-maintenance diagnostics and d
 
 ## Explicit complete exports
 
-Explicit text, JSON, and SARIF output remains complete and never uses the terminal finding limit:
+Explicit text (`--format text`), JSON (`--format json`), and SARIF (`--format sarif`) output remains complete and never uses the terminal finding limit. This complete-export guarantee does not include forced Ink:
 
 ```bash
 npx zedbee scan --format text > zedbee-report.txt
