@@ -4,14 +4,19 @@ import {
   type Diagnostic,
   type DiagnosticContext,
 } from "../doctor/diagnostics.js";
+import { renderDoctorDashboard } from "../ui/doctor-dashboard.js";
 
-export type DoctorOutputFormat = "text" | "json";
+export type DoctorOutputFormat = "auto" | "text" | "json";
 
 export interface DoctorCommandOptions extends DiagnosticContext {
   readonly format: DoctorOutputFormat;
+  readonly color: boolean;
 }
 
 export interface DoctorCommandIO {
+  readonly stdoutIsTTY: boolean;
+  readonly width: number;
+  readonly env: Record<string, string | undefined>;
   writeStdout(value: string): void;
   writeStderr(value: string): void;
 }
@@ -28,6 +33,8 @@ export interface DoctorCommandDependencies {
 const DEFAULT_DEPENDENCIES: DoctorCommandDependencies = {
   diagnose: (context) => runDiagnostics(defaultDiagnosticProbe, context),
 };
+
+const MINIMUM_DASHBOARD_WIDTH = 80;
 
 function renderText(result: DoctorCommandResult): string {
   return `${result.diagnostics
@@ -60,10 +67,21 @@ export async function executeDoctorCommand(
       ? (2 as const)
       : (0 as const);
     const result = Object.freeze({ exitCode, diagnostics });
+    const dashboard =
+      options.format === "auto" &&
+      io.stdoutIsTTY &&
+      io.width >= MINIMUM_DASHBOARD_WIDTH &&
+      io.env.TERM !== "dumb" &&
+      io.env.CI === undefined;
     io.writeStdout(
       options.format === "json"
         ? `${JSON.stringify(result, null, 2)}\n`
-        : renderText(result),
+        : dashboard
+          ? renderDoctorDashboard(result.diagnostics, {
+              width: io.width,
+              color: options.color && io.env.NO_COLOR === undefined,
+            })
+          : renderText(result),
     );
     return result;
   } catch {

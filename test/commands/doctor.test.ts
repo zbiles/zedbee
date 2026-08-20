@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   executeDoctorCommand,
+  type DoctorCommandOptions,
   type DoctorCommandIO,
 } from "../../src/commands/doctor.js";
 import {
@@ -21,15 +22,42 @@ const passProbe: DiagnosticProbe = async (id) => ({
   message: `${id} is ready.`,
 });
 
-function terminal(): DoctorCommandIO & { stdout: string[]; stderr: string[] } {
+function terminal(
+  options: {
+    readonly stdoutIsTTY?: boolean;
+    readonly width?: number;
+    readonly env?: Record<string, string | undefined>;
+  } = {},
+): DoctorCommandIO & {
+  stdout: string[];
+  stderr: string[];
+  stdoutIsTTY: boolean;
+  width: number;
+  env: Record<string, string | undefined>;
+} {
   const stdout: string[] = [];
   const stderr: string[] = [];
   return {
     stdout,
     stderr,
+    stdoutIsTTY: options.stdoutIsTTY ?? false,
+    width: options.width ?? 80,
+    env: options.env ?? {},
     writeStdout: (value) => stdout.push(value),
     writeStderr: (value) => stderr.push(value),
   };
+}
+
+function doctorOptions(
+  overrides: Partial<DoctorCommandOptions> = {},
+): DoctorCommandOptions {
+  return {
+    cwd: "/repo",
+    format: "auto",
+    environment: {},
+    color: true,
+    ...overrides,
+  } as DoctorCommandOptions;
 }
 
 describe("doctor diagnostics", () => {
@@ -389,10 +417,72 @@ describe("doctor diagnostics", () => {
 });
 
 describe("executeDoctorCommand", () => {
+  it("renders one large colored Doctor panel in a wide interactive terminal", async () => {
+    const io = terminal({ stdoutIsTTY: true, width: 100 });
+
+    await executeDoctorCommand(doctorOptions(), io, {
+      diagnose: async () => [
+        { id: "git", status: "pass", message: "Git is ready." },
+        {
+          id: "hook-state",
+          status: "warning",
+          message: "No hook is installed.",
+          remediation: "Run zedbee init.",
+        },
+        { id: "node", status: "fail", message: "Node is too old." },
+      ],
+    });
+
+    const output = io.stdout.join("");
+    expect(output).toContain("DOCTOR");
+    expect(output.match(/DOCTOR/gu)).toHaveLength(1);
+    expect(output).toContain("Git is ready.");
+    expect(output).toContain("Run zedbee init.");
+    expect(output).toContain("PASS");
+    expect(output).toContain("WARNING");
+    expect(output).toContain("FAIL");
+  });
+
+  it.each([
+    ["narrow terminal", terminal({ stdoutIsTTY: true, width: 79 }), {}],
+    ["redirected output", terminal({ stdoutIsTTY: false, width: 120 }), {}],
+    [
+      "dumb terminal",
+      terminal({ stdoutIsTTY: true, width: 120, env: { TERM: "dumb" } }),
+      { environment: { TERM: "dumb" } },
+    ],
+    [
+      "CI pseudo-terminal",
+      terminal({ stdoutIsTTY: true, width: 120, env: { CI: "true" } }),
+      { environment: { CI: "true" } },
+    ],
+  ] as const)("uses plain text for %s", async (_name, io, overrides) => {
+    await executeDoctorCommand(doctorOptions(overrides), io, {
+      diagnose: async () => [
+        { id: "git", status: "pass", message: "Git is ready." },
+      ],
+    });
+
+    expect(io.stdout.join("")).toBe("PASS git: Git is ready.\n");
+    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+  });
+
+  it("lets explicit text force the plain view in a wide terminal", async () => {
+    const io = terminal({ stdoutIsTTY: true, width: 120 });
+
+    await executeDoctorCommand(doctorOptions({ format: "text" }), io, {
+      diagnose: async () => [
+        { id: "git", status: "pass", message: "Git is ready." },
+      ],
+    });
+
+    expect(io.stdout.join("")).toBe("PASS git: Git is ready.\n");
+  });
+
   it("returns zero for pass/warning diagnostics and deterministic JSON", async () => {
     const io = terminal();
     const result = await executeDoctorCommand(
-      { cwd: "/repo", format: "json", environment: {} },
+      doctorOptions({ format: "json" }),
       io,
       {
         diagnose: async () => [
@@ -413,7 +503,7 @@ describe("executeDoctorCommand", () => {
   it("returns two on any failure and keeps piped text ANSI-free", async () => {
     const io = terminal();
     const result = await executeDoctorCommand(
-      { cwd: "/repo", format: "text", environment: {} },
+      doctorOptions({ format: "text" }),
       io,
       {
         diagnose: async () => [

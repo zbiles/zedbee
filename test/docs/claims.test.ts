@@ -153,4 +153,16 @@ describe("public documentation claims", () => {
       /coding tools[^.]*complete report path[^.]*exit code 2/i,
     );
   });
+
+  it("documents responsive Doctor output and stable plain fallbacks", async () => {
+    const readme = await read("README.md");
+
+    expect(readme).toMatch(/Doctor uses[^.]*yellow Zedbee frame/i);
+    expect(readme).toMatch(/DOCTOR` panel[^.]*wide interactive terminal/i);
+    expect(readme).toMatch(
+      /narrow terminal[^.]*redirected output[^.]*CI environment[^.]*plain text/i,
+    );
+    expect(readme).toMatch(/doctor --format text[^.]*plain/i);
+    expect(readme).toMatch(/doctor --format json[^.]*ANSI-free/i);
+  });
 });

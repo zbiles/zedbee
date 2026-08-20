@@ -242,9 +242,18 @@ describe("packaged Zedbee CLI", () => {
       "--format",
       "json",
     ]);
+    const redirected = await runPackagedCli(repository.root, ["doctor"]);
+    const help = await runPackagedCli(repository.root, ["doctor", "--help"]);
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 0 });
+    expect(redirected.exitCode).toBe(0);
+    expect(redirected.stdout).toContain("PASS git:");
+    expect(redirected.stdout).not.toContain("DOCTOR");
+    expect(redirected.stdout).not.toMatch(/\u001b\[/u);
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("auto");
+    expect(help.stdout).toContain("--no-color");
   }, 30_000);
 
   it("initializes a raw hook non-interactively from the installed package", async () => {

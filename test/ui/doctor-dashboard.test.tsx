@@ -1,0 +1,52 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalForceColor = process.env.FORCE_COLOR;
+
+afterEach(() => {
+  if (originalForceColor === undefined) delete process.env.FORCE_COLOR;
+  else process.env.FORCE_COLOR = originalForceColor;
+  vi.resetModules();
+});
+
+beforeEach(() => {
+  process.env.FORCE_COLOR = "3";
+  vi.resetModules();
+});
+
+describe("DoctorDashboard", () => {
+  it("uses Zedbee status colors within one full-width Doctor panel", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { DoctorDashboard } =
+      await import("../../src/ui/doctor-dashboard.js");
+    const frame = render(
+      React.createElement(DoctorDashboard, {
+        width: 100,
+        color: true,
+        diagnostics: [
+          { id: "git", status: "pass", message: "Git is ready." },
+          {
+            id: "hook-state",
+            status: "warning",
+            message: "No hook is installed.",
+          },
+          { id: "node", status: "fail", message: "Node is too old." },
+        ],
+      }),
+    ).lastFrame()!;
+
+    expect(frame.match(/DOCTOR/gu)).toHaveLength(1);
+    expect(frame).toContain("\u001b[38;2;85;207;130mPASS");
+    expect(frame).toContain("\u001b[38;2;232;184;76mWARNING");
+    expect(frame).toContain("\u001b[38;2;239;101;89mFAIL");
+    expect(frame).toContain("\u001b[38;2;254;205;35m");
+    expect(
+      Math.max(
+        ...frame
+          .replaceAll(/\u001b\[[0-9;]*m/gu, "")
+          .split("\n")
+          .map((line) => [...line].length),
+      ),
+    ).toBeLessThanOrEqual(100);
+  });
+});
