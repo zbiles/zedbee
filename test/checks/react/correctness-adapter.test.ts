@@ -1,13 +1,38 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
+import type { Linter } from "eslint";
 import { describe, expect, it } from "vitest";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
+import { createReactAdapter } from "../../../src/checks/react/adapter.js";
+import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
 import { reactCorrectnessAdapter } from "../../../src/checks/react/correctness-adapter.js";
+import { resolveReactVersion } from "../../../src/checks/react/version.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
-import { createInspectionFixture } from "../../inspection/fixture.js";
+import {
+  createInspectionFixture,
+  type InspectionFixture,
+} from "../../inspection/fixture.js";
+
+async function writeReactResolutionFixture(
+  fixture: InspectionFixture,
+  version: "18.3.1" | "19.2.0",
+): Promise<void> {
+  await fixture.writeJson("package.json", {
+    name: "fixture",
+    private: true,
+    dependencies: { react: ">=18 <20", "react-dom": ">=18 <20" },
+  });
+  await fixture.writeJson("package-lock.json", {
+    lockfileVersion: 3,
+    packages: {
+      "": {},
+      "node_modules/react": { version },
+    },
+  });
+}
 
 async function reactContext(
   environment: "react" | "ink",
@@ -94,6 +119,72 @@ async function reactContext(
 }
 
 describe("reactCorrectnessAdapter", () => {
+  it("calibration resolves baseline and target React versions independently", async () => {
+    const { fixtures, run } = await reactContext("react");
+    await writeReactResolutionFixture(fixtures.baseline, "18.3.1");
+    await writeReactResolutionFixture(fixtures.staged, "19.2.0");
+    const context: CheckRunContext = {
+      ...run,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+    };
+    const versions: string[] = [];
+    const configFactory = (version: string): Linter.Config => {
+      versions.push(version);
+      return managedReactCorrectnessConfig(version);
+    };
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      configFactory,
+    );
+
+    await adapter.collect(context);
+
+    expect(versions).toEqual(["18.3.1", "19.2.0"]);
+  });
+
+  it("calibration never executes project React from node_modules", async () => {
+    const { fixtures, run } = await reactContext("react");
+    await writeReactResolutionFixture(fixtures.staged, "19.2.0");
+    await fixtures.staged.write(
+      "node_modules/react/index.js",
+      [
+        `require("node:fs").writeFileSync(${JSON.stringify(join(fixtures.staged.root, "REACT_EXECUTED"))}, "yes");`,
+        "module.exports = {};",
+        "",
+      ].join("\n"),
+    );
+    const targetInspection = await inspectRepository(fixtures.staged.root);
+    const context: CheckRunContext = {
+      ...run,
+      targetInspection,
+    };
+    const versions: string[] = [];
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      (version): Linter.Config => {
+        versions.push(version);
+        return managedReactCorrectnessConfig(version);
+      },
+    );
+
+    await adapter.collect(context);
+
+    const workspace = targetInspection.workspaces.find(
+      ({ relativeRoot }) => relativeRoot === ".",
+    );
+    expect(workspace).toBeDefined();
+    await expect(
+      resolveReactVersion(targetInspection, workspace!),
+    ).resolves.toEqual({ version: "19.2.0", source: "lockfile" });
+    expect(versions[1]).toBe("19.2.0");
+    await expect(
+      access(join(fixtures.staged.root, "REACT_EXECUTED")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it.each(["react", "ink"] as const)(
     "finds Rules of Hooks and missing-key violations in a %s workspace",
     async (environment) => {

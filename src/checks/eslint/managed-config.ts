@@ -21,23 +21,36 @@ export const readabilityComplexityPlugin: ESLint.Plugin = Object.freeze({
 export type ManagedEslintMode =
   "lint" | "complexity" | "react-correctness" | "react-accessibility";
 
+export type ReactCorrectnessConfigFactory = (
+  reactVersion: string,
+) => Linter.Config;
+
 export interface ManagedConfigOptions {
   readonly mode: ManagedEslintMode;
   readonly managedIgnores: readonly string[];
+  readonly reactVersion?: string;
+  readonly reactCorrectnessConfigFactory?: ReactCorrectnessConfigFactory;
   readonly typedProject?: {
     readonly programs: readonly ts.Program[];
   };
 }
 
-function modePlugins(mode: ManagedEslintMode): Linter.Config | undefined {
-  switch (mode) {
+function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
+  switch (options.mode) {
     case "lint":
       return {
         files: SOURCE_FILES,
         plugins: { "@typescript-eslint": tseslint.plugin },
       };
     case "react-correctness":
-      return managedReactCorrectnessConfig();
+      if (options.reactVersion === undefined) {
+        throw new TypeError(
+          "Managed React correctness requires a React version.",
+        );
+      }
+      return (
+        options.reactCorrectnessConfigFactory ?? managedReactCorrectnessConfig
+      )(options.reactVersion);
     case "react-accessibility":
       return managedReactAccessibilityConfig();
     case "complexity":
@@ -108,7 +121,7 @@ export function managedConfig(
       }
     }
   }
-  const plugins = modePlugins(options.mode);
+  const plugins = modePlugins(options);
   if (plugins !== undefined) config.push(plugins);
   return config;
 }

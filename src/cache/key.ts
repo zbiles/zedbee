@@ -18,7 +18,7 @@ const ENGINE_IDENTITIES = Object.freeze({
   dependencyArchitecture: "dependency-cruiser@18.2.0+zedbee-rules-v1",
   deadCode: "knip@6.32.2+zedbee-managed-config-v1",
   reactCorrectness:
-    "eslint@9.39.5+eslint-plugin-react@7.37.5+react-hooks@7.1.1",
+    "eslint@9.39.5+eslint-plugin-react@7.37.5+react-hooks@7.1.1+zedbee-react-calibration-v2",
   reactAccessibility: "eslint@9.39.5+eslint-plugin-jsx-a11y@6.10.2",
 } as const);
 

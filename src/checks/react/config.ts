@@ -19,7 +19,9 @@ type HooksFlatConfigs = {
   readonly recommended: Linter.Config;
 };
 
-export function managedReactCorrectnessConfig(): Linter.Config {
+export function managedReactCorrectnessConfig(
+  reactVersion: string,
+): Linter.Config {
   const reactConfigs = reactPlugin.configs.flat as unknown as ReactFlatConfigs;
   const hooksConfigs = reactHooksPlugin.configs.flat as HooksFlatConfigs;
   return {
@@ -28,7 +30,7 @@ export function managedReactCorrectnessConfig(): Linter.Config {
       react: reactPlugin,
       "react-hooks": reactHooksPlugin as unknown as ESLint.Plugin,
     },
-    settings: { react: { version: "19.2" } },
+    settings: { react: { version: reactVersion } },
     rules: {
       ...reactConfigs.recommended.rules,
       ...reactConfigs["jsx-runtime"].rules,

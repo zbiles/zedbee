@@ -15,7 +15,12 @@ import type {
 } from "../adapter.js";
 import { convertEslintMessage } from "../eslint/convert-message.js";
 import { createManagedEslint } from "../eslint/load-engine.js";
-import type { ManagedEslintMode } from "../eslint/managed-config.js";
+import type {
+  ManagedEslintMode,
+  ReactCorrectnessConfigFactory,
+} from "../eslint/managed-config.js";
+import { managedReactCorrectnessConfig } from "./config.js";
+import { resolveReactVersion } from "./version.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const REACT_ENVIRONMENTS = new Set<Environment>([
@@ -57,6 +62,7 @@ async function collectSide(
   target: CheckTarget,
   id: "reactCorrectness" | "reactAccessibility",
   mode: ManagedEslintMode,
+  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
 ): Promise<readonly Observation[]> {
   const failure =
     id === "reactCorrectness"
@@ -72,10 +78,18 @@ async function collectSide(
       .sort(compareCodeUnits);
     if (files.length === 0) return Object.freeze([]);
 
+    const reactVersion =
+      mode === "react-correctness"
+        ? (await resolveReactVersion(inspection, workspace)).version
+        : undefined;
+
     const engine = createManagedEslint({
       cwd: canonicalRoot,
       mode,
       managedIgnores: [],
+      ...(reactVersion === undefined
+        ? {}
+        : { reactVersion, reactCorrectnessConfigFactory }),
     });
     const results = await engine.lintFiles(files);
     const allowed = new Set(files);
@@ -106,6 +120,7 @@ async function collectSide(
 export function createReactAdapter(
   id: "reactCorrectness" | "reactAccessibility",
   mode: ManagedEslintMode,
+  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory = managedReactCorrectnessConfig,
 ): ObservationCheckAdapter {
   const environments =
     id === "reactAccessibility" ? DOM_ENVIRONMENTS : REACT_ENVIRONMENTS;
@@ -148,22 +163,22 @@ export function createReactAdapter(
       };
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
-      const [baselineObservations, targetObservations] = await Promise.all([
-        collectSide(
-          context.snapshots.baselineDir,
-          context.baselineInspection,
-          context.target,
-          id,
-          mode,
-        ),
-        collectSide(
-          context.snapshots.targetDir,
-          context.targetInspection,
-          context.target,
-          id,
-          mode,
-        ),
-      ]);
+      const baselineObservations = await collectSide(
+        context.snapshots.baselineDir,
+        context.baselineInspection,
+        context.target,
+        id,
+        mode,
+        reactCorrectnessConfigFactory,
+      );
+      const targetObservations = await collectSide(
+        context.snapshots.targetDir,
+        context.targetInspection,
+        context.target,
+        id,
+        mode,
+        reactCorrectnessConfigFactory,
+      );
       return {
         checkId: id,
         target: context.target,

@@ -81,10 +81,11 @@ class ManagedEslint extends ESLint {
 }
 
 export function createManagedEslint(options: ManagedEslintOptions): ESLint {
+  const { cwd, ...configOptions } = options;
   return new ManagedEslint({
-    cwd: options.cwd,
+    cwd,
     overrideConfigFile: true,
-    overrideConfig: [...managedConfig(options)],
+    overrideConfig: [...managedConfig(configOptions)],
     fix: false,
     errorOnUnmatchedPattern: false,
     globInputPaths: false,

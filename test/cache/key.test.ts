@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
+import { observationCacheEngineIdentity } from "../../src/cache/key.js";
 import type { ObservationCache } from "../../src/cache/store.js";
-import type { CheckAdapter, CheckRunContext } from "../../src/checks/adapter.js";
+import type {
+  CheckAdapter,
+  CheckRunContext,
+} from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 
-function contextFor(
-  snapshotRoot: string,
-  specifier: string,
-): CheckRunContext {
+function contextFor(snapshotRoot: string, specifier: string): CheckRunContext {
   const config = resolveConfig({ schemaVersion: 1, profile: "fast" });
   const inspection: RepositoryInspection = {
     snapshotRoot,
@@ -68,6 +69,12 @@ const adapter = {
 } satisfies CheckAdapter;
 
 describe("observation cache keys", () => {
+  it("versions React correctness calibration in the engine identity", () => {
+    expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
+      "zedbee-react-calibration-v2",
+    );
+  });
+
   it("separates otherwise identical inspections by staged React declaration", async () => {
     const fixture = await createInspectionFixture();
     await fixture.write("src/value.ts", "export const value = 1;\n");
