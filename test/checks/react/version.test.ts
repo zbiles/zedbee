@@ -54,6 +54,16 @@ describe("resolveReactVersion manifest fallback", () => {
     ["an exact version", "18.3.1", "18.3.1"],
     ["a caret range", "^18.2.0", "18.2.0"],
     ["a peer-only bounded range", ">=18 <20", "18.0.0"],
+    [
+      "a range with an admitted stable release after a prerelease minimum",
+      ">=19.0.0-beta.1 <20",
+      "19.0.0",
+    ],
+    [
+      "an OR range with a prerelease-only first comparator set",
+      ">=19.0.0-beta.1 <19.0.0 || >=20.0.0 <21",
+      "20.0.0",
+    ],
   ])(
     "resolves %s to its minimum stable version",
     async (_name, specifier, version) => {
@@ -82,7 +92,6 @@ describe("resolveReactVersion manifest fallback", () => {
     ["a Git dependency", "github:facebook/react"],
     ["a URL dependency", "https://example.test/react.tgz"],
     ["an invalid range", "not-a-version"],
-    ["a prerelease-only range", ">=19.0.0-beta.1 <19.0.0"],
   ])("uses the managed fallback for %s", async (_name, specifier) => {
     await expect(
       resolveManifest([declaration("dependencies", specifier)]),
@@ -91,6 +100,21 @@ describe("resolveReactVersion manifest fallback", () => {
       source: "fallback",
     });
   });
+
+  it.each([
+    ["a prerelease-only range", ">=19.0.0-beta.1 <19.0.0"],
+    ["an exact prerelease declaration", "19.0.0-beta.1"],
+  ])(
+    "uses the managed fallback for peer dependency %s",
+    async (_name, specifier) => {
+      await expect(
+        resolveManifest([declaration("peerDependencies", specifier)]),
+      ).resolves.toEqual({
+        version: "19.2.0",
+        source: "fallback",
+      });
+    },
+  );
 
   it("uses the managed fallback when React is undeclared", async () => {
     await expect(

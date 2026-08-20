@@ -1,5 +1,12 @@
 import { posix } from "node:path";
-import { minVersion, satisfies, valid, validRange } from "semver";
+import {
+  minVersion,
+  Range,
+  SemVer,
+  satisfies,
+  valid,
+  validRange,
+} from "semver";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import type {
   DependencyDeclaration,
@@ -52,6 +59,30 @@ function selectedReactDeclaration(
   return undefined;
 }
 
+function minimumStableVersion(range: string): string | undefined {
+  let earliest: SemVer | undefined;
+
+  for (const comparatorSet of new Range(range).set) {
+    const minimum = minVersion(
+      comparatorSet.map((comparator) => comparator.value).join(" "),
+    );
+    if (minimum === null) continue;
+
+    const candidate =
+      minimum.prerelease.length === 0
+        ? minimum
+        : new SemVer(`${minimum.major}.${minimum.minor}.${minimum.patch}`);
+    if (!comparatorSet.every((comparator) => comparator.test(candidate))) {
+      continue;
+    }
+    if (earliest === undefined || candidate.compare(earliest) < 0) {
+      earliest = candidate;
+    }
+  }
+
+  return earliest?.version;
+}
+
 function resolveManifestVersion(
   workspace: WorkspaceInspection,
 ): ManifestResolution {
@@ -62,24 +93,16 @@ function resolveManifestVersion(
     return { resolution: FALLBACK_RESOLUTION };
   }
 
-  const exactVersion = valid(declaration.specifier);
-  if (exactVersion !== null) {
-    return {
-      resolution: { version: exactVersion, source: "manifest" },
-      range: exactVersion,
-    };
-  }
-
   const range = validRange(declaration.specifier);
   if (range === null) {
     return { resolution: FALLBACK_RESOLUTION };
   }
-  const minimum = minVersion(range);
-  if (minimum === null || minimum.prerelease.length > 0) {
+  const minimum = minimumStableVersion(range);
+  if (minimum === undefined) {
     return { resolution: FALLBACK_RESOLUTION };
   }
   return {
-    resolution: { version: minimum.version, source: "manifest" },
+    resolution: { version: minimum, source: "manifest" },
     range,
   };
 }
