@@ -11,14 +11,28 @@ configuration.
 
 ## React version calibration
 
-Zedbee currently fixes the managed plugin setting to React 19.2 instead of using
-the plugin's `detect` mode. Detection would probe the scanned project's installed
-package tree, while a fixed value keeps analysis deterministic and prevents
-project package code or mutable working-tree metadata from entering the analyzer
-boundary.
+For each workspace and each isolated snapshot, React correctness independently
+calibrates the managed React plugin from staged data. It first reads the direct
+`react` declaration from that workspace's staged package.json. If its exact
+version or supported semver range can be resolved, Zedbee then prefers one
+unambiguous matching direct record from a supported staged lockfile:
+`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`, or
+`bun.lock`. An exact workspace importer wins; otherwise a lockfile-wide record
+may be used only when that lockfile owns the workspace. This prevents a sibling
+workspace's lockfile record from calibrating the wrong package in a monorepo.
 
-Negative impact: version-sensitive rules, especially deprecated-API rules, may
-not perfectly match projects on older or newer React releases. Rules of Hooks,
-missing list keys, and DOM accessibility rules do not depend on that version
-setting. A future release may derive the declared React version from the inert
-staged package manifest once that value is part of the inspection contract.
+If the manifest declaration is absent or unsupported, the lockfile cannot be
+parsed, no matching record is unambiguous, or the record belongs to another
+workspace, Zedbee silently uses the resolvable staged manifest version instead.
+If that is unavailable too, it silently falls back to Zedbee's managed React
+19.2 baseline. This makes calibration deterministic and gives version-sensitive
+rules more appropriate input without requiring developers to edit lockfiles for
+Zedbee.
+
+Zedbee deliberately does not use eslint-plugin-react's `detect` mode: it would
+probe the scanned project's installed package tree. React calibration parses
+only staged manifests and lockfiles and never loads project node_modules or
+executes project React code. Baseline and target snapshots are calibrated
+independently, so a staged React upgrade is analyzed with each side's own
+declared dependency state. Rules of Hooks, missing list keys, and DOM
+accessibility rules do not depend on the React version setting.

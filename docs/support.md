@@ -10,7 +10,7 @@ This document distinguishes implemented coverage from unsupported or deferred be
 | Operating systems | Linux, macOS, and Windows                                    | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform.      |
 | Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts` | Zedbee targets JavaScript and TypeScript initially.                                                                                            |
 | Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces               | Discovery uses staged manifests and workspace declarations without running lifecycle scripts.                                                  |
-| React             | React, React DOM, Ink, Next.js, and Remix correctness        | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink.                                                                         |
+| React             | React, React DOM, Ink, Next.js, and Remix correctness        | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink. React correctness calibrates each snapshot/workspace from staged dependency data. |
 | Git input         | Exact staged index against committed `HEAD`                  | Intent-to-add entries are excluded. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete. |
 
 ## Dependency vulnerability inventories
@@ -26,9 +26,20 @@ This document distinguishes implemented coverage from unsupported or deferred be
 
 Text lockfiles are limited to 8 MiB and are rejected before an oversized body is loaded into memory. Parsed structure, nesting, strings, dependency records, and OSV query counts have additional fixed safety limits. pnpm and modern Yarn YAML alias references—including anchor-based reuse—are deliberately rejected rather than expanded, so the vulnerability check reports incomplete. Regenerate the lockfile with the package manager instead of hand-authoring reusable YAML nodes.
 
+React correctness can also use these supported staged lockfiles to refine a
+workspace's direct staged `react` declaration. It uses only an unambiguous,
+compatible record associated with that workspace; monorepo sibling records do
+not qualify. Missing, unsupported, unreadable, or ambiguous lockfile data falls
+back silently to the staged manifest version and then Zedbee's managed React
+19.2 baseline. Users do not need to change a lockfile for React calibration.
+
 ## Project-analysis resolution boundary
 
 Managed Knip analysis does not permit an imported package beneath `node_modules` to be supplied by the staged snapshot or by an ancestor directory. This prevents repository-controlled package code from entering analyzer module resolution. A repository that commits such a package receives an incomplete `deadCode` result; remove the committed package and restore dependencies through the package manager and lockfile. Ordinary ignored, locally installed dependencies remain supported.
+
+React calibration likewise does not use plugin `detect` mode and never loads
+project `node_modules`; it parses staged package manifests and supported
+lockfiles instead, so it does not execute project React code.
 
 When enabled, vulnerability analysis sends package name, exact version, and the npm ecosystem identifier to `api.osv.dev`. It is online only. Configure `checks.vulnerabilities.onUnavailable` as `block` or `warn`; `zedbee init` presents that choice and its disclosure.
 
