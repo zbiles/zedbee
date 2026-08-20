@@ -104,4 +104,39 @@ describe("public documentation claims", () => {
       /cleanup failure[^.]*disclose one validated Zedbee temporary directory/i,
     );
   });
+
+  it("documents bounded automatic terminal reports and their complete-report contract", async () => {
+    const [readme, reporting, privacy, support] = await Promise.all([
+      read("README.md"),
+      read("docs/reporting.md"),
+      read("docs/privacy.md"),
+      read("docs/support.md"),
+    ]);
+    const publicDocs = [readme, reporting, privacy, support].join("\n");
+
+    expect(readme).toContain('"terminalFindingLimit": 25');
+    expect(readme).toContain('"temporaryReportRetention": 5');
+    expect(publicDocs).toMatch(/terminalFindingLimit[^.]*default[^.]*25/i);
+    expect(publicDocs).toMatch(/terminalFindingLimit[^.]*"all"/i);
+    expect(publicDocs).toMatch(
+      /temporaryReportRetention[^.]*default[^.]*5 subsequent runs/i,
+    );
+    expect(reporting).toMatch(/explicit text, JSON, and SARIF[^.]*complete/i);
+    expect(reporting).toMatch(
+      /path[^.]*printed only after[^.]*complete report[^.]*exists/i,
+    );
+    expect(reporting).toMatch(/fixing only[^.]*preview[^.]*insufficient/i);
+    expect(privacy).toMatch(/protected operating-system temporary storage/i);
+    expect(privacy).toMatch(/operating system[^.]*delete[^.]*early/i);
+    expect(privacy).toMatch(
+      /interactive[^.]*source excerpts[^.]*disk[^.]*source-excerpt policy/i,
+    );
+    expect(support).toMatch(/cleanup and write warnings[^.]*non-blocking/i);
+    expect(support).toMatch(
+      /write failure[^.]*restores[^.]*full terminal output/i,
+    );
+    expect(support).toMatch(
+      /coding tools[^.]*complete report path[^.]*exit code 2/i,
+    );
+  });
 });

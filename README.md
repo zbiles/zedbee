@@ -65,7 +65,11 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
     "readabilityComplexity": { "max": 15, "blockWorsening": true },
     "vulnerabilities": { "severity": "error", "onUnavailable": "block" },
   },
-  "reporting": { "sourceExcerpts": "interactive" },
+  "reporting": {
+    "sourceExcerpts": "interactive",
+    "terminalFindingLimit": 25,
+    "temporaryReportRetention": 5,
+  },
   "failOnIncomplete": true,
 }
 ```
@@ -73,6 +77,8 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. The managed defaults are cyclomatic complexity 20 and readability complexity 15; both block a staged increase that remains above the configured limit.
 
 `reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, JSON, and SARIF. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
+
+`reporting.terminalFindingLimit` defaults to 25 findings for automatic terminal output; set it to a positive integer or `"all"`. When an automatic Ink or text result exceeds the limit, Zedbee first saves the complete versioned JSON report in protected operating-system temporary storage and then shows a preview plus its path. `reporting.temporaryReportRetention` defaults to 5 subsequent runs, after which Zedbee removes that report when it next performs report maintenance. The operating system may delete temporary files earlier.
 
 The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
 
@@ -130,9 +136,11 @@ npx zedbee scan --format sarif > zedbee.sarif
 npx zedbee scan --format text --include-source > zedbee-report-with-source.txt
 ```
 
-Ink, text, JSON, and SARIF print every finding. There is no finding cap, X-of-Y summary that hides remaining findings, or automatic report file; choose a non-interactive format and redirect it explicitly when you need a saved report. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](docs/reporting.md) for its complete contract, including incomplete-scan notifications and source-excerpt behavior.
+Automatic Ink and text output shows at most `reporting.terminalFindingLimit` findings. If more exist, Zedbee prints a `NEXT STEPS` section with the complete temporary JSON report path and its run-based expiration; a report path is printed only after the complete report exists. Fixing only the visible preview is insufficient—process every finding in the complete report. If the report cannot be written, Zedbee warns and restores full terminal output instead of hiding findings.
 
-For coding agents and CI, prefer `zedbee scan --format json` or `zedbee scan --format sarif` when the receiving system ingests SARIF. Both are versioned, deterministically ordered, ANSI-free, repository-relative, and include stable finding IDs, attribution evidence, incomplete states, and network disclosures. Agents should treat exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
+Explicit `--format text`, `--format json`, and `--format sarif` output remains complete, has no finding cap, and creates no automatic report file. Redirect an explicit format when you need to choose the saved location. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](docs/reporting.md) for the full contract, including incomplete-scan notifications, retention, and source-excerpt behavior.
+
+For coding tools and CI, prefer `zedbee scan --format json` or `zedbee scan --format sarif` when the receiving system ingests SARIF. Both are versioned, deterministically ordered, ANSI-free, repository-relative, and include stable finding IDs, attribution evidence, incomplete states, and network disclosures. When automatic output provides a complete report path, coding tools must process that file rather than only the preview. They must respect exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
 
 ## Exit codes
 
