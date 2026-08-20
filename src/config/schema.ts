@@ -22,9 +22,12 @@ export type ProfileId = (typeof PROFILE_IDS)[number];
 export type CheckSeverity = "off" | "warn" | "error";
 export type CheckTiming = "relevant" | "always";
 export type SourceExcerptPolicy = "never" | "interactive" | "always";
+export type TerminalFindingLimit = number | "all";
 
 export interface ResolvedReportingPolicy {
   readonly sourceExcerpts: SourceExcerptPolicy;
+  readonly terminalFindingLimit: TerminalFindingLimit;
+  readonly temporaryReportRetention: number;
 }
 
 export interface ResolvedCheckPolicy {
@@ -63,6 +66,7 @@ const checkTimingSchema = z.enum(["relevant", "always"]).meta({
   default: "relevant",
 });
 const positiveIntegerSchema = z.number().int().positive();
+const positiveSafeIntegerSchema = z.number().int().positive().safe();
 const percentageSchema = z.number().finite().min(0).max(100);
 
 const commonPolicyFields = {
@@ -188,6 +192,18 @@ const reportingSchema = z
       description:
         "Include exact staged source excerpts never, only in Ink, or in every report format.",
       default: "interactive",
+    }),
+    terminalFindingLimit: z
+      .union([positiveSafeIntegerSchema, z.literal("all")])
+      .optional()
+      .meta({
+        description:
+          'Maximum findings presented automatically in terminal output; use "all" to present every finding.',
+        default: 25,
+      }),
+    temporaryReportRetention: positiveSafeIntegerSchema.optional().meta({
+      description: "Number of temporary reports retained for subsequent scans.",
+      default: 5,
     }),
   })
   .strict();

@@ -42,6 +42,8 @@ const validExamples = [
 ] as const;
 
 const validSourceExcerptPolicies = ["never", "interactive", "always"] as const;
+const validTerminalFindingLimits = [1, 25, "all"] as const;
+const validTemporaryReportRetentions = [1, 5, 9] as const;
 
 function validator() {
   const ajv = new Ajv({ allErrors: true });
@@ -79,6 +81,35 @@ describe("Zedbee configuration JSON Schema", () => {
     },
   );
 
+  it.each(validTerminalFindingLimits)(
+    "accepts the %s terminal finding limit in both validators",
+    (terminalFindingLimit) => {
+      const input = { schemaVersion: 1, reporting: { terminalFindingLimit } };
+      const validate = validator();
+
+      expect(configFileSchema.safeParse(input).success).toBe(true);
+      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+    },
+  );
+
+  it.each(validTemporaryReportRetentions)(
+    "accepts the %s subsequent-scan temporary report retention in both validators",
+    (temporaryReportRetention) => {
+      const input = {
+        schemaVersion: 1,
+        reporting: { temporaryReportRetention },
+      };
+      const validate = validator();
+
+      expect(configFileSchema.safeParse(input).success).toBe(true);
+      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+    },
+  );
+
   it.each([
     {
       name: "unknown root key",
@@ -91,6 +122,61 @@ describe("Zedbee configuration JSON Schema", () => {
     {
       name: "unknown reporting key",
       input: { schemaVersion: 1, reporting: { surprise: true } },
+    },
+    {
+      name: "zero terminal finding limit",
+      input: { schemaVersion: 1, reporting: { terminalFindingLimit: 0 } },
+    },
+    {
+      name: "negative terminal finding limit",
+      input: { schemaVersion: 1, reporting: { terminalFindingLimit: -1 } },
+    },
+    {
+      name: "fractional terminal finding limit",
+      input: { schemaVersion: 1, reporting: { terminalFindingLimit: 1.5 } },
+    },
+    {
+      name: "unsafe terminal finding limit",
+      input: {
+        schemaVersion: 1,
+        reporting: { terminalFindingLimit: 9_007_199_254_740_992 },
+      },
+    },
+    {
+      name: "numeric string terminal finding limit",
+      input: { schemaVersion: 1, reporting: { terminalFindingLimit: "25" } },
+    },
+    {
+      name: "zero temporary report retention",
+      input: { schemaVersion: 1, reporting: { temporaryReportRetention: 0 } },
+    },
+    {
+      name: "negative temporary report retention",
+      input: {
+        schemaVersion: 1,
+        reporting: { temporaryReportRetention: -1 },
+      },
+    },
+    {
+      name: "fractional temporary report retention",
+      input: {
+        schemaVersion: 1,
+        reporting: { temporaryReportRetention: 1.5 },
+      },
+    },
+    {
+      name: "unsafe temporary report retention",
+      input: {
+        schemaVersion: 1,
+        reporting: { temporaryReportRetention: 9_007_199_254_740_992 },
+      },
+    },
+    {
+      name: "numeric string temporary report retention",
+      input: {
+        schemaVersion: 1,
+        reporting: { temporaryReportRetention: "5" },
+      },
     },
     {
       name: "file-scoped OSV availability policy",
@@ -149,7 +235,11 @@ describe("Zedbee configuration JSON Schema", () => {
         };
         overrides: { default: unknown[]; description: string };
         reporting: {
-          properties: { sourceExcerpts: { default: string } };
+          properties: {
+            sourceExcerpts: { default: string };
+            terminalFindingLimit: { default: number };
+            temporaryReportRetention: { default: number };
+          };
         };
         failOnIncomplete: { default: boolean; description: string };
       };
@@ -163,7 +253,11 @@ describe("Zedbee configuration JSON Schema", () => {
         checks: { default: {} },
         overrides: { default: [] },
         reporting: {
-          properties: { sourceExcerpts: { default: "interactive" } },
+          properties: {
+            sourceExcerpts: { default: "interactive" },
+            terminalFindingLimit: { default: 25 },
+            temporaryReportRetention: { default: 5 },
+          },
         },
         failOnIncomplete: { default: true },
       },

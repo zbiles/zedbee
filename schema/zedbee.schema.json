@@ -854,6 +854,28 @@
           "default": "interactive",
           "type": "string",
           "enum": ["never", "interactive", "always"]
+        },
+        "terminalFindingLimit": {
+          "description": "Maximum findings presented automatically in terminal output; use \"all\" to present every finding.",
+          "default": 25,
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            {
+              "type": "string",
+              "const": "all"
+            }
+          ]
+        },
+        "temporaryReportRetention": {
+          "description": "Number of temporary reports retained for subsequent scans.",
+          "default": 5,
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "additionalProperties": false

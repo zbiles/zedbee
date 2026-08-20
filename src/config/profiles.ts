@@ -133,6 +133,8 @@ export function resolveConfig(
     overrides: resolveOverrides(file),
     reporting: {
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
+      terminalFindingLimit: file?.reporting?.terminalFindingLimit ?? 25,
+      temporaryReportRetention: file?.reporting?.temporaryReportRetention ?? 5,
     },
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };

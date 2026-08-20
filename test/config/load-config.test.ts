@@ -35,18 +35,22 @@ describe("loadConfig", () => {
     expect(config.overrides).toEqual([]);
     expect(config.reporting).toEqual({
       sourceExcerpts: "interactive",
+      terminalFindingLimit: 25,
+      temporaryReportRetention: 5,
     });
   });
 
-  it("applies the configured source excerpt reporting policy", async () => {
+  it("applies the configured reporting policy", async () => {
     const root = await createRepositoryRoot();
     await writeFile(
       join(root, ".zedbeerc.jsonc"),
-      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always"}}',
+      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always","terminalFindingLimit":"all","temporaryReportRetention":9}}',
     );
 
     expect((await loadConfig(root)).reporting).toEqual({
       sourceExcerpts: "always",
+      terminalFindingLimit: "all",
+      temporaryReportRetention: 9,
     });
   });
 
@@ -224,6 +228,54 @@ describe("loadConfig", () => {
     {
       name: "invalid source excerpt reporting policy",
       source: '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
+    },
+    {
+      name: "zero terminal finding limit",
+      source: '{"schemaVersion":1,"reporting":{"terminalFindingLimit":0}}',
+    },
+    {
+      name: "negative terminal finding limit",
+      source: '{"schemaVersion":1,"reporting":{"terminalFindingLimit":-1}}',
+    },
+    {
+      name: "fractional terminal finding limit",
+      source: '{"schemaVersion":1,"reporting":{"terminalFindingLimit":1.5}}',
+    },
+    {
+      name: "unsafe terminal finding limit",
+      source:
+        '{"schemaVersion":1,"reporting":{"terminalFindingLimit":9007199254740992}}',
+    },
+    {
+      name: "numeric string terminal finding limit",
+      source: '{"schemaVersion":1,"reporting":{"terminalFindingLimit":"25"}}',
+    },
+    {
+      name: "zero temporary report retention",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportRetention":0}}',
+    },
+    {
+      name: "negative temporary report retention",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportRetention":-1}}',
+    },
+    {
+      name: "fractional temporary report retention",
+      source:
+        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":1.5}}',
+    },
+    {
+      name: "unsafe temporary report retention",
+      source:
+        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":9007199254740992}}',
+    },
+    {
+      name: "numeric string temporary report retention",
+      source:
+        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":"5"}}',
+    },
+    {
+      name: "unknown reporting setting",
+      source: '{"schemaVersion":1,"reporting":{"unexpected":true}}',
     },
     {
       name: "malformed JSONC",

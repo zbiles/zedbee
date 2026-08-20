@@ -3,6 +3,26 @@ import { resolveConfig } from "../../src/config/profiles.js";
 import { CHECK_IDS, type CheckId } from "../../src/config/schema.js";
 
 describe("managed check profiles", () => {
+  it("resolves version-1 reporting defaults", () => {
+    expect(resolveConfig(undefined).reporting).toEqual({
+      sourceExcerpts: "interactive",
+      terminalFindingLimit: 25,
+      temporaryReportRetention: 5,
+    });
+  });
+
+  it("resolves configured terminal presentation and subsequent-scan retention", () => {
+    expect(
+      resolveConfig({
+        schemaVersion: 1,
+        reporting: { terminalFindingLimit: "all", temporaryReportRetention: 9 },
+      }).reporting,
+    ).toMatchObject({
+      terminalFindingLimit: "all",
+      temporaryReportRetention: 9,
+    });
+  });
+
   it("publishes every managed check ID in stable order", () => {
     expect(CHECK_IDS).toEqual([
       "formatting",
