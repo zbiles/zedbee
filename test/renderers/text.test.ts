@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import { validateReportableSnapshotPath } from "../../src/git/snapshot-path.js";
+import { nextStepsLines } from "../../src/reporting/next-steps.js";
+import type { TerminalPresentation } from "../../src/reporting/presentation.js";
 import { renderText } from "../../src/renderers/text.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
@@ -36,6 +38,170 @@ function fixtureTerminalWidth(value: string): number {
 }
 
 describe("renderText", () => {
+  it("provides neutral outcome-aware guidance for abbreviated reports", () => {
+    const base = {
+      shown: 25,
+      total: 712,
+      reportPath: "/temporary/path/zedbee-report.json",
+      expiresAfterRuns: 5,
+    } as const;
+
+    expect(nextStepsLines({ ...base, outcome: "blocked" })).toEqual([
+      "NEXT STEPS",
+      "",
+      "Showing 25 of 712 findings.",
+      "Full report: /temporary/path/zedbee-report.json",
+      "Expires after 5 more Zedbee runs.",
+      "",
+      "Fix every blocking finding, stage the changes, then run Zedbee again.",
+      "The terminal output is abbreviated; do not treat it as the complete report.",
+    ]);
+    expect(nextStepsLines({ ...base, outcome: "pass" })).toContain(
+      "Review every warning, make any appropriate changes, and run Zedbee again when changes are made.",
+    );
+    expect(nextStepsLines({ ...base, outcome: "incomplete" })).toContain(
+      "Restore every required incomplete check, then run Zedbee again.",
+    );
+    expect(nextStepsLines({ ...base, outcome: "incomplete" })).toContain(
+      "Do not treat the scan as clean.",
+    );
+    expect(
+      nextStepsLines({ ...base, outcome: "blocked" }).join("\n"),
+    ).not.toMatch(/\bAI\b|Claude|Codex|Copilot/iu);
+    expect(
+      nextStepsLines({ ...base, outcome: "blocked", expiresAfterRuns: 1 }),
+    ).toContain("Expires after 1 more Zedbee run.");
+  });
+
+  it("renders only preview findings while retaining canonical diagnostics and disclosures", () => {
+    const shown = createFinding({ id: "shown", rule: "shown-rule" });
+    const hidden = createFinding({ id: "hidden", rule: "hidden-rule" });
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      checks: [
+        {
+          checkId: "vulnerabilities",
+          status: "incomplete",
+          incompleteDisposition: "block",
+          durationMs: 2,
+          findings: [],
+          error: {
+            code: "OSV_UNAVAILABLE",
+            message: "OSV is temporarily unavailable.",
+          },
+        },
+      ],
+      summary: {
+        passed: 4,
+        warnings: 3,
+        failed: 2,
+        incomplete: 1,
+        findings: [shown, hidden],
+      },
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["package names"],
+        },
+      ],
+    });
+    const presentation: TerminalPresentation = {
+      findings: [shown],
+      totalFindingCount: 2,
+      abbreviated: true,
+      reportPath: "/private/tmp/zedbee-reports/hash/full.json",
+      expiresAfterRuns: 5,
+      warnings: [],
+    };
+
+    const output = renderText(report, {
+      width: 80,
+      color: false,
+      presentation,
+    });
+
+    expect(output).toContain("4 passed · 3 warnings · 2 failed");
+    expect(output).toContain("OSV UNAVAILABLE");
+    expect(output).toContain("NETWORK DISCLOSURE");
+    expect(output).toContain("shown-rule");
+    expect(output).not.toContain("hidden-rule");
+    expect(output).toContain("Showing 1 of 2 findings.");
+  });
+
+  it("renders maintenance warnings even when terminal output is complete", () => {
+    const report = createReport();
+    const cleanupPath =
+      "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/stuck.json";
+    const presentation: TerminalPresentation = {
+      findings: report.summary.findings,
+      totalFindingCount: 0,
+      abbreviated: false,
+      warnings: [
+        {
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          message: "A retained report could not be removed.",
+          path: cleanupPath,
+        },
+      ],
+    };
+
+    const output = renderText(report, {
+      width: 40,
+      color: false,
+      presentation,
+    });
+
+    expect(output).toContain("REPORT MAINTENANCE WARNING");
+    expect(output.replaceAll(/\s/gu, "")).toContain(
+      "A retained report could not be removed.".replaceAll(/\s/gu, ""),
+    );
+    expect(output.match(/Path:/gu)).toHaveLength(1);
+    expect(output.replaceAll(/\s/gu, "")).toContain(
+      cleanupPath.replaceAll(/\s/gu, ""),
+    );
+    expect(output).not.toContain("NEXT STEPS");
+  });
+
+  it("preserves a wrapped report path at 40 columns without ANSI color", () => {
+    const finding = createFinding({ id: "shown", rule: "shown-rule" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 2,
+        incomplete: 0,
+        findings: [finding, createFinding({ id: "hidden" })],
+      },
+    });
+    const reportPath =
+      "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/full-report.json";
+    const presentation: TerminalPresentation = {
+      findings: [finding],
+      totalFindingCount: 2,
+      abbreviated: true,
+      reportPath,
+      expiresAfterRuns: 5,
+      warnings: [],
+    };
+
+    const output = renderText(report, {
+      width: 40,
+      color: false,
+      presentation,
+    });
+
+    expect(output).not.toMatch(/\u001B\[[0-9;]*m/u);
+    expect(output.replaceAll("\n", "")).toContain(reportPath);
+    expect(
+      Math.max(...output.split("\n").map(fixtureTerminalWidth)),
+    ).toBeLessThanOrEqual(40);
+  });
+
   it("renders a concise passing report", () => {
     expect(renderText(createReport(), { width: 80, color: false })).toBe(
       [

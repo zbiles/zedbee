@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import { ScanApp } from "../../src/ui/scan-app.js";
+import type { TerminalPresentation } from "../../src/reporting/presentation.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 const events: ScanEvent[] = [
@@ -11,6 +12,101 @@ const events: ScanEvent[] = [
 ];
 
 describe("ScanApp", () => {
+  it("renders a neutral abbreviated preview with warnings at 40 columns", () => {
+    const previousNoColor = process.env.NO_COLOR;
+    process.env.NO_COLOR = "1";
+    const shown = createFinding({ id: "shown", rule: "shown-rule" });
+    const hidden = createFinding({ id: "hidden", rule: "hidden-rule" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 3,
+        warnings: 1,
+        failed: 2,
+        incomplete: 0,
+        findings: [shown, hidden],
+      },
+    });
+    const reportPath =
+      "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/full.json";
+    const presentation: TerminalPresentation = {
+      findings: [shown],
+      totalFindingCount: 2,
+      abbreviated: true,
+      reportPath,
+      expiresAfterRuns: 5,
+      warnings: [
+        {
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          message: "A retained report could not be removed.",
+          path: "/private/tmp/zedbee-reports/hash/stuck.json",
+        },
+      ],
+    };
+
+    let frame: string;
+    try {
+      frame = render(
+        <ScanApp
+          events={events}
+          elapsedMs={15}
+          width={40}
+          color={false}
+          animations={false}
+          report={report}
+          presentation={presentation}
+        />,
+      ).lastFrame()!;
+    } finally {
+      if (previousNoColor === undefined) delete process.env.NO_COLOR;
+      else process.env.NO_COLOR = previousNoColor;
+    }
+
+    expect(frame).toContain("3 passed · 1 warning · 2 failed");
+    expect(frame).toContain("shown-rule");
+    expect(frame).not.toContain("hidden-rule");
+    expect(frame).toContain("REPORT MAINTENANCE WARNING");
+    expect(frame).toContain("NEXT STEPS");
+    expect(frame.replaceAll("\n", "")).toContain(reportPath);
+    expect(frame).not.toMatch(/\u001B\[[0-9;]*m/u);
+    expect(frame).not.toMatch(/\bAI\b|Claude|Codex|Copilot/iu);
+    expect(
+      Math.max(...frame.split("\n").map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(40);
+  });
+
+  it("keeps complete final output backward compatible without a presentation", () => {
+    const first = createFinding({ id: "first", rule: "first-rule" });
+    const second = createFinding({ id: "second", rule: "second-rule" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 2,
+        incomplete: 0,
+        findings: [first, second],
+      },
+    });
+
+    const frame = render(
+      <ScanApp
+        events={events}
+        elapsedMs={15}
+        width={96}
+        color={false}
+        animations={false}
+        report={report}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("first-rule");
+    expect(frame).toContain("second-rule");
+    expect(frame).not.toContain("NEXT STEPS");
+  });
+
   it("replaces the live dashboard with the compact final report", () => {
     const view = render(
       <ScanApp

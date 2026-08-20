@@ -3,6 +3,9 @@ import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
+import { nextStepsLines } from "../reporting/next-steps.js";
+import type { TerminalPresentation } from "../reporting/presentation.js";
+import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { incompleteSectionLines } from "./incomplete.js";
 import {
   chunkTerminalCells,
@@ -16,6 +19,7 @@ export interface TextRendererOptions {
   width: number;
   color: boolean;
   verbose?: boolean;
+  presentation?: TerminalPresentation;
 }
 
 function wrapWords(value: string, width: number, indent = ""): string[] {
@@ -24,7 +28,7 @@ function wrapWords(value: string, width: number, indent = ""): string[] {
 }
 
 function descriptionLines(
-  label: "Issue" | "Fix" | "Attribution",
+  label: "Issue" | "Fix" | "Attribution" | "Path",
   value: string,
   width: number,
 ): string[] {
@@ -153,21 +157,66 @@ function disclosureLines(report: ScanReport, width: number): string[] {
   ];
 }
 
+function maintenanceWarningLines(
+  warnings: readonly ReportMaintenanceWarning[],
+  width: number,
+): string[] {
+  if (warnings.length === 0) return [];
+  return warnings.flatMap((warning) => [
+    "",
+    "REPORT MAINTENANCE WARNING",
+    ...wrapWords(warning.code.replaceAll("_", " "), width),
+    ...descriptionLines("Issue", warning.message, width),
+    ...(warning.path === undefined
+      ? []
+      : descriptionLines("Path", warning.path, width)),
+  ]);
+}
+
+function guidanceLines(
+  report: ScanReport,
+  presentation: TerminalPresentation | undefined,
+  width: number,
+): string[] {
+  if (
+    presentation?.abbreviated !== true ||
+    presentation.reportPath === undefined ||
+    presentation.expiresAfterRuns === undefined
+  ) {
+    return [];
+  }
+  return [
+    "",
+    ...nextStepsLines({
+      outcome: report.outcome,
+      shown: presentation.findings.length,
+      total: presentation.totalFindingCount,
+      reportPath: presentation.reportPath,
+      expiresAfterRuns: presentation.expiresAfterRuns,
+    }).flatMap((line) => (line === "" ? [""] : wrapWords(line, width))),
+  ];
+}
+
 export function renderText(
   report: ScanReport,
   options: TextRendererOptions,
 ): string {
   const sanitized = validateReportDisplayStrings(report);
+  const displayedFindings =
+    options.presentation === undefined
+      ? sanitized.summaryFindings
+      : validateReportDisplayStrings({
+          checks: [],
+          summary: { findings: options.presentation.findings },
+        }).summaryFindings;
   const width = Math.max(20, options.width);
   const lines = [
     ...headline(report).flatMap((line) => wrapWords(line, width)),
     ...incompleteSectionLines(sanitized.checks, width),
-    ...renderedFindings(
-      sanitized.summaryFindings,
-      width,
-      options.verbose === true,
-    ),
+    ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
+    ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
+    ...guidanceLines(report, options.presentation, width),
   ];
   return `${lines.join("\n")}\n`;
 }

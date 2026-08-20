@@ -8,6 +8,10 @@ import {
 import { createGitRepository } from "../helpers/git-repository.js";
 
 describe("runInkScan", () => {
+  it("retains the 400 ms minimum live-dashboard duration", () => {
+    expect(INK_MINIMUM_DISPLAY_MS).toBe(400);
+  });
+
   it("keeps the animated live interface visible before the compact report", async () => {
     const repository = await createGitRepository("zedbee-ink-timing-");
     await repository.write(

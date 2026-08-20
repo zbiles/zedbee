@@ -1,6 +1,9 @@
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
+import { nextStepsLines } from "../reporting/next-steps.js";
+import type { TerminalPresentation } from "../reporting/presentation.js";
+import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { FindingsList } from "./findings-list.js";
 import { IncompleteList } from "./incomplete-list.js";
 import { LiveDashboard } from "./live-dashboard.js";
@@ -15,6 +18,93 @@ export interface ScanAppProps {
   color: boolean;
   animations: boolean;
   report?: ScanReport;
+  presentation?: TerminalPresentation;
+}
+
+function MaintenanceWarnings({
+  warnings,
+  width,
+  color,
+}: {
+  warnings: readonly ReportMaintenanceWarning[];
+  width: number;
+  color: boolean;
+}) {
+  if (warnings.length === 0) return null;
+  return (
+    <Box flexDirection="column" width={width} marginTop={1}>
+      {warnings.map((warning, index) => (
+        <Box
+          key={`${warning.code}:${warning.path ?? ""}:${index}`}
+          flexDirection="column"
+          width={width}
+          marginTop={index === 0 ? 0 : 1}
+        >
+          <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+            REPORT MAINTENANCE WARNING
+          </Text>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {warning.code.replaceAll("_", " ")}
+          </Text>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+            Issue: {warning.message}
+          </Text>
+          {warning.path === undefined ? null : (
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              Path: {warning.path}
+            </Text>
+          )}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function NextSteps({
+  report,
+  presentation,
+  width,
+  color,
+}: {
+  report: ScanReport;
+  presentation: TerminalPresentation;
+  width: number;
+  color: boolean;
+}) {
+  if (
+    !presentation.abbreviated ||
+    presentation.reportPath === undefined ||
+    presentation.expiresAfterRuns === undefined
+  ) {
+    return null;
+  }
+  const [heading, ...lines] = nextStepsLines({
+    outcome: report.outcome,
+    shown: presentation.findings.length,
+    total: presentation.totalFindingCount,
+    reportPath: presentation.reportPath,
+    expiresAfterRuns: presentation.expiresAfterRuns,
+  });
+  return (
+    <Box flexDirection="column" width={width} marginTop={1}>
+      <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
+        {heading}
+      </Text>
+      {lines.map((line, index) =>
+        line === "" ? (
+          <Text key={`blank:${index}`}> </Text>
+        ) : (
+          <Text
+            key={`${line}:${index}`}
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.primary)}
+          >
+            {line}
+          </Text>
+        ),
+      )}
+    </Box>
+  );
 }
 
 export function ScanApp(props: ScanAppProps) {
@@ -41,7 +131,7 @@ export function ScanApp(props: ScanAppProps) {
         color={props.color}
       />
       <FindingsList
-        findings={props.report.summary.findings}
+        findings={props.presentation?.findings ?? props.report.summary.findings}
         width={props.width}
         color={props.color}
       />
@@ -53,18 +143,33 @@ export function ScanApp(props: ScanAppProps) {
           </Text>
         </Box>
       ))}
-      <Box marginTop={1}>
-        <Text
-          {...colorProp(
-            props.color,
-            props.report.outcome === "pass"
-              ? ZEDBEE_THEME.pass
-              : ZEDBEE_THEME.failure,
-          )}
-        >
-          {instruction}
-        </Text>
-      </Box>
+      <MaintenanceWarnings
+        warnings={props.presentation?.warnings ?? []}
+        width={props.width}
+        color={props.color}
+      />
+      {props.presentation?.abbreviated === true ? null : (
+        <Box marginTop={1}>
+          <Text
+            {...colorProp(
+              props.color,
+              props.report.outcome === "pass"
+                ? ZEDBEE_THEME.pass
+                : ZEDBEE_THEME.failure,
+            )}
+          >
+            {instruction}
+          </Text>
+        </Box>
+      )}
+      {props.presentation === undefined ? null : (
+        <NextSteps
+          report={props.report}
+          presentation={props.presentation}
+          width={props.width}
+          color={props.color}
+        />
+      )}
     </Box>
   );
 }
