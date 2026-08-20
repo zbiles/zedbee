@@ -1,7 +1,8 @@
 import type { SourceExcerptPolicy } from "../config/schema.js";
 
 export type SourceExcerptOverride = "include" | "exclude";
-export type ReportingSurface = "ink" | "text" | "json";
+export type RequestedOutputFormat = "auto" | "ink" | "text" | "json" | "sarif";
+export type ReportingSurface = Exclude<RequestedOutputFormat, "auto">;
 
 export function shouldIncludeSourceExcerpts(
   policy: SourceExcerptPolicy,

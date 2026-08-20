@@ -1,15 +1,17 @@
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
+import { renderSarif } from "../renderers/sarif.js";
 import { renderText } from "../renderers/text.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
 import type {
   ReportingSurface,
+  RequestedOutputFormat,
   SourceExcerptOverride,
 } from "../scan/reporting-options.js";
 
-export type RequestedOutputFormat = "auto" | "ink" | "text" | "json";
+export type { RequestedOutputFormat } from "../scan/reporting-options.js";
 export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
@@ -146,6 +148,9 @@ export async function executeScanCommand(
 
     if (format === "json") {
       io.writeStdout(renderJson(report));
+    } else if (format === "sarif") {
+      const sarif = renderSarif(report);
+      io.writeStdout(`${sarif}\n`);
     } else if (format === "text") {
       io.writeStdout(renderText(report, { width: io.width, color: false }));
     } else {

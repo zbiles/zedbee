@@ -66,7 +66,7 @@ async function createInstalledRepository() {
 
 async function runZedbee(
   repositoryRoot: string,
-  format: "json" | "text" = "json",
+  format: "json" | "sarif" | "text" = "json",
   extraArguments: readonly string[] = [],
 ) {
   return execa(
@@ -107,6 +107,21 @@ describe("packaged Zedbee CLI", () => {
     for (const command of ["init", "scan", "checks", "doctor"]) {
       expect(result.stdout).toContain(command);
     }
+  }, 30_000);
+
+  it("lists and accepts SARIF as a packaged scan output format", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.git(["add", "--", "value.ts"]);
+
+    const help = await runPackagedCli(repository.root, ["scan", "--help"]);
+    const result = await runZedbee(repository.root, "sarif");
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout).toContain("sarif");
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout).version).toBe("2.1.0");
+    expect(result.stderr).toBe("");
   }, 30_000);
 
   it("runs doctor from the installed package", async () => {

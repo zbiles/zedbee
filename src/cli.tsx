@@ -7,11 +7,8 @@ import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
-import {
-  executeScanCommand,
-  signalExitCode,
-  type RequestedOutputFormat,
-} from "./commands/scan.js";
+import type { RequestedOutputFormat } from "./scan/reporting-options.js";
+import { executeScanCommand, signalExitCode } from "./commands/scan.js";
 
 interface CommanderScanOptions {
   format: RequestedOutputFormat;
@@ -132,7 +129,7 @@ export async function main(
     .description("scan the exact staged Git snapshot")
     .addOption(
       new Option("--format <format>", "output format")
-        .choices(["auto", "ink", "text", "json"])
+        .choices(["auto", "ink", "text", "json", "sarif"])
         .default("auto"),
     )
     .addOption(

@@ -44,6 +44,8 @@ describe("selectOutputFormat", () => {
 
   it("honors an explicit structured format", () => {
     expect(selectOutputFormat("json", true, true)).toBe("json");
+    expect(selectOutputFormat("sarif", true, true)).toBe("sarif");
+    expect(selectOutputFormat("sarif", false, false)).toBe("sarif");
   });
 });
 
@@ -160,6 +162,71 @@ describe("executeScanCommand", () => {
       sourceExcerpts: "include",
     });
     expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({ exitCode: 1 });
+  });
+
+  it("renders SARIF without Ink and preserves the report exit code", async () => {
+    const terminal = io(true);
+    let mounted = false;
+    const deps = dependencies(async () => {
+      mounted = true;
+    });
+    let received: unknown;
+    const report = createReport({ outcome: "blocked", exitCode: 1 });
+    deps.scan = async (options) => {
+      received = options;
+      return report;
+    };
+
+    const exitCode = await executeScanCommand(
+      {
+        cwd: "/repo",
+        format: "sarif",
+        color: true,
+        animations: true,
+        sourceExcerpts: "include",
+      },
+      terminal,
+      deps,
+    );
+
+    expect(exitCode).toBe(report.exitCode);
+    expect(mounted).toBe(false);
+    expect(received).toMatchObject({
+      reportingSurface: "sarif",
+      sourceExcerpts: "include",
+    });
+    const stdout = terminal.stdout.join("");
+    expect(JSON.parse(stdout).version).toBe("2.1.0");
+    expect(stdout).toMatch(/\n$/u);
+    expect(stdout).not.toMatch(/\n\n$/u);
+    expect(stdout).not.toMatch(/\u001B\[[0-9;]*m/u);
+    expect(terminal.stderr).toEqual([]);
+  });
+
+  it("keeps stdout empty when SARIF rendering fails", async () => {
+    const terminal = io(false);
+    const deps = dependencies();
+    deps.scan = async () =>
+      createReport({
+        checks: [
+          {
+            checkId: "formatting",
+            status: "invalid",
+            durationMs: 4,
+            findings: [],
+          },
+        ] as unknown as ReturnType<typeof createReport>["checks"],
+      });
+
+    const exitCode = await executeScanCommand(
+      { cwd: "/repo", format: "sarif", color: false, animations: false },
+      terminal,
+      deps,
+    );
+
+    expect(exitCode).toBe(2);
+    expect(terminal.stdout).toEqual([]);
+    expect(terminal.stderr).toEqual(["Zedbee could not complete the scan.\n"]);
   });
 
   it("treats NO_COLOR as authoritative", async () => {
