@@ -4,6 +4,7 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import { nextStepsLines } from "../reporting/next-steps.js";
+import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { incompleteSectionLines } from "./incomplete.js";
@@ -38,6 +39,22 @@ function descriptionLines(
   const continuation = " ".repeat(prefixWidth);
   return wrapWords(value, Math.max(1, width - prefixWidth)).map(
     (line, index) => `${index === 0 ? prefix : continuation}${line}`,
+  );
+}
+
+function opaquePathLines(
+  label: "Path" | "Full report",
+  path: string,
+  width: number,
+): string[] {
+  const prefix = label === "Path" ? "       Path: " : "Full report: ";
+  const prefixWidth = terminalCellWidth(prefix);
+  const chunks = chunkTerminalCells(
+    opaqueTemporaryReportPath(path),
+    Math.max(1, width - prefixWidth),
+  );
+  return chunks.map((chunk, index) =>
+    index === 0 ? `${prefix}${chunk}` : chunk,
   );
 }
 
@@ -169,7 +186,7 @@ function maintenanceWarningLines(
     ...descriptionLines("Issue", warning.message, width),
     ...(warning.path === undefined
       ? []
-      : descriptionLines("Path", warning.path, width)),
+      : opaquePathLines("Path", warning.path, width)),
   ]);
 }
 
@@ -193,7 +210,13 @@ function guidanceLines(
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
       expiresAfterRuns: presentation.expiresAfterRuns,
-    }).flatMap((line) => (line === "" ? [""] : wrapWords(line, width))),
+    }).flatMap((line) =>
+      line === ""
+        ? [""]
+        : line.startsWith("Full report: ")
+          ? opaquePathLines("Full report", presentation.reportPath!, width)
+          : wrapWords(line, width),
+    ),
   ];
 }
 

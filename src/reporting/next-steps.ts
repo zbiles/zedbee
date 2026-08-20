@@ -1,4 +1,5 @@
 import type { ScanReport } from "../scan/report.js";
+import { opaqueTemporaryReportPath } from "./report-path.js";
 
 export interface NextStepsInput {
   readonly outcome: ScanReport["outcome"];
@@ -33,7 +34,7 @@ export function nextStepsLines(input: NextStepsInput): readonly string[] {
     "NEXT STEPS",
     "",
     `Showing ${input.shown} of ${input.total} findings.`,
-    `Full report: ${input.reportPath}`,
+    `Full report: ${opaqueTemporaryReportPath(input.reportPath)}`,
     `Expires after ${input.expiresAfterRuns} more Zedbee ${runLabel}.`,
     "",
     ...outcomeInstructions(input.outcome),

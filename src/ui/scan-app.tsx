@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
 import { nextStepsLines } from "../reporting/next-steps.js";
+import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { FindingsList } from "./findings-list.js";
@@ -9,6 +10,19 @@ import { IncompleteList } from "./incomplete-list.js";
 import { LiveDashboard } from "./live-dashboard.js";
 import { OutcomeStrip } from "./outcome-strip.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
+import { chunkTerminalCells } from "../renderers/terminal-cells.js";
+
+function opaquePathLines(
+  label: "Path" | "Full report",
+  path: string,
+  width: number,
+): readonly string[] {
+  const prefix = `${label}: `;
+  return chunkTerminalCells(
+    opaqueTemporaryReportPath(path),
+    Math.max(1, width - prefix.length),
+  ).map((chunk, index) => (index === 0 ? `${prefix}${chunk}` : chunk));
+}
 
 export interface ScanAppProps {
   events: readonly ScanEvent[];
@@ -49,11 +63,18 @@ function MaintenanceWarnings({
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
             Issue: {warning.message}
           </Text>
-          {warning.path === undefined ? null : (
-            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-              Path: {warning.path}
-            </Text>
-          )}
+          {warning.path === undefined
+            ? null
+            : opaquePathLines("Path", warning.path, width).map(
+                (line, lineIndex) => (
+                  <Text
+                    key={`path:${lineIndex}`}
+                    {...colorProp(color, ZEDBEE_THEME.secondary)}
+                  >
+                    {line}
+                  </Text>
+                ),
+              )}
         </Box>
       ))}
     </Box>
@@ -93,6 +114,21 @@ function NextSteps({
       {lines.map((line, index) =>
         line === "" ? (
           <Text key={`blank:${index}`}> </Text>
+        ) : line.startsWith("Full report: ") ? (
+          <Box key={`report:${index}`} flexDirection="column" width={width}>
+            {opaquePathLines(
+              "Full report",
+              presentation.reportPath!,
+              width,
+            ).map((pathLine, pathIndex) => (
+              <Text
+                key={`report-path:${pathIndex}`}
+                {...colorProp(color, ZEDBEE_THEME.primary)}
+              >
+                {pathLine}
+              </Text>
+            ))}
+          </Box>
         ) : (
           <Text
             key={`${line}:${index}`}

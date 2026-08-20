@@ -50,7 +50,7 @@ describe("renderText", () => {
       "NEXT STEPS",
       "",
       "Showing 25 of 712 findings.",
-      "Full report: /temporary/path/zedbee-report.json",
+      'Full report: "/temporary/path/zedbee-report.json"',
       "Expires after 5 more Zedbee runs.",
       "",
       "Fix every blocking finding, stage the changes, then run Zedbee again.",
@@ -165,7 +165,7 @@ describe("renderText", () => {
     expect(output).not.toContain("NEXT STEPS");
   });
 
-  it("preserves a wrapped report path at 40 columns without ANSI color", () => {
+  it("renders a spaced report path as one opaque value at narrow width", () => {
     const finding = createFinding({ id: "shown", rule: "shown-rule" });
     const report = createReport({
       outcome: "blocked",
@@ -179,7 +179,7 @@ describe("renderText", () => {
       },
     });
     const reportPath =
-      "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/full-report.json";
+      "/private/tmp/zedbee reports/0123456789abcdef0123456789abcdef/full report.json";
     const presentation: TerminalPresentation = {
       findings: [finding],
       totalFindingCount: 2,
@@ -190,16 +190,34 @@ describe("renderText", () => {
     };
 
     const output = renderText(report, {
-      width: 40,
+      width: 20,
       color: false,
       presentation,
     });
 
     expect(output).not.toMatch(/\u001B\[[0-9;]*m/u);
-    expect(output.replaceAll("\n", "")).toContain(reportPath);
+    expect(output.replaceAll("\n", "")).toContain(
+      JSON.stringify(reportPath).replaceAll(" ", "\\u0020"),
+    );
     expect(
       Math.max(...output.split("\n").map(fixtureTerminalWidth)),
-    ).toBeLessThanOrEqual(40);
+    ).toBeLessThanOrEqual(20);
+  });
+
+  it.each([
+    "/tmp/report\u001b[31m.json",
+    "/tmp/report\n.json",
+    "/tmp/report\u202e.json",
+  ])("rejects an unsafe report path before rendering %j", (reportPath) => {
+    expect(() =>
+      nextStepsLines({
+        shown: 1,
+        total: 2,
+        outcome: "blocked",
+        reportPath,
+        expiresAfterRuns: 5,
+      }),
+    ).toThrow(/safe temporary report path display text/u);
   });
 
   it("renders a concise passing report", () => {

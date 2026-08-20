@@ -7,6 +7,7 @@ import type {
   RequestedOutputFormat,
 } from "../scan/reporting-options.js";
 import { omitReportSourceExcerpts } from "../scan/source-excerpts.js";
+import { validateTemporaryReportPath } from "./report-path.js";
 import type {
   ReportMaintenanceWarning,
   TemporaryReportStore,
@@ -31,7 +32,14 @@ function freezeWarnings(
   warnings: readonly ReportMaintenanceWarning[],
 ): readonly ReportMaintenanceWarning[] {
   return Object.freeze(
-    warnings.map((warning) => Object.freeze({ ...warning })),
+    warnings.map((warning) =>
+      Object.freeze({
+        ...warning,
+        ...(warning.path === undefined
+          ? {}
+          : { path: validateTemporaryReportPath(warning.path) }),
+      }),
+    ),
   );
 }
 
@@ -46,7 +54,9 @@ function presentation(
     findings: Object.freeze([...findings]),
     totalFindingCount,
     abbreviated: reportPath !== undefined,
-    ...(reportPath === undefined ? {} : { reportPath }),
+    ...(reportPath === undefined
+      ? {}
+      : { reportPath: validateTemporaryReportPath(reportPath) }),
     ...(expiresAfterRuns === undefined ? {} : { expiresAfterRuns }),
     warnings: freezeWarnings(warnings),
   });

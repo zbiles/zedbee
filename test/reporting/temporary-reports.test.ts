@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
+  chmod,
   lstat,
   mkdtemp,
   mkdir,
@@ -14,8 +15,9 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
@@ -54,6 +56,18 @@ async function fixture(): Promise<{
   return { repositoryRoot, temporaryRoot };
 }
 
+async function waitForRegularFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      if ((await lstat(path)).isFile()) return;
+    } catch {
+      // The producer has not published the file yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
+
 interface StoredState {
   readonly schemaVersion: number;
   readonly generation: number;
@@ -87,10 +101,88 @@ async function repositoryDirectory(
   const repositoryHash = createHash("sha256")
     .update(canonicalRepositoryRoot, "utf8")
     .digest("hex");
-  return join(await realpath(temporaryRoot), "zedbee-reports", repositoryHash);
+  const identity = userInfo();
+  const stableIdentity =
+    Number.isSafeInteger(identity.uid) && identity.uid >= 0
+      ? `uid:${identity.uid}`
+      : `username:${identity.username}`;
+  const namespace = `zedbee-reports-${createHash("sha256")
+    .update(stableIdentity, "utf8")
+    .digest("hex")}`;
+  return join(await realpath(temporaryRoot), namespace, repositoryHash);
 }
 
 describe("temporary report store", () => {
+  it("isolates identical repositories in stable safe per-user namespaces", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const rootUser = createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: 0, username: "root" },
+    });
+    const firstUser = createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: 501, username: "../unsafe\n\u001b\u202e" },
+    });
+    const secondUser = createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: 502, username: "same-name" },
+    });
+    const windowsUser = createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: -1, username: "../unsafe\n\u001b\u202e" },
+    });
+
+    const [rootResult, firstResult, secondResult, windowsResult] =
+      await Promise.all([
+        rootUser.maintain({ repositoryRoot, retentionRuns: 5, json: "root\n" }),
+        firstUser.maintain({ repositoryRoot, retentionRuns: 5, json: "one\n" }),
+        secondUser.maintain({
+          repositoryRoot,
+          retentionRuns: 5,
+          json: "two\n",
+        }),
+        windowsUser.maintain({
+          repositoryRoot,
+          retentionRuns: 5,
+          json: "windows\n",
+        }),
+      ]);
+
+    expect(dirname(dirname(rootResult.reportPath!))).toBe(
+      join(
+        await realpath(temporaryRoot),
+        "zedbee-reports-6d422e16b2aa28e255047c0802dd6d6e4777266ef380db7d1ac8d558cb16b16d",
+      ),
+    );
+    expect(dirname(dirname(firstResult.reportPath!))).toBe(
+      join(
+        await realpath(temporaryRoot),
+        "zedbee-reports-dbf226aa5e80d199d75e850ec98e82c91a3ab2d0f48c1e46cd7a9af937af0b94",
+      ),
+    );
+    expect(dirname(dirname(secondResult.reportPath!))).toBe(
+      join(
+        await realpath(temporaryRoot),
+        "zedbee-reports-c143ebac66fb4fc0d62dbe48936100ba8337b388fe673cd97d8a3d49737849f6",
+      ),
+    );
+    expect(dirname(dirname(windowsResult.reportPath!))).toBe(
+      join(
+        await realpath(temporaryRoot),
+        "zedbee-reports-e30e18926069b174e464567ef62949ffe7ab8cb02a1a576ddc0bf7afdfb0875a",
+      ),
+    );
+    expect(
+      new Set([
+        rootResult.reportPath,
+        firstResult.reportPath,
+        secondResult.reportPath,
+        windowsResult.reportPath,
+      ]),
+    ).toHaveLength(4);
+    expect((await readdir(temporaryRoot)).join("\n")).not.toContain("unsafe");
+  });
+
   it("skips unsupported Windows directory fsync without masking POSIX errors", async () => {
     const { temporaryRoot } = await fixture();
     const missingDirectory = join(temporaryRoot, "does-not-exist");
@@ -124,8 +216,10 @@ describe("temporary report store", () => {
     expect(result.warnings).toEqual([]);
     const reportPath = result.reportPath!;
     const repositoryDirectory = dirname(reportPath);
-    expect(repositoryDirectory).toBe(
-      join(canonicalTemporaryRoot, "zedbee-reports", expectedHash),
+    expect(basename(repositoryDirectory)).toBe(expectedHash);
+    expect(dirname(dirname(repositoryDirectory))).toBe(canonicalTemporaryRoot);
+    expect(basename(dirname(repositoryDirectory))).toMatch(
+      /^zedbee-reports-[0-9a-f]{64}$/u,
     );
     expect(basename(reportPath)).toMatch(REPORT_NAME);
     await expect(readFile(reportPath, "utf8")).resolves.toBe(json);
@@ -145,6 +239,24 @@ describe("temporary report store", () => {
         (await stat(join(repositoryDirectory, stateName!))).mode & 0o777,
       ).toBe(0o600);
     }
+  });
+
+  it("does not publish a report path beneath an unsafe display root", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const unsafeRoot = join(temporaryRoot, "unsafe\u202e-root");
+    await mkdir(unsafeRoot);
+
+    const maintained = await createTemporaryReportStore({
+      temporaryRoot: unsafeRoot,
+    }).maintain({ repositoryRoot, retentionRuns: 5, json: "complete\n" });
+
+    expect(maintained.reportPath).toBeUndefined();
+    expect(maintained.warnings).toContainEqual(
+      expect.objectContaining({ code: "TEMP_REPORT_WRITE_FAILED" }),
+    );
+    expect(maintained.warnings.every((item) => item.path === undefined)).toBe(
+      true,
+    );
   });
 
   it("initializes a pristine managed directory without a cleanup warning", async () => {
@@ -345,12 +457,11 @@ describe("temporary report store", () => {
 
   it("rejects a symlinked repository directory without touching its target", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
-    const reportsRoot = join(await realpath(temporaryRoot), "zedbee-reports");
-    await mkdir(reportsRoot, { mode: 0o700 });
     const managedRepositoryDirectory = await repositoryDirectory(
       repositoryRoot,
       temporaryRoot,
     );
+    await mkdir(dirname(managedRepositoryDirectory), { mode: 0o700 });
     const outside = join(dirname(temporaryRoot), "outside-symlink-target");
     await mkdir(outside);
     const sentinel = join(outside, "sentinel");
@@ -372,12 +483,11 @@ describe("temporary report store", () => {
 
   it("rejects a non-directory managed boundary without changing it", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
-    const reportsRoot = join(await realpath(temporaryRoot), "zedbee-reports");
-    await mkdir(reportsRoot, { mode: 0o700 });
     const managedRepositoryDirectory = await repositoryDirectory(
       repositoryRoot,
       temporaryRoot,
     );
+    await mkdir(dirname(managedRepositoryDirectory), { mode: 0o700 });
     await writeFile(managedRepositoryDirectory, "not a directory", {
       mode: 0o600,
     });
@@ -783,14 +893,19 @@ describe("temporary report store", () => {
       flag: "wx",
       mode: 0o600,
     });
-    const startedAt = Date.now();
+    const dateNow = vi
+      .spyOn(Date, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValue(1_000_000);
+    const startedAt = performance.now();
 
     const maintained = await store.maintain({
       repositoryRoot,
       retentionRuns: 5,
       json: "must not be written\n",
     });
-    const elapsed = Date.now() - startedAt;
+    const elapsed = performance.now() - startedAt;
+    dateNow.mockRestore();
 
     expect(elapsed).toBeGreaterThanOrEqual(1_800);
     expect(elapsed).toBeLessThan(3_000);
@@ -800,8 +915,11 @@ describe("temporary report store", () => {
         expect.objectContaining({ code: "TEMP_REPORT_CLEANUP_FAILED" }),
       ]),
     );
-    expect(maintained.warnings.every((item) => item.path === undefined)).toBe(
-      true,
+    expect(maintained.warnings).toContainEqual(
+      expect.objectContaining({
+        code: "TEMP_REPORT_CLEANUP_FAILED",
+        path: lockPath,
+      }),
     );
     await expect(readFile(lockPath, "utf8")).resolves.toBe(
       "held by another process",
@@ -812,4 +930,120 @@ describe("temporary report store", () => {
     );
     expect(reportNames).toEqual([basename(created.reportPath!)]);
   }, 5_000);
+
+  it.skipIf(process.platform !== "darwin")(
+    "names a validated lock when its unlink fails",
+    async () => {
+      const { repositoryRoot, temporaryRoot } = await fixture();
+      const store = createTemporaryReportStore({ temporaryRoot });
+      const initial = await store.maintain({
+        repositoryRoot,
+        retentionRuns: 5,
+        json: "initial\n",
+      });
+      const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
+      const pending = store.maintain({
+        repositoryRoot,
+        retentionRuns: 5,
+        json: `${"lock payload".repeat(500_000)}\n`,
+      });
+      await waitForRegularFile(lockPath);
+      await execFileAsync("/usr/bin/chflags", ["uchg", lockPath]);
+      try {
+        const maintained = await pending;
+        expect(maintained.warnings).toContainEqual(
+          expect.objectContaining({
+            code: "TEMP_REPORT_CLEANUP_FAILED",
+            path: lockPath,
+          }),
+        );
+      } finally {
+        await execFileAsync("/usr/bin/chflags", ["nouchg", lockPath]);
+        await unlink(lockPath);
+      }
+    },
+    10_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "omits the removed lock path when only directory synchronization fails",
+    async () => {
+      const { repositoryRoot, temporaryRoot } = await fixture();
+      const store = createTemporaryReportStore({ temporaryRoot });
+      const initial = await store.maintain({
+        repositoryRoot,
+        retentionRuns: 5,
+        json: "initial\n",
+      });
+      const directory = dirname(initial.reportPath!);
+      const lockPath = join(directory, LOCK_FILE_NAME);
+      const pending = store.maintain({
+        repositoryRoot,
+        retentionRuns: 5,
+        json: `${"sync payload".repeat(500_000)}\n`,
+      });
+      await waitForRegularFile(lockPath);
+      await chmod(directory, 0o300);
+      try {
+        const maintained = await pending;
+        expect(maintained.warnings).toContainEqual(
+          expect.objectContaining({
+            code: "TEMP_REPORT_CLEANUP_FAILED",
+            message: expect.stringContaining(
+              "released lock directory could not be synchronized",
+            ),
+          }),
+        );
+        expect(
+          maintained.warnings
+            .filter((item) => item.message.includes("released lock"))
+            .every((item) => item.path === undefined),
+        ).toBe(true);
+        await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+      } finally {
+        await chmod(directory, 0o700);
+      }
+    },
+    10_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "does not name an expired report after unlink succeeds but directory sync fails",
+    async () => {
+      const { repositoryRoot, temporaryRoot } = await fixture();
+      const store = createTemporaryReportStore({ temporaryRoot });
+      const created = await store.maintain({
+        repositoryRoot,
+        retentionRuns: 1,
+        json: "expires\n",
+      });
+      const directory = dirname(created.reportPath!);
+      const state = await storedState(created.reportPath!);
+      await writeFile(
+        state.path,
+        `${JSON.stringify(state.value)}${" ".repeat(900_000)}`,
+        "utf8",
+      );
+      const lockPath = join(directory, LOCK_FILE_NAME);
+      const pending = store.maintain({
+        repositoryRoot,
+        retentionRuns: 1,
+      });
+      await waitForRegularFile(lockPath);
+      await chmod(directory, 0o300);
+      try {
+        const maintained = await pending;
+        const warning = maintained.warnings.find((item) =>
+          item.message.includes("removed report's directory"),
+        );
+        expect(warning).toBeDefined();
+        expect(warning?.path).toBeUndefined();
+        await expect(lstat(created.reportPath!)).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      } finally {
+        await chmod(directory, 0o700);
+      }
+    },
+  );
 });

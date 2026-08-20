@@ -11,8 +11,10 @@ import {
   unlink,
 } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { performance } from "node:perf_hooks";
+import { validateTemporaryReportPath } from "./report-path.js";
 
 export type ReportMaintenanceWarningCode =
   "TEMP_REPORT_WRITE_FAILED" | "TEMP_REPORT_CLEANUP_FAILED";
@@ -38,6 +40,11 @@ export interface TemporaryReportStore {
   maintain(request: TemporaryReportRequest): Promise<TemporaryReportResult>;
 }
 
+export interface TemporaryReportUserIdentity {
+  readonly uid: number;
+  readonly username: string;
+}
+
 interface ReportLifecycleState {
   readonly schemaVersion: 1;
   readonly generation: number;
@@ -56,15 +63,36 @@ const LOCK_RETRY_MS = 25;
 const REPORT_NAME =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
 
+function userNamespace(identity: TemporaryReportUserIdentity): string {
+  const stableIdentity =
+    Number.isSafeInteger(identity.uid) && identity.uid >= 0
+      ? `uid:${identity.uid}`
+      : typeof identity.username === "string" && identity.username.length > 0
+        ? `username:${identity.username}`
+        : undefined;
+  if (stableIdentity === undefined) {
+    throw new TypeError("Unable to resolve temporary-report user identity");
+  }
+  return `zedbee-reports-${createHash("sha256").update(stableIdentity, "utf8").digest("hex")}`;
+}
+
 function warning(
   code: ReportMaintenanceWarningCode,
   message: string,
   path?: string,
 ): ReportMaintenanceWarning {
+  let validatedPath: string | undefined;
+  if (path !== undefined) {
+    try {
+      validatedPath = validateTemporaryReportPath(path);
+    } catch {
+      validatedPath = undefined;
+    }
+  }
   return Object.freeze({
     code,
     message,
-    ...(path === undefined ? {} : { path }),
+    ...(validatedPath === undefined ? {} : { path: validatedPath }),
   });
 }
 
@@ -199,6 +227,13 @@ interface OwnedLock {
 
 class LockTimeoutError extends Error {
   readonly code = "LOCK_TIMEOUT";
+
+  constructor(
+    message: string,
+    readonly path?: string,
+  ) {
+    super(message);
+  }
 }
 
 class StateLimitError extends Error {
@@ -214,16 +249,28 @@ async function acquireLock(
   warnings: ReportMaintenanceWarning[],
 ): Promise<OwnedLock> {
   const path = join(repositoryDirectory, LOCK_FILE_NAME);
-  const deadline = Date.now() + LOCK_TIMEOUT_MS;
+  const deadline = performance.now() + LOCK_TIMEOUT_MS;
   for (;;) {
     let handle: FileHandle;
     try {
       handle = await open(path, "wx", 0o600);
     } catch (error) {
       if (errorCode(error) !== "EEXIST") throw error;
-      const remaining = deadline - Date.now();
+      const remaining = deadline - performance.now();
       if (remaining <= 0) {
-        throw new LockTimeoutError("Temporary-report lock timed out");
+        let actionablePath: string | undefined;
+        try {
+          const metadata = await lstat(path);
+          if (metadata.isFile() && !metadata.isSymbolicLink()) {
+            actionablePath = validateTemporaryReportPath(path);
+          }
+        } catch {
+          actionablePath = undefined;
+        }
+        throw new LockTimeoutError(
+          "Temporary-report lock timed out",
+          actionablePath,
+        );
       }
       await wait(Math.min(LOCK_RETRY_MS, remaining));
       continue;
@@ -270,24 +317,54 @@ async function releaseLock(
   warnings: ReportMaintenanceWarning[],
 ): Promise<void> {
   try {
-    const current = await lstat(lock.path);
+    let current;
+    try {
+      current = await lstat(lock.path);
+    } catch (error) {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `The owned temporary-report lock could not be validated (${errorCode(error)}).`,
+        ),
+      );
+      return;
+    }
     if (
       current.isSymbolicLink() ||
       !current.isFile() ||
       current.dev !== lock.device ||
       current.ino !== lock.inode
     ) {
-      throw new TypeError("Temporary-report lock identity changed");
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          "The owned temporary-report lock identity changed and was left untouched.",
+        ),
+      );
+      return;
     }
-    await unlink(lock.path);
-    await syncTemporaryReportDirectory(dirname(lock.path));
-  } catch (error) {
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `The owned temporary-report lock could not be released safely (${errorCode(error)}).`,
-      ),
-    );
+    try {
+      await unlink(lock.path);
+    } catch (error) {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `The validated temporary-report lock could not be removed (${errorCode(error)}).`,
+          lock.path,
+        ),
+      );
+      return;
+    }
+    try {
+      await syncTemporaryReportDirectory(dirname(lock.path));
+    } catch (error) {
+      warnings.push(
+        warning(
+          "TEMP_REPORT_CLEANUP_FAILED",
+          `The released lock directory could not be synchronized (${errorCode(error)}).`,
+        ),
+      );
+    }
   } finally {
     await lock.handle.close().catch((error: unknown) => {
       warnings.push(
@@ -489,6 +566,7 @@ async function writeUniqueReport(
       if (path === undefined) {
         throw new TypeError("Invalid generated report name");
       }
+      validateTemporaryReportPath(path);
       try {
         await link(temporary, path);
       } catch (error) {
@@ -627,7 +705,6 @@ async function removeExpiredReports(
         warning(
           "TEMP_REPORT_CLEANUP_FAILED",
           `A removed report's directory could not be synchronized (${errorCode(error)}).`,
-          path,
         ),
       );
     }
@@ -637,8 +714,10 @@ async function removeExpiredReports(
 
 export function createTemporaryReportStore(options?: {
   readonly temporaryRoot?: string;
+  readonly userIdentity?: TemporaryReportUserIdentity;
 }): TemporaryReportStore {
   const configuredTemporaryRoot = options?.temporaryRoot ?? tmpdir();
+  const configuredUserIdentity = options?.userIdentity;
 
   return Object.freeze({
     async maintain(
@@ -661,7 +740,7 @@ export function createTemporaryReportStore(options?: {
           ]);
         const reportsRoot = await ensureManagedDirectory(
           canonicalTemporaryRoot,
-          "zedbee-reports",
+          userNamespace(configuredUserIdentity ?? userInfo()),
         );
         const repositoryHash = createHash("sha256")
           .update(canonicalRepositoryRoot, "utf8")
@@ -762,6 +841,7 @@ export function createTemporaryReportStore(options?: {
               ? "TEMP_REPORT_CLEANUP_FAILED"
               : "TEMP_REPORT_WRITE_FAILED",
             `Temporary-report maintenance could not start (${errorCode(error)}).`,
+            error instanceof LockTimeoutError ? error.path : undefined,
           ),
         );
         reportPath = undefined;

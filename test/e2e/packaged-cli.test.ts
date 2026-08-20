@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { installPackedFixture } from "../helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 let packDirectory: string;
+let temporaryReportRoot: string;
 let tarballPath: string;
 
 async function runNpm(args: readonly string[], cwd: string) {
@@ -21,7 +22,11 @@ async function runNpm(args: readonly string[], cwd: string) {
 }
 
 beforeAll(async () => {
-  packDirectory = await mkdtemp(join(tmpdir(), "zedbee-pack-"));
+  [packDirectory, temporaryReportRoot] = await Promise.all([
+    mkdtemp(join(tmpdir(), "zedbee-pack-")),
+    mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
+  ]);
+  temporaryReportRoot = await realpath(temporaryReportRoot);
   const packed = await runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
     packageRoot,
@@ -32,7 +37,13 @@ beforeAll(async () => {
 }, 30_000);
 
 afterAll(async () => {
-  await rm(packDirectory, { recursive: true, force: true });
+  await Promise.all([
+    rm(packDirectory, { recursive: true, force: true }),
+    rm(temporaryReportRoot, { recursive: true, force: true }),
+  ]);
+  await expect(lstat(temporaryReportRoot)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
 });
 
 async function createInstalledRepository() {
@@ -78,7 +89,16 @@ async function runZedbee(
       format,
       ...extraArguments,
     ],
-    { cwd: repositoryRoot, reject: false, stdin: "ignore" },
+    {
+      cwd: repositoryRoot,
+      env: {
+        TMPDIR: temporaryReportRoot,
+        TMP: temporaryReportRoot,
+        TEMP: temporaryReportRoot,
+      },
+      reject: false,
+      stdin: "ignore",
+    },
   );
 }
 
@@ -92,7 +112,16 @@ async function runPackagedCli(
       join(repositoryRoot, "node_modules", "zedbee", "dist", "cli.js"),
       ...arguments_,
     ],
-    { cwd: repositoryRoot, reject: false, stdin: "ignore" },
+    {
+      cwd: repositoryRoot,
+      env: {
+        TMPDIR: temporaryReportRoot,
+        TMP: temporaryReportRoot,
+        TEMP: temporaryReportRoot,
+      },
+      reject: false,
+      stdin: "ignore",
+    },
   );
 }
 
@@ -123,9 +152,13 @@ describe("packaged Zedbee CLI", () => {
       /Full report:\s*([\s\S]*?)\nExpires after/u,
     );
     expect(reportSection, result.stdout).not.toBeNull();
-    const reportPath = reportSection?.[1]?.replaceAll(/\s/gu, "");
+    const reportLiteral = reportSection?.[1]?.replaceAll(/\s/gu, "");
+    const reportPath = JSON.parse(reportLiteral ?? "") as string;
     expect(reportPath).toBeTruthy();
-    const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
+    expect(relative(temporaryReportRoot, reportPath)).not.toMatch(
+      /^\.\.(?:[/\\]|$)/u,
+    );
+    const report = JSON.parse(await readFile(reportPath, "utf8")) as {
       readonly checks: readonly { readonly findings: readonly unknown[] }[];
     };
     expect(report.checks.flatMap((check) => check.findings)).toHaveLength(26);

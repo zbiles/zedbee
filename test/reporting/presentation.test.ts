@@ -331,6 +331,35 @@ describe("prepareTerminalPresentation", () => {
     expect(report.exitCode).toBe(1);
   });
 
+  it.each([
+    ["report", "/tmp/unsafe\u001b[31m.json", undefined],
+    ["warning", "/tmp/valid.json", "/tmp/unsafe\u202e.json"],
+  ] as const)(
+    "rejects an unsafe %s path before publishing a presentation",
+    async (_kind, reportPath, warningPath) => {
+      const { store } = recordingStore({
+        reportPath,
+        warnings:
+          warningPath === undefined
+            ? []
+            : [
+                {
+                  code: "TEMP_REPORT_CLEANUP_FAILED",
+                  message: "Cleanup failed.",
+                  path: warningPath,
+                },
+              ],
+      });
+
+      await expect(
+        prepareTerminalPresentation(
+          reportWithFindings(26),
+          options(store, "auto", "text"),
+        ),
+      ).rejects.toThrow(/safe temporary report path display text/u);
+    },
+  );
+
   it("returns immutable presentation containers", async () => {
     const { store } = recordingStore({
       reportPath: "/tmp/zedbee/complete.json",

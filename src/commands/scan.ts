@@ -12,6 +12,7 @@ import {
   createTemporaryReportStore,
   type ReportMaintenanceWarning,
 } from "../reporting/temporary-reports.js";
+import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
 import type {
@@ -77,7 +78,9 @@ function renderMaintenanceWarnings(
       "REPORT MAINTENANCE WARNING",
       warning.code.replaceAll("_", " "),
       `Issue: ${warning.message}`,
-      ...(warning.path === undefined ? [] : [`Path: ${warning.path}`]),
+      ...(warning.path === undefined
+        ? []
+        : [`Path: ${opaqueTemporaryReportPath(warning.path)}`]),
     ])
     .join("\n")}\n`;
 }

@@ -12,7 +12,7 @@ const events: ScanEvent[] = [
 ];
 
 describe("ScanApp", () => {
-  it("renders a neutral abbreviated preview with warnings at 40 columns", () => {
+  it("renders opaque report and warning paths at narrow width", () => {
     const previousNoColor = process.env.NO_COLOR;
     process.env.NO_COLOR = "1";
     const shown = createFinding({ id: "shown", rule: "shown-rule" });
@@ -29,7 +29,8 @@ describe("ScanApp", () => {
       },
     });
     const reportPath =
-      "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/full.json";
+      "/private/tmp/zedbee reports/0123456789abcdef0123456789abcdef/full report.json";
+    const warningPath = "/private/tmp/zedbee reports/hash/stuck report.json";
     const presentation: TerminalPresentation = {
       findings: [shown],
       totalFindingCount: 2,
@@ -40,7 +41,7 @@ describe("ScanApp", () => {
         {
           code: "TEMP_REPORT_CLEANUP_FAILED",
           message: "A retained report could not be removed.",
-          path: "/private/tmp/zedbee-reports/hash/stuck.json",
+          path: warningPath,
         },
       ],
     };
@@ -51,7 +52,7 @@ describe("ScanApp", () => {
         <ScanApp
           events={events}
           elapsedMs={15}
-          width={40}
+          width={20}
           color={false}
           animations={false}
           report={report}
@@ -63,17 +64,23 @@ describe("ScanApp", () => {
       else process.env.NO_COLOR = previousNoColor;
     }
 
-    expect(frame).toContain("3 passed · 1 warning · 2 failed");
+    expect(frame).toContain("3 passed · 1");
+    expect(frame).toContain("warning · 2");
     expect(frame).toContain("shown-rule");
     expect(frame).not.toContain("hidden-rule");
-    expect(frame).toContain("REPORT MAINTENANCE WARNING");
+    expect(frame.replaceAll("\n", " ")).toContain("REPORT MAINTENANCE WARNING");
     expect(frame).toContain("NEXT STEPS");
-    expect(frame.replaceAll("\n", "")).toContain(reportPath);
+    expect(frame.replaceAll("\n", "")).toContain(
+      JSON.stringify(reportPath).replaceAll(" ", "\\u0020"),
+    );
+    expect(frame.replaceAll("\n", "")).toContain(
+      JSON.stringify(warningPath).replaceAll(" ", "\\u0020"),
+    );
     expect(frame).not.toMatch(/\u001B\[[0-9;]*m/u);
     expect(frame).not.toMatch(/\bAI\b|Claude|Codex|Copilot/iu);
     expect(
       Math.max(...frame.split("\n").map((line) => [...line].length)),
-    ).toBeLessThanOrEqual(40);
+    ).toBeLessThanOrEqual(20);
   });
 
   it("keeps complete final output backward compatible without a presentation", () => {
