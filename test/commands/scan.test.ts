@@ -6,7 +6,12 @@ import {
   type ScanCommandDependencies,
   type ScanCommandIO,
 } from "../../src/commands/scan.js";
-import { createReport } from "../helpers/scan-report.js";
+import type {
+  PreparePresentationOptions,
+  TerminalPresentation,
+} from "../../src/reporting/presentation.js";
+import type { ScanReport } from "../../src/scan/report.js";
+import { createFinding, createReport } from "../helpers/scan-report.js";
 
 function io(
   tty: boolean,
@@ -32,6 +37,45 @@ function dependencies(
     resolveRepositoryRoot: async () => "/repo",
     scan: async () => createReport(),
     renderInk,
+    preparePresentation: async (report) => completePresentation(report),
+  };
+}
+
+function reportWithFindings(count: number): ScanReport {
+  const findings = Array.from({ length: count }, (_, index) =>
+    createFinding({
+      id: `finding-${index + 1}`,
+      rule: `rule-${index + 1}`,
+      location: { file: `src/file-${index + 1}.ts`, startLine: index + 1 },
+    }),
+  );
+  return createReport({
+    outcome: "blocked",
+    exitCode: 1,
+    summary: {
+      passed: 0,
+      warnings: 0,
+      failed: count,
+      incomplete: 0,
+      findings,
+    },
+    checks: [
+      {
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 4,
+        findings,
+      },
+    ],
+  });
+}
+
+function completePresentation(report: ScanReport): TerminalPresentation {
+  return {
+    findings: report.summary.findings,
+    totalFindingCount: report.summary.findings.length,
+    abbreviated: false,
+    warnings: [],
   };
 }
 
@@ -50,6 +94,152 @@ describe("selectOutputFormat", () => {
 });
 
 describe("executeScanCommand", () => {
+  it("bounds automatic piped output and points to the complete report", async () => {
+    const terminal = io(false);
+    const report = reportWithFindings(26);
+    const deps = dependencies();
+    deps.scan = async () => report;
+    deps.preparePresentation = async (_report, options) => {
+      expect(options).toEqual({
+        requestedFormat: "auto",
+        selectedFormat: "text",
+      });
+      return {
+        findings: report.summary.findings.slice(0, 25),
+        totalFindingCount: 26,
+        abbreviated: true,
+        reportPath: "/tmp/zedbee-reports/hash/complete.json",
+        expiresAfterRuns: 5,
+        warnings: [],
+      };
+    };
+
+    const exitCode = await executeScanCommand(
+      { cwd: "/repo", format: "auto", color: false, animations: false },
+      terminal,
+      deps,
+    );
+
+    const output = terminal.stdout.join("");
+    expect(exitCode).toBe(1);
+    expect(output).toContain("Showing 25 of 26 findings.");
+    expect(output).toContain("/tmp/zedbee-reports/hash/complete.json");
+    expect(output).toContain("rule-25");
+    expect(output).not.toContain("rule-26");
+  });
+
+  it.each(["text", "json", "sarif"] as const)(
+    "keeps explicit %s output complete while advancing maintenance once",
+    async (format) => {
+      const terminal = io(false);
+      const report = reportWithFindings(26);
+      const deps = dependencies();
+      deps.scan = async () => report;
+      const preparations: Omit<PreparePresentationOptions, "store">[] = [];
+      deps.preparePresentation = async (preparedReport, options) => {
+        preparations.push(options);
+        return completePresentation(preparedReport);
+      };
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      expect(exitCode).toBe(1);
+      expect(preparations).toEqual([
+        { requestedFormat: format, selectedFormat: format },
+      ]);
+      expect(terminal.stdout.join("")).toContain("rule-26");
+    },
+  );
+
+  it("prints every finding and a visible warning when report persistence fails", async () => {
+    const terminal = io(false);
+    const report = reportWithFindings(26);
+    const deps = dependencies();
+    deps.scan = async () => report;
+    deps.preparePresentation = async (preparedReport) => ({
+      ...completePresentation(preparedReport),
+      warnings: [
+        {
+          code: "TEMP_REPORT_WRITE_FAILED",
+          message: "The complete report could not be written.",
+        },
+      ],
+    });
+
+    const exitCode = await executeScanCommand(
+      { cwd: "/repo", format: "auto", color: false, animations: false },
+      terminal,
+      deps,
+    );
+
+    const output = terminal.stdout.join("");
+    expect(exitCode).toBe(1);
+    expect(output).toContain("rule-26");
+    expect(output).toContain("REPORT MAINTENANCE WARNING");
+    expect(output).toContain("The complete report could not be written.");
+  });
+
+  it.each(["json", "sarif"] as const)(
+    "writes %s maintenance warnings to stderr without changing the scan result",
+    async (format) => {
+      const terminal = io(false);
+      const report = reportWithFindings(1);
+      const deps = dependencies();
+      deps.scan = async () => report;
+      deps.preparePresentation = async (preparedReport) => ({
+        ...completePresentation(preparedReport),
+        warnings: [
+          {
+            code: "TEMP_REPORT_CLEANUP_FAILED",
+            message: "An expired report remains.",
+            path: "/tmp/zedbee-reports/hash/stuck.json",
+          },
+        ],
+      });
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      expect(exitCode).toBe(1);
+      expect(terminal.stderr.join("")).toContain("REPORT MAINTENANCE WARNING");
+      expect(terminal.stderr.join("")).toContain(
+        "/tmp/zedbee-reports/hash/stuck.json",
+      );
+      expect(() => JSON.parse(terminal.stdout.join(""))).not.toThrow();
+    },
+  );
+
+  it.each(["json", "sarif"] as const)(
+    "emits no partial %s document when presentation serialization fails",
+    async (format) => {
+      const terminal = io(false);
+      const deps = dependencies();
+      deps.scan = async () => reportWithFindings(26);
+      deps.preparePresentation = async () => {
+        throw new TypeError("unsafe display text");
+      };
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      expect(exitCode).toBe(2);
+      expect(terminal.stdout).toEqual([]);
+      expect(terminal.stderr).toEqual([
+        "Zedbee could not complete the scan.\n",
+      ]);
+    },
+  );
+
   it("mounts Ink for auto format in a TTY and passes accessibility options", async () => {
     const terminal = io(true);
     const renders: unknown[] = [];

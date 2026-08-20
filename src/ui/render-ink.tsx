@@ -1,5 +1,14 @@
 import { render } from "ink";
 import type { ScanEvent } from "../checks/events.js";
+import {
+  prepareTerminalPresentation,
+  type PreparePresentationOptions,
+  type TerminalPresentation,
+} from "../reporting/presentation.js";
+import {
+  createTemporaryReportStore,
+  type TemporaryReportStore,
+} from "../reporting/temporary-reports.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
 import { ScanApp } from "./scan-app.js";
@@ -8,6 +17,11 @@ export interface InkSessionOptions {
   color: boolean;
   animations: boolean;
   width: number;
+}
+
+export interface InkScanDependencies {
+  readonly preparePresentation?: typeof prepareTerminalPresentation;
+  readonly store?: TemporaryReportStore;
 }
 
 export const INK_ANIMATION_FRAME_MS = 80;
@@ -25,6 +39,7 @@ function wait(milliseconds: number): Promise<void> {
 export async function runInkScan(
   scanOptions: RunScanOptions,
   viewOptions: InkSessionOptions,
+  dependencies: InkScanDependencies = {},
 ): Promise<ScanReport> {
   const events: ScanEvent[] = [];
   const started = performance.now();
@@ -44,7 +59,10 @@ export async function runInkScan(
     },
   );
 
-  const rerender = (report?: ScanReport): void => {
+  const rerender = (
+    report?: ScanReport,
+    presentation?: TerminalPresentation,
+  ): void => {
     app.rerender(
       <ScanApp
         events={[...events]}
@@ -54,6 +72,7 @@ export async function runInkScan(
         color={viewOptions.color}
         animations={viewOptions.animations}
         {...(report === undefined ? {} : { report })}
+        {...(presentation === undefined ? {} : { presentation })}
       />,
     );
   };
@@ -71,13 +90,21 @@ export async function runInkScan(
         rerender();
       },
     });
+    const presentationOptions: PreparePresentationOptions = {
+      requestedFormat: "ink",
+      selectedFormat: "ink",
+      store: dependencies.store ?? createTemporaryReportStore(),
+    };
+    const presentation = await (
+      dependencies.preparePresentation ?? prepareTerminalPresentation
+    )(report, presentationOptions);
     if (viewOptions.animations) {
       const remaining =
         INK_MINIMUM_DISPLAY_MS - Math.max(0, performance.now() - started);
       if (remaining > 0) await wait(remaining);
     }
     if (ticker !== undefined) clearInterval(ticker);
-    rerender(report);
+    rerender(report, presentation);
     await app.waitUntilRenderFlush();
     return report;
   } finally {

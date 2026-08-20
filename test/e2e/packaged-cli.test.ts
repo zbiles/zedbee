@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,7 +96,42 @@ async function runPackagedCli(
   );
 }
 
+async function runAutomaticScan(repositoryRoot: string) {
+  return runPackagedCli(repositoryRoot, [
+    "scan",
+    "--no-color",
+    "--no-animations",
+  ]);
+}
+
 describe("packaged Zedbee CLI", () => {
+  it("bounds automatic piped findings and persists the complete JSON report", async () => {
+    const repository = await createInstalledRepository();
+    for (let index = 1; index <= 26; index += 1) {
+      await repository.write(
+        `src/value-${index}.ts`,
+        `export const value${index}={answer:${index}}\n`,
+      );
+    }
+    await repository.git(["add", "--", "src"]);
+
+    const result = await runAutomaticScan(repository.root);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain("Showing 25 of 26 findings.");
+    const reportSection = result.stdout.match(
+      /Full report:\s*([\s\S]*?)\nExpires after/u,
+    );
+    expect(reportSection, result.stdout).not.toBeNull();
+    const reportPath = reportSection?.[1]?.replaceAll(/\s/gu, "");
+    expect(reportPath).toBeTruthy();
+    const report = JSON.parse(await readFile(reportPath!, "utf8")) as {
+      readonly checks: readonly { readonly findings: readonly unknown[] }[];
+    };
+    expect(report.checks.flatMap((check) => check.findings)).toHaveLength(26);
+    expect(result.stderr).not.toContain("Zedbee could not complete the scan");
+  }, 30_000);
+
   it("exposes the installed CLI help and command set", async () => {
     const repository = await createInstalledRepository();
 
@@ -121,7 +156,7 @@ describe("packaged Zedbee CLI", () => {
     expect(help.stdout).toContain("sarif");
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).version).toBe("2.1.0");
-    expect(result.stderr).toBe("");
+    expect(result.stderr).toContain("REPORT MAINTENANCE WARNING");
   }, 30_000);
 
   it("exports every blocked fixture finding as a complete SARIF report", async () => {

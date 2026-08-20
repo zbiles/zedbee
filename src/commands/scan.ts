@@ -3,6 +3,15 @@ import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
 import { renderSarif } from "../renderers/sarif.js";
 import { renderText } from "../renderers/text.js";
+import {
+  prepareTerminalPresentation,
+  type PreparePresentationOptions,
+  type TerminalPresentation,
+} from "../reporting/presentation.js";
+import {
+  createTemporaryReportStore,
+  type ReportMaintenanceWarning,
+} from "../reporting/temporary-reports.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
 import type {
@@ -42,11 +51,43 @@ export interface InkRenderOptions {
 export interface ScanCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   scan(options: RunScanOptions): Promise<ScanReport>;
-  renderInk(report: ScanReport, options: InkRenderOptions): Promise<void>;
+  renderInk(
+    report: ScanReport,
+    options: InkRenderOptions,
+    presentation?: TerminalPresentation,
+  ): Promise<void>;
+  preparePresentation(
+    report: ScanReport,
+    options: Omit<PreparePresentationOptions, "store">,
+  ): Promise<TerminalPresentation>;
   scanInk?(
     options: RunScanOptions,
     renderOptions: InkRenderOptions,
   ): Promise<ScanReport>;
+}
+
+const TEMPORARY_REPORT_STORE = createTemporaryReportStore();
+
+function renderMaintenanceWarnings(
+  warnings: readonly ReportMaintenanceWarning[],
+): string {
+  if (warnings.length === 0) return "";
+  return `${warnings
+    .flatMap((warning) => [
+      "REPORT MAINTENANCE WARNING",
+      warning.code.replaceAll("_", " "),
+      `Issue: ${warning.message}`,
+      ...(warning.path === undefined ? [] : [`Path: ${warning.path}`]),
+    ])
+    .join("\n")}\n`;
+}
+
+function writeMaintenanceWarnings(
+  io: ScanCommandIO,
+  warnings: readonly ReportMaintenanceWarning[],
+): void {
+  const output = renderMaintenanceWarnings(warnings);
+  if (output !== "") io.writeStderr(output);
 }
 
 export function selectOutputFormat(
@@ -97,6 +138,12 @@ const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {
     const { runInkScan } = await import("../ui/render-ink.js");
     return runInkScan(options, renderOptions);
   },
+  async preparePresentation(report, options) {
+    return prepareTerminalPresentation(report, {
+      ...options,
+      store: TEMPORARY_REPORT_STORE,
+    });
+  },
 };
 
 export async function executeScanCommand(
@@ -145,16 +192,29 @@ export async function executeScanCommand(
     }
 
     const report = await dependencies.scan(scanOptions);
+    const presentation = await dependencies.preparePresentation(report, {
+      requestedFormat: options.format,
+      selectedFormat: format,
+    });
 
     if (format === "json") {
-      io.writeStdout(renderJson(report));
+      const json = renderJson(report);
+      io.writeStdout(json);
+      writeMaintenanceWarnings(io, presentation.warnings);
     } else if (format === "sarif") {
       const sarif = renderSarif(report);
       io.writeStdout(`${sarif}\n`);
+      writeMaintenanceWarnings(io, presentation.warnings);
     } else if (format === "text") {
-      io.writeStdout(renderText(report, { width: io.width, color: false }));
+      io.writeStdout(
+        renderText(report, {
+          width: io.width,
+          color: false,
+          presentation,
+        }),
+      );
     } else {
-      await dependencies.renderInk(report, inkOptions);
+      await dependencies.renderInk(report, inkOptions, presentation);
     }
     return report.exitCode;
   } catch {
