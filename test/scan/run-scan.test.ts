@@ -28,6 +28,11 @@ import {
   type RunScanDependencies,
 } from "../../src/scan/run-scan.js";
 import type { ScanEvent } from "../../src/checks/events.js";
+import { prepareTerminalPresentation } from "../../src/reporting/presentation.js";
+import type {
+  TemporaryReportRequest,
+  TemporaryReportStore,
+} from "../../src/reporting/temporary-reports.js";
 
 const config: ResolvedConfig = resolveConfig({
   schemaVersion: 1,
@@ -1332,12 +1337,7 @@ describe("runScan", () => {
     },
   ])(
     "retains the resolved presentation policy for $name",
-    async ({
-      reporting,
-      reportingSurface,
-      sourceExcerpts,
-      expected,
-    }) => {
+    async ({ reporting, reportingSurface, sourceExcerpts, expected }) => {
       const resolved = resolveConfig({
         schemaVersion: 1,
         profile: "recommended",
@@ -1467,6 +1467,80 @@ describe("runScan", () => {
     expect(calls.indexOf("evaluate policy")).toBeLessThan(
       calls.indexOf("clean snapshots"),
     );
+  });
+
+  it("keeps default interactive source live but strips it from an overflow report", async () => {
+    const created = await mkdtemp(join(tmpdir(), "zedbee-live-excerpts-"));
+    const snapshotRoot = await realpath(created);
+    const baselineDir = join(snapshotRoot, "baseline");
+    const targetDir = join(snapshotRoot, "target");
+    await mkdir(baselineDir);
+    await mkdir(join(targetDir, "src"), { recursive: true });
+    await writeFile(
+      join(targetDir, "src/value.ts"),
+      "one\ntwo\nthree\nexport const staged = true;\n",
+    );
+    onTestFinished(() => rm(snapshotRoot, { recursive: true, force: true }));
+
+    const interactiveConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: "error" },
+      reporting: { sourceExcerpts: "interactive" },
+    });
+    const baseFinding = blocking.findings[0]!;
+    const deps = dependencies([], {
+      loadConfig: async () => interactiveConfig,
+      buildSnapshots: async () => ({
+        baselineDir,
+        targetDir,
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+        cleanup: async () => undefined,
+      }),
+      dispatch: async () => [
+        {
+          result: {
+            ...blocking,
+            findings: Array.from({ length: 26 }, (_, index) => ({
+              ...baseFinding,
+              id: `lint-${index}`,
+              location: { file: "src/value.ts", startLine: 4 },
+            })),
+          },
+          policy: Object.freeze({ ...interactiveConfig.checks.lint }),
+        },
+      ],
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      reportingSurface: "ink",
+      dependencies: deps,
+    });
+    let request: TemporaryReportRequest | undefined;
+    const store: TemporaryReportStore = {
+      async maintain(value) {
+        request = value;
+        return { reportPath: "/tmp/zedbee/complete.json", warnings: [] };
+      },
+    };
+
+    const presentation = await prepareTerminalPresentation(report, {
+      requestedFormat: "auto",
+      selectedFormat: "ink",
+      store,
+    });
+
+    expect(report.summary.findings[0]?.sourceExcerpt?.text).toBe(
+      "export const staged = true;",
+    );
+    expect(report.presentationPolicy.persistSourceExcerpts).toBe(false);
+    expect(request?.json).not.toContain("export const staged = true;");
+    expect(presentation).toMatchObject({
+      abbreviated: true,
+      totalFindingCount: 26,
+      reportPath: "/tmp/zedbee/complete.json",
+    });
   });
 
   it("omits adapter excerpts from library reports without a surface", async () => {

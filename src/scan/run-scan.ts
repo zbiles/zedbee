@@ -48,7 +48,10 @@ import type {
   ReportingSurface,
   SourceExcerptOverride,
 } from "./reporting-options.js";
-import { shouldIncludeSourceExcerpts } from "./reporting-options.js";
+import {
+  shouldIncludeSourceExcerpts,
+  shouldPersistSourceExcerpts,
+} from "./reporting-options.js";
 import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import {
@@ -270,6 +273,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   let report: ScanReport | undefined;
   let abortedError: unknown;
   let shouldRethrow = false;
+  let includeSourceExcerpts = false;
   let presentationPolicy: ScanPresentationPolicy = Object.freeze({
     terminalFindingLimit: 25,
     temporaryReportRetention: 5,
@@ -292,12 +296,16 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       options.repositoryRoot,
       options.configPath,
     );
+    includeSourceExcerpts = shouldIncludeSourceExcerpts(
+      config.reporting.sourceExcerpts,
+      options.reportingSurface,
+      options.sourceExcerpts,
+    );
     presentationPolicy = Object.freeze({
       terminalFindingLimit: config.reporting.terminalFindingLimit,
       temporaryReportRetention: config.reporting.temporaryReportRetention,
-      persistSourceExcerpts: shouldIncludeSourceExcerpts(
+      persistSourceExcerpts: shouldPersistSourceExcerpts(
         config.reporting.sourceExcerpts,
-        options.reportingSurface,
         options.sourceExcerpts,
       ),
     });
@@ -372,7 +380,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         );
         activePhase = "policy-evaluation";
         const decision = dependencies.evaluate(results, config);
-        const reportedResults = presentationPolicy.persistSourceExcerpts
+        const reportedResults = includeSourceExcerpts
           ? await enrichSourceExcerpts(decision.results, targetInspection)
           : omitSourceExcerpts(decision.results);
         report = {

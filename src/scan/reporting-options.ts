@@ -15,3 +15,12 @@ export function shouldIncludeSourceExcerpts(
   if (policy === "always") return true;
   return policy === "interactive" && surface === "ink";
 }
+
+export function shouldPersistSourceExcerpts(
+  policy: SourceExcerptPolicy,
+  override: SourceExcerptOverride | undefined,
+): boolean {
+  if (override === "include") return true;
+  if (override === "exclude") return false;
+  return policy === "always";
+}
