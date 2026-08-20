@@ -74,6 +74,11 @@ describe("executeChecksCommand", () => {
           }),
         }),
         expect.objectContaining({
+          id: "reactCorrectness",
+          limitation:
+            "Calibrates from staged React dependency data and falls back to managed React 19.2 settings.",
+        }),
+        expect.objectContaining({
           id: "vulnerabilities",
           executionClass: "network",
           network: "online-package-metadata-only",

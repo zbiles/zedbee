@@ -159,7 +159,7 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
     },
     executionClass: "lightweight",
     limitation:
-      "Uses managed React 19.2 settings rather than project executable configuration.",
+      "Calibrates from staged React dependency data and falls back to managed React 19.2 settings.",
   },
   reactAccessibility: {
     description: "Checks JSX accessibility for DOM React workspaces.",

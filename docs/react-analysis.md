@@ -21,13 +21,13 @@ unambiguous matching direct record from a supported staged lockfile:
 may be used only when that lockfile owns the workspace. This prevents a sibling
 workspace's lockfile record from calibrating the wrong package in a monorepo.
 
-If the manifest declaration is absent or unsupported, the lockfile cannot be
-parsed, no matching record is unambiguous, or the record belongs to another
-workspace, Zedbee silently uses the resolvable staged manifest version instead.
-If that is unavailable too, it silently falls back to Zedbee's managed React
-19.2 baseline. This makes calibration deterministic and gives version-sensitive
-rules more appropriate input without requiring developers to edit lockfiles for
-Zedbee.
+If a supporting lockfile cannot be parsed, no matching record is unambiguous,
+or the record belongs to another workspace, Zedbee silently uses the resolvable
+staged manifest version instead. If the direct React declaration is absent,
+unsupported, or cannot be resolved, Zedbee silently falls back to its managed
+React 19.2 baseline. This makes calibration deterministic and gives
+version-sensitive rules more appropriate input without requiring developers to
+edit lockfiles for Zedbee.
 
 Zedbee deliberately does not use eslint-plugin-react's `detect` mode: it would
 probe the scanned project's installed package tree. React calibration parses
