@@ -1,4 +1,5 @@
 import { relative, sep } from "node:path";
+import type { ESLint } from "eslint";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
@@ -14,7 +15,10 @@ import type {
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { convertEslintMessage } from "../eslint/convert-message.js";
-import { createManagedEslint } from "../eslint/load-engine.js";
+import {
+  createManagedEslint,
+  type ManagedEslintOptions,
+} from "../eslint/load-engine.js";
 import type {
   ManagedEslintMode,
   ReactCorrectnessConfigFactory,
@@ -31,6 +35,12 @@ const REACT_ENVIRONMENTS = new Set<Environment>([
   "remix",
 ]);
 const DOM_ENVIRONMENTS = new Set<Environment>(["react-dom", "next", "remix"]);
+
+type ReactEslintEngineFactory = (
+  options: ManagedEslintOptions,
+) => Pick<ESLint, "lintFiles">;
+
+type PreparedSide = () => Promise<readonly Observation[]>;
 
 function targetFor(workspace: WorkspaceInspection): CheckTarget {
   return {
@@ -56,14 +66,15 @@ function workspaceFor(
   );
 }
 
-async function collectSide(
+async function prepareSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
   id: "reactCorrectness" | "reactAccessibility",
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
-): Promise<readonly Observation[]> {
+  engineFactory: ReactEslintEngineFactory,
+): Promise<PreparedSide> {
   const failure =
     id === "reactCorrectness"
       ? "React correctness analysis failed."
@@ -72,18 +83,22 @@ async function collectSide(
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
     if (canonicalRoot !== inspection.snapshotRoot) throw new Error(failure);
     const workspace = workspaceFor(inspection, target);
-    if (workspace === undefined) return Object.freeze([]);
+    if (workspace === undefined) {
+      return async () => Object.freeze([]);
+    }
     const files = workspace.sourceFiles
       .filter((path) => SOURCE.test(path))
       .sort(compareCodeUnits);
-    if (files.length === 0) return Object.freeze([]);
+    if (files.length === 0) {
+      return async () => Object.freeze([]);
+    }
 
     const reactVersion =
       mode === "react-correctness"
         ? (await resolveReactVersion(inspection, workspace)).version
         : undefined;
 
-    const engine = createManagedEslint({
+    const engine = engineFactory({
       cwd: canonicalRoot,
       mode,
       managedIgnores: [],
@@ -91,27 +106,33 @@ async function collectSide(
         ? {}
         : { reactVersion, reactCorrectnessConfigFactory }),
     });
-    const results = await engine.lintFiles(files);
-    const allowed = new Set(files);
-    const observations: Observation[] = [];
-    for (const result of results) {
-      const path = relative(canonicalRoot, result.filePath)
-        .split(sep)
-        .join("/");
-      if (!allowed.has(path)) throw new Error(failure);
-      observations.push(
-        ...result.messages.map((message) =>
-          convertEslintMessage(path, message, canonicalRoot, id),
-        ),
-      );
-    }
-    return Object.freeze(
-      observations.sort(
-        (left, right) =>
-          compareCodeUnits(left.identity, right.identity) ||
-          compareCodeUnits(left.message, right.message),
-      ),
-    );
+    return async () => {
+      try {
+        const results = await engine.lintFiles(files);
+        const allowed = new Set(files);
+        const observations: Observation[] = [];
+        for (const result of results) {
+          const path = relative(canonicalRoot, result.filePath)
+            .split(sep)
+            .join("/");
+          if (!allowed.has(path)) throw new Error(failure);
+          observations.push(
+            ...result.messages.map((message) =>
+              convertEslintMessage(path, message, canonicalRoot, id),
+            ),
+          );
+        }
+        return Object.freeze(
+          observations.sort(
+            (left, right) =>
+              compareCodeUnits(left.identity, right.identity) ||
+              compareCodeUnits(left.message, right.message),
+          ),
+        );
+      } catch {
+        throw new Error(failure);
+      }
+    };
   } catch {
     throw new Error(failure);
   }
@@ -121,6 +142,7 @@ export function createReactAdapter(
   id: "reactCorrectness" | "reactAccessibility",
   mode: ManagedEslintMode,
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory = managedReactCorrectnessConfig,
+  engineFactory: ReactEslintEngineFactory = createManagedEslint,
 ): ObservationCheckAdapter {
   const environments =
     id === "reactAccessibility" ? DOM_ENVIRONMENTS : REACT_ENVIRONMENTS;
@@ -163,22 +185,28 @@ export function createReactAdapter(
       };
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
-      const baselineObservations = await collectSide(
+      const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
         context.target,
         id,
         mode,
         reactCorrectnessConfigFactory,
+        engineFactory,
       );
-      const targetObservations = await collectSide(
+      const collectTarget = await prepareSide(
         context.snapshots.targetDir,
         context.targetInspection,
         context.target,
         id,
         mode,
         reactCorrectnessConfigFactory,
+        engineFactory,
       );
+      const [baselineObservations, targetObservations] = await Promise.all([
+        collectBaseline(),
+        collectTarget(),
+      ]);
       return {
         checkId: id,
         target: context.target,

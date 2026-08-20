@@ -1,8 +1,10 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import type { Linter } from "eslint";
+import type { ESLint, Linter } from "eslint";
 import { describe, expect, it } from "vitest";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
+import { createManagedEslint } from "../../../src/checks/eslint/load-engine.js";
+import type { ManagedEslintOptions } from "../../../src/checks/eslint/load-engine.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { createReactAdapter } from "../../../src/checks/react/adapter.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
@@ -142,6 +144,53 @@ describe("reactCorrectnessAdapter", () => {
     await adapter.collect(context);
 
     expect(versions).toEqual(["18.3.1", "19.2.0"]);
+  });
+
+  it("starts target lint before baseline lint completes", async () => {
+    const { run } = await reactContext("react");
+    let markTargetStarted: () => void = () => undefined;
+    const targetStarted = new Promise<void>((resolve) => {
+      markTargetStarted = resolve;
+    });
+    let targetStartedWhileBaselineHeld = false;
+    const engineFactory = (
+      options: ManagedEslintOptions,
+    ): Pick<ESLint, "lintFiles"> => {
+      const engine = createManagedEslint(options);
+      return {
+        async lintFiles(patterns) {
+          if (options.cwd === run.baselineInspection.snapshotRoot) {
+            let timeout: NodeJS.Timeout | undefined;
+            try {
+              targetStartedWhileBaselineHeld = await Promise.race([
+                targetStarted.then(() => true),
+                new Promise<boolean>((resolve) => {
+                  timeout = setTimeout(() => resolve(false), 250);
+                }),
+              ]);
+            } finally {
+              if (timeout !== undefined) clearTimeout(timeout);
+            }
+          } else if (options.cwd === run.targetInspection.snapshotRoot) {
+            markTargetStarted();
+          }
+          return engine.lintFiles(patterns);
+        },
+      };
+    };
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      engineFactory,
+    );
+
+    const result = await adapter.collect(run);
+
+    expect(targetStartedWhileBaselineHeld).toBe(true);
+    expect(result.targetObservations).toContainEqual(
+      expect.objectContaining({ rule: "react-hooks/rules-of-hooks" }),
+    );
   });
 
   it("calibration never executes project React from node_modules", async () => {
