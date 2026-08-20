@@ -1,4 +1,4 @@
-import { Box, Text, renderToString } from "ink";
+import { Box, Text, render } from "ink";
 import type { Diagnostic } from "../doctor/diagnostics.js";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
@@ -169,11 +169,18 @@ export function DoctorDashboard({
   );
 }
 
-export function renderDoctorDashboard(
+export async function runInkDoctor(
   diagnostics: readonly Diagnostic[],
   options: { readonly width: number; readonly color: boolean },
-): string {
-  return `${renderToString(
+): Promise<void> {
+  const app = render(
     <DoctorDashboard diagnostics={diagnostics} {...options} />,
-  )}\n`;
+    { exitOnCtrlC: false, patchConsole: false, maxFps: 1 },
+  );
+  try {
+    await app.waitUntilRenderFlush();
+  } finally {
+    app.unmount();
+    await app.waitUntilExit();
+  }
 }

@@ -4,7 +4,6 @@ import {
   type Diagnostic,
   type DiagnosticContext,
 } from "../doctor/diagnostics.js";
-import { renderDoctorDashboard } from "../ui/doctor-dashboard.js";
 
 export type DoctorOutputFormat = "auto" | "text" | "json";
 
@@ -28,10 +27,23 @@ export interface DoctorCommandResult {
 
 export interface DoctorCommandDependencies {
   diagnose(context: DiagnosticContext): Promise<readonly Diagnostic[]>;
+  renderDashboard?(
+    diagnostics: readonly Diagnostic[],
+    options: { readonly width: number; readonly color: boolean },
+  ): Promise<void>;
+}
+
+async function renderDashboard(
+  diagnostics: readonly Diagnostic[],
+  options: { readonly width: number; readonly color: boolean },
+): Promise<void> {
+  const { runInkDoctor } = await import("../ui/doctor-dashboard.js");
+  await runInkDoctor(diagnostics, options);
 }
 
 const DEFAULT_DEPENDENCIES: DoctorCommandDependencies = {
   diagnose: (context) => runDiagnostics(defaultDiagnosticProbe, context),
+  renderDashboard,
 };
 
 const MINIMUM_DASHBOARD_WIDTH = 80;
@@ -73,16 +85,19 @@ export async function executeDoctorCommand(
       io.width >= MINIMUM_DASHBOARD_WIDTH &&
       io.env.TERM !== "dumb" &&
       io.env.CI === undefined;
-    io.writeStdout(
-      options.format === "json"
-        ? `${JSON.stringify(result, null, 2)}\n`
-        : dashboard
-          ? renderDoctorDashboard(result.diagnostics, {
-              width: io.width,
-              color: options.color && io.env.NO_COLOR === undefined,
-            })
-          : renderText(result),
-    );
+    if (options.format === "json") {
+      io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
+    } else if (dashboard) {
+      await (dependencies.renderDashboard ?? renderDashboard)(
+        result.diagnostics,
+        {
+          width: io.width,
+          color: options.color && io.env.NO_COLOR === undefined,
+        },
+      );
+    } else {
+      io.writeStdout(renderText(result));
+    }
     return result;
   } catch {
     const result = Object.freeze({

@@ -54,4 +54,32 @@ describe("DoctorDashboard", () => {
       ),
     ).toBeLessThanOrEqual(100);
   });
+
+  it("flushes the completed dashboard through a live Ink session", async () => {
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      output.push(String(args[0] ?? ""));
+      const callback = args.find((value) => typeof value === "function");
+      if (typeof callback === "function")
+        queueMicrotask(callback as () => void);
+      return true;
+    }) as typeof process.stdout.write);
+
+    try {
+      const { runInkDoctor } = await import("../../src/ui/doctor-dashboard.js");
+      await runInkDoctor(
+        [{ id: "git", status: "pass", message: "Git is ready." }],
+        { width: 100, color: true },
+      );
+    } finally {
+      stdout.mockRestore();
+    }
+
+    const rendered = output.join("");
+    expect(rendered).toContain("DOCTOR");
+    expect(rendered).toContain("Git is ready.");
+    expect(rendered).toContain("PASS");
+  });
 });

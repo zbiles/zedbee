@@ -11,6 +11,7 @@ import {
   DOCTOR_DIAGNOSTIC_IDS,
   defaultDiagnosticProbe,
   runDiagnostics,
+  type Diagnostic,
   type DiagnosticProbe,
 } from "../../src/doctor/diagnostics.js";
 import { OsvUnavailableError } from "../../src/checks/vulnerabilities/osv/errors.js";
@@ -419,28 +420,43 @@ describe("doctor diagnostics", () => {
 describe("executeDoctorCommand", () => {
   it("renders one large colored Doctor panel in a wide interactive terminal", async () => {
     const io = terminal({ stdoutIsTTY: true, width: 100 });
-
-    await executeDoctorCommand(doctorOptions(), io, {
+    const renders: Array<{
+      diagnostics: readonly Diagnostic[];
+      options: { readonly width: number; readonly color: boolean };
+    }> = [];
+    const dependencies = {
       diagnose: async () => [
-        { id: "git", status: "pass", message: "Git is ready." },
+        { id: "git", status: "pass" as const, message: "Git is ready." },
         {
           id: "hook-state",
-          status: "warning",
+          status: "warning" as const,
           message: "No hook is installed.",
           remediation: "Run zedbee init.",
         },
-        { id: "node", status: "fail", message: "Node is too old." },
+        {
+          id: "node",
+          status: "fail" as const,
+          message: "Node is too old.",
+        },
       ],
-    });
+      async renderDashboard(
+        diagnostics: readonly Diagnostic[],
+        options: { readonly width: number; readonly color: boolean },
+      ) {
+        renders.push({ diagnostics, options });
+      },
+    };
 
-    const output = io.stdout.join("");
-    expect(output).toContain("DOCTOR");
-    expect(output.match(/DOCTOR/gu)).toHaveLength(1);
-    expect(output).toContain("Git is ready.");
-    expect(output).toContain("Run zedbee init.");
-    expect(output).toContain("PASS");
-    expect(output).toContain("WARNING");
-    expect(output).toContain("FAIL");
+    await executeDoctorCommand(doctorOptions(), io, dependencies);
+
+    expect(io.stdout).toEqual([]);
+    expect(renders).toHaveLength(1);
+    expect(renders[0]?.options).toEqual({ width: 100, color: true });
+    expect(renders[0]?.diagnostics.map(({ id }) => id)).toEqual([
+      "git",
+      "hook-state",
+      "node",
+    ]);
   });
 
   it.each([
