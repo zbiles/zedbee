@@ -36,7 +36,7 @@ describe("loadConfig", () => {
     expect(config.reporting).toEqual({
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
-      temporaryReportRetention: 5,
+      temporaryReportMaxAge: "24h",
     });
   });
 
@@ -44,13 +44,13 @@ describe("loadConfig", () => {
     const root = await createRepositoryRoot();
     await writeFile(
       join(root, ".zedbeerc.jsonc"),
-      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always","terminalFindingLimit":"all","temporaryReportRetention":9}}',
+      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always","terminalFindingLimit":"all","temporaryReportMaxAge":"7d"}}',
     );
 
     expect((await loadConfig(root)).reporting).toEqual({
       sourceExcerpts: "always",
       terminalFindingLimit: "all",
-      temporaryReportRetention: 9,
+      temporaryReportMaxAge: "7d",
     });
   });
 
@@ -251,27 +251,25 @@ describe("loadConfig", () => {
       source: '{"schemaVersion":1,"reporting":{"terminalFindingLimit":"25"}}',
     },
     {
-      name: "zero temporary report retention",
-      source: '{"schemaVersion":1,"reporting":{"temporaryReportRetention":0}}',
+      name: "numeric zero temporary report age",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportMaxAge":0}}',
     },
     {
-      name: "negative temporary report retention",
-      source: '{"schemaVersion":1,"reporting":{"temporaryReportRetention":-1}}',
+      name: "negative numeric temporary report age",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportMaxAge":-1}}',
     },
     {
-      name: "fractional temporary report retention",
+      name: "fractional numeric temporary report age",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportMaxAge":1.5}}',
+    },
+    {
+      name: "unsafe numeric temporary report age",
       source:
-        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":1.5}}',
+        '{"schemaVersion":1,"reporting":{"temporaryReportMaxAge":9007199254740992}}',
     },
     {
-      name: "unsafe temporary report retention",
-      source:
-        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":9007199254740992}}',
-    },
-    {
-      name: "numeric string temporary report retention",
-      source:
-        '{"schemaVersion":1,"reporting":{"temporaryReportRetention":"5"}}',
+      name: "unitless temporary report age",
+      source: '{"schemaVersion":1,"reporting":{"temporaryReportMaxAge":"5"}}',
     },
     {
       name: "unknown reporting setting",

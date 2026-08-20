@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseTemporaryReportMaxAge } from "../reporting/report-age.js";
 
 export const CHECK_IDS = [
   "formatting",
@@ -27,7 +28,7 @@ export type TerminalFindingLimit = number | "all";
 export interface ResolvedReportingPolicy {
   readonly sourceExcerpts: SourceExcerptPolicy;
   readonly terminalFindingLimit: TerminalFindingLimit;
-  readonly temporaryReportRetention: number;
+  readonly temporaryReportMaxAge: string;
 }
 
 export interface ResolvedCheckPolicy {
@@ -68,6 +69,23 @@ const checkTimingSchema = z.enum(["relevant", "always"]).meta({
 const positiveIntegerSchema = z.number().int().positive();
 const positiveSafeIntegerSchema = z.number().int().positive().safe();
 const percentageSchema = z.number().finite().min(0).max(100);
+const temporaryReportMaxAgeSchema = z
+  .string()
+  .regex(/^[1-9][0-9]{0,7}[mhd]$/u)
+  .refine(
+    (value) => {
+      try {
+        parseTemporaryReportMaxAge(value);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    {
+      message:
+        'Use a positive whole-number duration such as "30m", "24h", or "7d".',
+    },
+  );
 
 const commonPolicyFields = {
   severity: checkSeveritySchema.optional(),
@@ -201,9 +219,10 @@ const reportingSchema = z
           'Maximum findings presented automatically in terminal output; use "all" to present every finding.',
         default: 25,
       }),
-    temporaryReportRetention: positiveSafeIntegerSchema.optional().meta({
-      description: "Number of temporary reports retained for subsequent scans.",
-      default: 5,
+    temporaryReportMaxAge: temporaryReportMaxAgeSchema.optional().meta({
+      description:
+        'Maximum temporary-report age as a whole-number duration ending in "m", "h", or "d".',
+      default: "24h",
     }),
   })
   .strict();

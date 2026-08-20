@@ -110,7 +110,7 @@ describe("runInkScan", () => {
         totalFindingCount: 2,
         abbreviated: true,
         reportPath: "/tmp/zedbee-reports/hash/complete.json",
-        expiresAfterRuns: 5,
+        maximumAge: "24h",
         warnings: [
           {
             code: "TEMP_REPORT_CLEANUP_FAILED" as const,

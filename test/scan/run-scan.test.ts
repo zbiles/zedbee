@@ -896,7 +896,7 @@ describe("runScan", () => {
     ]);
     expect(report.presentationPolicy).toEqual({
       terminalFindingLimit: 25,
-      temporaryReportRetention: 5,
+      temporaryReportMaxAge: "24h",
       persistSourceExcerpts: false,
     });
     expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
@@ -1286,7 +1286,7 @@ describe("runScan", () => {
       sourceExcerpts: undefined,
       expected: {
         terminalFindingLimit: 25,
-        temporaryReportRetention: 5,
+        temporaryReportMaxAge: "24h",
         persistSourceExcerpts: false,
       },
     },
@@ -1295,13 +1295,13 @@ describe("runScan", () => {
       reporting: {
         sourceExcerpts: "always" as const,
         terminalFindingLimit: "all" as const,
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
       },
       reportingSurface: "json" as const,
       sourceExcerpts: undefined,
       expected: {
         terminalFindingLimit: "all" as const,
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
       },
     },
@@ -1310,13 +1310,13 @@ describe("runScan", () => {
       reporting: {
         sourceExcerpts: "interactive" as const,
         terminalFindingLimit: 11,
-        temporaryReportRetention: 3,
+        temporaryReportMaxAge: "3d",
       },
       reportingSurface: "text" as const,
       sourceExcerpts: "include" as const,
       expected: {
         terminalFindingLimit: 11,
-        temporaryReportRetention: 3,
+        temporaryReportMaxAge: "3d",
         persistSourceExcerpts: true,
       },
     },
@@ -1325,13 +1325,13 @@ describe("runScan", () => {
       reporting: {
         sourceExcerpts: "always" as const,
         terminalFindingLimit: 7,
-        temporaryReportRetention: 2,
+        temporaryReportMaxAge: "2d",
       },
       reportingSurface: "ink" as const,
       sourceExcerpts: "exclude" as const,
       expected: {
         terminalFindingLimit: 7,
-        temporaryReportRetention: 2,
+        temporaryReportMaxAge: "2d",
         persistSourceExcerpts: false,
       },
     },
@@ -1364,7 +1364,7 @@ describe("runScan", () => {
       reporting: {
         sourceExcerpts: "always",
         terminalFindingLimit: "all",
-        temporaryReportRetention: 8,
+        temporaryReportMaxAge: "8d",
       },
     });
     const report = await runScan({
@@ -1381,7 +1381,7 @@ describe("runScan", () => {
     expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
     expect(report.presentationPolicy).toEqual({
       terminalFindingLimit: "all",
-      temporaryReportRetention: 8,
+      temporaryReportMaxAge: "8d",
       persistSourceExcerpts: true,
     });
     expect(Object.isFrozen(report.presentationPolicy)).toBe(true);

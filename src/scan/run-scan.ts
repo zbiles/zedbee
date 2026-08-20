@@ -276,7 +276,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   let includeSourceExcerpts = false;
   let presentationPolicy: ScanPresentationPolicy = Object.freeze({
     terminalFindingLimit: 25,
-    temporaryReportRetention: 5,
+    temporaryReportMaxAge: "24h",
     persistSourceExcerpts: false,
   });
 
@@ -303,7 +303,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     );
     presentationPolicy = Object.freeze({
       terminalFindingLimit: config.reporting.terminalFindingLimit,
-      temporaryReportRetention: config.reporting.temporaryReportRetention,
+      temporaryReportMaxAge: config.reporting.temporaryReportMaxAge,
       persistSourceExcerpts: shouldPersistSourceExcerpts(
         config.reporting.sourceExcerpts,
         options.sourceExcerpts,

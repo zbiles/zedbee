@@ -109,7 +109,7 @@ describe("executeScanCommand", () => {
         totalFindingCount: 26,
         abbreviated: true,
         reportPath: "/tmp/zedbee-reports/hash/complete.json",
-        expiresAfterRuns: 5,
+        maximumAge: "24h",
         warnings: [],
       };
     };

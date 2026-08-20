@@ -68,7 +68,7 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
   "reporting": {
     "sourceExcerpts": "interactive",
     "terminalFindingLimit": 25,
-    "temporaryReportRetention": 5,
+    "temporaryReportMaxAge": "24h",
   },
   "failOnIncomplete": true,
 }
@@ -78,7 +78,7 @@ Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `of
 
 `reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, JSON, and SARIF. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
 
-`reporting.terminalFindingLimit` defaults to 25 findings for automatically selected terminal output and forced `--format ink`; set it to a positive integer or `"all"`. When one of these results exceeds the limit, Zedbee first saves the complete versioned JSON report in protected operating-system temporary storage and then shows a preview plus its path. `reporting.temporaryReportRetention` defaults to 5 subsequent runs, after which Zedbee removes that report when it next performs report maintenance. The operating system may delete temporary files earlier.
+`reporting.terminalFindingLimit` defaults to 25 findings for automatically selected terminal output and forced `--format ink`; set it to a positive integer or `"all"`. When one of these results exceeds the limit, Zedbee first saves the complete versioned JSON report in protected operating-system temporary storage and then shows a preview plus its path. `reporting.temporaryReportMaxAge` defaults to `"24h"`; on a later run, Zedbee removes reports older than that age. The operating system may delete temporary files earlier.
 
 The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
 
@@ -136,7 +136,7 @@ npx zedbee scan --format sarif > zedbee.sarif
 npx zedbee scan --format text --include-source > zedbee-report-with-source.txt
 ```
 
-Both automatically selected Ink/text output and explicit `--format ink` show at most `reporting.terminalFindingLimit` findings. If more exist, Zedbee prints a `NEXT STEPS` section with the complete temporary JSON report path and its run-based expiration; a report path is printed only after the complete report exists. Fixing only the visible preview is insufficient—process every finding in the complete report. If the report cannot be written, Zedbee warns and restores full terminal output instead of hiding findings.
+Both automatically selected Ink/text output and explicit `--format ink` show at most `reporting.terminalFindingLimit` findings. If more exist, Zedbee prints a `NEXT STEPS` section with the complete temporary JSON report path and its maximum age; a report path is printed only after the complete report exists. Fixing only the visible preview is insufficient—process every finding in the complete report. If the report cannot be retained safely, Zedbee removes it, restores full terminal output, and ends with a `REPORT DELIVERY WARNING` confirming that nothing was hidden.
 
 Explicit `--format text`, `--format json`, and `--format sarif` output remains complete, has no finding cap, and creates no automatic report file. Redirect an explicit format when you need to choose the saved location. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](docs/reporting.md) for the full contract, including incomplete-scan notifications, retention, and source-excerpt behavior.
 

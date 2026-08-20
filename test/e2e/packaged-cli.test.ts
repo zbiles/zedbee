@@ -149,7 +149,7 @@ describe("packaged Zedbee CLI", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("Showing 25 of 26 findings.");
     const reportSection = result.stdout.match(
-      /Full report:\s*([\s\S]*?)\nExpires after/u,
+      /Full report:\s*([\s\S]*?)\nZedbee will remove this report/u,
     );
     expect(reportSection, result.stdout).not.toBeNull();
     const reportLiteral = reportSection?.[1]?.replaceAll(/\s/gu, "");

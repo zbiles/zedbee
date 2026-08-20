@@ -4,7 +4,7 @@
 
 An automatic scan (`zedbee scan` or `zedbee scan --format auto`) uses Ink in an interactive terminal and text when redirected. Automatically selected output shows up to 25 findings by default. Explicit `--format ink` uses the same bounded terminal preview even when Ink is forced. If either surface has more findings, Zedbee saves the complete versioned JSON report in protected operating-system temporary storage before it prints a `NEXT STEPS` preview. The path is printed only after a complete report exists. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
 
-Configure the limit and run-based retention without making any lockfile changes:
+Configure the limit and maximum report age without making any lockfile changes:
 
 ```jsonc
 {
@@ -12,16 +12,16 @@ Configure the limit and run-based retention without making any lockfile changes:
   "reporting": {
     "sourceExcerpts": "interactive",
     "terminalFindingLimit": 25,
-    "temporaryReportRetention": 5,
+    "temporaryReportMaxAge": "24h",
   },
 }
 ```
 
-`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding and disable automatic overflow reports. `temporaryReportRetention` defaults to 5 subsequent runs. Retention counts later Zedbee scans, not hours or days: report maintenance removes an expired report on a subsequent run. Files live in the operating system's temporary area, so the operating system may delete them earlier.
+`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding and disable automatic overflow reports. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. On each run, Zedbee removes tracked reports older than the configured age. Files live in the operating system's temporary area, so the operating system may delete them earlier.
 
 The temporary JSON report follows the disk source-excerpt policy, not the interactive preview policy. The default `"interactive"` policy can show source excerpts live in Ink but omits ordinary excerpts from disk. Set `sourceExcerpts` to `"always"` or pass `--include-source` to persist them; `"never"` or `--no-source` omits them. Secret content is always redacted.
 
-Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A write failure restores full terminal output and prints no nonexistent report path, so no finding is hidden.
+Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A write failure restores full terminal output and prints no nonexistent report path. The final `REPORT DELIVERY WARNING` confirms that nothing was hidden and all findings are shown above.
 
 ## Explicit complete exports
 

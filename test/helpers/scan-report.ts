@@ -85,7 +85,7 @@ export function createReport(overrides: Partial<ScanReport> = {}): ScanReport {
     networkDisclosures: [],
     presentationPolicy: {
       terminalFindingLimit: 25,
-      temporaryReportRetention: 5,
+      temporaryReportMaxAge: "24h",
       persistSourceExcerpts: false,
     },
     summary,

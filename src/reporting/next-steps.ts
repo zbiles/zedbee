@@ -1,4 +1,5 @@
 import type { ScanReport } from "../scan/report.js";
+import { formatTemporaryReportMaxAge } from "./report-age.js";
 import { opaqueTemporaryReportPath } from "./report-path.js";
 
 export interface NextStepsInput {
@@ -6,7 +7,7 @@ export interface NextStepsInput {
   readonly shown: number;
   readonly total: number;
   readonly reportPath: string;
-  readonly expiresAfterRuns: number;
+  readonly maximumAge: string;
 }
 
 function outcomeInstructions(
@@ -29,13 +30,14 @@ function outcomeInstructions(
 }
 
 export function nextStepsLines(input: NextStepsInput): readonly string[] {
-  const runLabel = input.expiresAfterRuns === 1 ? "run" : "runs";
+  const age = formatTemporaryReportMaxAge(input.maximumAge);
   return Object.freeze([
     "NEXT STEPS",
     "",
     `Showing ${input.shown} of ${input.total} findings.`,
     `Full report: ${opaqueTemporaryReportPath(input.reportPath)}`,
-    `Expires after ${input.expiresAfterRuns} more Zedbee ${runLabel}.`,
+    `Zedbee will remove this report on the first run after ${age}.`,
+    "The operating system may remove it sooner.",
     "",
     ...outcomeInstructions(input.outcome),
     "The terminal output is abbreviated; do not treat it as the complete report.",

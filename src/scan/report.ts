@@ -9,7 +9,7 @@ export interface NetworkDisclosure {
 
 export interface ScanPresentationPolicy {
   readonly terminalFindingLimit: number | "all";
-  readonly temporaryReportRetention: number;
+  readonly temporaryReportMaxAge: string;
   readonly persistSourceExcerpts: boolean;
 }
 

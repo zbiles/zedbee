@@ -111,7 +111,7 @@ describe("prepareTerminalPresentation", () => {
       expect(maintain).toHaveBeenCalledTimes(1);
       expect(maintain).toHaveBeenCalledWith({
         repositoryRoot: "/repo",
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         ...(shouldPersist ? { json: expect.any(String) } : {}),
       });
       expect(presentation.findings).toHaveLength(expectedCount);
@@ -120,7 +120,8 @@ describe("prepareTerminalPresentation", () => {
       expect(presentation.reportPath).toBe(
         shouldPersist ? "/tmp/zedbee/report.json" : undefined,
       );
-      expect(presentation.expiresAfterRuns).toBe(shouldPersist ? 5 : undefined);
+      expect(presentation.maximumAge).toBe(shouldPersist ? "24h" : undefined);
+      expect(presentation.completeOutputFallback).toBeUndefined();
       expect(presentation.findings).toEqual(
         [...report.summary.findings]
           .sort(compareFindings)
@@ -134,7 +135,7 @@ describe("prepareTerminalPresentation", () => {
     const report = reportWithFindings(26, {
       presentationPolicy: {
         terminalFindingLimit: "all",
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: false,
       },
     });
@@ -149,7 +150,7 @@ describe("prepareTerminalPresentation", () => {
     expect(maintain).toHaveBeenCalledOnce();
     expect(maintain).toHaveBeenCalledWith({
       repositoryRoot: "/repo",
-      retentionRuns: 9,
+      maxAgeMs: 604_800_000,
     });
   });
 
@@ -161,7 +162,7 @@ describe("prepareTerminalPresentation", () => {
     const report = reportWithFindings(26, {
       presentationPolicy: {
         terminalFindingLimit: 3,
-        temporaryReportRetention: 5,
+        temporaryReportMaxAge: "24h",
         persistSourceExcerpts: true,
       },
     });
@@ -203,7 +204,7 @@ describe("prepareTerminalPresentation", () => {
       const report = reportWithFindings(26, {
         presentationPolicy: {
           terminalFindingLimit: 25,
-          temporaryReportRetention: 5,
+          temporaryReportMaxAge: "24h",
           persistSourceExcerpts: true,
         },
       });
@@ -223,7 +224,7 @@ describe("prepareTerminalPresentation", () => {
     const report = reportWithFindings(26, {
       presentationPolicy: {
         terminalFindingLimit: 25,
-        temporaryReportRetention: 5,
+        temporaryReportMaxAge: "24h",
         persistSourceExcerpts: false,
       },
     });
@@ -251,7 +252,7 @@ describe("prepareTerminalPresentation", () => {
     const report = reportWithFindings(26, {
       presentationPolicy: {
         terminalFindingLimit: 25,
-        temporaryReportRetention: 5,
+        temporaryReportMaxAge: "24h",
         persistSourceExcerpts: true,
       },
       summary: {
@@ -304,7 +305,8 @@ describe("prepareTerminalPresentation", () => {
     expect(presentation.findings).toHaveLength(26);
     expect(presentation.abbreviated).toBe(false);
     expect(presentation.reportPath).toBeUndefined();
-    expect(presentation.expiresAfterRuns).toBeUndefined();
+    expect(presentation.maximumAge).toBeUndefined();
+    expect(presentation.completeOutputFallback).toBe(true);
     expect(presentation.warnings).toEqual([writeWarning]);
   });
 
@@ -409,7 +411,7 @@ describe("prepareTerminalPresentation", () => {
     expect(maintain).toHaveBeenCalledOnce();
     expect(maintain).toHaveBeenCalledWith({
       repositoryRoot: "/repo",
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
     });
   });
 });

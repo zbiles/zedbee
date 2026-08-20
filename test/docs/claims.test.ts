@@ -115,12 +115,11 @@ describe("public documentation claims", () => {
     const publicDocs = [readme, reporting, privacy, support].join("\n");
 
     expect(readme).toContain('"terminalFindingLimit": 25');
-    expect(readme).toContain('"temporaryReportRetention": 5');
+    expect(readme).toContain('"temporaryReportMaxAge": "24h"');
     expect(publicDocs).toMatch(/terminalFindingLimit[^.]*default[^.]*25/i);
     expect(publicDocs).toMatch(/terminalFindingLimit[^.]*"all"/i);
-    expect(publicDocs).toMatch(
-      /temporaryReportRetention[^.]*default[^.]*5 subsequent runs/i,
-    );
+    expect(publicDocs).toMatch(/temporaryReportMaxAge[^.]*default[^.]*24h/i);
+    expect(reporting).toMatch(/"30m"[^.]*"24h"[^.]*"7d"/i);
     expect(reporting).toMatch(
       /explicit text \(`--format text`\), JSON \(`--format json`\), and SARIF \(`--format sarif`\)[^.]*complete/i,
     );
@@ -146,6 +145,9 @@ describe("public documentation claims", () => {
     expect(support).toMatch(/cleanup and write warnings[^.]*non-blocking/i);
     expect(support).toMatch(
       /write failure[^.]*restores[^.]*full terminal output/i,
+    );
+    expect(support).toMatch(
+      /report delivery warning[^.]*nothing was hidden[^.]*shown above/i,
     );
     expect(support).toMatch(
       /coding tools[^.]*complete report path[^.]*exit code 2/i,

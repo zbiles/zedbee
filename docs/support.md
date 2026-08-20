@@ -51,7 +51,7 @@ Secret findings and overlapping source excerpts are always redacted. Zedbee neve
 
 ## Reports and automation
 
-Ink is the interactive human interface. Both automatically selected Ink/text output and explicit `--format ink` are limited to 25 findings by default. When there are more, Zedbee writes a complete JSON report to protected operating-system temporary storage and prints its path with `NEXT STEPS`; `reporting.terminalFindingLimit: "all"` disables abbreviation. The default `temporaryReportRetention` is 5 subsequent runs, although the operating system may delete temporary files earlier.
+Ink is the interactive human interface. Both automatically selected Ink/text output and explicit `--format ink` are limited to 25 findings by default. When there are more, Zedbee writes a complete JSON report to protected operating-system temporary storage and prints its path with `NEXT STEPS`; `reporting.terminalFindingLimit: "all"` disables abbreviation. The default `temporaryReportMaxAge` is `"24h"`, although the operating system may delete temporary files earlier.
 
 Stable text, versioned JSON, and SARIF 2.1.0 are suitable for redirection, coding tools, and CI. Every explicit text, JSON, and SARIF export is complete: it includes every finding and incomplete-scan notification, has no finding cap, and creates no automatic report file. Forced Ink remains a bounded preview rather than a complete export.
 
@@ -63,7 +63,7 @@ npx zedbee scan --format sarif > zedbee.sarif
 
 SARIF remains non-interactive and retains the normal scan exit status: exit code 0 allows the commit, 1 indicates completed blocking findings, and 2 indicates incomplete required analysis. An OSV outage configured as `warn` remains visible as incomplete but does not by itself block. Terminal presentation and explicit exports have separate contracts, so terminal finding limits never abbreviate explicitly requested text, JSON, or SARIF.
 
-Coding tools must process the complete report path shown after an abbreviated preview and respect exit code 2 as incomplete—not clean. Fixing only the visible preview is insufficient. The path appears only after the report exists completely. Cleanup and write warnings are non-blocking maintenance diagnostics; a write failure restores full terminal output and provides no nonexistent path. Automatic reports use the disk source-excerpt policy: default interactive excerpts are omitted from the file unless `reporting.sourceExcerpts` is `always` or `--include-source` is used.
+Coding tools must process the complete report path shown after an abbreviated preview and respect exit code 2 as incomplete—not clean. Fixing only the visible preview is insufficient. The path appears only after the report exists completely. Cleanup and write warnings are non-blocking maintenance diagnostics; a write failure restores full terminal output and provides no nonexistent path. The final `REPORT DELIVERY WARNING` confirms that nothing was hidden and all findings are shown above. Automatic reports use the disk source-excerpt policy: default interactive excerpts are omitted from the file unless `reporting.sourceExcerpts` is `always` or `--include-source` is used.
 
 ## Not currently supported
 

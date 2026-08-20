@@ -21,7 +21,7 @@ describe("renderJson", () => {
       exitCode: 1,
       presentationPolicy: {
         terminalFindingLimit: "all",
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
       },
       summary: {

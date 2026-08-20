@@ -7,6 +7,7 @@ import type {
   RequestedOutputFormat,
 } from "../scan/reporting-options.js";
 import { omitReportSourceExcerpts } from "../scan/source-excerpts.js";
+import { parseTemporaryReportMaxAge } from "./report-age.js";
 import { validateTemporaryReportPath } from "./report-path.js";
 import type {
   ReportMaintenanceWarning,
@@ -18,7 +19,8 @@ export interface TerminalPresentation {
   readonly totalFindingCount: number;
   readonly abbreviated: boolean;
   readonly reportPath?: string;
-  readonly expiresAfterRuns?: number;
+  readonly maximumAge?: string;
+  readonly completeOutputFallback?: boolean;
   readonly warnings: readonly ReportMaintenanceWarning[];
 }
 
@@ -48,7 +50,8 @@ function presentation(
   totalFindingCount: number,
   warnings: readonly ReportMaintenanceWarning[],
   reportPath?: string,
-  expiresAfterRuns?: number,
+  maximumAge?: string,
+  completeOutputFallback = false,
 ): TerminalPresentation {
   return Object.freeze({
     findings: Object.freeze([...findings]),
@@ -57,7 +60,8 @@ function presentation(
     ...(reportPath === undefined
       ? {}
       : { reportPath: validateTemporaryReportPath(reportPath) }),
-    ...(expiresAfterRuns === undefined ? {} : { expiresAfterRuns }),
+    ...(maximumAge === undefined ? {} : { maximumAge }),
+    ...(completeOutputFallback ? { completeOutputFallback: true } : {}),
     warnings: freezeWarnings(warnings),
   });
 }
@@ -87,7 +91,7 @@ export async function prepareTerminalPresentation(
     supportsAbbreviation(options.requestedFormat, options.selectedFormat);
   const maintenanceRequest = {
     repositoryRoot: report.repositoryRoot,
-    retentionRuns: policy.temporaryReportRetention,
+    maxAgeMs: parseTemporaryReportMaxAge(policy.temporaryReportMaxAge),
   };
 
   if (!shouldPersist) {
@@ -118,6 +122,9 @@ export async function prepareTerminalPresentation(
       orderedFindings,
       orderedFindings.length,
       maintained.warnings,
+      undefined,
+      undefined,
+      true,
     );
   }
 
@@ -126,6 +133,6 @@ export async function prepareTerminalPresentation(
     orderedFindings.length,
     maintained.warnings,
     maintained.reportPath,
-    policy.temporaryReportRetention,
+    policy.temporaryReportMaxAge,
   );
 }

@@ -95,7 +95,7 @@ function NextSteps({
   if (
     !presentation.abbreviated ||
     presentation.reportPath === undefined ||
-    presentation.expiresAfterRuns === undefined
+    presentation.maximumAge === undefined
   ) {
     return null;
   }
@@ -104,7 +104,7 @@ function NextSteps({
     shown: presentation.findings.length,
     total: presentation.totalFindingCount,
     reportPath: presentation.reportPath,
-    expiresAfterRuns: presentation.expiresAfterRuns,
+    maximumAge: presentation.maximumAge,
   });
   return (
     <Box flexDirection="column" width={width} marginTop={1}>
@@ -139,6 +139,33 @@ function NextSteps({
           </Text>
         ),
       )}
+    </Box>
+  );
+}
+
+function DeliveryFallback({
+  presentation,
+  width,
+  color,
+}: {
+  presentation: TerminalPresentation | undefined;
+  width: number;
+  color: boolean;
+}) {
+  if (presentation?.completeOutputFallback !== true) return null;
+  const count = presentation.totalFindingCount;
+  const findingLabel = count === 1 ? "finding is" : "findings are";
+  return (
+    <Box flexDirection="column" width={width} marginTop={1}>
+      <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+        REPORT DELIVERY WARNING
+      </Text>
+      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+        Zedbee could not safely retain the temporary report, so it was removed.
+      </Text>
+      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+        Nothing was hidden; all {count} {findingLabel} shown above.
+      </Text>
     </Box>
   );
 }
@@ -179,11 +206,6 @@ export function ScanApp(props: ScanAppProps) {
           </Text>
         </Box>
       ))}
-      <MaintenanceWarnings
-        warnings={props.presentation?.warnings ?? []}
-        width={props.width}
-        color={props.color}
-      />
       {props.presentation?.abbreviated === true ? null : (
         <Box marginTop={1}>
           <Text
@@ -206,6 +228,16 @@ export function ScanApp(props: ScanAppProps) {
           color={props.color}
         />
       )}
+      <MaintenanceWarnings
+        warnings={props.presentation?.warnings ?? []}
+        width={props.width}
+        color={props.color}
+      />
+      <DeliveryFallback
+        presentation={props.presentation}
+        width={props.width}
+        color={props.color}
+      />
     </Box>
   );
 }

@@ -43,7 +43,7 @@ const validExamples = [
 
 const validSourceExcerptPolicies = ["never", "interactive", "always"] as const;
 const validTerminalFindingLimits = [1, 25, "all"] as const;
-const validTemporaryReportRetentions = [1, 5, 9] as const;
+const validTemporaryReportMaxAges = ["30m", "24h", "7d"] as const;
 
 function validator() {
   const ajv = new Ajv({ allErrors: true });
@@ -94,12 +94,12 @@ describe("Zedbee configuration JSON Schema", () => {
     },
   );
 
-  it.each(validTemporaryReportRetentions)(
-    "accepts the %s subsequent-scan temporary report retention in both validators",
-    (temporaryReportRetention) => {
+  it.each(validTemporaryReportMaxAges)(
+    "accepts the %s temporary report maximum age in both validators",
+    (temporaryReportMaxAge) => {
       const input = {
         schemaVersion: 1,
-        reporting: { temporaryReportRetention },
+        reporting: { temporaryReportMaxAge },
       };
       const validate = validator();
 
@@ -147,35 +147,46 @@ describe("Zedbee configuration JSON Schema", () => {
       input: { schemaVersion: 1, reporting: { terminalFindingLimit: "25" } },
     },
     {
-      name: "zero temporary report retention",
-      input: { schemaVersion: 1, reporting: { temporaryReportRetention: 0 } },
+      name: "numeric temporary report maximum age",
+      input: { schemaVersion: 1, reporting: { temporaryReportMaxAge: 0 } },
     },
     {
-      name: "negative temporary report retention",
+      name: "negative numeric temporary report maximum age",
       input: {
         schemaVersion: 1,
-        reporting: { temporaryReportRetention: -1 },
+        reporting: { temporaryReportMaxAge: -1 },
       },
     },
     {
-      name: "fractional temporary report retention",
+      name: "fractional numeric temporary report maximum age",
       input: {
         schemaVersion: 1,
-        reporting: { temporaryReportRetention: 1.5 },
+        reporting: { temporaryReportMaxAge: 1.5 },
       },
     },
     {
-      name: "unsafe temporary report retention",
+      name: "unsafe numeric temporary report maximum age",
       input: {
         schemaVersion: 1,
-        reporting: { temporaryReportRetention: 9_007_199_254_740_992 },
+        reporting: { temporaryReportMaxAge: 9_007_199_254_740_992 },
       },
     },
     {
-      name: "numeric string temporary report retention",
+      name: "duration without a unit",
       input: {
         schemaVersion: 1,
-        reporting: { temporaryReportRetention: "5" },
+        reporting: { temporaryReportMaxAge: "5" },
+      },
+    },
+    {
+      name: "zero temporary report maximum age",
+      input: { schemaVersion: 1, reporting: { temporaryReportMaxAge: "0h" } },
+    },
+    {
+      name: "fractional temporary report maximum age",
+      input: {
+        schemaVersion: 1,
+        reporting: { temporaryReportMaxAge: "1.5h" },
       },
     },
     {
@@ -238,7 +249,7 @@ describe("Zedbee configuration JSON Schema", () => {
           properties: {
             sourceExcerpts: { default: string };
             terminalFindingLimit: { default: number };
-            temporaryReportRetention: { default: number };
+            temporaryReportMaxAge: { default: string };
           };
         };
         failOnIncomplete: { default: boolean; description: string };
@@ -256,7 +267,7 @@ describe("Zedbee configuration JSON Schema", () => {
           properties: {
             sourceExcerpts: { default: "interactive" },
             terminalFindingLimit: { default: 25 },
-            temporaryReportRetention: { default: 5 },
+            temporaryReportMaxAge: { default: "24h" },
           },
         },
         failOnIncomplete: { default: true },

@@ -52,7 +52,7 @@ describe("renderSarif", () => {
     const report = createReport({
       presentationPolicy: {
         terminalFindingLimit: "all",
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
       },
     });

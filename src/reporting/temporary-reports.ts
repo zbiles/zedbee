@@ -27,7 +27,7 @@ export interface ReportMaintenanceWarning {
 
 export interface TemporaryReportRequest {
   readonly repositoryRoot: string;
-  readonly retentionRuns: number;
+  readonly maxAgeMs: number;
   readonly json?: string;
 }
 
@@ -46,6 +46,14 @@ export interface TemporaryReportUserIdentity {
 }
 
 interface ReportLifecycleState {
+  readonly schemaVersion: 2;
+  readonly reports: readonly {
+    readonly fileName: string;
+    readonly createdAtMs: number;
+  }[];
+}
+
+interface LegacyReportLifecycleState {
   readonly schemaVersion: 1;
   readonly generation: number;
   readonly reports: readonly {
@@ -53,6 +61,9 @@ interface ReportLifecycleState {
     readonly createdGeneration: number;
   }[];
 }
+
+type ParsedReportLifecycleState =
+  ReportLifecycleState | LegacyReportLifecycleState;
 
 const STATE_FILE_NAME = ".lifecycle.json";
 const MAX_STATE_BYTES = 1024 * 1024;
@@ -377,41 +388,63 @@ async function releaseLock(
   }
 }
 
-function parseState(serialized: string): ReportLifecycleState {
-  const value = JSON.parse(serialized) as Partial<ReportLifecycleState> | null;
-  if (
-    value === null ||
-    typeof value !== "object" ||
-    !hasOnlyKeys(value, ["schemaVersion", "generation", "reports"]) ||
-    value.schemaVersion !== 1 ||
-    !Number.isSafeInteger(value.generation) ||
-    value.generation === undefined ||
-    value.generation < 1 ||
-    value.generation >= Number.MAX_SAFE_INTEGER ||
-    !Array.isArray(value.reports) ||
-    value.reports.length > MAX_STATE_REPORTS ||
-    value.reports.some(
-      (report) =>
-        typeof report !== "object" ||
-        report === null ||
-        !hasOnlyKeys(report, ["fileName", "createdGeneration"]) ||
-        typeof report.fileName !== "string" ||
-        basename(report.fileName) !== report.fileName ||
-        !REPORT_NAME.test(report.fileName) ||
-        !Number.isSafeInteger(report.createdGeneration) ||
-        report.createdGeneration < 1 ||
-        report.createdGeneration > value.generation!,
-    )
-  ) {
+function parseState(serialized: string): ParsedReportLifecycleState {
+  const value = JSON.parse(serialized) as Record<string, unknown> | null;
+  if (value === null || typeof value !== "object") {
     throw new TypeError("Invalid temporary-report lifecycle state");
   }
+  if (value.schemaVersion === 1) {
+    if (
+      !hasOnlyKeys(value, ["schemaVersion", "generation", "reports"]) ||
+      !Number.isSafeInteger(value.generation) ||
+      (value.generation as number) < 1 ||
+      (value.generation as number) >= Number.MAX_SAFE_INTEGER ||
+      !Array.isArray(value.reports) ||
+      value.reports.length > MAX_STATE_REPORTS ||
+      value.reports.some(
+        (report) =>
+          typeof report !== "object" ||
+          report === null ||
+          !hasOnlyKeys(report, ["fileName", "createdGeneration"]) ||
+          typeof report.fileName !== "string" ||
+          basename(report.fileName) !== report.fileName ||
+          !REPORT_NAME.test(report.fileName) ||
+          !Number.isSafeInteger(report.createdGeneration) ||
+          report.createdGeneration < 1 ||
+          report.createdGeneration > (value.generation as number),
+      )
+    ) {
+      throw new TypeError("Invalid temporary-report lifecycle state");
+    }
+  } else if (value.schemaVersion === 2) {
+    if (
+      !hasOnlyKeys(value, ["schemaVersion", "reports"]) ||
+      !Array.isArray(value.reports) ||
+      value.reports.length > MAX_STATE_REPORTS ||
+      value.reports.some(
+        (report) =>
+          typeof report !== "object" ||
+          report === null ||
+          !hasOnlyKeys(report, ["fileName", "createdAtMs"]) ||
+          typeof report.fileName !== "string" ||
+          basename(report.fileName) !== report.fileName ||
+          !REPORT_NAME.test(report.fileName) ||
+          !Number.isSafeInteger(report.createdAtMs) ||
+          report.createdAtMs < 0,
+      )
+    ) {
+      throw new TypeError("Invalid temporary-report lifecycle state");
+    }
+  } else {
+    throw new TypeError("Invalid temporary-report lifecycle state");
+  }
+  const reports = value.reports as readonly { readonly fileName: string }[];
   if (
-    new Set(value.reports.map((report) => report.fileName)).size !==
-    value.reports.length
+    new Set(reports.map((report) => report.fileName)).size !== reports.length
   ) {
     throw new TypeError("Duplicate temporary-report lifecycle entry");
   }
-  return value as ReportLifecycleState;
+  return value as unknown as ParsedReportLifecycleState;
 }
 
 function serializeState(state: ReportLifecycleState): string {
@@ -480,11 +513,35 @@ async function readBoundedRegularFile(path: string): Promise<string> {
 async function loadState(
   repositoryDirectory: string,
   warnings: ReportMaintenanceWarning[],
+  nowMs: number,
 ): Promise<ReportLifecycleState> {
   try {
-    return parseState(
+    const parsed = parseState(
       await readBoundedRegularFile(join(repositoryDirectory, STATE_FILE_NAME)),
     );
+    if (parsed.schemaVersion === 2) return parsed;
+    const reports: ReportLifecycleState["reports"][number][] = [];
+    for (const report of parsed.reports) {
+      const path = trackedReportPath(repositoryDirectory, report.fileName);
+      let createdAtMs = nowMs;
+      if (path !== undefined) {
+        try {
+          const metadata = await lstat(path);
+          if (
+            metadata.isFile() &&
+            !metadata.isSymbolicLink() &&
+            Number.isSafeInteger(metadata.mtimeMs) &&
+            metadata.mtimeMs >= 0
+          ) {
+            createdAtMs = Math.min(metadata.mtimeMs, nowMs);
+          }
+        } catch {
+          // Preserve the tracked entry with a fresh age; cleanup validates it later.
+        }
+      }
+      reports.push({ fileName: report.fileName, createdAtMs });
+    }
+    return { schemaVersion: 2, reports };
   } catch (error) {
     if (errorCode(error) === "ENOENT") {
       const entries = await readdir(repositoryDirectory).catch(() => undefined);
@@ -493,7 +550,7 @@ async function loadState(
         entries.length === 1 &&
         entries[0] === LOCK_FILE_NAME
       ) {
-        return { schemaVersion: 1, generation: 0, reports: [] };
+        return { schemaVersion: 2, reports: [] };
       }
     }
     warnings.push(
@@ -502,7 +559,7 @@ async function loadState(
         `Temporary-report lifecycle state was unavailable (${errorCode(error)}); unknown entries were left untouched.`,
       ),
     );
-    return { schemaVersion: 1, generation: 0, reports: [] };
+    return { schemaVersion: 2, reports: [] };
   }
 }
 
@@ -532,13 +589,23 @@ async function rollbackReport(
   }
   try {
     await unlink(reportPath);
-    await syncTemporaryReportDirectory(dirname(reportPath));
   } catch (error) {
     warnings.push(
       warning(
         "TEMP_REPORT_CLEANUP_FAILED",
         `A newly written report could not be rolled back (${errorCode(error)}).`,
         reportPath,
+      ),
+    );
+    return;
+  }
+  try {
+    await syncTemporaryReportDirectory(dirname(reportPath));
+  } catch (error) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `A rolled-back report's directory could not be synchronized (${errorCode(error)}).`,
       ),
     );
   }
@@ -644,13 +711,13 @@ function trackedReportPath(
 async function removeExpiredReports(
   repositoryDirectory: string,
   reports: ReportLifecycleState["reports"],
-  generation: number,
-  retentionRuns: number,
+  nowMs: number,
+  maxAgeMs: number,
   warnings: ReportMaintenanceWarning[],
 ): Promise<ReportLifecycleState["reports"]> {
   const retained: ReportLifecycleState["reports"][number][] = [];
   for (const report of reports) {
-    if (generation - report.createdGeneration < retentionRuns) {
+    if (nowMs - report.createdAtMs < maxAgeMs) {
       retained.push(report);
       continue;
     }
@@ -718,9 +785,11 @@ async function removeExpiredReports(
 export function createTemporaryReportStore(options?: {
   readonly temporaryRoot?: string;
   readonly userIdentity?: TemporaryReportUserIdentity;
+  readonly now?: () => number;
 }): TemporaryReportStore {
   const configuredTemporaryRoot = options?.temporaryRoot ?? tmpdir();
   const configuredUserIdentity = options?.userIdentity;
+  const now = options?.now ?? Date.now;
 
   return Object.freeze({
     async maintain(
@@ -730,11 +799,12 @@ export function createTemporaryReportStore(options?: {
       let reportPath: string | undefined;
       let ownedLock: OwnedLock | undefined;
       try {
-        if (
-          !Number.isSafeInteger(request.retentionRuns) ||
-          request.retentionRuns < 1
-        ) {
-          throw new TypeError("Invalid temporary-report retention");
+        if (!Number.isSafeInteger(request.maxAgeMs) || request.maxAgeMs < 0) {
+          throw new TypeError("Invalid temporary-report maximum age");
+        }
+        const nowMs = now();
+        if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
+          throw new TypeError("Invalid temporary-report clock");
         }
         const [canonicalTemporaryRoot, canonicalRepositoryRoot] =
           await Promise.all([
@@ -753,14 +823,17 @@ export function createTemporaryReportStore(options?: {
           repositoryHash,
         );
         ownedLock = await acquireLock(repositoryDirectory, warnings);
-        const previousState = await loadState(repositoryDirectory, warnings);
-        const generation = previousState.generation + 1;
+        const previousState = await loadState(
+          repositoryDirectory,
+          warnings,
+          nowMs,
+        );
         const reports = [
           ...(await removeExpiredReports(
             repositoryDirectory,
             previousState.reports,
-            generation,
-            request.retentionRuns,
+            nowMs,
+            request.maxAgeMs,
             warnings,
           )),
         ];
@@ -768,13 +841,12 @@ export function createTemporaryReportStore(options?: {
         if (request.json !== undefined) {
           let hasCapacity = true;
           const capacityProbe: ReportLifecycleState = {
-            schemaVersion: 1,
-            generation,
+            schemaVersion: 2,
             reports: [
               ...reports,
               {
                 fileName: "00000000-0000-4000-8000-000000000000.json",
-                createdGeneration: generation,
+                createdAtMs: nowMs,
               },
             ],
           };
@@ -799,7 +871,7 @@ export function createTemporaryReportStore(options?: {
               reportPath = report.path;
               reports.push({
                 fileName: report.fileName,
-                createdGeneration: generation,
+                createdAtMs: nowMs,
               });
             } catch (error) {
               warnings.push(
@@ -814,8 +886,7 @@ export function createTemporaryReportStore(options?: {
         }
 
         const nextState: ReportLifecycleState = {
-          schemaVersion: 1,
-          generation,
+          schemaVersion: 2,
           reports,
         };
         try {

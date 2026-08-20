@@ -145,7 +145,7 @@ describe("omitReportSourceExcerpts", () => {
       ],
       presentationPolicy: {
         terminalFindingLimit: "all",
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
       },
       checks: [
@@ -176,22 +176,12 @@ describe("omitReportSourceExcerpts", () => {
 
     expect(
       omitted.checks[0]?.findings.map(({ sourceExcerpt }) => sourceExcerpt),
-    ).toEqual([
-      undefined,
-      { line: 8, redacted: true, truncated: false },
-    ]);
+    ).toEqual([undefined, { line: 8, redacted: true, truncated: false }]);
     expect(
       omitted.summary.findings.map(({ sourceExcerpt }) => sourceExcerpt),
-    ).toEqual([
-      undefined,
-      { line: 8, redacted: true, truncated: false },
-    ]);
-    expect(omitted.summary.findings[0]).toBe(
-      omitted.checks[0]?.findings[0],
-    );
-    expect(omitted.summary.findings[1]).toBe(
-      omitted.checks[0]?.findings[1],
-    );
+    ).toEqual([undefined, { line: 8, redacted: true, truncated: false }]);
+    expect(omitted.summary.findings[0]).toBe(omitted.checks[0]?.findings[0]);
+    expect(omitted.summary.findings[1]).toBe(omitted.checks[0]?.findings[1]);
 
     const withoutSource = ({
       sourceExcerpt: _sourceExcerpt,
@@ -244,7 +234,7 @@ describe("omitReportSourceExcerpts", () => {
       ],
       presentationPolicy: {
         terminalFindingLimit: "all",
-        temporaryReportRetention: 9,
+        temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
       },
     });

@@ -43,7 +43,7 @@ describe("renderText", () => {
       shown: 25,
       total: 712,
       reportPath: "/temporary/path/zedbee-report.json",
-      expiresAfterRuns: 5,
+      maximumAge: "24h",
     } as const;
 
     expect(nextStepsLines({ ...base, outcome: "blocked" })).toEqual([
@@ -51,7 +51,8 @@ describe("renderText", () => {
       "",
       "Showing 25 of 712 findings.",
       'Full report: "/temporary/path/zedbee-report.json"',
-      "Expires after 5 more Zedbee runs.",
+      "Zedbee will remove this report on the first run after 24 hours.",
+      "The operating system may remove it sooner.",
       "",
       "Fix every blocking finding, stage the changes, then run Zedbee again.",
       "The terminal output is abbreviated; do not treat it as the complete report.",
@@ -69,8 +70,10 @@ describe("renderText", () => {
       nextStepsLines({ ...base, outcome: "blocked" }).join("\n"),
     ).not.toMatch(/\bAI\b|Claude|Codex|Copilot/iu);
     expect(
-      nextStepsLines({ ...base, outcome: "blocked", expiresAfterRuns: 1 }),
-    ).toContain("Expires after 1 more Zedbee run.");
+      nextStepsLines({ ...base, outcome: "blocked", maximumAge: "1h" }),
+    ).toContain(
+      "Zedbee will remove this report on the first run after 1 hour.",
+    );
   });
 
   it("renders only preview findings while retaining canonical diagnostics and disclosures", () => {
@@ -113,7 +116,7 @@ describe("renderText", () => {
       totalFindingCount: 2,
       abbreviated: true,
       reportPath: "/private/tmp/zedbee-reports/hash/full.json",
-      expiresAfterRuns: 5,
+      maximumAge: "24h",
       warnings: [],
     };
 
@@ -165,6 +168,44 @@ describe("renderText", () => {
     expect(output).not.toContain("NEXT STEPS");
   });
 
+  it("ends a failed overflow delivery with a clear complete-output notice", () => {
+    const finding = createFinding({ id: "complete", rule: "complete-rule" });
+    const report = createReport({
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+    const presentation: TerminalPresentation = {
+      findings: report.summary.findings,
+      totalFindingCount: report.summary.findings.length,
+      abbreviated: false,
+      completeOutputFallback: true,
+      warnings: [
+        {
+          code: "TEMP_REPORT_WRITE_FAILED",
+          message: "Temporary-report tracking could not be saved.",
+        },
+      ],
+    };
+
+    const output = renderText(report, {
+      width: 80,
+      color: false,
+      presentation,
+    });
+
+    expect(output).toContain("REPORT DELIVERY WARNING");
+    expect(
+      output
+        .trimEnd()
+        .endsWith("Nothing was hidden; all 1 finding is shown above."),
+    ).toBe(true);
+  });
+
   it("renders a spaced report path as one opaque value at narrow width", () => {
     const finding = createFinding({ id: "shown", rule: "shown-rule" });
     const report = createReport({
@@ -185,7 +226,7 @@ describe("renderText", () => {
       totalFindingCount: 2,
       abbreviated: true,
       reportPath,
-      expiresAfterRuns: 5,
+      maximumAge: "24h",
       warnings: [],
     };
 
@@ -215,7 +256,7 @@ describe("renderText", () => {
         total: 2,
         outcome: "blocked",
         reportPath,
-        expiresAfterRuns: 5,
+        maximumAge: "24h",
       }),
     ).toThrow(/safe temporary report path display text/u);
   });

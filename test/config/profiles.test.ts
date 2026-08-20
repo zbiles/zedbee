@@ -7,19 +7,19 @@ describe("managed check profiles", () => {
     expect(resolveConfig(undefined).reporting).toEqual({
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
-      temporaryReportRetention: 5,
+      temporaryReportMaxAge: "24h",
     });
   });
 
-  it("resolves configured terminal presentation and subsequent-scan retention", () => {
+  it("resolves configured terminal presentation and maximum report age", () => {
     expect(
       resolveConfig({
         schemaVersion: 1,
-        reporting: { terminalFindingLimit: "all", temporaryReportRetention: 9 },
+        reporting: { terminalFindingLimit: "all", temporaryReportMaxAge: "7d" },
       }).reporting,
     ).toMatchObject({
       terminalFindingLimit: "all",
-      temporaryReportRetention: 9,
+      temporaryReportMaxAge: "7d",
     });
   });
 

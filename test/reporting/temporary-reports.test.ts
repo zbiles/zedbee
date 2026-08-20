@@ -13,6 +13,7 @@ import {
   stat,
   symlink,
   unlink,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
@@ -95,10 +96,9 @@ async function waitForRegularFile(path: string): Promise<void> {
 
 interface StoredState {
   readonly schemaVersion: number;
-  readonly generation: number;
   readonly reports: readonly {
     readonly fileName: string;
-    readonly createdGeneration: number;
+    readonly createdAtMs: number;
   }[];
 }
 
@@ -159,16 +159,24 @@ describe("temporary report store", () => {
 
     const [rootResult, firstResult, secondResult, windowsResult] =
       await Promise.all([
-        rootUser.maintain({ repositoryRoot, retentionRuns: 5, json: "root\n" }),
-        firstUser.maintain({ repositoryRoot, retentionRuns: 5, json: "one\n" }),
+        rootUser.maintain({
+          repositoryRoot,
+          maxAgeMs: 86_400_000,
+          json: "root\n",
+        }),
+        firstUser.maintain({
+          repositoryRoot,
+          maxAgeMs: 86_400_000,
+          json: "one\n",
+        }),
         secondUser.maintain({
           repositoryRoot,
-          retentionRuns: 5,
+          maxAgeMs: 86_400_000,
           json: "two\n",
         }),
         windowsUser.maintain({
           repositoryRoot,
-          retentionRuns: 5,
+          maxAgeMs: 86_400_000,
           json: "windows\n",
         }),
       ]);
@@ -232,7 +240,7 @@ describe("temporary report store", () => {
     const result = await createTemporaryReportStore({ temporaryRoot }).maintain(
       {
         repositoryRoot,
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         json,
       },
     );
@@ -273,7 +281,7 @@ describe("temporary report store", () => {
 
     const maintained = await createTemporaryReportStore({
       temporaryRoot: unsafeRoot,
-    }).maintain({ repositoryRoot, retentionRuns: 5, json: "complete\n" });
+    }).maintain({ repositoryRoot, maxAgeMs: 86_400_000, json: "complete\n" });
 
     expect(maintained.reportPath).toBeUndefined();
     expect(maintained.warnings).toContainEqual(
@@ -289,7 +297,7 @@ describe("temporary report store", () => {
 
     const maintained = await createTemporaryReportStore({
       temporaryRoot,
-    }).maintain({ repositoryRoot, retentionRuns: 5 });
+    }).maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
 
     expect(maintained.warnings).toEqual([]);
     const managedDirectory = await repositoryDirectory(
@@ -305,12 +313,12 @@ describe("temporary report store", () => {
 
     const first = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "first\n",
     });
     const second = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "second\n",
     });
 
@@ -326,7 +334,7 @@ describe("temporary report store", () => {
   it("never overwrites a destination introduced while a report is being published", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const store = createTemporaryReportStore({ temporaryRoot });
-    await store.maintain({ repositoryRoot, retentionRuns: 5 });
+    await store.maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
     const managedDirectory = await repositoryDirectory(
       repositoryRoot,
       temporaryRoot,
@@ -346,7 +354,7 @@ describe("temporary report store", () => {
     const json = `${"report payload".repeat(350_000)}\n`;
     const maintenance = store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json,
     });
     const collision = (async (): Promise<string> => {
@@ -391,12 +399,11 @@ describe("temporary report store", () => {
         json,
       );
       expect((await storedState(maintained.reportPath!)).value).toEqual({
-        schemaVersion: 1,
-        generation: 2,
+        schemaVersion: 2,
         reports: [
           {
             fileName: `${successfulUuid}.json`,
-            createdGeneration: 2,
+            createdAtMs: expect.any(Number),
           },
         ],
       });
@@ -410,36 +417,6 @@ describe("temporary report store", () => {
     }
   }, 8_000);
 
-  it("expires a report on the fifth subsequent retained generation", async () => {
-    const { repositoryRoot, temporaryRoot } = await fixture();
-    const store = createTemporaryReportStore({ temporaryRoot });
-    const created = await store.maintain({
-      repositoryRoot,
-      retentionRuns: 5,
-      json: "retained\n",
-    });
-    expect(created.reportPath).toBeDefined();
-
-    for (let subsequentRun = 1; subsequentRun <= 4; subsequentRun += 1) {
-      await store.maintain({ repositoryRoot, retentionRuns: 5 });
-      await expect(readFile(created.reportPath!, "utf8")).resolves.toBe(
-        "retained\n",
-      );
-    }
-    expect((await storedState(created.reportPath!)).value.generation).toBe(5);
-
-    await store.maintain({ repositoryRoot, retentionRuns: 5 });
-
-    await expect(stat(created.reportPath!)).rejects.toMatchObject({
-      code: "ENOENT",
-    });
-    expect((await storedState(created.reportPath!)).value).toEqual({
-      schemaVersion: 1,
-      generation: 6,
-      reports: [],
-    });
-  });
-
   it.each(["missing", "corrupt"] as const)(
     "warns for %s state and never adopts or removes unknown entries",
     async (stateKind) => {
@@ -447,7 +424,7 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const created = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
         json: "must remain unknown\n",
       });
       expect(created.reportPath).toBeDefined();
@@ -462,7 +439,7 @@ describe("temporary report store", () => {
 
       const maintained = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
       });
 
       expect(maintained.warnings).toEqual(
@@ -495,7 +472,7 @@ describe("temporary report store", () => {
 
     const maintained = await createTemporaryReportStore({
       temporaryRoot,
-    }).maintain({ repositoryRoot, retentionRuns: 5, json: "blocked\n" });
+    }).maintain({ repositoryRoot, maxAgeMs: 86_400_000, json: "blocked\n" });
 
     expect(maintained.reportPath).toBeUndefined();
     expect(maintained.warnings).toHaveLength(1);
@@ -519,7 +496,7 @@ describe("temporary report store", () => {
 
     const maintained = await createTemporaryReportStore({
       temporaryRoot,
-    }).maintain({ repositoryRoot, retentionRuns: 5, json: "blocked\n" });
+    }).maintain({ repositoryRoot, maxAgeMs: 86_400_000, json: "blocked\n" });
 
     expect(maintained.reportPath).toBeUndefined();
     expect(maintained.warnings).toHaveLength(1);
@@ -534,7 +511,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
       json: "must survive oversized state\n",
     });
     const state = await storedState(created.reportPath!);
@@ -546,7 +523,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(maintained.warnings).toEqual(
@@ -567,7 +544,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
       json: "must survive too many records\n",
     });
     const state = await storedState(created.reportPath!);
@@ -590,7 +567,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(maintained.warnings).not.toHaveLength(0);
@@ -609,7 +586,7 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const created = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
         json: "known report\n",
       });
       const state = await storedState(created.reportPath!);
@@ -626,7 +603,7 @@ describe("temporary report store", () => {
 
       const maintained = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
       });
 
       expect(maintained.warnings).not.toHaveLength(0);
@@ -645,7 +622,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
       json: "tracked locally\n",
     });
     const state = await storedState(created.reportPath!);
@@ -658,7 +635,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(maintained.warnings).not.toHaveLength(0);
@@ -680,7 +657,7 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const created = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
         json: "replace me\n",
       });
       await unlink(created.reportPath!);
@@ -694,7 +671,7 @@ describe("temporary report store", () => {
 
       const maintained = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
       });
 
       expect(maintained.warnings).not.toHaveLength(0);
@@ -711,7 +688,7 @@ describe("temporary report store", () => {
       expect((await storedState(created.reportPath!)).value.reports).toEqual([
         {
           fileName: basename(created.reportPath!),
-          createdGeneration: 1,
+          createdAtMs: expect.any(Number),
         },
       ]);
     },
@@ -722,14 +699,14 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
       json: "vanishes before cleanup\n",
     });
     await unlink(created.reportPath!);
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(maintained.warnings).toEqual([]);
@@ -741,14 +718,14 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
       json: "retry validation\n",
     });
     filesystemControl.lstatFailures.set(created.reportPath!, "EIO");
 
     const failed = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(failed.warnings).toContainEqual(
@@ -764,13 +741,13 @@ describe("temporary report store", () => {
     expect((await storedState(created.reportPath!)).value.reports).toEqual([
       {
         fileName: basename(created.reportPath!),
-        createdGeneration: 1,
+        createdAtMs: expect.any(Number),
       },
     ]);
 
     const retried = await store.maintain({
       repositoryRoot,
-      retentionRuns: 1,
+      maxAgeMs: 0,
     });
 
     expect(retried.warnings).toEqual([]);
@@ -787,14 +764,14 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const created = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
         json: "immutable report\n",
       });
       await execFileAsync("/usr/bin/chflags", ["uchg", created.reportPath!]);
       try {
         const maintained = await store.maintain({
           repositoryRoot,
-          retentionRuns: 1,
+          maxAgeMs: 0,
         });
         expect(maintained.warnings).toEqual(
           expect.arrayContaining([
@@ -810,7 +787,7 @@ describe("temporary report store", () => {
         expect((await storedState(created.reportPath!)).value.reports).toEqual([
           {
             fileName: basename(created.reportPath!),
-            createdGeneration: 1,
+            createdAtMs: expect.any(Number),
           },
         ]);
       } finally {
@@ -822,7 +799,7 @@ describe("temporary report store", () => {
 
       const retried = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
       });
 
       expect(retried.warnings).toEqual([]);
@@ -830,8 +807,7 @@ describe("temporary report store", () => {
         code: "ENOENT",
       });
       expect((await storedState(created.reportPath!)).value).toEqual({
-        schemaVersion: 1,
-        generation: 3,
+        schemaVersion: 2,
         reports: [],
       });
     },
@@ -842,7 +818,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "initial\n",
     });
     const state = await storedState(created.reportPath!);
@@ -851,7 +827,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "must roll back\n",
     });
 
@@ -872,7 +848,7 @@ describe("temporary report store", () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const maintained = await createTemporaryReportStore({
       temporaryRoot,
-    }).maintain({ repositoryRoot, retentionRuns: 5 });
+    }).maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
 
     expect(Object.isFrozen(maintained)).toBe(true);
     expect(Object.isFrozen(maintained.warnings)).toBe(true);
@@ -887,7 +863,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const initial = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "existing unknown file\n",
     });
     const state = await storedState(initial.reportPath!);
@@ -905,7 +881,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "must not become untracked\n",
     });
 
@@ -918,7 +894,7 @@ describe("temporary report store", () => {
     const persisted = JSON.parse(
       await readFile(state.path, "utf8"),
     ) as StoredState;
-    expect(persisted.generation).toBe(2);
+    expect(persisted.schemaVersion).toBe(2);
     expect(persisted.reports).toHaveLength(10_000);
     const reportNames = (await readdir(dirname(initial.reportPath!))).filter(
       (entry) => REPORT_NAME.test(entry),
@@ -933,8 +909,12 @@ describe("temporary report store", () => {
     const secondJson = `${"b".repeat(512 * 1024)}\n`;
 
     const [first, second] = await Promise.all([
-      store.maintain({ repositoryRoot, retentionRuns: 5, json: firstJson }),
-      store.maintain({ repositoryRoot, retentionRuns: 5, json: secondJson }),
+      store.maintain({ repositoryRoot, maxAgeMs: 86_400_000, json: firstJson }),
+      store.maintain({
+        repositoryRoot,
+        maxAgeMs: 86_400_000,
+        json: secondJson,
+      }),
     ]);
 
     expect(first.reportPath).toBeDefined();
@@ -945,7 +925,7 @@ describe("temporary report store", () => {
       secondJson,
     );
     const state = (await storedState(first.reportPath!)).value;
-    expect(state.generation).toBe(2);
+    expect(state.schemaVersion).toBe(2);
     expect(state.reports.map((report) => report.fileName).sort()).toEqual(
       [basename(first.reportPath!), basename(second.reportPath!)].sort(),
     );
@@ -956,7 +936,7 @@ describe("temporary report store", () => {
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "existing\n",
     });
     const state = await storedState(created.reportPath!);
@@ -974,7 +954,7 @@ describe("temporary report store", () => {
 
     const maintained = await store.maintain({
       repositoryRoot,
-      retentionRuns: 5,
+      maxAgeMs: 86_400_000,
       json: "must not be written\n",
     });
     const elapsed = performance.now() - startedAt;
@@ -1011,13 +991,13 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const initial = await store.maintain({
         repositoryRoot,
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         json: "initial\n",
       });
       const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
       const pending = store.maintain({
         repositoryRoot,
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         json: `${"lock payload".repeat(500_000)}\n`,
       });
       await waitForRegularFile(lockPath);
@@ -1045,14 +1025,14 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const initial = await store.maintain({
         repositoryRoot,
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         json: "initial\n",
       });
       const directory = dirname(initial.reportPath!);
       const lockPath = join(directory, LOCK_FILE_NAME);
       const pending = store.maintain({
         repositoryRoot,
-        retentionRuns: 5,
+        maxAgeMs: 86_400_000,
         json: `${"sync payload".repeat(500_000)}\n`,
       });
       await waitForRegularFile(lockPath);
@@ -1087,7 +1067,7 @@ describe("temporary report store", () => {
       const store = createTemporaryReportStore({ temporaryRoot });
       const created = await store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
         json: "expires\n",
       });
       const directory = dirname(created.reportPath!);
@@ -1100,7 +1080,7 @@ describe("temporary report store", () => {
       const lockPath = join(directory, LOCK_FILE_NAME);
       const pending = store.maintain({
         repositoryRoot,
-        retentionRuns: 1,
+        maxAgeMs: 0,
       });
       await waitForRegularFile(lockPath);
       await chmod(directory, 0o300);
@@ -1119,4 +1099,65 @@ describe("temporary report store", () => {
       }
     },
   );
+
+  it("removes a report on the first maintenance run after its maximum age", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    let now = Date.UTC(2026, 7, 20, 12);
+    const store = createTemporaryReportStore({
+      temporaryRoot,
+      now: () => now,
+    });
+    const created = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json: "complete\n",
+    });
+
+    now += 86_400_000 - 1;
+    await store.maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
+    await expect(lstat(created.reportPath!)).resolves.toMatchObject({
+      isFile: expect.any(Function),
+    });
+
+    now += 1;
+    await store.maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
+    await expect(lstat(created.reportPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("migrates tracked run-based reports using their existing file time", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const initial = createTemporaryReportStore({ temporaryRoot });
+    const created = await initial.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json: "legacy\n",
+    });
+    const state = await storedState(created.reportPath!);
+    const now = Date.UTC(2026, 7, 20, 12);
+    const createdAt = now - 86_400_001;
+    await utimes(created.reportPath!, createdAt / 1000, createdAt / 1000);
+    await writeFile(
+      state.path,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        generation: 1,
+        reports: [
+          { fileName: basename(created.reportPath!), createdGeneration: 1 },
+        ],
+      })}\n`,
+      { mode: 0o600 },
+    );
+
+    const migrated = createTemporaryReportStore({
+      temporaryRoot,
+      now: () => now,
+    });
+    await migrated.maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
+
+    await expect(lstat(created.reportPath!)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
 });

@@ -134,7 +134,7 @@ export function resolveConfig(
     reporting: {
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
       terminalFindingLimit: file?.reporting?.terminalFindingLimit ?? 25,
-      temporaryReportRetention: file?.reporting?.temporaryReportRetention ?? 5,
+      temporaryReportMaxAge: file?.reporting?.temporaryReportMaxAge ?? "24h",
     },
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };

@@ -198,7 +198,7 @@ function guidanceLines(
   if (
     presentation?.abbreviated !== true ||
     presentation.reportPath === undefined ||
-    presentation.expiresAfterRuns === undefined
+    presentation.maximumAge === undefined
   ) {
     return [];
   }
@@ -209,13 +209,34 @@ function guidanceLines(
       shown: presentation.findings.length,
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
-      expiresAfterRuns: presentation.expiresAfterRuns,
+      maximumAge: presentation.maximumAge,
     }).flatMap((line) =>
       line === ""
         ? [""]
         : line.startsWith("Full report: ")
           ? opaquePathLines("Full report", presentation.reportPath!, width)
           : wrapWords(line, width),
+    ),
+  ];
+}
+
+function deliveryFallbackLines(
+  presentation: TerminalPresentation | undefined,
+  width: number,
+): string[] {
+  if (presentation?.completeOutputFallback !== true) return [];
+  const count = presentation.totalFindingCount;
+  const findingLabel = count === 1 ? "finding is" : "findings are";
+  return [
+    "",
+    "REPORT DELIVERY WARNING",
+    ...wrapWords(
+      "Zedbee could not safely retain the temporary report, so it was removed.",
+      width,
+    ),
+    ...wrapWords(
+      `Nothing was hidden; all ${count} ${findingLabel} shown above.`,
+      width,
     ),
   ];
 }
@@ -238,8 +259,9 @@ export function renderText(
     ...incompleteSectionLines(sanitized.checks, width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
-    ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...guidanceLines(report, options.presentation, width),
+    ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
+    ...deliveryFallbackLines(options.presentation, width),
   ];
   return `${lines.join("\n")}\n`;
 }

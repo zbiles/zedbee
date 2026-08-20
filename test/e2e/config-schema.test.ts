@@ -56,7 +56,7 @@ describe("published configuration schema", () => {
         schemaVersion: 1,
         reporting: {
           terminalFindingLimit: "all",
-          temporaryReportRetention: 9,
+          temporaryReportMaxAge: "7d",
         },
       }),
       validate.errors?.map(String).join("\n"),

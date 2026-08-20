@@ -36,7 +36,7 @@ describe("ScanApp", () => {
       totalFindingCount: 2,
       abbreviated: true,
       reportPath,
-      expiresAfterRuns: 5,
+      maximumAge: "24h",
       warnings: [
         {
           code: "TEMP_REPORT_CLEANUP_FAILED",
@@ -112,6 +112,55 @@ describe("ScanApp", () => {
     expect(frame).toContain("first-rule");
     expect(frame).toContain("second-rule");
     expect(frame).not.toContain("NEXT STEPS");
+  });
+
+  it("ends complete fallback output with the report delivery warning", () => {
+    const finding = createFinding({ id: "shown", rule: "shown-rule" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+    const presentation: TerminalPresentation = {
+      findings: [finding],
+      totalFindingCount: 1,
+      abbreviated: false,
+      completeOutputFallback: true,
+      warnings: [
+        {
+          code: "TEMP_REPORT_WRITE_FAILED",
+          message: "The temporary report could not be retained.",
+        },
+      ],
+    };
+
+    const frame = render(
+      <ScanApp
+        events={events}
+        elapsedMs={15}
+        width={96}
+        color={false}
+        animations={false}
+        report={report}
+        presentation={presentation}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("shown-rule");
+    expect(frame.indexOf("REPORT MAINTENANCE WARNING")).toBeLessThan(
+      frame.indexOf("REPORT DELIVERY WARNING"),
+    );
+    expect(
+      frame
+        .trimEnd()
+        .endsWith("Nothing was hidden; all 1 finding is shown above."),
+    ).toBe(true);
   });
 
   it("replaces the live dashboard with the compact final report", () => {
