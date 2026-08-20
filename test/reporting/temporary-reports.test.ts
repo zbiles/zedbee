@@ -121,6 +121,7 @@ describe("temporary report store", () => {
     );
 
     expect(result.reportPath).toBeDefined();
+    expect(result.warnings).toEqual([]);
     const reportPath = result.reportPath!;
     const repositoryDirectory = dirname(reportPath);
     expect(repositoryDirectory).toBe(
@@ -144,6 +145,21 @@ describe("temporary report store", () => {
         (await stat(join(repositoryDirectory, stateName!))).mode & 0o777,
       ).toBe(0o600);
     }
+  });
+
+  it("initializes a pristine managed directory without a cleanup warning", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+
+    const maintained = await createTemporaryReportStore({
+      temporaryRoot,
+    }).maintain({ repositoryRoot, retentionRuns: 5 });
+
+    expect(maintained.warnings).toEqual([]);
+    const managedDirectory = await repositoryDirectory(
+      repositoryRoot,
+      temporaryRoot,
+    );
+    expect(await readdir(managedDirectory)).toEqual([".lifecycle.json"]);
   });
 
   it("uses a fresh report name without overwriting earlier bytes", async () => {
@@ -677,7 +693,7 @@ describe("temporary report store", () => {
 
     expect(Object.isFrozen(maintained)).toBe(true);
     expect(Object.isFrozen(maintained.warnings)).toBe(true);
-    expect(maintained.warnings.length).toBeGreaterThan(0);
+    expect(maintained.warnings).toEqual([]);
     expect(maintained.warnings.every((item) => Object.isFrozen(item))).toBe(
       true,
     );

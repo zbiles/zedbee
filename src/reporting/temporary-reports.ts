@@ -5,6 +5,7 @@ import {
   lstat,
   mkdir,
   open,
+  readdir,
   realpath,
   rename,
   unlink,
@@ -408,6 +409,16 @@ async function loadState(
       await readBoundedRegularFile(join(repositoryDirectory, STATE_FILE_NAME)),
     );
   } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      const entries = await readdir(repositoryDirectory).catch(() => undefined);
+      if (
+        entries !== undefined &&
+        entries.length === 1 &&
+        entries[0] === LOCK_FILE_NAME
+      ) {
+        return { schemaVersion: 1, generation: 0, reports: [] };
+      }
+    }
     warnings.push(
       warning(
         "TEMP_REPORT_CLEANUP_FAILED",

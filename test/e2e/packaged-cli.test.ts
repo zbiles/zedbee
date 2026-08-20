@@ -129,7 +129,7 @@ describe("packaged Zedbee CLI", () => {
       readonly checks: readonly { readonly findings: readonly unknown[] }[];
     };
     expect(report.checks.flatMap((check) => check.findings)).toHaveLength(26);
-    expect(result.stderr).not.toContain("Zedbee could not complete the scan");
+    expect(result.stderr).toBe("");
   }, 30_000);
 
   it("exposes the installed CLI help and command set", async () => {
@@ -156,7 +156,7 @@ describe("packaged Zedbee CLI", () => {
     expect(help.stdout).toContain("sarif");
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).version).toBe("2.1.0");
-    expect(result.stderr).toContain("REPORT MAINTENANCE WARNING");
+    expect(result.stderr).toBe("");
   }, 30_000);
 
   it("exports every blocked fixture finding as a complete SARIF report", async () => {
