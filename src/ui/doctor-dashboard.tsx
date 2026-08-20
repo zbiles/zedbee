@@ -42,7 +42,12 @@ function DoctorPanel({
       flexDirection="column"
       width={width}
       borderStyle="single"
-      {...(color ? { borderColor: ZEDBEE_THEME.border } : {})}
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.border,
+            borderBackgroundColor: "#000000",
+          }
+        : {})}
     >
       <Box paddingX={2}>
         <Text {...colorProp(color, ZEDBEE_THEME.muted)}>DOCTOR</Text>

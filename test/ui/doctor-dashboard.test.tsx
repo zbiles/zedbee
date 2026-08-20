@@ -40,6 +40,11 @@ describe("DoctorDashboard", () => {
     expect(frame).toContain("\u001b[38;2;232;184;76mWARNING");
     expect(frame).toContain("\u001b[38;2;239;101;89mFAIL");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
+    expect(frame).toContain("\u001b[48;2;0;0;0m  \u001b[38;2;72;78;89m┌");
+    expect(frame).toContain("\u001b[48;2;0;0;0m  \u001b[38;2;72;78;89m│");
+    expect(frame).not.toContain(
+      "\u001b[48;2;0;0;0m  \u001b[49m\u001b[38;2;72;78;89m┌",
+    );
     expect(
       Math.max(
         ...frame
