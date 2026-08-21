@@ -1,3 +1,5 @@
+import { render } from "ink-testing-library";
+import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import {
   executeScanCommand,
@@ -11,8 +13,8 @@ import type {
   PreparePresentationOptions,
   TerminalPresentation,
 } from "../../src/reporting/presentation.js";
-import { renderText } from "../../src/renderers/text.js";
 import type { ScanReport } from "../../src/scan/report.js";
+import { ScanResultDashboard } from "../../src/ui/scan-result-dashboard.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 function io(
@@ -137,19 +139,33 @@ function automaticPresentation(
   };
 }
 
-function renderAutomaticInkAsText(
+function renderAutomaticInk(
   terminal: ScanCommandIO,
 ): ScanCommandDependencies["renderInk"] {
   return async (report, options, presentation) => {
-    expect(options.requestedFormat).toBe("auto");
+    expect(options).toEqual({
+      requestedFormat: "auto",
+      color: false,
+      animations: false,
+      width: 120,
+    });
     expect(presentation?.automatic).toBe(true);
-    terminal.writeStdout(
-      renderText(report, {
+    if (presentation === undefined) {
+      throw new TypeError("Automatic Ink rendering requires a presentation");
+    }
+    const app = render(
+      createElement(ScanResultDashboard, {
+        report,
+        presentation,
         width: options.width,
-        color: false,
-        ...(presentation === undefined ? {} : { presentation }),
+        color: options.color,
       }),
     );
+    try {
+      terminal.writeStdout(`${app.lastFrame() ?? ""}\n`);
+    } finally {
+      app.unmount();
+    }
   };
 }
 
@@ -217,7 +233,7 @@ describe("executeScanCommand", () => {
       const terminal = io(tty);
       terminal.width = tty ? 120 : 80;
       const report = createReport();
-      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      const deps = dependencies(renderAutomaticInk(terminal));
       deps.preparePresentation = async (_report, options) => {
         expect(options).toEqual({
           requestedFormat: "auto",
@@ -237,44 +253,61 @@ describe("executeScanCommand", () => {
       expect(output).toContain("COMMIT ALLOWED");
       expect(output.match(/COMPLETE REPORT/gu)).toHaveLength(2);
       expect(output.match(/complete\.json/gu)).toHaveLength(2);
+      if (selectedFormat === "ink") {
+        expect(output).toContain("█████ █████ ████");
+      } else {
+        expect(output).not.toContain("█████ █████ ████");
+      }
     },
   );
 
-  it("bounds automatic piped output and points to the complete report", async () => {
-    const terminal = io(false);
-    const report = reportWithMixedFindings(26);
-    const deps = dependencies();
-    deps.scan = async () => report;
-    deps.preparePresentation = async (_report, options) => {
-      expect(options).toEqual({
-        requestedFormat: "auto",
-        selectedFormat: "text",
-      });
-      return {
-        automatic: true,
-        reportStatus: "available",
-        findings: report.summary.findings.slice(0, 25),
-        totalFindingCount: 26,
-        abbreviated: true,
-        reportPath: "/tmp/zedbee-reports/hash/complete.json",
-        maximumAge: "24h",
-        warnings: [],
+  it.each([
+    ["text", false],
+    ["ink", true],
+  ] as const)(
+    "bounds 26 mixed findings in automatic %s output and points to the complete report",
+    async (selectedFormat, tty) => {
+      const terminal = io(tty);
+      terminal.width = tty ? 120 : 80;
+      const report = reportWithMixedFindings(26);
+      const deps = dependencies(renderAutomaticInk(terminal));
+      deps.scan = async () => report;
+      deps.preparePresentation = async (_report, options) => {
+        expect(options).toEqual({
+          requestedFormat: "auto",
+          selectedFormat,
+        });
+        return {
+          automatic: true,
+          reportStatus: "available",
+          findings: report.summary.findings.slice(0, 25),
+          totalFindingCount: 26,
+          abbreviated: true,
+          reportPath: "/tmp/zedbee-reports/hash/complete.json",
+          maximumAge: "24h",
+          warnings: [],
+        };
       };
-    };
 
-    const exitCode = await executeScanCommand(
-      { cwd: "/repo", format: "auto", color: false, animations: false },
-      terminal,
-      deps,
-    );
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        terminal,
+        deps,
+      );
 
-    const output = terminal.stdout.join("");
-    expect(exitCode).toBe(1);
-    expect(output).toContain("Showing 25 of 26 findings.");
-    expect(output).toContain("/tmp/zedbee-reports/hash/complete.json");
-    expect(output).toContain("rule-25");
-    expect(output).not.toContain("rule-26");
-  });
+      const output = terminal.stdout.join("");
+      expect(exitCode).toBe(1);
+      expect(output).toContain("Showing 25 of 26 findings.");
+      expect(output).toContain("/tmp/zedbee-reports/hash/complete.json");
+      expect(output).toContain("rule-25");
+      expect(output).not.toContain("rule-26");
+      if (selectedFormat === "ink") {
+        expect(output).toContain("█████ █████ ████");
+      } else {
+        expect(output).not.toContain("█████ █████ ████");
+      }
+    },
+  );
 
   it.each(["text", "json", "sarif"] as const)(
     "keeps explicit %s output complete while advancing maintenance once",
@@ -308,7 +341,7 @@ describe("executeScanCommand", () => {
     ["ink", true],
   ] as const)(
     "prints every finding and fixed automatic %s notices when report persistence fails",
-    async (_selectedFormat, tty) => {
+    async (selectedFormat, tty) => {
       const terminal = io(tty);
       terminal.width = tty ? 120 : 80;
       const baseReport = reportWithMixedFindings(26);
@@ -322,7 +355,7 @@ describe("executeScanCommand", () => {
           },
         },
       };
-      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      const deps = dependencies(renderAutomaticInk(terminal));
       deps.scan = async () => report;
       deps.preparePresentation = async () =>
         automaticPresentation(report, {
@@ -353,6 +386,11 @@ describe("executeScanCommand", () => {
       expect(output).not.toContain("AGENT GUIDANCE");
       expect(output).not.toContain("AGENT NEXT STEP");
       expect(output).not.toContain("complete.json");
+      if (selectedFormat === "ink") {
+        expect(output).toContain("█████ █████ ████");
+      } else {
+        expect(output).not.toContain("█████ █████ ████");
+      }
     },
   );
 
@@ -361,7 +399,7 @@ describe("executeScanCommand", () => {
     ["ink", true],
   ] as const)(
     "retains automatic %s guidance and report paths when cleanup warns",
-    async (_selectedFormat, tty) => {
+    async (selectedFormat, tty) => {
       const terminal = io(tty);
       terminal.width = tty ? 120 : 80;
       const report = createReport({
@@ -375,7 +413,7 @@ describe("executeScanCommand", () => {
           },
         },
       });
-      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      const deps = dependencies(renderAutomaticInk(terminal));
       deps.scan = async () => report;
       deps.preparePresentation = async () =>
         automaticPresentation(report, {
@@ -401,25 +439,37 @@ describe("executeScanCommand", () => {
       expect(output.match(/complete\.json/gu)).toHaveLength(2);
       expect(output).toContain("REPORT WARNINGS");
       expect(output).toContain("expired.json");
+      if (selectedFormat === "ink") {
+        expect(output).toContain("█████ █████ ████");
+      } else {
+        expect(output).not.toContain("█████ █████ ████");
+      }
     },
   );
 
   it.each([
-    ["blocked", 1],
-    ["incomplete", 2],
+    ["blocked", "text", 1, false],
+    ["blocked", "ink", 1, true],
+    ["incomplete", "text", 2, false],
+    ["incomplete", "ink", 2, true],
   ] as const)(
-    "preserves canonical exit after automatic report failure for an %s scan",
-    async (outcome, expectedExitCode) => {
-      const terminal = io(false);
+    "preserves canonical exit after automatic report failure for an %s scan in automatic %s",
+    async (outcome, selectedFormat, expectedExitCode, tty) => {
+      const terminal = io(tty);
+      terminal.width = tty ? 120 : 80;
       const report: ScanReport = {
         ...reportWithFindings(1),
         outcome,
         exitCode: expectedExitCode,
       };
-      const deps = dependencies();
+      const deps = dependencies(renderAutomaticInk(terminal));
       deps.scan = async () => report;
-      deps.preparePresentation = async () =>
-        automaticPresentation(report, {
+      deps.preparePresentation = async (_report, options) => {
+        expect(options).toEqual({
+          requestedFormat: "auto",
+          selectedFormat,
+        });
+        return automaticPresentation(report, {
           reportStatus: "unavailable",
           completeOutputFallback: true,
           warnings: [
@@ -429,6 +479,7 @@ describe("executeScanCommand", () => {
             },
           ],
         });
+      };
 
       const exitCode = await executeScanCommand(
         { cwd: "/repo", format: "auto", color: false, animations: false },
@@ -437,7 +488,13 @@ describe("executeScanCommand", () => {
       );
 
       expect(exitCode).toBe(expectedExitCode);
-      expect(terminal.stdout.join("")).toContain("REPORT UNAVAILABLE");
+      const output = terminal.stdout.join("");
+      expect(output).toContain("REPORT UNAVAILABLE");
+      if (selectedFormat === "ink") {
+        expect(output).toContain("█████ █████ ████");
+      } else {
+        expect(output).not.toContain("█████ █████ ████");
+      }
     },
   );
 
