@@ -166,7 +166,7 @@ function FindingPanel({
   if (findings.length === 0) return null;
   const contentWidth = Math.max(1, width - 6);
   return (
-    <Box marginTop={1}>
+    <Box>
       <BrandedCommandPanel title={title} width={width} color={color}>
         <Box
           flexDirection="column"
@@ -227,7 +227,7 @@ function DisclosuresPanel({
 }) {
   if (disclosures.length === 0) return null;
   return (
-    <Box marginTop={1}>
+    <Box>
       <BrandedCommandPanel title="DISCLOSURES" width={width} color={color}>
         <Box
           flexDirection="column"
@@ -263,7 +263,7 @@ function IncompleteChecksPanel({
   if (checks.length === 0) return null;
   const contentWidth = Math.max(1, width - 6);
   return (
-    <Box marginTop={1}>
+    <Box>
       <BrandedCommandPanel
         title="INCOMPLETE CHECKS"
         width={width}
@@ -351,7 +351,7 @@ function ReportWarningsPanel({
   if (warnings.length === 0) return null;
   const contentWidth = Math.max(1, width - 6);
   return (
-    <Box marginTop={1}>
+    <Box>
       <BrandedCommandPanel title="REPORT WARNINGS" width={width} color={color}>
         <Box
           flexDirection="column"

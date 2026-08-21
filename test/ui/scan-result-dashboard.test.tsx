@@ -81,6 +81,36 @@ function expectBlankRowAfterPanelHeading(
   ).not.toBe("││");
 }
 
+function expectPanelsTouch(
+  output: string,
+  upperHeading: string,
+  lowerHeading: string,
+): void {
+  const lines = output.split("\n");
+  const upperHeadingIndex = lines.findIndex((line) =>
+    line.includes(upperHeading),
+  );
+  const lowerHeadingIndex = lines.findIndex((line) =>
+    line.includes(lowerHeading),
+  );
+  const upperBottomIndex = lines.findIndex(
+    (line, index) => index > upperHeadingIndex && line.includes("└"),
+  );
+  let lowerTopIndex = lowerHeadingIndex;
+  while (lowerTopIndex >= 0 && !lines[lowerTopIndex]!.includes("┌")) {
+    lowerTopIndex -= 1;
+  }
+
+  expect(upperHeadingIndex).toBeGreaterThanOrEqual(0);
+  expect(lowerHeadingIndex).toBeGreaterThan(upperHeadingIndex);
+  expect(upperBottomIndex).toBeGreaterThan(upperHeadingIndex);
+  expect(lowerTopIndex).toBeGreaterThan(upperBottomIndex);
+  expect(
+    lowerTopIndex,
+    `${lowerHeading} starts immediately after ${upperHeading}`,
+  ).toBe(upperBottomIndex + 1);
+}
+
 describe("ScanResultDashboard", () => {
   it("frames a passing result and prints the complete report above and below", () => {
     const output = dashboard(
@@ -224,6 +254,15 @@ describe("ScanResultDashboard", () => {
       "INCOMPLETE CHECKS",
       "SCAN RESULT",
     ]);
+    for (const [upper, lower] of [
+      ["BLOCKING FINDINGS", "WARNINGS"],
+      ["WARNINGS", "DISCLOSURES"],
+      ["DISCLOSURES", "REPORT WARNINGS"],
+      ["REPORT WARNINGS", "INCOMPLETE CHECKS"],
+      ["INCOMPLETE CHECKS", "SCAN RESULT"],
+    ] as const) {
+      expectPanelsTouch(output, upper, lower);
+    }
     expect(output).toContain(
       "vulnerabilities sent package names to api.osv.dev.",
     );
@@ -236,6 +275,38 @@ describe("ScanResultDashboard", () => {
     expect(output).toContain(
       "0 checks passed · 1 blocking finding · 1 warning finding",
     );
+  });
+
+  it("stacks blocking findings directly against incomplete checks", () => {
+    const blocking = createFinding({ id: "blocking", rule: "blocking" });
+    const output = dashboard(
+      createReport({
+        outcome: "incomplete",
+        exitCode: 2,
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 1,
+          incomplete: 1,
+          findings: [blocking],
+        },
+        checks: [
+          {
+            checkId: "lint",
+            status: "incomplete",
+            durationMs: 3,
+            findings: [],
+            error: {
+              code: "LINT_FAILED",
+              message: "Lint could not finish.",
+            },
+          },
+        ],
+      }),
+      presentation({ findings: [blocking], totalFindingCount: 1 }),
+    );
+
+    expectPanelsTouch(output, "BLOCKING FINDINGS", "INCOMPLETE CHECKS");
   });
 
   it("balances every result panel with a blank row above its content", () => {
