@@ -72,6 +72,13 @@ function expectBlankRowAfterPanelHeading(
     ),
     `${heading} content starts after one blank row`,
   ).toBe("││");
+  expect(
+    lines[headingIndex + 3]!.slice(leftBorder, rightBorder + 1).replaceAll(
+      " ",
+      "",
+    ),
+    `${heading} content follows the blank row immediately`,
+  ).not.toBe("││");
 }
 
 describe("ScanResultDashboard", () => {
