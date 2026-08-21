@@ -25,6 +25,7 @@ export interface InkSessionOptions {
 export interface InkScanDependencies {
   readonly preparePresentation?: typeof prepareTerminalPresentation;
   readonly store?: TemporaryReportStore;
+  readonly interactive?: boolean;
 }
 
 export const INK_ANIMATION_FRAME_MS = 80;
@@ -59,6 +60,10 @@ export async function runInkScan(
       exitOnCtrlC: false,
       patchConsole: false,
       maxFps: inkMaxFps(viewOptions.animations),
+      alternateScreen: viewOptions.requestedFormat === "auto",
+      ...(dependencies.interactive === undefined
+        ? {}
+        : { interactive: dependencies.interactive }),
     },
   );
 

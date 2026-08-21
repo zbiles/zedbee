@@ -97,6 +97,16 @@ describe("runInkScan", () => {
     );
     await repository.commitAll("fixture setup");
     const output: string[] = [];
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(process.stdout, "rows", {
+      configurable: true,
+      value: 100,
+    });
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
       ...args: unknown[]
     ) => {
@@ -141,10 +151,15 @@ describe("runInkScan", () => {
           animations: false,
           width: 120,
         },
-        { preparePresentation, store },
+        { preparePresentation, store, interactive: true },
       );
     } finally {
       stdout.mockRestore();
+      if (isTTY === undefined)
+        delete (process.stdout as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdout, "isTTY", isTTY);
+      if (rows === undefined) delete (process.stdout as { rows?: number }).rows;
+      else Object.defineProperty(process.stdout, "rows", rows);
     }
 
     const rendered = output.join("");
@@ -153,9 +168,10 @@ describe("runInkScan", () => {
     expect(rendered).toContain("REPORT MAINTENANCE WARNING");
     expect(rendered).toContain("NEXT STEPS");
     expect(rendered).not.toContain("SCAN RESULT");
+    expect(rendered).not.toContain("\u001b[?1049h");
   });
 
-  it("unmounts the live automatic view and appends one branded static result", async () => {
+  it("restores terminal history before appending the automatic result", async () => {
     const repository = await createGitRepository("zedbee-auto-ink-result-");
     await repository.write(
       "package.json",
@@ -163,6 +179,16 @@ describe("runInkScan", () => {
     );
     await repository.commitAll("fixture setup");
     const output: string[] = [];
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(process.stdout, "rows", {
+      configurable: true,
+      value: 5,
+    });
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
       ...args: unknown[]
     ) => {
@@ -202,10 +228,15 @@ describe("runInkScan", () => {
           animations: false,
           width: 120,
         },
-        { preparePresentation, store },
+        { preparePresentation, store, interactive: true },
       );
     } finally {
       stdout.mockRestore();
+      if (isTTY === undefined)
+        delete (process.stdout as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdout, "isTTY", isTTY);
+      if (rows === undefined) delete (process.stdout as { rows?: number }).rows;
+      else Object.defineProperty(process.stdout, "rows", rows);
     }
 
     const resultWrites = output.filter((chunk) =>
@@ -214,6 +245,19 @@ describe("runInkScan", () => {
     expect(resultWrites).toHaveLength(1);
     expect(resultWrites[0]).toContain("█████ █████ ████");
     expect(resultWrites[0]).toContain("COMPLETE REPORT");
-    expect(output.join("")).not.toContain("\u001b[2J\u001b[3J\u001b[H");
+    const rendered = output.join("");
+    const temporaryScreenStart = rendered.indexOf("\u001b[?1049h");
+    const temporaryScreenEnd = rendered.indexOf("\u001b[?1049l");
+    const resultStart = rendered.indexOf("SCAN RESULT");
+    expect(temporaryScreenStart).toBeGreaterThanOrEqual(0);
+    expect(temporaryScreenEnd).toBeGreaterThan(temporaryScreenStart);
+    expect(resultStart).toBeGreaterThan(temporaryScreenEnd);
+    expect(rendered.slice(temporaryScreenEnd)).not.toContain("ACTIVITY");
+    expect(rendered.slice(0, temporaryScreenStart)).not.toContain(
+      "\u001b[2J\u001b[3J\u001b[H",
+    );
+    expect(rendered.slice(temporaryScreenEnd)).not.toContain(
+      "\u001b[2J\u001b[3J\u001b[H",
+    );
   });
 });
