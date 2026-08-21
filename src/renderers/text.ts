@@ -75,6 +75,12 @@ function countLine(report: ScanReport): string {
   return `${passed} passed · ${warnings} ${warningLabel}`;
 }
 
+function automaticCountLine(report: ScanReport): string {
+  const { passed, warnings, failed } = report.summary;
+  const warningLabel = warnings === 1 ? "warning" : "warnings";
+  return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`;
+}
+
 function headline(report: ScanReport): string[] {
   if (report.outcome === "blocked") {
     return [
@@ -266,7 +272,7 @@ function automaticHeadline(
     return [
       "COMMIT BLOCKED",
       "A check failed. Commit blocked.",
-      countLine(report),
+      automaticCountLine(report),
       ...previewLine,
     ];
   }
@@ -274,7 +280,7 @@ function automaticHeadline(
     return [
       "SCAN INCOMPLETE",
       "A required check could not finish. Commit blocked.",
-      countLine(report),
+      automaticCountLine(report),
       ...previewLine,
     ];
   }
@@ -283,7 +289,7 @@ function automaticHeadline(
     report.stagedFileCount === 0
       ? "No staged changes. Commit allowed."
       : "All checks passed. Commit allowed.",
-    countLine(report),
+    automaticCountLine(report),
     ...previewLine,
   ];
 }

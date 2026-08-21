@@ -156,6 +156,34 @@ describe("renderText", () => {
     expect(output).toContain("SCAN RESULT");
   });
 
+  it("keeps the complete pass, warning, and failure counts in automatic linear output", () => {
+    const report = createReport({
+      summary: {
+        passed: 1,
+        warnings: 2,
+        failed: 0,
+        incomplete: 0,
+        findings: [],
+      },
+    });
+    const output = renderText(report, {
+      width: 100,
+      color: false,
+      presentation: {
+        automatic: true,
+        reportStatus: "available",
+        findings: [],
+        totalFindingCount: 0,
+        abbreviated: false,
+        reportPath: "/private/tmp/zedbee-reports/complete.json",
+        maximumAge: "24h",
+        warnings: [],
+      },
+    });
+
+    expect(output).toContain("1 passed · 2 warnings · 0 failed");
+  });
+
   it("prints fixed complete-output callouts and every finding when automatic report persistence fails", () => {
     const first = createFinding({ id: "first", rule: "first" });
     const second = createFinding({ id: "second", rule: "second" });
