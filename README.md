@@ -44,6 +44,8 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 `zedbee doctor` defaults to responsive automatic output. Doctor uses the yellow Zedbee frame with one full-width `DOCTOR` panel in a wide interactive terminal. A narrow terminal, redirected output, CI environment, or `TERM=dumb` receives compact plain text instead. `zedbee doctor --format text` always forces the plain view, while `zedbee doctor --format json` is deterministic and ANSI-free. `--no-color` keeps an eligible framed layout but removes semantic status colors.
 
+`zedbee checks` uses the same responsive behavior. Checks uses the yellow Zedbee frame with one full-width `CHECKS` panel in a wide interactive terminal, showing each check's severity, applicability, engine, targets, execution details, network use, and limitations. `zedbee checks --format text` forces the complete plain view, while `zedbee checks --format json` keeps the existing deterministic, ANSI-free machine output. Narrow terminals, redirected output, CI, and `TERM=dumb` use plain text; `--no-color` keeps an eligible framed layout without semantic colors.
+
 ## Exact staged content
 
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome. Source excerpts therefore come from the exact indexed content and line, never from a later working-tree edit.

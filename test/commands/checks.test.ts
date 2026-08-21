@@ -13,6 +13,9 @@ function terminal(): ChecksCommandIO & { stdout: string[]; stderr: string[] } {
   return {
     stdout,
     stderr,
+    stdoutIsTTY: false,
+    width: 80,
+    env: {},
     writeStdout: (value) => stdout.push(value),
     writeStderr: (value) => stderr.push(value),
   };
@@ -37,10 +40,85 @@ const dependencies: ChecksCommandDependencies = {
 };
 
 describe("executeChecksCommand", () => {
+  it("renders the Checks dashboard in a wide interactive terminal", async () => {
+    const io = {
+      ...terminal(),
+      stdoutIsTTY: true,
+      width: 100,
+    };
+    const renders: unknown[] = [];
+
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "auto", color: true },
+      io,
+      {
+        ...dependencies,
+        renderDashboard: async (checks, options) => {
+          renders.push({ checks, options });
+        },
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(io.stdout).toEqual([]);
+    expect(renders).toEqual([
+      {
+        checks: result.checks,
+        options: { width: 100, color: true },
+      },
+    ]);
+  });
+
+  it.each([
+    ["narrow terminal", true, 79, {}],
+    ["redirected output", false, 120, {}],
+    ["dumb terminal", true, 120, { TERM: "dumb" }],
+    ["CI pseudo-terminal", true, 120, { CI: "true" }],
+  ] as const)("uses plain text for a %s", async (_name, tty, width, env) => {
+    const io = { ...terminal(), stdoutIsTTY: tty, width, env };
+    await executeChecksCommand(
+      { cwd: "/repo", format: "auto", color: true },
+      io,
+      dependencies,
+    );
+
+    expect(io.stdout.join("")).toContain("formatting [error/relevant]");
+    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+  });
+
+  it("lets explicit text force the plain view and NO_COLOR disable dashboard color", async () => {
+    const plain = { ...terminal(), stdoutIsTTY: true, width: 120 };
+    await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: true },
+      plain,
+      dependencies,
+    );
+    expect(plain.stdout.join("")).toContain("formatting [error/relevant]");
+
+    const noColor = {
+      ...terminal(),
+      stdoutIsTTY: true,
+      width: 120,
+      env: { NO_COLOR: "1" },
+    };
+    const renders: unknown[] = [];
+    await executeChecksCommand(
+      { cwd: "/repo", format: "auto", color: true },
+      noColor,
+      {
+        ...dependencies,
+        renderDashboard: async (_checks, options) => {
+          renders.push(options);
+        },
+      },
+    );
+    expect(renders).toEqual([{ width: 120, color: false }]);
+  });
+
   it("returns every check in canonical order with complete machine-readable metadata", async () => {
     const io = terminal();
     const result = await executeChecksCommand(
-      { cwd: "/repo", format: "json" },
+      { cwd: "/repo", format: "json", color: true },
       io,
       dependencies,
     );
@@ -98,12 +176,12 @@ describe("executeChecksCommand", () => {
     const first = terminal();
     const second = terminal();
     await executeChecksCommand(
-      { cwd: "/repo", format: "text" },
+      { cwd: "/repo", format: "text", color: true },
       first,
       dependencies,
     );
     await executeChecksCommand(
-      { cwd: "/repo", format: "text" },
+      { cwd: "/repo", format: "text", color: true },
       second,
       dependencies,
     );
@@ -112,7 +190,7 @@ describe("executeChecksCommand", () => {
 
     const failed = terminal();
     const result = await executeChecksCommand(
-      { cwd: "/repo", format: "json" },
+      { cwd: "/repo", format: "json", color: true },
       failed,
       {
         ...dependencies,

@@ -165,4 +165,13 @@ describe("public documentation claims", () => {
     expect(readme).toMatch(/doctor --format text[^.]*plain/i);
     expect(readme).toMatch(/doctor --format json[^.]*ANSI-free/i);
   });
+
+  it("documents responsive Checks output without changing its machine format", async () => {
+    const readme = await read("README.md");
+
+    expect(readme).toMatch(/Checks uses[^.]*yellow Zedbee frame/i);
+    expect(readme).toMatch(/CHECKS` panel[^.]*wide interactive terminal/i);
+    expect(readme).toMatch(/checks --format text[^.]*plain/i);
+    expect(readme).toMatch(/checks --format json[^.]*ANSI-free/i);
+  });
 });

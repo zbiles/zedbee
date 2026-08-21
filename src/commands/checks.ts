@@ -16,15 +16,19 @@ import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 
-export type ChecksOutputFormat = "text" | "json";
+export type ChecksOutputFormat = "auto" | "text" | "json";
 
 export interface ChecksCommandOptions {
   readonly cwd: string;
   readonly format: ChecksOutputFormat;
+  readonly color: boolean;
   readonly configPath?: string;
 }
 
 export interface ChecksCommandIO {
+  readonly stdoutIsTTY: boolean;
+  readonly width: number;
+  readonly env: Record<string, string | undefined>;
   writeStdout(value: string): void;
   writeStderr(value: string): void;
 }
@@ -69,6 +73,10 @@ export interface ChecksCommandDependencies {
     repositoryRoot: string,
     config: ResolvedConfig,
   ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>>;
+  renderDashboard?(
+    checks: readonly CheckDescription[],
+    options: { readonly width: number; readonly color: boolean },
+  ): Promise<void>;
 }
 
 interface CatalogEntry {
@@ -242,6 +250,16 @@ const DEFAULT_DEPENDENCIES: ChecksCommandDependencies = {
   inspectChecks: inspectConfiguredChecks,
 };
 
+const MINIMUM_DASHBOARD_WIDTH = 80;
+
+async function renderDashboard(
+  checks: readonly CheckDescription[],
+  options: { readonly width: number; readonly color: boolean },
+): Promise<void> {
+  const { runInkChecks } = await import("../ui/checks-dashboard.js");
+  await runInkChecks(checks, options);
+}
+
 function renderText(result: ChecksCommandResult): string {
   return `${result.checks
     .map((check) => {
@@ -295,11 +313,22 @@ export async function executeChecksCommand(
       }),
     );
     const result = Object.freeze({ exitCode: 0 as const, checks });
-    io.writeStdout(
-      options.format === "json"
-        ? `${JSON.stringify(result, null, 2)}\n`
-        : renderText(result),
-    );
+    const dashboard =
+      options.format === "auto" &&
+      io.stdoutIsTTY &&
+      io.width >= MINIMUM_DASHBOARD_WIDTH &&
+      io.env.TERM !== "dumb" &&
+      io.env.CI === undefined;
+    if (options.format === "json") {
+      io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
+    } else if (dashboard) {
+      await (dependencies.renderDashboard ?? renderDashboard)(result.checks, {
+        width: io.width,
+        color: options.color && io.env.NO_COLOR === undefined,
+      });
+    } else {
+      io.writeStdout(renderText(result));
+    }
     return result;
   } catch {
     io.writeStderr("Zedbee could not describe the configured checks.\n");

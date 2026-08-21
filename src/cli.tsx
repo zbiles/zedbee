@@ -19,9 +19,10 @@ interface CommanderScanOptions {
   animations: boolean;
 }
 
-interface CommanderReportOptions {
-  format: "text" | "json";
+interface CommanderChecksOptions {
+  format: "auto" | "text" | "json";
   config?: string;
+  color: boolean;
 }
 
 interface CommanderDoctorOptions {
@@ -185,20 +186,25 @@ export async function main(
     .description("describe configured checks and their applicability")
     .addOption(
       new Option("--format <format>", "output format")
-        .choices(["text", "json"])
-        .default("text"),
+        .choices(["auto", "text", "json"])
+        .default("auto"),
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
-    .action(async (options: CommanderReportOptions) => {
+    .option("--no-color", "disable color")
+    .action(async (options: CommanderChecksOptions) => {
       const result = await executeChecksCommand(
         {
           cwd: process.cwd(),
           format: options.format,
+          color: options.color,
           ...(options.config === undefined
             ? {}
             : { configPath: options.config }),
         },
         {
+          stdoutIsTTY: process.stdout.isTTY === true,
+          width: process.stdout.columns ?? 80,
+          env: process.env,
           writeStdout: (value) => process.stdout.write(value),
           writeStderr: (value) => process.stderr.write(value),
         },
