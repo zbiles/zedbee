@@ -1,28 +1,18 @@
-import { PassThrough } from "node:stream";
-import { Box, Text, render } from "ink";
+import { Box, Text } from "ink";
 import type { CheckDescription } from "../commands/checks.js";
 import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
+  BrandedCommandPanel,
+  BrandedCommandPanelRule,
 } from "./branded-command-frame.js";
+import { renderStaticInk } from "./render-static.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 function severityTone(severity: string): string {
   if (severity === "error") return ZEDBEE_THEME.failure;
   if (severity === "warn") return ZEDBEE_THEME.warning;
   return ZEDBEE_THEME.muted;
-}
-
-function HorizontalRule({ width, color }: { width: number; color: boolean }) {
-  return (
-    <Box marginX={-1}>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>├</Text>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>
-        {"─".repeat(Math.max(1, width - 2))}
-      </Text>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>┤</Text>
-    </Box>
-  );
 }
 
 function CheckEntry({
@@ -88,31 +78,17 @@ function ChecksPanel({
   readonly color: boolean;
 }) {
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.border,
-            borderBackgroundColor: "#000000",
-          }
-        : {})}
-    >
-      <Box paddingX={2}>
-        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>CHECKS</Text>
-      </Box>
-      <HorizontalRule width={width} color={color} />
+    <BrandedCommandPanel title="CHECKS" width={width} color={color}>
       {checks.map((check, index) => (
         <Box key={check.id} flexDirection="column">
           <CheckEntry check={check} color={color} />
           {index < checks.length - 1 ? (
-            <HorizontalRule width={width} color={color} />
+            <BrandedCommandPanelRule width={width} color={color} />
           ) : null}
         </Box>
       ))}
       <Text> </Text>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 
@@ -140,33 +116,7 @@ export async function runInkChecks(
   checks: readonly CheckDescription[],
   options: { readonly width: number; readonly color: boolean },
 ): Promise<void> {
-  const chunks: Buffer[] = [];
-  const sink = new PassThrough() as PassThrough & {
-    columns: number;
-    rows: number;
-    isTTY: boolean;
-  };
-  sink.columns = options.width;
-  sink.rows = process.stdout.rows ?? 24;
-  sink.isTTY = false;
-  sink.on("data", (chunk: Buffer) => chunks.push(chunk));
-  const app = render(<ChecksDashboard checks={checks} {...options} />, {
-    exitOnCtrlC: false,
-    patchConsole: false,
-    maxFps: 1,
-    stdout: sink as unknown as NodeJS.WriteStream,
-  });
-  try {
-    await app.waitUntilRenderFlush();
-  } finally {
-    app.unmount();
-    await app.waitUntilExit();
-  }
-  const output = Buffer.concat(chunks).toString("utf8");
-  await new Promise<void>((resolve, reject) => {
-    process.stdout.write(output, (error) => {
-      if (error == null) resolve();
-      else reject(error);
-    });
+  await renderStaticInk(<ChecksDashboard checks={checks} {...options} />, {
+    width: options.width,
   });
 }

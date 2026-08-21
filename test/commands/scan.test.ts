@@ -265,7 +265,12 @@ describe("executeScanCommand", () => {
     expect(exitCode).toBe(0);
     expect(renders).toHaveLength(1);
     expect(renders[0]).toMatchObject({
-      options: { color: false, animations: false, width: 80 },
+      options: {
+        requestedFormat: "auto",
+        color: false,
+        animations: false,
+        width: 80,
+      },
     });
     expect(terminal.stdout).toEqual([]);
   });
@@ -291,7 +296,12 @@ describe("executeScanCommand", () => {
     expect(exitCode).toBe(0);
     expect(receivedOptions).toMatchObject({
       scanOptions: { repositoryRoot: "/repo", reportingSurface: "ink" },
-      renderOptions: { color: true, animations: false, width: 80 },
+      renderOptions: {
+        requestedFormat: "auto",
+        color: true,
+        animations: false,
+        width: 80,
+      },
     });
   });
 
@@ -436,7 +446,14 @@ describe("executeScanCommand", () => {
       }),
     );
 
-    expect(renders).toEqual([{ color: false, animations: true, width: 80 }]);
+    expect(renders).toEqual([
+      {
+        requestedFormat: "ink",
+        color: false,
+        animations: true,
+        width: 80,
+      },
+    ]);
   });
 
   it("rejects configuration paths outside the repository", async () => {

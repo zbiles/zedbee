@@ -11,9 +11,12 @@ import {
 } from "../reporting/temporary-reports.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
 import type { ScanReport } from "../scan/report.js";
+import { renderStaticInk } from "./render-static.js";
 import { ScanApp } from "./scan-app.js";
+import { ScanResultDashboard } from "./scan-result-dashboard.js";
 
 export interface InkSessionOptions {
+  requestedFormat: "auto" | "ink";
   color: boolean;
   animations: boolean;
   width: number;
@@ -80,6 +83,13 @@ export async function runInkScan(
   const ticker = viewOptions.animations
     ? setInterval(rerender, INK_ANIMATION_FRAME_MS)
     : undefined;
+  let liveMounted = true;
+  const unmountLive = async (): Promise<void> => {
+    if (!liveMounted) return;
+    liveMounted = false;
+    app.unmount();
+    await app.waitUntilExit();
+  };
 
   try {
     const report = await runScan({
@@ -91,7 +101,7 @@ export async function runInkScan(
       },
     });
     const presentationOptions: PreparePresentationOptions = {
-      requestedFormat: "ink",
+      requestedFormat: viewOptions.requestedFormat,
       selectedFormat: "ink",
       store: dependencies.store ?? createTemporaryReportStore(),
     };
@@ -104,12 +114,24 @@ export async function runInkScan(
       if (remaining > 0) await wait(remaining);
     }
     if (ticker !== undefined) clearInterval(ticker);
+    if (viewOptions.requestedFormat === "auto") {
+      await unmountLive();
+      await renderStaticInk(
+        <ScanResultDashboard
+          report={report}
+          presentation={presentation}
+          width={viewOptions.width}
+          color={viewOptions.color}
+        />,
+        { width: viewOptions.width },
+      );
+      return report;
+    }
     rerender(report, presentation);
     await app.waitUntilRenderFlush();
     return report;
   } finally {
     if (ticker !== undefined) clearInterval(ticker);
-    app.unmount();
-    await app.waitUntilExit();
+    await unmountLive();
   }
 }

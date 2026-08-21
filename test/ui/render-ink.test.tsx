@@ -33,7 +33,12 @@ describe("runInkScan", () => {
     try {
       const report = await runInkScan(
         { repositoryRoot: repository.root },
-        { color: false, animations: true, width: 120 },
+        {
+          requestedFormat: "ink",
+          color: false,
+          animations: true,
+          width: 120,
+        },
       );
 
       expect(report.checks).toHaveLength(0);
@@ -68,7 +73,12 @@ describe("runInkScan", () => {
     try {
       await runInkScan(
         { repositoryRoot: repository.root },
-        { color: false, animations: false, width: 120 },
+        {
+          requestedFormat: "ink",
+          color: false,
+          animations: false,
+          width: 120,
+        },
       );
 
       expect(performance.now() - startedAt).toBeLessThan(
@@ -79,7 +89,7 @@ describe("runInkScan", () => {
     }
   });
 
-  it("prepares the completed scan before flushing the final Ink frame", async () => {
+  it("keeps explicit Ink final output and requested-format identity truthful", async () => {
     const repository = await createGitRepository("zedbee-ink-presentation-");
     await repository.write(
       "package.json",
@@ -106,7 +116,7 @@ describe("runInkScan", () => {
         store,
       });
       return {
-        automatic: true,
+        automatic: false,
         reportStatus: "available" as const,
         findings: [createFinding({ rule: "shown-rule" })],
         totalFindingCount: 2,
@@ -125,7 +135,12 @@ describe("runInkScan", () => {
     try {
       await runInkScan(
         { repositoryRoot: repository.root },
-        { color: false, animations: false, width: 120 },
+        {
+          requestedFormat: "ink",
+          color: false,
+          animations: false,
+          width: 120,
+        },
         { preparePresentation, store },
       );
     } finally {
@@ -137,5 +152,68 @@ describe("runInkScan", () => {
     expect(rendered).toContain("shown-rule");
     expect(rendered).toContain("REPORT MAINTENANCE WARNING");
     expect(rendered).toContain("NEXT STEPS");
+    expect(rendered).not.toContain("SCAN RESULT");
+  });
+
+  it("unmounts the live automatic view and appends one branded static result", async () => {
+    const repository = await createGitRepository("zedbee-auto-ink-result-");
+    await repository.write(
+      "package.json",
+      '{"name":"auto-ink-result-fixture","private":true}\n',
+    );
+    await repository.commitAll("fixture setup");
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      output.push(String(args[0] ?? ""));
+      const callback = args.find((value) => typeof value === "function");
+      if (typeof callback === "function")
+        queueMicrotask(() => (callback as (error: null) => void)(null));
+      return true;
+    }) as typeof process.stdout.write);
+    const store = {
+      maintain: vi.fn(async () => ({ warnings: [] })),
+    };
+    const preparePresentation = vi.fn(async (_report, options) => {
+      expect(options).toMatchObject({
+        requestedFormat: "auto",
+        selectedFormat: "ink",
+        store,
+      });
+      return {
+        automatic: true,
+        reportStatus: "available" as const,
+        findings: [],
+        totalFindingCount: 0,
+        abbreviated: false,
+        reportPath: "/tmp/zedbee-reports/hash/complete.json",
+        maximumAge: "24h",
+        warnings: [],
+      };
+    });
+
+    try {
+      await runInkScan(
+        { repositoryRoot: repository.root },
+        {
+          requestedFormat: "auto",
+          color: false,
+          animations: false,
+          width: 120,
+        },
+        { preparePresentation, store },
+      );
+    } finally {
+      stdout.mockRestore();
+    }
+
+    const resultWrites = output.filter((chunk) =>
+      chunk.includes("SCAN RESULT"),
+    );
+    expect(resultWrites).toHaveLength(1);
+    expect(resultWrites[0]).toContain("█████ █████ ████");
+    expect(resultWrites[0]).toContain("COMPLETE REPORT");
+    expect(output.join("")).not.toContain("\u001b[2J\u001b[3J\u001b[H");
   });
 });

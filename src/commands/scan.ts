@@ -44,6 +44,7 @@ export interface ScanCommandIO {
 }
 
 export interface InkRenderOptions {
+  requestedFormat: "auto" | "ink";
   color: boolean;
   animations: boolean;
   width: number;
@@ -184,7 +185,10 @@ export async function executeScanCommand(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
     const color = options.color && io.env.NO_COLOR === undefined;
+    const requestedInkFormat: InkRenderOptions["requestedFormat"] =
+      options.format === "auto" ? "auto" : "ink";
     const inkOptions = {
+      requestedFormat: requestedInkFormat,
       color,
       animations: options.animations,
       width: io.width,

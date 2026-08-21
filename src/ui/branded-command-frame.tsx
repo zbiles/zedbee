@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Box } from "ink";
+import { Box, Text } from "ink";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
 import { ZEDBEE_THEME } from "./theme.js";
@@ -19,6 +19,56 @@ export function brandedCommandContentWidth(width: number): number {
   return Math.max(1, width - 9);
 }
 
+export function BrandedCommandPanelRule({
+  width,
+  color,
+}: {
+  readonly width: number;
+  readonly color: boolean;
+}) {
+  return (
+    <Box marginX={-1}>
+      <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>├</Text>
+      <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>
+        {"─".repeat(Math.max(1, width - 2))}
+      </Text>
+      <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>┤</Text>
+    </Box>
+  );
+}
+
+export function BrandedCommandPanel({
+  title,
+  width,
+  color,
+  children,
+}: {
+  readonly title: string;
+  readonly width: number;
+  readonly color: boolean;
+  readonly children: ReactNode;
+}) {
+  return (
+    <Box
+      flexDirection="column"
+      width={width}
+      borderStyle="single"
+      {...(color
+        ? {
+            borderColor: ZEDBEE_THEME.border,
+            borderBackgroundColor: "#000000",
+          }
+        : {})}
+    >
+      <Box paddingX={2}>
+        <Text {...(color ? { color: ZEDBEE_THEME.muted } : {})}>{title}</Text>
+      </Box>
+      <BrandedCommandPanelRule width={width} color={color} />
+      {children}
+    </Box>
+  );
+}
+
 export function BrandedCommandFrame({
   width,
   color,
@@ -31,7 +81,14 @@ export function BrandedCommandFrame({
   const frameWidth = Math.max(1, width - 2);
   const compactBrand = width < 129;
   const brandWidth = pixelWordmarkWidth(compactBrand);
-  const brandGroupWidth = brandWidth + 2 + pixelBeeWidth(compactBrand);
+  const beeWidth = pixelBeeWidth(compactBrand);
+  const availableBrandWidth = Math.max(1, frameWidth - 7);
+  const showWordmark = brandWidth <= availableBrandWidth;
+  const showBee =
+    showWordmark && brandWidth + 2 + beeWidth <= availableBrandWidth;
+  const brandGroupWidth = showWordmark
+    ? brandWidth + (showBee ? 2 + beeWidth : 0)
+    : Math.min(availableBrandWidth, 6);
 
   return (
     <Box width={width} paddingLeft={1} paddingRight={1} paddingTop={2}>
@@ -44,7 +101,7 @@ export function BrandedCommandFrame({
           width={frameWidth}
           borderStyle={SOLID_BORDER}
           {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
-          borderBackgroundColor="#000000"
+          borderBackgroundColor={color ? "#000000" : undefined}
         >
           <Box
             flexDirection="column"
@@ -64,10 +121,21 @@ export function BrandedCommandFrame({
               marginBottom={2}
             >
               <Box position="relative" width={brandGroupWidth} height={5}>
-                <PixelWordmark color={color} compact={compactBrand} />
-                <Box position="absolute" left={brandWidth + 2} top={-5}>
-                  <PixelBee compact={compactBrand} sparse color={color} />
-                </Box>
+                {showWordmark ? (
+                  <PixelWordmark color={color} compact={compactBrand} />
+                ) : (
+                  <Text
+                    bold
+                    {...(color ? { color: ZEDBEE_THEME.wordmark } : {})}
+                  >
+                    ZEDBEE
+                  </Text>
+                )}
+                {showBee ? (
+                  <Box position="absolute" left={brandWidth + 2} top={-5}>
+                    <PixelBee compact={compactBrand} sparse color={color} />
+                  </Box>
+                ) : null}
               </Box>
             </Box>
             {children}

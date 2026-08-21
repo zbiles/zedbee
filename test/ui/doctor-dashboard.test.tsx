@@ -40,6 +40,7 @@ describe("DoctorDashboard", () => {
     expect(frame).toContain("\u001b[38;2;232;184;76mWARNING");
     expect(frame).toContain("\u001b[38;2;239;101;89mFAIL");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
+    expect(frame).toContain("█████ █████ ████");
     expect(frame).toContain("\u001b[48;2;0;0;0m  \u001b[38;2;72;78;89m┌");
     expect(frame).toContain("\u001b[48;2;0;0;0m  \u001b[38;2;72;78;89m│");
     expect(frame).not.toContain(
@@ -53,6 +54,28 @@ describe("DoctorDashboard", () => {
           .map((line) => [...line].length),
       ),
     ).toBeLessThanOrEqual(100);
+  });
+
+  it("keeps the shared frame within a narrow no-color viewport", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { DoctorDashboard } =
+      await import("../../src/ui/doctor-dashboard.js");
+    const frame = render(
+      React.createElement(DoctorDashboard, {
+        width: 40,
+        color: false,
+        diagnostics: [{ id: "git", status: "pass", message: "Git is ready." }],
+      }),
+    ).lastFrame()!;
+
+    expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain("DOCTOR");
+    expect(frame).not.toMatch(/\u001B\[(?:38|48);2;/u);
+    const plainFrame = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    expect(
+      Math.max(...plainFrame.split("\n").map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(40);
   });
 
   it("flushes the completed dashboard through a live Ink session", async () => {

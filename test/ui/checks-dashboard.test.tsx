@@ -66,6 +66,9 @@ describe("ChecksDashboard", () => {
     expect(frame).toContain("Engine: Prettier 3.9.6 (MIT)");
     expect(frame).toContain("Reason: No React DOM workspace was found.");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
+    expect(frame).toContain("█████ █████ ████");
+    expect(frame).toContain("┌");
+    expect(frame).toContain("└");
     expect(
       Math.max(
         ...frame
@@ -74,6 +77,28 @@ describe("ChecksDashboard", () => {
           .map((line) => [...line].length),
       ),
     ).toBeLessThanOrEqual(100);
+  });
+
+  it("keeps the shared frame and content inside a narrow no-color viewport", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { ChecksDashboard } =
+      await import("../../src/ui/checks-dashboard.js");
+    const frame = render(
+      React.createElement(ChecksDashboard, {
+        width: 40,
+        color: false,
+        checks: checks.slice(0, 1),
+      }),
+    ).lastFrame()!;
+
+    expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain("CHECKS");
+    expect(frame).not.toMatch(/\u001B\[(?:38|48);2;/u);
+    const plainFrame = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    expect(
+      Math.max(...plainFrame.split("\n").map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(40);
   });
 
   it("appends the completed dashboard without clearing terminal history", async () => {
@@ -111,6 +136,7 @@ describe("ChecksDashboard", () => {
     }
 
     const rendered = output.join("");
+    expect(output).toHaveLength(1);
     expect(rendered.match(/CHECKS/gu)).toHaveLength(1);
     expect(rendered).toContain("Checks staged formatting.");
     expect(rendered).not.toContain("\u001b[2J\u001b[3J\u001b[H");

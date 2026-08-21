@@ -60,14 +60,16 @@ export function FindingsList({
   findings,
   width,
   color,
+  firstItemMarginTop = 1,
 }: {
   findings: readonly Finding[];
   width: number;
   color: boolean;
+  firstItemMarginTop?: number;
 }) {
   return (
     <Box flexDirection="column" width={width}>
-      {findings.map((finding) => {
+      {findings.map((finding, index) => {
         const header = `${findingCheckLabel(finding.check)}  ${finding.rule}`;
         const location =
           finding.location === undefined
@@ -91,7 +93,7 @@ export function FindingsList({
           <Box
             key={finding.id}
             flexDirection="column"
-            marginTop={1}
+            marginTop={index === 0 ? firstItemMarginTop : 1}
             width={width}
           >
             {headerFits ? (
