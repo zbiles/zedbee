@@ -48,6 +48,32 @@ function expectOrder(output: string, headings: readonly string[]): void {
   }
 }
 
+function expectBlankRowAfterPanelHeading(
+  output: string,
+  heading: string,
+): void {
+  const lines = output.split("\n");
+  const headingIndex = lines.findIndex((line) => line.includes(heading));
+  expect(headingIndex, `${heading} is rendered`).toBeGreaterThanOrEqual(0);
+  const headingLine = lines[headingIndex]!;
+  const leftBorder = headingLine.indexOf("│");
+  const rightBorder = headingLine.lastIndexOf("│");
+  expect(
+    leftBorder,
+    `${heading} has a left panel border`,
+  ).toBeGreaterThanOrEqual(0);
+  expect(rightBorder, `${heading} has a right panel border`).toBeGreaterThan(
+    leftBorder,
+  );
+  expect(
+    lines[headingIndex + 2]!.slice(leftBorder, rightBorder + 1).replaceAll(
+      " ",
+      "",
+    ),
+    `${heading} content starts after one blank row`,
+  ).toBe("││");
+}
+
 describe("ScanResultDashboard", () => {
   it("frames a passing result and prints the complete report above and below", () => {
     const output = dashboard(
@@ -197,6 +223,70 @@ describe("ScanResultDashboard", () => {
     expect(output).toContain("OSV UNAVAILABLE");
     expect(output).toContain("Fix: Restore network access, then scan again.");
     expect(output).toContain("TEMP REPORT CLEANUP FAILED");
+  });
+
+  it("balances every result panel with a blank row above its content", () => {
+    const blocking = createFinding({ id: "blocking", rule: "blocking" });
+    const warning = createFinding({
+      id: "warning",
+      severity: "warning",
+      rule: "warning",
+    });
+    const output = dashboard(
+      createReport({
+        outcome: "incomplete",
+        exitCode: 2,
+        summary: {
+          passed: 0,
+          warnings: 1,
+          failed: 1,
+          incomplete: 1,
+          findings: [blocking, warning],
+        },
+        networkDisclosures: [
+          {
+            checkId: "vulnerabilities",
+            target: ".",
+            services: ["api.osv.dev"],
+            metadata: ["package names"],
+          },
+        ],
+        checks: [
+          {
+            checkId: "vulnerabilities",
+            status: "incomplete",
+            durationMs: 3,
+            findings: [],
+            error: {
+              code: "OSV_UNAVAILABLE",
+              message: "OSV is unavailable.",
+              remediation: "Restore network access, then scan again.",
+            },
+          },
+        ],
+      }),
+      presentation({
+        findings: [blocking, warning],
+        totalFindingCount: 2,
+        warnings: [
+          {
+            code: "TEMP_REPORT_CLEANUP_FAILED",
+            message: "An expired report remains.",
+          },
+        ],
+      }),
+    );
+
+    for (const heading of [
+      "SCAN RESULT",
+      "BLOCKING FINDINGS",
+      "WARNINGS",
+      "DISCLOSURES",
+      "INCOMPLETE CHECKS",
+      "REPORT WARNINGS",
+    ]) {
+      expectBlankRowAfterPanelHeading(output, heading);
+    }
   });
 
   it("shows cleanup warning paths while retaining a valid report path", () => {

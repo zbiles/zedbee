@@ -123,7 +123,13 @@ function ResultContent({
 }) {
   const outcome = outcomeCopy(report);
   return (
-    <Box flexDirection="column" width={width} paddingX={2} paddingBottom={1}>
+    <Box
+      flexDirection="column"
+      width={width}
+      paddingX={2}
+      paddingTop={1}
+      paddingBottom={1}
+    >
       <Text bold {...colorProp(color, outcome.tone)}>
         {outcome.symbol} {outcome.heading}
       </Text>
@@ -159,7 +165,12 @@ function FindingPanel({
   return (
     <Box marginTop={1}>
       <BrandedCommandPanel title={title} width={width} color={color}>
-        <Box flexDirection="column" paddingX={2} paddingBottom={1}>
+        <Box
+          flexDirection="column"
+          paddingX={2}
+          paddingTop={1}
+          paddingBottom={1}
+        >
           <FindingsList
             findings={findings}
             width={contentWidth}
@@ -215,7 +226,12 @@ function DisclosuresPanel({
   return (
     <Box marginTop={1}>
       <BrandedCommandPanel title="DISCLOSURES" width={width} color={color}>
-        <Box flexDirection="column" paddingX={2} paddingBottom={1}>
+        <Box
+          flexDirection="column"
+          paddingX={2}
+          paddingTop={1}
+          paddingBottom={1}
+        >
           {disclosures.map((disclosure, index) => (
             <Text
               key={`${disclosure.checkId}:${disclosure.target}:${index}`}
@@ -250,7 +266,12 @@ function IncompleteChecksPanel({
         width={width}
         color={color}
       >
-        <Box flexDirection="column" paddingX={2} paddingBottom={1}>
+        <Box
+          flexDirection="column"
+          paddingX={2}
+          paddingTop={1}
+          paddingBottom={1}
+        >
           {checks.map((check, index) => {
             const error = check.error;
             const title =
@@ -329,7 +350,12 @@ function ReportWarningsPanel({
   return (
     <Box marginTop={1}>
       <BrandedCommandPanel title="REPORT WARNINGS" width={width} color={color}>
-        <Box flexDirection="column" paddingX={2} paddingBottom={1}>
+        <Box
+          flexDirection="column"
+          paddingX={2}
+          paddingTop={1}
+          paddingBottom={1}
+        >
           {warnings.map((warning, index) => (
             <Box
               key={`${warning.code}:${warning.path ?? ""}:${index}`}
