@@ -8,6 +8,7 @@ describe("managed check profiles", () => {
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",
+      agentGuidance: { opening: "", nextStep: "" },
     });
   });
 

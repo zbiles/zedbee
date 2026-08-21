@@ -168,9 +168,10 @@ describe("packaged Zedbee CLI", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain("Showing 25 of 26 findings.");
     const reportSection = result.stdout.match(
-      /Full report:\s*([\s\S]*?)\nZedbee will remove this report/u,
+      /COMPLETE REPORT\n([\s\S]*?)\n\nSCAN RESULT/u,
     );
     expect(reportSection, result.stdout).not.toBeNull();
+    expect(result.stdout.match(/COMPLETE REPORT/gu)).toHaveLength(2);
     const reportLiteral = reportSection?.[1]?.replaceAll(/\s/gu, "");
     const reportPath = JSON.parse(reportLiteral ?? "") as string;
     expect(reportPath).toBeTruthy();
