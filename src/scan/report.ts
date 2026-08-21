@@ -1,4 +1,5 @@
 import type { CheckResult, RunSummary } from "../core/types.js";
+import type { AgentGuidance } from "../reporting/agent-guidance.js";
 
 export interface NetworkDisclosure {
   readonly checkId: string;
@@ -11,6 +12,7 @@ export interface ScanPresentationPolicy {
   readonly terminalFindingLimit: number | "all";
   readonly temporaryReportMaxAge: string;
   readonly persistSourceExcerpts: boolean;
+  readonly agentGuidance: AgentGuidance;
 }
 
 export interface ScanReport {

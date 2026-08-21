@@ -11,6 +11,7 @@ import type {
   TemporaryReportStore,
 } from "../../src/reporting/temporary-reports.js";
 import { renderJson } from "../../src/renderers/json.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import type { ScanReport } from "../../src/scan/report.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
@@ -84,21 +85,27 @@ function options(
 
 describe("prepareTerminalPresentation", () => {
   it.each([
-    ["auto", "ink", 26, 25, true],
-    ["auto", "text", 26, 25, true],
-    ["ink", "ink", 26, 25, true],
-    ["auto", "ink", 25, 25, false],
-    ["auto", "text", 25, 25, false],
-    ["ink", "ink", 25, 25, false],
-    ["text", "text", 26, 26, false],
-    ["json", "json", 26, 26, false],
-    ["sarif", "sarif", 26, 26, false],
+    ["auto", "ink", 0, true, "available", false],
+    ["auto", "text", 25, true, "available", false],
+    ["auto", "ink", 26, true, "available", true],
+    ["ink", "ink", 25, false, "not-requested", false],
+    ["ink", "ink", 26, true, "available", true],
+    ["text", "text", 26, false, "not-requested", false],
+    ["json", "json", 26, false, "not-requested", false],
+    ["sarif", "sarif", 26, false, "not-requested", false],
   ] as const)(
-    "%s/%s with %i findings selects %i and persistence=%s",
-    async (requested, selected, count, expectedCount, shouldPersist) => {
+    "%s/%s with %i findings persists=%s status=%s abbreviated=%s",
+    async (
+      requested,
+      selected,
+      count,
+      shouldPersist,
+      reportStatus,
+      abbreviated,
+    ) => {
       const { store, maintain } = recordingStore(
         shouldPersist
-          ? { reportPath: "/tmp/zedbee/report.json", warnings: [] }
+          ? { reportPath: "/tmp/zedbee/complete.json", warnings: [] }
           : { warnings: [] },
       );
       const report = reportWithFindings(count);
@@ -114,29 +121,35 @@ describe("prepareTerminalPresentation", () => {
         maxAgeMs: 86_400_000,
         ...(shouldPersist ? { json: expect.any(String) } : {}),
       });
-      expect(presentation.findings).toHaveLength(expectedCount);
+      expect(presentation.findings).toHaveLength(abbreviated ? 25 : count);
       expect(presentation.totalFindingCount).toBe(count);
-      expect(presentation.abbreviated).toBe(shouldPersist);
+      expect(presentation.automatic).toBe(requested === "auto");
+      expect(presentation.reportStatus).toBe(reportStatus);
+      expect(presentation.abbreviated).toBe(abbreviated);
       expect(presentation.reportPath).toBe(
-        shouldPersist ? "/tmp/zedbee/report.json" : undefined,
+        shouldPersist ? "/tmp/zedbee/complete.json" : undefined,
       );
       expect(presentation.maximumAge).toBe(shouldPersist ? "24h" : undefined);
       expect(presentation.completeOutputFallback).toBeUndefined();
       expect(presentation.findings).toEqual(
         [...report.summary.findings]
           .sort(compareFindings)
-          .slice(0, expectedCount),
+          .slice(0, abbreviated ? 25 : count),
       );
     },
   );
 
-  it("keeps every finding and only maintains lifecycle state when the limit is all", async () => {
-    const { store, maintain } = recordingStore();
+  it("persists every automatic report when the limit is all", async () => {
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/complete.json",
+      warnings: [],
+    });
     const report = reportWithFindings(26, {
       presentationPolicy: {
         terminalFindingLimit: "all",
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: false,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     });
 
@@ -146,11 +159,13 @@ describe("prepareTerminalPresentation", () => {
     );
 
     expect(presentation.findings).toHaveLength(26);
+    expect(presentation.reportStatus).toBe("available");
     expect(presentation.abbreviated).toBe(false);
     expect(maintain).toHaveBeenCalledOnce();
     expect(maintain).toHaveBeenCalledWith({
       repositoryRoot: "/repo",
       maxAgeMs: 604_800_000,
+      json: expect.any(String),
     });
   });
 
@@ -164,6 +179,7 @@ describe("prepareTerminalPresentation", () => {
         terminalFindingLimit: 3,
         temporaryReportMaxAge: "24h",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     });
 
@@ -178,6 +194,65 @@ describe("prepareTerminalPresentation", () => {
     expect(presentation.findings).toEqual(
       [...report.summary.findings].sort(compareFindings).slice(0, 3),
     );
+  });
+
+  it("prioritizes blocking findings in abbreviated previews without changing stored canonical order", async () => {
+    const warnings = Array.from({ length: 20 }, (_, index) =>
+      createFinding({
+        id: `warning-${index}`,
+        severity: "warning",
+        location: { file: `src/a-${index}.ts`, startLine: index + 1 },
+      }),
+    );
+    const errors = Array.from({ length: 10 }, (_, index) =>
+      createFinding({
+        id: `error-${index}`,
+        severity: "error",
+        location: { file: `src/z-${index}.ts`, startLine: index + 1 },
+      }),
+    );
+    const reportFindings = [...warnings, ...errors];
+    const report = reportWithFindings(30, {
+      summary: {
+        passed: 0,
+        warnings: 20,
+        failed: 10,
+        incomplete: 0,
+        findings: reportFindings,
+      },
+      checks: [
+        {
+          checkId: "formatting",
+          status: "completed",
+          durationMs: 4,
+          findings: reportFindings,
+        },
+      ],
+    });
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/complete.json",
+      warnings: [],
+    });
+
+    const presentation = await prepareTerminalPresentation(
+      report,
+      options(store, "auto", "ink"),
+    );
+
+    expect(presentation.findings).toHaveLength(25);
+    expect(
+      presentation.findings.filter(({ severity }) => severity === "error"),
+    ).toHaveLength(10);
+    expect(
+      presentation.findings.filter(({ severity }) => severity === "warning"),
+    ).toHaveLength(15);
+    const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
+    expect(JSON.parse(request.json ?? "").checks[0].findings).toHaveLength(30);
+    expect(
+      JSON.parse(request.json ?? "").checks[0].findings.map(
+        (finding: { id: string }) => finding.id,
+      ),
+    ).toEqual([...reportFindings].sort(compareFindings).map(({ id }) => id));
   });
 
   it("omits ordinary source from stored JSON under the default persistence policy", async () => {
@@ -206,6 +281,7 @@ describe("prepareTerminalPresentation", () => {
           terminalFindingLimit: 25,
           temporaryReportMaxAge: "24h",
           persistSourceExcerpts: true,
+          agentGuidance: EMPTY_AGENT_GUIDANCE,
         },
       });
 
@@ -226,6 +302,7 @@ describe("prepareTerminalPresentation", () => {
         terminalFindingLimit: 25,
         temporaryReportMaxAge: "24h",
         persistSourceExcerpts: false,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     });
 
@@ -254,6 +331,7 @@ describe("prepareTerminalPresentation", () => {
         terminalFindingLimit: 25,
         temporaryReportMaxAge: "24h",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
       summary: {
         passed: 0,
@@ -303,6 +381,7 @@ describe("prepareTerminalPresentation", () => {
     );
 
     expect(presentation.findings).toHaveLength(26);
+    expect(presentation.reportStatus).toBe("unavailable");
     expect(presentation.abbreviated).toBe(false);
     expect(presentation.reportPath).toBeUndefined();
     expect(presentation.maximumAge).toBeUndefined();
@@ -328,6 +407,7 @@ describe("prepareTerminalPresentation", () => {
     );
 
     expect(presentation.findings).toHaveLength(25);
+    expect(presentation.reportStatus).toBe("available");
     expect(presentation.abbreviated).toBe(true);
     expect(presentation.warnings).toEqual([cleanupWarning]);
     expect(report.exitCode).toBe(1);
@@ -384,7 +464,7 @@ describe("prepareTerminalPresentation", () => {
     expect(Object.isFrozen(presentation.warnings[0])).toBe(true);
   });
 
-  it("propagates JSON sanitization errors while still maintaining lifecycle state", async () => {
+  it("falls back to the complete finding set when JSON serialization fails", async () => {
     const { store, maintain } = recordingStore();
     const invalid = createFinding({ message: "unsafe\u001b[31m" });
     const report = reportWithFindings(26, {
@@ -405,13 +485,23 @@ describe("prepareTerminalPresentation", () => {
       ],
     });
 
-    await expect(
-      prepareTerminalPresentation(report, options(store, "auto", "ink")),
-    ).rejects.toThrow(/display text/i);
+    const presentation = await prepareTerminalPresentation(
+      report,
+      options(store, "auto", "ink"),
+    );
+
     expect(maintain).toHaveBeenCalledOnce();
     expect(maintain).toHaveBeenCalledWith({
       repositoryRoot: "/repo",
       maxAgeMs: 86_400_000,
     });
+    expect(presentation).toMatchObject({
+      reportStatus: "unavailable",
+      findings: expect.arrayContaining([...report.summary.findings]),
+      completeOutputFallback: true,
+    });
+    expect(presentation.warnings).toEqual([
+      expect.objectContaining({ code: "TEMP_REPORT_WRITE_FAILED" }),
+    ]);
   });
 });

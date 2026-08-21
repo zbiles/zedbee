@@ -7,6 +7,7 @@ import type {
   Finding,
   SourceLocation,
 } from "../../src/core/types.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import { createReport } from "../helpers/scan-report.js";
 
 const readBoundary = vi.hoisted(() => ({
@@ -147,6 +148,7 @@ describe("omitReportSourceExcerpts", () => {
         terminalFindingLimit: "all",
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
       checks: [
         {
@@ -236,6 +238,7 @@ describe("omitReportSourceExcerpts", () => {
         terminalFindingLimit: "all",
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     });
     expect(JSON.stringify(report)).toBe(inputJson);

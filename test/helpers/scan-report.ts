@@ -6,6 +6,7 @@ import type {
   SourceLocation,
 } from "../../src/core/types.js";
 import type { ScanReport } from "../../src/scan/report.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 
 export function createFinding(overrides: Partial<Finding> = {}): Finding {
   return {
@@ -87,6 +88,7 @@ export function createReport(overrides: Partial<ScanReport> = {}): ScanReport {
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",
       persistSourceExcerpts: false,
+      agentGuidance: EMPTY_AGENT_GUIDANCE,
     },
     summary,
     checks,

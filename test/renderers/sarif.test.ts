@@ -7,6 +7,7 @@ import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { renderJson } from "../../src/renderers/json.js";
 import { renderSarif } from "../../src/renderers/sarif.js";
 import { renderText } from "../../src/renderers/text.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 function reportFromIncompletePolicy(
@@ -54,6 +55,7 @@ describe("renderSarif", () => {
         terminalFindingLimit: "all",
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     });
     const first = renderSarif(report);

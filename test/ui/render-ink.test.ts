@@ -106,6 +106,8 @@ describe("runInkScan", () => {
         store,
       });
       return {
+        automatic: true,
+        reportStatus: "available" as const,
         findings: [createFinding({ rule: "shown-rule" })],
         totalFindingCount: 2,
         abbreviated: true,

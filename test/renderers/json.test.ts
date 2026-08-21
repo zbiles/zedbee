@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import { validateReportableSnapshotPath } from "../../src/git/snapshot-path.js";
 import { renderJson } from "../../src/renderers/json.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 describe("renderJson", () => {
@@ -23,6 +24,7 @@ describe("renderJson", () => {
         terminalFindingLimit: "all",
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
       summary: {
         passed: 0,

@@ -112,6 +112,8 @@ describe("renderText", () => {
       ],
     });
     const presentation: TerminalPresentation = {
+      automatic: true,
+      reportStatus: "available",
       findings: [shown],
       totalFindingCount: 2,
       abbreviated: true,
@@ -139,6 +141,8 @@ describe("renderText", () => {
     const cleanupPath =
       "/private/tmp/zedbee-reports/0123456789abcdef0123456789abcdef/stuck.json";
     const presentation: TerminalPresentation = {
+      automatic: false,
+      reportStatus: "not-requested",
       findings: report.summary.findings,
       totalFindingCount: 0,
       abbreviated: false,
@@ -180,6 +184,8 @@ describe("renderText", () => {
       },
     });
     const presentation: TerminalPresentation = {
+      automatic: true,
+      reportStatus: "unavailable",
       findings: report.summary.findings,
       totalFindingCount: report.summary.findings.length,
       abbreviated: false,
@@ -222,6 +228,8 @@ describe("renderText", () => {
     const reportPath =
       "/private/tmp/zedbee reports/0123456789abcdef0123456789abcdef/full report.json";
     const presentation: TerminalPresentation = {
+      automatic: true,
+      reportStatus: "available",
       findings: [finding],
       totalFindingCount: 2,
       abbreviated: true,

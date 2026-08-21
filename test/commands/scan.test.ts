@@ -72,6 +72,8 @@ function reportWithFindings(count: number): ScanReport {
 
 function completePresentation(report: ScanReport): TerminalPresentation {
   return {
+    automatic: false,
+    reportStatus: "not-requested",
     findings: report.summary.findings,
     totalFindingCount: report.summary.findings.length,
     abbreviated: false,
@@ -105,6 +107,8 @@ describe("executeScanCommand", () => {
         selectedFormat: "text",
       });
       return {
+        automatic: true,
+        reportStatus: "available",
         findings: report.summary.findings.slice(0, 25),
         totalFindingCount: 26,
         abbreviated: true,

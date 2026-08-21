@@ -19,6 +19,7 @@ import { typescriptAdapter } from "../checks/typescript/adapter.js";
 import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
 import { ConfigError, loadConfig } from "../config/load-config.js";
 import type { ResolvedConfig } from "../config/schema.js";
+import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
 import { readStagedChangeSet, type ChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
@@ -278,6 +279,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     terminalFindingLimit: 25,
     temporaryReportMaxAge: "24h",
     persistSourceExcerpts: false,
+    agentGuidance: EMPTY_AGENT_GUIDANCE,
   });
 
   const reportContext = (): ScanReportContext => ({
@@ -308,6 +310,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         config.reporting.sourceExcerpts,
         options.sourceExcerpts,
       ),
+      agentGuidance: config.reporting.agentGuidance,
     });
     activePhase = "change-discovery";
     const git = dependencies.createGitClient(options.repositoryRoot);

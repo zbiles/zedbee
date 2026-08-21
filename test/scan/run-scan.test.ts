@@ -29,6 +29,7 @@ import {
 } from "../../src/scan/run-scan.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { prepareTerminalPresentation } from "../../src/reporting/presentation.js";
+import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import type {
   TemporaryReportRequest,
   TemporaryReportStore,
@@ -898,6 +899,7 @@ describe("runScan", () => {
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",
       persistSourceExcerpts: false,
+      agentGuidance: EMPTY_AGENT_GUIDANCE,
     });
     expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
     expect(JSON.stringify(report)).not.toContain("private-token-123");
@@ -1288,6 +1290,7 @@ describe("runScan", () => {
         terminalFindingLimit: 25,
         temporaryReportMaxAge: "24h",
         persistSourceExcerpts: false,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     },
     {
@@ -1303,6 +1306,7 @@ describe("runScan", () => {
         terminalFindingLimit: "all" as const,
         temporaryReportMaxAge: "7d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     },
     {
@@ -1318,6 +1322,7 @@ describe("runScan", () => {
         terminalFindingLimit: 11,
         temporaryReportMaxAge: "3d",
         persistSourceExcerpts: true,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     },
     {
@@ -1333,6 +1338,7 @@ describe("runScan", () => {
         terminalFindingLimit: 7,
         temporaryReportMaxAge: "2d",
         persistSourceExcerpts: false,
+        agentGuidance: EMPTY_AGENT_GUIDANCE,
       },
     },
   ])(
@@ -1383,6 +1389,7 @@ describe("runScan", () => {
       terminalFindingLimit: "all",
       temporaryReportMaxAge: "8d",
       persistSourceExcerpts: true,
+      agentGuidance: EMPTY_AGENT_GUIDANCE,
     });
     expect(Object.isFrozen(report.presentationPolicy)).toBe(true);
   });

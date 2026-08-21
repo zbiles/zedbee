@@ -32,6 +32,8 @@ describe("ScanApp", () => {
       "/private/tmp/zedbee reports/0123456789abcdef0123456789abcdef/full report.json";
     const warningPath = "/private/tmp/zedbee reports/hash/stuck report.json";
     const presentation: TerminalPresentation = {
+      automatic: true,
+      reportStatus: "available",
       findings: [shown],
       totalFindingCount: 2,
       abbreviated: true,
@@ -128,6 +130,8 @@ describe("ScanApp", () => {
       },
     });
     const presentation: TerminalPresentation = {
+      automatic: true,
+      reportStatus: "unavailable",
       findings: [finding],
       totalFindingCount: 1,
       abbreviated: false,

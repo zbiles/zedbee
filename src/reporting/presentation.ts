@@ -14,7 +14,12 @@ import type {
   TemporaryReportStore,
 } from "./temporary-reports.js";
 
+export type TerminalReportStatus =
+  "available" | "unavailable" | "not-requested";
+
 export interface TerminalPresentation {
+  readonly automatic: boolean;
+  readonly reportStatus: TerminalReportStatus;
   readonly findings: readonly Finding[];
   readonly totalFindingCount: number;
   readonly abbreviated: boolean;
@@ -45,24 +50,29 @@ function freezeWarnings(
   );
 }
 
-function presentation(
-  findings: readonly Finding[],
-  totalFindingCount: number,
-  warnings: readonly ReportMaintenanceWarning[],
-  reportPath?: string,
-  maximumAge?: string,
-  completeOutputFallback = false,
-): TerminalPresentation {
+function presentation(input: {
+  readonly automatic: boolean;
+  readonly reportStatus: TerminalReportStatus;
+  readonly findings: readonly Finding[];
+  readonly totalFindingCount: number;
+  readonly abbreviated: boolean;
+  readonly warnings: readonly ReportMaintenanceWarning[];
+  readonly reportPath?: string;
+  readonly maximumAge?: string;
+  readonly completeOutputFallback?: boolean;
+}): TerminalPresentation {
   return Object.freeze({
-    findings: Object.freeze([...findings]),
-    totalFindingCount,
-    abbreviated: reportPath !== undefined,
-    ...(reportPath === undefined
+    automatic: input.automatic,
+    reportStatus: input.reportStatus,
+    findings: Object.freeze([...input.findings]),
+    totalFindingCount: input.totalFindingCount,
+    abbreviated: input.abbreviated,
+    ...(input.reportPath === undefined
       ? {}
-      : { reportPath: validateTemporaryReportPath(reportPath) }),
-    ...(maximumAge === undefined ? {} : { maximumAge }),
-    ...(completeOutputFallback ? { completeOutputFallback: true } : {}),
-    warnings: freezeWarnings(warnings),
+      : { reportPath: validateTemporaryReportPath(input.reportPath) }),
+    ...(input.maximumAge === undefined ? {} : { maximumAge: input.maximumAge }),
+    ...(input.completeOutputFallback ? { completeOutputFallback: true } : {}),
+    warnings: freezeWarnings(input.warnings),
   });
 }
 
@@ -76,6 +86,26 @@ function supportsAbbreviation(
   return requestedFormat === "ink" && selectedFormat === "ink";
 }
 
+function prioritizePreview(
+  findings: readonly Finding[],
+  limit: number,
+): readonly Finding[] {
+  const blocking = findings.filter(({ severity }) => severity === "error");
+  const warnings = findings.filter(({ severity }) => severity !== "error");
+  const selectedBlocking = blocking.slice(0, limit);
+  return Object.freeze([
+    ...selectedBlocking,
+    ...warnings.slice(0, Math.max(0, limit - selectedBlocking.length)),
+  ]);
+}
+
+function writeFailureWarning(): ReportMaintenanceWarning {
+  return Object.freeze({
+    code: "TEMP_REPORT_WRITE_FAILED",
+    message: "The temporary report could not be written.",
+  });
+}
+
 export async function prepareTerminalPresentation(
   report: ScanReport,
   options: PreparePresentationOptions,
@@ -85,10 +115,15 @@ export async function prepareTerminalPresentation(
     [...report.summary.findings].sort(compareFindings),
   );
   const limit = policy.terminalFindingLimit;
+  const automatic = options.requestedFormat === "auto";
+  const canPreview = supportsAbbreviation(
+    options.requestedFormat,
+    options.selectedFormat,
+  );
+  const abbreviated =
+    limit !== "all" && orderedFindings.length > limit && canPreview;
   const shouldPersist =
-    limit !== "all" &&
-    orderedFindings.length > limit &&
-    supportsAbbreviation(options.requestedFormat, options.selectedFormat);
+    automatic || (options.requestedFormat === "ink" && abbreviated);
   const maintenanceRequest = {
     repositoryRoot: report.repositoryRoot,
     maxAgeMs: parseTemporaryReportMaxAge(policy.temporaryReportMaxAge),
@@ -96,11 +131,14 @@ export async function prepareTerminalPresentation(
 
   if (!shouldPersist) {
     const maintained = await options.store.maintain(maintenanceRequest);
-    return presentation(
-      orderedFindings,
-      orderedFindings.length,
-      maintained.warnings,
-    );
+    return presentation({
+      automatic,
+      reportStatus: "not-requested",
+      findings: orderedFindings,
+      totalFindingCount: orderedFindings.length,
+      abbreviated: false,
+      warnings: maintained.warnings,
+    });
   }
 
   let json: string;
@@ -108,31 +146,49 @@ export async function prepareTerminalPresentation(
     json = renderJson(
       policy.persistSourceExcerpts ? report : omitReportSourceExcerpts(report),
     );
-  } catch (error) {
-    await options.store.maintain(maintenanceRequest).catch(() => undefined);
-    throw error;
+  } catch {
+    const maintained = await options.store
+      .maintain(maintenanceRequest)
+      .catch(() => ({ warnings: [] }));
+    return presentation({
+      automatic,
+      reportStatus: "unavailable",
+      findings: orderedFindings,
+      totalFindingCount: orderedFindings.length,
+      abbreviated: false,
+      warnings: [...maintained.warnings, writeFailureWarning()],
+      completeOutputFallback: true,
+    });
   }
 
-  const maintained = await options.store.maintain({
-    ...maintenanceRequest,
-    json,
+  const maintained = await options.store
+    .maintain({ ...maintenanceRequest, json })
+    .catch(() => undefined);
+  if (maintained?.reportPath === undefined) {
+    return presentation({
+      automatic,
+      reportStatus: "unavailable",
+      findings: orderedFindings,
+      totalFindingCount: orderedFindings.length,
+      abbreviated: false,
+      warnings:
+        maintained === undefined
+          ? [writeFailureWarning()]
+          : maintained.warnings,
+      completeOutputFallback: true,
+    });
+  }
+
+  return presentation({
+    automatic,
+    reportStatus: "available",
+    findings: abbreviated
+      ? prioritizePreview(orderedFindings, limit)
+      : orderedFindings,
+    totalFindingCount: orderedFindings.length,
+    abbreviated,
+    warnings: maintained.warnings,
+    reportPath: maintained.reportPath,
+    maximumAge: policy.temporaryReportMaxAge,
   });
-  if (maintained.reportPath === undefined) {
-    return presentation(
-      orderedFindings,
-      orderedFindings.length,
-      maintained.warnings,
-      undefined,
-      undefined,
-      true,
-    );
-  }
-
-  return presentation(
-    orderedFindings.slice(0, limit),
-    orderedFindings.length,
-    maintained.warnings,
-    maintained.reportPath,
-    policy.temporaryReportMaxAge,
-  );
 }
