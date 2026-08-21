@@ -874,7 +874,7 @@ export async function dispatchChecks(
                 target: target.id,
                 durationMs: durationMs(),
                 code: "ADAPTER_RESULT_INVALID",
-                message: `${label} returned an invalid result for ${target.id}.`,
+                message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
                 remediation:
                   "Run zedbee doctor and update Zedbee before retrying.",
               });
@@ -891,7 +891,7 @@ export async function dispatchChecks(
                   target: target.id,
                   durationMs: durationMs(),
                   code: "ADAPTER_RESULT_INVALID",
-                  message: `${label} returned an invalid result for ${target.id}.`,
+                  message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
                   remediation:
                     "Run zedbee doctor and update Zedbee before retrying.",
                 });
@@ -917,7 +917,7 @@ export async function dispatchChecks(
                     target: target.id,
                     durationMs: durationMs(),
                     code: "ADAPTER_EXECUTION_FAILED",
-                    message: `${label} could not analyze ${target.id}.`,
+                    message: `${label} could not analyze ${target.id === "." ? "the repository root" : target.id}.`,
                     remediation:
                       "Check the analyzer installation and staged input, then retry.",
                   });

@@ -15,6 +15,7 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import { collectStructuralSecurityObservations } from "./rules.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
@@ -41,6 +42,7 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   signal: AbortSignal,
+  side: "baseline" | "staged",
 ): Promise<readonly Observation[]> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
@@ -55,7 +57,17 @@ async function collectSide(
   for (const file of files) {
     if (signal.aborted) throw new Error("Structural security analysis failed.");
     const source = await readContainedFile(registry, file);
-    observations.push(...collectStructuralSecurityObservations(file, source));
+    try {
+      observations.push(...collectStructuralSecurityObservations(file, source));
+    } catch {
+      throw new CheckIncompleteError({
+        code: "STRUCTURAL_SECURITY_PARSE_FAILED",
+        message: `Structural security could not parse a ${side} source file.`,
+        path: file,
+        remediation:
+          "Verify that this file uses valid JavaScript or TypeScript syntax, then retry. If the project accepts this syntax, report a Zedbee parser compatibility issue.",
+      });
+    }
   }
   return Object.freeze(
     observations.sort((left, right) =>
@@ -98,12 +110,14 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
           context.baselineInspection,
           context.target,
           context.signal,
+          "baseline",
         ),
         collectSide(
           context.snapshots.targetDir,
           context.targetInspection,
           context.target,
           context.signal,
+          "staged",
         ),
       ]);
       return {
@@ -112,7 +126,8 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
         baselineObservations,
         targetObservations,
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof CheckIncompleteError) throw error;
       throw new Error("Structural security analysis failed.");
     }
   },

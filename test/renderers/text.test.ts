@@ -106,12 +106,12 @@ describe("renderText", () => {
     const headings = [
       "AGENT GUIDANCE",
       "COMPLETE REPORT",
-      "SCAN RESULT",
       "BLOCKING FINDINGS",
       "WARNINGS",
       "DISCLOSURES",
-      "INCOMPLETE CHECKS",
       "REPORT WARNINGS",
+      "INCOMPLETE CHECKS",
+      "SCAN RESULT",
       "AGENT NEXT STEP",
       "COMPLETE REPORT",
     ];
@@ -181,7 +181,57 @@ describe("renderText", () => {
       },
     });
 
-    expect(output).toContain("1 passed · 2 warnings · 0 failed");
+    expect(output).toContain(
+      "1 check passed · 0 blocking findings · 2 warning findings",
+    );
+  });
+
+  it("directs an automatic incomplete scan to the details above its final result", () => {
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 0,
+        incomplete: 1,
+        findings: [],
+      },
+      checks: [
+        {
+          checkId: "lint",
+          status: "incomplete",
+          incompleteDisposition: "block",
+          durationMs: 2,
+          findings: [],
+          error: {
+            code: "TYPED_LINT_ANALYSIS_FAILED",
+            message: "Typed lint could not analyze the configured project.",
+          },
+        },
+      ],
+    });
+    const output = renderText(report, {
+      width: 60,
+      color: false,
+      presentation: {
+        automatic: true,
+        reportStatus: "available",
+        findings: [],
+        totalFindingCount: 0,
+        abbreviated: false,
+        reportPath: "/private/tmp/zedbee-reports/complete.json",
+        maximumAge: "24h",
+        warnings: [],
+      },
+    });
+
+    expect(output.indexOf("INCOMPLETE CHECKS")).toBeLessThan(
+      output.indexOf("SCAN RESULT"),
+    );
+    expect(output).toMatch(
+      /A required check could not finish\. Review INCOMPLETE CHECKS\s+above for details\. Commit blocked\./u,
+    );
   });
 
   it("prints fixed complete-output callouts and every finding when automatic report persistence fails", () => {
@@ -351,7 +401,9 @@ describe("renderText", () => {
     });
 
     expect(output).toContain("SCAN RESULT");
-    expect(output).toContain("4 passed · 3 warnings · 2 failed");
+    expect(output).toContain(
+      "4 checks passed · 2 blocking findings · 3 warning findings",
+    );
     expect(output).toContain("OSV UNAVAILABLE");
     expect(output).toContain("DISCLOSURES");
     expect(output).toContain("shown-rule");

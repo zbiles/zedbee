@@ -125,6 +125,20 @@ describe("fingerprintObservation", () => {
     ).toBe("src/日本語/naïve.ts");
   });
 
+  it("accepts bounded internal identities longer than terminal labels", () => {
+    const identity = `dependency-edge:${"nested/".repeat(1_300)}leaf`;
+    const comparisonIdentity = `comparison:${"branch/".repeat(50)}leaf`;
+
+    expect(
+      normalizeObservation(createObservation({ identity, comparisonIdentity })),
+    ).toMatchObject({ identity, comparisonIdentity });
+    expect(() =>
+      normalizeObservation(
+        createObservation({ identity: `function:${"x".repeat(128 * 1024 + 1)}` }),
+      ),
+    ).toThrow(/canonical identity/i);
+  });
+
   it("rejects unsafe entity paths before hashing", () => {
     expect(() =>
       fingerprintObservation(

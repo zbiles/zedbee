@@ -434,7 +434,8 @@ describe("dispatchChecks", () => {
         findings: [],
         error: {
           code: "ADAPTER_RESULT_INVALID",
-          message: "Formatting returned an invalid result for ..",
+          message:
+            "Formatting returned an invalid result for the repository root.",
           remediation: "Run zedbee doctor and update Zedbee before retrying.",
         },
       });
@@ -569,7 +570,8 @@ describe("dispatchChecks", () => {
         findings: [],
         error: {
           code: "ADAPTER_RESULT_INVALID",
-          message: "Formatting returned an invalid result for ..",
+          message:
+            "Formatting returned an invalid result for the repository root.",
           remediation: "Run zedbee doctor and update Zedbee before retrying.",
         },
       });
@@ -609,7 +611,7 @@ describe("dispatchChecks", () => {
       findings: [],
       error: {
         code: "ADAPTER_RESULT_INVALID",
-        message: "Lint returned an invalid result for ..",
+        message: "Lint returned an invalid result for the repository root.",
         remediation: "Run zedbee doctor and update Zedbee before retrying.",
       },
     });
@@ -1433,7 +1435,7 @@ describe("dispatchChecks", () => {
       findings: [],
       error: {
         code: "ADAPTER_EXECUTION_FAILED",
-        message: "broken could not analyze ..",
+        message: "broken could not analyze the repository root.",
         remediation:
           "Check the analyzer installation and staged input, then retry.",
       },
@@ -1446,15 +1448,19 @@ describe("dispatchChecks", () => {
   });
 
   it("preserves safe details and disposition from a known incomplete error", async () => {
-    const unavailable = createAdapter("vulnerabilities", "network", async () => {
-      throw new CheckIncompleteError({
-        code: "OSV_UNAVAILABLE",
-        message: "OSV did not respond before the request deadline.",
-        remediation: "Retry the scan or set onUnavailable to warn.",
-        path: "package-lock.json",
-        disposition: "warn",
-      });
-    });
+    const unavailable = createAdapter(
+      "vulnerabilities",
+      "network",
+      async () => {
+        throw new CheckIncompleteError({
+          code: "OSV_UNAVAILABLE",
+          message: "OSV did not respond before the request deadline.",
+          remediation: "Retry the scan or set onUnavailable to warn.",
+          path: "package-lock.json",
+          disposition: "warn",
+        });
+      },
+    );
 
     const [execution] = await dispatchChecks(
       [unavailable],

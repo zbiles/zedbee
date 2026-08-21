@@ -132,4 +132,21 @@ describe("structuralSecurityAdapter", () => {
       "Structural security analysis failed.",
     );
   });
+
+  it("identifies the staged file that the managed parser cannot read", async () => {
+    const { fixtures, run } = await structuralSecurityContext();
+    await fixtures.staged.write(
+      "src/security.ts",
+      "export const broken = &;\n",
+    );
+
+    await expect(structuralSecurityAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "STRUCTURAL_SECURITY_PARSE_FAILED",
+      message: "Structural security could not parse a staged source file.",
+      path: "src/security.ts",
+      remediation:
+        "Verify that this file uses valid JavaScript or TypeScript syntax, then retry. If the project accepts this syntax, report a Zedbee parser compatibility issue.",
+    });
+  });
 });

@@ -77,8 +77,10 @@ function countLine(report: ScanReport): string {
 
 function automaticCountLine(report: ScanReport): string {
   const { passed, warnings, failed } = report.summary;
-  const warningLabel = warnings === 1 ? "warning" : "warnings";
-  return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`;
+  const checkLabel = passed === 1 ? "check" : "checks";
+  const blockingLabel = failed === 1 ? "finding" : "findings";
+  const warningLabel = warnings === 1 ? "finding" : "findings";
+  return `${passed} ${checkLabel} passed · ${failed} blocking ${blockingLabel} · ${warnings} warning ${warningLabel}`;
 }
 
 function headline(report: ScanReport): string[] {
@@ -279,7 +281,7 @@ function automaticHeadline(
   if (report.outcome === "incomplete") {
     return [
       "SCAN INCOMPLETE",
-      "A required check could not finish. Commit blocked.",
+      "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
       automaticCountLine(report),
       ...previewLine,
     ];
@@ -316,10 +318,6 @@ function automaticTextLines(
   return [
     ...calloutLines(callouts.opening, width),
     "",
-    "SCAN RESULT",
-    ...automaticHeadline(report, presentation).flatMap((line) =>
-      wrapWords(line, width),
-    ),
     ...findingSectionLines(
       "BLOCKING FINDINGS",
       sections.blockingFindings,
@@ -333,8 +331,13 @@ function automaticTextLines(
       verbose,
     ),
     ...disclosureSectionLines(sections.disclosures, width),
-    ...incompleteSectionLines(sections.incompleteChecks, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
+    ...incompleteSectionLines(sections.incompleteChecks, width),
+    "",
+    "SCAN RESULT",
+    ...automaticHeadline(report, presentation).flatMap((line) =>
+      wrapWords(line, width),
+    ),
     "",
     ...calloutLines(callouts.closing, width),
   ];

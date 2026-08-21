@@ -15,6 +15,7 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "../eslint/load-engine.js";
 import { managedConfig } from "../eslint/managed-config.js";
 import {
@@ -56,26 +57,17 @@ function observationsFromMessages(
   limit?: number,
 ): readonly Observation[] {
   const spans = collectMetricEntitySpans(source, file);
-  if (
-    messages.some(
-      (message) =>
-        parseComplexityMetric(message) === undefined ||
-        message.line === undefined ||
-        message.column === undefined,
-    )
-  ) {
+  if (messages.some((message) => message.fatal === true)) {
     throw new Error("Complexity analysis failed.");
   }
   const mapped = messages.flatMap((message): Observation[] => {
     const metric = parseComplexityMetric(message);
-    if (
-      metric === undefined ||
-      message.line === undefined ||
-      message.column === undefined
-    )
-      return [];
+    if (metric === undefined) return [];
+    if (message.line === undefined || message.column === undefined) {
+      throw new Error("Complexity analysis failed.");
+    }
     const offset = positionOffset(source, message.line, message.column);
-    const span = spans
+    const containing = spans
       .filter(
         ({ startOffset, endOffset }) =>
           offset >= startOffset && offset < endOffset,
@@ -86,6 +78,14 @@ function observationsFromMessages(
           left.startOffset -
           (right.endOffset - right.startOffset),
       )[0];
+    const followingOnLine = spans
+      .filter(
+        ({ startOffset }) =>
+          startOffset >= offset &&
+          !source.slice(offset, startOffset).includes("\n"),
+      )
+      .sort((left, right) => left.startOffset - right.startOffset)[0];
+    const span = containing ?? followingOnLine;
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
     const check =
@@ -189,14 +189,25 @@ async function collectSide(
     if (result.messages.length === 0) continue;
     if (result.source === undefined)
       throw new Error("Complexity analysis failed.");
-    observations.push(
-      ...observationsFromMessages(
-        file,
-        result.source,
-        result.messages,
-        limit,
-      ).filter(({ metric }) => metric?.name === metricName),
-    );
+    try {
+      observations.push(
+        ...observationsFromMessages(
+          file,
+          result.source,
+          result.messages,
+          limit,
+        ).filter(({ metric }) => metric?.name === metricName),
+      );
+    } catch {
+      throw new CheckIncompleteError({
+        code: "COMPLEXITY_FILE_ANALYSIS_FAILED",
+        message:
+          "Complexity analysis could not attribute metrics for a source file.",
+        path: file,
+        remediation:
+          "Verify that the file contains valid JavaScript or TypeScript, then retry. If the project accepts the syntax, report a Zedbee analyzer compatibility issue.",
+      });
+    }
   }
   return Object.freeze(
     observations.sort((left, right) =>
@@ -261,7 +272,8 @@ function createComplexityAdapter(
           baselineObservations,
           targetObservations,
         };
-      } catch {
+      } catch (error) {
+        if (error instanceof CheckIncompleteError) throw error;
         throw new Error("Complexity analysis failed.");
       }
     },

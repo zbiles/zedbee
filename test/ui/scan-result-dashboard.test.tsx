@@ -148,7 +148,7 @@ describe("ScanResultDashboard", () => {
       }),
     );
 
-    expectOrder(output, ["SCAN RESULT", "BLOCKING FINDINGS", "WARNINGS"]);
+    expectOrder(output, ["BLOCKING FINDINGS", "WARNINGS", "SCAN RESULT"]);
     expect(output.match(/BLOCKING FINDINGS/gu)).toHaveLength(1);
     expect(output.match(/WARNINGS/gu)).toHaveLength(1);
     expect(output).toContain("Prettier  no-unsafe-call");
@@ -217,12 +217,12 @@ describe("ScanResultDashboard", () => {
     );
 
     expectOrder(output, [
-      "SCAN RESULT",
       "BLOCKING FINDINGS",
       "WARNINGS",
       "DISCLOSURES",
-      "INCOMPLETE CHECKS",
       "REPORT WARNINGS",
+      "INCOMPLETE CHECKS",
+      "SCAN RESULT",
     ]);
     expect(output).toContain(
       "vulnerabilities sent package names to api.osv.dev.",
@@ -230,6 +230,12 @@ describe("ScanResultDashboard", () => {
     expect(output).toContain("OSV UNAVAILABLE");
     expect(output).toContain("Fix: Restore network access, then scan again.");
     expect(output).toContain("TEMP REPORT CLEANUP FAILED");
+    expect(output).toContain(
+      "Review INCOMPLETE CHECKS above for details. Commit blocked.",
+    );
+    expect(output).toContain(
+      "0 checks passed · 1 blocking finding · 1 warning finding",
+    );
   });
 
   it("balances every result panel with a blank row above its content", () => {

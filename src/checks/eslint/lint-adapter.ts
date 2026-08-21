@@ -14,6 +14,7 @@ import type {
 } from "../../inspection/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { convertEslintMessage } from "./convert-message.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "./load-engine.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
@@ -78,7 +79,13 @@ async function collectSide(
         programs,
       };
     } catch {
-      throw new Error("Typed lint analysis failed.");
+      throw new CheckIncompleteError({
+        code: "TYPED_LINT_SETUP_FAILED",
+        message:
+          "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
+        remediation:
+          "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
+      });
     }
   }
 
@@ -122,7 +129,19 @@ async function collectSide(
       ),
     );
   } catch (error) {
-    if ((error as Error).message === "Typed lint analysis failed.") throw error;
+    if (error instanceof CheckIncompleteError) throw error;
+    if (
+      error instanceof Error &&
+      error.message === "Typed lint analysis failed."
+    ) {
+      throw new CheckIncompleteError({
+        code: "TYPED_LINT_ANALYSIS_FAILED",
+        message:
+          "Typed lint could not analyze every requested TypeScript file with the configured project.",
+        remediation:
+          "Verify that the staged TypeScript configuration includes every staged TypeScript file, then retry. If it does, report a Zedbee typed-lint compatibility issue.",
+      });
+    }
     throw new Error(
       typescriptFiles.length > 0
         ? "Typed lint analysis failed."

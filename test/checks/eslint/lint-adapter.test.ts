@@ -74,6 +74,32 @@ async function context(
 }
 
 describe("lintAdapter", () => {
+  it("explains when typed lint cannot build a project for staged TypeScript", async () => {
+    const fixtures = await pair();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.write("src/value.ts", "export const value: number = 1;\n");
+    }
+    const run = await context(
+      fixtures,
+      changes([
+        {
+          path: "src/value.ts",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
+    );
+
+    await expect(lintAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_SETUP_FAILED",
+      message:
+        "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
+      remediation:
+        "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
+    });
+  });
+
   it("collects managed JavaScript syntax and recommended-rule observations only from explicit snapshot files", async () => {
     const fixtures = await pair();
     await fixtures.staged.write("src/syntax.js", "export const broken = ;\n");
@@ -417,9 +443,10 @@ describe("lintAdapter", () => {
       ]),
     );
 
-    await expect(lintAdapter.collect(run)).rejects.toThrow(
-      /typed lint analysis failed/i,
-    );
+    await expect(lintAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_SETUP_FAILED",
+    });
   });
 
   it("fails incomplete when a safe config cannot initialize typed lint for an inspected file", async () => {
@@ -440,9 +467,53 @@ describe("lintAdapter", () => {
       ]),
     );
 
-    await expect(lintAdapter.collect(run)).rejects.toThrow(
-      /typed lint analysis failed/i,
+    await expect(lintAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_SETUP_FAILED",
+    });
+  });
+
+  it("explains when typed lint cannot analyze every file in a mixed TypeScript workspace", async () => {
+    const fixtures = await pair();
+    const nestedConfig = {
+      compilerOptions: {
+        strict: true,
+        target: "ES2022",
+        module: "ES2022",
+        moduleResolution: "Bundler",
+      },
+      include: ["src/**/*"],
+    };
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.writeJson("tools/tsconfig.json", nestedConfig);
+      await fixture.write(
+        "tools/src/value.ts",
+        "export const value: number = 1;\n",
+      );
+      await fixture.write(
+        "docs/config.mts",
+        "export const title: string = 'Docs';\n",
+      );
+    }
+    const run = await context(
+      fixtures,
+      changes([
+        {
+          path: "docs/config.mts",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
     );
+
+    await expect(lintAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_ANALYSIS_FAILED",
+      message:
+        "Typed lint could not analyze every requested TypeScript file with the configured project.",
+      remediation:
+        "Verify that the staged TypeScript configuration includes every staged TypeScript file, then retry. If it does, report a Zedbee typed-lint compatibility issue.",
+    });
   });
 
   it.each([
@@ -470,9 +541,10 @@ describe("lintAdapter", () => {
       ]),
     );
 
-    await expect(lintAdapter.collect(run)).rejects.toThrow(
-      /typed lint analysis failed/i,
-    );
+    await expect(lintAdapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_SETUP_FAILED",
+    });
   });
 
   it("uses the snapshot program for node and installed-package imports", async () => {

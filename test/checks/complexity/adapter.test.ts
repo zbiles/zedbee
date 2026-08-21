@@ -190,6 +190,35 @@ describe("collectComplexityObservations", () => {
     }
   });
 
+  it("attributes arrow functions stored in object properties", async () => {
+    const observations = await collectComplexityObservations(
+      "src/icons.jsx",
+      "export const icons = { Play: (value) => value ? 1 : 0, Pause: (value) => value ?? 0 };",
+    );
+
+    for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const properties = observations.filter(
+        (observation) =>
+          observation.check === check && observation.entity?.kind === "function",
+      );
+      expect(properties).toHaveLength(2);
+      expect(new Set(properties.map(({ identity }) => identity)).size).toBe(2);
+    }
+  });
+
+  it("ignores unused disable notices that are not complexity metrics", async () => {
+    await expect(
+      collectComplexityObservations(
+        "src/result.jsx",
+        "export function result(value) { /* eslint-disable-next-line react-hooks/exhaustive-deps */ return value ? 1 : 0; }",
+      ),
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ check: "cyclomaticComplexity" }),
+      ]),
+    );
+  });
+
   it.each(["mjs", "cjs", "mts", "cts"])(
     "supports the managed .%s source extension",
     async (extension) => {

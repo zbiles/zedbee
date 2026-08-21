@@ -89,7 +89,8 @@ function outcomeCopy(report: ScanReport): {
   if (report.outcome === "incomplete") {
     return {
       heading: "SCAN INCOMPLETE",
-      detail: "A required check could not finish. Commit blocked.",
+      detail:
+        "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
       tone: ZEDBEE_THEME.warning,
       symbol: "!",
     };
@@ -106,8 +107,10 @@ function outcomeCopy(report: ScanReport): {
 }
 
 function countLine(report: ScanReport): string {
-  const warningLabel = report.summary.warnings === 1 ? "warning" : "warnings";
-  return `${report.summary.passed} passed · ${report.summary.warnings} ${warningLabel} · ${report.summary.failed} failed`;
+  const checkLabel = report.summary.passed === 1 ? "check" : "checks";
+  const blockingLabel = report.summary.failed === 1 ? "finding" : "findings";
+  const warningLabel = report.summary.warnings === 1 ? "finding" : "findings";
+  return `${report.summary.passed} ${checkLabel} passed · ${report.summary.failed} blocking ${blockingLabel} · ${report.summary.warnings} warning ${warningLabel}`;
 }
 
 function ResultContent({
@@ -414,18 +417,6 @@ export function ScanResultDashboard({
     <Box flexDirection="column" width={width}>
       <Callouts lines={callouts.opening} width={width} color={color} />
       <BrandedCommandFrame width={width} color={color}>
-        <BrandedCommandPanel
-          title="SCAN RESULT"
-          width={panelWidth}
-          color={color}
-        >
-          <ResultContent
-            report={report}
-            presentation={presentation}
-            width={panelWidth}
-            color={color}
-          />
-        </BrandedCommandPanel>
         <FindingPanel
           title="BLOCKING FINDINGS"
           findings={sections.blockingFindings}
@@ -443,16 +434,28 @@ export function ScanResultDashboard({
           width={panelWidth}
           color={color}
         />
-        <IncompleteChecksPanel
-          checks={sections.incompleteChecks}
-          width={panelWidth}
-          color={color}
-        />
         <ReportWarningsPanel
           warnings={sections.reportWarnings}
           width={panelWidth}
           color={color}
         />
+        <IncompleteChecksPanel
+          checks={sections.incompleteChecks}
+          width={panelWidth}
+          color={color}
+        />
+        <BrandedCommandPanel
+          title="SCAN RESULT"
+          width={panelWidth}
+          color={color}
+        >
+          <ResultContent
+            report={report}
+            presentation={presentation}
+            width={panelWidth}
+            color={color}
+          />
+        </BrandedCommandPanel>
       </BrandedCommandFrame>
       <Callouts lines={callouts.closing} width={width} color={color} />
     </Box>

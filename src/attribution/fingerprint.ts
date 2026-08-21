@@ -15,6 +15,9 @@ const UNSAFE_PATH_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 /** Repository paths are bounded by Unicode code points, not UTF-16 units. */
 export const MAX_REPOSITORY_PATH_CODE_POINTS = 4096;
 export const MAX_REPOSITORY_SEGMENT_CODE_POINTS = 255;
+// Internal keys may combine multiple maximum-length repository paths and a
+// lockfile's bounded dependency ancestry before they are hashed.
+const MAX_CANONICAL_IDENTITY_LENGTH = 128 * 1024;
 
 function codePointLength(value: string): number {
   return Array.from(value).length;
@@ -68,6 +71,19 @@ function canonicalText(value: unknown, field: string): string {
     throw new TypeError(`Expected canonical ${field}`);
   }
   return displayLabel(value, field);
+}
+
+function canonicalIdentityText(value: unknown, field: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > MAX_CANONICAL_IDENTITY_LENGTH ||
+    value.trim() !== value ||
+    UNSAFE_PATH_CHARACTER.test(value)
+  ) {
+    throw new TypeError(`Expected canonical ${field}`);
+  }
+  return value;
 }
 
 function coordinate(value: unknown, field: string): number | undefined {
@@ -186,12 +202,12 @@ export function normalizeObservation(observation: Observation): Observation {
   const comparisonIdentity =
     comparisonIdentityValue === undefined
       ? undefined
-      : canonicalText(comparisonIdentityValue, "comparison identity");
+      : canonicalIdentityText(comparisonIdentityValue, "comparison identity");
 
   return Object.freeze({
     check: canonicalText(checkValue, "check"),
     rule: canonicalText(ruleValue, "rule"),
-    identity: canonicalText(identityValue, "identity"),
+    identity: canonicalIdentityText(identityValue, "identity"),
     ...(comparisonIdentity === undefined ? {} : { comparisonIdentity }),
     severity: severity(severityValue),
     message: prose(messageValue, "message"),
@@ -235,7 +251,7 @@ function findingIdentityFromSnapshot(
   return {
     check: canonicalText(observation.check, "check"),
     rule: canonicalText(observation.rule, "rule"),
-    identity: canonicalText(observation.identity, "identity"),
+    identity: canonicalIdentityText(observation.identity, "identity"),
     scope,
     ...(metricName === undefined ? {} : { metricName }),
   };
