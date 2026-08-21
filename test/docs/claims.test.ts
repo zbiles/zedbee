@@ -154,6 +154,67 @@ describe("public documentation claims", () => {
     );
   });
 
+  it("documents automatic-report delivery as a complete, accessible handoff", async () => {
+    const [readme, reporting, privacy, support, checks] = await Promise.all([
+      read("README.md"),
+      read("docs/reporting.md"),
+      read("docs/privacy.md"),
+      read("docs/support.md"),
+      read("docs/checks.md"),
+    ]);
+    const publicDocs = [readme, reporting, privacy, support, checks].join("\n");
+
+    expect(readme).toContain('"agentGuidance"');
+    expect(readme).toContain('"opening"');
+    expect(readme).toContain('"nextStep"');
+    expect(publicDocs).toMatch(
+      /automatic scans[^.]*always[^.]*complete versioned JSON report/i,
+    );
+    expect(publicDocs).toMatch(/pass[^.]*zero findings[^.]*report/i);
+    expect(publicDocs).toMatch(
+      /complete report path[^.]*before[^.]*final output/i,
+    );
+    expect(publicDocs).toMatch(
+      /wide[^.]*TTY[^.]*branded[^.]*narrow[^.]*linear[^.]*ANSI-free/i,
+    );
+    expect(publicDocs).toMatch(/CI[^.]*TERM=dumb[^.]*screen[- ]reader/i);
+    expect(publicDocs).toMatch(
+      /explicit Ink[^.]*only[^.]*finding[^.]*overflows/i,
+    );
+    expect(publicDocs).toMatch(
+      /explicit text[^.]*JSON[^.]*SARIF[^.]*no sidecar/i,
+    );
+    expect(publicDocs).toMatch(/25[^.]*findings only[^.]*blockers first/i);
+    expect(publicDocs).toMatch(
+      /disclosures[^.]*incomplete checks[^.]*warnings[^.]*never limited/i,
+    );
+    expect(publicDocs).toMatch(
+      /opening[^.]*nextStep[^.]*independently[^.]*""/i,
+    );
+    expect(publicDocs).toMatch(
+      /complete-report[^.]*lines[^.]*remain[^.]*blank/i,
+    );
+    expect(publicDocs).toMatch(
+      /report failure[^.]*no[^.]*path[^.]*guidance[^.]*fixed[^.]*alerts[^.]*twice/i,
+    );
+    expect(publicDocs).toMatch(/all findings[^.]*canonical scan outcome/i);
+    expect(publicDocs).toMatch(
+      /default[^.]*automatic (?:temporary )?report[^.]*omits ordinary source/i,
+    );
+    expect(publicDocs).toMatch(/CLI overrides[^.]*automatic reports/i);
+    expect(publicDocs).toMatch(/secret content[^.]*always redacted/i);
+    expect(publicDocs).toMatch(/operating-system temporary/i);
+    expect(publicDocs).toMatch(
+      /temporary reports[^.]*at most 24 hours[^.]*earlier/i,
+    );
+    expect(publicDocs).toMatch(/not archival storage/i);
+    expect(publicDocs).toMatch(
+      /durable JSON[^.]*SARIF[^.]*explicit output[^.]*redirection/i,
+    );
+    expect(publicDocs).not.toMatch(/Windows ACL/i);
+    expect(readme).toContain("PolyForm Small Business License 1.0.0");
+  });
+
   it("documents responsive Doctor output and stable plain fallbacks", async () => {
     const readme = await read("README.md");
 

@@ -2,7 +2,9 @@
 
 ## Automatic terminal output
 
-An automatic scan (`zedbee scan` or `zedbee scan --format auto`) uses Ink in an interactive terminal and text when redirected. Automatically selected output shows up to 25 findings by default. Explicit `--format ink` uses the same bounded terminal preview even when Ink is forced. If either surface has more findings, Zedbee saves the complete versioned JSON report in protected operating-system temporary storage before it prints a `NEXT STEPS` preview. The path is printed only after a complete report exists. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
+An automatic scan (`zedbee scan` or `zedbee scan --format auto`) always writes a complete versioned JSON report to operating-system temporary storage. A pass with zero findings still receives a report. Its complete report path appears before the final output and after the final result; the path is printed only after a complete report exists. A wide ordinary TTY uses branded Ink. A narrow terminal, redirected output, CI, `TERM=dumb`, or screen-reader output uses a linear ANSI-free result.
+
+Automatic output shows up to 25 findings by default, with blockers first; that limit applies only to findings. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths remain complete. Explicit `--format ink` is a bounded preview using the same limit, but writes a temporary report only when its finding preview overflows. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
 
 Configure the limit and maximum report age without making any lockfile changes:
 
@@ -13,15 +15,19 @@ Configure the limit and maximum report age without making any lockfile changes:
     "sourceExcerpts": "interactive",
     "terminalFindingLimit": 25,
     "temporaryReportMaxAge": "24h",
+    "agentGuidance": {
+      "opening": "Use the complete report as the source of truth.",
+      "nextStep": "Fix every blocking finding, then run Zedbee again.",
+    },
   },
 }
 ```
 
-`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding and disable automatic overflow reports. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. On each run, Zedbee removes tracked reports older than the configured age. Files live in the operating system's temporary area, so the operating system may delete them earlier.
+`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. Temporary reports are OS handoff data, retained for at most the configured age but possibly removed earlier by the operating system; they are not archival storage. `zedbee init` supplies recommended `agentGuidance`. `opening` and `nextStep` can be blanked independently with `""` to hide that heading/message. Complete-report lines remain when a configured message is blank.
 
 The temporary JSON report follows the disk source-excerpt policy, not the interactive preview policy. The default `"interactive"` policy can show source excerpts live in Ink but omits ordinary excerpts from disk. Set `sourceExcerpts` to `"always"` or pass `--include-source` to persist them; `"never"` or `--no-source` omits them. Secret content is always redacted.
 
-Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A write failure restores full terminal output and prints no nonexistent report path. The final `REPORT DELIVERY WARNING` confirms that nothing was hidden and all findings are shown above.
+Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A report failure prints no path or configured guidance, restores every finding, preserves the canonical scan outcome, and shows the fixed `REPORT DELIVERY WARNING` alert twice—above and below the result.
 
 ## Explicit complete exports
 
@@ -33,7 +39,7 @@ npx zedbee scan --format json > zedbee-report.json
 npx zedbee scan --format sarif > zedbee.sarif
 ```
 
-These explicit formats create no automatic temporary report. Text is stable human-readable output, JSON is Zedbee's versioned machine contract, and SARIF is the enterprise interchange format. Coding tools that receive a `NEXT STEPS` path must process the complete report and respect exit code 2 as incomplete required analysis; they must not treat a preview or an incomplete scan as clean.
+These explicit formats create no sidecar or automatic temporary report. Text is stable human-readable output, JSON is Zedbee's versioned machine contract, and SARIF is the enterprise interchange format. Redirect explicit JSON or SARIF when durable output is required. Coding tools that receive a complete-report path must process it and respect exit code 2 as incomplete required analysis; they must not treat a preview or an incomplete scan as clean.
 
 ## SARIF 2.1.0
 
