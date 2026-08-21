@@ -31,6 +31,7 @@ export interface InkScanDependencies {
 export const INK_ANIMATION_FRAME_MS = 80;
 export const INK_MINIMUM_DISPLAY_MS = 400;
 export const INK_EVENT_MAX_FPS = 30;
+const CURSOR_HOME = "\u001b[H";
 
 export function inkMaxFps(_animations: boolean): number {
   return INK_EVENT_MAX_FPS;
@@ -47,6 +48,10 @@ export async function runInkScan(
 ): Promise<ScanReport> {
   const events: ScanEvent[] = [];
   const started = performance.now();
+  let homeTemporaryScreen =
+    viewOptions.requestedFormat === "auto" &&
+    process.stdout.isTTY === true &&
+    dependencies.interactive !== false;
   const app = render(
     <ScanApp
       events={events}
@@ -61,6 +66,11 @@ export async function runInkScan(
       patchConsole: false,
       maxFps: inkMaxFps(viewOptions.animations),
       alternateScreen: viewOptions.requestedFormat === "auto",
+      onRender() {
+        if (!homeTemporaryScreen) return;
+        homeTemporaryScreen = false;
+        process.stdout.write(CURSOR_HOME);
+      },
       ...(dependencies.interactive === undefined
         ? {}
         : { interactive: dependencies.interactive }),

@@ -248,9 +248,14 @@ describe("runInkScan", () => {
     const rendered = output.join("");
     const temporaryScreenStart = rendered.indexOf("\u001b[?1049h");
     const temporaryScreenEnd = rendered.indexOf("\u001b[?1049l");
+    const cursorHome = rendered.indexOf("\u001b[H", temporaryScreenStart);
+    const liveFrameStart = rendered.indexOf("CHECKS", temporaryScreenStart);
     const resultStart = rendered.indexOf("SCAN RESULT");
     expect(temporaryScreenStart).toBeGreaterThanOrEqual(0);
     expect(temporaryScreenEnd).toBeGreaterThan(temporaryScreenStart);
+    expect(cursorHome).toBeGreaterThan(temporaryScreenStart);
+    expect(liveFrameStart).toBeGreaterThan(cursorHome);
+    expect(cursorHome).toBeLessThan(temporaryScreenEnd);
     expect(resultStart).toBeGreaterThan(temporaryScreenEnd);
     expect(rendered.slice(temporaryScreenEnd)).not.toContain("ACTIVITY");
     expect(rendered.slice(0, temporaryScreenStart)).not.toContain(
