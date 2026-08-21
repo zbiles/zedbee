@@ -107,6 +107,9 @@ describe("executeInitCommand", () => {
     expect(await readFile(join(root, ".zedbeerc.jsonc"), "utf8")).toContain(
       '"profile": "fast"',
     );
+    expect(await readFile(join(root, ".zedbeerc.jsonc"), "utf8")).toContain(
+      '"agentGuidance"',
+    );
     const output = io.stdout.join("");
     expect(output).not.toContain(root);
     expect(JSON.parse(output)).toMatchObject({

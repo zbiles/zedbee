@@ -37,6 +37,10 @@ describe("loadConfig", () => {
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",
+      agentGuidance: {
+        opening: "",
+        nextStep: "",
+      },
     });
   });
 
@@ -44,13 +48,46 @@ describe("loadConfig", () => {
     const root = await createRepositoryRoot();
     await writeFile(
       join(root, ".zedbeerc.jsonc"),
-      '{"schemaVersion":1,"reporting":{"sourceExcerpts":"always","terminalFindingLimit":"all","temporaryReportMaxAge":"7d"}}',
+      JSON.stringify({
+        schemaVersion: 1,
+        reporting: {
+          sourceExcerpts: "always",
+          terminalFindingLimit: "all",
+          temporaryReportMaxAge: "7d",
+          agentGuidance: {
+            opening: "Read the complete report and follow TEAM.md.",
+            nextStep: "Fix blocking findings before asking for review.",
+          },
+        },
+      }),
     );
 
     expect((await loadConfig(root)).reporting).toEqual({
       sourceExcerpts: "always",
       terminalFindingLimit: "all",
       temporaryReportMaxAge: "7d",
+      agentGuidance: {
+        opening: "Read the complete report and follow TEAM.md.",
+        nextStep: "Fix blocking findings before asking for review.",
+      },
+    });
+  });
+
+  it("normalizes whitespace-only agent guidance to blank strings", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      JSON.stringify({
+        schemaVersion: 1,
+        reporting: {
+          agentGuidance: { opening: "   ", nextStep: "  " },
+        },
+      }),
+    );
+
+    expect((await loadConfig(root)).reporting.agentGuidance).toEqual({
+      opening: "",
+      nextStep: "",
     });
   });
 

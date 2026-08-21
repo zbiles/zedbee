@@ -9,6 +9,7 @@ import {
   type ResolvedConfig,
   type ResolvedPolicyOverride,
 } from "./schema.js";
+import { normalizeAgentGuidance } from "../reporting/agent-guidance.js";
 
 const FAST_CHECKS = new Set<CheckId>([
   "formatting",
@@ -135,6 +136,7 @@ export function resolveConfig(
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
       terminalFindingLimit: file?.reporting?.terminalFindingLimit ?? 25,
       temporaryReportMaxAge: file?.reporting?.temporaryReportMaxAge ?? "24h",
+      agentGuidance: normalizeAgentGuidance(file?.reporting?.agentGuidance),
     },
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };

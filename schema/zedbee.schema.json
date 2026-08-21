@@ -875,6 +875,23 @@
           "default": "24h",
           "type": "string",
           "pattern": "^[1-9][0-9]{0,7}[mhd]$"
+        },
+        "agentGuidance": {
+          "description": "Optional terminal-safe guidance for agents reviewing automatic scan results.",
+          "type": "object",
+          "properties": {
+            "opening": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$"
+            },
+            "nextStep": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

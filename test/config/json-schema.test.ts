@@ -6,6 +6,7 @@ import {
   generateConfigJsonSchema,
   serializeConfigJsonSchema,
 } from "../../src/config/json-schema.js";
+import { DISPLAY_TEXT_LIMITS } from "../../src/core/display-text.js";
 import { CHECK_IDS, configFileSchema } from "../../src/config/schema.js";
 
 const validExamples = [
@@ -44,6 +45,12 @@ const validExamples = [
 const validSourceExcerptPolicies = ["never", "interactive", "always"] as const;
 const validTerminalFindingLimits = [1, 25, "all"] as const;
 const validTemporaryReportMaxAges = ["30m", "24h", "7d"] as const;
+const validAgentGuidances = [
+  {
+    opening: "Read the complete report and follow TEAM.md.",
+    nextStep: "Fix blocking findings before asking for review.",
+  },
+] as const;
 
 function validator() {
   const ajv = new Ajv({ allErrors: true });
@@ -110,6 +117,19 @@ describe("Zedbee configuration JSON Schema", () => {
     },
   );
 
+  it.each(validAgentGuidances)(
+    "accepts safe agent guidance in both validators",
+    (agentGuidance) => {
+      const input = { schemaVersion: 1, reporting: { agentGuidance } };
+      const validate = validator();
+
+      expect(configFileSchema.safeParse(input).success).toBe(true);
+      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+    },
+  );
+
   it.each([
     {
       name: "unknown root key",
@@ -122,6 +142,24 @@ describe("Zedbee configuration JSON Schema", () => {
     {
       name: "unknown reporting key",
       input: { schemaVersion: 1, reporting: { surprise: true } },
+    },
+    {
+      name: "unsafe agent guidance",
+      input: {
+        schemaVersion: 1,
+        reporting: { agentGuidance: { opening: "unsafe\u001b[2J" } },
+      },
+    },
+    {
+      name: "oversized agent guidance",
+      input: {
+        schemaVersion: 1,
+        reporting: {
+          agentGuidance: {
+            nextStep: "a".repeat(DISPLAY_TEXT_LIMITS.prose + 1),
+          },
+        },
+      },
     },
     {
       name: "zero terminal finding limit",
@@ -250,6 +288,12 @@ describe("Zedbee configuration JSON Schema", () => {
             sourceExcerpts: { default: string };
             terminalFindingLimit: { default: number };
             temporaryReportMaxAge: { default: string };
+            agentGuidance: {
+              properties: {
+                opening: { maxLength: number };
+                nextStep: { maxLength: number };
+              };
+            };
           };
         };
         failOnIncomplete: { default: boolean; description: string };
@@ -268,6 +312,12 @@ describe("Zedbee configuration JSON Schema", () => {
             sourceExcerpts: { default: "interactive" },
             terminalFindingLimit: { default: 25 },
             temporaryReportMaxAge: { default: "24h" },
+            agentGuidance: {
+              properties: {
+                opening: { maxLength: DISPLAY_TEXT_LIMITS.prose },
+                nextStep: { maxLength: DISPLAY_TEXT_LIMITS.prose },
+              },
+            },
           },
         },
         failOnIncomplete: { default: true },

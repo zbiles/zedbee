@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
+import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import type {
   CreateInitProposalOptions,
   InitFileChange,
@@ -162,6 +163,9 @@ function configContents(
         schemaVersion: 1,
         profile,
         ...(initialChecks === undefined ? {} : { checks: initialChecks }),
+        reporting: {
+          agentGuidance: RECOMMENDED_AGENT_GUIDANCE,
+        },
       },
       null,
       2,

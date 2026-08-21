@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { DISPLAY_TEXT_LIMITS, displayProse } from "../core/display-text.js";
+import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import { parseTemporaryReportMaxAge } from "../reporting/report-age.js";
 
 export const CHECK_IDS = [
@@ -29,6 +31,7 @@ export interface ResolvedReportingPolicy {
   readonly sourceExcerpts: SourceExcerptPolicy;
   readonly terminalFindingLimit: TerminalFindingLimit;
   readonly temporaryReportMaxAge: string;
+  readonly agentGuidance: AgentGuidance;
 }
 
 export interface ResolvedCheckPolicy {
@@ -86,6 +89,25 @@ const temporaryReportMaxAgeSchema = z
         'Use a positive whole-number duration such as "30m", "24h", or "7d".',
     },
   );
+
+const safeDisplayProsePattern = /^(?!.*[\p{Cc}\p{Cf}\u2028\u2029]).*$/u;
+function safeDisplayProseSchema(field: string) {
+  return z
+    .string()
+    .max(DISPLAY_TEXT_LIMITS.prose)
+    .regex(safeDisplayProsePattern)
+    .refine(
+      (value) => {
+        try {
+          displayProse(value, field, { allowEmpty: true });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: `Expected safe ${field} display text` },
+    );
+}
 
 const commonPolicyFields = {
   severity: checkSeveritySchema.optional(),
@@ -224,6 +246,17 @@ const reportingSchema = z
         'Maximum temporary-report age as a whole-number duration ending in "m", "h", or "d".',
       default: "24h",
     }),
+    agentGuidance: z
+      .object({
+        opening: safeDisplayProseSchema("agent guidance opening").optional(),
+        nextStep: safeDisplayProseSchema("agent guidance next step").optional(),
+      })
+      .strict()
+      .optional()
+      .meta({
+        description:
+          "Optional terminal-safe guidance for agents reviewing automatic scan results.",
+      }),
   })
   .strict();
 

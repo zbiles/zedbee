@@ -123,6 +123,12 @@ describe("createInitProposal", () => {
       after: expect.stringContaining('"profile": "fast"'),
       diff: expect.stringContaining("+++ .zedbeerc.jsonc"),
     });
+    expect(proposal.files[0]?.after).toContain(
+      '"opening": "Use the complete JSON report as the source of truth. Do not rely only on this terminal summary. Follow the report outcome and review all recorded details."',
+    );
+    expect(proposal.files[0]?.after).toContain(
+      '"nextStep": "Fix every blocking finding, review warnings separately, and resolve any incomplete checks. Stage any changes and run Zedbee again. Do not bypass the pre-commit hook."',
+    );
   });
 
   it("updates an existing JSONC profile without discarding comments or check choices", () => {
@@ -148,6 +154,29 @@ describe("createInitProposal", () => {
     );
     expect(proposal.files[0]?.after).toContain('"secrets": "off"');
     expect(proposal.files[0]?.after).toContain('"profile": "thorough"');
+  });
+
+  it("preserves omitted and explicitly blank existing agent guidance", () => {
+    const omitted = createInitProposal(inspection(["javascript"]), {
+      repositoryRoot: "/repo",
+      profile: "thorough",
+      hook: "none",
+      configBefore: '{ "schemaVersion": 1 }\n',
+    });
+    expect(omitted.files[0]?.after).not.toContain("agentGuidance");
+
+    const blank = createInitProposal(inspection(["javascript"]), {
+      repositoryRoot: "/repo",
+      profile: "thorough",
+      hook: "none",
+      configBefore:
+        '{ "schemaVersion": 1, "reporting": { "agentGuidance": { "opening": "", "nextStep": "" } } }\n',
+    });
+    expect(blank.files[0]?.after).toContain('"opening": ""');
+    expect(blank.files[0]?.after).toContain('"nextStep": ""');
+    expect(blank.files[0]?.after).not.toContain(
+      "Use the complete JSON report as the source of truth.",
+    );
   });
 
   it("preserves shorthand vulnerability severity while adding outage policy", () => {
