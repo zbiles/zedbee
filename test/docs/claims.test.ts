@@ -147,7 +147,7 @@ describe("public documentation claims", () => {
       /write failure[^.]*restores[^.]*full terminal output/i,
     );
     expect(support).toMatch(
-      /report delivery warning[^.]*nothing was hidden[^.]*shown above/i,
+      /fixed[^.]*report unavailable[^.]*alerts[^.]*twice/i,
     );
     expect(support).toMatch(
       /coding tools[^.]*complete report path[^.]*exit code 2/i,
@@ -167,6 +167,9 @@ describe("public documentation claims", () => {
     expect(readme).toContain('"agentGuidance"');
     expect(readme).toContain('"opening"');
     expect(readme).toContain('"nextStep"');
+    expect(readme).toMatch(/example[^.]*illustrative/i);
+    expect(readme).toMatch(/init[^.]*editable recommended guidance/i);
+    expect(readme).not.toMatch(/init[^.]*text shown above/i);
     expect(publicDocs).toMatch(
       /automatic scans[^.]*always[^.]*complete versioned JSON report/i,
     );
@@ -197,6 +200,8 @@ describe("public documentation claims", () => {
     expect(publicDocs).toMatch(
       /report failure[^.]*no[^.]*path[^.]*guidance[^.]*fixed[^.]*alerts[^.]*twice/i,
     );
+    expect(publicDocs).toMatch(/REPORT UNAVAILABLE/i);
+    expect(publicDocs).not.toMatch(/REPORT DELIVERY WARNING[^.]*twice/i);
     expect(publicDocs).toMatch(/all findings[^.]*canonical scan outcome/i);
     expect(publicDocs).toMatch(
       /default[^.]*automatic (?:temporary )?report[^.]*omits ordinary source/i,

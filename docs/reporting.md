@@ -23,11 +23,11 @@ Configure the limit and maximum report age without making any lockfile changes:
 }
 ```
 
-`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. Temporary reports are OS handoff data, retained for at most the configured age but possibly removed earlier by the operating system; they are not archival storage. `zedbee init` supplies recommended `agentGuidance`. `opening` and `nextStep` can be blanked independently with `""` to hide that heading/message. Complete-report lines remain when a configured message is blank.
+`terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. Temporary reports are OS handoff data, retained for at most the configured age but possibly removed earlier by the operating system; they are not archival storage. This configuration example is illustrative; `zedbee init` writes editable recommended guidance. `opening` and `nextStep` can be blanked independently with `""` to hide that heading/message. Complete-report lines remain when a configured message is blank.
 
 The temporary JSON report follows the disk source-excerpt policy, not the interactive preview policy. The default `"interactive"` policy can show source excerpts live in Ink but omits ordinary excerpts from disk. Set `sourceExcerpts` to `"always"` or pass `--include-source` to persist them; `"never"` or `--no-source` omits them. Secret content is always redacted.
 
-Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A report failure prints no path or configured guidance, restores every finding, preserves the canonical scan outcome, and shows the fixed `REPORT DELIVERY WARNING` alert twice—above and below the result.
+Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A report failure prints no path or configured guidance, restores every finding, preserves the canonical scan outcome, and shows the fixed `REPORT UNAVAILABLE` alert twice—above and below the result. `REPORT DELIVERY WARNING` is a detail panel for report-maintenance information, not the fixed failure alert.
 
 ## Explicit complete exports
 
