@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   executeScanCommand,
+  normalizeTerminalWidth,
   selectOutputFormat,
   signalExitCode,
   type ScanCommandDependencies,
@@ -10,6 +11,7 @@ import type {
   PreparePresentationOptions,
   TerminalPresentation,
 } from "../../src/reporting/presentation.js";
+import { renderText } from "../../src/renderers/text.js";
 import type { ScanReport } from "../../src/scan/report.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
@@ -70,6 +72,38 @@ function reportWithFindings(count: number): ScanReport {
   });
 }
 
+function reportWithMixedFindings(count: number): ScanReport {
+  const findings = Array.from({ length: count }, (_, index) =>
+    createFinding({
+      id: `finding-${index + 1}`,
+      rule: `rule-${index + 1}`,
+      severity: index % 2 === 0 ? "error" : "warning",
+      location: { file: `src/file-${index + 1}.ts`, startLine: index + 1 },
+    }),
+  );
+  const failed = findings.filter(({ severity }) => severity === "error").length;
+  const warnings = findings.length - failed;
+  return createReport({
+    outcome: "blocked",
+    exitCode: 1,
+    summary: {
+      passed: 0,
+      warnings,
+      failed,
+      incomplete: 0,
+      findings,
+    },
+    checks: [
+      {
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 4,
+        findings,
+      },
+    ],
+  });
+}
+
 function completePresentation(report: ScanReport): TerminalPresentation {
   return {
     automatic: false,
@@ -81,24 +115,134 @@ function completePresentation(report: ScanReport): TerminalPresentation {
   };
 }
 
+function automaticPresentation(
+  report: ScanReport,
+  overrides: Partial<TerminalPresentation> = {},
+): TerminalPresentation {
+  const reportAvailable = overrides.reportStatus !== "unavailable";
+  return {
+    automatic: true,
+    reportStatus: "available",
+    findings: report.summary.findings,
+    totalFindingCount: report.summary.findings.length,
+    abbreviated: false,
+    ...(reportAvailable
+      ? {
+          reportPath: "/tmp/zedbee-reports/hash/complete.json",
+          maximumAge: "24h",
+        }
+      : {}),
+    warnings: [],
+    ...overrides,
+  };
+}
+
+function renderAutomaticInkAsText(
+  terminal: ScanCommandIO,
+): ScanCommandDependencies["renderInk"] {
+  return async (report, options, presentation) => {
+    expect(options.requestedFormat).toBe("auto");
+    expect(presentation?.automatic).toBe(true);
+    terminal.writeStdout(
+      renderText(report, {
+        width: options.width,
+        color: false,
+        ...(presentation === undefined ? {} : { presentation }),
+      }),
+    );
+  };
+}
+
 describe("selectOutputFormat", () => {
-  it("selects Ink only for an interactive input and output pair", () => {
-    expect(selectOutputFormat("auto", true, true)).toBe("ink");
-    expect(selectOutputFormat("auto", false, true)).toBe("text");
-    expect(selectOutputFormat("auto", true, false)).toBe("text");
+  it.each([
+    ["redirected stdout", true, false, 120, {}],
+    ["narrow terminal", true, true, 79, {}],
+    ["CI true", true, true, 120, { CI: "true" }],
+    ["CI one", true, true, 120, { CI: "1" }],
+    ["CI provider value", true, true, 120, { CI: "buildkite" }],
+    ["dumb terminal", true, true, 120, { TERM: "dumb" }],
+    ["screen-reader terminal", true, true, 120, { INK_SCREEN_READER: "true" }],
+  ] as const)(
+    "selects text for automatic output in a %s",
+    (_name, stdinIsTTY, stdoutIsTTY, width, env) => {
+      expect(
+        selectOutputFormat("auto", stdinIsTTY, stdoutIsTTY, width, env),
+      ).toBe("text");
+    },
+  );
+
+  it("selects Ink for automatic output in a wide ordinary TTY", () => {
+    expect(selectOutputFormat("auto", true, true, 120, {})).toBe("ink");
+    expect(selectOutputFormat("auto", false, true, 120, {})).toBe("ink");
   });
 
-  it("honors an explicit structured format", () => {
-    expect(selectOutputFormat("json", true, true)).toBe("json");
-    expect(selectOutputFormat("sarif", true, true)).toBe("sarif");
-    expect(selectOutputFormat("sarif", false, false)).toBe("sarif");
+  it("treats invalid terminal widths and false CI values as unknown", () => {
+    for (const width of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        selectOutputFormat("auto", true, true, width, { CI: "false" }),
+      ).toBe("ink");
+    }
+  });
+
+  it.each(["ink", "text", "json", "sarif"] as const)(
+    "never downgrades explicit %s output",
+    (format) => {
+      expect(
+        selectOutputFormat(format, false, false, 20, {
+          CI: "true",
+          TERM: "dumb",
+          INK_SCREEN_READER: "true",
+        }),
+      ).toBe(format);
+    },
+  );
+});
+
+describe("normalizeTerminalWidth", () => {
+  it("accepts positive finite integers and uses the ordinary width otherwise", () => {
+    expect(normalizeTerminalWidth(79)).toBe(79);
+    for (const value of [undefined, 0, -1, 79.5, Number.NaN, Infinity]) {
+      expect(normalizeTerminalWidth(value)).toBe(80);
+    }
   });
 });
 
 describe("executeScanCommand", () => {
+  it.each([
+    ["text", false],
+    ["ink", true],
+  ] as const)(
+    "delivers a successful zero-finding automatic %s result with a report path",
+    async (selectedFormat, tty) => {
+      const terminal = io(tty);
+      terminal.width = tty ? 120 : 80;
+      const report = createReport();
+      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      deps.preparePresentation = async (_report, options) => {
+        expect(options).toEqual({
+          requestedFormat: "auto",
+          selectedFormat,
+        });
+        return automaticPresentation(report);
+      };
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      const output = terminal.stdout.join("");
+      expect(exitCode).toBe(0);
+      expect(output).toContain("COMMIT ALLOWED");
+      expect(output.match(/COMPLETE REPORT/gu)).toHaveLength(2);
+      expect(output.match(/complete\.json/gu)).toHaveLength(2);
+    },
+  );
+
   it("bounds automatic piped output and points to the complete report", async () => {
     const terminal = io(false);
-    const report = reportWithFindings(26);
+    const report = reportWithMixedFindings(26);
     const deps = dependencies();
     deps.scan = async () => report;
     deps.preparePresentation = async (_report, options) => {
@@ -159,33 +303,143 @@ describe("executeScanCommand", () => {
     },
   );
 
-  it("prints every finding and a visible warning when report persistence fails", async () => {
-    const terminal = io(false);
-    const report = reportWithFindings(26);
-    const deps = dependencies();
-    deps.scan = async () => report;
-    deps.preparePresentation = async (preparedReport) => ({
-      ...completePresentation(preparedReport),
-      warnings: [
-        {
-          code: "TEMP_REPORT_WRITE_FAILED",
-          message: "The complete report could not be written.",
+  it.each([
+    ["text", false],
+    ["ink", true],
+  ] as const)(
+    "prints every finding and fixed automatic %s notices when report persistence fails",
+    async (_selectedFormat, tty) => {
+      const terminal = io(tty);
+      terminal.width = tty ? 120 : 80;
+      const baseReport = reportWithMixedFindings(26);
+      const report: ScanReport = {
+        ...baseReport,
+        presentationPolicy: {
+          ...baseReport.presentationPolicy,
+          agentGuidance: {
+            opening: "Read the configured report path.",
+            nextStep: "Continue from the configured report path.",
+          },
         },
-      ],
-    });
+      };
+      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      deps.scan = async () => report;
+      deps.preparePresentation = async () =>
+        automaticPresentation(report, {
+          reportStatus: "unavailable",
+          abbreviated: false,
+          completeOutputFallback: true,
+          warnings: [
+            {
+              code: "TEMP_REPORT_WRITE_FAILED",
+              message: "The complete report could not be written.",
+            },
+          ],
+        });
 
-    const exitCode = await executeScanCommand(
-      { cwd: "/repo", format: "auto", color: false, animations: false },
-      terminal,
-      deps,
-    );
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        terminal,
+        deps,
+      );
 
-    const output = terminal.stdout.join("");
-    expect(exitCode).toBe(1);
-    expect(output).toContain("rule-26");
-    expect(output).toContain("REPORT MAINTENANCE WARNING");
-    expect(output).toContain("The complete report could not be written.");
-  });
+      const output = terminal.stdout.join("");
+      expect(exitCode).toBe(1);
+      expect(output).toContain("rule-1");
+      expect(output).toContain("rule-26");
+      expect(output.match(/REPORT UNAVAILABLE/gu)).toHaveLength(2);
+      expect(output).toContain("REPORT WARNINGS");
+      expect(output).toContain("The complete report could not be written.");
+      expect(output).not.toContain("AGENT GUIDANCE");
+      expect(output).not.toContain("AGENT NEXT STEP");
+      expect(output).not.toContain("complete.json");
+    },
+  );
+
+  it.each([
+    ["text", false],
+    ["ink", true],
+  ] as const)(
+    "retains automatic %s guidance and report paths when cleanup warns",
+    async (_selectedFormat, tty) => {
+      const terminal = io(tty);
+      terminal.width = tty ? 120 : 80;
+      const report = createReport({
+        presentationPolicy: {
+          terminalFindingLimit: 25,
+          temporaryReportMaxAge: "24h",
+          persistSourceExcerpts: false,
+          agentGuidance: {
+            opening: "Read this report.",
+            nextStep: "Continue from this report.",
+          },
+        },
+      });
+      const deps = dependencies(renderAutomaticInkAsText(terminal));
+      deps.scan = async () => report;
+      deps.preparePresentation = async () =>
+        automaticPresentation(report, {
+          warnings: [
+            {
+              code: "TEMP_REPORT_CLEANUP_FAILED",
+              message: "An expired report remains.",
+              path: "/tmp/zedbee-reports/hash/expired.json",
+            },
+          ],
+        });
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      const output = terminal.stdout.join("");
+      expect(exitCode).toBe(0);
+      expect(output).toContain("AGENT GUIDANCE");
+      expect(output).toContain("AGENT NEXT STEP");
+      expect(output.match(/complete\.json/gu)).toHaveLength(2);
+      expect(output).toContain("REPORT WARNINGS");
+      expect(output).toContain("expired.json");
+    },
+  );
+
+  it.each([
+    ["blocked", 1],
+    ["incomplete", 2],
+  ] as const)(
+    "preserves canonical exit after automatic report failure for an %s scan",
+    async (outcome, expectedExitCode) => {
+      const terminal = io(false);
+      const report: ScanReport = {
+        ...reportWithFindings(1),
+        outcome,
+        exitCode: expectedExitCode,
+      };
+      const deps = dependencies();
+      deps.scan = async () => report;
+      deps.preparePresentation = async () =>
+        automaticPresentation(report, {
+          reportStatus: "unavailable",
+          completeOutputFallback: true,
+          warnings: [
+            {
+              code: "TEMP_REPORT_WRITE_FAILED",
+              message: "The complete report could not be written.",
+            },
+          ],
+        });
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      expect(exitCode).toBe(expectedExitCode);
+      expect(terminal.stdout.join("")).toContain("REPORT UNAVAILABLE");
+    },
+  );
 
   it.each(["json", "sarif"] as const)(
     "writes %s maintenance warnings to stderr without changing the scan result",

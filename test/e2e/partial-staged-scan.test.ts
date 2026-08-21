@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { executeScanCommand } from "../../src/commands/scan.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { readStagedChangeSet } from "../../src/git/change-set.js";
@@ -180,5 +181,59 @@ describe("partially staged reporting", () => {
       expect(surface).not.toContain("BASELINE");
       expect(surface).not.toContain("WORKTREE-ONLY");
     }
+
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const exitCode = await executeScanCommand(
+      {
+        cwd: repository.root,
+        format: "auto",
+        color: false,
+        animations: false,
+      },
+      {
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+        width: 80,
+        env: {},
+        writeStdout: (value) => stdout.push(value),
+        writeStderr: (value) => stderr.push(value),
+      },
+      {
+        resolveRepositoryRoot: async () => repository.root,
+        scan: async (options) => {
+          expect(options.reportingSurface).toBe("text");
+          return report;
+        },
+        renderInk: async () => {
+          throw new Error("redirected automatic output must not mount Ink");
+        },
+        preparePresentation: async (_report, options) => {
+          expect(options).toEqual({
+            requestedFormat: "auto",
+            selectedFormat: "text",
+          });
+          return {
+            automatic: true,
+            reportStatus: "available",
+            findings: report.summary.findings,
+            totalFindingCount: report.summary.findings.length,
+            abbreviated: false,
+            reportPath: "/tmp/zedbee-reports/hash/complete.json",
+            maximumAge: "24h",
+            warnings: [],
+          };
+        },
+      },
+    );
+    const automaticOutput = stdout.join("");
+
+    expect(exitCode).toBe(1);
+    expect(stderr).toEqual([]);
+    expect(automaticOutput).toContain("SCAN RESULT");
+    expect(automaticOutput.match(/COMPLETE REPORT/gu)).toHaveLength(2);
+    expect(automaticOutput).not.toContain(stagedSecret);
+    expect(automaticOutput).not.toContain("BASELINE");
+    expect(automaticOutput).not.toContain("WORKTREE-ONLY");
   });
 });

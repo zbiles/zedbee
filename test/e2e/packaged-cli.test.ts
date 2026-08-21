@@ -1,4 +1,11 @@
-import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import {
+  lstat,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -133,6 +140,27 @@ async function runAutomaticScan(repositoryRoot: string) {
   ]);
 }
 
+async function temporaryJsonReports(
+  directory = temporaryReportRoot,
+): Promise<readonly string[]> {
+  const entries = await readdir(directory, { withFileTypes: true }).catch(
+    () => [],
+  );
+  const reports = await Promise.all(
+    entries.map(async (entry): Promise<readonly string[]> => {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) return temporaryJsonReports(path);
+      return entry.isFile() &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u.test(
+          entry.name,
+        )
+        ? [path]
+        : [];
+    }),
+  );
+  return reports.flat().sort();
+}
+
 describe("packaged Zedbee CLI", () => {
   it("runs through the executable npm bin launcher", async () => {
     const repository = await createInstalledRepository();
@@ -185,6 +213,32 @@ describe("packaged Zedbee CLI", () => {
     expect(result.stderr).toBe("");
   }, 30_000);
 
+  it("persists a successful zero-finding automatic report with blank guidance", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.git(["add", "--", "value.ts"]);
+
+    const result = await runAutomaticScan(repository.root);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain("COMMIT ALLOWED");
+    expect(result.stdout).not.toContain("AGENT GUIDANCE");
+    expect(result.stdout).not.toContain("AGENT NEXT STEP");
+    expect(result.stdout.match(/COMPLETE REPORT/gu)).toHaveLength(2);
+    const reportSection = result.stdout.match(
+      /COMPLETE REPORT\n([\s\S]*?)\n\nSCAN RESULT/u,
+    );
+    expect(reportSection, result.stdout).not.toBeNull();
+    const reportPath = JSON.parse(
+      reportSection?.[1]?.replaceAll(/\s/gu, "") ?? "",
+    ) as string;
+    const report = JSON.parse(await readFile(reportPath, "utf8")) as {
+      readonly checks: readonly { readonly findings: readonly unknown[] }[];
+    };
+    expect(report.checks.flatMap((check) => check.findings)).toEqual([]);
+    expect(result.stderr).toBe("");
+  }, 30_000);
+
   it("exposes the installed CLI help and command set", async () => {
     const repository = await createInstalledRepository();
 
@@ -203,13 +257,20 @@ describe("packaged Zedbee CLI", () => {
     await repository.git(["add", "--", "value.ts"]);
 
     const help = await runPackagedCli(repository.root, ["scan", "--help"]);
+    const reportsBefore = await temporaryJsonReports();
     const result = await runZedbee(repository.root, "sarif");
+    const text = await runZedbee(repository.root, "text");
+    const reportsAfter = await temporaryJsonReports();
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("sarif");
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout).version).toBe("2.1.0");
     expect(result.stderr).toBe("");
+    expect(text.exitCode).toBe(0);
+    expect(text.stdout).toContain("BEE-UTIFUL");
+    expect(text.stderr).toBe("");
+    expect(reportsAfter).toEqual(reportsBefore);
   }, 30_000);
 
   it("exports every blocked fixture finding as a complete SARIF report", async () => {
@@ -322,7 +383,9 @@ describe("packaged Zedbee CLI", () => {
     await repository.git(["add", "--", "value.ts"]);
     const before = await repository.git(["status", "--porcelain=v1", "-z"]);
 
+    const reportsBefore = await temporaryJsonReports();
     const result = await runZedbee(repository.root);
+    const reportsAfter = await temporaryJsonReports();
     const after = await repository.git(["status", "--porcelain=v1", "-z"]);
 
     expect(result.exitCode).toBe(0);
@@ -333,6 +396,7 @@ describe("packaged Zedbee CLI", () => {
       target: "index",
     });
     expect(after.stdout).toBe(before.stdout);
+    expect(reportsAfter).toEqual(reportsBefore);
   }, 30_000);
 
   it("blocks an attributed staged formatting regression", async () => {

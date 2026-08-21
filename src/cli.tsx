@@ -8,7 +8,11 @@ import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
 import type { RequestedOutputFormat } from "./scan/reporting-options.js";
-import { executeScanCommand, signalExitCode } from "./commands/scan.js";
+import {
+  executeScanCommand,
+  normalizeTerminalWidth,
+  signalExitCode,
+} from "./commands/scan.js";
 
 interface CommanderScanOptions {
   format: RequestedOutputFormat;
@@ -173,7 +177,7 @@ export async function main(
         {
           stdinIsTTY: process.stdin.isTTY === true,
           stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
+          width: normalizeTerminalWidth(process.stdout.columns),
           env: process.env,
           writeStdout: (value) => process.stdout.write(value),
           writeStderr: (value) => process.stderr.write(value),
