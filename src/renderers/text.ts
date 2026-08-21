@@ -5,6 +5,11 @@ import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import { nextStepsLines } from "../reporting/next-steps.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
+import {
+  buildReportCallouts,
+  type ReportCalloutLine,
+} from "../reporting/report-callouts.js";
+import { buildScanResultSections } from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { incompleteSectionLines } from "./incomplete.js";
@@ -159,12 +164,40 @@ function renderedFindings(
   ]);
 }
 
+function findingSectionLines(
+  heading: "BLOCKING FINDINGS" | "WARNINGS",
+  findings: readonly Finding[],
+  width: number,
+  verbose: boolean,
+): string[] {
+  if (findings.length === 0) return [];
+  return ["", heading, ...renderedFindings(findings, width, verbose)];
+}
+
 function disclosureLines(report: ScanReport, width: number): string[] {
   if (report.networkDisclosures.length === 0) return [];
   return [
     "",
     "NETWORK DISCLOSURE",
     ...report.networkDisclosures.flatMap((disclosure) =>
+      wrapWords(
+        `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
+        width,
+        "  ",
+      ),
+    ),
+  ];
+}
+
+function disclosureSectionLines(
+  disclosures: ScanReport["networkDisclosures"],
+  width: number,
+): string[] {
+  if (disclosures.length === 0) return [];
+  return [
+    "",
+    "DISCLOSURES",
+    ...disclosures.flatMap((disclosure) =>
       wrapWords(
         `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
         width,
@@ -188,6 +221,117 @@ function maintenanceWarningLines(
       ? []
       : opaquePathLines("Path", warning.path, width)),
   ]);
+}
+
+function reportWarningsSectionLines(
+  warnings: readonly ReportMaintenanceWarning[],
+  width: number,
+): string[] {
+  if (warnings.length === 0) return [];
+  return [
+    "",
+    "REPORT WARNINGS",
+    ...warnings.flatMap((warning, index) => [
+      ...(index === 0 ? [] : [""]),
+      ...wrapWords(warning.code.replaceAll("_", " "), width),
+      ...descriptionLines("Issue", warning.message, width),
+      ...(warning.path === undefined
+        ? []
+        : opaquePathLines("Path", warning.path, width)),
+    ]),
+  ];
+}
+
+function calloutLines(
+  callouts: readonly ReportCalloutLine[],
+  width: number,
+): string[] {
+  return callouts.flatMap((line) =>
+    line.kind === "text"
+      ? wrapWords(line.value, width)
+      : chunkTerminalCells(opaqueTemporaryReportPath(line.path), width),
+  );
+}
+
+function automaticHeadline(
+  report: ScanReport,
+  presentation: TerminalPresentation,
+): string[] {
+  const previewLine = presentation.abbreviated
+    ? [
+        `Showing ${presentation.findings.length} of ${presentation.totalFindingCount} findings.`,
+      ]
+    : [];
+  if (report.outcome === "blocked") {
+    return [
+      "COMMIT BLOCKED",
+      "A check failed. Commit blocked.",
+      countLine(report),
+      ...previewLine,
+    ];
+  }
+  if (report.outcome === "incomplete") {
+    return [
+      "SCAN INCOMPLETE",
+      "A required check could not finish. Commit blocked.",
+      countLine(report),
+      ...previewLine,
+    ];
+  }
+  return [
+    "COMMIT ALLOWED",
+    report.stagedFileCount === 0
+      ? "No staged changes. Commit allowed."
+      : "All checks passed. Commit allowed.",
+    countLine(report),
+    ...previewLine,
+  ];
+}
+
+function automaticTextLines(
+  report: ScanReport,
+  sanitized: ReturnType<typeof validateReportDisplayStrings>,
+  presentation: TerminalPresentation,
+  width: number,
+  verbose: boolean,
+): string[] {
+  const selectedFindings = validateReportDisplayStrings({
+    checks: [],
+    summary: { findings: presentation.findings },
+  }).summaryFindings;
+  const sections = buildScanResultSections(
+    { ...report, checks: sanitized.checks },
+    { ...presentation, findings: selectedFindings },
+  );
+  const callouts = buildReportCallouts(
+    presentation,
+    report.presentationPolicy.agentGuidance,
+  );
+  return [
+    ...calloutLines(callouts.opening, width),
+    "",
+    "SCAN RESULT",
+    ...automaticHeadline(report, presentation).flatMap((line) =>
+      wrapWords(line, width),
+    ),
+    ...findingSectionLines(
+      "BLOCKING FINDINGS",
+      sections.blockingFindings,
+      width,
+      verbose,
+    ),
+    ...findingSectionLines(
+      "WARNINGS",
+      sections.warningFindings,
+      width,
+      verbose,
+    ),
+    ...disclosureSectionLines(sections.disclosures, width),
+    ...incompleteSectionLines(sections.incompleteChecks, width),
+    ...reportWarningsSectionLines(sections.reportWarnings, width),
+    "",
+    ...calloutLines(callouts.closing, width),
+  ];
 }
 
 function guidanceLines(
@@ -246,6 +390,16 @@ export function renderText(
   options: TextRendererOptions,
 ): string {
   const sanitized = validateReportDisplayStrings(report);
+  const width = Math.max(20, options.width);
+  if (options.presentation?.automatic === true) {
+    return `${automaticTextLines(
+      report,
+      sanitized,
+      options.presentation,
+      width,
+      options.verbose === true,
+    ).join("\n")}\n`;
+  }
   const displayedFindings =
     options.presentation === undefined
       ? sanitized.summaryFindings
@@ -253,7 +407,6 @@ export function renderText(
           checks: [],
           summary: { findings: options.presentation.findings },
         }).summaryFindings;
-  const width = Math.max(20, options.width);
   const lines = [
     ...headline(report).flatMap((line) => wrapWords(line, width)),
     ...incompleteSectionLines(sanitized.checks, width),

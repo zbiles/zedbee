@@ -38,6 +38,200 @@ function fixtureTerminalWidth(value: string): number {
 }
 
 describe("renderText", () => {
+  it("renders automatic sections and callouts in stable linear order", () => {
+    const blocking = createFinding({ id: "blocking", rule: "blocking" });
+    const warning = createFinding({
+      id: "warning",
+      severity: "warning",
+      rule: "warning",
+    });
+    const report = createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 1,
+        warnings: 1,
+        failed: 1,
+        incomplete: 1,
+        findings: [blocking, warning],
+      },
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["package names"],
+        },
+      ],
+      checks: [
+        {
+          checkId: "vulnerabilities",
+          status: "incomplete",
+          incompleteDisposition: "block",
+          durationMs: 2,
+          findings: [],
+          error: { code: "OSV_UNAVAILABLE", message: "OSV is unavailable." },
+        },
+      ],
+      presentationPolicy: {
+        terminalFindingLimit: 1,
+        temporaryReportMaxAge: "24h",
+        persistSourceExcerpts: false,
+        agentGuidance: {
+          opening: "Read the complete report.",
+          nextStep: "Resolve blocking findings.",
+        },
+      },
+    });
+    const output = renderText(report, {
+      width: 100,
+      color: false,
+      presentation: {
+        automatic: true,
+        reportStatus: "available",
+        findings: [blocking, warning],
+        totalFindingCount: 2,
+        abbreviated: true,
+        reportPath: "/private/tmp/zedbee-reports/complete.json",
+        maximumAge: "24h",
+        warnings: [
+          {
+            code: "TEMP_REPORT_CLEANUP_FAILED",
+            message: "An older report could not be removed.",
+          },
+        ],
+      },
+    });
+
+    const headings = [
+      "AGENT GUIDANCE",
+      "COMPLETE REPORT",
+      "SCAN RESULT",
+      "BLOCKING FINDINGS",
+      "WARNINGS",
+      "DISCLOSURES",
+      "INCOMPLETE CHECKS",
+      "REPORT WARNINGS",
+      "AGENT NEXT STEP",
+      "COMPLETE REPORT",
+    ];
+    let prior = -1;
+    for (const heading of headings) {
+      const index = output.indexOf(heading, prior + 1);
+      expect(index).toBeGreaterThan(prior);
+      prior = index;
+    }
+    expect(
+      output.lastIndexOf("/private/tmp/zedbee-reports/complete.json"),
+    ).toBeGreaterThan(output.indexOf("REPORT WARNINGS"));
+  });
+
+  it("omits blank automatic guidance headings while keeping complete-report callouts", () => {
+    const report = createReport({
+      presentationPolicy: {
+        terminalFindingLimit: 25,
+        temporaryReportMaxAge: "24h",
+        persistSourceExcerpts: false,
+        agentGuidance: { opening: "", nextStep: "" },
+      },
+    });
+    const output = renderText(report, {
+      width: 100,
+      color: false,
+      presentation: {
+        automatic: true,
+        reportStatus: "available",
+        findings: [],
+        totalFindingCount: 0,
+        abbreviated: false,
+        reportPath: "/private/tmp/zedbee-reports/complete.json",
+        maximumAge: "24h",
+        warnings: [],
+      },
+    });
+
+    expect(output).not.toContain("AGENT GUIDANCE");
+    expect(output).not.toContain("AGENT NEXT STEP");
+    expect(output.match(/COMPLETE REPORT/g)).toHaveLength(2);
+    expect(output).toContain("SCAN RESULT");
+  });
+
+  it("prints fixed complete-output callouts and every finding when automatic report persistence fails", () => {
+    const first = createFinding({ id: "first", rule: "first" });
+    const second = createFinding({ id: "second", rule: "second" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 2,
+        incomplete: 0,
+        findings: [first, second],
+      },
+      presentationPolicy: {
+        terminalFindingLimit: 1,
+        temporaryReportMaxAge: "24h",
+        persistSourceExcerpts: false,
+        agentGuidance: {
+          opening: "Read the report.",
+          nextStep: "Use the report.",
+        },
+      },
+    });
+    const output = renderText(report, {
+      width: 100,
+      color: false,
+      presentation: {
+        automatic: true,
+        reportStatus: "unavailable",
+        findings: [first, second],
+        totalFindingCount: 2,
+        abbreviated: false,
+        completeOutputFallback: true,
+        warnings: [
+          {
+            code: "TEMP_REPORT_WRITE_FAILED",
+            message: "The temporary report could not be written.",
+          },
+        ],
+      },
+    });
+
+    expect(output.match(/REPORT UNAVAILABLE/g)).toHaveLength(2);
+    expect(output).toContain(
+      "The terminal output is the complete source of truth.",
+    );
+    expect(output).toContain("first");
+    expect(output).toContain("second");
+    expect(output).not.toContain("AGENT GUIDANCE");
+    expect(output).not.toContain("AGENT NEXT STEP");
+    expect(output).not.toContain("/private/tmp/zedbee-reports/complete.json");
+  });
+
+  it("keeps explicit text complete and free of automatic callouts", () => {
+    const finding = createFinding({ id: "complete", rule: "complete" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const output = renderText(report, { width: 100, color: false });
+
+    expect(output).toContain("THAT STINGS");
+    expect(output).toContain("complete");
+    expect(output).not.toContain("AGENT GUIDANCE");
+    expect(output).not.toContain("COMPLETE REPORT");
+    expect(output).not.toContain("SCAN RESULT");
+  });
+
   it("provides neutral outcome-aware guidance for abbreviated reports", () => {
     const base = {
       shown: 25,
@@ -128,12 +322,13 @@ describe("renderText", () => {
       presentation,
     });
 
+    expect(output).toContain("SCAN RESULT");
     expect(output).toContain("4 passed · 3 warnings · 2 failed");
     expect(output).toContain("OSV UNAVAILABLE");
-    expect(output).toContain("NETWORK DISCLOSURE");
+    expect(output).toContain("DISCLOSURES");
     expect(output).toContain("shown-rule");
     expect(output).not.toContain("hidden-rule");
-    expect(output).toContain("Showing 1 of 2 findings.");
+    expect(output).toContain("COMPLETE REPORT");
   });
 
   it("renders maintenance warnings even when terminal output is complete", () => {
@@ -172,7 +367,7 @@ describe("renderText", () => {
     expect(output).not.toContain("NEXT STEPS");
   });
 
-  it("ends a failed overflow delivery with a clear complete-output notice", () => {
+  it("ends automatic report persistence failure with a fixed complete-output notice", () => {
     const finding = createFinding({ id: "complete", rule: "complete-rule" });
     const report = createReport({
       summary: {
@@ -204,11 +399,12 @@ describe("renderText", () => {
       presentation,
     });
 
-    expect(output).toContain("REPORT DELIVERY WARNING");
+    expect(output.match(/REPORT UNAVAILABLE/g)).toHaveLength(2);
+    expect(output).toContain("REPORT WARNINGS");
     expect(
       output
         .trimEnd()
-        .endsWith("Nothing was hidden; all 1 finding is shown above."),
+        .endsWith("The terminal output is the complete source of truth."),
     ).toBe(true);
   });
 
