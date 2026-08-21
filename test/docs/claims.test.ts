@@ -131,7 +131,7 @@ describe("public documentation claims", () => {
       /explicit `?--format ink`?[^.]*bounded[^.]*preview/i,
     );
     expect(privacy).toMatch(/protected operating-system temporary storage/i);
-    expect(privacy).toMatch(/operating system[^.]*delete[^.]*early/i);
+    expect(privacy).toMatch(/operating system[^.]*remove[^.]*sooner/i);
     expect(privacy).toMatch(
       /owner-only POSIX permissions[^.]*where supported/i,
     );
@@ -209,10 +209,17 @@ describe("public documentation claims", () => {
     expect(publicDocs).toMatch(/CLI overrides[^.]*automatic reports/i);
     expect(publicDocs).toMatch(/secret content[^.]*always redacted/i);
     expect(publicDocs).toMatch(/operating-system temporary/i);
-    expect(publicDocs).toMatch(
-      /temporary reports[^.]*at most 24 hours[^.]*earlier/i,
-    );
-    expect(publicDocs).toMatch(/not archival storage/i);
+    for (const document of [readme, reporting, privacy, support]) {
+      expect(document).toMatch(
+        /temporary reports[^.]*eligible for cleanup[^.]*configured age/i,
+      );
+      expect(document).toMatch(
+        /removed[^.]*subsequent Zedbee maintenance run/i,
+      );
+      expect(document).toMatch(/operating system[^.]*remove[^.]*sooner/i);
+      expect(document).toMatch(/not (?:an )?archive|not archival storage/i);
+      expect(document).not.toMatch(/retained for at most/i);
+    }
     expect(publicDocs).toMatch(
       /durable JSON[^.]*SARIF[^.]*explicit output[^.]*redirection/i,
     );
