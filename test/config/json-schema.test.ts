@@ -49,12 +49,33 @@ const validExamples = [
         settings: { minLines: 8, minTokens: 60, mode: "strict" },
       },
       vulnerabilities: { onUnavailable: "warn" },
+      lint: {
+        rules: {
+          "no-console": "warn",
+          "@typescript-eslint/no-unused-vars": [
+            "error",
+            { argsIgnorePattern: "^_" },
+          ],
+        },
+      },
+      reactCorrectness: {
+        rules: {
+          "react/prop-types": "off",
+          "react-hooks/rules-of-hooks": "error",
+        },
+      },
+      reactAccessibility: {
+        rules: { "jsx-a11y/no-autofocus": "off" },
+      },
     },
     overrides: [
       {
         files: ["packages/web/**/*.tsx"],
         checks: {
-          reactAccessibility: "error",
+          reactAccessibility: {
+            severity: "error",
+            rules: { "jsx-a11y/alt-text": "warn" },
+          },
           vulnerabilities: { severity: "warn", when: "relevant" },
         },
       },
@@ -200,27 +221,6 @@ describe("Zedbee configuration JSON Schema", () => {
       input: {
         schemaVersion: 1,
         checks: { duplication: { settings: { mode: "medium" } } },
-      },
-    },
-    {
-      name: "root lint rules before bounded validation exists",
-      input: {
-        schemaVersion: 1,
-        checks: { lint: { rules: { "no-console": "warn" } } },
-      },
-    },
-    {
-      name: "override react rules before bounded validation exists",
-      input: {
-        schemaVersion: 1,
-        overrides: [
-          {
-            files: ["packages/web/**"],
-            checks: {
-              reactAccessibility: { rules: { "jsx-a11y/alt-text": "warn" } },
-            },
-          },
-        ],
       },
     },
     {
@@ -419,13 +419,13 @@ describe("Zedbee configuration JSON Schema", () => {
     ).toMatch(/online/i);
     expect(
       JSON.stringify(schema.properties.checks.properties.lint),
-    ).not.toContain("rules");
+    ).toContain("rules");
     expect(
       JSON.stringify(schema.properties.checks.properties.reactCorrectness),
-    ).not.toContain("rules");
+    ).toContain("rules");
     expect(
       JSON.stringify(schema.properties.checks.properties.reactAccessibility),
-    ).not.toContain("rules");
+    ).toContain("rules");
     expect(schema.properties.overrides.description).not.toBe("");
     expect(schema.properties.failOnIncomplete.description).not.toBe("");
     expect(configFileSchema.parse({ schemaVersion: 1 })).toEqual({

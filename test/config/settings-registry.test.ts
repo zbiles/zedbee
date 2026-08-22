@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFIGURABLE_CHECK_IDS,
+  CONFIGURABLE_RULE_CHECK_IDS,
+  isConfigurableRuleCheckId,
   managedSettingDefinition,
 } from "../../src/config/settings-registry.js";
 import { resolveConfig } from "../../src/config/profiles.js";
@@ -17,6 +19,13 @@ describe("managed settings registry", () => {
       "reactAccessibility",
     ]);
     expect(managedSettingDefinition("types")).toBeUndefined();
+    expect(CONFIGURABLE_RULE_CHECK_IDS).toEqual([
+      "lint",
+      "reactCorrectness",
+      "reactAccessibility",
+    ]);
+    expect(isConfigurableRuleCheckId("lint")).toBe(true);
+    expect(isConfigurableRuleCheckId("formatting")).toBe(false);
   });
 
   it("resolves explicit immutable managed defaults", () => {

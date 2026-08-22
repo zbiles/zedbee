@@ -23,11 +23,17 @@ import {
   duplicationSettingsSchema,
   type DuplicationSettings,
 } from "../checks/duplication/settings.js";
+import {
+  freezeRuleSettings,
+  validateManagedRuleConfiguration,
+  type RuleCheckId,
+} from "../checks/eslint/rule-settings.js";
 import type {
   EslintRuleConfiguration,
   ResolvedConfigurationOrigins,
   SettingOrigin,
 } from "./settings-definition.js";
+import { isConfigurableRuleCheckId } from "./settings-registry.js";
 
 const FAST_CHECKS = new Set<CheckId>([
   "formatting",
@@ -104,7 +110,14 @@ function baseChecks(profile: ProfileId): MutableCheckPolicies {
   };
 }
 
-function policyPatch(input: CheckPolicyInput): ResolvedCheckPolicyPatch {
+function isRuleCheckId(checkId: CheckId): checkId is RuleCheckId {
+  return isConfigurableRuleCheckId(checkId);
+}
+
+function policyPatch(
+  checkId: CheckId,
+  input: CheckPolicyInput,
+): ResolvedCheckPolicyPatch {
   if (typeof input === "string") {
     return { severity: input };
   }
@@ -129,7 +142,13 @@ function policyPatch(input: CheckPolicyInput): ResolvedCheckPolicyPatch {
     patch.settings = Object.freeze({ ...objectInput.settings });
   }
   if (objectInput.rules !== undefined) {
-    patch.rules = Object.freeze({ ...objectInput.rules });
+    if (!isRuleCheckId(checkId)) {
+      throw new TypeError(`${checkId} does not support managed rule overrides`);
+    }
+    patch.rules = validateManagedRuleConfiguration(
+      checkId,
+      objectInput.rules,
+    );
   }
   if (objectInput.blockWorsening !== undefined) {
     patch.blockWorsening = objectInput.blockWorsening;
@@ -143,7 +162,7 @@ function policyPatch(input: CheckPolicyInput): ResolvedCheckPolicyPatch {
 function freezeRules(
   rules: Readonly<Record<string, EslintRuleConfiguration>>,
 ): Readonly<Record<string, EslintRuleConfiguration>> {
-  return Object.freeze({ ...rules });
+  return freezeRuleSettings(rules);
 }
 
 function freezeFormattingSettings(
@@ -163,7 +182,7 @@ function resolvePolicy(
   base: ResolvedCheckPolicy,
   override: CheckPolicyInput | undefined,
 ): ResolvedCheckPolicy {
-  const patch = override === undefined ? {} : policyPatch(override);
+  const patch = override === undefined ? {} : policyPatch(checkId, override);
   switch (checkId) {
     case "formatting": {
       const basePolicy = base as ResolvedCheckPolicies["formatting"];
@@ -306,7 +325,7 @@ function resolveOverrides(
     for (const checkId of CHECK_IDS) {
       const input = policyInput(override.checks, checkId);
       if (input !== undefined) {
-        checks[checkId] = policyPatch(input);
+        checks[checkId] = policyPatch(checkId, input);
         recordPatchOrigins(
           configurationOrigins,
           checkId,
@@ -362,7 +381,7 @@ export function resolveConfig(
     recordPatchOrigins(
       mutableOrigins,
       checkId,
-      input === undefined ? undefined : policyPatch(input),
+      input === undefined ? undefined : policyPatch(checkId, input),
       repositoryOrigin,
     );
   }

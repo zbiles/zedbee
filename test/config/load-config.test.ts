@@ -357,14 +357,19 @@ describe("loadConfig", () => {
         '{"schemaVersion":1,"checks":{"duplication":{"settings":{"mode":"medium"}}}}',
     },
     {
-      name: "root lint rules before bounded validation exists",
+      name: "wrong-owner managed rule",
       source:
-        '{"schemaVersion":1,"checks":{"lint":{"rules":{"no-console":"warn"}}}}',
+        '{"schemaVersion":1,"checks":{"lint":{"rules":{"jsx-a11y/no-autofocus":"warn"}}}}',
     },
     {
-      name: "override react rules before bounded validation exists",
+      name: "unsupported private rule",
       source:
-        '{"schemaVersion":1,"overrides":[{"files":["packages/web/**"],"checks":{"reactAccessibility":{"rules":{"jsx-a11y/alt-text":"warn"}}}}]}',
+        '{"schemaVersion":1,"checks":{"reactCorrectness":{"rules":{"company/private-rule":"error"}}}}',
+    },
+    {
+      name: "invalid managed rule option",
+      source:
+        '{"schemaVersion":1,"overrides":[{"files":["packages/web/**"],"checks":{"lint":{"rules":{"no-restricted-syntax":["error",{"selector":42}]}}}}]}',
     },
     {
       name: "invalid source excerpt reporting policy",

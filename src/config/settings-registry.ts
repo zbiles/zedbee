@@ -20,6 +20,13 @@ export const CONFIGURABLE_CHECK_IDS = [
 ] as const satisfies readonly CheckId[];
 
 export type ConfigurableCheckId = (typeof CONFIGURABLE_CHECK_IDS)[number];
+export const CONFIGURABLE_RULE_CHECK_IDS = [
+  "lint",
+  "reactCorrectness",
+  "reactAccessibility",
+] as const satisfies readonly ConfigurableCheckId[];
+export type ConfigurableRuleCheckId =
+  (typeof CONFIGURABLE_RULE_CHECK_IDS)[number];
 
 export interface ManagedSettingsDefinitions {
   readonly formatting: ManagedSettingsDefinition<FormattingSettings>;
@@ -37,4 +44,12 @@ export function managedSettingDefinition(
   return MANAGED_SETTINGS_DEFINITIONS[
     checkId as keyof ManagedSettingsDefinitions
   ] as ManagedSettingsDefinition<object> | undefined;
+}
+
+export function isConfigurableRuleCheckId(
+  checkId: CheckId,
+): checkId is ConfigurableRuleCheckId {
+  return CONFIGURABLE_RULE_CHECK_IDS.includes(
+    checkId as ConfigurableRuleCheckId,
+  );
 }

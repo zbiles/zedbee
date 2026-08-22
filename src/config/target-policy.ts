@@ -6,6 +6,7 @@ import type {
 } from "../inspection/types.js";
 import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
 import type { ResolvedCheckPolicyPatch } from "./schema.js";
+import { freezeRuleSettings } from "../checks/eslint/rule-settings.js";
 
 function policyCandidates(
   target: CheckTarget,
@@ -77,7 +78,7 @@ function mergePolicyPatch(
     merged.settings = Object.freeze({ ...policy.settings, ...patch.settings });
   }
   if ("rules" in policy && patch.rules !== undefined) {
-    merged.rules = Object.freeze({ ...policy.rules, ...patch.rules });
+    merged.rules = freezeRuleSettings({ ...policy.rules, ...patch.rules });
   }
   return Object.freeze(merged) as ResolvedCheckPolicy;
 }

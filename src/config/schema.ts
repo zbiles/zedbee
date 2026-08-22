@@ -10,6 +10,11 @@ import {
   duplicationSettingsSchema,
   type DuplicationSettings,
 } from "../checks/duplication/settings.js";
+import {
+  ManagedRuleConfigurationError,
+  validateManagedRuleConfiguration,
+  type RuleCheckId,
+} from "../checks/eslint/rule-settings.js";
 import type {
   EslintRuleConfiguration,
   ResolvedConfigurationOrigins,
@@ -172,7 +177,53 @@ const commonPolicyFields = {
   when: checkTimingSchema.optional(),
 } as const;
 
+const eslintRuleSeveritySchema = z.union([
+  checkSeveritySchema,
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+]);
+const eslintRuleConfigurationSchema = z
+  .union([
+    eslintRuleSeveritySchema,
+    z.tuple([eslintRuleSeveritySchema]).rest(z.unknown()),
+  ])
+  .meta({
+    description:
+      'ESLint rule severity ("off", "warn", "error", 0, 1, 2) or [severity, ...options].',
+  });
+const eslintRuleSettingsSchema = z
+  .record(z.string().min(1), eslintRuleConfigurationSchema)
+  .meta({
+    description:
+      "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs.",
+  });
+
 const simplePolicyObjectSchema = z.object(commonPolicyFields).strict();
+function rulePolicyObjectSchema(checkId: RuleCheckId) {
+  return z
+    .object({
+      ...commonPolicyFields,
+      rules: eslintRuleSettingsSchema.optional(),
+    })
+    .strict()
+    .superRefine((policy, context) => {
+      if (policy.rules === undefined) return;
+      try {
+        validateManagedRuleConfiguration(checkId, policy.rules);
+      } catch (error) {
+        context.addIssue({
+          code: "custom",
+          message: error instanceof Error ? error.message : "Invalid rules",
+          path:
+            error instanceof ManagedRuleConfigurationError &&
+            error.ruleId !== undefined
+              ? ["rules", error.ruleId]
+              : ["rules"],
+        });
+      }
+    });
+}
 function complexityPolicyObjectSchema(defaultMaximum: number) {
   return z
     .object({
@@ -221,6 +272,13 @@ function policySchema<T extends z.ZodType>(objectSchema: T) {
 }
 
 const simplePolicySchema = policySchema(simplePolicyObjectSchema);
+const lintPolicySchema = policySchema(rulePolicyObjectSchema("lint"));
+const reactCorrectnessPolicySchema = policySchema(
+  rulePolicyObjectSchema("reactCorrectness"),
+);
+const reactAccessibilityPolicySchema = policySchema(
+  rulePolicyObjectSchema("reactAccessibility"),
+);
 const formattingPolicySchema = policySchema(formattingPolicyObjectSchema);
 const cyclomaticComplexityPolicySchema = policySchema(
   complexityPolicyObjectSchema(20),
@@ -242,7 +300,7 @@ const checksSchema = z
       "Prettier formatting for changed JavaScript and TypeScript files.",
     ),
     lint: describedPolicy(
-      simplePolicySchema,
+      lintPolicySchema,
       "ESLint correctness and maintainability findings in changed code.",
     ),
     types: describedPolicy(
@@ -278,11 +336,11 @@ const checksSchema = z
       "Unused files, exports, and dependencies reported by Knip.",
     ),
     reactCorrectness: describedPolicy(
-      simplePolicySchema,
+      reactCorrectnessPolicySchema,
       "React and Hooks correctness validation for changed components.",
     ),
     reactAccessibility: describedPolicy(
-      simplePolicySchema,
+      reactAccessibilityPolicySchema,
       "JSX accessibility validation for changed components.",
     ),
     vulnerabilities: describedPolicy(
@@ -364,6 +422,9 @@ const policyOverrideSchema = z
 
 export type CheckPolicyInput =
   | z.infer<typeof simplePolicySchema>
+  | z.infer<typeof lintPolicySchema>
+  | z.infer<typeof reactCorrectnessPolicySchema>
+  | z.infer<typeof reactAccessibilityPolicySchema>
   | z.infer<typeof formattingPolicySchema>
   | z.infer<typeof cyclomaticComplexityPolicySchema>
   | z.infer<typeof readabilityComplexityPolicySchema>
