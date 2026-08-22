@@ -7,6 +7,7 @@ import type {
   CheckTarget,
 } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
+import { CheckIncompleteError } from "../../../src/checks/incomplete-error.js";
 import {
   createLintAdapter,
   lintAdapter,
@@ -323,6 +324,84 @@ describe("lintAdapter", () => {
     rejectFirst(new Error("first group failed"));
     await expect(collected).rejects.toThrow("Managed lint analysis failed.");
     expect(started).toEqual([["src/a.js"]]);
+  });
+
+  it("awaits both started sides and rejects in stable baseline-first order", async () => {
+    const fixtures = await pair();
+    await fixtures.baseline.write("src/old.js", "export const value = 1;\n");
+    await fixtures.staged.write("test/new.js", "export const value = 2;\n");
+    const changeSet = changes([
+      {
+        path: "test/new.js",
+        previousPath: "src/old.js",
+        status: "renamed",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const run = await context(fixtures, changeSet);
+    let rejectBaseline: (error: Error) => void = () => undefined;
+    const baselineResult = new Promise<never>((_resolve, reject) => {
+      rejectBaseline = reject;
+    });
+    let rejectTarget: (error: Error) => void = () => undefined;
+    const targetResult = new Promise<never>((_resolve, reject) => {
+      rejectTarget = reject;
+    });
+    let markBaselineStarted: () => void = () => undefined;
+    const baselineStarted = new Promise<void>((resolve) => {
+      markBaselineStarted = resolve;
+    });
+    let markTargetStarted: () => void = () => undefined;
+    const targetStarted = new Promise<void>((resolve) => {
+      markTargetStarted = resolve;
+    });
+    const baselineFailure = new CheckIncompleteError({
+      code: "BASELINE_GROUP_FAILED",
+      message: "Baseline group failed.",
+      path: "src/old.js",
+      remediation: "Retry the baseline group.",
+    });
+    const targetFailure = new CheckIncompleteError({
+      code: "TARGET_GROUP_FAILED",
+      message: "Target group failed.",
+      path: "test/new.js",
+      remediation: "Retry the target group.",
+    });
+    const adapter = createLintAdapter((options) => ({
+      async lintFiles() {
+        if (options.cwd === run.baselineInspection.snapshotRoot) {
+          markBaselineStarted();
+          return baselineResult;
+        }
+        markTargetStarted();
+        return targetResult;
+      },
+    }));
+
+    let collectionSettled = false;
+    const outcome = adapter.collect(run).then(
+      () => {
+        collectionSettled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        collectionSettled = true;
+        return error;
+      },
+    );
+    await Promise.all([baselineStarted, targetStarted]);
+    rejectTarget(targetFailure);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const settledBeforeBaseline = collectionSettled;
+    rejectBaseline(baselineFailure);
+    const error = await outcome;
+
+    expect(settledBeforeBaseline).toBe(false);
+    expect(error).toMatchObject({
+      name: "CheckIncompleteError",
+      code: "BASELINE_GROUP_FAILED",
+      path: "src/old.js",
+    });
   });
 
   it("rejects an out-of-group typed result with a precise incomplete path and no retry", async () => {

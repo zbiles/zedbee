@@ -140,6 +140,38 @@ describe("managedConfig", () => {
     ).toThrow(/unsupported rule/u);
   });
 
+  test("validates hidden-only rule maps at the managed engine boundary", () => {
+    const symbolOnly = {} as Record<string | symbol, unknown>;
+    symbolOnly[Symbol("hidden-rule")] = "warn";
+    const nonEnumerableOnly: Record<string, unknown> = {};
+    Object.defineProperty(nonEnumerableOnly, "no-console", {
+      enumerable: false,
+      value: "warn",
+    });
+
+    for (const ruleOverrides of [symbolOnly, nonEnumerableOnly]) {
+      expect(() =>
+        managedConfig({
+          mode: "lint",
+          managedIgnores: [],
+          ruleOverrides: ruleOverrides as NonNullable<
+            Parameters<typeof managedConfig>[0]["ruleOverrides"]
+          >,
+        }),
+      ).toThrow(/JSON-compatible/u);
+    }
+  });
+
+  test("preserves the default config shape for an ordinary empty rule map", () => {
+    expect(
+      managedConfig({
+        mode: "lint",
+        managedIgnores: [],
+        ruleOverrides: {},
+      }),
+    ).toEqual(managedConfig({ mode: "lint", managedIgnores: [] }));
+  });
+
   test("groups identical effective rules deterministically and skips off files", () => {
     const resolve = ((_checkId: string, file: string, _side: string) => ({
       severity: file === "generated/off.js" ? "off" : "error",

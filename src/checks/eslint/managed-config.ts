@@ -218,10 +218,7 @@ export function managedConfig(
   }
   const plugins = modePlugins(options);
   if (plugins !== undefined) config.push(plugins);
-  if (
-    options.ruleOverrides !== undefined &&
-    Object.keys(options.ruleOverrides).length > 0
-  ) {
+  if (options.ruleOverrides !== undefined) {
     const checkId = ruleCheckId(options.mode);
     if (checkId === undefined) {
       throw new TypeError("Managed complexity does not accept rule overrides.");
@@ -230,10 +227,12 @@ export function managedConfig(
       checkId,
       options.ruleOverrides,
     );
-    config.push({
-      files: SOURCE_FILES,
-      rules: rules as Linter.RulesRecord,
-    });
+    if (Object.keys(rules).length > 0) {
+      config.push({
+        files: SOURCE_FILES,
+        rules: rules as Linter.RulesRecord,
+      });
+    }
   }
   return config;
 }

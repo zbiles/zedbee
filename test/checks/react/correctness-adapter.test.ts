@@ -6,6 +6,7 @@ import type { CheckRunContext } from "../../../src/checks/adapter.js";
 import { createManagedEslint } from "../../../src/checks/eslint/load-engine.js";
 import type { ManagedEslintOptions } from "../../../src/checks/eslint/load-engine.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
+import { CheckIncompleteError } from "../../../src/checks/incomplete-error.js";
 import { createReactAdapter } from "../../../src/checks/react/adapter.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
 import { reactCorrectnessAdapter } from "../../../src/checks/react/correctness-adapter.js";
@@ -382,6 +383,78 @@ describe("reactCorrectnessAdapter", () => {
     });
     expect(created).toEqual(["error"]);
     expect(started).toEqual([["src/a.tsx"]]);
+  });
+
+  it("awaits both React sides and uses stable baseline-first failure precedence", async () => {
+    const { run } = await reactContext("react");
+    let rejectBaseline: (error: Error) => void = () => undefined;
+    const baselineResult = new Promise<never>((_resolve, reject) => {
+      rejectBaseline = reject;
+    });
+    let rejectTarget: (error: Error) => void = () => undefined;
+    const targetResult = new Promise<never>((_resolve, reject) => {
+      rejectTarget = reject;
+    });
+    let markBaselineStarted: () => void = () => undefined;
+    const baselineStarted = new Promise<void>((resolve) => {
+      markBaselineStarted = resolve;
+    });
+    let markTargetStarted: () => void = () => undefined;
+    const targetStarted = new Promise<void>((resolve) => {
+      markTargetStarted = resolve;
+    });
+    const baselineFailure = new CheckIncompleteError({
+      code: "BASELINE_REACT_FAILED",
+      message: "Baseline React group failed.",
+      path: "src/app.tsx",
+      remediation: "Retry the baseline React group.",
+    });
+    const targetFailure = new CheckIncompleteError({
+      code: "TARGET_REACT_FAILED",
+      message: "Target React group failed.",
+      path: "src/app.tsx",
+      remediation: "Retry the target React group.",
+    });
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => ({
+        async lintFiles() {
+          if (options.cwd === run.baselineInspection.snapshotRoot) {
+            markBaselineStarted();
+            return baselineResult;
+          }
+          markTargetStarted();
+          return targetResult;
+        },
+      }),
+    );
+
+    let collectionSettled = false;
+    const outcome = adapter.collect(run).then(
+      () => {
+        collectionSettled = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        collectionSettled = true;
+        return error;
+      },
+    );
+    await Promise.all([baselineStarted, targetStarted]);
+    rejectTarget(targetFailure);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const settledBeforeBaseline = collectionSettled;
+    rejectBaseline(baselineFailure);
+    const error = await outcome;
+
+    expect(settledBeforeBaseline).toBe(false);
+    expect(error).toMatchObject({
+      name: "CheckIncompleteError",
+      code: "BASELINE_REACT_FAILED",
+      path: "src/app.tsx",
+    });
   });
 
   it("skips effective-off files before React version resolution or engine creation", async () => {

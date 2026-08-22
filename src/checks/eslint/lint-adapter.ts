@@ -19,6 +19,7 @@ import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "./load-engine.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
+import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -209,28 +210,30 @@ export function createLintAdapter(
     },
 
     async collect(context): Promise<CheckObservationSet> {
-      const [baselineObservations, targetObservations] = await Promise.all([
-        collectSide(
-          context.snapshots.baselineDir,
-          context.repositoryRoot,
-          context.baselineInspection,
-          context.target,
-          "baseline",
-          context.policyForFile,
-          engineFactory,
+      const [baselineObservations, targetObservations] =
+        await settleSnapshotSides(
+          collectSide(
+            context.snapshots.baselineDir,
+            context.repositoryRoot,
+            context.baselineInspection,
+            context.target,
+            "baseline",
+            context.policyForFile,
+            engineFactory,
+            context.signal,
+          ),
+          collectSide(
+            context.snapshots.targetDir,
+            context.repositoryRoot,
+            context.targetInspection,
+            context.target,
+            "target",
+            context.policyForFile,
+            engineFactory,
+            context.signal,
+          ),
           context.signal,
-        ),
-        collectSide(
-          context.snapshots.targetDir,
-          context.repositoryRoot,
-          context.targetInspection,
-          context.target,
-          "target",
-          context.policyForFile,
-          engineFactory,
-          context.signal,
-        ),
-      ]);
+        );
       return {
         checkId: "lint",
         target: context.target,

@@ -30,6 +30,7 @@ import type {
 } from "../../config/file-policy.js";
 import { groupFilesByRules } from "../eslint/managed-config.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
+import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import {
   createReactVersionResolver,
   type ReactVersionResolver,
@@ -297,10 +298,12 @@ export function createReactAdapter(
         context.policyForFile,
         context.signal,
       );
-      const [baselineObservations, targetObservations] = await Promise.all([
-        collectBaseline(),
-        collectTarget(),
-      ]);
+      const [baselineObservations, targetObservations] =
+        await settleSnapshotSides(
+          collectBaseline(),
+          collectTarget(),
+          context.signal,
+        );
       return {
         checkId: id,
         target: context.target,
