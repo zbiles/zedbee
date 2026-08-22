@@ -1298,6 +1298,36 @@ describe("runScan", () => {
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
     expect(Object.isFrozen(report.summary.findings)).toBe(true);
+    const rawKeys: string[] = [];
+    const pending: object[] = [report];
+    const visited = new Set<object>();
+    while (pending.length > 0) {
+      const value = pending.pop()!;
+      if (visited.has(value)) continue;
+      visited.add(value);
+      for (const key of Reflect.ownKeys(value)) {
+        expect(typeof key).toBe("string");
+        if (typeof key !== "string") continue;
+        rawKeys.push(key);
+        const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+        expect("value" in descriptor).toBe(true);
+        if (!("value" in descriptor)) continue;
+        expect(typeof descriptor.value).not.toBe("function");
+        if (typeof descriptor.value === "object" && descriptor.value !== null) {
+          pending.push(descriptor.value);
+        }
+      }
+    }
+    for (const privateKey of [
+      "config",
+      "configPath",
+      "configurationOrigins",
+      "plugins",
+      "rules",
+      "settings",
+    ]) {
+      expect(rawKeys).not.toContain(privateKey);
+    }
     expect(Object.keys(JSON.parse(JSON.stringify(report)))).toEqual([
       "schemaVersion",
       "outcome",

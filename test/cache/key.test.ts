@@ -16,8 +16,12 @@ import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
 
-function contextFor(snapshotRoot: string, specifier: string): CheckRunContext {
-  const config = resolveConfig({ schemaVersion: 1, profile: "fast" });
+function contextFor(
+  snapshotRoot: string,
+  specifier: string,
+  config = resolveConfig({ schemaVersion: 1, profile: "fast" }),
+  sourceFiles: readonly string[] = [],
+): CheckRunContext {
   const inspection: RepositoryInspection = {
     snapshotRoot,
     packageManager: "npm",
@@ -26,7 +30,7 @@ function contextFor(snapshotRoot: string, specifier: string): CheckRunContext {
       {
         relativeRoot: ".",
         manifestPath: "package.json",
-        sourceFiles: [],
+        sourceFiles,
         tsconfigPaths: [],
         environments: ["javascript"],
         dependencyDeclarations: [
@@ -74,6 +78,19 @@ const adapter = {
     targetObservations: [],
   }),
 } satisfies CheckAdapter;
+
+function adapterFor(id: string): CheckAdapter {
+  return {
+    ...adapter,
+    id,
+    collect: async (context) => ({
+      checkId: id,
+      target: context.target,
+      baselineObservations: [],
+      targetObservations: [],
+    }),
+  };
+}
 
 const unchanged: ChangeSet = {
   files: new Map(),
@@ -126,6 +143,115 @@ describe("observation cache keys", () => {
 
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it("uses each analyzer's exact extension case semantics in file behavior mapping", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.write("src/value.ts", "export const value = 1;\n");
+    const paths = ["src/value.ts", "src/ignored.TS"];
+    const keyPair = async (
+      checkId: CheckId,
+      base: ResolvedConfig,
+      withUppercaseOverride: ResolvedConfig,
+    ): Promise<readonly string[]> => {
+      const keys: string[] = [];
+      const cache: ObservationCache = {
+        get: async (key) => {
+          keys.push(key);
+          return undefined;
+        },
+        set: async () => undefined,
+      };
+      await dispatchChecks(
+        [adapterFor(checkId)],
+        contextFor(fixture.root, "^19.0.0", base, paths),
+        { cache },
+      );
+      await dispatchChecks(
+        [adapterFor(checkId)],
+        contextFor(fixture.root, "^19.0.0", withUppercaseOverride, paths),
+        { cache },
+      );
+      return keys;
+    };
+
+    const lintBase = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: { severity: "error", rules: { "no-console": "warn" } },
+      },
+    });
+    const lintOverride = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: { severity: "error", rules: { "no-console": "warn" } },
+      },
+      overrides: [
+        {
+          files: ["src/ignored.TS"],
+          checks: { lint: { rules: { "no-console": "error" } } },
+        },
+      ],
+    });
+    const reactBase = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        reactCorrectness: {
+          severity: "error",
+          rules: { "react/jsx-key": "warn" },
+        },
+      },
+    });
+    const reactOverride = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        reactCorrectness: {
+          severity: "error",
+          rules: { "react/jsx-key": "warn" },
+        },
+      },
+      overrides: [
+        {
+          files: ["src/ignored.TS"],
+          checks: {
+            reactCorrectness: { rules: { "react/jsx-key": "error" } },
+          },
+        },
+      ],
+    });
+    const complexityBase = resolveConfig({
+      schemaVersion: 1,
+      checks: { cyclomaticComplexity: { severity: "error", max: 10 } },
+    });
+    const complexityOverride = resolveConfig({
+      schemaVersion: 1,
+      checks: { cyclomaticComplexity: { severity: "error", max: 10 } },
+      overrides: [
+        {
+          files: ["src/ignored.TS"],
+          checks: { cyclomaticComplexity: { max: 20 } },
+        },
+      ],
+    });
+
+    const lintKeys = await keyPair("lint", lintBase, lintOverride);
+    const reactKeys = await keyPair(
+      "reactCorrectness",
+      reactBase,
+      reactOverride,
+    );
+    const complexityKeys = await keyPair(
+      "cyclomaticComplexity",
+      complexityBase,
+      complexityOverride,
+    );
+
+    expect(lintKeys).toHaveLength(2);
+    expect(lintKeys[0]).toBe(lintKeys[1]);
+    expect(reactKeys).toHaveLength(2);
+    expect(reactKeys[0]).not.toBe(reactKeys[1]);
+    expect(complexityKeys).toHaveLength(2);
+    expect(complexityKeys[0]).not.toBe(complexityKeys[1]);
   });
 
   it.each([

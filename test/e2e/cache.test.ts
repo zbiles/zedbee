@@ -237,6 +237,50 @@ describe("observation cache integration", () => {
       checks: { lint: { rules: { "no-console": "warn" } } },
       overrides: [
         {
+          files: ["package.json"],
+          checks: { lint: { rules: { "no-console": "error" } } },
+        },
+      ],
+    });
+    await runScan(options);
+    currentConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
+          files: ["package.json"],
+          checks: { lint: { rules: { "no-console": "error" } } },
+        },
+        {
+          files: ["."],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+      ],
+    });
+    await runScan(options);
+    currentConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
+          files: ["."],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+        {
+          files: ["package.json"],
+          checks: { lint: { rules: { "no-console": "error" } } },
+        },
+      ],
+    });
+    await runScan(options);
+    currentConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
           files: ["src/**"],
           checks: {
             lint: { rules: { "no-console": "error", eqeqeq: "warn" } },
@@ -263,9 +307,12 @@ describe("observation cache integration", () => {
     );
     await runScan(options);
 
-    expect(keys).toHaveLength(3);
-    expect(keys[0]).not.toBe(keys[1]);
-    expect(keys[1]).toBe(keys[2]);
+    expect(keys).toHaveLength(6);
+    expect(keys[0]).toBe(keys[1]);
+    expect(keys[0]).toBe(keys[2]);
+    expect(keys[0]).toBe(keys[3]);
+    expect(keys[3]).not.toBe(keys[4]);
+    expect(keys[4]).toBe(keys[5]);
     expect(collections).toBe(2);
   });
 });

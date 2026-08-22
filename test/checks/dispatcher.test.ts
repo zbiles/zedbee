@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import type { CheckResult } from "../../src/core/types.js";
 import type { Observation } from "../../src/core/types.js";
-import type { ResolvedConfig } from "../../src/config/schema.js";
+import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
@@ -1444,7 +1444,7 @@ describe("dispatchChecks", () => {
     });
   });
 
-  it("keeps an immutable policy envelope when an adapter mutates its run policy", async () => {
+  it("passes adapters a detached frozen run policy and keeps the authoritative envelope", async () => {
     const targetConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
@@ -1452,11 +1452,26 @@ describe("dispatchChecks", () => {
       overrides: [{ files: ["apps/web/**"], checks: { formatting: "error" } }],
     });
     let adapterPolicy: CheckRunContext["policy"] | undefined;
+    let adapterSettings: Readonly<{ singleQuote: boolean }> | undefined;
+    let mutationRejected = false;
+    let nestedMutationRejected = false;
     const adapter = createLegacyAdapter(
       async (context) => {
         adapterPolicy = context.policy;
-        (context.policy as { severity: "off" | "warn" | "error" }).severity =
-          "warn";
+        adapterSettings = (
+          context.policy as CheckRunContext["config"]["checks"]["formatting"]
+        ).settings;
+        try {
+          (context.policy as { severity: "off" | "warn" | "error" }).severity =
+            "warn";
+        } catch {
+          mutationRejected = true;
+        }
+        try {
+          (adapterSettings as { singleQuote: boolean }).singleQuote = true;
+        } catch {
+          nestedMutationRejected = true;
+        }
         return {
           checkId: "formatting",
           status: "completed",
@@ -1490,9 +1505,102 @@ describe("dispatchChecks", () => {
 
     expect(execution.policy).toMatchObject({ severity: "error" });
     expect(Object.isFrozen(execution.policy)).toBe(true);
+    expect(Object.isFrozen(adapterPolicy)).toBe(true);
     expect(execution.policy).not.toBe(adapterPolicy);
+    expect(adapterPolicy).toMatchObject({ severity: "error" });
+    expect(adapterSettings).not.toBe(targetConfig.checks.formatting.settings);
+    expect(Object.isFrozen(adapterSettings)).toBe(true);
+    expect(mutationRejected).toBe(true);
+    expect(nestedMutationRejected).toBe(true);
     expect(decision).toMatchObject({ outcome: "blocked", exitCode: 1 });
     expect(decision.results[0]?.findings[0]?.severity).toBe("error");
+  });
+
+  it("supports detached immutable custom override patches through inspection and collection", async () => {
+    const sourceMetadata = { labels: ["repository"] };
+    const overrideMetadata = { labels: ["override"] };
+    const base = createConfig({ customPolicy: "error" });
+    const customConfig = {
+      ...base,
+      checks: {
+        ...base.checks,
+        customPolicy: {
+          severity: "error" as const,
+          when: "relevant" as const,
+          metadata: sourceMetadata,
+        },
+      },
+      overrides: [
+        {
+          files: ["package.json"],
+          checks: {
+            customPolicy: {
+              severity: "warn" as const,
+              metadata: overrideMetadata,
+            },
+          },
+        },
+      ],
+    } as unknown as ResolvedConfig;
+    let inspections = 0;
+    let collections = 0;
+    const assertOverrideSnapshot = (context: CheckRunContext) => {
+      const patch = context.config.overrides[0]?.checks[
+        "customPolicy" as CheckId
+      ] as unknown as {
+        readonly metadata: { readonly labels: readonly string[] };
+      };
+      expect(patch.metadata).not.toBe(overrideMetadata);
+      expect(patch.metadata.labels).not.toBe(overrideMetadata.labels);
+      expect(Object.isFrozen(patch)).toBe(true);
+      expect(Object.isFrozen(patch.metadata)).toBe(true);
+      expect(Object.isFrozen(patch.metadata.labels)).toBe(true);
+    };
+    const adapter: ObservationCheckAdapter = {
+      id: "customPolicy",
+      output: "observations",
+      inspect: async (context) => {
+        inspections += 1;
+        assertOverrideSnapshot(context as CheckRunContext);
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      collect: async (context) => {
+        collections += 1;
+        assertOverrideSnapshot(context);
+        const policy = context.policy as unknown as {
+          readonly severity: string;
+          readonly metadata: { readonly labels: readonly string[] };
+        };
+        expect(policy).toMatchObject({ severity: "warn" });
+        expect(policy.metadata).not.toBe(overrideMetadata);
+        expect(policy.metadata.labels).not.toBe(overrideMetadata.labels);
+        expect(Object.isFrozen(policy)).toBe(true);
+        expect(Object.isFrozen(policy.metadata)).toBe(true);
+        expect(Object.isFrozen(policy.metadata.labels)).toBe(true);
+        return {
+          checkId: "customPolicy",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+
+    const results = await dispatchChecks(
+      [adapter],
+      createContext(customConfig),
+    );
+    sourceMetadata.labels.push("mutated");
+    overrideMetadata.labels.push("mutated");
+
+    expect(inspections).toBe(1);
+    expect(collections).toBe(1);
+    expect(results[0]?.result.status).toBe("completed");
   });
 
   it("uses the most permissive configured timing for inspection and the exact target timing for execution", async () => {

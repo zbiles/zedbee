@@ -102,6 +102,7 @@ describe("attribution platform", () => {
     );
 
     let targetSource = "";
+    let mutationRejected = false;
     const adapter = {
       id: CHECK_ID,
       output: "observations",
@@ -113,8 +114,12 @@ describe("attribution platform", () => {
       }),
       collect: async (context) => {
         const policy = context.policy as ResolvedComplexityPolicy;
-        policy.max = 100;
-        policy.blockWorsening = false;
+        try {
+          policy.max = 100;
+          policy.blockWorsening = false;
+        } catch {
+          mutationRejected = true;
+        }
         targetSource = await readFile(
           join(context.snapshots.targetDir, "src/parser.ts"),
           "utf8",
@@ -176,6 +181,7 @@ describe("attribution platform", () => {
 
     expect(targetSource).not.toContain("liveOnly");
     expect(report).toMatchObject({ outcome: "blocked", exitCode: 1 });
+    expect(mutationRejected).toBe(true);
     expect(report.summary.findings).toHaveLength(5);
     expect(report.summary.findings).toEqual(
       expect.arrayContaining([
@@ -242,6 +248,7 @@ describe("attribution platform", () => {
     );
     await repository.git(["add", "--", "packages/dup/src/index.ts"]);
 
+    let mutationRejected = false;
     const adapter = {
       id: "duplication",
       output: "observations",
@@ -258,7 +265,11 @@ describe("attribution platform", () => {
         ],
       }),
       collect: async (context) => {
-        (context.policy as ResolvedDuplicationPolicy).threshold = 100;
+        try {
+          (context.policy as ResolvedDuplicationPolicy).threshold = 100;
+        } catch {
+          mutationRejected = true;
+        }
         return {
           checkId: "duplication",
           target: context.target,
@@ -310,6 +321,7 @@ describe("attribution platform", () => {
     });
 
     expect(report).toMatchObject({ outcome: "blocked", exitCode: 1 });
+    expect(mutationRejected).toBe(true);
     expect(report.summary.findings).toEqual([
       expect.objectContaining({
         check: "duplication",

@@ -32,6 +32,7 @@ import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type {
   ResolvedConfig,
+  ResolvedCheckPolicyPatch,
   ResolvedPolicyOverride,
 } from "../config/schema.js";
 import { displayResultForPolicy } from "../policy/evaluate.js";
@@ -95,13 +96,12 @@ function checkLabel(checkId: string): string {
   return CHECK_LABELS[checkId] ?? checkId;
 }
 
-function immutablePolicy(
-  checkId: string,
-  policy: ResolvedCheckPolicy,
-): Readonly<ResolvedCheckPolicy> {
+function immutablePolicy<
+  T extends ResolvedCheckPolicy | ResolvedCheckPolicyPatch,
+>(checkId: string, policy: Readonly<T>): Readonly<T> {
   return CHECK_IDS.includes(checkId as CheckId)
     ? snapshotManagedPolicy(checkId as CheckId, policy)
-    : (immutableConfigurationSnapshot(policy) as Readonly<ResolvedCheckPolicy>);
+    : immutableConfigurationSnapshot(policy);
 }
 
 function executionResult(
@@ -245,9 +245,7 @@ function snapshotOverride(
       Object.fromEntries(
         Object.entries(override.checks).map(([id, patch]) => [
           id,
-          patch === undefined
-            ? undefined
-            : snapshotManagedPolicy(id as CheckId, patch),
+          patch === undefined ? undefined : immutablePolicy(id, patch),
         ]),
       ),
     ),
@@ -350,7 +348,8 @@ function cacheInspection(
   };
 }
 
-const CONFIGURABLE_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+const LINT_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/u;
+const REACT_COMPLEXITY_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const FILE_BEHAVIOR_CHECKS = new Set<CheckId>([
   "lint",
   "cyclomaticComplexity",
@@ -358,6 +357,12 @@ const FILE_BEHAVIOR_CHECKS = new Set<CheckId>([
   "reactCorrectness",
   "reactAccessibility",
 ]);
+
+function isFileBehaviorPath(checkId: CheckId, path: string): boolean {
+  return checkId === "lint"
+    ? LINT_SOURCE_PATH.test(path)
+    : REACT_COMPLEXITY_SOURCE_PATH.test(path);
+}
 
 function cacheBehaviorPaths(
   checkId: CheckId,
@@ -373,7 +378,7 @@ function cacheBehaviorPaths(
           target.kind === "repository" || relativeRoot === target.relativeRoot,
       )
       .flatMap(({ sourceFiles }) =>
-        sourceFiles.filter((path) => CONFIGURABLE_SOURCE_PATH.test(path)),
+        sourceFiles.filter((path) => isFileBehaviorPath(checkId, path)),
       ),
   );
   return Object.freeze([...new Set(paths)].sort(compareCodeUnits));
@@ -390,6 +395,7 @@ function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
 async function collectObservations(
   adapter: Extract<AdapterSnapshot, { output: "observations" }>,
   runContext: CheckRunContext,
+  cachePolicy: Readonly<ResolvedCheckPolicy>,
   behavior: unknown,
   options: DispatchOptions,
 ): Promise<CheckObservationSet> {
@@ -405,7 +411,7 @@ async function collectObservations(
       cacheKey = await createObservationCacheKey({
         checkId: adapter.id,
         engineIdentity,
-        policy: runContext.policy,
+        policy: cachePolicy,
         target: runContext.target,
         baselineRoot: runContext.snapshots.baselineDir,
         targetRoot: runContext.snapshots.targetDir,
@@ -500,9 +506,9 @@ function scopedContext(
     ...context,
     config,
     target: Object.freeze({ ...target }),
-    // Adapter policy is a detached working copy. The authoritative immutable
-    // execution policy is retained privately for attribution and enforcement.
-    policy: { ...policy },
+    // Keep the adapter snapshot detached from the authoritative execution
+    // envelope while preserving the same deeply immutable behavior.
+    policy: Object.freeze({ ...policy }),
   });
 }
 
@@ -937,6 +943,9 @@ export async function dispatchChecks(
               const observations = await collectObservations(
                 adapter,
                 runContext,
+                FILE_BEHAVIOR_CHECKS.has(checkId)
+                  ? adapterContext.config.checks[checkId]
+                  : runContext.policy,
                 CHECK_IDS.includes(checkId)
                   ? effectiveBehaviorFingerprint(
                       adapterContext.config,
