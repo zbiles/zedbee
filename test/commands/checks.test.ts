@@ -142,77 +142,101 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 describe("executeChecksCommand", () => {
-  it("agrees with dispatch for a matching always override without staged files", async () => {
-    const repository = await createGitRepository();
-    await repository.write("package.json", '{"name":"fixture"}\n');
-    await repository.write("src/enabled.js", "export const enabled = true;\n");
-    await repository.write(
-      ".zedbeerc.jsonc",
-      `${JSON.stringify({
-        schemaVersion: 1,
-        profile: "recommended",
-        checks: { lint: "off" },
-        overrides: [
+  it.each([
+    {
+      name: "matching always override",
+      sourcePath: "src/enabled.js",
+      overridePattern: "src/enabled.js",
+      expectedRuns: 1,
+      expectedApplicability: "applicable",
+      expectedTargets: ["."],
+    },
+    {
+      name: "unmatched always override",
+      sourcePath: "src/value.js",
+      overridePattern: "private/enabled.js",
+      expectedRuns: 0,
+      expectedApplicability: "not-applicable",
+      expectedTargets: [],
+    },
+  ] as const)(
+    "agrees with dispatch for an $name without staged files",
+    async ({
+      sourcePath,
+      overridePattern,
+      expectedRuns,
+      expectedApplicability,
+      expectedTargets,
+    }) => {
+      const repository = await createGitRepository();
+      await repository.write("package.json", '{"name":"fixture"}\n');
+      await repository.write(sourcePath, "export const enabled = true;\n");
+      await repository.write(
+        ".zedbeerc.jsonc",
+        `${JSON.stringify({
+          schemaVersion: 1,
+          profile: "recommended",
+          checks: { lint: "off" },
+          overrides: [
+            {
+              files: [overridePattern],
+              checks: { lint: { severity: "error", when: "always" } },
+            },
+          ],
+        })}\n`,
+      );
+      await repository.commitAll("fixture");
+
+      const io = terminal();
+      const described = await executeChecksCommand(
+        { cwd: repository.root, format: "json", color: false },
+        io,
+      );
+
+      const git = new GitClient(repository.root);
+      const changeSet = await readStagedChangeSet(git);
+      const snapshots = await buildSnapshotPair(repository.root, git);
+      onTestFinished(snapshots.cleanup);
+      const [baselineInspection, targetInspection, config] = await Promise.all([
+        inspectRepository(snapshots.baselineDir),
+        inspectRepository(snapshots.targetDir),
+        loadConfig(repository.root),
+      ]);
+      let dispatchedRuns = 0;
+      const executions = await dispatchChecks(
+        [
           {
-            files: ["src/enabled.js"],
-            checks: { lint: { severity: "error", when: "always" } },
+            ...lintAdapter,
+            collect: async (context) => {
+              dispatchedRuns += 1;
+              return {
+                checkId: "lint",
+                target: context.target,
+                baselineObservations: [],
+                targetObservations: [],
+              };
+            },
           },
         ],
-      })}\n`,
-    );
-    await repository.commitAll("fixture");
-
-    const io = terminal();
-    const described = await executeChecksCommand(
-      { cwd: repository.root, format: "json", color: false },
-      io,
-    );
-
-    const git = new GitClient(repository.root);
-    const changeSet = await readStagedChangeSet(git);
-    const snapshots = await buildSnapshotPair(repository.root, git);
-    onTestFinished(snapshots.cleanup);
-    const [baselineInspection, targetInspection, config] = await Promise.all([
-      inspectRepository(snapshots.baselineDir),
-      inspectRepository(snapshots.targetDir),
-      loadConfig(repository.root),
-    ]);
-    let dispatchedRuns = 0;
-    const executions = await dispatchChecks(
-      [
         {
-          ...lintAdapter,
-          collect: async (context) => {
-            dispatchedRuns += 1;
-            return {
-              checkId: "lint",
-              target: context.target,
-              baselineObservations: [],
-              targetObservations: [],
-            };
-          },
+          repositoryRoot: repository.root,
+          changeSet,
+          config,
+          snapshots,
+          baselineInspection,
+          targetInspection,
+          signal: new AbortController().signal,
         },
-      ],
-      {
-        repositoryRoot: repository.root,
-        changeSet,
-        config,
-        snapshots,
-        baselineInspection,
-        targetInspection,
-        signal: new AbortController().signal,
-      },
-    );
-    const lint = described.checks.find(({ id }) => id === "lint");
-    const dispatched = dispatchedRuns === 1 && executions.length === 1;
+      );
+      const lint = described.checks.find(({ id }) => id === "lint");
 
-    expect(dispatched).toBe(true);
-    expect(lint?.applicability).toBe(
-      dispatched ? "applicable" : "not-applicable",
-    );
-    expect(lint?.targets).toEqual(["."]);
-    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
-  });
+      expect(dispatchedRuns).toBe(expectedRuns);
+      expect(executions).toHaveLength(expectedRuns);
+      expect(lint?.applicability).toBe(expectedApplicability);
+      expect(lint?.targets).toEqual(expectedTargets);
+      expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+    },
+  );
 
   it("renders the Checks dashboard in a wide interactive terminal", async () => {
     const io = {

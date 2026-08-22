@@ -31,7 +31,11 @@ import {
   managedSettingKeys,
 } from "../config/settings-registry.js";
 import type { SettingOrigin } from "../config/settings-definition.js";
-import { resolveInspectionPolicy } from "../checks/policy-scheduling.js";
+import {
+  resolveInspectionPolicy,
+  resolveScheduledTargetPolicy,
+} from "../checks/policy-scheduling.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
 
 export type {
   CheckApplicabilityDescription,
@@ -211,6 +215,7 @@ async function inspectConfiguredChecks(
       baselineInspection,
       targetInspection,
     };
+    const policyForFile = createFilePolicyResolver(config, changeSet);
     const entries = await Promise.all(
       DEFAULT_CHECK_ADAPTERS.map(async (adapter: CheckAdapter) => {
         const id = adapter.id as CheckId;
@@ -224,12 +229,25 @@ async function inspectConfiguredChecks(
         const applicability = await adapter.inspect(
           Object.freeze({ ...context, config: inspectionConfig }),
         );
+        const targets = applicability.applies
+          ? applicability.targets.filter(
+              (target) =>
+                resolveScheduledTargetPolicy(
+                  config,
+                  id,
+                  target,
+                  targetInspection,
+                  changeSet,
+                  policyForFile,
+                ) !== undefined,
+            )
+          : [];
         return [
           id,
-          applicability.applies
+          applicability.applies && targets.length > 0
             ? {
                 applicable: true,
-                targets: applicability.targets
+                targets: targets
                   .map(({ id: targetId }) => targetId)
                   .sort(compareCodeUnits),
                 executionClass: applicability.executionClass,
@@ -238,7 +256,9 @@ async function inspectConfiguredChecks(
                 applicable: false,
                 targets: [],
                 executionClass: CATALOG[id].executionClass,
-                reason: applicability.reason,
+                reason: applicability.applies
+                  ? "No applicable targets under the configured check policy"
+                  : applicability.reason,
               },
         ] as const;
       }),

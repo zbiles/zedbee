@@ -4,7 +4,6 @@ import {
   type CheckId,
   type ResolvedCheckPolicy,
 } from "../config/schema.js";
-import { resolveTargetPolicy } from "../config/target-policy.js";
 import {
   createFilePolicyResolver,
   type FilePolicyResolver,
@@ -49,7 +48,7 @@ import {
 } from "../cache/store.js";
 import {
   resolveInspectionPolicy,
-  shouldScheduleTarget,
+  resolveScheduledTargetPolicy,
 } from "./policy-scheduling.js";
 import {
   immutableConfigurationSnapshot,
@@ -822,24 +821,16 @@ export async function dispatchChecks(
     for (const target of targets) {
       let policy: ResolvedCheckPolicy;
       try {
-        policy = resolveTargetPolicy(
+        const scheduledPolicy = resolveScheduledTargetPolicy(
           context.config,
           adapter.id as CheckId,
           target,
           context.targetInspection,
+          context.changeSet,
+          policyForFile,
         );
-        if (
-          !shouldScheduleTarget(
-            adapter.id as CheckId,
-            target,
-            policy,
-            context.targetInspection,
-            context.changeSet,
-            policyForFile,
-          )
-        ) {
-          continue;
-        }
+        if (scheduledPolicy === undefined) continue;
+        policy = scheduledPolicy;
       } catch {
         const label = checkLabel(adapter.id);
         const queuedAt = clock();

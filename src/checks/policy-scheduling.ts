@@ -6,6 +6,7 @@ import type {
   ResolvedConfig,
 } from "../config/schema.js";
 import { snapshotManagedPolicy } from "../config/settings-registry.js";
+import { resolveTargetPolicy } from "../config/target-policy.js";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
   RepositoryInspection,
@@ -173,4 +174,25 @@ export function shouldScheduleTarget(
       );
     },
   );
+}
+
+export function resolveScheduledTargetPolicy(
+  config: ResolvedConfig,
+  checkId: CheckId,
+  target: CheckTarget,
+  inspection: RepositoryInspection,
+  changeSet: ChangeSet,
+  policyForFile: FilePolicyResolver,
+): Readonly<ResolvedCheckPolicy> | undefined {
+  const policy = resolveTargetPolicy(config, checkId, target, inspection);
+  return shouldScheduleTarget(
+    checkId,
+    target,
+    policy,
+    inspection,
+    changeSet,
+    policyForFile,
+  )
+    ? policy
+    : undefined;
 }
