@@ -86,5 +86,36 @@ describe("published configuration schema", () => {
       expect(configFileSchema.safeParse(unsafe).success).toBe(false);
       expect(validate(unsafe)).toBe(false);
     }
+
+    for (const [checkId, field] of [
+      ["formatting", "printWidth"],
+      ["formatting", "tabWidth"],
+      ["duplication", "minLines"],
+      ["duplication", "minTokens"],
+    ] as const) {
+      const safe = {
+        schemaVersion: 1,
+        checks: {
+          [checkId]: {
+            settings: { [field]: Number.MAX_SAFE_INTEGER },
+          },
+        },
+      };
+      const unsafe = {
+        schemaVersion: 1,
+        checks: {
+          [checkId]: {
+            settings: { [field]: Number.MAX_SAFE_INTEGER + 1 },
+          },
+        },
+      };
+
+      expect(configFileSchema.safeParse(safe).success).toBe(true);
+      expect(validate(safe), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+      expect(configFileSchema.safeParse(unsafe).success).toBe(false);
+      expect(validate(unsafe)).toBe(false);
+    }
   });
 });

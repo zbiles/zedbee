@@ -46,7 +46,7 @@ Exactly seven configurable checks expose settings beyond severity and timing:
 | `reactCorrectness`      | Bundled React and Hooks `rules`                                                        | File-scoped and limited to rule IDs Zedbee ships                               |
 | `reactAccessibility`    | Bundled jsx-a11y `rules`                                                               | File-scoped and limited to rule IDs Zedbee ships                               |
 
-A target-only score above `max` and a staged score that crosses `max` are blocking. `blockWorsening: true` additionally blocks an increase when both the baseline and target were already above `max`; set it to `false` to tolerate that above-limit worsening while teams pay down existing debt. Duplication `threshold` accepts 0 through 100. `minLines` and `minTokens` are positive integers. Duplication mode is one of `strict`, `mild`, or `weak`.
+A target-only score above `max` and a staged score that crosses `max` are blocking. `blockWorsening: true` additionally blocks an increase when both the baseline and target were already above `max`; set it to `false` to tolerate that above-limit worsening while teams pay down existing debt. Duplication `threshold` accepts 0 through 100. `minLines` and `minTokens` are positive safe integers. Duplication mode is one of `strict`, `mild`, or `weak`.
 
 ### Prettier settings
 
@@ -54,8 +54,8 @@ The formatting check accepts all and only these fourteen Prettier fields. Values
 
 | Field                        |       Default | Accepted value                                 |
 | ---------------------------- | ------------: | ---------------------------------------------- |
-| `printWidth`                 |          `80` | Positive integer                               |
-| `tabWidth`                   |           `2` | Positive integer                               |
+| `printWidth`                 |          `80` | Positive safe integer                          |
+| `tabWidth`                   |           `2` | Positive safe integer                          |
 | `useTabs`                    |       `false` | Boolean                                        |
 | `semi`                       |        `true` | Boolean                                        |
 | `singleQuote`                |       `false` | Boolean                                        |
@@ -69,9 +69,20 @@ The formatting check accepts all and only these fourteen Prettier fields. Values
 | `endOfLine`                  |        `"lf"` | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`          |
 | `embeddedLanguageFormatting` |      `"auto"` | `"auto"` or `"off"`                            |
 
+### Duplication settings
+
+Duplication uses these workspace-wide values:
+
+| Field       |  Default | Accepted value                    |
+| ----------- | -------: | --------------------------------- |
+| `threshold` |      `5` | Finite percentage from 0 to 100   |
+| `minLines`  |      `5` | Positive safe integer             |
+| `minTokens` |     `50` | Positive safe integer             |
+| `mode`      | `"mild"` | `"strict"`, `"mild"`, or `"weak"` |
+
 ### Bundled ESLint and React rules
 
-`lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options are validated against Zedbee's pinned ESLint and plugin versions, so compatibility follows the versions printed by `zedbee checks` and may change only with a Zedbee engine upgrade.
+`lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and may change only with a Zedbee engine upgrade.
 
 ```jsonc
 {
@@ -137,7 +148,7 @@ For `packages/legacy/view.ts`, the example resolves formatting `printWidth` to 1
 
 Duplication analysis is workspace-wide because jscpd compares clone regions and the duplication percentage across a whole workspace. Configure `threshold`, `minLines`, `minTokens`, and `mode` only under the root `checks.duplication`; putting them in `overrides` is rejected. Overrides may still supply duplication severity or timing, but Zedbee resolves those patches conservatively for the whole workspace target rather than per clone finding. OSV availability policy is also repository-wide: `checks.vulnerabilities.onUnavailable` accepts `block` or `warn`, while file-scoped availability overrides are rejected.
 
-Run `zedbee checks` to inspect effective settings and configured overrides. Its output identifies whether each root value came from the selected profile or repository configuration; `zedbee checks --format json` returns the complete deterministic metadata.
+Run `zedbee checks` to inspect effective settings and configured overrides. Its output identifies whether each root value came from the selected profile or repository configuration and includes the primary managed engine summary; it is not an inventory of every supporting package version. `zedbee checks --format json` returns the complete deterministic settings metadata.
 
 ## Managed-only configuration boundary
 

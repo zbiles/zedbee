@@ -297,12 +297,31 @@ describe("public documentation claims", () => {
     for (const mode of ["strict", "mild", "weak"]) {
       expect(publicDocs).toContain(`\`${mode}\``);
     }
+    for (const [field, defaultValue] of [
+      ["printWidth", "80"],
+      ["tabWidth", "2"],
+      ["minLines", "5"],
+      ["minTokens", "50"],
+    ]) {
+      expect(checks).toMatch(
+        new RegExp(
+          `\\|\\s*\`${field}\`\\s*\\|\\s*\`${defaultValue}\`\\s*\\|\\s*Positive safe integer\\s*\\|`,
+          "iu",
+        ),
+      );
+    }
     expect(publicDocs).toMatch(/exactly seven[^.]*configurable checks/i);
     expect(publicDocs).toMatch(/later matching override[^.]*takes precedence/i);
     expect(publicDocs).toMatch(/duplication[^.]*workspace-wide/i);
     expect(publicDocs).toMatch(/bundled rules[^.]*custom plugins/i);
     expect(publicDocs).toMatch(
-      /rule options[^.]*pinned ESLint and plugin versions/i,
+      /rule options[^.]*analyzer and plugin versions pinned by the installed Zedbee release/i,
+    );
+    expect(publicDocs).toMatch(
+      /`zedbee checks`[^.]*primary managed engine summary/i,
+    );
+    expect(publicDocs).not.toMatch(
+      /versions printed by `zedbee checks`|versions appear in `zedbee checks` output/i,
     );
     expect(publicDocs).toMatch(/does not load[^.]*native analyzer config/i);
     expect(publicDocs).toMatch(
