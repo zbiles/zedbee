@@ -39,6 +39,7 @@ import { compareCodeUnits } from "../core/compare.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import {
   createObservationCacheKey,
+  effectiveBehaviorFingerprint,
   observationCacheEngineIdentity,
 } from "../cache/key.js";
 import {
@@ -46,6 +47,10 @@ import {
   type ObservationCache,
 } from "../cache/store.js";
 import { shouldScheduleTarget } from "./policy-scheduling.js";
+import {
+  immutableConfigurationSnapshot,
+  snapshotManagedPolicy,
+} from "../config/settings-registry.js";
 
 export interface DispatchOptions {
   clock?: () => number;
@@ -91,9 +96,12 @@ function checkLabel(checkId: string): string {
 }
 
 function immutablePolicy(
+  checkId: string,
   policy: ResolvedCheckPolicy,
 ): Readonly<ResolvedCheckPolicy> {
-  return freezePolicy(policy);
+  return CHECK_IDS.includes(checkId as CheckId)
+    ? snapshotManagedPolicy(checkId as CheckId, policy)
+    : (immutableConfigurationSnapshot(policy) as Readonly<ResolvedCheckPolicy>);
 }
 
 function executionResult(
@@ -237,7 +245,9 @@ function snapshotOverride(
       Object.fromEntries(
         Object.entries(override.checks).map(([id, patch]) => [
           id,
-          patch === undefined ? undefined : freezePolicyPatch(patch),
+          patch === undefined
+            ? undefined
+            : snapshotManagedPolicy(id as CheckId, patch),
         ]),
       ),
     ),
@@ -247,41 +257,12 @@ function snapshotOverride(
   });
 }
 
-function freezePolicyPatch(
-  patch: NonNullable<ResolvedPolicyOverride["checks"][CheckId]>,
-): NonNullable<ResolvedPolicyOverride["checks"][CheckId]> {
-  return Object.freeze({
-    ...patch,
-    ...("settings" in patch && patch.settings !== undefined
-      ? { settings: Object.freeze({ ...patch.settings }) }
-      : {}),
-    ...("rules" in patch && patch.rules !== undefined
-      ? { rules: Object.freeze({ ...patch.rules }) }
-      : {}),
-  });
-}
-
-function freezePolicy(
-  policy: ResolvedCheckPolicy,
-): Readonly<ResolvedCheckPolicy> {
-  return Object.freeze({
-    ...policy,
-    ...("settings" in policy
-      ? { settings: Object.freeze({ ...policy.settings }) }
-      : {}),
-    ...("rules" in policy ? { rules: Object.freeze({ ...policy.rules }) } : {}),
-  }) as Readonly<ResolvedCheckPolicy>;
-}
-
 function snapshotConfigurationOrigins(
   origins: ResolvedConfig["configurationOrigins"] | undefined,
 ): ResolvedConfig["configurationOrigins"] {
-  return Object.freeze(
+  return immutableConfigurationSnapshot(
     Object.fromEntries(
-      CHECK_IDS.map((checkId) => [
-        checkId,
-        Object.freeze({ ...(origins?.[checkId] ?? {}) }),
-      ]),
+      CHECK_IDS.map((checkId) => [checkId, origins?.[checkId] ?? {}]),
     ),
   ) as ResolvedConfig["configurationOrigins"];
 }
@@ -294,12 +275,12 @@ function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
       Object.fromEntries(
         Object.entries(config.checks).map(([id, policy]) => [
           id,
-          freezePolicy(policy),
+          immutablePolicy(id, policy),
         ]),
       ),
     ) as ResolvedConfig["checks"],
     overrides: Object.freeze(config.overrides.map(snapshotOverride)),
-    reporting: Object.freeze({ ...config.reporting }),
+    reporting: immutableConfigurationSnapshot(config.reporting),
     configurationOrigins: snapshotConfigurationOrigins(
       config.configurationOrigins,
     ),
@@ -369,6 +350,35 @@ function cacheInspection(
   };
 }
 
+const CONFIGURABLE_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+const FILE_BEHAVIOR_CHECKS = new Set<CheckId>([
+  "lint",
+  "cyclomaticComplexity",
+  "readabilityComplexity",
+  "reactCorrectness",
+  "reactAccessibility",
+]);
+
+function cacheBehaviorPaths(
+  checkId: CheckId,
+  target: CheckTarget,
+  baseline: RepositoryInspection,
+  staged: RepositoryInspection,
+): readonly string[] {
+  if (!FILE_BEHAVIOR_CHECKS.has(checkId)) return Object.freeze([]);
+  const paths = [baseline, staged].flatMap((inspection) =>
+    inspection.workspaces
+      .filter(
+        ({ relativeRoot }) =>
+          target.kind === "repository" || relativeRoot === target.relativeRoot,
+      )
+      .flatMap(({ sourceFiles }) =>
+        sourceFiles.filter((path) => CONFIGURABLE_SOURCE_PATH.test(path)),
+      ),
+  );
+  return Object.freeze([...new Set(paths)].sort(compareCodeUnits));
+}
+
 function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
   return (
     left.id === right.id &&
@@ -380,6 +390,7 @@ function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
 async function collectObservations(
   adapter: Extract<AdapterSnapshot, { output: "observations" }>,
   runContext: CheckRunContext,
+  behavior: unknown,
   options: DispatchOptions,
 ): Promise<CheckObservationSet> {
   const engineIdentity = (
@@ -400,6 +411,7 @@ async function collectObservations(
         targetRoot: runContext.snapshots.targetDir,
         relevantConfig: {
           schemaVersion: runContext.config.schemaVersion,
+          behavior,
           baseline: cacheInspection(
             runContext.baselineInspection,
             runContext.target,
@@ -753,7 +765,7 @@ export async function dispatchChecks(
       continue;
     }
     if (inspectPolicy === undefined) continue;
-    const inspectExecutionPolicy = immutablePolicy(inspectPolicy);
+    const inspectExecutionPolicy = immutablePolicy(adapter.id, inspectPolicy);
     let applicability;
     try {
       applicability = snapshotApplicability(
@@ -875,7 +887,7 @@ export async function dispatchChecks(
         scheduled.push(Promise.resolve(execution));
         continue;
       }
-      const executionPolicy = immutablePolicy(policy);
+      const executionPolicy = immutablePolicy(adapter.id, policy);
 
       if (applicability.networkDisclosure !== undefined) {
         emit({
@@ -921,9 +933,23 @@ export async function dispatchChecks(
             };
             let adapterResult: CheckResult | undefined;
             if (adapter.output === "observations") {
+              const checkId = adapter.id as CheckId;
               const observations = await collectObservations(
                 adapter,
                 runContext,
+                CHECK_IDS.includes(checkId)
+                  ? effectiveBehaviorFingerprint(
+                      adapterContext.config,
+                      checkId,
+                      cacheBehaviorPaths(
+                        checkId,
+                        target,
+                        adapterContext.baselineInspection,
+                        adapterContext.targetInspection,
+                      ),
+                      adapterContext.changeSet,
+                    )
+                  : undefined,
                 options,
               );
               try {

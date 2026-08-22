@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { observationCacheEngineIdentity } from "../../src/cache/key.js";
+import {
+  effectiveBehaviorFingerprint,
+  observationCacheEngineIdentity,
+} from "../../src/cache/key.js";
 import type { ObservationCache } from "../../src/cache/store.js";
 import type {
   CheckAdapter,
@@ -7,6 +10,8 @@ import type {
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
+import type { ChangeSet, ChangedFile } from "../../src/git/change-set.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
@@ -70,6 +75,29 @@ const adapter = {
   }),
 } satisfies CheckAdapter;
 
+const unchanged: ChangeSet = {
+  files: new Map(),
+  isEmpty: true,
+  containsAddedLine: () => false,
+};
+
+function changed(...files: readonly ChangedFile[]): ChangeSet {
+  return {
+    files: new Map(files.map((file) => [file.path, file])),
+    isEmpty: files.length === 0,
+    containsAddedLine: () => false,
+  };
+}
+
+function behavior(
+  config: ResolvedConfig,
+  checkId: CheckId,
+  paths: readonly string[] = [],
+  changeSet: ChangeSet = unchanged,
+) {
+  return effectiveBehaviorFingerprint(config, checkId, paths, changeSet);
+}
+
 describe("observation cache keys", () => {
   it("versions React correctness calibration in the engine identity", () => {
     expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
@@ -98,5 +126,227 @@ describe("observation cache keys", () => {
 
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
+  });
+
+  it.each([
+    {
+      name: "formatting singleQuote",
+      checkId: "formatting" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: { formatting: { settings: { singleQuote: false } } },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: { formatting: { settings: { singleQuote: true } } },
+      }),
+    },
+    {
+      name: "lint no-console rule",
+      checkId: "lint" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: { lint: { rules: { "no-console": "warn" } } },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: { lint: { rules: { "no-console": "error" } } },
+      }),
+    },
+    {
+      name: "React rule options",
+      checkId: "reactCorrectness" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: {
+          reactCorrectness: {
+            rules: {
+              "react/jsx-key": ["error", { checkFragmentShorthand: false }],
+            },
+          },
+        },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: {
+          reactCorrectness: {
+            rules: {
+              "react/jsx-key": ["error", { checkFragmentShorthand: true }],
+            },
+          },
+        },
+      }),
+    },
+    {
+      name: "complexity maximum",
+      checkId: "cyclomaticComplexity" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: { cyclomaticComplexity: { max: 10 } },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: { cyclomaticComplexity: { max: 11 } },
+      }),
+    },
+    {
+      name: "complexity worsening policy",
+      checkId: "readabilityComplexity" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: { readabilityComplexity: { blockWorsening: true } },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: { readabilityComplexity: { blockWorsening: false } },
+      }),
+    },
+    {
+      name: "duplication minTokens",
+      checkId: "duplication" as const,
+      left: resolveConfig({
+        schemaVersion: 1,
+        checks: { duplication: { settings: { minTokens: 50 } } },
+      }),
+      right: resolveConfig({
+        schemaVersion: 1,
+        checks: { duplication: { settings: { minTokens: 75 } } },
+      }),
+    },
+  ])("separates $name behavior", ({ checkId, left, right }) => {
+    expect(behavior(left, checkId)).not.toEqual(behavior(right, checkId));
+  });
+
+  it("separates a matching override but ignores an unrelated override", () => {
+    const root = resolveConfig({
+      schemaVersion: 1,
+      checks: { lint: { rules: { "no-console": "warn" } } },
+    });
+    const overridden = resolveConfig({
+      schemaVersion: 1,
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
+          files: ["src/**"],
+          checks: { lint: { rules: { "no-console": "error" } } },
+        },
+      ],
+    });
+
+    expect(behavior(root, "lint", ["src/value.ts"])).not.toEqual(
+      behavior(overridden, "lint", ["src/value.ts"]),
+    );
+    expect(behavior(root, "lint", ["test/value.ts"])).toEqual(
+      behavior(overridden, "lint", ["test/value.ts"]),
+    );
+  });
+
+  it("normalizes target rename policy paths before fingerprinting", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+      ],
+    });
+    const changeSet = changed({
+      path: "test/new.test.ts",
+      previousPath: "src/old.ts",
+      status: "renamed",
+      addedRanges: [],
+    });
+
+    expect(behavior(config, "lint", ["src/old.ts"], changeSet).files).toEqual([
+      {
+        path: "test/new.test.ts",
+        policy: expect.objectContaining({
+          rules: expect.objectContaining({ "no-console": "off" }),
+        }),
+      },
+    ]);
+  });
+
+  it("retains option-array order while ignoring object and rule insertion order", () => {
+    const left = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: {
+          rules: {
+            "no-console": ["warn", { allow: ["warn", "error"] }],
+            eqeqeq: "error",
+          },
+        },
+      },
+    });
+    const equivalent = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: {
+          rules: {
+            eqeqeq: "error",
+            "no-console": ["warn", { allow: ["warn", "error"] }],
+          },
+        },
+      },
+    });
+    const reorderedOptions = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: {
+          rules: {
+            eqeqeq: "error",
+            "no-console": ["warn", { allow: ["error", "warn"] }],
+          },
+        },
+      },
+    });
+
+    expect(behavior(left, "lint", ["z.ts", "a.ts"])).toEqual(
+      behavior(equivalent, "lint", ["a.ts", "z.ts"]),
+    );
+    expect(behavior(left, "lint", ["z.ts", "a.ts"])).not.toEqual(
+      behavior(reorderedOptions, "lint", ["a.ts", "z.ts"]),
+    );
+  });
+
+  it("includes the selected behavior profile", () => {
+    const fast = resolveConfig({ schemaVersion: 1, profile: "fast" });
+    const recommended = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+    });
+
+    expect(behavior(fast, "lint")).not.toEqual(behavior(recommended, "lint"));
+  });
+
+  it("excludes configuration paths and presentation-only origins", () => {
+    const config = resolveConfig(
+      {
+        schemaVersion: 1,
+        checks: { lint: { rules: { "no-console": "warn" } } },
+      },
+      "/repo/.zedbeerc.jsonc",
+    );
+    const relabeled = {
+      ...config,
+      configPath: "/private/presentation-only.jsonc",
+      configurationOrigins: Object.freeze({
+        ...config.configurationOrigins,
+        lint: Object.freeze({
+          ...config.configurationOrigins.lint,
+          rules: Object.freeze({
+            kind: "repository" as const,
+            configPath: "/private/presentation-only.jsonc",
+          }),
+        }),
+      }),
+    };
+
+    expect(behavior(config, "lint", ["src/value.ts"])).toEqual(
+      behavior(relabeled, "lint", ["src/value.ts"]),
+    );
   });
 });

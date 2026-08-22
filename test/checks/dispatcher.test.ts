@@ -887,6 +887,116 @@ describe("dispatchChecks", () => {
     expect(decision.results[0]?.findings[0]?.severity).toBe("error");
   });
 
+  it("detaches and deeply freezes nested managed rule options before adapters receive them", async () => {
+    const sourceOption = { allow: ["warn"] };
+    const resolved = resolveConfig({ schemaVersion: 1, profile: "fast" });
+    const config = {
+      ...resolved,
+      checks: {
+        ...resolved.checks,
+        lint: {
+          ...resolved.checks.lint,
+          severity: "error" as const,
+          rules: {
+            ...resolved.checks.lint.rules,
+            "no-console": ["warn", sourceOption] as const,
+          },
+        },
+      },
+    } satisfies ResolvedConfig;
+    let adapterOption: { readonly allow: readonly string[] } | undefined;
+    const assertSnapshot = (adapterContext: CheckRunContext) => {
+      const configuration = adapterContext.config.checks.lint.rules[
+        "no-console"
+      ] as readonly [string, { readonly allow: readonly string[] }];
+      adapterOption = configuration[1];
+      expect(configuration).not.toBe(config.checks.lint.rules["no-console"]);
+      expect(adapterOption).not.toBe(sourceOption);
+      expect(adapterOption.allow).not.toBe(sourceOption.allow);
+      expect(Object.isFrozen(configuration)).toBe(true);
+      expect(Object.isFrozen(adapterOption)).toBe(true);
+      expect(Object.isFrozen(adapterOption.allow)).toBe(true);
+    };
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async (inspectContext) => {
+        assertSnapshot(inspectContext as CheckRunContext);
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      collect: async (runContext) => {
+        assertSnapshot(runContext);
+        return {
+          checkId: "lint",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+
+    await dispatchChecks([adapter], createContext(config));
+    sourceOption.allow.push("error");
+
+    expect(adapterOption?.allow).toEqual(["warn"]);
+  });
+
+  it("rejects executable rule option values before invoking adapters", async () => {
+    const resolved = resolveConfig({ schemaVersion: 1, profile: "fast" });
+    const config = {
+      ...resolved,
+      checks: {
+        ...resolved.checks,
+        lint: {
+          ...resolved.checks.lint,
+          severity: "error" as const,
+          rules: {
+            ...resolved.checks.lint.rules,
+            "no-console": [
+              "warn",
+              { format: () => "executable content" },
+            ] as const,
+          },
+        },
+      },
+    } satisfies ResolvedConfig;
+    let inspections = 0;
+    let collections = 0;
+    const adapter: ObservationCheckAdapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => {
+        inspections += 1;
+        return {
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+        };
+      },
+      collect: async (runContext) => {
+        collections += 1;
+        return {
+          checkId: "lint",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+
+    await expect(
+      dispatchChecks([adapter], createContext(config)),
+    ).rejects.toThrow(/JSON-compatible/u);
+    expect(inspections).toBe(0);
+    expect(collections).toBe(0);
+  });
+
   it("emits policy-filtered and severity-mapped completed results", async () => {
     const events: ScanEvent[] = [];
     const adapter = createLegacyAdapter(async () => ({

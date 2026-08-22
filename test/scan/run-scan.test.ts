@@ -1245,10 +1245,30 @@ describe("runScan", () => {
 
   it("runs the complete pipeline and cleans before returning an immutable report", async () => {
     const calls: string[] = [];
+    const privateConfigurationMarker = "private-config-marker-9283";
+    const reportConfig = resolveConfig(
+      {
+        schemaVersion: 1,
+        profile: "recommended",
+        checks: {
+          lint: {
+            rules: {
+              "no-console": ["warn", { allow: [privateConfigurationMarker] }],
+            },
+          },
+        },
+      },
+      "/repo/private-zedbee-config.jsonc",
+    );
 
     const report = await runScan({
       repositoryRoot: "/repo",
-      dependencies: dependencies(calls),
+      dependencies: dependencies(calls, {
+        loadConfig: async () => {
+          calls.push("load config");
+          return reportConfig;
+        },
+      }),
     });
     calls.push("return report");
 
@@ -1278,6 +1298,27 @@ describe("runScan", () => {
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
     expect(Object.isFrozen(report.summary.findings)).toBe(true);
+    expect(Object.keys(JSON.parse(JSON.stringify(report)))).toEqual([
+      "schemaVersion",
+      "outcome",
+      "exitCode",
+      "repositoryRoot",
+      "baseline",
+      "target",
+      "stagedFileCount",
+      "startedAt",
+      "durationMs",
+      "networkDisclosures",
+      "presentationPolicy",
+      "summary",
+      "checks",
+    ]);
+    const serialized = JSON.stringify(report);
+    expect(serialized).not.toContain(privateConfigurationMarker);
+    expect(serialized).not.toContain("private-zedbee-config.jsonc");
+    expect(serialized).not.toMatch(
+      /configurationOrigins|configPath|"rules"|"settings"|"plugins?"|"functions?"/u,
+    );
   });
 
   it.each([

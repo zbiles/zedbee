@@ -3,9 +3,20 @@ import { createReadStream } from "node:fs";
 import { readlink, realpath } from "node:fs/promises";
 import pLimit from "p-limit";
 import type { CheckTarget } from "../checks/adapter.js";
-import type { ResolvedCheckPolicy } from "../config/schema.js";
+import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
+import type {
+  CheckId,
+  ResolvedCheckPolicy,
+  ResolvedConfig,
+} from "../config/schema.js";
+import {
+  immutableConfigurationSnapshot,
+  snapshotManagedPolicy,
+} from "../config/settings-registry.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
+import type { ChangeSet } from "../git/change-set.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 
 const ENGINE_IDENTITIES = Object.freeze({
@@ -48,6 +59,68 @@ export interface ObservationCacheKeyInput {
   readonly platform?: string;
   readonly arch?: string;
   readonly zedbeeVersion?: string;
+}
+
+function targetPolicyPaths(
+  paths: readonly string[],
+  changeSet: ChangeSet,
+): readonly string[] {
+  const renames = new Map<string, string>();
+  for (const file of changeSet.files.values()) {
+    if (file.status !== "renamed") continue;
+    if (file.previousPath === undefined) {
+      throw new TypeError("Expected a renamed file to have a baseline path");
+    }
+    const baselinePath = normalizeRepositoryRelativePath(file.previousPath);
+    const targetPath = normalizeRepositoryRelativePath(file.path);
+    const existing = renames.get(baselinePath);
+    if (existing !== undefined && existing !== targetPath) {
+      throw new TypeError(
+        "Expected each baseline path to have one target path",
+      );
+    }
+    renames.set(baselinePath, targetPath);
+  }
+  return Object.freeze(
+    [
+      ...new Set(
+        paths.map((path) => {
+          const normalized = normalizeRepositoryRelativePath(path);
+          return renames.get(normalized) ?? normalized;
+        }),
+      ),
+    ].sort(compareCodeUnits),
+  );
+}
+
+export function effectiveBehaviorFingerprint(
+  config: ResolvedConfig,
+  checkId: CheckId,
+  paths: readonly string[],
+  changeSet: ChangeSet,
+): Readonly<{
+  repository: unknown;
+  files: readonly Readonly<{ path: string; policy: unknown }>[];
+}> {
+  const policyForFile = createFilePolicyResolver(config, changeSet);
+  const files = Object.freeze(
+    targetPolicyPaths(paths, changeSet).map((path) =>
+      Object.freeze({
+        path,
+        policy: snapshotManagedPolicy(
+          checkId,
+          policyForFile(checkId, path, "target"),
+        ),
+      }),
+    ),
+  );
+  return immutableConfigurationSnapshot({
+    repository: {
+      profile: config.profile,
+      policy: snapshotManagedPolicy(checkId, config.checks[checkId]),
+    },
+    files,
+  });
 }
 
 function stable(value: unknown): unknown {

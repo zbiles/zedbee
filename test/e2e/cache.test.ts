@@ -163,4 +163,109 @@ describe("observation cache integration", () => {
     expect(collections).toBe(1);
     expect(report.outcome).toBe("pass");
   });
+
+  it("misses for changed matching behavior and reuses equivalent reordered behavior", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      `${JSON.stringify({ name: "cache-policy-fixture" })}\n`,
+    );
+    await repository.write("src/value.ts", "console.log('baseline');\n");
+    await repository.commitAll("baseline");
+    await repository.write("src/value.ts", "console.log('target');\n");
+    await repository.git(["add", "--", "src/value.ts"]);
+    let collections = 0;
+    const adapter = {
+      id: "lint",
+      output: "observations",
+      inspect: async () => ({
+        applies: true as const,
+        executionClass: "project-analysis" as const,
+        requiresBaseline: false,
+        targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
+      }),
+      collect: async (context) => {
+        collections += 1;
+        return {
+          checkId: "lint",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    } satisfies CheckAdapter;
+    let currentConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "warn" } } },
+    });
+    const git = new GitClient(repository.root);
+    const dependencies: RunScanDependencies = {
+      loadConfig: async () => currentConfig,
+      createGitClient: () => git,
+      readChangeSet: readStagedChangeSet,
+      buildSnapshots: buildSnapshotPair,
+      inspectRepository,
+      baselineForEmptyChange: async () => "HEAD",
+      dispatch: dispatchChecks,
+      evaluate: evaluatePolicy,
+      adapters: [adapter],
+      now: () => new Date("2026-08-16T00:00:00.000Z"),
+      clock: () => 0,
+    };
+    const cacheRoot = await mkdtemp(join(tmpdir(), "zedbee-cache-policy-"));
+    onTestFinished(() => rm(cacheRoot, { recursive: true, force: true }));
+    const store = new ObservationCacheStore({ root: cacheRoot });
+    const keys: string[] = [];
+    const cache: ObservationCache = {
+      get: async (key) => {
+        keys.push(key);
+        return store.get(key);
+      },
+      set: async (key, observations) => store.set(key, observations),
+    };
+    const options = {
+      repositoryRoot: repository.root,
+      dependencies,
+      cache,
+    } satisfies RunScanOptions;
+
+    await runScan(options);
+    currentConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "warn" } } },
+      overrides: [
+        {
+          files: ["src/**"],
+          checks: {
+            lint: { rules: { "no-console": "error", eqeqeq: "warn" } },
+          },
+        },
+      ],
+    });
+    await runScan(options);
+    currentConfig = resolveConfig(
+      {
+        schemaVersion: 1,
+        profile: "recommended",
+        checks: { lint: { rules: { "no-console": "warn" } } },
+        overrides: [
+          {
+            files: ["src/**"],
+            checks: {
+              lint: { rules: { eqeqeq: "warn", "no-console": "error" } },
+            },
+          },
+        ],
+      },
+      "/different/presentation-only-config.jsonc",
+    );
+    await runScan(options);
+
+    expect(keys).toHaveLength(3);
+    expect(keys[0]).not.toBe(keys[1]);
+    expect(keys[1]).toBe(keys[2]);
+    expect(collections).toBe(2);
+  });
 });
