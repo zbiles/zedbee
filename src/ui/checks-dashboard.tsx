@@ -3,8 +3,8 @@ import {
   configurationOverrideLine,
   configurationSummary,
   configurationValueLine,
-  type CheckDescription,
-} from "../commands/checks.js";
+} from "../checks/configuration-presentation.js";
+import type { CheckDescription } from "../checks/description.js";
 import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
@@ -72,9 +72,11 @@ function CheckEntry({
           {configurationValueLine(key, value)}
         </Text>
       ))}
-      {check.configuration.overrides.map((override) => (
+      {check.configuration.overrides.map((override, index) => (
         <Text
-          key={override.files.join("|")}
+          key={`${index}:${override.files.join("|")}:${Object.keys(
+            override.values,
+          ).join("|")}`}
           wrap="wrap"
           {...colorProp(color, ZEDBEE_THEME.secondary)}
         >

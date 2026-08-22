@@ -4,7 +4,7 @@ import {
   type ChecksCommandDependencies,
   type ChecksCommandIO,
 } from "../../src/commands/checks.js";
-import { CHECK_IDS } from "../../src/config/schema.js";
+import { CHECK_IDS, type ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 
 function terminal(): ChecksCommandIO & { stdout: string[]; stderr: string[] } {
@@ -54,6 +54,84 @@ const dependencies: ChecksCommandDependencies = {
       ]),
     ),
 };
+
+function configuredDependencies(
+  config: ResolvedConfig,
+): ChecksCommandDependencies {
+  return {
+    ...dependencies,
+    loadConfig: async () => config,
+    inspectChecks: async () =>
+      new Map(
+        CHECK_IDS.map((id) => [
+          id,
+          {
+            applicable: true,
+            targets: ["."],
+            executionClass: "project-analysis",
+          },
+        ]),
+      ),
+  };
+}
+
+function configWithOverrides(
+  overrides: ResolvedConfig["overrides"],
+): ResolvedConfig {
+  const base = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+  return {
+    ...base,
+    overrides,
+  };
+}
+
+function configWithMutableLintRule(
+  repositoryRule: unknown[],
+  overrideRule: unknown[],
+): ResolvedConfig {
+  const base = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+  return {
+    ...base,
+    checks: {
+      ...base.checks,
+      lint: {
+        ...base.checks.lint,
+        rules: { "no-restricted-syntax": repositoryRule },
+      },
+    },
+    overrides: [
+      {
+        files: ["test/**"],
+        checks: {
+          lint: {
+            rules: { "no-alert": overrideRule },
+          },
+        },
+        configurationOrigins: base.configurationOrigins,
+      },
+    ],
+    configurationOrigins: {
+      ...base.configurationOrigins,
+      lint: {
+        "rules.no-restricted-syntax": { kind: "repository" },
+      },
+    },
+  } as unknown as ResolvedConfig;
+}
+
+function hasUnpairedSurrogate(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) return true;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return true;
+    }
+  }
+  return false;
+}
 
 describe("executeChecksCommand", () => {
   it("renders the Checks dashboard in a wide interactive terminal", async () => {
@@ -256,6 +334,149 @@ describe("executeChecksCommand", () => {
     });
     expect(JSON.parse(io.stdout.join(""))).toEqual(result);
     expect(io.stderr).toEqual([]);
+  });
+
+  it("keeps exact override patterns in JSON but escapes and bounds terminal previews", async () => {
+    const hostilePatterns = [
+      "src/\u001b[31mred/**",
+      "docs/line\nbreak/**",
+      "ui/\u202ereversed/**",
+      `long/${"segment-".repeat(80)}/**`,
+      "extra/a/**",
+      "extra/b/**",
+      "extra/c/**",
+    ];
+    const config = configWithOverrides([
+      {
+        files: hostilePatterns,
+        checks: { formatting: { settings: { tabWidth: 4 } } },
+        configurationOrigins: resolveConfig({
+          schemaVersion: 1,
+          profile: "thorough",
+        }).configurationOrigins,
+      },
+    ]);
+
+    const json = terminal();
+    const jsonResult = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      json,
+      configuredDependencies(config),
+    );
+    const formatting = jsonResult.checks.find(({ id }) => id === "formatting");
+    expect(formatting?.configuration.overrides[0]?.files).toEqual(
+      hostilePatterns,
+    );
+    expect(
+      JSON.parse(json.stdout.join("")).checks.find(
+        ({ id }: { id: string }) => id === "formatting",
+      ).configuration.overrides[0].files,
+    ).toEqual(hostilePatterns);
+
+    const text = terminal();
+    await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: false },
+      text,
+      configuredDependencies(config),
+    );
+    const output = text.stdout.join("");
+    expect(output).toContain(
+      "Override src/\\u001b[31mred/**, docs/line\\u000abreak/**, ui/\\u202ereversed/**",
+    );
+    expect(output).toContain("[truncated]");
+    expect(output).toContain("(+4 patterns)");
+    expect(output).toContain("settings.tabWidth: 4");
+    expect(output).not.toContain("\u001b[31m");
+    expect(output).not.toContain("line\nbreak/**");
+    expect(output).not.toContain("\u202e");
+    expect(output).not.toContain(hostilePatterns[3]);
+    expect(output).not.toMatch(/\u001b\[[0-9;]*m/u);
+  });
+
+  it("detaches and deep-freezes nested configuration values in descriptions", async () => {
+    const repositoryOption = {
+      selector: "CallExpression",
+      options: { allow: ["warn"] },
+    };
+    const overrideOption = {
+      selector: "Identifier",
+      options: { allow: ["error"] },
+    };
+    const repositoryRule = ["warn", repositoryOption];
+    const overrideRule = ["error", overrideOption];
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      configuredDependencies(
+        configWithMutableLintRule(repositoryRule, overrideRule),
+      ),
+    );
+    const lint = result.checks.find(({ id }) => id === "lint")!;
+    const describedRule = lint.configuration.values[
+      "rules.no-restricted-syntax"
+    ]!.value as readonly [
+      string,
+      { selector: string; options: { allow: string[] } },
+    ];
+    const describedOverrideRule = lint.configuration.overrides[0]!.values[
+      "rules.no-alert"
+    ] as readonly [string, { selector: string; options: { allow: string[] } }];
+
+    repositoryRule[0] = "off";
+    repositoryOption.selector = "Mutated";
+    repositoryOption.options.allow.push("confirm");
+    overrideRule[0] = "off";
+    overrideOption.selector = "MutatedOverride";
+    overrideOption.options.allow.push("prompt");
+
+    expect(describedRule).toEqual([
+      "warn",
+      { selector: "CallExpression", options: { allow: ["warn"] } },
+    ]);
+    expect(describedOverrideRule).toEqual([
+      "error",
+      { selector: "Identifier", options: { allow: ["error"] } },
+    ]);
+    expect(Object.isFrozen(describedRule)).toBe(true);
+    expect(Object.isFrozen(describedRule[1])).toBe(true);
+    expect(Object.isFrozen(describedRule[1].options)).toBe(true);
+    expect(Object.isFrozen(describedRule[1].options.allow)).toBe(true);
+    expect(Object.isFrozen(describedOverrideRule)).toBe(true);
+    expect(Object.isFrozen(describedOverrideRule[1])).toBe(true);
+    expect(() => {
+      (describedRule as unknown as string[])[0] = "off";
+    }).toThrow(TypeError);
+  });
+
+  it("uses code-point-safe bounded terminal value previews with explicit truncation markers", async () => {
+    const longText = `${"😀".repeat(140)}\u001b[31m${"tail".repeat(80)}`;
+    const config = configWithMutableLintRule(
+      [
+        "warn",
+        {
+          selector: longText,
+          values: Array.from({ length: 80 }, (_, index) => ({
+            index,
+            label: `entry-${index}`,
+          })),
+        },
+      ],
+      ["error", { selector: "Identifier" }],
+    );
+
+    const io = terminal();
+    await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: false },
+      io,
+      configuredDependencies(config),
+    );
+
+    const output = io.stdout.join("");
+    expect(output).toContain("rules.no-restricted-syntax:");
+    expect(output).toContain("[truncated]");
+    expect(output).toContain("\\u001b");
+    expect(output).not.toContain("\u001b[31m");
+    expect(hasUnpairedSurrogate(output)).toBe(false);
   });
 
   it("renders deterministic ANSI-free text and fails closed on inspection errors", async () => {

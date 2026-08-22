@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { CheckDescription } from "../../src/commands/checks.js";
+import type { CheckDescription } from "../../src/checks/description.js";
 
 const originalForceColor = process.env.FORCE_COLOR;
 
@@ -64,6 +64,46 @@ const checks: readonly CheckDescription[] = [
       customized: false,
       values: {},
       overrides: [],
+    },
+  },
+];
+
+const hostilePatterns = [
+  "src/\u001b[31mred/**",
+  "docs/line\nbreak/**",
+  "ui/\u202ereversed/**",
+  `long/${"segment-".repeat(80)}/**`,
+  "extra/a/**",
+  "extra/b/**",
+  "extra/c/**",
+];
+
+const hostileChecks: readonly CheckDescription[] = [
+  {
+    ...checks[0]!,
+    configuration: {
+      customized: true,
+      values: {
+        "settings.printWidth": {
+          value: `${"😀".repeat(140)}\u001b[31m${"tail".repeat(80)}`,
+          source: "repository",
+          customized: true,
+        },
+      },
+      overrides: [
+        {
+          files: hostilePatterns,
+          values: { "settings.tabWidth": 4 },
+        },
+        {
+          files: ["repeat/**"],
+          values: { "settings.semi": false },
+        },
+        {
+          files: ["repeat/**"],
+          values: { "settings.singleQuote": true },
+        },
+      ],
     },
   },
 ];
@@ -179,5 +219,83 @@ describe("ChecksDashboard", () => {
       "settings.printWidth: 100 (repository) (customized)",
     );
     expect(rendered).not.toContain("\u001b[2J\u001b[3J\u001b[H");
+  });
+
+  it("escapes and bounds unsafe override patterns and values in the Ink terminal output", async () => {
+    const output: string[] = [];
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
+    Object.defineProperty(process.stdout, "isTTY", {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(process.stdout, "rows", {
+      configurable: true,
+      value: 8,
+    });
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      output.push(String(args[0] ?? ""));
+      const callback = args.find((value) => typeof value === "function");
+      if (typeof callback === "function")
+        queueMicrotask(() => (callback as (error: null) => void)(null));
+      return true;
+    }) as typeof process.stdout.write);
+
+    try {
+      const { runInkChecks } = await import("../../src/ui/checks-dashboard.js");
+      await runInkChecks(hostileChecks, { width: 70, color: false });
+    } finally {
+      stdout.mockRestore();
+      if (isTTY === undefined)
+        delete (process.stdout as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(process.stdout, "isTTY", isTTY);
+      if (rows === undefined) delete (process.stdout as { rows?: number }).rows;
+      else Object.defineProperty(process.stdout, "rows", rows);
+    }
+
+    const rendered = output.join("");
+    expect(rendered).toContain("src/\\u001b[31mred/**");
+    expect(rendered).toContain("docs/line\\u000abreak/**");
+    expect(rendered).toContain("ui/\\u202ereversed/**");
+    expect(rendered).toContain("[truncated]");
+    expect(rendered).toContain("(+4 patterns)");
+    expect(rendered).not.toContain("\u001b[31m");
+    expect(rendered).not.toContain("line\nbreak/**");
+    expect(rendered).not.toContain("\u202e");
+    expect(rendered).not.toContain(hostilePatterns[3]);
+    expect(rendered).not.toContain("\u001b[2J\u001b[3J\u001b[H");
+    const plainFrame = rendered.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    expect(
+      Math.max(...plainFrame.split("\n").map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(70);
+  });
+
+  it("uses stable override row keys for repeated identical file patterns", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { ChecksDashboard } =
+      await import("../../src/ui/checks-dashboard.js");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+
+    try {
+      const frame = render(
+        React.createElement(ChecksDashboard, {
+          width: 100,
+          color: false,
+          checks: hostileChecks,
+        }),
+      ).lastFrame()!;
+
+      expect(frame.match(/Override repeat\/\*\*/gu)).toHaveLength(2);
+      expect(frame).toContain("settings.semi: false");
+      expect(frame).toContain("settings.singleQuote: true");
+      expect(consoleError).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

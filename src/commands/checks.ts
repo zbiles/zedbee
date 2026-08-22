@@ -3,6 +3,13 @@ import type {
   ExecutionClass,
   InspectionContext,
 } from "../checks/adapter.js";
+import { configurationTextLines } from "../checks/configuration-presentation.js";
+import type {
+  CheckApplicabilityDescription,
+  CheckConfigurationDescription,
+  CheckDescription,
+  EffectiveSettingDescription,
+} from "../checks/description.js";
 import { loadConfig } from "../config/load-config.js";
 import {
   CHECK_IDS,
@@ -18,11 +25,19 @@ import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import {
+  immutableConfigurationSnapshot,
   isConfigurableRuleCheckId,
   managedPolicyScalarKeys,
   managedSettingKeys,
 } from "../config/settings-registry.js";
 import type { SettingOrigin } from "../config/settings-definition.js";
+
+export type {
+  CheckApplicabilityDescription,
+  CheckConfigurationDescription,
+  CheckDescription,
+  EffectiveSettingDescription,
+} from "../checks/description.js";
 
 export type ChecksOutputFormat = "auto" | "text" | "json";
 
@@ -39,47 +54,6 @@ export interface ChecksCommandIO {
   readonly env: Record<string, string | undefined>;
   writeStdout(value: string): void;
   writeStderr(value: string): void;
-}
-
-export interface CheckApplicabilityDescription {
-  readonly applicable: boolean;
-  readonly targets: readonly string[];
-  readonly executionClass: ExecutionClass;
-  readonly reason?: string;
-}
-
-export interface EffectiveSettingDescription {
-  readonly value: unknown;
-  readonly source: "profile" | "repository";
-  readonly customized: boolean;
-}
-
-export interface CheckConfigurationDescription {
-  readonly customized: boolean;
-  readonly values: Readonly<Record<string, EffectiveSettingDescription>>;
-  readonly overrides: readonly Readonly<{
-    readonly files: readonly string[];
-    readonly values: Readonly<Record<string, unknown>>;
-  }>[];
-}
-
-export interface CheckDescription {
-  readonly id: CheckId;
-  readonly description: string;
-  readonly severity: string;
-  readonly timing: string;
-  readonly applicability: "applicable" | "not-applicable";
-  readonly targets: readonly string[];
-  readonly executionClass: ExecutionClass;
-  readonly network: "none" | "online-package-metadata-only";
-  readonly engine: {
-    readonly name: string;
-    readonly version: string;
-    readonly license: string;
-  };
-  readonly limitation: string;
-  readonly configuration: CheckConfigurationDescription;
-  readonly reason?: string;
 }
 
 export interface ChecksCommandResult {
@@ -298,6 +272,10 @@ function repositoryValueSource(
   return origin?.kind === "repository" ? "repository" : "profile";
 }
 
+function configurationValueSnapshot(value: unknown): unknown {
+  return immutableConfigurationSnapshot(value);
+}
+
 function policyValueEntries(
   checkId: CheckId,
   policy: ResolvedCheckPolicy,
@@ -360,7 +338,7 @@ function describeConfiguration(
       return [
         key,
         Object.freeze({
-          value,
+          value: configurationValueSnapshot(value),
           source,
           customized: source === "repository",
         }),
@@ -374,7 +352,12 @@ function describeConfiguration(
         if (patch === undefined) return undefined;
         return Object.freeze({
           files: Object.freeze([...override.files]),
-          values: orderedRecord(patchValueEntries(checkId, patch)),
+          values: orderedRecord(
+            patchValueEntries(checkId, patch).map(([key, value]) => [
+              key,
+              configurationValueSnapshot(value),
+            ]),
+          ),
         });
       })
       .filter(
@@ -393,76 +376,6 @@ function describeConfiguration(
     values,
     overrides,
   });
-}
-
-function pluralizeValue(count: number): string {
-  return count === 1 ? "value" : "values";
-}
-
-export function configurationSummary(
-  configuration: CheckConfigurationDescription,
-): string {
-  const counts = { profile: 0, repository: 0 };
-  for (const value of Object.values(configuration.values)) {
-    counts[value.source] += 1;
-  }
-  const parts: string[] = [];
-  if (counts.profile > 0) {
-    parts.push(`${counts.profile} profile ${pluralizeValue(counts.profile)}`);
-  }
-  if (counts.repository > 0) {
-    parts.push(
-      `${counts.repository} repository ${pluralizeValue(counts.repository)}`,
-    );
-  }
-  if (parts.length === 0) parts.push("profile defaults");
-  return `Configuration: ${parts.join(", ")}`;
-}
-
-function displayConfigurationValue(value: unknown): string {
-  const rendered = JSON.stringify(value);
-  if (rendered === undefined) return "null";
-  return rendered
-    .replaceAll(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) => {
-      const code = character.codePointAt(0) ?? 0;
-      return `\\u${code.toString(16).padStart(4, "0")}`;
-    })
-    .slice(0, 256);
-}
-
-export function configurationValueLine(
-  key: string,
-  value: EffectiveSettingDescription,
-): string {
-  return `${key}: ${displayConfigurationValue(value.value)} (${value.source})${
-    value.customized ? " (customized)" : ""
-  }`;
-}
-
-export function configurationOverrideLine(
-  files: readonly string[],
-  values: Readonly<Record<string, unknown>>,
-): string {
-  const renderedValues = Object.entries(values)
-    .map(([key, value]) => `${key}: ${displayConfigurationValue(value)}`)
-    .join(", ");
-  return `Override ${files.join(", ")}: ${renderedValues}`;
-}
-
-function configurationTextLines(
-  configuration: CheckConfigurationDescription,
-): readonly string[] {
-  const customizedValues = Object.entries(configuration.values)
-    .filter(([, value]) => value.customized)
-    .map(([key, value]) => configurationValueLine(key, value));
-  const overrides = configuration.overrides.map(({ files, values }) =>
-    configurationOverrideLine(files, values),
-  );
-  return [
-    configurationSummary(configuration),
-    ...customizedValues,
-    ...overrides,
-  ];
 }
 
 function renderText(result: ChecksCommandResult): string {
