@@ -247,4 +247,69 @@ describe("public documentation claims", () => {
     expect(readme).toMatch(/checks --format text[^.]*plain/i);
     expect(readme).toMatch(/checks --format json[^.]*ANSI-free/i);
   });
+
+  it("documents the complete managed check customization contract", async () => {
+    const [readme, checks, support] = await Promise.all([
+      read("README.md"),
+      read("docs/checks.md"),
+      read("docs/support.md"),
+    ]);
+    const publicDocs = [readme, checks, support].join("\n");
+
+    for (const checkId of [
+      "formatting",
+      "lint",
+      "cyclomaticComplexity",
+      "readabilityComplexity",
+      "duplication",
+      "reactCorrectness",
+      "reactAccessibility",
+    ]) {
+      expect(publicDocs).toContain(`\`${checkId}\``);
+    }
+    for (const option of [
+      "printWidth",
+      "tabWidth",
+      "useTabs",
+      "semi",
+      "singleQuote",
+      "quoteProps",
+      "jsxSingleQuote",
+      "trailingComma",
+      "bracketSpacing",
+      "bracketSameLine",
+      "arrowParens",
+      "proseWrap",
+      "endOfLine",
+      "embeddedLanguageFormatting",
+    ]) {
+      expect(publicDocs).toContain(`\`${option}\``);
+    }
+    for (const setting of [
+      "max",
+      "blockWorsening",
+      "threshold",
+      "minLines",
+      "minTokens",
+    ]) {
+      expect(publicDocs).toContain(`\`${setting}\``);
+    }
+    for (const mode of ["strict", "mild", "weak"]) {
+      expect(publicDocs).toContain(`\`${mode}\``);
+    }
+    expect(publicDocs).toMatch(/exactly seven[^.]*configurable checks/i);
+    expect(publicDocs).toMatch(/later matching override[^.]*takes precedence/i);
+    expect(publicDocs).toMatch(/duplication[^.]*workspace-wide/i);
+    expect(publicDocs).toMatch(/bundled rules[^.]*custom plugins/i);
+    expect(publicDocs).toMatch(
+      /rule options[^.]*pinned ESLint and plugin versions/i,
+    );
+    expect(publicDocs).toMatch(/does not load[^.]*native analyzer config/i);
+    expect(publicDocs).toMatch(
+      /native configs[^.]*different Zedbee results[^.]*not loaded/i,
+    );
+    expect(publicDocs).toMatch(
+      /`zedbee checks`[^.]*effective settings[^.]*overrides/i,
+    );
+  });
 });

@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { Ajv } from "ajv";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { configFileSchema } from "../../src/config/schema.js";
 
 const root = resolve(import.meta.dirname, "../..");
 let scratch: string;
@@ -67,5 +68,23 @@ describe("published configuration schema", () => {
         reporting: { terminalFindingLimit: 0 },
       }),
     ).toBe(false);
+
+    for (const checkId of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const safe = {
+        schemaVersion: 1,
+        checks: { [checkId]: { max: Number.MAX_SAFE_INTEGER } },
+      };
+      const unsafe = {
+        schemaVersion: 1,
+        checks: { [checkId]: { max: Number.MAX_SAFE_INTEGER + 1 } },
+      };
+
+      expect(configFileSchema.safeParse(safe).success).toBe(true);
+      expect(validate(safe), validate.errors?.map(String).join("\n")).toBe(
+        true,
+      );
+      expect(configFileSchema.safeParse(unsafe).success).toBe(false);
+      expect(validate(unsafe)).toBe(false);
+    }
   });
 });

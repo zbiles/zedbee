@@ -64,11 +64,32 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
   "schemaVersion": 1,
   "profile": "recommended",
   "checks": {
-    "formatting": { "severity": "error", "when": "relevant" },
+    "formatting": {
+      "severity": "error",
+      "settings": { "printWidth": 100, "singleQuote": true },
+    },
+    "lint": { "rules": { "no-console": "warn" } },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "readabilityComplexity": { "max": 15, "blockWorsening": true },
+    "duplication": {
+      "threshold": 5,
+      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" },
+    },
+    "reactCorrectness": { "rules": { "react/prop-types": "off" } },
+    "reactAccessibility": {
+      "rules": { "jsx-a11y/no-autofocus": "warn" },
+    },
     "vulnerabilities": { "severity": "error", "onUnavailable": "block" },
   },
+  "overrides": [
+    {
+      "files": ["**/*.test.{ts,tsx}"],
+      "checks": {
+        "lint": { "rules": { "no-console": "off" } },
+        "formatting": { "settings": { "printWidth": 88 } },
+      },
+    },
+  ],
   "reporting": {
     "sourceExcerpts": "interactive",
     "terminalFindingLimit": 25,
@@ -82,7 +103,11 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 }
 ```
 
-Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. The managed defaults are cyclomatic complexity 20 and readability complexity 15; both block a staged increase that remains above the configured limit.
+Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. Exactly seven configurable checks expose additional managed settings: `formatting`, `lint`, `cyclomaticComplexity`, `readabilityComplexity`, `duplication`, `reactCorrectness`, and `reactAccessibility`. The complete option tables, defaults, rule boundaries, and override examples are in the [check guide](docs/checks.md).
+
+Overrides are evaluated in array order for each repository-relative file. Every matching patch is applied, and a later matching override takes precedence for the fields it supplies. This is true per-file behavior: two staged files in the same workspace can receive different formatting, rule, complexity, severity, and timing policy. Duplication is the exception because jscpd compares a workspace as a whole; its `threshold`, `minLines`, `minTokens`, and `mode` settings are workspace-wide and are rejected in file overrides.
+
+Run `zedbee checks` to inspect effective settings, their profile or repository source, and configured file overrides without running analysis. Use `zedbee checks --format json` for the complete machine-readable view. `zedbee init` deliberately writes only the selected profile/checks and existing guidance; the shipped editor schema, this documentation, and `zedbee checks` are the settings discovery surface.
 
 `reporting.sourceExcerpts` accepts `never`, `interactive`, or `always` and defaults to `interactive`. `never` omits ordinary source from every format, `interactive` includes it only in Ink, and `always` includes it in Ink, text, JSON, and SARIF. An explicit `--include-source` or `--no-source` overrides repository policy for that scan.
 
@@ -94,7 +119,9 @@ The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.j
 
 ## Managed analyzer boundary
 
-Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. TypeScript configuration is parsed as staged data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. A workspace containing TypeScript source must provide a contained `tsconfig.json`; otherwise typed lint and type analysis fail closed. This is stricter than tools that silently invent compiler options, but avoids validating staged code under settings different from the project.
+Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options are validated against Zedbee's pinned ESLint and plugin versions. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as staged data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. A workspace containing TypeScript source must provide a contained `tsconfig.json`; otherwise typed lint and type analysis fail closed. This is stricter than tools that silently invent compiler options, but avoids validating staged code under settings different from the project.
+
+Zedbee does not load any native analyzer config files, including native Prettier and ESLint configs. Adoption therefore has a deliberate tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Re-express the supported policy in `.zedbeerc.jsonc`, within Zedbee's bounded managed settings, rather than expecting native configuration parity.
 
 Project checks inspect a workspace as a whole, then compare the isolated `HEAD` and index snapshots so existing debt remains non-blocking. This roughly doubles analyzer work. Knip runs as a managed shell-free subprocess because it has no supported analysis API; all framework plugins are disabled so repository configs cannot execute. That safety choice is less framework-aware than a normal Knip setup, and dynamic imports, framework conventions, wildcard package exports, and TypeScript path aliases may need future managed profiles. jscpd also runs as a subprocess and receives an exact source-file list; exceptionally large workspaces can exceed the operating system argument limit and fail incomplete. Dependency Cruiser runs through its public API.
 

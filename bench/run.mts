@@ -8,6 +8,7 @@ import { structuralSecurityAdapter } from "../dist/checks/structural-security/ad
 import { createVulnerabilitiesAdapter } from "../dist/checks/vulnerabilities/adapter.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../dist/scan/run-scan.js";
 import { observationCheckResult } from "../dist/checks/observation-result.js";
+import { createFilePolicyResolver } from "../dist/config/file-policy.js";
 import { resolveConfig } from "../dist/config/profiles.js";
 import { inspectRepository } from "../dist/inspection/inspect-repository.js";
 import { renderJson } from "../dist/renderers/json.js";
@@ -159,6 +160,7 @@ async function phases(fixture: FixtureName, scratch: string) {
     },
   };
   const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+  const policyForFile = createFilePolicyResolver(config, changeSet);
   const inspectionContext = {
     repositoryRoot: resolve(here, ".."),
     changeSet,
@@ -182,6 +184,7 @@ async function phases(fixture: FixtureName, scratch: string) {
     },
     target,
     policy: config.checks.structuralSecurity,
+    policyForFile,
     signal: new AbortController().signal,
   };
   const observations = await structuralSecurityAdapter.collect(runContext);
@@ -257,6 +260,7 @@ async function phases(fixture: FixtureName, scratch: string) {
             snapshots: runContext.snapshots,
             target: adapterTarget,
             policy: config.checks[adapter.id as keyof typeof config.checks],
+            policyForFile,
             signal: runContext.signal,
           };
           if (adapter.output === "observations") {

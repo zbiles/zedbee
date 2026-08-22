@@ -32,4 +32,113 @@ Complete JSON, text, and SARIF exports report every attributed finding. Automati
 
 Every check can be set to severity `off`, `warn`, or `error`. A warning remains visible but does not block. An enabled check that cannot complete returns exit code 2 when `failOnIncomplete` is enabled.
 
-File overrides may change severity, timing, and supported numeric thresholds. OSV availability policy is deliberately repository-wide: `checks.vulnerabilities.onUnavailable` accepts `block` or `warn`, while file-scoped overrides are rejected because an outage affects the repository-wide request.
+## Managed customization
+
+Exactly seven configurable checks expose settings beyond severity and timing:
+
+| Check ID                | Managed settings                                                                       | Defaults and boundary                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `formatting`            | Fourteen Prettier options under `settings`                                             | File-scoped; defaults are listed below                                         |
+| `lint`                  | Bundled ESLint and typescript-eslint `rules`                                           | File-scoped and limited to rule IDs Zedbee ships                               |
+| `cyclomaticComplexity`  | Positive safe-integer `max`; Boolean `blockWorsening`                                  | `max: 20`, `blockWorsening: true`; file-scoped                                 |
+| `readabilityComplexity` | Positive safe-integer `max`; Boolean `blockWorsening`                                  | `max: 15`, `blockWorsening: true`; file-scoped                                 |
+| `duplication`           | Percentage `threshold`; `settings.minLines`, `settings.minTokens`, and `settings.mode` | `threshold: 5`, `minLines: 5`, `minTokens: 50`, `mode: "mild"`; workspace-wide |
+| `reactCorrectness`      | Bundled React and Hooks `rules`                                                        | File-scoped and limited to rule IDs Zedbee ships                               |
+| `reactAccessibility`    | Bundled jsx-a11y `rules`                                                               | File-scoped and limited to rule IDs Zedbee ships                               |
+
+A target-only score above `max` and a staged score that crosses `max` are blocking. `blockWorsening: true` additionally blocks an increase when both the baseline and target were already above `max`; set it to `false` to tolerate that above-limit worsening while teams pay down existing debt. Duplication `threshold` accepts 0 through 100. `minLines` and `minTokens` are positive integers. Duplication mode is one of `strict`, `mild`, or `weak`.
+
+### Prettier settings
+
+The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
+
+| Field                        |       Default | Accepted value                                 |
+| ---------------------------- | ------------: | ---------------------------------------------- |
+| `printWidth`                 |          `80` | Positive integer                               |
+| `tabWidth`                   |           `2` | Positive integer                               |
+| `useTabs`                    |       `false` | Boolean                                        |
+| `semi`                       |        `true` | Boolean                                        |
+| `singleQuote`                |       `false` | Boolean                                        |
+| `quoteProps`                 | `"as-needed"` | `"as-needed"`, `"consistent"`, or `"preserve"` |
+| `jsxSingleQuote`             |       `false` | Boolean                                        |
+| `trailingComma`              |       `"all"` | `"all"`, `"es5"`, or `"none"`                  |
+| `bracketSpacing`             |        `true` | Boolean                                        |
+| `bracketSameLine`            |       `false` | Boolean                                        |
+| `arrowParens`                |    `"always"` | `"always"` or `"avoid"`                        |
+| `proseWrap`                  |  `"preserve"` | `"always"`, `"never"`, or `"preserve"`         |
+| `endOfLine`                  |        `"lf"` | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`          |
+| `embeddedLanguageFormatting` |      `"auto"` | `"auto"` or `"off"`                            |
+
+### Bundled ESLint and React rules
+
+`lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options are validated against Zedbee's pinned ESLint and plugin versions, so compatibility follows the versions printed by `zedbee checks` and may change only with a Zedbee engine upgrade.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "checks": {
+    "lint": {
+      "rules": {
+        "no-console": "warn",
+        "@typescript-eslint/no-unused-vars": [
+          "error",
+          { "argsIgnorePattern": "^_" },
+        ],
+      },
+    },
+    "reactCorrectness": {
+      "rules": {
+        "react/prop-types": "off",
+        "react-hooks/rules-of-hooks": "error",
+      },
+    },
+    "reactAccessibility": {
+      "rules": { "jsx-a11y/no-autofocus": "warn" },
+    },
+  },
+}
+```
+
+### Ordered file overrides
+
+File overrides are evaluated in array order independently for every repository-relative file. All matching entries contribute a patch; a later matching override takes precedence only for fields it supplies. Settings omitted by that later entry retain the result of the profile, repository check policy, and earlier matches.
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "checks": {
+    "formatting": { "settings": { "printWidth": 100 } },
+    "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
+    "duplication": {
+      "threshold": 5,
+      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" },
+    },
+  },
+  "overrides": [
+    {
+      "files": ["packages/**"],
+      "checks": {
+        "formatting": { "settings": { "printWidth": 90 } },
+        "cyclomaticComplexity": { "max": 18 },
+      },
+    },
+    {
+      "files": ["packages/legacy/**"],
+      "checks": {
+        "formatting": { "settings": { "printWidth": 120 } },
+        "cyclomaticComplexity": { "blockWorsening": false },
+      },
+    },
+  ],
+}
+```
+
+For `packages/legacy/view.ts`, the example resolves formatting `printWidth` to 120, complexity `max` to 18, and `blockWorsening` to false. A file outside `packages/**` keeps the repository values. This is true per-file last-match behavior, not one merged workspace policy.
+
+Duplication analysis is workspace-wide because jscpd compares clone regions and the duplication percentage across a whole workspace. Configure `threshold`, `minLines`, `minTokens`, and `mode` only under the root `checks.duplication`; putting them in `overrides` is rejected. Overrides may still supply duplication severity or timing, but Zedbee resolves those patches conservatively for the whole workspace target rather than per clone finding. OSV availability policy is also repository-wide: `checks.vulnerabilities.onUnavailable` accepts `block` or `warn`, while file-scoped availability overrides are rejected.
+
+Run `zedbee checks` to inspect effective settings and configured overrides. Its output identifies whether each root value came from the selected profile or repository configuration; `zedbee checks --format json` returns the complete deterministic metadata.
+
+## Managed-only configuration boundary
+
+Zedbee does not load a project's native analyzer config. It ignores native Prettier, ESLint, plugin, parser, and executable analyzer configuration in favor of its pinned engines and inert managed settings. Teams with native configs may see different Zedbee results because those files are not loaded. Adopt Zedbee by calibrating the supported `.zedbeerc.jsonc` settings and rule inventory, not by assuming identical results from an existing native tool invocation.

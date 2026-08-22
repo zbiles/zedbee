@@ -102,6 +102,21 @@ describe("packaged init command", () => {
     expect(config).toContain('"lint": "error"');
     expect(config).toContain('"types": "error"');
     expect(config).toContain('"formatting": "off"');
+    expect(config).toContain(
+      '"$schema": "./node_modules/zedbee/schema/zedbee.schema.json"',
+    );
+    expect(config).toContain('"agentGuidance"');
+    for (const expandedSetting of [
+      '"settings"',
+      '"rules"',
+      '"max"',
+      '"blockWorsening"',
+      '"threshold"',
+      '"minLines"',
+      '"minTokens"',
+    ]) {
+      expect(config).not.toContain(expandedSetting);
+    }
     expect(hook).toContain("printf 'existing hook\\n'");
     expect(hook).toContain("npm test");
     expect(hook.match(/zedbee scan/gu) ?? []).toHaveLength(1);

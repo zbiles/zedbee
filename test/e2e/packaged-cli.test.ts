@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Ajv } from "ajv";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
@@ -249,6 +250,140 @@ describe("packaged Zedbee CLI", () => {
     for (const command of ["init", "scan", "checks", "doctor"]) {
       expect(result.stdout).toContain(command);
     }
+  }, 30_000);
+
+  it("ships customization schema and effective check metadata", async () => {
+    const repository = await createInstalledRepository();
+    const config = {
+      $schema: "./node_modules/zedbee/schema/zedbee.schema.json",
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: {
+          severity: "error",
+          settings: { printWidth: 100, singleQuote: true },
+        },
+        lint: { rules: { "no-console": "warn" } },
+        cyclomaticComplexity: { max: 12, blockWorsening: false },
+        duplication: {
+          threshold: 3,
+          settings: { minLines: 8, minTokens: 70, mode: "strict" },
+        },
+      },
+      overrides: [
+        {
+          files: ["src/**/*.ts"],
+          checks: {
+            formatting: { settings: { printWidth: 88 } },
+            lint: { rules: { "no-console": "off" } },
+          },
+        },
+      ],
+    } as const;
+    await repository.write(".zedbeerc.jsonc", `${JSON.stringify(config)}\n`);
+
+    const shippedSchema = JSON.parse(
+      await repository.read("node_modules/zedbee/schema/zedbee.schema.json"),
+    );
+    const validate = new Ajv({ allErrors: true }).compile(shippedSchema);
+    expect(validate(config), validate.errors?.map(String).join("\n")).toBe(
+      true,
+    );
+
+    const result = await runPackagedCli(repository.root, [
+      "checks",
+      "--format",
+      "json",
+    ]);
+    expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(0);
+    const output = JSON.parse(result.stdout) as {
+      checks: Array<{
+        id: string;
+        configuration: {
+          customized: boolean;
+          values: Record<
+            string,
+            { value: unknown; source: string; customized: boolean }
+          >;
+          overrides: Array<{
+            files: string[];
+            values: Record<string, unknown>;
+          }>;
+        };
+      }>;
+    };
+    const check = (id: string) =>
+      output.checks.find((candidate) => candidate.id === id)?.configuration;
+
+    expect(check("formatting")).toMatchObject({
+      customized: true,
+      values: {
+        "settings.printWidth": {
+          value: 100,
+          source: "repository",
+          customized: true,
+        },
+        "settings.singleQuote": {
+          value: true,
+          source: "repository",
+          customized: true,
+        },
+      },
+      overrides: [
+        {
+          files: ["src/**/*.ts"],
+          values: { "settings.printWidth": 88 },
+        },
+      ],
+    });
+    expect(check("lint")).toMatchObject({
+      customized: true,
+      values: {
+        "rules.no-console": {
+          value: "warn",
+          source: "repository",
+          customized: true,
+        },
+      },
+      overrides: [
+        {
+          files: ["src/**/*.ts"],
+          values: { "rules.no-console": "off" },
+        },
+      ],
+    });
+    expect(check("cyclomaticComplexity")).toMatchObject({
+      customized: true,
+      values: {
+        max: { value: 12, source: "repository", customized: true },
+        blockWorsening: {
+          value: false,
+          source: "repository",
+          customized: true,
+        },
+      },
+    });
+    expect(check("duplication")).toMatchObject({
+      customized: true,
+      values: {
+        threshold: { value: 3, source: "repository", customized: true },
+        "settings.minLines": {
+          value: 8,
+          source: "repository",
+          customized: true,
+        },
+        "settings.minTokens": {
+          value: 70,
+          source: "repository",
+          customized: true,
+        },
+        "settings.mode": {
+          value: "strict",
+          source: "repository",
+          customized: true,
+        },
+      },
+    });
   }, 30_000);
 
   it("lists and accepts SARIF as a packaged scan output format", async () => {

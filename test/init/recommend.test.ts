@@ -129,6 +129,20 @@ describe("createInitProposal", () => {
     expect(proposal.files[0]?.after).toContain(
       '"nextStep": "Fix every blocking finding, review warnings separately, and resolve any incomplete checks. Stage any changes and run Zedbee again. Do not bypass the pre-commit hook."',
     );
+    expect(proposal.files[0]?.after).toContain(
+      '"$schema": "./node_modules/zedbee/schema/zedbee.schema.json"',
+    );
+    for (const expandedSetting of [
+      '"settings"',
+      '"rules"',
+      '"max"',
+      '"blockWorsening"',
+      '"threshold"',
+      '"minLines"',
+      '"minTokens"',
+    ]) {
+      expect(proposal.files[0]?.after).not.toContain(expandedSetting);
+    }
   });
 
   it("updates an existing JSONC profile without discarding comments or check choices", () => {

@@ -41,6 +41,14 @@ React calibration likewise does not use plugin `detect` mode and never loads
 project `node_modules`; it parses staged package manifests and supported
 lockfiles instead, so it does not execute project React code.
 
+## Managed configuration compatibility
+
+Zedbee does not load a project's native analyzer config. Prettier, ESLint, React, Hooks, and JSX accessibility behavior comes from Zedbee's managed settings and bundled rules; custom plugins and executable project configuration are outside the supported boundary. Rule options are validated against Zedbee's pinned ESLint and plugin versions. The applicable versions appear in `zedbee checks` output and change only when Zedbee upgrades its managed engines.
+
+This boundary is an adoption tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Configure supported differences in `.zedbeerc.jsonc` and use the shipped schema for editor validation. `zedbee checks` shows the effective settings, profile or repository source, and ordered overrides without running analysis.
+
+Formatting, lint, both complexity checks, React correctness, and React accessibility can resolve settings independently per file. Later matching overrides take precedence for the fields they supply. Duplication thresholds and clone settings remain workspace-wide because clone detection compares the workspace as a whole.
+
 When enabled, vulnerability analysis sends package name, exact version, and the npm ecosystem identifier to `api.osv.dev`. It is online only. Configure `checks.vulnerabilities.onUnavailable` as `block` or `warn`; `zedbee init` presents that choice and its disclosure.
 
 ## Secret scanning inputs
