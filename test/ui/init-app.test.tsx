@@ -1,6 +1,10 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
-import type { CheckId, ProfileId } from "../../src/config/schema.js";
+import {
+  CHECK_IDS,
+  type CheckId,
+  type ProfileId,
+} from "../../src/config/schema.js";
 import type { InitProposal } from "../../src/init/types.js";
 import {
   InitApp,
@@ -84,6 +88,48 @@ describe("InitApp", () => {
       expect(emptyLines[disclosureStart]).not.toContain("NETWORK DISCLOSURE:");
     },
   );
+
+  it("moves between outage options before selecting either one", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={(profile, checks, osvUnavailable) => ({
+          ...proposal,
+          profile,
+          recommendedChecks: checks ?? proposal.recommendedChecks,
+          osvUnavailable,
+        })}
+        width={80}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    for (let index = 0; index < CHECK_IDS.length + 1; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [✽] Block the commit (recommended)");
+
+    view.stdin.write("\u001b[B");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [ ] Warn and allow the commit");
+
+    view.stdin.write(" ");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [✽] Warn and allow the commit");
+    expect(view.lastFrame()).toContain("[ ] Block the commit (recommended)");
+
+    view.stdin.write("\u001b[A");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [ ] Block the commit (recommended)");
+
+    view.stdin.write(" ");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [✽] Block the commit (recommended)");
+    expect(view.lastFrame()).toContain("[ ] Warn and allow the commit");
+  });
 
   it("navigates profiles, checks, and OSV with one keyboard flow", async () => {
     const onDecision = vi.fn();
@@ -202,6 +248,9 @@ describe("InitApp", () => {
     }
     await new Promise((resolve) => setImmediate(resolve));
     expect(view.lastFrame()).toContain("➜ [✽] Block the commit (recommended)");
+    view.stdin.write("\u001b[B");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("➜ [ ] Warn and allow the commit");
     view.stdin.write(" ");
     await new Promise((resolve) => setImmediate(resolve));
     expect(view.lastFrame()).toContain("➜ [✽] Warn and allow the commit");

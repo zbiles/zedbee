@@ -187,11 +187,11 @@ function CheckChoices({
 
 function VulnerabilityOutageChoice({
   value,
-  focused,
+  cursor,
   color,
 }: {
   readonly value: InitOsvUnavailable;
-  readonly focused: boolean;
+  readonly cursor: number;
   readonly color: boolean;
 }) {
   return (
@@ -205,20 +205,20 @@ function VulnerabilityOutageChoice({
       <Text
         {...colorProp(
           color,
-          value === "block" ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
+          cursor === 0 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
         )}
       >
-        {focused && value === "block" ? "➜" : " "} [
-        {value === "block" ? "✽" : " "}] Block the commit (recommended)
+        {cursor === 0 ? "➜" : " "} [{value === "block" ? "✽" : " "}] Block the
+        commit (recommended)
       </Text>
       <Text
         {...colorProp(
           color,
-          value === "warn" ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
+          cursor === 1 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
         )}
       >
-        {focused && value === "warn" ? "➜" : " "} [
-        {value === "warn" ? "✽" : " "}] Warn and allow the commit
+        {cursor === 1 ? "➜" : " "} [{value === "warn" ? "✽" : " "}] Warn and
+        allow the commit
       </Text>
     </Box>
   );
@@ -309,7 +309,7 @@ function SetupPanel({
           <BrandedCommandPanelRule width={width} color={color} />
           <VulnerabilityOutageChoice
             value={osvUnavailable}
-            focused={focus === CHECK_IDS.length + 1}
+            cursor={focus - CHECK_IDS.length - 1}
             color={color}
           />
         </>
@@ -412,11 +412,11 @@ export function InitApp({
       exit();
     } else if (key.upArrow) {
       const focusCount =
-        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 2 : 1);
+        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 3 : 1);
       setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
       const focusCount =
-        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 2 : 1);
+        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 3 : 1);
       setFocus((value) => (value + 1) % focusCount);
     } else if (focus === 0 && (key.leftArrow || key.rightArrow)) {
       const currentIndex = PROFILE_IDS.indexOf(baseProfile);
@@ -438,7 +438,14 @@ export function InitApp({
         proposal.vulnerabilityScanningAvailable &&
         focus === CHECK_IDS.length + 1
       ) {
-        setOsvUnavailable((value) => (value === "block" ? "warn" : "block"));
+        setOsvUnavailable("block");
+        return;
+      }
+      if (
+        proposal.vulnerabilityScanningAvailable &&
+        focus === CHECK_IDS.length + 2
+      ) {
+        setOsvUnavailable("warn");
         return;
       }
       const check = CHECK_IDS[focus - 1];
