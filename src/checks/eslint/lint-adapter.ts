@@ -65,7 +65,9 @@ async function collectSide(
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   engineFactory: LintEslintEngineFactory,
+  signal: AbortSignal,
 ): Promise<readonly Observation[]> {
+  signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new Error("Managed lint analysis failed.");
@@ -119,6 +121,7 @@ async function collectSide(
     });
   const observations: Observation[] = [];
   for (const group of groups) {
+    signal.throwIfAborted();
     const groupHasTypescript = group.files.some((path) =>
       TYPESCRIPT_SOURCE.test(path),
     );
@@ -131,6 +134,7 @@ async function collectSide(
         ...(typedProject === undefined ? {} : { typedProject }),
       });
       const results = await engine.lintFiles([...group.files]);
+      signal.throwIfAborted();
       const allowed = new Set(group.files);
       for (const result of results) {
         const path = relative(canonicalRoot, result.filePath)
@@ -155,6 +159,7 @@ async function collectSide(
         );
       }
     } catch (error) {
+      signal.throwIfAborted();
       if (error instanceof CheckIncompleteError) throw error;
       if (groupHasTypescript) {
         throw typedFailure(
@@ -213,6 +218,7 @@ export function createLintAdapter(
           "baseline",
           context.policyForFile,
           engineFactory,
+          context.signal,
         ),
         collectSide(
           context.snapshots.targetDir,
@@ -222,6 +228,7 @@ export function createLintAdapter(
           "target",
           context.policyForFile,
           engineFactory,
+          context.signal,
         ),
       ]);
       return {

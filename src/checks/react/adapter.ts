@@ -113,11 +113,13 @@ async function prepareSide(
   resolveWorkspaceReactVersion: ResolveWorkspaceReactVersion,
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
+  signal: AbortSignal,
 ): Promise<PreparedSide> {
   const failure =
     id === "reactCorrectness"
       ? "React correctness analysis failed."
       : "React accessibility analysis failed.";
+  signal.throwIfAborted();
   try {
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
     if (canonicalRoot !== inspection.snapshotRoot) throw new Error(failure);
@@ -140,12 +142,14 @@ async function prepareSide(
       mode === "react-correctness"
         ? await resolveWorkspaceReactVersion(inspection, workspace)
         : undefined;
+    signal.throwIfAborted();
 
-    const preparedGroups = groups.map((group) => {
-      try {
-        return {
-          group,
-          engine: engineFactory({
+    return async () => {
+      const observations: Observation[] = [];
+      for (const group of groups) {
+        signal.throwIfAborted();
+        try {
+          const engine = engineFactory({
             cwd: canonicalRoot,
             mode,
             managedIgnores: [],
@@ -153,58 +157,40 @@ async function prepareSide(
             ...(reactVersion === undefined
               ? {}
               : { reactVersion, reactCorrectnessConfigFactory }),
-          }),
-        };
-      } catch {
-        throw reactAnalysisFailure(
-          id,
-          group.files.length === 1 ? group.files[0] : undefined,
-        );
+          });
+          const results = await engine.lintFiles([...group.files]);
+          signal.throwIfAborted();
+          const allowed = new Set(group.files);
+          for (const result of results) {
+            const path = relative(canonicalRoot, result.filePath)
+              .split(sep)
+              .join("/");
+            if (!allowed.has(path)) throw new Error(failure);
+            observations.push(
+              ...result.messages.map((message) =>
+                convertEslintMessage(path, message, canonicalRoot, id),
+              ),
+            );
+          }
+        } catch (error) {
+          signal.throwIfAborted();
+          if (error instanceof CheckIncompleteError) throw error;
+          throw reactAnalysisFailure(
+            id,
+            group.files.length === 1 ? group.files[0] : undefined,
+          );
+        }
       }
-    });
-    return async () => {
-      try {
-        const collected = await Promise.all(
-          preparedGroups.map(async ({ group, engine }) => {
-            try {
-              const results = await engine.lintFiles([...group.files]);
-              const allowed = new Set(group.files);
-              const observations: Observation[] = [];
-              for (const result of results) {
-                const path = relative(canonicalRoot, result.filePath)
-                  .split(sep)
-                  .join("/");
-                if (!allowed.has(path)) throw new Error(failure);
-                observations.push(
-                  ...result.messages.map((message) =>
-                    convertEslintMessage(path, message, canonicalRoot, id),
-                  ),
-                );
-              }
-              return observations;
-            } catch (error) {
-              if (error instanceof CheckIncompleteError) throw error;
-              throw reactAnalysisFailure(
-                id,
-                group.files.length === 1 ? group.files[0] : undefined,
-              );
-            }
-          }),
-        );
-        const observations = collected.flat();
-        return Object.freeze(
-          observations.sort(
-            (left, right) =>
-              compareCodeUnits(left.identity, right.identity) ||
-              compareCodeUnits(left.message, right.message),
-          ),
-        );
-      } catch (error) {
-        if (error instanceof CheckIncompleteError) throw error;
-        throw new Error(failure);
-      }
+      return Object.freeze(
+        observations.sort(
+          (left, right) =>
+            compareCodeUnits(left.identity, right.identity) ||
+            compareCodeUnits(left.message, right.message),
+        ),
+      );
     };
   } catch (error) {
+    signal.throwIfAborted();
     if (error instanceof CheckIncompleteError) throw error;
     throw new Error(failure);
   }
@@ -296,6 +282,7 @@ export function createReactAdapter(
         resolveBaselineReactVersion,
         "baseline",
         context.policyForFile,
+        context.signal,
       );
       const collectTarget = await prepareSide(
         context.snapshots.targetDir,
@@ -308,6 +295,7 @@ export function createReactAdapter(
         resolveTargetReactVersion,
         "target",
         context.policyForFile,
+        context.signal,
       );
       const [baselineObservations, targetObservations] = await Promise.all([
         collectBaseline(),

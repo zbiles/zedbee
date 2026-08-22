@@ -126,6 +126,78 @@ async function reactContext(
   };
 }
 
+async function groupedReactContext(): Promise<CheckRunContext> {
+  const [baseline, staged, live] = await Promise.all([
+    createInspectionFixture(),
+    createInspectionFixture(),
+    createInspectionFixture(),
+  ]);
+  for (const fixture of [baseline, staged, live]) {
+    await fixture.writeJson("package.json", {
+      name: "fixture",
+      private: true,
+      dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
+    });
+  }
+  await staged.write("src/a.tsx", "export const A = () => <main />;\n");
+  await staged.write("test/b.tsx", "export const B = () => <main />;\n");
+  const changedFiles = new Map<string, ChangedFile>([
+    [
+      "src/a.tsx",
+      {
+        path: "src/a.tsx",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ],
+    [
+      "test/b.tsx",
+      {
+        path: "test/b.tsx",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ],
+  ]);
+  const changeSet: ChangeSet = {
+    files: changedFiles,
+    isEmpty: false,
+    containsAddedLine: () => true,
+  };
+  const config = resolveConfig({
+    schemaVersion: 1,
+    profile: "recommended",
+    checks: {
+      reactCorrectness: { rules: { "react/jsx-key": "error" } },
+    },
+    overrides: [
+      {
+        files: ["test/**"],
+        checks: {
+          reactCorrectness: { rules: { "react/jsx-key": "off" } },
+        },
+      },
+    ],
+  });
+  return {
+    repositoryRoot: live.root,
+    changeSet,
+    config,
+    snapshots: {
+      baselineDir: baseline.root,
+      targetDir: staged.root,
+      baselineRef: "HEAD",
+      unsupportedEntries: [],
+    },
+    baselineInspection: await inspectRepository(baseline.root),
+    targetInspection: await inspectRepository(staged.root),
+    target: { id: ".", kind: "workspace", relativeRoot: "." },
+    policy: config.checks.reactCorrectness,
+    policyForFile: testFilePolicyResolver(config, changeSet),
+    signal: new AbortController().signal,
+  };
+}
+
 describe("reactCorrectnessAdapter", () => {
   it("applies grouped per-file rules with identical patches on both snapshot sides", async () => {
     const { fixtures, changedFiles, run } = await reactContext("react");
@@ -229,6 +301,87 @@ describe("reactCorrectnessAdapter", () => {
       path: "src/app.tsx",
     });
     expect(factoryCalls).toBe(2);
+  });
+
+  it("does not create or start a later React rule group after the first rejects", async () => {
+    const run = await groupedReactContext();
+    let rejectFirst: (error: Error) => void = () => undefined;
+    const firstResult = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    let markFirstStarted: () => void = () => undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const created: string[] = [];
+    const started: string[][] = [];
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => {
+        if (options.cwd === run.targetInspection.snapshotRoot) {
+          created.push(String(options.ruleOverrides?.["react/jsx-key"]));
+        }
+        return {
+          async lintFiles(patterns) {
+            const files = typeof patterns === "string" ? [patterns] : patterns;
+            if (options.cwd !== run.targetInspection.snapshotRoot) return [];
+            started.push([...files]);
+            if (started.length === 1) {
+              markFirstStarted();
+              return firstResult;
+            }
+            return [];
+          },
+        };
+      },
+    );
+
+    const collected = adapter.collect(run);
+    await firstStarted;
+    rejectFirst(new Error("first group failed"));
+    await expect(collected).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "REACT_CORRECTNESS_ANALYSIS_FAILED",
+      path: "src/a.tsx",
+    });
+    expect(created).toEqual(["error"]);
+    expect(started).toEqual([["src/a.tsx"]]);
+  });
+
+  it("stops before the next React rule group when the run is aborted", async () => {
+    const base = await groupedReactContext();
+    const controller = new AbortController();
+    const run: CheckRunContext = { ...base, signal: controller.signal };
+    const created: string[] = [];
+    const started: string[][] = [];
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => {
+        if (options.cwd === run.targetInspection.snapshotRoot) {
+          created.push(String(options.ruleOverrides?.["react/jsx-key"]));
+        }
+        return {
+          async lintFiles(patterns) {
+            const files = typeof patterns === "string" ? [patterns] : patterns;
+            if (options.cwd === run.targetInspection.snapshotRoot) {
+              started.push([...files]);
+              if (started.length === 1) controller.abort();
+            }
+            return [];
+          },
+        };
+      },
+    );
+
+    await expect(adapter.collect(run)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(created).toEqual(["error"]);
+    expect(started).toEqual([["src/a.tsx"]]);
   });
 
   it("skips effective-off files before React version resolution or engine creation", async () => {

@@ -138,6 +138,98 @@ describe("managed lint rule settings", () => {
     ).not.toThrow();
   });
 
+  it("rejects runtime-only rule option values before ESLint validation", () => {
+    class RuntimeOption {
+      readonly allow = ["warn"];
+    }
+    const cyclic: Record<string, unknown> = { allow: ["warn"] };
+    cyclic.self = cyclic;
+    const accessor = { marker: true } as Record<string, unknown>;
+    Object.defineProperty(accessor, "allow", {
+      enumerable: true,
+      get: () => ["warn"],
+    });
+    const symbolKey = { allow: ["warn"] } as Record<string | symbol, unknown>;
+    symbolKey[Symbol("hidden")] = "runtime-only";
+    const hiddenKey = { allow: ["warn"] } as Record<string, unknown>;
+    Object.defineProperty(hiddenKey, "hidden", {
+      enumerable: false,
+      value: "runtime-only",
+    });
+
+    const cases: readonly [string, unknown][] = [
+      ["undefined", undefined],
+      ["bigint", 1n],
+      ["symbol", Symbol("option")],
+      ["function", () => undefined],
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["class instance", new RuntimeOption()],
+      ["Date", new Date("2026-08-21T00:00:00.000Z")],
+      ["RegExp", /warn/u],
+      ["Map", new Map([["allow", ["warn"]]])],
+      ["Set", new Set(["warn"])],
+      ["accessor", accessor],
+      ["symbol key", symbolKey],
+      ["non-enumerable key", hiddenKey],
+      ["cycle", cyclic],
+    ];
+
+    for (const [label, option] of cases) {
+      const rules = {
+        "no-console": ["warn", option],
+      } as unknown as Parameters<typeof validateManagedRuleConfiguration>[1];
+      expect(
+        () => validateManagedRuleConfiguration("lint", rules),
+        label,
+      ).toThrow(/JSON-compatible/u);
+    }
+  });
+
+  it.each(["__proto__", "prototype", "constructor"])(
+    "rejects the prototype-pollution option key %s",
+    (unsafeKey) => {
+      const option = { allow: ["warn"] } as Record<string, unknown>;
+      Object.defineProperty(option, unsafeKey, {
+        enumerable: true,
+        value: "unsafe",
+      });
+      const rules = {
+        "no-console": ["warn", option],
+      } as unknown as Parameters<typeof validateManagedRuleConfiguration>[1];
+
+      expect(() => validateManagedRuleConfiguration("lint", rules)).toThrow(
+        /JSON-compatible/u,
+      );
+    },
+  );
+
+  it("rejects symbol keys on the rule map itself", () => {
+    const rules = { "no-console": "warn" } as Record<string | symbol, unknown>;
+    rules[Symbol("hidden-rule")] = "error";
+
+    expect(() =>
+      validateManagedRuleConfiguration(
+        "lint",
+        rules as Parameters<typeof validateManagedRuleConfiguration>[1],
+      ),
+    ).toThrow(/JSON-compatible/u);
+  });
+
+  it.each([null, undefined])(
+    "rejects a non-record rule map at the JSON boundary: %j",
+    (rules) => {
+      expect(() =>
+        validateManagedRuleConfiguration(
+          "lint",
+          rules as unknown as Parameters<
+            typeof validateManagedRuleConfiguration
+          >[1],
+        ),
+      ).toThrow(/JSON-compatible/u);
+    },
+  );
+
   it("exposes only managed lint-owned rules in the inventory", () => {
     const inventory = managedRuleInventory("lint");
 

@@ -89,9 +89,10 @@ describe("managedConfig", () => {
   });
 
   test("appends detached validated rule overrides after managed presets", () => {
-    const input = {
-      "no-console": ["warn", { allow: ["warn"] }],
-    } as const;
+    const allow = ["warn"];
+    const options = { allow };
+    const rule = ["warn", options] as const;
+    const input = { "no-console": rule };
     const config = managedConfig({
       mode: "lint",
       managedIgnores: [],
@@ -104,6 +105,10 @@ describe("managedConfig", () => {
       rules: { "no-console": ["warn", { allow: ["warn"] }] },
     });
     expect(override?.rules).not.toBe(input);
+    expect(override?.rules?.["no-console"]).not.toBe(rule);
+    expect((override?.rules?.["no-console"] as readonly unknown[])[1]).not.toBe(
+      options,
+    );
     expect(Object.isFrozen(override?.rules)).toBe(true);
     expect(Object.isFrozen(override?.rules?.["no-console"])).toBe(true);
     expect(
@@ -111,6 +116,11 @@ describe("managedConfig", () => {
         (override?.rules?.["no-console"] as readonly unknown[])[1],
       ),
     ).toBe(true);
+
+    allow[0] = "error";
+    expect(override?.rules).toEqual({
+      "no-console": ["warn", { allow: ["warn"] }],
+    });
   });
 
   test("revalidates rule ownership at the managed engine config boundary", () => {
@@ -154,5 +164,27 @@ describe("managedConfig", () => {
         rules: { "no-console": "warn", "no-debugger": "error" },
       },
     ]);
+  });
+
+  test("rejects non-JSON rule options before calculating group fingerprints", () => {
+    const resolve = ((_checkId: string, file: string, _side: string) => ({
+      severity: "error",
+      when: "relevant",
+      rules: {
+        "no-console": [
+          "warn",
+          file === "src/date.js" ? new Date(0) : /collision/u,
+        ],
+      },
+    })) as FilePolicyResolver;
+
+    expect(() =>
+      groupFilesByRules(
+        ["src/date.js", "src/regexp.js"],
+        "target",
+        resolve,
+        "lint",
+      ),
+    ).toThrow(/JSON-compatible/u);
   });
 });

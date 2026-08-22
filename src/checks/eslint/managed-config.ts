@@ -85,9 +85,13 @@ export function groupFilesByRules(
   for (const file of [...files].sort(compareCodeUnits)) {
     const policy = resolve(checkId as CheckId, file, side);
     if (policy.severity === "off" || !("rules" in policy)) continue;
+    const validatedRules = validateManagedRuleConfiguration(
+      checkId,
+      policy.rules,
+    );
     const rules = Object.freeze(
       Object.fromEntries(
-        Object.entries(policy.rules).sort(([left], [right]) =>
+        Object.entries(validatedRules).sort(([left], [right]) =>
           compareCodeUnits(left, right),
         ),
       ),

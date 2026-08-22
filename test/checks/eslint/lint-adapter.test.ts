@@ -208,6 +208,123 @@ describe("lintAdapter", () => {
     });
   });
 
+  it("stops before the next lint rule group when the run is aborted", async () => {
+    const fixtures = await pair();
+    await fixtures.staged.write("src/a.js", "export const a = 1;\n");
+    await fixtures.staged.write("test/b.js", "export const b = 2;\n");
+    const changeSet = changes([
+      {
+        path: "src/a.js",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+      {
+        path: "test/b.js",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const base = await context(fixtures, changeSet);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "error" } } },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+      ],
+    });
+    const controller = new AbortController();
+    const run: CheckRunContext = {
+      ...base,
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+      signal: controller.signal,
+    };
+    const started: string[][] = [];
+    const adapter = createLintAdapter((options) => ({
+      async lintFiles(patterns) {
+        const files = typeof patterns === "string" ? [patterns] : patterns;
+        if (options.cwd === run.targetInspection.snapshotRoot) {
+          started.push([...files]);
+          if (started.length === 1) controller.abort();
+        }
+        return [];
+      },
+    }));
+
+    await expect(adapter.collect(run)).rejects.toMatchObject({
+      name: "AbortError",
+    });
+    expect(started).toEqual([["src/a.js"]]);
+  });
+
+  it("does not start a later lint rule group after the first group rejects", async () => {
+    const fixtures = await pair();
+    await fixtures.staged.write("src/a.js", "export const a = 1;\n");
+    await fixtures.staged.write("test/b.js", "export const b = 2;\n");
+    const changeSet = changes([
+      {
+        path: "src/a.js",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+      {
+        path: "test/b.js",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const base = await context(fixtures, changeSet);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "error" } } },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+      ],
+    });
+    const run: CheckRunContext = {
+      ...base,
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+    };
+    let rejectFirst: (error: Error) => void = () => undefined;
+    const firstResult = new Promise<never>((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    let markFirstStarted: () => void = () => undefined;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const started: string[][] = [];
+    const adapter = createLintAdapter((options) => ({
+      async lintFiles(patterns) {
+        const files = typeof patterns === "string" ? [patterns] : patterns;
+        if (options.cwd !== run.targetInspection.snapshotRoot) return [];
+        started.push([...files]);
+        if (started.length === 1) {
+          markFirstStarted();
+          return firstResult;
+        }
+        return [];
+      },
+    }));
+
+    const collected = adapter.collect(run);
+    await firstStarted;
+    rejectFirst(new Error("first group failed"));
+    await expect(collected).rejects.toThrow("Managed lint analysis failed.");
+    expect(started).toEqual([["src/a.js"]]);
+  });
+
   it("rejects an out-of-group typed result with a precise incomplete path and no retry", async () => {
     const fixtures = await pair();
     const tsconfig = {
