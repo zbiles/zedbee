@@ -6,6 +6,7 @@ import { compareCodeUnits } from "../core/compare.js";
 
 export const IGNORED_DIRECTORY_NAMES = [
   "node_modules",
+  ".venv",
   ".git",
   ".zedbee",
   ".snapshot",

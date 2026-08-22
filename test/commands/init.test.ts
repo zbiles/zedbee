@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -53,6 +53,71 @@ function dependencies(root: string): InitCommandDependencies {
 }
 
 describe("executeInitCommand", () => {
+  it("explains a known unsafe repository-inspection failure without exposing paths", async () => {
+    const root = await fixture();
+    const outside = await mkdtemp(join(tmpdir(), "zedbee-init-outside-"));
+    roots.push(outside);
+    const outsideFile = join(outside, "outside.ts");
+    await writeFile(outsideFile, "private path details must not escape\n");
+    await symlink(outsideFile, join(root, "escape.ts"));
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: root,
+        profile: "recommended",
+        hook: "none",
+        yes: false,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(root),
+    );
+
+    expect(exitCode).toBe(2);
+    expect(io.stderr.join("")).toBe(
+      [
+        "Zedbee could not initialize this repository safely.",
+        "Reason: Repository inspection found a symbolic link that leaves the repository.",
+        "Remediation: Remove the external link or move it into a directory Zedbee ignores.",
+        "",
+      ].join("\n"),
+    );
+    expect(io.stderr.join("")).not.toContain(root);
+    expect(io.stderr.join("")).not.toContain("private path details");
+  });
+
+  it("does not expose details from an unknown initialization failure", async () => {
+    const root = await fixture();
+    const io = terminal(false);
+    const deps = dependencies(root);
+    deps.inspect = async () => {
+      throw new Error("private unknown failure details");
+    };
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: root,
+        profile: "recommended",
+        hook: "none",
+        yes: false,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      deps,
+    );
+
+    expect(exitCode).toBe(2);
+    expect(io.stderr.join("")).toBe(
+      "Zedbee could not initialize this repository safely.\n",
+    );
+    expect(io.stderr.join("")).not.toContain("private unknown failure");
+  });
+
   it("prints a deterministic JSON proposal without writing when confirmation is absent", async () => {
     const root = await fixture();
     const io = terminal(false);

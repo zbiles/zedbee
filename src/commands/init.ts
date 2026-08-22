@@ -4,6 +4,7 @@ import { GitClient } from "../git/client.js";
 import { detectHookIntegration } from "../hooks/detect.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
+import { RepositoryInspectionError } from "../inspection/types.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
@@ -130,6 +131,20 @@ function renderText(proposal: InitProposal, applied: boolean): string {
   return `${lines.join("\n")}\n`;
 }
 
+function renderInitFailure(error: unknown): string {
+  const lines = ["Zedbee could not initialize this repository safely."];
+  if (
+    error instanceof RepositoryInspectionError &&
+    error.code === "UNSAFE_SNAPSHOT_PATH"
+  ) {
+    lines.push(
+      "Reason: Repository inspection found a symbolic link that leaves the repository.",
+      "Remediation: Remove the external link or move it into a directory Zedbee ignores.",
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export async function executeInitCommand(
   options: InitCommandOptions,
   io: InitCommandIO,
@@ -206,8 +221,8 @@ export async function executeInitCommand(
       io.writeStdout(renderText(proposal, result.applied));
     }
     return 0;
-  } catch {
-    io.writeStderr("Zedbee could not initialize this repository safely.\n");
+  } catch (error) {
+    io.writeStderr(renderInitFailure(error));
     return 2;
   }
 }

@@ -48,6 +48,25 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe("inspectRepository", () => {
+  it.runIf(process.platform !== "win32")(
+    "ignores external Python interpreter links inside .venv",
+    async () => {
+      const fixture = await createInspectionFixture();
+      const outside = await mkdtemp(join(tmpdir(), "zedbee-python-runtime-"));
+      onTestFinished(() => rm(outside, { recursive: true, force: true }));
+      await fixture.writeJson("package.json", { name: "root" });
+      await fixture.write("src/index.ts", "export const ready = true;\n");
+      await mkdir(join(fixture.root, ".venv/bin"), { recursive: true });
+      const interpreter = join(outside, "python3.11");
+      await writeFile(interpreter, "external interpreter fixture\n");
+      await symlink(interpreter, join(fixture.root, ".venv/bin/python"));
+
+      const inspection = await inspectRepository(fixture.root);
+
+      expect(inspection.workspaces[0]?.sourceFiles).toEqual(["src/index.ts"]);
+    },
+  );
+
   it("carries staged dependency declarations into the inspected workspace", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
