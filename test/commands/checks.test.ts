@@ -24,7 +24,23 @@ function terminal(): ChecksCommandIO & { stdout: string[]; stderr: string[] } {
 const dependencies: ChecksCommandDependencies = {
   resolveRepositoryRoot: async () => "/repo",
   loadConfig: async () =>
-    resolveConfig({ schemaVersion: 1, profile: "thorough" }),
+    resolveConfig({
+      schemaVersion: 1,
+      profile: "thorough",
+      checks: {
+        formatting: { settings: { printWidth: 100 } },
+        lint: { rules: { "no-console": "warn", eqeqeq: "error" } },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: {
+            formatting: { settings: { tabWidth: 4 } },
+            lint: { rules: { "no-debugger": "error" } },
+          },
+        },
+      ],
+    }),
   inspectChecks: async () =>
     new Map(
       CHECK_IDS.map((id) => [
@@ -168,6 +184,76 @@ describe("executeChecksCommand", () => {
         }),
       ]),
     );
+    const formatting = result.checks.find(({ id }) => id === "formatting");
+    expect(formatting?.configuration).toMatchObject({
+      customized: true,
+      values: {
+        "settings.printWidth": {
+          value: 100,
+          source: "repository",
+          customized: true,
+        },
+        "settings.tabWidth": {
+          value: 2,
+          source: "profile",
+          customized: false,
+        },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          values: {
+            "settings.tabWidth": 4,
+          },
+        },
+      ],
+    });
+    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual([
+      "settings.arrowParens",
+      "settings.bracketSameLine",
+      "settings.bracketSpacing",
+      "settings.embeddedLanguageFormatting",
+      "settings.endOfLine",
+      "settings.jsxSingleQuote",
+      "settings.printWidth",
+      "settings.proseWrap",
+      "settings.quoteProps",
+      "settings.semi",
+      "settings.singleQuote",
+      "settings.tabWidth",
+      "settings.trailingComma",
+      "settings.useTabs",
+    ]);
+    const lint = result.checks.find(({ id }) => id === "lint");
+    expect(Object.keys(lint?.configuration.values ?? {})).toEqual([
+      "rules.eqeqeq",
+      "rules.no-console",
+    ]);
+    expect(lint?.configuration.overrides).toEqual([
+      {
+        files: ["test/**"],
+        values: {
+          "rules.no-debugger": "error",
+        },
+      },
+    ]);
+    const duplication = result.checks.find(({ id }) => id === "duplication");
+    expect(duplication?.configuration).toMatchObject({
+      customized: false,
+      values: {
+        "settings.minLines": {
+          value: 5,
+          source: "profile",
+          customized: false,
+        },
+        threshold: {
+          value: 5,
+          source: "profile",
+          customized: false,
+        },
+      },
+      overrides: [],
+    });
     expect(JSON.parse(io.stdout.join(""))).toEqual(result);
     expect(io.stderr).toEqual([]);
   });
@@ -187,6 +273,15 @@ describe("executeChecksCommand", () => {
     );
     expect(first.stdout).toEqual(second.stdout);
     expect(first.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+    expect(first.stdout.join("")).toContain(
+      "Configuration: 13 profile values, 1 repository value",
+    );
+    expect(first.stdout.join("")).toContain(
+      "settings.printWidth: 100 (repository) (customized)",
+    );
+    expect(first.stdout.join("")).toContain(
+      "Override test/**: settings.tabWidth: 4",
+    );
 
     const failed = terminal();
     const result = await executeChecksCommand(

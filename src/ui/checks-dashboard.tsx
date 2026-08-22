@@ -1,5 +1,10 @@
 import { Box, Text } from "ink";
-import type { CheckDescription } from "../commands/checks.js";
+import {
+  configurationOverrideLine,
+  configurationSummary,
+  configurationValueLine,
+  type CheckDescription,
+} from "../commands/checks.js";
 import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
@@ -26,6 +31,9 @@ function CheckEntry({
   const applicabilityTone = applicable ? ZEDBEE_THEME.pass : ZEDBEE_THEME.muted;
   const targets =
     check.targets.length === 0 ? "none" : check.targets.join(", ");
+  const customizedValues = Object.entries(check.configuration.values).filter(
+    ([, value]) => value.customized,
+  );
 
   return (
     <Box flexDirection="column" paddingX={2}>
@@ -56,6 +64,23 @@ function CheckEntry({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         Network: {check.network}
       </Text>
+      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+        {configurationSummary(check.configuration)}
+      </Text>
+      {customizedValues.map(([key, value]) => (
+        <Text key={key} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+          {configurationValueLine(key, value)}
+        </Text>
+      ))}
+      {check.configuration.overrides.map((override) => (
+        <Text
+          key={override.files.join("|")}
+          wrap="wrap"
+          {...colorProp(color, ZEDBEE_THEME.secondary)}
+        >
+          {configurationOverrideLine(override.files, override.values)}
+        </Text>
+      ))}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
         Limitation: {check.limitation}
       </Text>

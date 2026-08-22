@@ -7,6 +7,8 @@ import { loadConfig } from "../config/load-config.js";
 import {
   CHECK_IDS,
   type CheckId,
+  type ResolvedCheckPolicy,
+  type ResolvedCheckPolicyPatch,
   type ResolvedConfig,
 } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -15,6 +17,12 @@ import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
+import {
+  isConfigurableRuleCheckId,
+  managedPolicyScalarKeys,
+  managedSettingKeys,
+} from "../config/settings-registry.js";
+import type { SettingOrigin } from "../config/settings-definition.js";
 
 export type ChecksOutputFormat = "auto" | "text" | "json";
 
@@ -40,6 +48,21 @@ export interface CheckApplicabilityDescription {
   readonly reason?: string;
 }
 
+export interface EffectiveSettingDescription {
+  readonly value: unknown;
+  readonly source: "profile" | "repository";
+  readonly customized: boolean;
+}
+
+export interface CheckConfigurationDescription {
+  readonly customized: boolean;
+  readonly values: Readonly<Record<string, EffectiveSettingDescription>>;
+  readonly overrides: readonly Readonly<{
+    readonly files: readonly string[];
+    readonly values: Readonly<Record<string, unknown>>;
+  }>[];
+}
+
 export interface CheckDescription {
   readonly id: CheckId;
   readonly description: string;
@@ -55,6 +78,7 @@ export interface CheckDescription {
     readonly license: string;
   };
   readonly limitation: string;
+  readonly configuration: CheckConfigurationDescription;
   readonly reason?: string;
 }
 
@@ -260,12 +284,196 @@ async function renderDashboard(
   await runInkChecks(checks, options);
 }
 
+function orderedRecord<T>(entries: readonly (readonly [string, T])[]) {
+  return Object.freeze(
+    Object.fromEntries(
+      [...entries].sort(([left], [right]) => compareCodeUnits(left, right)),
+    ),
+  ) as Readonly<Record<string, T>>;
+}
+
+function repositoryValueSource(
+  origin: SettingOrigin | undefined,
+): EffectiveSettingDescription["source"] {
+  return origin?.kind === "repository" ? "repository" : "profile";
+}
+
+function policyValueEntries(
+  checkId: CheckId,
+  policy: ResolvedCheckPolicy,
+): readonly (readonly [string, unknown])[] {
+  const entries: [string, unknown][] = [];
+  for (const key of managedPolicyScalarKeys(checkId)) {
+    if (key in policy) {
+      entries.push([key, policy[key as keyof ResolvedCheckPolicy]]);
+    }
+  }
+  if ("settings" in policy) {
+    const settings = policy.settings as Readonly<Record<string, unknown>>;
+    for (const key of managedSettingKeys(checkId)) {
+      entries.push([`settings.${key}`, settings[key]]);
+    }
+  }
+  if ("rules" in policy && isConfigurableRuleCheckId(checkId)) {
+    for (const key of Object.keys(policy.rules).sort(compareCodeUnits)) {
+      entries.push([`rules.${key}`, policy.rules[key]]);
+    }
+  }
+  return entries;
+}
+
+function patchValueEntries(
+  checkId: CheckId,
+  patch: ResolvedCheckPolicyPatch,
+): readonly (readonly [string, unknown])[] {
+  const entries: [string, unknown][] = [];
+  for (const key of ["severity", "when", ...managedPolicyScalarKeys(checkId)]) {
+    if (key in patch) {
+      entries.push([key, patch[key as keyof ResolvedCheckPolicyPatch]]);
+    }
+  }
+  if (patch.settings !== undefined) {
+    for (const key of Object.keys(patch.settings).sort(compareCodeUnits)) {
+      entries.push([
+        `settings.${key}`,
+        (patch.settings as Readonly<Record<string, unknown>>)[key],
+      ]);
+    }
+  }
+  if (patch.rules !== undefined && isConfigurableRuleCheckId(checkId)) {
+    for (const key of Object.keys(patch.rules).sort(compareCodeUnits)) {
+      entries.push([`rules.${key}`, patch.rules[key]]);
+    }
+  }
+  return entries;
+}
+
+function describeConfiguration(
+  checkId: CheckId,
+  config: ResolvedConfig,
+): CheckConfigurationDescription {
+  const values = orderedRecord(
+    policyValueEntries(checkId, config.checks[checkId]).map(([key, value]) => {
+      const source = repositoryValueSource(
+        config.configurationOrigins[checkId][key],
+      );
+      return [
+        key,
+        Object.freeze({
+          value,
+          source,
+          customized: source === "repository",
+        }),
+      ] as const;
+    }),
+  );
+  const overrides = Object.freeze(
+    config.overrides
+      .map((override) => {
+        const patch = override.checks[checkId];
+        if (patch === undefined) return undefined;
+        return Object.freeze({
+          files: Object.freeze([...override.files]),
+          values: orderedRecord(patchValueEntries(checkId, patch)),
+        });
+      })
+      .filter(
+        (
+          override,
+        ): override is Readonly<{
+          readonly files: readonly string[];
+          readonly values: Readonly<Record<string, unknown>>;
+        }> => override !== undefined,
+      ),
+  );
+  return Object.freeze({
+    customized:
+      Object.values(values).some(({ customized }) => customized) ||
+      overrides.length > 0,
+    values,
+    overrides,
+  });
+}
+
+function pluralizeValue(count: number): string {
+  return count === 1 ? "value" : "values";
+}
+
+export function configurationSummary(
+  configuration: CheckConfigurationDescription,
+): string {
+  const counts = { profile: 0, repository: 0 };
+  for (const value of Object.values(configuration.values)) {
+    counts[value.source] += 1;
+  }
+  const parts: string[] = [];
+  if (counts.profile > 0) {
+    parts.push(`${counts.profile} profile ${pluralizeValue(counts.profile)}`);
+  }
+  if (counts.repository > 0) {
+    parts.push(
+      `${counts.repository} repository ${pluralizeValue(counts.repository)}`,
+    );
+  }
+  if (parts.length === 0) parts.push("profile defaults");
+  return `Configuration: ${parts.join(", ")}`;
+}
+
+function displayConfigurationValue(value: unknown): string {
+  const rendered = JSON.stringify(value);
+  if (rendered === undefined) return "null";
+  return rendered
+    .replaceAll(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) => {
+      const code = character.codePointAt(0) ?? 0;
+      return `\\u${code.toString(16).padStart(4, "0")}`;
+    })
+    .slice(0, 256);
+}
+
+export function configurationValueLine(
+  key: string,
+  value: EffectiveSettingDescription,
+): string {
+  return `${key}: ${displayConfigurationValue(value.value)} (${value.source})${
+    value.customized ? " (customized)" : ""
+  }`;
+}
+
+export function configurationOverrideLine(
+  files: readonly string[],
+  values: Readonly<Record<string, unknown>>,
+): string {
+  const renderedValues = Object.entries(values)
+    .map(([key, value]) => `${key}: ${displayConfigurationValue(value)}`)
+    .join(", ");
+  return `Override ${files.join(", ")}: ${renderedValues}`;
+}
+
+function configurationTextLines(
+  configuration: CheckConfigurationDescription,
+): readonly string[] {
+  const customizedValues = Object.entries(configuration.values)
+    .filter(([, value]) => value.customized)
+    .map(([key, value]) => configurationValueLine(key, value));
+  const overrides = configuration.overrides.map(({ files, values }) =>
+    configurationOverrideLine(files, values),
+  );
+  return [
+    configurationSummary(configuration),
+    ...customizedValues,
+    ...overrides,
+  ];
+}
+
 function renderText(result: ChecksCommandResult): string {
   return `${result.checks
     .map((check) => {
       const targets =
         check.targets.length === 0 ? "none" : check.targets.join(", ");
-      return `${check.id} [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}\n  ${check.description}\n  Limitation: ${check.limitation}${check.reason === undefined ? "" : `\n  Reason: ${check.reason}`}`;
+      const configurationLines = configurationTextLines(check.configuration)
+        .map((line) => `  ${line}`)
+        .join("\n");
+      return `${check.id} [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}\n  ${check.description}\n${configurationLines}\n  Limitation: ${check.limitation}${check.reason === undefined ? "" : `\n  Reason: ${check.reason}`}`;
     })
     .join("\n")}\n`;
 }
@@ -308,6 +516,7 @@ export async function executeChecksCommand(
             id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
           engine: Object.freeze({ ...CATALOG[id].engine }),
           limitation: CATALOG[id].limitation,
+          configuration: describeConfiguration(id, config),
           ...(runtime.reason === undefined ? {} : { reason: runtime.reason }),
         });
       }),

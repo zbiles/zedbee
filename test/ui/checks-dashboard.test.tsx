@@ -26,6 +26,27 @@ const checks: readonly CheckDescription[] = [
     network: "none",
     engine: { name: "Prettier", version: "3.9.6", license: "MIT" },
     limitation: "Reports differences without rewriting the index.",
+    configuration: {
+      customized: true,
+      values: {
+        "settings.printWidth": {
+          value: 100,
+          source: "repository",
+          customized: true,
+        },
+        "settings.tabWidth": {
+          value: 2,
+          source: "profile",
+          customized: false,
+        },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          values: { "settings.tabWidth": 4 },
+        },
+      ],
+    },
   },
   {
     id: "reactAccessibility",
@@ -39,6 +60,11 @@ const checks: readonly CheckDescription[] = [
     engine: { name: "jsx-a11y", version: "6.10.2", license: "MIT" },
     limitation: "Static rules cannot prove runtime accessibility.",
     reason: "No React DOM workspace was found.",
+    configuration: {
+      customized: false,
+      values: {},
+      overrides: [],
+    },
   },
 ];
 
@@ -64,7 +90,15 @@ describe("ChecksDashboard", () => {
     expect(frame).toContain("SEVERITY: WARN");
     expect(frame).toContain("NOT APPLICABLE");
     expect(frame).toContain("Engine: Prettier 3.9.6 (MIT)");
+    expect(frame).toContain(
+      "Configuration: 1 profile value, 1 repository value",
+    );
+    expect(frame).toContain(
+      "settings.printWidth: 100 (repository) (customized)",
+    );
+    expect(frame).toContain("Override test/**: settings.tabWidth: 4");
     expect(frame).toContain("Reason: No React DOM workspace was found.");
+    expect(frame).toContain("\u001b[38;2;232;184;76m");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
     expect(frame).toContain("█████ █████ ████");
     expect(frame).toContain("┌");
@@ -94,6 +128,8 @@ describe("ChecksDashboard", () => {
 
     expect(frame).toContain("ZEDBEE");
     expect(frame).toContain("CHECKS");
+    expect(frame).toContain("Configuration:");
+    expect(frame).toContain("(customized)");
     expect(frame).not.toMatch(/\u001B\[(?:38|48);2;/u);
     const plainFrame = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
     expect(
@@ -139,6 +175,9 @@ describe("ChecksDashboard", () => {
     expect(output).toHaveLength(1);
     expect(rendered.match(/CHECKS/gu)).toHaveLength(1);
     expect(rendered).toContain("Checks staged formatting.");
+    expect(rendered).toContain(
+      "settings.printWidth: 100 (repository) (customized)",
+    );
     expect(rendered).not.toContain("\u001b[2J\u001b[3J\u001b[H");
   });
 });

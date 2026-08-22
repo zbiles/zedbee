@@ -51,6 +51,32 @@ export function managedSettingDefinition(
   ] as ManagedSettingsDefinition<object> | undefined;
 }
 
+const MANAGED_POLICY_SCALAR_KEYS = Object.freeze({
+  formatting: [],
+  lint: [],
+  types: [],
+  cyclomaticComplexity: ["blockWorsening", "max"],
+  readabilityComplexity: ["blockWorsening", "max"],
+  structuralSecurity: [],
+  secrets: [],
+  duplication: ["threshold"],
+  dependencyArchitecture: [],
+  deadCode: [],
+  reactCorrectness: [],
+  reactAccessibility: [],
+  vulnerabilities: ["onUnavailable"],
+} as const satisfies Readonly<Record<CheckId, readonly string[]>>);
+
+export function managedPolicyScalarKeys(checkId: CheckId): readonly string[] {
+  return MANAGED_POLICY_SCALAR_KEYS[checkId];
+}
+
+export function managedSettingKeys(checkId: CheckId): readonly string[] {
+  const definition = managedSettingDefinition(checkId);
+  if (definition === undefined) return Object.freeze([]);
+  return Object.freeze(Object.keys(definition.describe).sort(compareCodeUnits));
+}
+
 export function isConfigurableRuleCheckId(
   checkId: CheckId,
 ): checkId is ConfigurableRuleCheckId {
