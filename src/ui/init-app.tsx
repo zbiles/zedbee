@@ -8,6 +8,7 @@ import {
 } from "../config/schema.js";
 import type { InitPromptOptions } from "../commands/init.js";
 import type {
+  InitFileChange,
   InitOsvUnavailable,
   InitProposal,
   ResolvedHookChoice,
@@ -273,6 +274,68 @@ function wordWrappedLineCount(value: string, width: number): number {
   return lines;
 }
 
+function setupReviewFocusIndex(vulnerabilityScanningAvailable: boolean) {
+  return CHECK_IDS.length + (vulnerabilityScanningAvailable ? 3 : 1);
+}
+
+function InitActionButton({
+  label,
+  focused,
+  color,
+}: {
+  readonly label: string;
+  readonly focused: boolean;
+  readonly color: boolean;
+}) {
+  return (
+    <Box justifyContent="center" paddingX={2}>
+      <Box
+        borderStyle="single"
+        paddingX={2}
+        {...(color
+          ? {
+              borderColor: ZEDBEE_THEME.yellow,
+              borderBackgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
+              backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
+            }
+          : {})}
+      >
+        <Text
+          bold
+          inverse={!color && focused}
+          {...(color
+            ? {
+                color: focused ? ZEDBEE_THEME.beeBlack : ZEDBEE_THEME.wordmark,
+                backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
+              }
+            : {})}
+        >
+          {label}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+function initFileDescription(file: InitFileChange): string {
+  const action = file.before === null ? "Create" : "Update";
+  switch (file.relativePath) {
+    case ".zedbeerc.jsonc":
+      return `${action} Zedbee's repository configuration with the selected profile, checks, and reporting settings.`;
+    case ".git/hooks/pre-commit":
+      return `${action} the Git pre-commit hook so Zedbee runs before each commit.`;
+    case ".husky/pre-commit":
+      return `${action} the Husky pre-commit hook so Zedbee runs before each commit.`;
+    case "lefthook.yml":
+    case "lefthook.yaml":
+      return `${action} the Lefthook configuration so Zedbee runs before each commit.`;
+    case "package.json":
+      return `${action} package.json so simple-git-hooks runs Zedbee before each commit.`;
+    default:
+      return `${action} this file as part of Zedbee initialization.`;
+  }
+}
+
 function SetupPanel({
   proposal,
   focus,
@@ -315,9 +378,18 @@ function SetupPanel({
         </>
       ) : null}
       <Text> </Text>
+      <InitActionButton
+        label="REVIEW CHANGES"
+        focused={
+          focus ===
+          setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable)
+        }
+        color={color}
+      />
+      <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          ↑↓ Move · ←→ Change profile · Space Toggle · Enter Review · Esc Cancel
+          ↑↓ Move · ←→ Change profile · Space Select · Enter Review · Esc Cancel
         </Text>
       </Box>
       <Text> </Text>
@@ -336,6 +408,13 @@ function ReviewPanel({
 }) {
   return (
     <BrandedCommandPanel title="REVIEW CHANGES" width={width} color={color}>
+      <Box flexDirection="column" paddingX={2}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Review these changes before Zedbee saves them to your repository.
+        </Text>
+        <Text> </Text>
+      </Box>
+      <BrandedCommandPanelRule width={width} color={color} />
       {proposal.files.map((file, index) => (
         <Box key={file.relativePath} flexDirection="column">
           <Box flexDirection="column" paddingX={2}>
@@ -343,18 +422,20 @@ function ReviewPanel({
               {file.relativePath}
             </Text>
             <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-              {file.diff}
+              {initFileDescription(file)}
             </Text>
+            <Text> </Text>
           </Box>
           {index < proposal.files.length - 1 ? (
             <BrandedCommandPanelRule width={width} color={color} />
           ) : null}
         </Box>
       ))}
+      <InitActionButton label="APPLY CHANGES" focused color={color} />
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          Enter/Y Apply · Esc/B Back · N Cancel
+          Space/Enter/Y Apply · Esc/B Back · N Cancel
         </Text>
       </Box>
       <Text> </Text>
@@ -393,7 +474,7 @@ export function InitApp({
   useInput((input, key) => {
     const normalized = input.toLowerCase();
     if (phase === "review") {
-      if (normalized === "y" || key.return) {
+      if (normalized === "y" || key.return || input === " ") {
         onDecision(reviewedProposal);
         exit();
       } else if (normalized === "n") {
@@ -412,11 +493,11 @@ export function InitApp({
       exit();
     } else if (key.upArrow) {
       const focusCount =
-        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 3 : 1);
+        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) + 1;
       setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
       const focusCount =
-        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 3 : 1);
+        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) + 1;
       setFocus((value) => (value + 1) % focusCount);
     } else if (focus === 0 && (key.leftArrow || key.rightArrow)) {
       const currentIndex = PROFILE_IDS.indexOf(baseProfile);
@@ -446,6 +527,12 @@ export function InitApp({
         focus === CHECK_IDS.length + 2
       ) {
         setOsvUnavailable("warn");
+        return;
+      }
+      if (
+        focus === setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable)
+      ) {
+        setPhase("review");
         return;
       }
       const check = CHECK_IDS[focus - 1];

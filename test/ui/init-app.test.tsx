@@ -5,7 +5,7 @@ import {
   type CheckId,
   type ProfileId,
 } from "../../src/config/schema.js";
-import type { InitProposal } from "../../src/init/types.js";
+import type { InitFileChange, InitProposal } from "../../src/init/types.js";
 import {
   InitApp,
   initMaxFps,
@@ -40,6 +40,21 @@ function setupFrame(value: InitProposal, width = 80): string {
       onDecision={() => undefined}
     />,
   ).lastFrame()!;
+}
+
+function fileChange(
+  relativePath: string,
+  before: string | null,
+): InitFileChange {
+  return {
+    relativePath,
+    before,
+    after: "updated contents",
+    beforeHash: before === null ? null : "before-hash",
+    afterHash: "after-hash",
+    diff: `DO NOT SHOW DIFF FOR ${relativePath}`,
+    mode: 0o644,
+  };
 }
 
 describe("InitApp", () => {
@@ -129,6 +144,73 @@ describe("InitApp", () => {
     await new Promise((resolve) => setImmediate(resolve));
     expect(view.lastFrame()).toContain("➜ [✽] Block the commit (recommended)");
     expect(view.lastFrame()).toContain("[ ] Warn and allow the commit");
+  });
+
+  it("opens and applies review through the focused action buttons", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    view.stdin.write(" ");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(view.lastFrame()).toContain("REVIEW CHANGES");
+    expect(view.lastFrame()).toContain("APPLY CHANGES");
+
+    view.stdin.write(" ");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onDecision).toHaveBeenCalledWith(proposal);
+  });
+
+  it("reviews concise file explanations without rendering raw diffs", async () => {
+    const reviewProposal: InitProposal = {
+      ...proposal,
+      files: [
+        fileChange(".zedbeerc.jsonc", null),
+        fileChange(".git/hooks/pre-commit", "existing hook"),
+        fileChange(".husky/pre-commit", null),
+        fileChange("lefthook.yml", "existing config"),
+        fileChange("package.json", "existing manifest"),
+        fileChange("custom.txt", null),
+      ],
+    };
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    view.stdin.write("\r");
+    await new Promise((resolve) => setImmediate(resolve));
+    const frame = view.lastFrame()!;
+
+    expect(frame).toContain("Review these changes before Zedbee saves them");
+    expect(frame).toContain("Create Zedbee's repository configuration");
+    expect(frame).toContain("Update the Git pre-commit hook");
+    expect(frame).toContain("Create the Husky pre-commit hook");
+    expect(frame).toContain("Update the Lefthook configuration");
+    expect(frame).toContain("Update package.json so simple-git-hooks");
+    expect(frame).toContain(
+      "Create this file as part of Zedbee initialization",
+    );
+    expect(frame).not.toContain("DO NOT SHOW DIFF");
   });
 
   it("navigates profiles, checks, and OSV with one keyboard flow", async () => {
@@ -258,8 +340,11 @@ describe("InitApp", () => {
     view.stdin.write("\r");
     await new Promise((resolve) => setImmediate(resolve));
     expect(view.lastFrame()).toContain("REVIEW CHANGES");
-    expect(view.lastFrame()).toContain("exact:thorough:");
-    expect(view.lastFrame()).toContain("Enter/Y Apply");
+    expect(view.lastFrame()).toContain(
+      "Create Zedbee's repository configuration",
+    );
+    expect(view.lastFrame()).not.toContain("exact:thorough:");
+    expect(view.lastFrame()).toContain("Space/Enter/Y Apply");
     expect(view.lastFrame()).not.toContain("[✽] formatting");
     view.stdin.write("b");
     await new Promise((resolve) => setImmediate(resolve));
