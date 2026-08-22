@@ -1,8 +1,14 @@
-import type { ResolvedCheckPolicy, ResolvedConfig } from "../config/schema.js";
+import {
+  CHECK_IDS,
+  type CheckId,
+  type ResolvedCheckPolicy,
+  type ResolvedConfig,
+} from "../config/schema.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, RunSummary } from "../core/types.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
+import type { FilePolicyResolver } from "../config/file-policy.js";
 
 export interface PolicyDecision {
   exitCode: 0 | 1 | 2;
@@ -21,16 +27,34 @@ function applySeverity(finding: Finding, policy: ResolvedCheckPolicy): Finding {
 export function displayResultForPolicy(
   result: CheckResult,
   policy: Readonly<ResolvedCheckPolicy> | null,
+  policyForFile?: FilePolicyResolver,
 ): CheckResult | undefined {
   const sanitizedResult = sanitizeCheckResult(result);
   if (policy === null) return sanitizedResult;
-  if (policy.severity === "off") return undefined;
-  if (sanitizedResult.status !== "completed") return sanitizedResult;
+  if (sanitizedResult.status !== "completed") {
+    return policy.severity === "off" ? undefined : sanitizedResult;
+  }
+  if (policy.severity === "off" && policyForFile === undefined)
+    return undefined;
+  const checkId = CHECK_IDS.includes(sanitizedResult.checkId as CheckId)
+    ? (sanitizedResult.checkId as CheckId)
+    : undefined;
   return sanitizeCheckResult({
     ...sanitizedResult,
     findings: sanitizedResult.findings
       .filter((finding) => finding.attribution.staged)
-      .map((finding) => applySeverity(finding, policy)),
+      .flatMap((finding) => {
+        const filePolicy =
+          policyForFile !== undefined &&
+          checkId !== undefined &&
+          checkId !== "duplication" &&
+          finding.location?.file !== undefined
+            ? policyForFile(checkId, finding.location.file, "target")
+            : policy;
+        return filePolicy.severity === "off"
+          ? []
+          : [applySeverity(finding, filePolicy)];
+      }),
   });
 }
 
@@ -38,19 +62,21 @@ export function evaluatePolicy(
   executions: readonly CheckExecutionResult[],
   config: ResolvedConfig,
 ): PolicyDecision {
-  const evaluated = executions.flatMap(({ result, policy }): CheckResult[] => {
-    const displayed = displayResultForPolicy(result, policy);
-    if (displayed === undefined) return [];
-    if (displayed.status !== "incomplete") return [displayed];
-    return [
-      {
-        ...displayed,
-        incompleteDisposition:
-          displayed.incompleteDisposition ??
-          (config.failOnIncomplete ? "block" : "warn"),
-      },
-    ];
-  });
+  const evaluated = executions.flatMap(
+    ({ result, policy, policyForFile }): CheckResult[] => {
+      const displayed = displayResultForPolicy(result, policy, policyForFile);
+      if (displayed === undefined) return [];
+      if (displayed.status !== "incomplete") return [displayed];
+      return [
+        {
+          ...displayed,
+          incompleteDisposition:
+            displayed.incompleteDisposition ??
+            (config.failOnIncomplete ? "block" : "warn"),
+        },
+      ];
+    },
+  );
   const summary = summarizeChecks(evaluated);
 
   const hasBlockingIncomplete = evaluated.some(

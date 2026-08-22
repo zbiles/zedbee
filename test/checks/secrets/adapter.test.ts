@@ -10,6 +10,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 async function context(files: readonly ChangedFile[]): Promise<CheckRunContext> {
   const [baseline, target, live] = await Promise.all([
@@ -44,6 +45,7 @@ async function context(files: readonly ChangedFile[]): Promise<CheckRunContext> 
     targetInspection: await inspectRepository(target.root),
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: config.checks.secrets,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

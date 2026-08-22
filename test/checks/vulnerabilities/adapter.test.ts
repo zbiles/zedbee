@@ -11,6 +11,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 function dependency(name: string, version: string, line: number): DependencyRecord {
   return Object.freeze({
@@ -105,6 +106,7 @@ async function context(options: {
     targetInspection: await inspectRepository(target.root),
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: config.checks.vulnerabilities,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

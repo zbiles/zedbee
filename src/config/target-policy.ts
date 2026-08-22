@@ -5,6 +5,7 @@ import type {
   WorkspaceInspection,
 } from "../inspection/types.js";
 import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
+import type { ResolvedCheckPolicies } from "./schema.js";
 import type { ResolvedCheckPolicyPatch } from "./schema.js";
 import { freezeRuleSettings } from "../checks/eslint/rule-settings.js";
 
@@ -69,16 +70,23 @@ export function resolveTargetPolicy(
   return policy;
 }
 
-function mergePolicyPatch(
-  policy: ResolvedCheckPolicy,
+export function mergePolicyPatch<K extends CheckId>(
+  policy: Readonly<ResolvedCheckPolicies[K]>,
   patch: ResolvedCheckPolicyPatch,
-): ResolvedCheckPolicy {
-  const merged = { ...policy, ...patch };
+): Readonly<ResolvedCheckPolicies[K]>;
+export function mergePolicyPatch(
+  policy: Readonly<ResolvedCheckPolicy>,
+  patch: ResolvedCheckPolicyPatch,
+): Readonly<ResolvedCheckPolicy> {
+  const merged: Record<string, unknown> = { ...policy, ...patch };
   if ("settings" in policy && patch.settings !== undefined) {
-    merged.settings = Object.freeze({ ...policy.settings, ...patch.settings });
+    merged.settings = Object.freeze({
+      ...(policy.settings as Readonly<Record<string, unknown>>),
+      ...(patch.settings as Readonly<Record<string, unknown>>),
+    });
   }
   if ("rules" in policy && patch.rules !== undefined) {
     merged.rules = freezeRuleSettings({ ...policy.rules, ...patch.rules });
   }
-  return Object.freeze(merged) as ResolvedCheckPolicy;
+  return Object.freeze(merged) as unknown as Readonly<ResolvedCheckPolicy>;
 }

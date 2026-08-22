@@ -9,6 +9,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -109,6 +110,7 @@ async function duplicationContext(
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.duplication,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -145,6 +147,7 @@ async function enlargementContext(): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.duplication,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -184,6 +187,7 @@ async function selfDuplicationContext(): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.duplication,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -229,6 +233,7 @@ async function nestedWorkspaceContext(): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.duplication,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

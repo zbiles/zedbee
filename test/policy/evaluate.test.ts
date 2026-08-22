@@ -2,6 +2,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import type { CheckExecutionResult } from "../../src/checks/adapter.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import type {
   Attribution,
   CheckResult,
@@ -27,14 +28,15 @@ function config(
 function finding(
   staged: boolean,
   severity: Finding["severity"] = "info",
+  file = "value.ts",
 ): Finding {
   return {
-    id: staged ? "staged" : "existing",
+    id: `${staged ? "staged" : "existing"}:${file}`,
     check: "formatting",
     rule: "prettier",
     severity,
     message: "Format file",
-    location: { file: "value.ts", startLine: staged ? 2 : 20 },
+    location: { file, startLine: staged ? 2 : 20 },
     attribution: {
       kind: staged ? "range-overlap" : "none",
       staged,
@@ -187,6 +189,50 @@ describe("evaluatePolicy", () => {
     expect(decision.exitCode).toBe(0);
     expect(decision.results).toEqual([]);
     expect(decision.summary.findings).toEqual([]);
+  });
+
+  it("applies warning, off, and blocking policy independently within one result", () => {
+    const mixedConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "error" },
+      overrides: [
+        { files: ["test/**"], checks: { formatting: "warn" } },
+        { files: ["generated/**"], checks: { formatting: "off" } },
+      ],
+    });
+    const result = completed([
+      finding(true, "info", "src/block.ts"),
+      finding(true, "error", "test/warn.test.ts"),
+      finding(true, "error", "generated/off.ts"),
+    ]);
+    const policyForFile = createFilePolicyResolver(mixedConfig, {
+      files: new Map(),
+      isEmpty: true,
+      containsAddedLine: () => false,
+    });
+    const mixedExecution = {
+      ...execution(result, "error"),
+      policyForFile,
+    };
+
+    const decision = evaluatePolicy([mixedExecution], mixedConfig);
+
+    expect(decision).toMatchObject({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: { warnings: 1, failed: 1 },
+    });
+    expect(decision.results[0]?.findings).toEqual([
+      expect.objectContaining({
+        id: "staged:src/block.ts",
+        severity: "error",
+      }),
+      expect.objectContaining({
+        id: "staged:test/warn.test.ts",
+        severity: "warning",
+      }),
+    ]);
   });
 
   it("returns incomplete ahead of an ordinary policy block by default", () => {

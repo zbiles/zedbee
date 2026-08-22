@@ -21,6 +21,7 @@ import {
   createInspectionFixture,
   type InspectionFixture,
 } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 async function writeReactResolutionFixture(
   fixture: InspectionFixture,
@@ -119,6 +120,7 @@ async function reactContext(
       targetInspection: await inspectRepository(staged.root),
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       policy: config.checks.reactCorrectness,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     } satisfies CheckRunContext,
   };
@@ -241,6 +243,7 @@ describe("reactCorrectnessAdapter", () => {
               relativeRoot: workspace.relativeRoot,
             },
             policy: config.checks.reactCorrectness,
+            policyForFile: testFilePolicyResolver(config),
             signal: new AbortController().signal,
           }),
         ),

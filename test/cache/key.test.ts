@@ -9,6 +9,7 @@ import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
+import { testFilePolicyResolver } from "../helpers/file-policy.js";
 
 function contextFor(snapshotRoot: string, specifier: string): CheckRunContext {
   const config = resolveConfig({ schemaVersion: 1, profile: "fast" });
@@ -47,6 +48,7 @@ function contextFor(snapshotRoot: string, specifier: string): CheckRunContext {
     targetInspection: inspection,
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: config.checks.lint,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

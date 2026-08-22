@@ -384,9 +384,10 @@ const reportingSchema = z
   })
   .strict();
 
-// Availability behavior is repository-wide because an outage affects the
-// repository-wide OSV request rather than an individual file target.
+// Availability behavior and duplication settings are repository/workspace-wide
+// because neither can vary safely for an individual file target.
 const overrideChecksSchema = checksSchema.extend({
+  duplication: simplePolicySchema.optional(),
   vulnerabilities: simplePolicySchema.optional(),
 });
 
@@ -415,7 +416,7 @@ const policyOverrideSchema = z
     }),
     checks: overrideChecksSchema.meta({
       description:
-        "Per-check policy patches. Vulnerability availability handling remains repository-wide.",
+        "Per-check policy patches. Duplication thresholds/settings and vulnerability availability handling remain repository-wide.",
     }),
   })
   .strict();

@@ -19,6 +19,7 @@ import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
+import { testFilePolicyResolver } from "../helpers/file-policy.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -82,6 +83,7 @@ function createContext(config: ResolvedConfig): CheckRunContext {
     },
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: config.checks.formatting,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -926,6 +928,78 @@ describe("dispatchChecks", () => {
     );
   });
 
+  it("uses each finding path for live and final policy in one workspace", async () => {
+    const events: ScanEvent[] = [];
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "error" },
+      overrides: [{ files: ["test/**"], checks: { formatting: "warn" } }],
+    });
+    const context = createContext(config);
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? {
+              ...workspace,
+              sourceFiles: ["src/app.ts", "test/app.test.ts"],
+            }
+          : workspace,
+      ),
+    };
+    const adapter = createLegacyAdapter(async () => ({
+      checkId: "formatting",
+      status: "completed",
+      durationMs: 0,
+      findings: [
+        {
+          id: "source",
+          check: "formatting",
+          rule: "prettier",
+          severity: "info",
+          message: "Format source",
+          location: { file: "src/app.ts", startLine: 1 },
+          attribution: {
+            kind: "transformation-diff",
+            staged: true,
+            evidence: ["src/app.ts"],
+          },
+        },
+        {
+          id: "test",
+          check: "formatting",
+          rule: "prettier",
+          severity: "info",
+          message: "Format test",
+          location: { file: "test/app.test.ts", startLine: 1 },
+          attribution: {
+            kind: "transformation-diff",
+            staged: true,
+            evidence: ["test/app.test.ts"],
+          },
+        },
+      ],
+    }));
+
+    const executions = await dispatchChecks([adapter], context, {
+      onEvent: (event) => events.push(event),
+    });
+    const finalResult = evaluatePolicy(executions, config).results[0];
+    const completedEvent = events.find(
+      (event): event is Extract<ScanEvent, { type: "check-completed" }> =>
+        event.type === "check-completed",
+    );
+
+    expect(
+      finalResult?.findings.map(({ id, severity }) => ({ id, severity })),
+    ).toEqual([
+      { id: "source", severity: "error" },
+      { id: "test", severity: "warning" },
+    ]);
+    expect(completedEvent?.result).toEqual(finalResult);
+  });
+
   it("emits a live pass for a completed baseline-only result", async () => {
     const events: ScanEvent[] = [];
     const adapter = createLegacyAdapter(async () => ({
@@ -966,7 +1040,8 @@ describe("dispatchChecks", () => {
     const adapter = createLegacyAdapter(
       async (context) => {
         adapterPolicy = context.policy;
-        context.policy.severity = "warn";
+        (context.policy as { severity: "off" | "warn" | "error" }).severity =
+          "warn";
         return {
           checkId: "formatting",
           status: "completed",

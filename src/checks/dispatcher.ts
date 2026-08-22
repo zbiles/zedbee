@@ -5,6 +5,10 @@ import {
   type ResolvedCheckPolicy,
 } from "../config/schema.js";
 import { resolveTargetPolicy } from "../config/target-policy.js";
+import {
+  createFilePolicyResolver,
+  type FilePolicyResolver,
+} from "../config/file-policy.js";
 import type { CheckResult } from "../core/types.js";
 import type {
   CheckAdapter,
@@ -59,7 +63,11 @@ function checkPolicy(
   return checks[checkId];
 }
 
-type DispatchContext = Omit<CheckRunContext, "target" | "policy">;
+type DispatchContext = InspectionContext &
+  Pick<CheckRunContext, "snapshots" | "signal">;
+type TrustedDispatchContext = DispatchContext & {
+  readonly policyForFile: FilePolicyResolver;
+};
 
 const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   formatting: "Formatting",
@@ -91,11 +99,13 @@ function executionResult(
   result: CheckResult,
   policy: Readonly<ResolvedCheckPolicy> | null,
   target?: CheckTarget,
+  policyForFile?: FilePolicyResolver,
 ): CheckExecutionResult {
   return {
     result: sanitizeCheckResult(result),
     ...(target === undefined ? {} : { target }),
     policy,
+    ...(policyForFile === undefined ? {} : { policyForFile }),
   };
 }
 
@@ -464,7 +474,7 @@ function inspectionContext(
 }
 
 function scopedContext(
-  context: DispatchContext,
+  context: TrustedDispatchContext,
   checkId: string,
   target: CheckTarget,
   policy: ResolvedCheckPolicy,
@@ -682,7 +692,15 @@ export async function dispatchChecks(
     "project-analysis": pLimit(1),
     network: pLimit(1),
   } as const;
-  const adapterContext = adapterBaseContext(context);
+  const baseContext = adapterBaseContext(context);
+  const policyForFile = createFilePolicyResolver(
+    baseContext.config,
+    baseContext.changeSet,
+  );
+  const adapterContext: TrustedDispatchContext = Object.freeze({
+    ...baseContext,
+    policyForFile,
+  });
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
   const adapterSnapshots = adapters.map(snapshotAdapter);
@@ -885,7 +903,7 @@ export async function dispatchChecks(
               executionPolicy,
             );
             const attributionContext: CheckRunContext = {
-              ...context,
+              ...adapterContext,
               target,
               policy: executionPolicy,
             };
@@ -968,7 +986,7 @@ export async function dispatchChecks(
                   });
           }
           const displayResult =
-            displayResultForPolicy(result, executionPolicy) ??
+            displayResultForPolicy(result, executionPolicy, policyForFile) ??
             sanitizeCheckResult(result);
           emit({
             type: "check-completed",
@@ -977,7 +995,12 @@ export async function dispatchChecks(
             timestamp: clock(),
             result: sanitizeCheckResult(displayResult),
           });
-          return executionResult(result, executionPolicy, target);
+          return executionResult(
+            result,
+            executionPolicy,
+            target,
+            policyForFile,
+          );
         }),
       );
     }

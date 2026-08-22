@@ -12,10 +12,12 @@ import {
   type MetricDeltaPolicy,
 } from "../attribution/metrics.js";
 import type {
+  CheckId,
   ResolvedCheckPolicy,
   ResolvedComplexityPolicy,
   ResolvedDuplicationPolicy,
 } from "../config/schema.js";
+import { CHECK_IDS } from "../config/schema.js";
 import { compareFindings } from "../core/summarize.js";
 import type {
   ChangedEntity,
@@ -219,14 +221,8 @@ function assertUniqueMetricFingerprints(
 
 function effectiveMetricPolicy(
   checkId: string,
-  baseline: readonly Observation[],
-  target: readonly Observation[],
   policy: Readonly<ResolvedCheckPolicy>,
 ): MetricDeltaPolicy | undefined {
-  const hasMetrics = [...baseline, ...target].some(
-    (observation) => observation.metric !== undefined,
-  );
-  if (!hasMetrics) return undefined;
   // Vulnerability severity is descriptive evidence, not a user-configured
   // threshold. It participates in ordinary baseline identity comparison.
   if (checkId === "vulnerabilities") return undefined;
@@ -260,12 +256,18 @@ function effectiveMetricPolicy(
 }
 
 function metricFindings(
+  checkId: string,
   baseline: readonly Observation[],
   target: readonly Observation[],
   entities: readonly ChangedEntity[],
-  policy: MetricDeltaPolicy | undefined,
+  context: CheckRunContext,
 ): Finding[] {
-  if (policy === undefined) return [];
+  if (!target.some((observation) => observation.metric !== undefined))
+    return [];
+  if (checkId === "vulnerabilities") return [];
+  if (!CHECK_IDS.includes(checkId as CheckId)) {
+    throw new TypeError("Metric check has no supported effective policy limit");
+  }
   const baselineByFingerprint = new Map<string, Observation>();
   for (const observation of baseline.filter(
     (candidate) => candidate.metric !== undefined,
@@ -289,6 +291,17 @@ function metricFindings(
     .map((observation) => {
       const fingerprint = fingerprintObservation(observation);
       const baselineObservation = baselineByFingerprint.get(fingerprint);
+      const file = observation.entity?.file ?? observation.location?.file;
+      const resolvedPolicy =
+        file === undefined
+          ? context.policy
+          : context.policyForFile(checkId as CheckId, file, "target");
+      const policy = effectiveMetricPolicy(checkId, resolvedPolicy);
+      if (policy === undefined) {
+        throw new TypeError(
+          "Metric check has no supported effective policy limit",
+        );
+      }
       return attributeMetricDelta(
         baselineObservation,
         observation,
@@ -305,12 +318,12 @@ export async function observationCheckResult(
   requiresBaseline: boolean,
 ): Promise<CheckResult> {
   const set = snapshotSet(rawSet, checkId, context.target, requiresBaseline);
-  const metricPolicy = effectiveMetricPolicy(
-    checkId,
-    set.baseline,
-    set.target,
-    context.policy,
+  const hasMetrics = [...set.baseline, ...set.target].some(
+    (observation) => observation.metric !== undefined,
   );
+  const metricPolicy = hasMetrics
+    ? effectiveMetricPolicy(checkId, context.policy)
+    : undefined;
   assertUniqueMetricFingerprints("baseline", set.baseline);
   assertUniqueMetricFingerprints("target", set.target);
   const [baselineRegistry, targetRegistry] = await Promise.all([
@@ -365,10 +378,11 @@ export async function observationCheckResult(
     },
   );
   const metrics = metricFindings(
+    checkId,
     set.baseline,
     set.target,
     entities,
-    metricPolicy,
+    context,
   );
   return {
     checkId,

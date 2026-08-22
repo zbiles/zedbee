@@ -8,6 +8,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 async function structuralSecurityContext() {
   const [baseline, staged, live] = await Promise.all([
@@ -60,6 +61,7 @@ async function structuralSecurityContext() {
       targetInspection: await inspectRepository(staged.root),
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       policy: config.checks.structuralSecurity,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     } satisfies CheckRunContext,
   };

@@ -14,6 +14,7 @@ import {
   createInspectionFixture,
   type InspectionFixture,
 } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -69,6 +70,7 @@ async function context(
     targetInspection: await inspectRepository(fixtures.staged.root),
     target,
     policy: config.checks.lint,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

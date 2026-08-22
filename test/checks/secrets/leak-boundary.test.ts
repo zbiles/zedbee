@@ -11,6 +11,7 @@ import { renderText } from "../../../src/renderers/text.js";
 import { enrichSourceExcerpts } from "../../../src/scan/source-excerpts.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { createReport } from "../../helpers/scan-report.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 async function context(file: ChangedFile): Promise<CheckRunContext> {
   const [baseline, target, live] = await Promise.all([
@@ -44,6 +45,7 @@ async function context(file: ChangedFile): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(target.root),
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: config.checks.secrets,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

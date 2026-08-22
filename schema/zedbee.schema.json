@@ -3902,7 +3902,6 @@
                 ]
               },
               "duplication": {
-                "description": "Duplicated-code coverage; threshold is a percentage and defaults to 5.",
                 "anyOf": [
                   {
                     "type": "string",
@@ -3922,33 +3921,6 @@
                         "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
-                      },
-                      "threshold": {
-                        "description": "Maximum allowed duplicated-code percentage from 0 to 100.",
-                        "default": 5,
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                      },
-                      "settings": {
-                        "type": "object",
-                        "properties": {
-                          "minLines": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "minTokens": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0,
-                            "maximum": 9007199254740991
-                          },
-                          "mode": {
-                            "type": "string",
-                            "enum": ["strict", "mild", "weak"]
-                          }
-                        },
-                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -4618,7 +4590,7 @@
               }
             },
             "additionalProperties": false,
-            "description": "Per-check policy patches. Vulnerability availability handling remains repository-wide."
+            "description": "Per-check policy patches. Duplication thresholds/settings and vulnerability availability handling remain repository-wide."
           }
         },
         "required": ["files", "checks"],

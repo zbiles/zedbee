@@ -11,6 +11,7 @@ import { buildSnapshotPair } from "../../../src/git/snapshot.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../../../src/inspection/types.js";
 import { createGitRepository } from "../../helpers/git-repository.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 function config(when: "relevant" | "always" = "relevant"): ResolvedConfig {
   return resolveConfig({
@@ -54,6 +55,7 @@ async function runAdapter(
     targetInspection: await inspectRepository(snapshots.targetDir),
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: resolvedConfig.checks.formatting,
+    policyForFile: testFilePolicyResolver(resolvedConfig),
     signal: new AbortController().signal,
   });
 }

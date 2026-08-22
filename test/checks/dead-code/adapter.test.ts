@@ -11,6 +11,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -85,6 +86,7 @@ async function context(
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.deadCode,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }

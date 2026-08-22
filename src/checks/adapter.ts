@@ -3,6 +3,7 @@ import type { ResolvedCheckPolicy, ResolvedConfig } from "../config/schema.js";
 import type { ChangeSet } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
 import type { RepositoryInspection } from "../inspection/types.js";
+import type { FilePolicyResolver } from "../config/file-policy.js";
 
 export type ExecutionClass = "lightweight" | "project-analysis" | "network";
 
@@ -39,6 +40,7 @@ export interface CheckExecutionResult {
   readonly target?: CheckTarget;
   /** A null policy marks a dispatcher failure that must remain visible. */
   readonly policy: Readonly<ResolvedCheckPolicy> | null;
+  readonly policyForFile?: FilePolicyResolver;
 }
 
 export type CheckApplicability =
@@ -56,10 +58,11 @@ export type CheckApplicability =
 
 export interface CheckRunContext extends InspectionContext {
   /** Read-only paths only; adapters never receive snapshot cleanup authority. */
-  snapshots: Readonly<Omit<SnapshotPair, "cleanup">>;
-  target: CheckTarget;
-  policy: ResolvedCheckPolicy;
-  signal: AbortSignal;
+  readonly snapshots: Readonly<Omit<SnapshotPair, "cleanup">>;
+  readonly target: CheckTarget;
+  readonly policy: Readonly<ResolvedCheckPolicy>;
+  readonly policyForFile: FilePolicyResolver;
+  readonly signal: AbortSignal;
 }
 
 interface CheckAdapterBase {

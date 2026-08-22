@@ -10,6 +10,7 @@ import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -79,6 +80,7 @@ async function cycleContext(): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.dependencyArchitecture,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -125,6 +127,7 @@ async function edgeContext(
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks.dependencyArchitecture,
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -333,6 +336,7 @@ describe("dependencyArchitectureAdapter", () => {
       targetInspection: await inspectRepository(staged.root),
       target,
       policy: config.checks.dependencyArchitecture,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     };
     await expect(
@@ -384,6 +388,7 @@ describe("dependencyArchitectureAdapter", () => {
       targetInspection: await inspectRepository(staged.root),
       target,
       policy: config.checks.dependencyArchitecture,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     };
     await expect(
@@ -469,6 +474,7 @@ describe("dependencyArchitectureAdapter", () => {
       targetInspection: await inspectRepository(staged.root),
       target: workspaceTarget,
       policy: config.checks.dependencyArchitecture,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     };
     const set = await dependencyArchitectureAdapter.collect(context);
@@ -549,6 +555,7 @@ describe("dependencyArchitectureAdapter", () => {
       targetInspection: await inspectRepository(staged.root),
       target: workspaceTarget,
       policy: config.checks.dependencyArchitecture,
+      policyForFile: testFilePolicyResolver(config),
       signal: new AbortController().signal,
     };
     const set = await dependencyArchitectureAdapter.collect(context);

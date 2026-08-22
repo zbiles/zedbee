@@ -221,7 +221,7 @@ describe("attribution platform", () => {
     );
   });
 
-  it("uses a workspace duplication threshold override instead of an adapter metric limit", async () => {
+  it("uses the authoritative workspace duplication threshold instead of an adapter metric limit", async () => {
     const repository = await createGitRepository();
     await repository.write(
       "package.json",
@@ -285,14 +285,8 @@ describe("attribution platform", () => {
       schemaVersion: 1,
       profile: "thorough",
       checks: {
-        duplication: { severity: "error", threshold: 50 },
+        duplication: { severity: "error", threshold: 10 },
       },
-      overrides: [
-        {
-          files: ["packages/dup/**"],
-          checks: { duplication: { threshold: 10 } },
-        },
-      ],
     });
     const git = new GitClient(repository.root);
     let tick = 0;

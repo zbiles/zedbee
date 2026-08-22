@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CheckRunContext, CheckTarget } from "../../src/checks/adapter.js";
 import { observationCheckResult } from "../../src/checks/observation-result.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import type { CheckId, ResolvedCheckPolicy } from "../../src/config/schema.js";
 import type { Observation } from "../../src/core/types.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
@@ -19,6 +20,10 @@ async function fixturePair() {
     await fixture.write(
       "src/index.ts",
       "export function run() { return 1; }\n",
+    );
+    await fixture.write(
+      "test/app.test.ts",
+      "export function testRun() { return 1; }\n",
     );
     await fixture.writeJson("apps/web/package.json", { name: "web" });
     await fixture.write("apps/web/src/index.ts", "export const web = true;\n");
@@ -52,19 +57,21 @@ async function context(
 ): Promise<CheckRunContext> {
   const fixtures = await fixturePair();
   const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+  const effectiveChangeSet =
+    changeSet ??
+    ({
+      files: new Map(),
+      isEmpty: false,
+      containsAddedLine: () => false,
+    } satisfies ChangeSet);
+  const effectiveConfig = {
+    ...config,
+    checks: { ...config.checks, [checkId]: policy },
+  };
   return {
     repositoryRoot: fixtures.target.root,
-    changeSet:
-      changeSet ??
-      ({
-        files: new Map(),
-        isEmpty: false,
-        containsAddedLine: () => false,
-      } satisfies ChangeSet),
-    config: {
-      ...config,
-      checks: { ...config.checks, [checkId]: policy },
-    },
+    changeSet: effectiveChangeSet,
+    config: effectiveConfig,
     snapshots: {
       baselineDir: fixtures.baseline.root,
       targetDir: fixtures.target.root,
@@ -75,6 +82,10 @@ async function context(
     targetInspection: await inspectRepository(fixtures.target.root),
     target,
     policy,
+    policyForFile: createFilePolicyResolver(
+      effectiveConfig,
+      effectiveChangeSet,
+    ),
     signal: new AbortController().signal,
   };
 }
@@ -103,6 +114,19 @@ function metric(check: CheckId, value: number, limit?: number): Observation {
       value,
       ...(limit === undefined ? {} : { limit }),
     },
+  };
+}
+
+function metricAt(
+  check: CheckId,
+  value: number,
+  file: string,
+  name: string,
+): Observation {
+  return {
+    ...metric(check, value),
+    identity: `function:${file}:${name}`,
+    entity: { kind: "function", name, file },
   };
 }
 
@@ -296,6 +320,73 @@ describe("observationCheckResult", () => {
         false,
       ),
     ).rejects.toThrow(TypeError);
+  });
+
+  it("resolves the metric limit for each target observation file", async () => {
+    const target = { id: ".", kind: "repository" as const, relativeRoot: "." };
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        cyclomaticComplexity: {
+          severity: "error",
+          max: 10,
+          blockWorsening: true,
+        },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { cyclomaticComplexity: { max: 20 } },
+        },
+      ],
+    });
+    const changeSet: ChangeSet = {
+      files: new Map(
+        ["src/index.ts", "test/app.test.ts"].map((path) => [
+          path,
+          {
+            path,
+            status: "modified" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      ),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    const runContext = await context(
+      "cyclomaticComplexity",
+      target,
+      config.checks.cyclomaticComplexity,
+      changeSet,
+    );
+    runContext.config = config;
+    const policyForFile = createFilePolicyResolver(config, changeSet);
+    const result = await observationCheckResult(
+      "cyclomaticComplexity",
+      {
+        checkId: "cyclomaticComplexity",
+        target,
+        baselineObservations: [],
+        targetObservations: [
+          metricAt("cyclomaticComplexity", 15, "src/index.ts", "run"),
+          metricAt("cyclomaticComplexity", 15, "test/app.test.ts", "testRun"),
+        ],
+      },
+      { ...runContext, policyForFile },
+      true,
+    );
+
+    expect(
+      result.findings.filter((finding) => finding.attribution.staged),
+    ).toEqual([
+      expect.objectContaining({
+        attribution: expect.objectContaining({
+          evidence: expect.arrayContaining(["limit:10"]),
+        }),
+      }),
+    ]);
   });
 
   it("treats vulnerability severity metrics as baseline annotations", async () => {

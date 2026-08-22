@@ -13,6 +13,7 @@ import type { CheckId } from "../../../src/config/schema.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
+import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -90,6 +91,7 @@ async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
     targetInspection: await inspectRepository(staged.root),
     target,
     policy: config.checks[checkId],
+    policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
@@ -353,6 +355,7 @@ describe("collectComplexityObservations", () => {
         targetInspection: await inspectRepository(staged.root),
         target,
         policy: config.checks[adapter.id as CheckId],
+        policyForFile: testFilePolicyResolver(config),
         signal: new AbortController().signal,
       };
 
