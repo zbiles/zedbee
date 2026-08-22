@@ -18,7 +18,9 @@ const { Config } = require(join(eslintRoot, "lib/config/config.js")) as {
 const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin;
 
 export type RuleCheckId = "lint" | "reactCorrectness" | "reactAccessibility";
-export type LintRuleSettings = Readonly<Record<string, EslintRuleConfiguration>>;
+export type LintRuleSettings = Readonly<
+  Record<string, EslintRuleConfiguration>
+>;
 export type ReactCorrectnessRuleSettings = Readonly<
   Record<string, EslintRuleConfiguration>
 >;
@@ -65,7 +67,7 @@ function prefixedRules(
 function buildInventory(
   checkId: RuleCheckId,
   entries: readonly [string, Rule.RuleModule][],
-): RuleInventory {
+): Map<string, Rule.RuleModule> {
   const inventory = new Map<string, Rule.RuleModule>();
   for (const [ruleId, rule] of entries) {
     if (!isRuleModule(rule)) {
@@ -82,7 +84,56 @@ function buildInventory(
     }
     inventory.set(ruleId, rule);
   }
-  return Object.freeze(inventory);
+  return inventory;
+}
+
+class ReadonlyRuleInventory implements RuleInventory {
+  readonly #inventory: RuleInventory;
+
+  constructor(inventory: RuleInventory) {
+    this.#inventory = inventory;
+  }
+
+  get size(): number {
+    return this.#inventory.size;
+  }
+
+  [Symbol.iterator](): MapIterator<[string, Rule.RuleModule]> {
+    return this.#inventory[Symbol.iterator]();
+  }
+
+  entries(): MapIterator<[string, Rule.RuleModule]> {
+    return this.#inventory.entries();
+  }
+
+  forEach(
+    callbackfn: (
+      value: Rule.RuleModule,
+      key: string,
+      map: ReadonlyMap<string, Rule.RuleModule>,
+    ) => void,
+    thisArg?: unknown,
+  ): void {
+    this.#inventory.forEach((value, key) => {
+      callbackfn.call(thisArg, value, key, this);
+    });
+  }
+
+  get(key: string): Rule.RuleModule | undefined {
+    return this.#inventory.get(key);
+  }
+
+  has(key: string): boolean {
+    return this.#inventory.has(key);
+  }
+
+  keys(): MapIterator<string> {
+    return this.#inventory.keys();
+  }
+
+  values(): MapIterator<Rule.RuleModule> {
+    return this.#inventory.values();
+  }
 }
 
 const coreRules = Object.fromEntries(builtinRules) as Record<
@@ -112,6 +163,16 @@ const inventoryByCheckId = Object.freeze({
   lint: lintInventory,
   reactCorrectness: reactCorrectnessInventory,
   reactAccessibility: reactAccessibilityInventory,
+}) satisfies Readonly<Record<RuleCheckId, Map<string, Rule.RuleModule>>>;
+
+const readonlyInventoryByCheckId = Object.freeze({
+  lint: Object.freeze(new ReadonlyRuleInventory(lintInventory)),
+  reactCorrectness: Object.freeze(
+    new ReadonlyRuleInventory(reactCorrectnessInventory),
+  ),
+  reactAccessibility: Object.freeze(
+    new ReadonlyRuleInventory(reactAccessibilityInventory),
+  ),
 }) satisfies Readonly<Record<RuleCheckId, RuleInventory>>;
 
 const ownerByRuleId = new Map<string, RuleOwner>();
@@ -152,6 +213,83 @@ const validationPlugins = Object.freeze({
   }),
 }) satisfies Readonly<Record<RuleCheckId, Readonly<Record<string, unknown>>>>;
 
+function clonePlainValidationValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => clonePlainValidationValue(item));
+  }
+
+  if (typeof value === "object" && value !== null) {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [
+        key,
+        clonePlainValidationValue(item),
+      ]),
+    );
+  }
+
+  return value;
+}
+
+function validationRuleConfiguration(
+  configuration: EslintRuleConfiguration,
+): EslintRuleConfiguration {
+  const clone = clonePlainValidationValue(configuration);
+  if (!Array.isArray(clone)) return 2;
+  return [2, ...clone.slice(1)] as EslintRuleConfiguration;
+}
+
+function isValidSeverity(value: unknown): boolean {
+  return (
+    value === "off" ||
+    value === "warn" ||
+    value === "error" ||
+    value === 0 ||
+    value === 1 ||
+    value === 2
+  );
+}
+
+function assertValidSeverity(
+  checkId: RuleCheckId,
+  rules: Readonly<Record<string, EslintRuleConfiguration>>,
+): void {
+  for (const [ruleId, configuration] of Object.entries(rules)) {
+    const severity = Array.isArray(configuration)
+      ? configuration[0]
+      : configuration;
+    if (!isValidSeverity(severity)) {
+      throw new ManagedRuleConfigurationError(
+        `invalid rule configuration for managed ${checkId} rules.`,
+        ruleId,
+      );
+    }
+  }
+}
+
+function validationRuleSettings(
+  rules: Readonly<Record<string, EslintRuleConfiguration>>,
+): Record<string, EslintRuleConfiguration> {
+  return Object.fromEntries(
+    Object.entries(rules).map(([ruleId, configuration]) => [
+      ruleId,
+      validationRuleConfiguration(configuration),
+    ]),
+  );
+}
+
+function validateWithPinnedEslintConfig(
+  checkId: RuleCheckId,
+  rules: Readonly<Record<string, EslintRuleConfiguration>>,
+): void {
+  new Config({
+    language: "@/js",
+    plugins: validationPlugins[checkId],
+    rules: validationRuleSettings(rules),
+  });
+}
+
 function ruleConfigurationSummary(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   if (/Expected severity/u.test(message)) return "invalid rule configuration";
@@ -187,12 +325,10 @@ function validateRuleOptions(
   rules: Readonly<Record<string, EslintRuleConfiguration>>,
 ): void {
   try {
-    new Config({
-      language: "@/js",
-      plugins: validationPlugins[checkId],
-      rules: { ...rules },
-    });
+    assertValidSeverity(checkId, rules);
+    validateWithPinnedEslintConfig(checkId, rules);
   } catch (error) {
+    if (error instanceof ManagedRuleConfigurationError) throw error;
     const ruleId =
       error instanceof Error
         ? Object.keys(rules).find((candidate) =>
@@ -238,7 +374,7 @@ export function freezeRuleSettings(
 }
 
 export function managedRuleInventory(checkId: RuleCheckId): RuleInventory {
-  return inventoryByCheckId[checkId];
+  return readonlyInventoryByCheckId[checkId];
 }
 
 export function validateManagedRuleConfiguration(

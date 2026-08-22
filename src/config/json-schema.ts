@@ -3,6 +3,10 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { format } from "prettier";
 import { z } from "zod";
+import {
+  managedRuleInventory,
+  type RuleCheckId,
+} from "../checks/eslint/rule-settings.js";
 import { configFileSchema } from "./schema.js";
 
 export type ConfigJsonSchema = Record<string, unknown>;
@@ -12,12 +16,94 @@ const schemaPath = resolve(
   "../../schema/zedbee.schema.json",
 );
 
+const RULE_CHECK_IDS = [
+  "lint",
+  "reactCorrectness",
+  "reactAccessibility",
+] as const satisfies readonly RuleCheckId[];
+const RULE_CONFIGURATION_DEFINITION = "managedEslintRuleConfiguration";
+
+function ruleSeverityJsonSchema(): ConfigJsonSchema {
+  return {
+    anyOf: [
+      {
+        type: "string",
+        enum: ["off", "warn", "error"],
+        description:
+          "Whether a rule is disabled, reports a warning, or reports an error.",
+      },
+      {
+        type: "number",
+        enum: [0, 1, 2],
+      },
+    ],
+  };
+}
+
+function ruleConfigurationJsonSchema(): ConfigJsonSchema {
+  return {
+    anyOf: [
+      ruleSeverityJsonSchema(),
+      {
+        type: "array",
+        minItems: 1,
+        items: [ruleSeverityJsonSchema()],
+        additionalItems: true,
+      },
+    ],
+    description:
+      'ESLint rule severity ("off", "warn", "error", 0, 1, 2) or [severity, ...options].',
+  };
+}
+
+function ruleConfigurationJsonSchemaReference(): ConfigJsonSchema {
+  return { $ref: `#/definitions/${RULE_CONFIGURATION_DEFINITION}` };
+}
+
+function boundedRuleSettingsJsonSchema(checkId: RuleCheckId): ConfigJsonSchema {
+  return {
+    type: "object",
+    properties: Object.fromEntries(
+      [...managedRuleInventory(checkId).keys()]
+        .sort()
+        .map((ruleId) => [ruleId, ruleConfigurationJsonSchemaReference()]),
+    ),
+    additionalProperties: false,
+    description:
+      "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs.",
+  };
+}
+
+function patchRuleSettingsSchema(
+  checksProperties: Record<string, Record<string, unknown>> | undefined,
+): void {
+  if (checksProperties === undefined) return;
+
+  for (const checkId of RULE_CHECK_IDS) {
+    const policySchema = checksProperties[checkId] as
+      { anyOf?: unknown[] } | undefined;
+    const objectSchema = policySchema?.anyOf?.find(
+      (candidate): candidate is { properties?: Record<string, unknown> } =>
+        typeof candidate === "object" &&
+        candidate !== null &&
+        "properties" in candidate,
+    );
+    if (objectSchema?.properties?.rules !== undefined) {
+      objectSchema.properties.rules = boundedRuleSettingsJsonSchema(checkId);
+    }
+  }
+}
+
 export function generateConfigJsonSchema(): ConfigJsonSchema {
   const generated = z.toJSONSchema(configFileSchema, {
     target: "draft-07",
     io: "input",
   });
   const schema = JSON.parse(JSON.stringify(generated)) as ConfigJsonSchema;
+  schema.definitions = {
+    ...((schema.definitions as Record<string, unknown> | undefined) ?? {}),
+    [RULE_CONFIGURATION_DEFINITION]: ruleConfigurationJsonSchema(),
+  };
   const properties = schema.properties as
     Record<string, Record<string, unknown>> | undefined;
 
@@ -29,6 +115,21 @@ export function generateConfigJsonSchema(): ConfigJsonSchema {
   if (properties?.overrides !== undefined) {
     properties.overrides.default = [];
   }
+  patchRuleSettingsSchema(
+    (
+      properties?.checks as
+        { properties?: Record<string, Record<string, unknown>> } | undefined
+    )?.properties,
+  );
+  patchRuleSettingsSchema(
+    (
+      (
+        properties?.overrides as
+          { items?: { properties?: Record<string, unknown> } } | undefined
+      )?.items?.properties?.checks as
+        { properties?: Record<string, Record<string, unknown>> } | undefined
+    )?.properties,
+  );
 
   return schema;
 }

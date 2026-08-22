@@ -73,11 +73,98 @@ describe("managed lint rule settings", () => {
     ).toThrow(/invalid rule options/u);
   });
 
+  it("rejects invalid rule options even when the requested severity is off", () => {
+    expect(() =>
+      validateManagedRuleConfiguration("lint", {
+        "no-restricted-syntax": [
+          "off",
+          {
+            selector: 42,
+            message: "selector must be a string",
+          },
+        ],
+      }),
+    ).toThrow(/invalid rule options/u);
+  });
+
+  it("does not mutate caller-owned rule arrays or option objects during private validation", () => {
+    const input = {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector: "CallExpression[callee.name='eval']",
+          message: "Avoid eval in managed code.",
+        },
+      ],
+    } as const;
+    const expected = {
+      "no-restricted-syntax": [
+        "warn",
+        {
+          selector: "CallExpression[callee.name='eval']",
+          message: "Avoid eval in managed code.",
+        },
+      ],
+    };
+
+    const resolved = validateManagedRuleConfiguration("lint", input);
+
+    expect(input).toEqual(expected);
+    expect(resolved).toEqual(expected);
+    const resolvedRule = resolved["no-restricted-syntax"];
+    expect(Array.isArray(resolvedRule)).toBe(true);
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(Object.isFrozen(resolvedRule)).toBe(true);
+    expect(
+      Array.isArray(resolvedRule) && Object.isFrozen(resolvedRule[1]),
+    ).toBe(true);
+  });
+
+  it("accepts deeply frozen valid rule arrays", () => {
+    const frozenRule = Object.freeze([
+      "error",
+      Object.freeze({
+        selector: "CallExpression[callee.name='eval']",
+        message: "Avoid eval in managed code.",
+      }),
+    ]) as unknown as Parameters<
+      typeof validateManagedRuleConfiguration
+    >[1][string];
+
+    expect(() =>
+      validateManagedRuleConfiguration("lint", {
+        "no-restricted-syntax": frozenRule,
+      }),
+    ).not.toThrow();
+  });
+
   it("exposes only managed lint-owned rules in the inventory", () => {
     const inventory = managedRuleInventory("lint");
 
     expect(inventory.has("no-console")).toBe(true);
     expect(inventory.has("@typescript-eslint/no-unused-vars")).toBe(true);
     expect(inventory.has("jsx-a11y/no-autofocus")).toBe(false);
+  });
+
+  it("returns an inventory view that cannot mutate canonical ownership", () => {
+    const inventory = managedRuleInventory("lint");
+    const coreRule = inventory.get("no-console");
+    expect(coreRule).toBeDefined();
+
+    expect(() => {
+      (inventory as Map<string, typeof coreRule>).set(
+        "company/private-rule",
+        coreRule,
+      );
+    }).toThrow();
+
+    expect(managedRuleInventory("lint").has("company/private-rule")).toBe(
+      false,
+    );
+    expect(() =>
+      validateManagedRuleConfiguration("lint", {
+        "company/private-rule": "error",
+      }),
+    ).toThrow(/unsupported rule/u);
   });
 });

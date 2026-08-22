@@ -99,6 +99,24 @@ function validator() {
   return ajv.compile(generateConfigJsonSchema());
 }
 
+function rulePropertiesFor(checkId: string): Record<string, unknown> {
+  const schema = generateConfigJsonSchema() as {
+    properties: {
+      checks: {
+        properties: Record<
+          string,
+          { anyOf: [{ type: "string" }, { properties: { rules: unknown } }] }
+        >;
+      };
+    };
+  };
+  const policyObjectSchema =
+    schema.properties.checks.properties[checkId]?.anyOf[1];
+  const rulesSchema = policyObjectSchema?.properties.rules as
+    { properties?: Record<string, unknown> } | undefined;
+  return rulesSchema?.properties ?? {};
+}
+
 describe("Zedbee configuration JSON Schema", () => {
   it("publishes each runtime check as one editor-visible property", () => {
     const schema = generateConfigJsonSchema() as {
@@ -417,9 +435,9 @@ describe("Zedbee configuration JSON Schema", () => {
     expect(
       schema.properties.checks.properties.vulnerabilities.description,
     ).toMatch(/online/i);
-    expect(
-      JSON.stringify(schema.properties.checks.properties.lint),
-    ).toContain("rules");
+    expect(JSON.stringify(schema.properties.checks.properties.lint)).toContain(
+      "rules",
+    );
     expect(
       JSON.stringify(schema.properties.checks.properties.reactCorrectness),
     ).toContain("rules");
@@ -432,6 +450,83 @@ describe("Zedbee configuration JSON Schema", () => {
       schemaVersion: 1,
     });
   });
+
+  it.each([
+    {
+      checkId: "lint",
+      owned: ["no-console", "@typescript-eslint/no-unused-vars"],
+      notOwned: ["jsx-a11y/no-autofocus", "company/private-rule"],
+    },
+    {
+      checkId: "reactCorrectness",
+      owned: ["react/prop-types", "react-hooks/rules-of-hooks"],
+      notOwned: ["jsx-a11y/no-autofocus", "company/private-rule"],
+    },
+    {
+      checkId: "reactAccessibility",
+      owned: ["jsx-a11y/no-autofocus"],
+      notOwned: ["react/prop-types", "company/private-rule"],
+    },
+  ])(
+    "exposes bounded known rule IDs for $checkId",
+    ({ checkId, owned, notOwned }) => {
+      const properties = rulePropertiesFor(checkId);
+
+      for (const ruleId of owned) {
+        expect(properties).toHaveProperty(ruleId);
+      }
+      for (const ruleId of notOwned) {
+        expect(properties).not.toHaveProperty(ruleId);
+      }
+    },
+  );
+
+  it.each([
+    {
+      name: "lint owned rule",
+      input: {
+        schemaVersion: 1,
+        checks: { lint: { rules: { "no-console": "warn" } } },
+      },
+      valid: true,
+    },
+    {
+      name: "lint wrong-check rule",
+      input: {
+        schemaVersion: 1,
+        checks: { lint: { rules: { "jsx-a11y/no-autofocus": "warn" } } },
+      },
+      valid: false,
+    },
+    {
+      name: "react accessibility owned rule",
+      input: {
+        schemaVersion: 1,
+        checks: {
+          reactAccessibility: { rules: { "jsx-a11y/no-autofocus": "off" } },
+        },
+      },
+      valid: true,
+    },
+    {
+      name: "react accessibility unknown rule",
+      input: {
+        schemaVersion: 1,
+        checks: {
+          reactAccessibility: { rules: { "company/private-rule": "error" } },
+        },
+      },
+      valid: false,
+    },
+  ])(
+    "keeps runtime and generated schema acceptance aligned for $name",
+    ({ input, valid }) => {
+      const validate = validator();
+
+      expect(configFileSchema.safeParse(input).success).toBe(valid);
+      expect(validate(input)).toBe(valid);
+    },
+  );
 
   it("keeps the checked-in schema byte-for-byte deterministic", async () => {
     const checkedIn = await readFile(
