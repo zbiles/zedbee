@@ -7,6 +7,9 @@ export type InitHookChoice =
 export type ResolvedHookChoice = Exclude<InitHookChoice, "auto">;
 export type InitOsvUnavailable = "block" | "warn";
 
+export const OSV_NETWORK_DISCLOSURE =
+  "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.";
+
 export interface InitHookActivation {
   readonly status: "active" | "pending" | "not-requested";
   readonly message: string;

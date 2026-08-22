@@ -3,6 +3,7 @@ import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
+import { OSV_NETWORK_DISCLOSURE } from "./types.js";
 import type {
   CreateInitProposalOptions,
   InitFileChange,
@@ -362,8 +363,7 @@ export function createInitProposal(
             id: "vulnerabilities" as const,
             usesNetwork: true,
             onUnavailable: osvUnavailable,
-            disclosure:
-              "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.",
+            disclosure: OSV_NETWORK_DISCLOSURE,
           }),
         ]),
     limitations: Object.freeze([

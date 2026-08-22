@@ -12,6 +12,7 @@ import type {
   InitProposal,
   ResolvedHookChoice,
 } from "../init/types.js";
+import { OSV_NETWORK_DISCLOSURE } from "../init/types.js";
 import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
@@ -112,9 +113,11 @@ function SetupSummary({
           </Text>
         ) : null}
       </Box>
-      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        {explanation}
-      </Text>
+      <Box paddingLeft={2}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {explanation}
+        </Text>
+      </Box>
       <Text> </Text>
       <Box>
         <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
@@ -223,14 +226,22 @@ function VulnerabilityOutageChoice({
 
 function NetworkDisclosures({
   proposal,
+  width,
   color,
 }: {
   readonly proposal: InitProposal;
+  readonly width: number;
   readonly color: boolean;
 }) {
-  if (proposal.networkChecks.length === 0) return null;
+  const disclosure =
+    proposal.networkChecks[0]?.disclosure ?? OSV_NETWORK_DISCLOSURE;
+  const lineWidth = Math.max(1, width - 6);
+  const disclosureHeight = wordWrappedLineCount(
+    "NETWORK DISCLOSURE: " + disclosure,
+    lineWidth,
+  );
   return (
-    <Box flexDirection="column" paddingX={2}>
+    <Box flexDirection="column" paddingX={2} height={disclosureHeight + 1}>
       <Text> </Text>
       {proposal.networkChecks.map((check) => (
         <Text key={check.id} wrap="wrap">
@@ -244,6 +255,22 @@ function NetworkDisclosures({
       ))}
     </Box>
   );
+}
+
+function wordWrappedLineCount(value: string, width: number): number {
+  let lines = 1;
+  let lineLength = 0;
+  for (const word of value.split(" ")) {
+    if (lineLength === 0) {
+      lineLength = word.length;
+    } else if (lineLength + word.length + 1 <= width) {
+      lineLength += word.length + 1;
+    } else {
+      lines += 1;
+      lineLength = word.length;
+    }
+  }
+  return lines;
 }
 
 function SetupPanel({
@@ -276,7 +303,7 @@ function SetupPanel({
       />
       <BrandedCommandPanelRule width={width} color={color} />
       <CheckChoices cursor={focus - 1} selected={selected} color={color} />
-      <NetworkDisclosures proposal={proposal} color={color} />
+      <NetworkDisclosures proposal={proposal} width={width} color={color} />
       {proposal.vulnerabilityScanningAvailable ? (
         <>
           <BrandedCommandPanelRule width={width} color={color} />

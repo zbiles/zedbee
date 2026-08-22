@@ -25,7 +25,66 @@ const proposal: InitProposal = {
   files: [],
 };
 
+function setupFrame(value: InitProposal, width = 80): string {
+  return render(
+    <InitApp
+      proposal={value}
+      proposalForSelection={() => value}
+      width={width}
+      color={false}
+      animations={false}
+      onDecision={() => undefined}
+    />,
+  ).lastFrame()!;
+}
+
 describe("InitApp", () => {
+  it("aligns the profile description with the Profile label", () => {
+    const lines = setupFrame(proposal).split("\n");
+    const profileLine = lines.find((line) => line.includes("Profile:"))!;
+    const descriptionLine = lines.find((line) =>
+      line.includes("Balanced local checks"),
+    )!;
+
+    expect(descriptionLine.indexOf("Balanced")).toBe(
+      profileLine.indexOf("Profile:"),
+    );
+  });
+
+  it.each([40, 80])(
+    "reserves the wrapped disclosure area at %i columns",
+    (width) => {
+      const withDisclosure: InitProposal = {
+        ...proposal,
+        networkChecks: [
+          {
+            id: "vulnerabilities",
+            usesNetwork: true,
+            onUnavailable: "block",
+            disclosure:
+              "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.",
+          },
+        ],
+      };
+      const emptyLines = setupFrame(proposal, width).split("\n");
+      const disclosureLines = setupFrame(withDisclosure, width).split("\n");
+      const emptyOutage = emptyLines.findIndex((line) =>
+        line.includes("Block the commit"),
+      );
+      const disclosureOutage = disclosureLines.findIndex((line) =>
+        line.includes("Block the commit"),
+      );
+      const disclosureStart = disclosureLines.findIndex((line) =>
+        line.includes("NETWORK DISCLOSURE:"),
+      );
+
+      expect(disclosureStart).toBeGreaterThan(0);
+      expect(emptyOutage).toBeGreaterThan(0);
+      expect(emptyOutage).toBe(disclosureOutage);
+      expect(emptyLines[disclosureStart]).not.toContain("NETWORK DISCLOSURE:");
+    },
+  );
+
   it("navigates profiles, checks, and OSV with one keyboard flow", async () => {
     const onDecision = vi.fn();
     const proposalForSelection = vi.fn(
