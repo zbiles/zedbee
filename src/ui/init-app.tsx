@@ -1,6 +1,11 @@
 import { useMemo, useState } from "react";
 import { Box, Text, render, useApp, useInput } from "ink";
-import { CHECK_IDS, type CheckId } from "../config/schema.js";
+import {
+  CHECK_IDS,
+  PROFILE_IDS,
+  type CheckId,
+  type ProfileId,
+} from "../config/schema.js";
 import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitOsvUnavailable,
@@ -17,8 +22,9 @@ import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
-  readonly proposalForChecks: (
-    checks: readonly CheckId[],
+  readonly proposalForSelection: (
+    profile: ProfileId,
+    checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
   ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
@@ -39,38 +45,75 @@ const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
 };
 
 const INIT_EVENT_MAX_FPS = 30;
+const CURSOR_HOME = "\u001b[H";
 
 export function initMaxFps(): number {
   return INIT_EVENT_MAX_FPS;
 }
 
 export function initRenderOptions() {
+  let homeTemporaryScreen = true;
   return Object.freeze({
     exitOnCtrlC: false,
     patchConsole: false,
     maxFps: initMaxFps(),
     alternateScreen: true,
+    onRender() {
+      if (!homeTemporaryScreen) return;
+      homeTemporaryScreen = false;
+      process.stdout.write(CURSOR_HOME);
+    },
   });
 }
 
 function SetupSummary({
   proposal,
+  profile,
+  baseProfile,
+  focused,
   color,
 }: {
   readonly proposal: InitProposal;
+  readonly profile: ProfileId | "custom";
+  readonly baseProfile: ProfileId;
+  readonly focused: boolean;
   readonly color: boolean;
 }) {
   const installsHook = proposal.hook !== "none";
+  const explanation =
+    profile === "custom"
+      ? "Custom checks based on the " + baseProfile + " profile."
+      : PROFILE_EXPLANATIONS[profile];
   return (
     <Box flexDirection="column" paddingX={2}>
       <Box>
-        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>Profile: </Text>
-        <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-          {proposal.profile}
+        <Text {...colorProp(color, ZEDBEE_THEME.yellow)}>
+          {focused ? "➜" : " "}{" "}
         </Text>
+        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>Profile: </Text>
+        {PROFILE_IDS.map((option, index) => (
+          <Text
+            key={option}
+            bold={profile === option}
+            {...colorProp(
+              color,
+              profile === option
+                ? ZEDBEE_THEME.primary
+                : ZEDBEE_THEME.secondary,
+            )}
+          >
+            {index === 0 ? " " : "  "}
+            {option}
+          </Text>
+        ))}
+        {profile === "custom" ? (
+          <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {"  "}custom
+          </Text>
+        ) : null}
       </Box>
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        {PROFILE_EXPLANATIONS[proposal.profile]}
+        {explanation}
       </Text>
       <Text> </Text>
       <Box>
@@ -131,7 +174,7 @@ function CheckChoices({
             index === cursor ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
           )}
         >
-          {index === cursor ? ">" : " "} [{selected.has(check) ? "x" : " "}]{" "}
+          {index === cursor ? "➜" : " "} [{selected.has(check) ? "✽" : " "}]{" "}
           {check}
         </Text>
       ))}
@@ -141,11 +184,11 @@ function CheckChoices({
 
 function VulnerabilityOutageChoice({
   value,
-  proposal,
+  focused,
   color,
 }: {
   readonly value: InitOsvUnavailable;
-  readonly proposal: InitProposal;
+  readonly focused: boolean;
   readonly color: boolean;
 }) {
   return (
@@ -162,7 +205,8 @@ function VulnerabilityOutageChoice({
           value === "block" ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
         )}
       >
-        {value === "block" ? "●" : "○"} [B] Block the commit (recommended)
+        {focused && value === "block" ? "➜" : " "} [
+        {value === "block" ? "✽" : " "}] Block the commit (recommended)
       </Text>
       <Text
         {...colorProp(
@@ -170,15 +214,32 @@ function VulnerabilityOutageChoice({
           value === "warn" ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
         )}
       >
-        {value === "warn" ? "●" : "○"} [W] Warn and allow the commit
+        {focused && value === "warn" ? "➜" : " "} [
+        {value === "warn" ? "✽" : " "}] Warn and allow the commit
       </Text>
+    </Box>
+  );
+}
+
+function NetworkDisclosures({
+  proposal,
+  color,
+}: {
+  readonly proposal: InitProposal;
+  readonly color: boolean;
+}) {
+  if (proposal.networkChecks.length === 0) return null;
+  return (
+    <Box flexDirection="column" paddingX={2}>
+      <Text> </Text>
       {proposal.networkChecks.map((check) => (
-        <Text
-          key={check.id}
-          wrap="wrap"
-          {...colorProp(color, ZEDBEE_THEME.warning)}
-        >
-          Network disclosure: {check.disclosure}
+        <Text key={check.id} wrap="wrap">
+          <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+            NETWORK DISCLOSURE:{" "}
+          </Text>
+          <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {check.disclosure}
+          </Text>
         </Text>
       ))}
     </Box>
@@ -187,14 +248,18 @@ function VulnerabilityOutageChoice({
 
 function SetupPanel({
   proposal,
-  cursor,
+  focus,
+  profile,
+  baseProfile,
   selected,
   osvUnavailable,
   width,
   color,
 }: {
   readonly proposal: InitProposal;
-  readonly cursor: number;
+  readonly focus: number;
+  readonly profile: ProfileId | "custom";
+  readonly baseProfile: ProfileId;
   readonly selected: ReadonlySet<CheckId>;
   readonly osvUnavailable: InitOsvUnavailable;
   readonly width: number;
@@ -202,15 +267,22 @@ function SetupPanel({
 }) {
   return (
     <BrandedCommandPanel title="SETUP" width={width} color={color}>
-      <SetupSummary proposal={proposal} color={color} />
+      <SetupSummary
+        proposal={proposal}
+        profile={profile}
+        baseProfile={baseProfile}
+        focused={focus === 0}
+        color={color}
+      />
       <BrandedCommandPanelRule width={width} color={color} />
-      <CheckChoices cursor={cursor} selected={selected} color={color} />
+      <CheckChoices cursor={focus - 1} selected={selected} color={color} />
+      <NetworkDisclosures proposal={proposal} color={color} />
       {proposal.vulnerabilityScanningAvailable ? (
         <>
           <BrandedCommandPanelRule width={width} color={color} />
           <VulnerabilityOutageChoice
             value={osvUnavailable}
-            proposal={proposal}
+            focused={focus === CHECK_IDS.length + 1}
             color={color}
           />
         </>
@@ -218,8 +290,7 @@ function SetupPanel({
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          ↑↓ Move · Space Toggle · B/W Outage behavior · Enter Review · Esc
-          Cancel
+          ↑↓ Move · ←→ Change profile · Space Toggle · Enter Review · Esc Cancel
         </Text>
       </Box>
       <Text> </Text>
@@ -266,14 +337,16 @@ function ReviewPanel({
 
 export function InitApp({
   proposal,
-  proposalForChecks,
+  proposalForSelection,
   width,
   color,
   onDecision,
 }: InitAppProps) {
   const { exit } = useApp();
   const [phase, setPhase] = useState<"configure" | "review">("configure");
-  const [cursor, setCursor] = useState(0);
+  const [focus, setFocus] = useState(0);
+  const [baseProfile, setBaseProfile] = useState<ProfileId>(proposal.profile);
+  const [customized, setCustomized] = useState(false);
   const [selected, setSelected] = useState(
     () => new Set<CheckId>(proposal.recommendedChecks),
   );
@@ -282,11 +355,12 @@ export function InitApp({
   );
   const reviewedProposal = useMemo(
     () =>
-      proposalForChecks(
+      proposalForSelection(
+        baseProfile,
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
       ),
-    [osvUnavailable, proposalForChecks, selected],
+    [baseProfile, osvUnavailable, proposalForSelection, selected],
   );
 
   useInput((input, key) => {
@@ -310,11 +384,37 @@ export function InitApp({
       onDecision(false);
       exit();
     } else if (key.upArrow) {
-      setCursor((value) => (value - 1 + CHECK_IDS.length) % CHECK_IDS.length);
+      const focusCount =
+        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 2 : 1);
+      setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
-      setCursor((value) => (value + 1) % CHECK_IDS.length);
+      const focusCount =
+        CHECK_IDS.length + (proposal.vulnerabilityScanningAvailable ? 2 : 1);
+      setFocus((value) => (value + 1) % focusCount);
+    } else if (focus === 0 && (key.leftArrow || key.rightArrow)) {
+      const currentIndex = PROFILE_IDS.indexOf(baseProfile);
+      const offset = key.rightArrow ? 1 : -1;
+      const nextProfile =
+        PROFILE_IDS[
+          (currentIndex + offset + PROFILE_IDS.length) % PROFILE_IDS.length
+        ]!;
+      const nextProposal = proposalForSelection(
+        nextProfile,
+        undefined,
+        osvUnavailable,
+      );
+      setBaseProfile(nextProfile);
+      setCustomized(false);
+      setSelected(new Set(nextProposal.recommendedChecks));
     } else if (input === " ") {
-      const check = CHECK_IDS[cursor];
+      if (
+        proposal.vulnerabilityScanningAvailable &&
+        focus === CHECK_IDS.length + 1
+      ) {
+        setOsvUnavailable((value) => (value === "block" ? "warn" : "block"));
+        return;
+      }
+      const check = CHECK_IDS[focus - 1];
       if (check !== undefined) {
         setSelected((current) => {
           const next = new Set(current);
@@ -322,12 +422,8 @@ export function InitApp({
           else next.add(check);
           return next;
         });
+        setCustomized(true);
       }
-    } else if (
-      proposal.vulnerabilityScanningAvailable &&
-      (normalized === "b" || normalized === "w")
-    ) {
-      setOsvUnavailable(normalized === "b" ? "block" : "warn");
     }
   });
 
@@ -337,7 +433,9 @@ export function InitApp({
       {phase === "configure" ? (
         <SetupPanel
           proposal={reviewedProposal}
-          cursor={cursor}
+          focus={focus}
+          profile={customized ? "custom" : baseProfile}
+          baseProfile={baseProfile}
           selected={selected}
           osvUnavailable={osvUnavailable}
           width={panelWidth}
@@ -357,8 +455,9 @@ export function InitApp({
 export async function runInitPrompt(
   proposal: InitProposal,
   options: InitPromptOptions,
-  proposalForChecks: (
-    checks: readonly CheckId[],
+  proposalForSelection: (
+    profile: ProfileId,
+    checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
   ) => InitProposal,
 ): Promise<false | InitProposal> {
@@ -366,7 +465,7 @@ export async function runInitPrompt(
   const app = render(
     <InitApp
       proposal={proposal}
-      proposalForChecks={proposalForChecks}
+      proposalForSelection={proposalForSelection}
       {...options}
       onDecision={(value) => {
         decision = value;

@@ -189,9 +189,14 @@ describe("executeInitCommand", () => {
     io.env.NO_COLOR = "1";
     const received: unknown[] = [];
     const deps = dependencies(root);
-    deps.confirm = async (proposal, options, proposalForChecks) => {
-      const reviewed = proposalForChecks(["lint", "types"], "warn");
+    deps.confirm = async (proposal, options, proposalForSelection) => {
+      const reviewed = proposalForSelection(
+        "thorough",
+        ["lint", "types"],
+        "warn",
+      );
       received.push({ proposal, options });
+      expect(reviewed.profile).toBe("thorough");
       expect(reviewed.recommendedChecks).toEqual(["lint", "types"]);
       expect(reviewed.osvUnavailable).toBe("warn");
       expect(reviewed.files[0]?.diff).toContain('"formatting": "off"');
@@ -219,7 +224,7 @@ describe("executeInitCommand", () => {
       }),
     ]);
     const written = await readFile(join(root, ".zedbeerc.jsonc"), "utf8");
-    expect(written).toContain('"profile": "recommended"');
+    expect(written).toContain('"profile": "thorough"');
     expect(written).toContain('"lint": "error"');
     expect(written).toContain('"formatting": "off"');
     expect(io.stdout.join("")).toBe("Zedbee initialized successfully\n");
@@ -335,8 +340,8 @@ describe("executeInitCommand", () => {
     interactiveDependencies.confirm = async (
       _proposal,
       _options,
-      proposalForChecks,
-    ) => proposalForChecks(["lint", "types"], "block");
+      proposalForSelection,
+    ) => proposalForSelection("recommended", ["lint", "types"], "block");
 
     const baseOptions = {
       profile: "recommended" as const,

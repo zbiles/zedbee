@@ -48,8 +48,9 @@ export interface InitCommandDependencies {
   confirm(
     proposal: InitProposal,
     options: InitPromptOptions,
-    proposalForChecks: (
-      checks: readonly CheckId[],
+    proposalForSelection: (
+      profile: ProfileId,
+      checks: readonly CheckId[] | undefined,
       osvUnavailable: InitOsvUnavailable,
     ) => InitProposal,
   ): Promise<false | InitProposal>;
@@ -61,9 +62,9 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
       .stdout;
   },
   inspect: inspectRepository,
-  async confirm(proposal, options, proposalForChecks) {
+  async confirm(proposal, options, proposalForSelection) {
     const { runInitPrompt } = await import("../ui/init-app.js");
-    return runInitPrompt(proposal, options, proposalForChecks);
+    return runInitPrompt(proposal, options, proposalForSelection);
   },
 };
 
@@ -171,19 +172,22 @@ export async function executeInitCommand(
       detectHookIntegration(repositoryRoot, options.hook),
       existingConfig(repositoryRoot),
     ]);
-    const proposalOptions: CreateInitProposalOptions = {
+    const proposalBaseOptions = {
       repositoryRoot,
-      profile: options.profile,
       hook: hookIntegration.hook,
-      ...(options.checks === undefined ? {} : { checks: options.checks }),
-      ...(options.osvUnavailable === undefined
-        ? {}
-        : { osvUnavailable: options.osvUnavailable }),
       configBefore,
       ...(hookIntegration.change === undefined
         ? {}
         : { hookChange: hookIntegration.change }),
       hookActivation: hookIntegration.activation,
+    };
+    const proposalOptions: CreateInitProposalOptions = {
+      ...proposalBaseOptions,
+      profile: options.profile,
+      ...(options.checks === undefined ? {} : { checks: options.checks }),
+      ...(options.osvUnavailable === undefined
+        ? {}
+        : { osvUnavailable: options.osvUnavailable }),
     };
     let proposal = createInitProposal(inspection, proposalOptions);
     const color = options.color && io.env.NO_COLOR === undefined;
@@ -203,10 +207,11 @@ export async function executeInitCommand(
           color,
           animations: options.animations && io.env.NO_COLOR === undefined,
         },
-        (checks, osvUnavailable) =>
+        (profile, checks, osvUnavailable) =>
           createInitProposal(inspection, {
-            ...proposalOptions,
-            checks,
+            ...proposalBaseOptions,
+            profile,
+            ...(checks === undefined ? {} : { checks }),
             osvUnavailable,
           }),
       );
