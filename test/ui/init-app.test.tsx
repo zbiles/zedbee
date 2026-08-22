@@ -2,12 +2,16 @@ import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 import type { CheckId } from "../../src/config/schema.js";
 import type { InitProposal } from "../../src/init/types.js";
-import { InitApp } from "../../src/ui/init-app.js";
+import {
+  InitApp,
+  initMaxFps,
+  initRenderOptions,
+} from "../../src/ui/init-app.js";
 
 const proposal: InitProposal = {
   repositoryRoot: "/repo",
   profile: "recommended",
-  hook: "none",
+  hook: "raw",
   detectedEnvironments: ["javascript", "typescript"],
   recommendedChecks: ["formatting", "lint", "types"],
   vulnerabilityScanningAvailable: true,
@@ -15,14 +19,14 @@ const proposal: InitProposal = {
   networkChecks: [],
   limitations: [],
   hookActivation: {
-    status: "not-requested",
-    message: "No pre-commit integration was requested.",
+    status: "active",
+    message: "The proposed raw hook directly invokes Zedbee.",
   },
   files: [],
 };
 
 describe("InitApp", () => {
-  it("previews and returns the exact proposal rebuilt from toggled checks", async () => {
+  it("configures first and reviews exact changes only after Enter", async () => {
     const onDecision = vi.fn();
     const proposalForChecks = vi.fn(
       (checks: readonly CheckId[], osvUnavailable: "block" | "warn") => ({
@@ -56,17 +60,39 @@ describe("InitApp", () => {
       />,
     );
 
-    expect(view.lastFrame()).toContain("Check toggles (Up/Down, Space)");
+    expect(view.lastFrame()).toContain("█████ █████ ████");
+    expect(view.lastFrame()).toContain("SETUP");
+    expect(view.lastFrame()).toContain("Install pre-commit hook: Yes");
+    expect(view.lastFrame()).toContain("Method: Git pre-commit hook");
+    expect(view.lastFrame()).toContain("CHECKS");
     expect(view.lastFrame()).toContain("[x] formatting");
-    expect(view.lastFrame()).toContain("OSV unavailable: block");
-    expect(view.lastFrame()).toContain("[Y/Enter] yes · [N/Esc] no");
+    expect(view.lastFrame()).toContain("VULNERABILITY SERVICE OUTAGES");
+    expect(view.lastFrame()).toContain(
+      "What should Zedbee do if OSV cannot be reached?",
+    );
+    expect(view.lastFrame()).toContain("Block the commit (recommended)");
+    expect(view.lastFrame()).toContain("Warn and allow the commit");
+    expect(view.lastFrame()).toContain("Enter Review");
+    expect(view.lastFrame()).not.toContain("exact:");
 
     view.stdin.write(" ");
     await new Promise((resolve) => setImmediate(resolve));
-    expect(view.lastFrame()).toContain("exact:lint,types");
+    expect(view.lastFrame()).not.toContain("exact:");
     view.stdin.write("w");
     await new Promise((resolve) => setImmediate(resolve));
-    expect(view.lastFrame()).toContain("OSV unavailable: warn");
+    expect(view.lastFrame()).toContain("● [W] Warn and allow the commit");
+    view.stdin.write("\r");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("REVIEW CHANGES");
+    expect(view.lastFrame()).toContain("exact:lint,types");
+    expect(view.lastFrame()).toContain("Enter/Y Apply");
+    expect(view.lastFrame()).not.toContain("[x] formatting");
+    view.stdin.write("b");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(view.lastFrame()).toContain("SETUP");
+    expect(view.lastFrame()).not.toContain("exact:");
+    view.stdin.write("\r");
+    await new Promise((resolve) => setImmediate(resolve));
     view.stdin.write("y");
     await new Promise((resolve) => setImmediate(resolve));
 
@@ -77,5 +103,33 @@ describe("InitApp", () => {
         files: [expect.objectContaining({ diff: "exact:lint,types" })],
       }),
     );
+  });
+
+  it("keeps the branded setup panel inside a narrow terminal", () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForChecks={() => proposal}
+        width={40}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    const frame = view.lastFrame()!;
+    expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain("SETUP");
+    expect(
+      Math.max(...frame.split("\n").map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(40);
+  });
+
+  it("uses a responsive refresh rate for keyboard interaction", () => {
+    expect(initMaxFps()).toBeGreaterThan(1);
+  });
+
+  it("uses a temporary screen so repainting preserves terminal history", () => {
+    expect(initRenderOptions()).toMatchObject({ alternateScreen: true });
   });
 });

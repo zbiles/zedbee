@@ -222,6 +222,34 @@ describe("executeInitCommand", () => {
     expect(written).toContain('"profile": "recommended"');
     expect(written).toContain('"lint": "error"');
     expect(written).toContain('"formatting": "off"');
+    expect(io.stdout.join("")).toBe("Zedbee initialized successfully\n");
+  });
+
+  it("reports a concise cancellation after an interactive decision", async () => {
+    const root = await fixture();
+    const io = terminal(true);
+    const deps = dependencies(root);
+    deps.confirm = async () => false;
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: root,
+        profile: "recommended",
+        hook: "none",
+        yes: false,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(io.stdout.join("")).toBe("Zedbee initialization cancelled\n");
+    await expect(
+      readFile(join(root, ".zedbeerc.jsonc"), "utf8"),
+    ).rejects.toThrow();
   });
 
   it("reports manager configuration as pending activation without running project tooling", async () => {
@@ -230,33 +258,32 @@ describe("executeInitCommand", () => {
       join(root, "lefthook.yml"),
       "pre-commit:\n  commands: {}\n",
     );
-    const io = terminal(false);
+    const io = terminal(true);
+    const deps = dependencies(root);
+    deps.confirm = async (proposal) => proposal;
 
     const exitCode = await executeInitCommand(
       {
         cwd: root,
         profile: "fast",
         hook: "lefthook",
-        yes: true,
-        format: "json",
+        yes: false,
+        format: "text",
         color: false,
         animations: false,
       },
       io,
-      dependencies(root),
+      deps,
     );
 
     expect(exitCode).toBe(0);
-    expect(JSON.parse(io.stdout.join(""))).toMatchObject({
-      applied: true,
-      proposal: {
-        hook: "lefthook",
-        hookActivation: {
-          status: "pending",
-          remediation: expect.stringContaining("lefthook install"),
-        },
-      },
-    });
+    expect(io.stdout.join("")).toBe(
+      [
+        "Zedbee initialized successfully",
+        "Next step: After reviewing the project tooling, run lefthook install to activate the configured hook.",
+        "",
+      ].join("\n"),
+    );
   });
 
   it("writes the non-interactive OSV outage choice and disclosure", async () => {

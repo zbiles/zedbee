@@ -145,6 +145,18 @@ function renderInitFailure(error: unknown): string {
   return `${lines.join("\n")}\n`;
 }
 
+function renderInteractiveResult(
+  confirmed: boolean,
+  proposal: InitProposal,
+): string {
+  if (!confirmed) return "Zedbee initialization cancelled\n";
+  const lines = ["Zedbee initialized successfully"];
+  if (proposal.hookActivation.remediation !== undefined) {
+    lines.push(`Next step: ${proposal.hookActivation.remediation}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 export async function executeInitCommand(
   options: InitCommandOptions,
   io: InitCommandIO,
@@ -176,12 +188,14 @@ export async function executeInitCommand(
     let proposal = createInitProposal(inspection, proposalOptions);
     const color = options.color && io.env.NO_COLOR === undefined;
     let confirmed = options.yes;
+    let promptedInteractively = false;
     if (
       !confirmed &&
       options.format === "text" &&
       io.stdinIsTTY &&
       io.stdoutIsTTY
     ) {
+      promptedInteractively = true;
       const decision = await dependencies.confirm(
         proposal,
         {
@@ -217,6 +231,8 @@ export async function executeInitCommand(
           2,
         )}\n`,
       );
+    } else if (promptedInteractively) {
+      io.writeStdout(renderInteractiveResult(confirmed, proposal));
     } else {
       io.writeStdout(renderText(proposal, result.applied));
     }
