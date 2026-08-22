@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import type {
   CheckRunContext,
   CheckTarget,
@@ -10,6 +12,32 @@ import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
+
+const execaHarness = vi.hoisted(() => ({
+  run: undefined as
+    | undefined
+    | ((
+        file: string,
+        args: readonly string[],
+        options: Record<string, unknown>,
+      ) => Promise<{ exitCode: number }>),
+}));
+
+vi.mock("execa", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("execa")>();
+  return {
+    ...actual,
+    execa(
+      file: string,
+      args: readonly string[],
+      options: Record<string, unknown>,
+    ) {
+      return execaHarness.run === undefined
+        ? actual.execa(file, args, options)
+        : execaHarness.run(file, args, options);
+    },
+  };
+});
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -366,5 +394,70 @@ describe("duplication policy", () => {
     await expect(
       duplicationAdapter.collect({ ...context, signal: controller.signal }),
     ).rejects.toThrow("Duplication analysis failed.");
+  });
+
+  it("passes configured public duplication settings into the private jscpd config", async () => {
+    const context = await duplicationContext(false);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        duplication: {
+          severity: "error",
+          threshold: 7.5,
+          settings: { minLines: 8, minTokens: 75, mode: "strict" },
+        },
+      },
+    });
+    const capturedConfigs: unknown[] = [];
+    execaHarness.run = async (_file, args) => {
+      const configIndex = args.indexOf("--config");
+      const configPath = args[configIndex + 1];
+      if (configIndex < 0 || configPath === undefined) {
+        throw new Error("Expected jscpd config path");
+      }
+      const managedConfig = JSON.parse(await readFile(configPath, "utf8")) as {
+        output?: string;
+      };
+      capturedConfigs.push(managedConfig);
+      if (typeof managedConfig.output !== "string") {
+        throw new Error("Expected managed output path");
+      }
+      await writeFile(
+        join(managedConfig.output, "jscpd-report.json"),
+        JSON.stringify({
+          duplicates: [],
+          statistics: { total: { percentage: 0 } },
+        }),
+        "utf8",
+      );
+      return { exitCode: 0 };
+    };
+
+    try {
+      await duplicationAdapter.collect({
+        ...context,
+        config,
+        policy: config.checks.duplication,
+        policyForFile: testFilePolicyResolver(config, context.changeSet),
+      });
+    } finally {
+      execaHarness.run = undefined;
+    }
+
+    expect(capturedConfigs).toHaveLength(2);
+    for (const config of capturedConfigs) {
+      expect(config).toMatchObject({
+        threshold: 7.5,
+        minLines: 8,
+        minTokens: 75,
+        mode: "strict",
+        format: ["javascript", "jsx", "typescript", "tsx"],
+        reporters: ["json"],
+        silent: true,
+        gitignore: true,
+      });
+      expect(config).toHaveProperty("output", expect.any(String));
+    }
   });
 });

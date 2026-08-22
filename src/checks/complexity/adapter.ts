@@ -10,6 +10,10 @@ import type {
   WorkspaceInspection,
 } from "../../inspection/types.js";
 import type {
+  FilePolicyResolver,
+  SnapshotSide,
+} from "../../config/file-policy.js";
+import type {
   CheckObservationSet,
   CheckRunContext,
   CheckTarget,
@@ -164,8 +168,10 @@ async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
+  checkId: "cyclomaticComplexity" | "readabilityComplexity",
   metricName: ComplexityMetricName,
-  limit?: number,
+  policyForFile: FilePolicyResolver,
+  side: SnapshotSide,
 ): Promise<readonly Observation[]> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
@@ -191,12 +197,13 @@ async function collectSide(
     if (result.source === undefined)
       throw new Error("Complexity analysis failed.");
     try {
+      const policy = policyForFile(checkId, file, side);
       observations.push(
         ...observationsFromMessages(
           file,
           result.source,
           result.messages,
-          limit,
+          (policy as ResolvedComplexityPolicy).max,
         ).filter(({ metric }) => metric?.name === metricName),
       );
     } catch {
@@ -250,21 +257,24 @@ function createComplexityAdapter(
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const limit = (context.policy as ResolvedComplexityPolicy).max;
         const [baselineObservations, targetObservations] = await Promise.all([
           collectSide(
             context.snapshots.baselineDir,
             context.baselineInspection,
             context.target,
+            id,
             metricName,
-            limit,
+            context.policyForFile,
+            "baseline",
           ),
           collectSide(
             context.snapshots.targetDir,
             context.targetInspection,
             context.target,
+            id,
             metricName,
-            limit,
+            context.policyForFile,
+            "target",
           ),
         ]);
         return {

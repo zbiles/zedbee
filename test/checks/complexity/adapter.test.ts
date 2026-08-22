@@ -36,6 +36,52 @@ function changes(): ChangeSet {
   };
 }
 
+function perFileLimitChanges(): ChangeSet {
+  return {
+    files: new Map([
+      [
+        "src/strict.ts",
+        {
+          path: "src/strict.ts",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 9 }],
+        },
+      ],
+      [
+        "test/renamed.test.ts",
+        {
+          path: "test/renamed.test.ts",
+          previousPath: "src/legacy.ts",
+          status: "renamed",
+          addedRanges: [{ start: 1, end: 9 }],
+        },
+      ],
+    ]),
+    isEmpty: false,
+    containsAddedLine(file, line) {
+      return (
+        (file === "src/strict.ts" || file === "test/renamed.test.ts") &&
+        line >= 1 &&
+        line <= 9
+      );
+    },
+  };
+}
+
+function branchySource(name: string): string {
+  return [
+    `export function ${name}(value: number) {`,
+    "  let total = 0;",
+    "  if (value > 0) total += 1;",
+    "  if (value > 1) total += 1;",
+    "  if (value > 2) total += 1;",
+    "  if (value > 3) total += 1;",
+    "  return total;",
+    "}",
+    "",
+  ].join("\n");
+}
+
 async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
   const [baseline, staged, live] = await Promise.all([
     createInspectionFixture(),
@@ -201,7 +247,8 @@ describe("collectComplexityObservations", () => {
     for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
       const properties = observations.filter(
         (observation) =>
-          observation.check === check && observation.entity?.kind === "function",
+          observation.check === check &&
+          observation.entity?.kind === "function",
       );
       expect(properties).toHaveLength(2);
       expect(new Set(properties.map(({ identity }) => identity)).size).toBe(2);
@@ -280,6 +327,90 @@ describe("collectComplexityObservations", () => {
         ({ entity }) => entity?.file === "src/changed.ts",
       );
       expect(changedTarget?.metric?.value).toBeGreaterThan(1);
+    },
+  );
+
+  it.each(complexityAdapters)(
+    "$id stores file-scoped metric limits on both snapshot sides",
+    async (adapter) => {
+      const [baseline, staged, live] = await Promise.all([
+        createInspectionFixture(),
+        createInspectionFixture(),
+        createInspectionFixture(),
+      ]);
+      const changed = perFileLimitChanges();
+      for (const fixture of [baseline, staged, live]) {
+        await fixture.writeJson("package.json", {
+          name: "fixture",
+          private: true,
+        });
+      }
+      await baseline.write(
+        "src/strict.ts",
+        "export function strictLimit() { return 0; }\n",
+      );
+      await staged.write("src/strict.ts", branchySource("strictLimit"));
+      await live.write("src/strict.ts", branchySource("strictLimit"));
+      await baseline.write("src/legacy.ts", branchySource("renamedLimit"));
+      await staged.write("test/renamed.test.ts", branchySource("renamedLimit"));
+      await live.write("test/renamed.test.ts", branchySource("renamedLimit"));
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "recommended",
+        checks: {
+          [adapter.id]: {
+            severity: "error",
+            max: 1,
+            blockWorsening: true,
+          },
+        },
+        overrides: [
+          {
+            files: ["test/**"],
+            checks: { [adapter.id]: { max: 99 } },
+          },
+        ],
+      });
+      const run: CheckRunContext = {
+        repositoryRoot: live.root,
+        changeSet: changed,
+        config,
+        snapshots: {
+          baselineDir: baseline.root,
+          targetDir: staged.root,
+          baselineRef: "HEAD",
+          unsupportedEntries: [],
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(staged.root),
+        target,
+        policy: config.checks[adapter.id as CheckId],
+        policyForFile: testFilePolicyResolver(config, changed),
+        signal: new AbortController().signal,
+      };
+
+      const set = await adapter.collect(run);
+      const srcTarget = set.targetObservations.find(
+        ({ entity }) => entity?.file === "src/strict.ts",
+      );
+      const renamedTarget = set.targetObservations.find(
+        ({ entity }) => entity?.file === "test/renamed.test.ts",
+      );
+      const renamedBaseline = set.baselineObservations.find(
+        ({ entity }) => entity?.file === "src/legacy.ts",
+      );
+      const result = await observationCheckResult(adapter.id, set, run, true);
+      const stagedFindings = result.findings.filter(
+        ({ attribution }) => attribution.staged,
+      );
+
+      expect(srcTarget?.metric?.value).toBe(renamedTarget?.metric?.value);
+      expect(srcTarget?.metric?.limit).toBe(1);
+      expect(renamedTarget?.metric?.limit).toBe(99);
+      expect(renamedBaseline?.metric?.limit).toBe(99);
+      expect(stagedFindings.map(({ location }) => location?.file)).toEqual([
+        "src/strict.ts",
+      ]);
     },
   );
 

@@ -342,6 +342,30 @@ describe("Zedbee configuration JSON Schema", () => {
       },
     },
     {
+      name: "file-scoped duplication threshold",
+      input: {
+        schemaVersion: 1,
+        overrides: [
+          {
+            files: ["packages/web/**"],
+            checks: { duplication: { threshold: 7.5 } },
+          },
+        ],
+      },
+    },
+    {
+      name: "file-scoped duplication settings",
+      input: {
+        schemaVersion: 1,
+        overrides: [
+          {
+            files: ["packages/web/**"],
+            checks: { duplication: { settings: { minLines: 8 } } },
+          },
+        ],
+      },
+    },
+    {
       name: "absolute override glob",
       input: {
         schemaVersion: 1,
