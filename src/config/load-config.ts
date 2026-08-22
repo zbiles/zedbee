@@ -3,6 +3,8 @@ import { basename, join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { resolveConfig } from "./profiles.js";
 import { configFileSchema, type ResolvedConfig } from "./schema.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
+import { DEFAULT_DUPLICATION_SETTINGS } from "../checks/duplication/settings.js";
 
 const CONFIG_FILENAME = ".zedbeerc.jsonc";
 const UNSUPPORTED_CONFIG_FILENAMES = [
@@ -73,6 +75,81 @@ function invalidJsonc(
   );
 }
 
+type ValidationIssue = {
+  readonly code?: string;
+  readonly path: readonly (string | number)[];
+  readonly keys?: readonly string[];
+  readonly errors?: readonly (readonly ValidationIssue[])[];
+  readonly unionErrors?: readonly {
+    readonly issues: readonly ValidationIssue[];
+  }[];
+};
+
+function flattenIssues(issue: ValidationIssue): ValidationIssue[] {
+  return [
+    issue,
+    ...(issue.errors ?? []).flatMap((issues) => issues.flatMap(flattenIssues)),
+    ...(issue.unionErrors ?? []).flatMap((error) =>
+      error.issues.flatMap(flattenIssues),
+    ),
+  ];
+}
+
+function issuePath(issue: ValidationIssue): string {
+  const path = [...issue.path];
+  if (issue.code === "unrecognized_keys" && issue.keys?.[0] !== undefined) {
+    path.push(issue.keys[0]);
+  }
+  return path.length === 0 ? "root" : path.map(String).join(".");
+}
+
+function supportedNames(path: string): readonly string[] {
+  if (path.startsWith("checks.formatting.settings.")) {
+    return Object.keys(DEFAULT_FORMATTING_SETTINGS);
+  }
+  if (path.startsWith("checks.duplication.settings.")) {
+    return Object.keys(DEFAULT_DUPLICATION_SETTINGS);
+  }
+  if (path.startsWith("checks.formatting.")) {
+    return ["severity", "when", "settings"];
+  }
+  if (path.startsWith("checks.duplication.")) {
+    return ["severity", "when", "threshold", "settings"];
+  }
+  if (
+    path.startsWith("checks.lint.") ||
+    path.startsWith("checks.reactCorrectness.") ||
+    path.startsWith("checks.reactAccessibility.")
+  ) {
+    return ["severity", "when", "rules"];
+  }
+  return [];
+}
+
+function invalidConfigMessage(
+  configPath: string,
+  issue: ValidationIssue,
+): string {
+  const best = flattenIssues(issue)
+    .filter((candidate) => candidate.code !== "invalid_union")
+    .sort((left, right) => issuePath(right).length - issuePath(left).length)[0];
+  const selected = best ?? issue;
+  const selectedPath = issuePath(selected);
+  const parentPath = issue.path.map(String).join(".");
+  const path =
+    parentPath !== "" &&
+    selectedPath !== "root" &&
+    !selectedPath.startsWith(parentPath)
+      ? `${parentPath}.${selectedPath}`
+      : selectedPath;
+  const supported = supportedNames(path);
+  const help =
+    supported.length === 0
+      ? ""
+      : ` Supported settings include ${supported.join(", ")}.`;
+  return `Invalid Zedbee configuration at ${basename(configPath)} (${path}).${help}`;
+}
+
 export async function loadConfig(
   repositoryRoot: string,
   explicitConfigPath?: string,
@@ -114,10 +191,12 @@ export async function loadConfig(
 
   const parsed = configFileSchema.safeParse(value);
   if (!parsed.success) {
-    const issuePath = parsed.error.issues[0]?.path.join(".") || "root";
+    const issue = parsed.error.issues[0] as ValidationIssue | undefined;
     throw new ConfigError(
       "CONFIG_INVALID",
-      `Invalid Zedbee configuration at ${basename(configPath)} (${issuePath}).`,
+      issue === undefined
+        ? `Invalid Zedbee configuration at ${basename(configPath)} (root).`
+        : invalidConfigMessage(configPath, issue),
       configPath,
     );
   }

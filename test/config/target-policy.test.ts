@@ -124,7 +124,7 @@ describe("resolveTargetPolicy", () => {
 
     expect(() =>
       resolveTargetPolicy(
-        config,
+        config as unknown as typeof base,
         "vulnerabilities",
         { id: ".", kind: "repository", relativeRoot: "." },
         inspection,

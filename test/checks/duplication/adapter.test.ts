@@ -241,6 +241,7 @@ describe("duplication policy", () => {
       severity: "error",
       when: "relevant",
       threshold: 5,
+      settings: { minLines: 5, minTokens: 50, mode: "mild" },
     });
   });
 

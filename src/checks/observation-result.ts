@@ -11,7 +11,11 @@ import {
   attributeMetricDelta,
   type MetricDeltaPolicy,
 } from "../attribution/metrics.js";
-import type { ResolvedCheckPolicy } from "../config/schema.js";
+import type {
+  ResolvedCheckPolicy,
+  ResolvedComplexityPolicy,
+  ResolvedDuplicationPolicy,
+} from "../config/schema.js";
 import { compareFindings } from "../core/summarize.js";
 import type {
   ChangedEntity,
@@ -231,9 +235,9 @@ function effectiveMetricPolicy(
     checkId === "cyclomaticComplexity" || checkId === "readabilityComplexity";
   const isDuplication = checkId === "duplication";
   const limit = isComplexity
-    ? policy.max
+    ? (policy as ResolvedComplexityPolicy).max
     : isDuplication
-      ? policy.threshold
+      ? (policy as ResolvedDuplicationPolicy).threshold
       : undefined;
   const validLimit = isComplexity
     ? typeof limit === "number" && Number.isSafeInteger(limit) && limit > 0
@@ -247,7 +251,7 @@ function effectiveMetricPolicy(
     throw new TypeError("Metric check has no supported effective policy limit");
   }
   const blockWorsening = isComplexity
-    ? (policy.blockWorsening ?? false)
+    ? ((policy as ResolvedComplexityPolicy).blockWorsening ?? false)
     : false;
   if (typeof blockWorsening !== "boolean") {
     throw new TypeError("Metric check has an invalid worsening policy");

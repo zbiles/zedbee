@@ -84,7 +84,7 @@ function checkLabel(checkId: string): string {
 function immutablePolicy(
   policy: ResolvedCheckPolicy,
 ): Readonly<ResolvedCheckPolicy> {
-  return Object.freeze({ ...policy });
+  return freezePolicy(policy);
 }
 
 function executionResult(
@@ -226,11 +226,53 @@ function snapshotOverride(
       Object.fromEntries(
         Object.entries(override.checks).map(([id, patch]) => [
           id,
-          patch === undefined ? undefined : Object.freeze({ ...patch }),
+          patch === undefined ? undefined : freezePolicyPatch(patch),
         ]),
       ),
     ),
+    configurationOrigins: snapshotConfigurationOrigins(
+      override.configurationOrigins,
+    ),
   });
+}
+
+function freezePolicyPatch(
+  patch: NonNullable<ResolvedPolicyOverride["checks"][CheckId]>,
+): NonNullable<ResolvedPolicyOverride["checks"][CheckId]> {
+  return Object.freeze({
+    ...patch,
+    ...("settings" in patch && patch.settings !== undefined
+      ? { settings: Object.freeze({ ...patch.settings }) }
+      : {}),
+    ...("rules" in patch && patch.rules !== undefined
+      ? { rules: Object.freeze({ ...patch.rules }) }
+      : {}),
+  });
+}
+
+function freezePolicy(
+  policy: ResolvedCheckPolicy,
+): Readonly<ResolvedCheckPolicy> {
+  return Object.freeze({
+    ...policy,
+    ...("settings" in policy
+      ? { settings: Object.freeze({ ...policy.settings }) }
+      : {}),
+    ...("rules" in policy ? { rules: Object.freeze({ ...policy.rules }) } : {}),
+  }) as Readonly<ResolvedCheckPolicy>;
+}
+
+function snapshotConfigurationOrigins(
+  origins: ResolvedConfig["configurationOrigins"] | undefined,
+): ResolvedConfig["configurationOrigins"] {
+  return Object.freeze(
+    Object.fromEntries(
+      CHECK_IDS.map((checkId) => [
+        checkId,
+        Object.freeze({ ...(origins?.[checkId] ?? {}) }),
+      ]),
+    ),
+  ) as ResolvedConfig["configurationOrigins"];
 }
 
 function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
@@ -241,12 +283,15 @@ function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
       Object.fromEntries(
         Object.entries(config.checks).map(([id, policy]) => [
           id,
-          Object.freeze({ ...policy }),
+          freezePolicy(policy),
         ]),
       ),
     ) as ResolvedConfig["checks"],
     overrides: Object.freeze(config.overrides.map(snapshotOverride)),
     reporting: Object.freeze({ ...config.reporting }),
+    configurationOrigins: snapshotConfigurationOrigins(
+      config.configurationOrigins,
+    ),
     failOnIncomplete: config.failOnIncomplete,
     ...(config.configPath === undefined
       ? {}

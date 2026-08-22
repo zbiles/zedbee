@@ -2,6 +2,18 @@ import { z } from "zod";
 import { DISPLAY_TEXT_LIMITS, displayProse } from "../core/display-text.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import { parseTemporaryReportMaxAge } from "../reporting/report-age.js";
+import {
+  formattingSettingsSchema,
+  type FormattingSettings,
+} from "../checks/prettier/settings.js";
+import {
+  duplicationSettingsSchema,
+  type DuplicationSettings,
+} from "../checks/duplication/settings.js";
+import type {
+  EslintRuleConfiguration,
+  ResolvedConfigurationOrigins,
+} from "./settings-definition.js";
 
 export const CHECK_IDS = [
   "formatting",
@@ -34,30 +46,76 @@ export interface ResolvedReportingPolicy {
   readonly agentGuidance: AgentGuidance;
 }
 
-export interface ResolvedCheckPolicy {
+export interface ResolvedCheckPolicyBase {
   severity: CheckSeverity;
   when: CheckTiming;
-  max?: number;
-  threshold?: number;
-  blockWorsening?: boolean;
-  onUnavailable?: "block" | "warn";
 }
 
-export type ResolvedCheckPolicyPatch = Readonly<Partial<ResolvedCheckPolicy>>;
+export interface ResolvedFormattingPolicy extends ResolvedCheckPolicyBase {
+  settings: Readonly<FormattingSettings>;
+}
+
+export interface ResolvedDuplicationPolicy extends ResolvedCheckPolicyBase {
+  threshold: number;
+  settings: Readonly<DuplicationSettings>;
+}
+
+export interface ResolvedRulePolicy extends ResolvedCheckPolicyBase {
+  rules: Readonly<Record<string, EslintRuleConfiguration>>;
+}
+
+export interface ResolvedComplexityPolicy extends ResolvedCheckPolicyBase {
+  max: number;
+  blockWorsening: boolean;
+}
+
+export interface ResolvedCheckPolicies {
+  readonly formatting: ResolvedFormattingPolicy;
+  readonly lint: ResolvedRulePolicy;
+  readonly types: ResolvedCheckPolicyBase;
+  readonly cyclomaticComplexity: ResolvedComplexityPolicy;
+  readonly readabilityComplexity: ResolvedComplexityPolicy;
+  readonly structuralSecurity: ResolvedCheckPolicyBase;
+  readonly secrets: ResolvedCheckPolicyBase;
+  readonly duplication: ResolvedDuplicationPolicy;
+  readonly dependencyArchitecture: ResolvedCheckPolicyBase;
+  readonly deadCode: ResolvedCheckPolicyBase;
+  readonly reactCorrectness: ResolvedRulePolicy;
+  readonly reactAccessibility: ResolvedRulePolicy;
+  readonly vulnerabilities: ResolvedCheckPolicyBase & {
+    onUnavailable: "block" | "warn";
+  };
+}
+
+export type ResolvedCheckPolicy = ResolvedCheckPolicies[CheckId];
+
+export type ResolvedCheckPolicyPatch = Readonly<
+  Partial<ResolvedCheckPolicyBase> & {
+    readonly max?: number;
+    readonly threshold?: number;
+    readonly blockWorsening?: boolean;
+    readonly onUnavailable?: "block" | "warn";
+    readonly settings?:
+      Partial<FormattingSettings> | Partial<DuplicationSettings>;
+    readonly rules?: Readonly<Record<string, EslintRuleConfiguration>>;
+  }
+>;
 
 export interface ResolvedPolicyOverride {
-  files: readonly string[];
-  checks: Readonly<Partial<Record<CheckId, ResolvedCheckPolicyPatch>>>;
+  readonly files: readonly string[];
+  readonly checks: Readonly<Partial<Record<CheckId, ResolvedCheckPolicyPatch>>>;
+  readonly configurationOrigins: ResolvedConfigurationOrigins;
 }
 
 export interface ResolvedConfig {
-  schemaVersion: 1;
-  profile: ProfileId;
-  checks: Readonly<Record<CheckId, ResolvedCheckPolicy>>;
-  overrides: readonly ResolvedPolicyOverride[];
-  reporting: ResolvedReportingPolicy;
-  failOnIncomplete: boolean;
-  configPath?: string;
+  readonly schemaVersion: 1;
+  readonly profile: ProfileId;
+  readonly checks: Readonly<ResolvedCheckPolicies>;
+  readonly overrides: readonly ResolvedPolicyOverride[];
+  readonly reporting: Readonly<ResolvedReportingPolicy>;
+  readonly configurationOrigins: ResolvedConfigurationOrigins;
+  readonly failOnIncomplete: boolean;
+  readonly configPath?: string;
 }
 
 const checkSeveritySchema = z.enum(["off", "warn", "error"]).meta({
@@ -115,6 +173,33 @@ const commonPolicyFields = {
 } as const;
 
 const simplePolicyObjectSchema = z.object(commonPolicyFields).strict();
+const eslintRuleSeveritySchema = z.union([
+  checkSeveritySchema,
+  z.literal(0),
+  z.literal(1),
+  z.literal(2),
+]);
+const eslintRuleConfigurationSchema = z.union([
+  eslintRuleSeveritySchema,
+  z
+    .array(z.unknown())
+    .min(1)
+    .refine((value) => eslintRuleSeveritySchema.safeParse(value[0]).success, {
+      message: "First rule setting item must be a supported severity",
+    })
+    .transform(
+      (value) =>
+        value as [z.infer<typeof eslintRuleSeveritySchema>, ...unknown[]],
+    ),
+]);
+const rulePolicyObjectSchema = z
+  .object({
+    ...commonPolicyFields,
+    rules: z
+      .record(z.string().min(1), eslintRuleConfigurationSchema)
+      .optional(),
+  })
+  .strict();
 function complexityPolicyObjectSchema(defaultMaximum: number) {
   return z
     .object({
@@ -138,6 +223,13 @@ const duplicationPolicyObjectSchema = z
       description: "Maximum allowed duplicated-code percentage from 0 to 100.",
       default: 5,
     }),
+    settings: duplicationSettingsSchema.partial().strict().optional(),
+  })
+  .strict();
+const formattingPolicyObjectSchema = z
+  .object({
+    ...commonPolicyFields,
+    settings: formattingSettingsSchema.partial().strict().optional(),
   })
   .strict();
 const vulnerabilityPolicyObjectSchema = z
@@ -156,6 +248,8 @@ function policySchema<T extends z.ZodType>(objectSchema: T) {
 }
 
 const simplePolicySchema = policySchema(simplePolicyObjectSchema);
+const formattingPolicySchema = policySchema(formattingPolicyObjectSchema);
+const rulePolicySchema = policySchema(rulePolicyObjectSchema);
 const cyclomaticComplexityPolicySchema = policySchema(
   complexityPolicyObjectSchema(20),
 );
@@ -172,11 +266,11 @@ function describedPolicy<T extends z.ZodType>(schema: T, description: string) {
 const checksSchema = z
   .object({
     formatting: describedPolicy(
-      simplePolicySchema,
+      formattingPolicySchema,
       "Prettier formatting for changed JavaScript and TypeScript files.",
     ),
     lint: describedPolicy(
-      simplePolicySchema,
+      rulePolicySchema,
       "ESLint correctness and maintainability findings in changed code.",
     ),
     types: describedPolicy(
@@ -212,11 +306,11 @@ const checksSchema = z
       "Unused files, exports, and dependencies reported by Knip.",
     ),
     reactCorrectness: describedPolicy(
-      simplePolicySchema,
+      rulePolicySchema,
       "React and Hooks correctness validation for changed components.",
     ),
     reactAccessibility: describedPolicy(
-      simplePolicySchema,
+      rulePolicySchema,
       "JSX accessibility validation for changed components.",
     ),
     vulnerabilities: describedPolicy(
@@ -297,7 +391,13 @@ const policyOverrideSchema = z
   .strict();
 
 export type CheckPolicyInput =
-  z.infer<typeof simplePolicySchema> | ResolvedCheckPolicyPatch;
+  | z.infer<typeof simplePolicySchema>
+  | z.infer<typeof formattingPolicySchema>
+  | z.infer<typeof rulePolicySchema>
+  | z.infer<typeof cyclomaticComplexityPolicySchema>
+  | z.infer<typeof readabilityComplexityPolicySchema>
+  | z.infer<typeof duplicationPolicySchema>
+  | z.infer<typeof vulnerabilityPolicySchema>;
 
 export const configFileSchema = z
   .object({

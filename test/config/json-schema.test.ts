@@ -19,14 +19,35 @@ const validExamples = [
     schemaVersion: 1,
     profile: "thorough",
     checks: {
-      formatting: "warn",
+      formatting: {
+        severity: "warn",
+        settings: {
+          printWidth: 100,
+          tabWidth: 4,
+          useTabs: true,
+          semi: false,
+          singleQuote: true,
+          quoteProps: "consistent",
+          jsxSingleQuote: true,
+          trailingComma: "all",
+          bracketSpacing: false,
+          bracketSameLine: true,
+          arrowParens: "avoid",
+          proseWrap: "always",
+          endOfLine: "lf",
+          embeddedLanguageFormatting: "off",
+        },
+      },
       cyclomaticComplexity: {
         severity: "error",
         when: "always",
         max: 24,
         blockWorsening: true,
       },
-      duplication: { threshold: 3.5 },
+      duplication: {
+        threshold: 3.5,
+        settings: { minLines: 8, minTokens: 60, mode: "strict" },
+      },
       vulnerabilities: { onUnavailable: "warn" },
     },
     overrides: [
@@ -138,6 +159,48 @@ describe("Zedbee configuration JSON Schema", () => {
     {
       name: "unknown check",
       input: { schemaVersion: 1, checks: { mystery: "error" } },
+    },
+    {
+      name: "unknown formatting setting",
+      input: {
+        schemaVersion: 1,
+        checks: { formatting: { settings: { parser: "typescript" } } },
+      },
+    },
+    {
+      name: "invalid formatting numeric setting",
+      input: {
+        schemaVersion: 1,
+        checks: { formatting: { settings: { printWidth: 0 } } },
+      },
+    },
+    {
+      name: "invalid formatting enum setting",
+      input: {
+        schemaVersion: 1,
+        checks: { formatting: { settings: { trailingComma: "sometimes" } } },
+      },
+    },
+    {
+      name: "unknown duplication setting",
+      input: {
+        schemaVersion: 1,
+        checks: { duplication: { settings: { minimumLines: 5 } } },
+      },
+    },
+    {
+      name: "invalid duplication numeric setting",
+      input: {
+        schemaVersion: 1,
+        checks: { duplication: { settings: { minTokens: 0 } } },
+      },
+    },
+    {
+      name: "invalid duplication enum setting",
+      input: {
+        schemaVersion: 1,
+        checks: { duplication: { settings: { mode: "medium" } } },
+      },
     },
     {
       name: "unknown reporting key",

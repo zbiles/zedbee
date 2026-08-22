@@ -21,6 +21,22 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "error",
       when: "relevant",
+      settings: {
+        printWidth: 80,
+        tabWidth: 2,
+        useTabs: false,
+        semi: true,
+        singleQuote: false,
+        quoteProps: "as-needed",
+        jsxSingleQuote: false,
+        trailingComma: "all",
+        bracketSpacing: true,
+        bracketSameLine: false,
+        arrowParens: "always",
+        proseWrap: "preserve",
+        endOfLine: "lf",
+        embeddedLanguageFormatting: "auto",
+      },
     });
     expect(config.checks.types).toEqual({
       severity: "error",
@@ -30,6 +46,7 @@ describe("loadConfig", () => {
       severity: "off",
       when: "relevant",
       threshold: 5,
+      settings: { minLines: 5, minTokens: 50, mode: "mild" },
     });
     expect(config.failOnIncomplete).toBe(true);
     expect(config.overrides).toEqual([]);
@@ -113,6 +130,22 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "warn",
       when: "always",
+      settings: {
+        printWidth: 80,
+        tabWidth: 2,
+        useTabs: false,
+        semi: true,
+        singleQuote: false,
+        quoteProps: "as-needed",
+        jsxSingleQuote: false,
+        trailingComma: "all",
+        bracketSpacing: true,
+        bracketSameLine: false,
+        arrowParens: "always",
+        proseWrap: "preserve",
+        endOfLine: "lf",
+        embeddedLanguageFormatting: "auto",
+      },
     });
     expect(config.checks.types).toEqual({ severity: "off", when: "relevant" });
     expect(config.failOnIncomplete).toBe(true);
@@ -137,6 +170,22 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "off",
       when: "relevant",
+      settings: {
+        printWidth: 80,
+        tabWidth: 2,
+        useTabs: false,
+        semi: true,
+        singleQuote: false,
+        quoteProps: "as-needed",
+        jsxSingleQuote: false,
+        trailingComma: "all",
+        bracketSpacing: true,
+        bracketSameLine: false,
+        arrowParens: "always",
+        proseWrap: "preserve",
+        endOfLine: "lf",
+        embeddedLanguageFormatting: "auto",
+      },
     });
     expect(config.failOnIncomplete).toBe(false);
   });
@@ -164,14 +213,19 @@ describe("loadConfig", () => {
       JSON.stringify({
         schemaVersion: 1,
         checks: {
-          lint: { when: "always" },
+          formatting: { settings: { printWidth: 100, singleQuote: true } },
+          lint: { when: "always", rules: { "no-console": "warn" } },
           cyclomaticComplexity: { max: 20, blockWorsening: true },
           readabilityComplexity: {
             severity: "warn",
             max: 15,
             blockWorsening: false,
           },
-          duplication: { threshold: 5 },
+          duplication: { threshold: 5, settings: { mode: "weak" } },
+          reactCorrectness: {
+            rules: { "react-hooks/rules-of-hooks": "error" },
+          },
+          reactAccessibility: { rules: { "jsx-a11y/alt-text": "warn" } },
           vulnerabilities: { onUnavailable: "warn" },
         },
       }),
@@ -179,7 +233,20 @@ describe("loadConfig", () => {
 
     const config = await loadConfig(root);
 
-    expect(config.checks.lint).toEqual({ severity: "error", when: "always" });
+    expect(config.checks.formatting).toMatchObject({
+      severity: "error",
+      when: "relevant",
+      settings: {
+        printWidth: 100,
+        tabWidth: 2,
+        singleQuote: true,
+      },
+    });
+    expect(config.checks.lint).toEqual({
+      severity: "error",
+      when: "always",
+      rules: { "no-console": "warn" },
+    });
     expect(config.checks.cyclomaticComplexity).toEqual({
       severity: "error",
       when: "relevant",
@@ -196,6 +263,13 @@ describe("loadConfig", () => {
       severity: "off",
       when: "relevant",
       threshold: 5,
+      settings: { minLines: 5, minTokens: 50, mode: "weak" },
+    });
+    expect(config.checks.reactCorrectness).toMatchObject({
+      rules: { "react-hooks/rules-of-hooks": "error" },
+    });
+    expect(config.checks.reactAccessibility).toMatchObject({
+      rules: { "jsx-a11y/alt-text": "warn" },
     });
     expect(config.checks.vulnerabilities).toEqual({
       severity: "off",
@@ -263,6 +337,26 @@ describe("loadConfig", () => {
         '{"schemaVersion":1,"checks":{"cyclomaticComplexity":{"severity":"error","maximum":20}}}',
     },
     {
+      name: "unknown formatting setting",
+      source:
+        '{"schemaVersion":1,"checks":{"formatting":{"settings":{"filepath":"src/index.ts"}}}}',
+    },
+    {
+      name: "invalid formatting setting",
+      source:
+        '{"schemaVersion":1,"checks":{"formatting":{"settings":{"printWidth":0}}}}',
+    },
+    {
+      name: "unknown duplication setting",
+      source:
+        '{"schemaVersion":1,"checks":{"duplication":{"settings":{"minimumLines":5}}}}',
+    },
+    {
+      name: "invalid duplication mode",
+      source:
+        '{"schemaVersion":1,"checks":{"duplication":{"settings":{"mode":"medium"}}}}',
+    },
+    {
       name: "invalid source excerpt reporting policy",
       source: '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
     },
@@ -324,6 +418,21 @@ describe("loadConfig", () => {
 
     expect(error).toMatchObject({ code: "CONFIG_INVALID" });
     expect(String(error)).not.toContain(source);
+  });
+
+  it("reports the invalid setting path without echoing the invalid value", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"checks":{"formatting":{"settings":{"parser":"secret-parser-name"}}}}',
+    );
+
+    const error = await loadConfig(root).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: "CONFIG_INVALID" });
+    expect(String(error)).toContain("checks.formatting.settings.parser");
+    expect(String(error)).toContain("printWidth");
+    expect(String(error)).not.toContain("secret-parser-name");
   });
 
   it.each([
@@ -412,7 +521,9 @@ describe("loadConfig", () => {
 
     const config = await loadConfig(root);
 
-    expect(config.overrides).toEqual([
+    expect(
+      config.overrides.map(({ files, checks }) => ({ files, checks })),
+    ).toEqual([
       {
         files: ["packages/web/**", "apps/*/src/**/*.tsx"],
         checks: {
@@ -428,5 +539,23 @@ describe("loadConfig", () => {
         },
       },
     ]);
+    expect(
+      config.overrides[0]?.configurationOrigins.reactAccessibility,
+    ).toEqual({
+      severity: {
+        kind: "override",
+        index: 0,
+        files: ["packages/web/**", "apps/*/src/**/*.tsx"],
+      },
+    });
+    expect(
+      config.overrides[1]?.configurationOrigins.cyclomaticComplexity,
+    ).toEqual({
+      blockWorsening: {
+        kind: "override",
+        index: 1,
+        files: ["packages/web/test/**"],
+      },
+    });
   });
 });

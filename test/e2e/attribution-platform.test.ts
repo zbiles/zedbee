@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 import type { CheckAdapter } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import type {
+  ResolvedComplexityPolicy,
+  ResolvedDuplicationPolicy,
+} from "../../src/config/schema.js";
 import type { Observation } from "../../src/core/types.js";
 import { readStagedChangeSet } from "../../src/git/change-set.js";
 import { GitClient } from "../../src/git/client.js";
@@ -108,8 +112,9 @@ describe("attribution platform", () => {
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
-        context.policy.max = 100;
-        context.policy.blockWorsening = false;
+        const policy = context.policy as ResolvedComplexityPolicy;
+        policy.max = 100;
+        policy.blockWorsening = false;
         targetSource = await readFile(
           join(context.snapshots.targetDir, "src/parser.ts"),
           "utf8",
@@ -253,7 +258,7 @@ describe("attribution platform", () => {
         ],
       }),
       collect: async (context) => {
-        context.policy.threshold = 100;
+        (context.policy as ResolvedDuplicationPolicy).threshold = 100;
         return {
           checkId: "duplication",
           target: context.target,

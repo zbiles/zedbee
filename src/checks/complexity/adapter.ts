@@ -15,6 +15,7 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
+import type { ResolvedComplexityPolicy } from "../../config/schema.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "../eslint/load-engine.js";
 import { managedConfig } from "../eslint/managed-config.js";
@@ -249,7 +250,7 @@ function createComplexityAdapter(
     },
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const limit = context.policy.max;
+        const limit = (context.policy as ResolvedComplexityPolicy).max;
         const [baselineObservations, targetObservations] = await Promise.all([
           collectSide(
             context.snapshots.baselineDir,

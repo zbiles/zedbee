@@ -19,6 +19,8 @@ import {
   writeManagedJsonConfig,
 } from "../project/config-boundary.js";
 import { cloneObservations, parseJscpdReport } from "./normalize-clone.js";
+import { jscpdOptions } from "./settings.js";
+import type { ResolvedDuplicationPolicy } from "../../config/schema.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const JSCPD_REPORT = "jscpd-report.json";
@@ -59,6 +61,7 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   policyThreshold: number,
+  settings: ReturnType<typeof jscpdOptions>,
   signal: AbortSignal,
 ): Promise<readonly Observation[]> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -75,9 +78,7 @@ async function collectSide(
   const output = await createManagedOutputDirectory("jscpd", [JSCPD_REPORT]);
   try {
     const managed = await writeManagedJsonConfig("jscpd", {
-      minTokens: 50,
-      minLines: 5,
-      mode: "mild",
+      ...jscpdOptions(settings),
       format: ["javascript", "jsx", "typescript", "tsx"],
       reporters: ["json"],
       output: output.path,
@@ -158,12 +159,14 @@ export const duplicationAdapter: ObservationCheckAdapter = {
   },
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
-      const policyThreshold = threshold(context.policy.threshold);
+      const policy = context.policy as ResolvedDuplicationPolicy;
+      const policyThreshold = threshold(policy.threshold);
       const baselineObservations = await collectSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
         context.target,
         policyThreshold,
+        policy.settings,
         context.signal,
       );
       const targetObservations = await collectSide(
@@ -171,6 +174,7 @@ export const duplicationAdapter: ObservationCheckAdapter = {
         context.targetInspection,
         context.target,
         policyThreshold,
+        policy.settings,
         context.signal,
       );
       return {

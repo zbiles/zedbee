@@ -1,5 +1,5 @@
 import { lstat, readFile } from "node:fs/promises";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
 import { SECRET_LINT_CONFIG } from "../checks/secrets/config.js";
@@ -11,7 +11,7 @@ import {
   OsvUnavailableError,
 } from "../checks/vulnerabilities/osv/errors.js";
 import type { OsvClient } from "../checks/vulnerabilities/osv/types.js";
-import { loadConfig } from "../config/load-config.js";
+import { ConfigError, loadConfig } from "../config/load-config.js";
 import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
@@ -259,7 +259,19 @@ export function createDefaultDiagnosticProbe(
       }
       case "config": {
         const root = await repositoryRoot(context.cwd);
-        await loadConfig(root, context.configPath);
+        try {
+          await loadConfig(root, context.configPath);
+        } catch (error) {
+          if (error instanceof ConfigError) {
+            return {
+              id: "config",
+              status: "fail",
+              message: error.message,
+              remediation: `Correct ${basename(error.configPath)} and run zedbee doctor again.`,
+            };
+          }
+          throw error;
+        }
         return {
           id,
           status: "pass",

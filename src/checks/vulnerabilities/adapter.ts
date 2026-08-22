@@ -16,6 +16,7 @@ import { normalizeOsvInventory } from "./normalize.js";
 import { createOsvClient, osvQueryKey } from "./osv/client.js";
 import { OsvAnalysisError, OsvUnavailableError } from "./osv/errors.js";
 import type { OsvClient, OsvPackageQuery } from "./osv/types.js";
+import type { ResolvedCheckPolicies } from "../../config/schema.js";
 
 const TARGET = Object.freeze({
   id: ".",
@@ -55,13 +56,14 @@ function hasDependencyStateDelta(context: InspectionContext): boolean {
   );
 }
 
-function analyzableLockfiles(inspection: RepositoryInspection): readonly string[] {
+function analyzableLockfiles(
+  inspection: RepositoryInspection,
+): readonly string[] {
   const hasTextBunLock = inspection.lockfiles.some(
     (path) => path.split("/").at(-1) === "bun.lock",
   );
   return inspection.lockfiles.filter(
-    (path) =>
-      !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
+    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
   );
 }
 
@@ -118,8 +120,7 @@ function safeIncomplete(
     return new CheckIncompleteError({
       code: error.code,
       message: error.message,
-      remediation:
-        error.remediation ?? inventoryRemediation(error.code),
+      remediation: error.remediation ?? inventoryRemediation(error.code),
     });
   }
   if (error instanceof OsvAnalysisError) {
@@ -178,14 +179,16 @@ export function createVulnerabilitiesAdapter(
             baselineInventory,
             advisories,
           ),
-          targetObservations: normalizeOsvInventory(targetInventory, advisories),
+          targetObservations: normalizeOsvInventory(
+            targetInventory,
+            advisories,
+          ),
           projectDelta: hasDependencyStateDelta(context),
         };
       } catch (error) {
-        throw safeIncomplete(
-          error,
-          context.policy.onUnavailable ?? "block",
-        );
+        const policy =
+          context.policy as ResolvedCheckPolicies["vulnerabilities"];
+        throw safeIncomplete(error, policy.onUnavailable ?? "block");
       }
     },
   });

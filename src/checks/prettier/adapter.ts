@@ -11,6 +11,8 @@ import {
 } from "./format-diff.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
+import { prettierOptions } from "./settings.js";
+import type { ResolvedFormattingPolicy } from "../../config/schema.js";
 
 const PARSERS = {
   ".css": "css",
@@ -160,6 +162,9 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           continue;
         }
         const formatted = await prettier.format(source, {
+          ...prettierOptions(
+            (context.policy as ResolvedFormattingPolicy).settings,
+          ),
           filepath: file,
           parser,
         });

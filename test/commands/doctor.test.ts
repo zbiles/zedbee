@@ -15,6 +15,7 @@ import {
   type DiagnosticProbe,
 } from "../../src/doctor/diagnostics.js";
 import { OsvUnavailableError } from "../../src/checks/vulnerabilities/osv/errors.js";
+import { ConfigError } from "../../src/config/load-config.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const passProbe: DiagnosticProbe = async (id) => ({
@@ -116,6 +117,52 @@ describe("doctor diagnostics", () => {
     expect(JSON.stringify(diagnostics)).not.toContain(
       "token=/private/tmp/secret",
     );
+  });
+
+  it("preserves precise config validation failures in the config diagnostic", async () => {
+    const repository = await createGitRepository("zedbee-doctor-config-");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"checks":{"formatting":{"settings":{"parser":"secret-parser-name"}}}}',
+    );
+    await repository.commitAll("fixture");
+
+    const diagnostic = await defaultDiagnosticProbe("config", {
+      cwd: repository.root,
+      environment: {},
+    });
+
+    expect(diagnostic).toEqual({
+      id: "config",
+      status: "fail",
+      message: expect.stringContaining("checks.formatting.settings.parser"),
+      remediation: "Correct .zedbeerc.jsonc and run zedbee doctor again.",
+    });
+    expect(diagnostic.message).not.toContain("secret-parser-name");
+  });
+
+  it("keeps non-config diagnostic crashes sanitized", async () => {
+    const diagnostics = await runDiagnostics(
+      async (id) => {
+        if (id === "git") {
+          throw new ConfigError(
+            "CONFIG_INVALID",
+            "Invalid Zedbee configuration at .zedbeerc.jsonc (checks.formatting.settings.parser).",
+            "/repo/.zedbeerc.jsonc",
+          );
+        }
+        return passProbe(id, { cwd: "/repo", environment: {} });
+      },
+      { cwd: "/repo", environment: {} },
+    );
+
+    expect(diagnostics.find(({ id }) => id === "git")).toEqual({
+      id: "git",
+      status: "fail",
+      message: "The diagnostic could not be completed.",
+      remediation:
+        "Run zedbee doctor again after correcting the reported setup issue.",
+    });
   });
 
   it("validates Secretlint directly without a managed executable", async () => {

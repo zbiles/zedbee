@@ -21,8 +21,11 @@ export function generateConfigJsonSchema(): ConfigJsonSchema {
   const properties = schema.properties as
     Record<string, Record<string, unknown>> | undefined;
 
-  // Zod currently omits an empty-array metadata default on this nested input
-  // schema. Restore the runtime default explicitly for editor completion.
+  // Zod currently omits empty metadata defaults on nested input schemas.
+  // Restore the runtime defaults explicitly for editor completion.
+  if (properties?.checks !== undefined) {
+    properties.checks.default = {};
+  }
   if (properties?.overrides !== undefined) {
     properties.overrides.default = [];
   }

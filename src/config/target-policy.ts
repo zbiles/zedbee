@@ -5,6 +5,7 @@ import type {
   WorkspaceInspection,
 } from "../inspection/types.js";
 import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
+import type { ResolvedCheckPolicyPatch } from "./schema.js";
 
 function policyCandidates(
   target: CheckTarget,
@@ -61,8 +62,22 @@ export function resolveTargetPolicy(
       const isMatch = picomatch(pattern, { dot: true });
       return candidates.some((candidate) => isMatch(candidate));
     });
-    if (matches) policy = { ...policy, ...patch };
+    if (matches) policy = mergePolicyPatch(policy, patch);
   }
 
   return policy;
+}
+
+function mergePolicyPatch(
+  policy: ResolvedCheckPolicy,
+  patch: ResolvedCheckPolicyPatch,
+): ResolvedCheckPolicy {
+  const merged = { ...policy, ...patch };
+  if ("settings" in policy && patch.settings !== undefined) {
+    merged.settings = Object.freeze({ ...policy.settings, ...patch.settings });
+  }
+  if ("rules" in policy && patch.rules !== undefined) {
+    merged.rules = Object.freeze({ ...policy.rules, ...patch.rules });
+  }
+  return Object.freeze(merged) as ResolvedCheckPolicy;
 }

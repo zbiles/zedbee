@@ -1110,7 +1110,7 @@ describe("dispatchChecks", () => {
 
     const results = await dispatchChecks(
       [adapter],
-      createContext(unsafeConfig),
+      createContext(unsafeConfig as unknown as ResolvedConfig),
     );
 
     expect(inspected).toBe(false);
