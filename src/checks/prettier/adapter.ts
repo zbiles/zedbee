@@ -12,7 +12,6 @@ import {
 import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
 import { prettierOptions } from "./settings.js";
-import type { ResolvedFormattingPolicy } from "../../config/schema.js";
 import {
   isSupportedPrettierPath,
   prettierParserFor,
@@ -143,10 +142,12 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
         if (parser === undefined) {
           continue;
         }
+        const policy = context.policyForFile("formatting", file, "target");
+        if (policy.severity === "off") {
+          continue;
+        }
         const formatted = await prettier.format(source, {
-          ...prettierOptions(
-            (context.policy as ResolvedFormattingPolicy).settings,
-          ),
+          ...prettierOptions(policy.settings),
           filepath: file,
           parser,
         });

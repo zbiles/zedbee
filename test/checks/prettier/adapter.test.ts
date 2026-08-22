@@ -40,12 +40,12 @@ function changeSet(files: ChangeSet["files"]): ChangeSet {
 async function runAdapter(
   repository: Awaited<ReturnType<typeof createGitRepository>>,
   when: "relevant" | "always" = "relevant",
+  resolvedConfig = config(when),
 ) {
   const git = new GitClient(repository.root);
   const stagedChanges = await readStagedChangeSet(git);
   const snapshots = await buildSnapshotPair(repository.root, git);
   onTestFinished(snapshots.cleanup);
-  const resolvedConfig = config(when);
   return prettierAdapter.runLegacy({
     repositoryRoot: repository.root,
     changeSet: stagedChanges,
@@ -184,6 +184,67 @@ describe("prettierAdapter.inspect", () => {
 });
 
 describe("prettierAdapter.run", () => {
+  it("applies target-side formatting settings per staged file override", async () => {
+    const repository = await createGitRepository();
+    await repository.write("src/value.ts", "export const existing = true\n");
+    await repository.write("test/value.ts", "export const existing = true;\n");
+    await repository.commitAll("formatted base");
+    await repository.write("src/value.ts", 'export const source = "ready";\n');
+    await repository.write("test/value.ts", "export const spec = 'ready'\n");
+    await repository.git(["add", "--", "src/value.ts", "test/value.ts"]);
+    await repository.write("src/value.ts", "export const source = 'ready'\n");
+    await repository.write("test/value.ts", "export const spec = 'ready';\n");
+    const formattingConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        formatting: { settings: { semi: false, singleQuote: true } },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { formatting: { settings: { semi: true } } },
+        },
+      ],
+    });
+
+    const result = await runAdapter(repository, "relevant", formattingConfig);
+
+    expect(result.status).toBe("completed");
+    expect(result.findings.map((finding) => finding.location)).toEqual([
+      { file: "src/value.ts", startLine: 1, endLine: 1 },
+      { file: "test/value.ts", startLine: 1, endLine: 1 },
+    ]);
+  });
+
+  it("skips staged files whose target-side formatting policy is off", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "generated/value.ts",
+      "export const existing = true;\n",
+    );
+    await repository.commitAll("generated base");
+    await repository.write(
+      "generated/value.ts",
+      "export const generated={value:1}\n",
+    );
+    await repository.git(["add", "--", "generated/value.ts"]);
+    const formattingConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      overrides: [
+        {
+          files: ["generated/**"],
+          checks: { formatting: "off" },
+        },
+      ],
+    });
+
+    const result = await runAdapter(repository, "relevant", formattingConfig);
+
+    expect(result).toMatchObject({ status: "completed", findings: [] });
+  });
+
   it("does not report pre-existing formatting outside staged lines", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "const existing={value:1}\n");
