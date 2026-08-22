@@ -1,12 +1,20 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
+import type { ESLint } from "eslint";
 import { describe, expect, it } from "vitest";
 import type {
   CheckRunContext,
   CheckTarget,
 } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
-import { lintAdapter } from "../../../src/checks/eslint/lint-adapter.js";
+import {
+  createLintAdapter,
+  lintAdapter,
+} from "../../../src/checks/eslint/lint-adapter.js";
+import {
+  createManagedEslint,
+  type ManagedEslintOptions,
+} from "../../../src/checks/eslint/load-engine.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
@@ -70,12 +78,192 @@ async function context(
     targetInspection: await inspectRepository(fixtures.staged.root),
     target,
     policy: config.checks.lint,
-    policyForFile: testFilePolicyResolver(config),
+    policyForFile: testFilePolicyResolver(config, changeSet),
     signal: new AbortController().signal,
   };
 }
 
 describe("lintAdapter", () => {
+  it("applies per-file rules in grouped engines and reuses target rename policy on both sides", async () => {
+    const fixtures = await pair();
+    const safe = "/* global console */\nconsole.log('safe');\n";
+    const renamed = "/* global console */\nconsole.log('renamed');\n";
+    for (const fixture of [fixtures.baseline, fixtures.live]) {
+      await fixture.write("src/app.js", safe);
+      await fixture.write("src/old.js", renamed);
+    }
+    await fixtures.staged.write("src/app.js", safe);
+    await fixtures.staged.write("test/new.test.js", renamed);
+    const changeSet = changes([
+      {
+        path: "src/app.js",
+        status: "modified",
+        addedRanges: [{ start: 2, end: 2 }],
+      },
+      {
+        path: "test/new.test.js",
+        previousPath: "src/old.js",
+        status: "renamed",
+        addedRanges: [],
+      },
+    ]);
+    const base = await context(fixtures, changeSet);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-console": "error" } } },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-console": "off" } } },
+        },
+      ],
+    });
+    const run: CheckRunContext = {
+      ...base,
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+    };
+    const factoryCalls: ManagedEslintOptions[] = [];
+    const lintCalls: {
+      readonly cwd: string;
+      readonly files: readonly string[];
+    }[] = [];
+    const adapter = createLintAdapter((options) => {
+      factoryCalls.push(options);
+      const engine = createManagedEslint(options);
+      return {
+        async lintFiles(patterns) {
+          const files = typeof patterns === "string" ? [patterns] : patterns;
+          lintCalls.push({ cwd: options.cwd, files: [...files] });
+          return engine.lintFiles(patterns);
+        },
+      } satisfies Pick<ESLint, "lintFiles">;
+    });
+
+    const collected = await adapter.collect(run);
+
+    expect(
+      collected.targetObservations
+        .filter(({ rule }) => rule === "no-console")
+        .map(({ location }) => location?.file),
+    ).toEqual(["src/app.js"]);
+    expect(factoryCalls).toHaveLength(4);
+    expect(
+      factoryCalls
+        .filter(({ cwd }) => cwd === run.baselineInspection.snapshotRoot)
+        .map(({ ruleOverrides }) => ruleOverrides),
+    ).toEqual([{ "no-console": "error" }, { "no-console": "off" }]);
+    expect(
+      factoryCalls
+        .filter(({ cwd }) => cwd === run.targetInspection.snapshotRoot)
+        .map(({ ruleOverrides }) => ruleOverrides),
+    ).toEqual([{ "no-console": "error" }, { "no-console": "off" }]);
+    expect(lintCalls).toEqual(
+      expect.arrayContaining([
+        {
+          cwd: run.baselineInspection.snapshotRoot,
+          files: ["src/old.js"],
+        },
+        {
+          cwd: run.targetInspection.snapshotRoot,
+          files: ["test/new.test.js"],
+        },
+      ]),
+    );
+  });
+
+  it("skips files whose effective per-file lint policy is off", async () => {
+    const fixtures = await pair();
+    await fixtures.staged.write(
+      "generated/broken.js",
+      "export const broken = missingName;\n",
+    );
+    const changeSet = changes([
+      {
+        path: "generated/broken.js",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const base = await context(fixtures, changeSet);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      overrides: [
+        { files: ["generated/**"], checks: { lint: { severity: "off" } } },
+      ],
+    });
+    const run: CheckRunContext = {
+      ...base,
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+    };
+
+    await expect(lintAdapter.collect(run)).resolves.toMatchObject({
+      baselineObservations: [],
+      targetObservations: [],
+    });
+  });
+
+  it("rejects an out-of-group typed result with a precise incomplete path and no retry", async () => {
+    const fixtures = await pair();
+    const tsconfig = {
+      compilerOptions: { strict: true },
+      include: ["src/**/*.ts"],
+    };
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.writeJson("tsconfig.json", tsconfig);
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+    }
+    const changeSet = changes([
+      {
+        path: "src/value.ts",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const run = await context(fixtures, changeSet);
+    let factoryCalls = 0;
+    let releaseFactories: () => void = () => undefined;
+    const bothFactoriesReady = new Promise<void>((resolve) => {
+      releaseFactories = resolve;
+    });
+    const adapter = createLintAdapter((options) => {
+      factoryCalls += 1;
+      if (factoryCalls === 2) releaseFactories();
+      return {
+        async lintFiles() {
+          await bothFactoriesReady;
+          return options.cwd === run.targetInspection.snapshotRoot
+            ? [
+                {
+                  filePath: join(options.cwd, "src/unrequested.ts"),
+                  messages: [],
+                  suppressedMessages: [],
+                  errorCount: 0,
+                  fatalErrorCount: 0,
+                  warningCount: 0,
+                  fixableErrorCount: 0,
+                  fixableWarningCount: 0,
+                  usedDeprecatedRules: [],
+                },
+              ]
+            : [];
+        },
+      };
+    });
+
+    await expect(adapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPED_LINT_ANALYSIS_FAILED",
+      path: "src/value.ts",
+    });
+    expect(factoryCalls).toBe(2);
+  });
+
   it("explains when typed lint cannot build a project for staged TypeScript", async () => {
     const fixtures = await pair();
     for (const fixture of [fixtures.baseline, fixtures.staged]) {

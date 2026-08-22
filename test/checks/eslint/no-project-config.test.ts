@@ -12,9 +12,14 @@ describe("createManagedEslint", () => {
       "eslint.config.mjs",
       `
         import { writeFileSync } from "node:fs";
+        await import("./project-plugin.mjs");
         writeFileSync("CONFIG_EXECUTED", "yes");
         export default [{ rules: { "project-only-rule": "error" } }];
       `,
+    );
+    await repository.write(
+      "project-plugin.mjs",
+      `import { writeFileSync } from "node:fs"; writeFileSync("PLUGIN_EXECUTED", "yes"); export default {};`,
     );
     await repository.write("src/value.ts", "export const value: number = 1;\n");
     await repository.write("src/not-requested.ts", "export const nope = ;\n");
@@ -23,6 +28,7 @@ describe("createManagedEslint", () => {
       cwd: repository.root,
       mode: "lint",
       managedIgnores: [],
+      ruleOverrides: { "no-console": "warn" },
     });
     const results = await engine.lintFiles(["src/value.ts"]);
 
@@ -31,6 +37,9 @@ describe("createManagedEslint", () => {
     ]);
     await expect(
       access(join(repository.root, "CONFIG_EXECUTED")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      access(join(repository.root, "PLUGIN_EXECUTED")),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 

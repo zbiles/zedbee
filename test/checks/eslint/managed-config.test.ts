@@ -6,10 +6,12 @@ import reactHooksPlugin from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 import { describe, expect, test } from "vitest";
 import {
+  groupFilesByRules,
   managedConfig,
   readabilityComplexityPlugin,
   type ManagedEslintMode,
 } from "../../../src/checks/eslint/managed-config.js";
+import type { FilePolicyResolver } from "../../../src/config/file-policy.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
 
 const require = createRequire(import.meta.url);
@@ -84,5 +86,73 @@ describe("managedConfig", () => {
     expect(config.slice(1).every((entry) => entry.ignores === undefined)).toBe(
       true,
     );
+  });
+
+  test("appends detached validated rule overrides after managed presets", () => {
+    const input = {
+      "no-console": ["warn", { allow: ["warn"] }],
+    } as const;
+    const config = managedConfig({
+      mode: "lint",
+      managedIgnores: [],
+      ruleOverrides: input,
+    });
+    const override = config.at(-1);
+
+    expect(override).toEqual({
+      files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
+      rules: { "no-console": ["warn", { allow: ["warn"] }] },
+    });
+    expect(override?.rules).not.toBe(input);
+    expect(Object.isFrozen(override?.rules)).toBe(true);
+    expect(Object.isFrozen(override?.rules?.["no-console"])).toBe(true);
+    expect(
+      Object.isFrozen(
+        (override?.rules?.["no-console"] as readonly unknown[])[1],
+      ),
+    ).toBe(true);
+  });
+
+  test("revalidates rule ownership at the managed engine config boundary", () => {
+    expect(() =>
+      managedConfig({
+        mode: "lint",
+        managedIgnores: [],
+        ruleOverrides: { "react/jsx-key": "off" },
+      }),
+    ).toThrow(/belongs to reactCorrectness/u);
+    expect(() =>
+      managedConfig({
+        mode: "react-accessibility",
+        managedIgnores: [],
+        ruleOverrides: { "company/private-rule": "error" },
+      }),
+    ).toThrow(/unsupported rule/u);
+  });
+
+  test("groups identical effective rules deterministically and skips off files", () => {
+    const resolve = ((_checkId: string, file: string, _side: string) => ({
+      severity: file === "generated/off.js" ? "off" : "error",
+      when: "relevant",
+      rules:
+        file === "src/z.js"
+          ? { "no-debugger": "error", "no-console": "warn" }
+          : { "no-console": "warn", "no-debugger": "error" },
+    })) as FilePolicyResolver;
+
+    expect(
+      groupFilesByRules(
+        ["src/z.js", "generated/off.js", "src/a.js"],
+        "target",
+        resolve,
+        "lint",
+      ),
+    ).toEqual([
+      {
+        fingerprint: '{"no-console":"warn","no-debugger":"error"}',
+        files: ["src/a.js", "src/z.js"],
+        rules: { "no-console": "warn", "no-debugger": "error" },
+      },
+    ]);
   });
 });

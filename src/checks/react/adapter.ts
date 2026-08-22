@@ -24,6 +24,12 @@ import type {
   ReactCorrectnessConfigFactory,
 } from "../eslint/managed-config.js";
 import { managedReactCorrectnessConfig } from "./config.js";
+import type {
+  FilePolicyResolver,
+  SnapshotSide,
+} from "../../config/file-policy.js";
+import { groupFilesByRules } from "../eslint/managed-config.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import {
   createReactVersionResolver,
   type ReactVersionResolver,
@@ -53,6 +59,24 @@ type ResolveWorkspaceReactVersion = (
   inspection: RepositoryInspection,
   workspace: WorkspaceInspection,
 ) => Promise<string>;
+
+function reactAnalysisFailure(
+  id: "reactCorrectness" | "reactAccessibility",
+  path?: string,
+): CheckIncompleteError {
+  const correctness = id === "reactCorrectness";
+  return new CheckIncompleteError({
+    code: correctness
+      ? "REACT_CORRECTNESS_ANALYSIS_FAILED"
+      : "REACT_ACCESSIBILITY_ANALYSIS_FAILED",
+    message: correctness
+      ? "React correctness analysis could not analyze every requested source file."
+      : "React accessibility analysis could not analyze every requested source file.",
+    remediation:
+      "Verify that the source file uses supported JavaScript or TypeScript syntax, then retry. If it does, report a Zedbee React analyzer compatibility issue.",
+    ...(path === undefined ? {} : { path }),
+  });
+}
 
 function targetFor(workspace: WorkspaceInspection): CheckTarget {
   return {
@@ -87,6 +111,8 @@ async function prepareSide(
   reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
   engineFactory: ReactEslintEngineFactory,
   resolveWorkspaceReactVersion: ResolveWorkspaceReactVersion,
+  side: SnapshotSide,
+  policyForFile: FilePolicyResolver,
 ): Promise<PreparedSide> {
   const failure =
     id === "reactCorrectness"
@@ -105,36 +131,67 @@ async function prepareSide(
     if (files.length === 0) {
       return async () => Object.freeze([]);
     }
+    const groups = groupFilesByRules(files, side, policyForFile, id);
+    if (groups.length === 0) {
+      return async () => Object.freeze([]);
+    }
 
     const reactVersion =
       mode === "react-correctness"
         ? await resolveWorkspaceReactVersion(inspection, workspace)
         : undefined;
 
-    const engine = engineFactory({
-      cwd: canonicalRoot,
-      mode,
-      managedIgnores: [],
-      ...(reactVersion === undefined
-        ? {}
-        : { reactVersion, reactCorrectnessConfigFactory }),
+    const preparedGroups = groups.map((group) => {
+      try {
+        return {
+          group,
+          engine: engineFactory({
+            cwd: canonicalRoot,
+            mode,
+            managedIgnores: [],
+            ruleOverrides: group.rules,
+            ...(reactVersion === undefined
+              ? {}
+              : { reactVersion, reactCorrectnessConfigFactory }),
+          }),
+        };
+      } catch {
+        throw reactAnalysisFailure(
+          id,
+          group.files.length === 1 ? group.files[0] : undefined,
+        );
+      }
     });
     return async () => {
       try {
-        const results = await engine.lintFiles(files);
-        const allowed = new Set(files);
-        const observations: Observation[] = [];
-        for (const result of results) {
-          const path = relative(canonicalRoot, result.filePath)
-            .split(sep)
-            .join("/");
-          if (!allowed.has(path)) throw new Error(failure);
-          observations.push(
-            ...result.messages.map((message) =>
-              convertEslintMessage(path, message, canonicalRoot, id),
-            ),
-          );
-        }
+        const collected = await Promise.all(
+          preparedGroups.map(async ({ group, engine }) => {
+            try {
+              const results = await engine.lintFiles([...group.files]);
+              const allowed = new Set(group.files);
+              const observations: Observation[] = [];
+              for (const result of results) {
+                const path = relative(canonicalRoot, result.filePath)
+                  .split(sep)
+                  .join("/");
+                if (!allowed.has(path)) throw new Error(failure);
+                observations.push(
+                  ...result.messages.map((message) =>
+                    convertEslintMessage(path, message, canonicalRoot, id),
+                  ),
+                );
+              }
+              return observations;
+            } catch (error) {
+              if (error instanceof CheckIncompleteError) throw error;
+              throw reactAnalysisFailure(
+                id,
+                group.files.length === 1 ? group.files[0] : undefined,
+              );
+            }
+          }),
+        );
+        const observations = collected.flat();
         return Object.freeze(
           observations.sort(
             (left, right) =>
@@ -142,11 +199,13 @@ async function prepareSide(
               compareCodeUnits(left.message, right.message),
           ),
         );
-      } catch {
+      } catch (error) {
+        if (error instanceof CheckIncompleteError) throw error;
         throw new Error(failure);
       }
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof CheckIncompleteError) throw error;
     throw new Error(failure);
   }
 }
@@ -235,6 +294,8 @@ export function createReactAdapter(
         reactCorrectnessConfigFactory,
         engineFactory,
         resolveBaselineReactVersion,
+        "baseline",
+        context.policyForFile,
       );
       const collectTarget = await prepareSide(
         context.snapshots.targetDir,
@@ -245,6 +306,8 @@ export function createReactAdapter(
         reactCorrectnessConfigFactory,
         engineFactory,
         resolveTargetReactVersion,
+        "target",
+        context.policyForFile,
       );
       const [baselineObservations, targetObservations] = await Promise.all([
         collectBaseline(),

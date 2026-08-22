@@ -4,7 +4,9 @@ import type {
   InspectionContext,
 } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
+import { createReactAdapter } from "../../../src/checks/react/adapter.js";
 import { reactAccessibilityAdapter } from "../../../src/checks/react/accessibility-adapter.js";
+import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
@@ -79,13 +81,105 @@ async function accessibilityContext(dependencies: Record<string, string>) {
       },
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       policy: config.checks.reactAccessibility,
-      policyForFile: testFilePolicyResolver(config),
+      policyForFile: testFilePolicyResolver(config, changeSet),
       signal: new AbortController().signal,
     } satisfies CheckRunContext,
   };
 }
 
 describe("reactAccessibilityAdapter", () => {
+  it("applies accessibility rule patches per file and skips the disabled group", async () => {
+    const { fixtures, changedFiles, run } = await accessibilityContext({
+      react: "19.0.0",
+      "react-dom": "19.0.0",
+    });
+    const clean =
+      'export const App = () => <img src="logo.png" alt="Logo" />;\n';
+    const violating = 'export const App = () => <img src="logo.png" />;\n';
+    for (const fixture of [fixtures.baseline, fixtures.live]) {
+      await fixture.write("src/app.tsx", clean);
+      await fixture.write("test/app.test.tsx", clean);
+    }
+    await fixtures.staged.write("src/app.tsx", violating);
+    await fixtures.staged.write("test/app.test.tsx", violating);
+    changedFiles.set("src/app.tsx", {
+      path: "src/app.tsx",
+      status: "modified",
+      addedRanges: [{ start: 1, end: 1 }],
+    });
+    changedFiles.set("test/app.test.tsx", {
+      path: "test/app.test.tsx",
+      status: "modified",
+      addedRanges: [{ start: 1, end: 1 }],
+    });
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        reactAccessibility: {
+          rules: { "jsx-a11y/alt-text": "error" },
+        },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: {
+            reactAccessibility: {
+              rules: { "jsx-a11y/alt-text": "off" },
+            },
+          },
+        },
+      ],
+    });
+    const context: CheckRunContext = {
+      ...run,
+      config,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+      policy: config.checks.reactAccessibility,
+      policyForFile: testFilePolicyResolver(config, run.changeSet),
+    };
+
+    const collected = await reactAccessibilityAdapter.collect(context);
+
+    expect(
+      collected.targetObservations
+        .filter(({ rule }) => rule === "jsx-a11y/alt-text")
+        .map(({ location }) => location?.file),
+    ).toEqual(["src/app.tsx"]);
+  });
+
+  it("reports a precise incomplete path without retrying a failed accessibility group", async () => {
+    const { run } = await accessibilityContext({
+      react: "19.0.0",
+      "react-dom": "19.0.0",
+    });
+    let factoryCalls = 0;
+    const adapter = createReactAdapter(
+      "reactAccessibility",
+      "react-accessibility",
+      managedReactCorrectnessConfig,
+      (options) => {
+        factoryCalls += 1;
+        return {
+          async lintFiles() {
+            if (options.cwd === run.targetInspection.snapshotRoot) {
+              throw new Error("engine failure");
+            }
+            return [];
+          },
+        };
+      },
+    );
+
+    await expect(adapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "REACT_ACCESSIBILITY_ANALYSIS_FAILED",
+      path: "src/app.tsx",
+    });
+    expect(factoryCalls).toBe(2);
+  });
+
   it("finds missing accessible labels and click-only interaction in React DOM", async () => {
     const { run } = await accessibilityContext({
       react: "19.0.0",

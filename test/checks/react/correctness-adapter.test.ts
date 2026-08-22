@@ -120,13 +120,159 @@ async function reactContext(
       targetInspection: await inspectRepository(staged.root),
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       policy: config.checks.reactCorrectness,
-      policyForFile: testFilePolicyResolver(config),
+      policyForFile: testFilePolicyResolver(config, changeSet),
       signal: new AbortController().signal,
     } satisfies CheckRunContext,
   };
 }
 
 describe("reactCorrectnessAdapter", () => {
+  it("applies grouped per-file rules with identical patches on both snapshot sides", async () => {
+    const { fixtures, changedFiles, run } = await reactContext("react");
+    const clean =
+      "export const App = () => [1].map(value => <span key={value}>{value}</span>);\n";
+    const violating =
+      "export const App = () => [1].map(value => <span>{value}</span>);\n";
+    for (const fixture of [fixtures.baseline, fixtures.live]) {
+      await fixture.write("src/app.tsx", clean);
+      await fixture.write("test/app.test.tsx", clean);
+    }
+    await fixtures.staged.write("src/app.tsx", violating);
+    await fixtures.staged.write("test/app.test.tsx", violating);
+    changedFiles.set("src/app.tsx", {
+      path: "src/app.tsx",
+      status: "modified",
+      addedRanges: [{ start: 1, end: 1 }],
+    });
+    changedFiles.set("test/app.test.tsx", {
+      path: "test/app.test.tsx",
+      status: "modified",
+      addedRanges: [{ start: 1, end: 1 }],
+    });
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        reactCorrectness: { rules: { "react/jsx-key": "error" } },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: {
+            reactCorrectness: { rules: { "react/jsx-key": "off" } },
+          },
+        },
+      ],
+    });
+    const context: CheckRunContext = {
+      ...run,
+      config,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+      policy: config.checks.reactCorrectness,
+      policyForFile: testFilePolicyResolver(config, run.changeSet),
+    };
+    const factoryCalls: ManagedEslintOptions[] = [];
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => {
+        factoryCalls.push(options);
+        return createManagedEslint(options);
+      },
+    );
+
+    const collected = await adapter.collect(context);
+
+    expect(
+      collected.targetObservations
+        .filter(({ rule }) => rule === "react/jsx-key")
+        .map(({ location }) => location?.file),
+    ).toEqual(["src/app.tsx"]);
+    expect(factoryCalls).toHaveLength(4);
+    for (const inspection of [
+      context.baselineInspection,
+      context.targetInspection,
+    ]) {
+      expect(
+        factoryCalls
+          .filter(({ cwd }) => cwd === inspection.snapshotRoot)
+          .map(({ ruleOverrides }) => ruleOverrides),
+      ).toEqual([{ "react/jsx-key": "error" }, { "react/jsx-key": "off" }]);
+    }
+  });
+
+  it("reports a precise incomplete path without retrying a failed correctness group", async () => {
+    const { run } = await reactContext("react");
+    let factoryCalls = 0;
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      (options) => {
+        factoryCalls += 1;
+        return {
+          async lintFiles() {
+            if (options.cwd === run.targetInspection.snapshotRoot) {
+              throw new Error("engine failure");
+            }
+            return [];
+          },
+        };
+      },
+    );
+
+    await expect(adapter.collect(run)).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "REACT_CORRECTNESS_ANALYSIS_FAILED",
+      path: "src/app.tsx",
+    });
+    expect(factoryCalls).toBe(2);
+  });
+
+  it("skips effective-off files before React version resolution or engine creation", async () => {
+    const { run } = await reactContext("react");
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      overrides: [
+        {
+          files: ["src/**"],
+          checks: { reactCorrectness: { severity: "off" } },
+        },
+      ],
+    });
+    const context: CheckRunContext = {
+      ...run,
+      config,
+      policy: config.checks.reactCorrectness,
+      policyForFile: testFilePolicyResolver(config, run.changeSet),
+    };
+    let engineCalls = 0;
+    let resolverCalls = 0;
+    const adapter = createReactAdapter(
+      "reactCorrectness",
+      "react-correctness",
+      managedReactCorrectnessConfig,
+      () => {
+        engineCalls += 1;
+        throw new Error("engine should not be created");
+      },
+      async () => {
+        resolverCalls += 1;
+        throw new Error("React version should not be resolved");
+      },
+    );
+
+    await expect(adapter.collect(context)).resolves.toMatchObject({
+      baselineObservations: [],
+      targetObservations: [],
+    });
+    expect(engineCalls).toBe(0);
+    expect(resolverCalls).toBe(0);
+  });
+
   it("parses each lockfile once per immutable snapshot across many workspaces", async () => {
     const workspaceCount = 8;
     const [baseline, target, live] = await Promise.all([

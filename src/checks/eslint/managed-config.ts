@@ -2,11 +2,22 @@ import js from "@eslint/js";
 import type { ESLint, Linter } from "eslint";
 import type * as ts from "typescript";
 import tseslint from "typescript-eslint";
+import type {
+  FilePolicyResolver,
+  SnapshotSide,
+} from "../../config/file-policy.js";
+import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
+import type { CheckId } from "../../config/schema.js";
+import { compareCodeUnits } from "../../core/compare.js";
 import { readabilityComplexityRule } from "../complexity/readability-rule.js";
 import {
   managedReactAccessibilityConfig,
   managedReactCorrectnessConfig,
 } from "../react/config.js";
+import {
+  validateManagedRuleConfiguration,
+  type RuleCheckId,
+} from "./rule-settings.js";
 
 const JAVASCRIPT_FILES = ["**/*.{js,jsx,mjs,cjs}"];
 const TYPESCRIPT_FILES = ["**/*.{ts,tsx,mts,cts}"];
@@ -28,11 +39,91 @@ export type ReactCorrectnessConfigFactory = (
 export interface ManagedConfigOptions {
   readonly mode: ManagedEslintMode;
   readonly managedIgnores: readonly string[];
+  readonly ruleOverrides?: Readonly<Record<string, EslintRuleConfiguration>>;
   readonly reactVersion?: string;
   readonly reactCorrectnessConfigFactory?: ReactCorrectnessConfigFactory;
   readonly typedProject?: {
     readonly programs: readonly ts.Program[];
   };
+}
+
+export interface FileRuleGroup {
+  readonly fingerprint: string;
+  readonly files: readonly string[];
+  readonly rules: Readonly<Record<string, EslintRuleConfiguration>>;
+}
+
+function stableRuleValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableRuleValue(item)).join(",")}]`;
+  }
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      compareCodeUnits(left, right),
+    );
+    return `{${entries
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableRuleValue(item)}`)
+      .join(",")}}`;
+  }
+  const encoded = JSON.stringify(value);
+  if (encoded === undefined) {
+    throw new TypeError("Managed rule configuration is not serializable.");
+  }
+  return encoded;
+}
+
+export function groupFilesByRules(
+  files: readonly string[],
+  side: SnapshotSide,
+  resolve: FilePolicyResolver,
+  checkId: RuleCheckId,
+): readonly FileRuleGroup[] {
+  const groups = new Map<
+    string,
+    { files: string[]; rules: FileRuleGroup["rules"] }
+  >();
+  for (const file of [...files].sort(compareCodeUnits)) {
+    const policy = resolve(checkId as CheckId, file, side);
+    if (policy.severity === "off" || !("rules" in policy)) continue;
+    const rules = Object.freeze(
+      Object.fromEntries(
+        Object.entries(policy.rules).sort(([left], [right]) =>
+          compareCodeUnits(left, right),
+        ),
+      ),
+    );
+    const fingerprint = stableRuleValue(rules);
+    const group = groups.get(fingerprint);
+    if (group === undefined) {
+      groups.set(fingerprint, { files: [file], rules });
+    } else {
+      group.files.push(file);
+    }
+  }
+  return Object.freeze(
+    [...groups.entries()]
+      .sort(([left], [right]) => compareCodeUnits(left, right))
+      .map(([fingerprint, group]) =>
+        Object.freeze({
+          fingerprint,
+          files: Object.freeze(group.files),
+          rules: group.rules,
+        }),
+      ),
+  );
+}
+
+function ruleCheckId(mode: ManagedEslintMode): RuleCheckId | undefined {
+  switch (mode) {
+    case "lint":
+      return "lint";
+    case "react-correctness":
+      return "reactCorrectness";
+    case "react-accessibility":
+      return "reactAccessibility";
+    case "complexity":
+      return undefined;
+  }
 }
 
 function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
@@ -123,5 +214,22 @@ export function managedConfig(
   }
   const plugins = modePlugins(options);
   if (plugins !== undefined) config.push(plugins);
+  if (
+    options.ruleOverrides !== undefined &&
+    Object.keys(options.ruleOverrides).length > 0
+  ) {
+    const checkId = ruleCheckId(options.mode);
+    if (checkId === undefined) {
+      throw new TypeError("Managed complexity does not accept rule overrides.");
+    }
+    const rules = validateManagedRuleConfiguration(
+      checkId,
+      options.ruleOverrides,
+    );
+    config.push({
+      files: SOURCE_FILES,
+      rules: rules as Linter.RulesRecord,
+    });
+  }
   return config;
 }
