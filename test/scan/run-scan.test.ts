@@ -1103,6 +1103,7 @@ describe("runScan", () => {
     });
     const deps = dependencies(calls, {
       loadConfig: async () => targetConfig,
+      readChangeSet: async () => addedChangeSet("apps/web/value.ts"),
       inspectRepository: async (snapshotRoot) => ({
         snapshotRoot,
         packageManager: "npm",
@@ -1192,6 +1193,7 @@ describe("runScan", () => {
     });
     const deps = dependencies(calls, {
       loadConfig: async () => targetConfig,
+      readChangeSet: async () => addedChangeSet("apps/web/value.ts"),
       inspectRepository: async (snapshotRoot) => ({
         snapshotRoot,
         packageManager: "npm",

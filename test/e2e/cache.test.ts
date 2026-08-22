@@ -31,6 +31,7 @@ function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
 describe("observation cache integration", () => {
   it("reuses staged observation sets while ignoring later unstaged edits", async () => {
     const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"cache-fixture"}\n');
     await repository.write("src/value.ts", "export const value = 1;\n");
     await repository.commitAll("baseline");
     await repository.write("src/value.ts", "export const value = 2;\n");
@@ -107,6 +108,7 @@ describe("observation cache integration", () => {
 
   it("continues with full analysis when cache reads and writes fail", async () => {
     const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"cache-fixture"}\n');
     await repository.write("src/value.ts", "export const value = 1;\n");
     await repository.commitAll("baseline");
     await repository.write("src/value.ts", "export const value = 2;\n");

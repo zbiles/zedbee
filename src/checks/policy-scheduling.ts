@@ -1,6 +1,11 @@
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
-import type { CheckId, ResolvedCheckPolicy } from "../config/schema.js";
+import type {
+  CheckId,
+  ResolvedCheckPolicy,
+  ResolvedConfig,
+} from "../config/schema.js";
+import { snapshotManagedPolicy } from "../config/settings-registry.js";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
   RepositoryInspection,
@@ -11,6 +16,45 @@ import { isSupportedPrettierPath } from "./prettier/supported-path.js";
 
 const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
+const FILE_SCOPED_CHECKS = new Set<CheckId>([
+  "formatting",
+  "lint",
+  "cyclomaticComplexity",
+  "readabilityComplexity",
+  "structuralSecurity",
+  "secrets",
+  "reactCorrectness",
+  "reactAccessibility",
+]);
+
+export function resolveInspectionPolicy(
+  config: ResolvedConfig,
+  checkId: CheckId,
+): Readonly<ResolvedCheckPolicy> {
+  const root = config.checks[checkId];
+  const patches = config.overrides
+    .map((override) => override.checks[checkId])
+    .filter((patch) => patch !== undefined);
+  if (patches.some((patch) => patch.onUnavailable !== undefined)) {
+    throw new TypeError(
+      "Vulnerability availability policy cannot be overridden by file scope",
+    );
+  }
+  const severities = [
+    root.severity,
+    ...patches.map((patch) => patch.severity),
+  ].filter((severity) => severity !== undefined && severity !== "off");
+  const severity = severities.includes("error")
+    ? "error"
+    : severities.includes("warn")
+      ? "warn"
+      : root.severity;
+  const when =
+    root.when === "always" || patches.some((patch) => patch.when === "always")
+      ? "always"
+      : "relevant";
+  return snapshotManagedPolicy(checkId, { ...root, severity, when });
+}
 
 function targetWorkspaces(
   target: CheckTarget,
@@ -111,8 +155,9 @@ export function shouldScheduleTarget(
   changeSet: ChangeSet,
   policyForFile: FilePolicyResolver,
 ): boolean {
-  if (targetPolicy.severity !== "off") return true;
-  if (checkId === "duplication") return false;
+  if (!FILE_SCOPED_CHECKS.has(checkId)) {
+    return targetPolicy.severity !== "off";
+  }
 
   const changed = new Set(
     [...changeSet.files.values()]

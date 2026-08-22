@@ -96,9 +96,8 @@
                       "type": "string",
                       "enum": ["lf", "crlf", "cr", "auto"]
                     },
-                    "embeddedLanguageFormatting": {
-                      "type": "string",
-                      "enum": ["auto", "off"]
+                    "singleAttributePerLine": {
+                      "type": "boolean"
                     }
                   },
                   "additionalProperties": false
@@ -2418,9 +2417,8 @@
                             "type": "string",
                             "enum": ["lf", "crlf", "cr", "auto"]
                           },
-                          "embeddedLanguageFormatting": {
-                            "type": "string",
-                            "enum": ["auto", "off"]
+                          "singleAttributePerLine": {
+                            "type": "boolean"
                           }
                         },
                         "additionalProperties": false

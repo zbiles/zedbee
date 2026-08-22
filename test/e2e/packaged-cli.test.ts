@@ -261,7 +261,11 @@ describe("packaged Zedbee CLI", () => {
       checks: {
         formatting: {
           severity: "error",
-          settings: { printWidth: 100, singleQuote: true },
+          settings: {
+            printWidth: 100,
+            singleAttributePerLine: true,
+            singleQuote: true,
+          },
         },
         lint: { rules: { "no-console": "warn" } },
         cyclomaticComplexity: { max: 12, blockWorsening: false },
@@ -324,6 +328,11 @@ describe("packaged Zedbee CLI", () => {
           customized: true,
         },
         "settings.singleQuote": {
+          value: true,
+          source: "repository",
+          customized: true,
+        },
+        "settings.singleAttributePerLine": {
           value: true,
           source: "repository",
           customized: true,

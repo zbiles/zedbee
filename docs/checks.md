@@ -52,22 +52,22 @@ A target-only score above `max` and a staged score that crosses `max` are blocki
 
 The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
 
-| Field                        |       Default | Accepted value                                 |
-| ---------------------------- | ------------: | ---------------------------------------------- |
-| `printWidth`                 |          `80` | Positive safe integer                          |
-| `tabWidth`                   |           `2` | Positive safe integer                          |
-| `useTabs`                    |       `false` | Boolean                                        |
-| `semi`                       |        `true` | Boolean                                        |
-| `singleQuote`                |       `false` | Boolean                                        |
-| `quoteProps`                 | `"as-needed"` | `"as-needed"`, `"consistent"`, or `"preserve"` |
-| `jsxSingleQuote`             |       `false` | Boolean                                        |
-| `trailingComma`              |       `"all"` | `"all"`, `"es5"`, or `"none"`                  |
-| `bracketSpacing`             |        `true` | Boolean                                        |
-| `bracketSameLine`            |       `false` | Boolean                                        |
-| `arrowParens`                |    `"always"` | `"always"` or `"avoid"`                        |
-| `proseWrap`                  |  `"preserve"` | `"always"`, `"never"`, or `"preserve"`         |
-| `endOfLine`                  |        `"lf"` | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`          |
-| `embeddedLanguageFormatting` |      `"auto"` | `"auto"` or `"off"`                            |
+| Field                    |       Default | Accepted value                                 |
+| ------------------------ | ------------: | ---------------------------------------------- |
+| `printWidth`             |          `80` | Positive safe integer                          |
+| `tabWidth`               |           `2` | Positive safe integer                          |
+| `useTabs`                |       `false` | Boolean                                        |
+| `semi`                   |        `true` | Boolean                                        |
+| `singleQuote`            |       `false` | Boolean                                        |
+| `quoteProps`             | `"as-needed"` | `"as-needed"`, `"consistent"`, or `"preserve"` |
+| `jsxSingleQuote`         |       `false` | Boolean                                        |
+| `trailingComma`          |       `"all"` | `"all"`, `"es5"`, or `"none"`                  |
+| `bracketSpacing`         |        `true` | Boolean                                        |
+| `bracketSameLine`        |       `false` | Boolean                                        |
+| `arrowParens`            |    `"always"` | `"always"` or `"avoid"`                        |
+| `proseWrap`              |  `"preserve"` | `"always"`, `"never"`, or `"preserve"`         |
+| `endOfLine`              |        `"lf"` | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`          |
+| `singleAttributePerLine` |       `false` | Boolean                                        |
 
 ### Duplication settings
 
@@ -118,7 +118,9 @@ File overrides are evaluated in array order independently for every repository-r
 {
   "schemaVersion": 1,
   "checks": {
-    "formatting": { "settings": { "printWidth": 100 } },
+    "formatting": {
+      "settings": { "printWidth": 100, "singleAttributePerLine": true },
+    },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "duplication": {
       "threshold": 5,

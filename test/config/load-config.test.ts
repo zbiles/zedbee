@@ -35,7 +35,7 @@ describe("loadConfig", () => {
         arrowParens: "always",
         proseWrap: "preserve",
         endOfLine: "lf",
-        embeddedLanguageFormatting: "auto",
+        singleAttributePerLine: false,
       },
     });
     expect(config.checks.types).toEqual({
@@ -144,7 +144,7 @@ describe("loadConfig", () => {
         arrowParens: "always",
         proseWrap: "preserve",
         endOfLine: "lf",
-        embeddedLanguageFormatting: "auto",
+        singleAttributePerLine: false,
       },
     });
     expect(config.checks.types).toEqual({ severity: "off", when: "relevant" });
@@ -184,7 +184,7 @@ describe("loadConfig", () => {
         arrowParens: "always",
         proseWrap: "preserve",
         endOfLine: "lf",
-        embeddedLanguageFormatting: "auto",
+        singleAttributePerLine: false,
       },
     });
     expect(config.failOnIncomplete).toBe(false);
@@ -340,6 +340,11 @@ describe("loadConfig", () => {
       name: "unknown formatting setting",
       source:
         '{"schemaVersion":1,"checks":{"formatting":{"settings":{"filepath":"src/index.ts"}}}}',
+    },
+    {
+      name: "unreleased mistaken formatting setting",
+      source:
+        '{"schemaVersion":1,"checks":{"formatting":{"settings":{"embeddedLanguageFormatting":"off"}}}}',
     },
     {
       name: "invalid formatting setting",

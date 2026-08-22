@@ -16,7 +16,7 @@ export const formattingSettingsSchema = z
     arrowParens: z.enum(["always", "avoid"]),
     proseWrap: z.enum(["always", "never", "preserve"]),
     endOfLine: z.enum(["lf", "crlf", "cr", "auto"]),
-    embeddedLanguageFormatting: z.enum(["auto", "off"]),
+    singleAttributePerLine: z.boolean(),
   })
   .strict();
 
@@ -37,7 +37,7 @@ export const DEFAULT_FORMATTING_SETTINGS: Readonly<FormattingSettings> =
     arrowParens: "always",
     proseWrap: "preserve",
     endOfLine: "lf",
-    embeddedLanguageFormatting: "auto",
+    singleAttributePerLine: false,
   });
 
 export function prettierOptions(
@@ -57,7 +57,7 @@ export function prettierOptions(
     arrowParens: settings.arrowParens,
     proseWrap: settings.proseWrap,
     endOfLine: settings.endOfLine,
-    embeddedLanguageFormatting: settings.embeddedLanguageFormatting,
+    singleAttributePerLine: settings.singleAttributePerLine,
   };
 }
 
@@ -82,7 +82,8 @@ export const FORMATTING_SETTINGS_DEFINITION: ManagedSettingsDefinition<Formattin
         "Include parentheses around a sole arrow function parameter.",
       proseWrap: "How Markdown prose is wrapped.",
       endOfLine: "Line ending written by the formatter.",
-      embeddedLanguageFormatting: "Format embedded code when possible.",
+      singleAttributePerLine:
+        "Put each HTML, Vue, and JSX attribute on its own line.",
     }),
     toEngineOptions: prettierOptions,
   });

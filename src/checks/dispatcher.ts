@@ -47,7 +47,10 @@ import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
 } from "../cache/store.js";
-import { shouldScheduleTarget } from "./policy-scheduling.js";
+import {
+  resolveInspectionPolicy,
+  shouldScheduleTarget,
+} from "./policy-scheduling.js";
 import {
   immutableConfigurationSnapshot,
   snapshotManagedPolicy,
@@ -137,28 +140,7 @@ function inspectionPolicy(
   const root = checkPolicy(context, checkId);
   if (root === undefined || !CHECK_IDS.includes(checkId as CheckId))
     return root;
-  const patches = context.config.overrides
-    .map((override) => override.checks[checkId as CheckId])
-    .filter((patch) => patch !== undefined);
-  if (patches.some((patch) => patch.onUnavailable !== undefined)) {
-    throw new TypeError(
-      "Vulnerability availability policy cannot be overridden by file scope",
-    );
-  }
-  const severities = [
-    root.severity,
-    ...patches.map((patch) => patch.severity),
-  ].filter((severity) => severity !== undefined && severity !== "off");
-  const severity = severities.includes("error")
-    ? "error"
-    : severities.includes("warn")
-      ? "warn"
-      : root.severity;
-  const when =
-    root.when === "always" || patches.some((patch) => patch.when === "always")
-      ? "always"
-      : "relevant";
-  return { ...root, severity, when };
+  return resolveInspectionPolicy(context.config, checkId as CheckId);
 }
 
 function readonlyMap<K, V>(

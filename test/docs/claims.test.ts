@@ -281,7 +281,7 @@ describe("public documentation claims", () => {
       "arrowParens",
       "proseWrap",
       "endOfLine",
-      "embeddedLanguageFormatting",
+      "singleAttributePerLine",
     ]) {
       expect(publicDocs).toContain(`\`${option}\``);
     }

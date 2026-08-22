@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   executeChecksCommand,
   type ChecksCommandDependencies,
@@ -6,6 +6,14 @@ import {
 } from "../../src/commands/checks.js";
 import { CHECK_IDS, type ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
+import { createGitRepository } from "../helpers/git-repository.js";
+import { GitClient } from "../../src/git/client.js";
+import { readStagedChangeSet } from "../../src/git/change-set.js";
+import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import { loadConfig } from "../../src/config/load-config.js";
+import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
 
 function terminal(): ChecksCommandIO & { stdout: string[]; stderr: string[] } {
   const stdout: string[] = [];
@@ -134,6 +142,78 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 describe("executeChecksCommand", () => {
+  it("agrees with dispatch for a matching always override without staged files", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.write("src/enabled.js", "export const enabled = true;\n");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "recommended",
+        checks: { lint: "off" },
+        overrides: [
+          {
+            files: ["src/enabled.js"],
+            checks: { lint: { severity: "error", when: "always" } },
+          },
+        ],
+      })}\n`,
+    );
+    await repository.commitAll("fixture");
+
+    const io = terminal();
+    const described = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+
+    const git = new GitClient(repository.root);
+    const changeSet = await readStagedChangeSet(git);
+    const snapshots = await buildSnapshotPair(repository.root, git);
+    onTestFinished(snapshots.cleanup);
+    const [baselineInspection, targetInspection, config] = await Promise.all([
+      inspectRepository(snapshots.baselineDir),
+      inspectRepository(snapshots.targetDir),
+      loadConfig(repository.root),
+    ]);
+    let dispatchedRuns = 0;
+    const executions = await dispatchChecks(
+      [
+        {
+          ...lintAdapter,
+          collect: async (context) => {
+            dispatchedRuns += 1;
+            return {
+              checkId: "lint",
+              target: context.target,
+              baselineObservations: [],
+              targetObservations: [],
+            };
+          },
+        },
+      ],
+      {
+        repositoryRoot: repository.root,
+        changeSet,
+        config,
+        snapshots,
+        baselineInspection,
+        targetInspection,
+        signal: new AbortController().signal,
+      },
+    );
+    const lint = described.checks.find(({ id }) => id === "lint");
+    const dispatched = dispatchedRuns === 1 && executions.length === 1;
+
+    expect(dispatched).toBe(true);
+    expect(lint?.applicability).toBe(
+      dispatched ? "applicable" : "not-applicable",
+    );
+    expect(lint?.targets).toEqual(["."]);
+    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+  });
+
   it("renders the Checks dashboard in a wide interactive terminal", async () => {
     const io = {
       ...terminal(),
@@ -290,13 +370,13 @@ describe("executeChecksCommand", () => {
       "settings.arrowParens",
       "settings.bracketSameLine",
       "settings.bracketSpacing",
-      "settings.embeddedLanguageFormatting",
       "settings.endOfLine",
       "settings.jsxSingleQuote",
       "settings.printWidth",
       "settings.proseWrap",
       "settings.quoteProps",
       "settings.semi",
+      "settings.singleAttributePerLine",
       "settings.singleQuote",
       "settings.tabWidth",
       "settings.trailingComma",

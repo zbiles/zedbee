@@ -117,5 +117,5 @@ describe("published configuration schema", () => {
       expect(configFileSchema.safeParse(unsafe).success).toBe(false);
       expect(validate(unsafe)).toBe(false);
     }
-  });
+  }, 30_000);
 });

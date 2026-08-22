@@ -20,7 +20,7 @@ function contextFor(
   snapshotRoot: string,
   specifier: string,
   config = resolveConfig({ schemaVersion: 1, profile: "fast" }),
-  sourceFiles: readonly string[] = [],
+  sourceFiles: readonly string[] = ["src/value.ts"],
 ): CheckRunContext {
   const inspection: RepositoryInspection = {
     snapshotRoot,
@@ -42,8 +42,17 @@ function contextFor(
   return {
     repositoryRoot: snapshotRoot,
     changeSet: {
-      files: new Map(),
-      isEmpty: true,
+      files: new Map(
+        sourceFiles.map((path) => [
+          path,
+          {
+            path,
+            status: "modified" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      ),
+      isEmpty: sourceFiles.length === 0,
       containsAddedLine: () => false,
     },
     config,

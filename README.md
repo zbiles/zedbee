@@ -66,7 +66,11 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
   "checks": {
     "formatting": {
       "severity": "error",
-      "settings": { "printWidth": 100, "singleQuote": true },
+      "settings": {
+        "printWidth": 100,
+        "singleAttributePerLine": true,
+        "singleQuote": true,
+      },
     },
     "lint": { "rules": { "no-console": "warn" } },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },

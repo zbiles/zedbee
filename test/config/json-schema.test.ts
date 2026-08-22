@@ -35,7 +35,7 @@ const validExamples = [
           arrowParens: "avoid",
           proseWrap: "always",
           endOfLine: "lf",
-          embeddedLanguageFormatting: "off",
+          singleAttributePerLine: true,
         },
       },
       cyclomaticComplexity: {
@@ -204,6 +204,17 @@ describe("Zedbee configuration JSON Schema", () => {
       input: {
         schemaVersion: 1,
         checks: { formatting: { settings: { parser: "typescript" } } },
+      },
+    },
+    {
+      name: "unreleased mistaken formatting setting",
+      input: {
+        schemaVersion: 1,
+        checks: {
+          formatting: {
+            settings: { embeddedLanguageFormatting: "off" },
+          },
+        },
       },
     },
     {

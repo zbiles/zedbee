@@ -67,6 +67,7 @@ function repositoryIssue(): Observation {
 describe("attribution platform", () => {
   it("blocks only a new staged range issue and a worsened changed-entity metric", async () => {
     const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"attribution-fixture"}\n');
     await repository.write(
       "src/parser.ts",
       [

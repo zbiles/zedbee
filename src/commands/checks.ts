@@ -31,6 +31,7 @@ import {
   managedSettingKeys,
 } from "../config/settings-registry.js";
 import type { SettingOrigin } from "../config/settings-definition.js";
+import { resolveInspectionPolicy } from "../checks/policy-scheduling.js";
 
 export type {
   CheckApplicabilityDescription,
@@ -212,8 +213,17 @@ async function inspectConfiguredChecks(
     };
     const entries = await Promise.all(
       DEFAULT_CHECK_ADAPTERS.map(async (adapter: CheckAdapter) => {
-        const applicability = await adapter.inspect(context);
         const id = adapter.id as CheckId;
+        const inspectionConfig = immutableConfigurationSnapshot({
+          ...config,
+          checks: {
+            ...config.checks,
+            [id]: resolveInspectionPolicy(config, id),
+          },
+        }) as ResolvedConfig;
+        const applicability = await adapter.inspect(
+          Object.freeze({ ...context, config: inspectionConfig }),
+        );
         return [
           id,
           applicability.applies

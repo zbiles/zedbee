@@ -187,7 +187,7 @@ describe("managed check profiles", () => {
             arrowParens: "avoid",
             proseWrap: "always",
             endOfLine: "lf",
-            embeddedLanguageFormatting: "off",
+            singleAttributePerLine: true,
           },
         },
       },
@@ -210,7 +210,7 @@ describe("managed check profiles", () => {
         arrowParens: "avoid",
         proseWrap: "always",
         endOfLine: "lf",
-        embeddedLanguageFormatting: "off",
+        singleAttributePerLine: true,
       },
     });
   });
@@ -238,7 +238,7 @@ describe("managed check profiles", () => {
         arrowParens: "always",
         proseWrap: "preserve",
         endOfLine: "lf",
-        embeddedLanguageFormatting: "auto",
+        singleAttributePerLine: false,
       },
     });
   });

@@ -45,10 +45,32 @@ function createConfig(
 }
 
 function createContext(config: ResolvedConfig): CheckRunContext {
+  const workspaceRoots = [
+    ".",
+    "apps/web",
+    "packages/core",
+    ...Array.from({ length: 5 }, (_, index) => `packages/${index}`),
+  ];
+  const sourcePath = (relativeRoot: string) =>
+    relativeRoot === "." ? "fixture.ts" : `${relativeRoot}/fixture.ts`;
+  const changedFiles = new Map(
+    workspaceRoots.map((relativeRoot) => {
+      const path = sourcePath(relativeRoot);
+      return [
+        path,
+        {
+          path,
+          status: "modified" as const,
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ] as const;
+    }),
+  );
   const changeSet: ChangeSet = {
-    files: new Map(),
+    files: changedFiles,
     isEmpty: false,
-    containsAddedLine: () => false,
+    containsAddedLine: (file, line) =>
+      changedFiles.has(file.replaceAll("\\", "/")) && line === 1,
   };
   const snapshots: SnapshotPair = {
     baselineDir: "/tmp/baseline",
@@ -61,16 +83,11 @@ function createContext(config: ResolvedConfig): CheckRunContext {
     snapshotRoot: snapshots.baselineDir,
     packageManager: "npm",
     lockfiles: ["package-lock.json"],
-    workspaces: [
-      ".",
-      "apps/web",
-      "packages/core",
-      ...Array.from({ length: 5 }, (_, index) => `packages/${index}`),
-    ].map((relativeRoot) => ({
+    workspaces: workspaceRoots.map((relativeRoot) => ({
       relativeRoot,
       manifestPath:
         relativeRoot === "." ? "package.json" : `${relativeRoot}/package.json`,
-      sourceFiles: [],
+      sourceFiles: [sourcePath(relativeRoot)],
       tsconfigPaths: [],
       environments: ["javascript"] as const,
       dependencyDeclarations: [],
@@ -796,6 +813,14 @@ describe("dispatchChecks", () => {
       containsAddedLine: (file, line) =>
         file === authoritativeFile.path && line >= 3 && line <= 4,
     };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? { ...workspace, sourceFiles: [authoritativeFile.path] }
+          : workspace,
+      ),
+    };
     const mutationFailures: string[] = [];
     const mutate = (phase: string, adapterContext: CheckRunContext) => {
       for (const [name, action] of [
@@ -1170,6 +1195,91 @@ describe("dispatchChecks", () => {
 
     expect(runs).toBe(1);
     expect(executions[0]?.policy?.severity).toBe("off");
+  });
+
+  it("does not schedule file-scoped lint when only the changed relevant path is off", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: "off" },
+      overrides: [{ files: ["src/enabled.js"], checks: { lint: "error" } }],
+    });
+    const context = createContext(config);
+    const sourcePaths = ["src/enabled.js", "test/off.js"];
+    const staged = {
+      path: "test/off.js",
+      status: "modified" as const,
+      addedRanges: [{ start: 1, end: 1 }],
+    };
+    context.changeSet = {
+      files: new Map([[staged.path, staged]]),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? { ...workspace, sourceFiles: sourcePaths }
+          : workspace,
+      ),
+    };
+    let runs = 0;
+    const adapter = createAdapter("lint", "project-analysis", async () => {
+      runs += 1;
+      return completed("lint");
+    });
+
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(0);
+    expect(executions).toEqual([]);
+  });
+
+  it("schedules an enabled matching always override without staged files", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: "off" },
+      overrides: [
+        {
+          files: ["src/enabled.js"],
+          checks: { lint: { severity: "error", when: "always" } },
+        },
+      ],
+    });
+    const context = createContext(config);
+    context.changeSet = {
+      files: new Map(),
+      isEmpty: true,
+      containsAddedLine: () => false,
+    };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? { ...workspace, sourceFiles: ["src/enabled.js"] }
+          : workspace,
+      ),
+    };
+    let runs = 0;
+    const adapter: ObservationCheckAdapter = {
+      ...lintAdapter,
+      collect: async (runContext) => {
+        runs += 1;
+        return {
+          checkId: "lint",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(1);
+    expect(executions).toHaveLength(1);
   });
 
   it("keeps duplication scheduling workspace-wide for mixed file overrides", async () => {

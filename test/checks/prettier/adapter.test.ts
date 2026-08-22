@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vitest";
-import type { ResolvedConfig } from "../../../src/config/schema.js";
+import type { ConfigFile, ResolvedConfig } from "../../../src/config/schema.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import { prettierAdapter } from "../../../src/checks/prettier/adapter.js";
 import { GitClient } from "../../../src/git/client.js";
@@ -184,6 +184,33 @@ describe("prettierAdapter.inspect", () => {
 });
 
 describe("prettierAdapter.run", () => {
+  it("applies singleAttributePerLine to staged JSX", async () => {
+    const repository = await createGitRepository();
+    await repository.write("component.tsx", "export const existing = true;\n");
+    await repository.commitAll("formatted base");
+    await repository.write(
+      "component.tsx",
+      'export const view = <Widget first="1" second="2" />;\n',
+    );
+    await repository.git(["add", "--", "component.tsx"]);
+    const formattingConfig = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        formatting: { settings: { singleAttributePerLine: true } },
+      },
+    } as unknown as ConfigFile);
+
+    const result = await runAdapter(repository, "relevant", formattingConfig);
+
+    expect(result.status).toBe("completed");
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0]?.location).toEqual({
+      file: "component.tsx",
+      startLine: 1,
+      endLine: 1,
+    });
+  });
+
   it("applies target-side formatting settings per staged file override", async () => {
     const repository = await createGitRepository();
     await repository.write("src/value.ts", "export const existing = true\n");
