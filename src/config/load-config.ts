@@ -2,7 +2,12 @@ import { access, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import { resolveConfig } from "./profiles.js";
-import { configFileSchema, type ResolvedConfig } from "./schema.js";
+import {
+  CHECK_IDS,
+  configFileSchema,
+  type CheckId,
+  type ResolvedConfig,
+} from "./schema.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
 import { DEFAULT_DUPLICATION_SETTINGS } from "../checks/duplication/settings.js";
 
@@ -103,27 +108,59 @@ function issuePath(issue: ValidationIssue): string {
   return path.length === 0 ? "root" : path.map(String).join(".");
 }
 
-function supportedNames(path: string): readonly string[] {
-  if (path.startsWith("checks.formatting.settings.")) {
-    return Object.keys(DEFAULT_FORMATTING_SETTINGS);
+function policyFields(checkId: CheckId): readonly string[] {
+  switch (checkId) {
+    case "formatting":
+      return ["severity", "when", "settings"];
+    case "duplication":
+      return ["severity", "when", "threshold", "settings"];
+    case "cyclomaticComplexity":
+    case "readabilityComplexity":
+      return ["severity", "when", "max", "blockWorsening"];
+    case "vulnerabilities":
+      return ["severity", "when", "onUnavailable"];
+    default:
+      return ["severity", "when"];
   }
-  if (path.startsWith("checks.duplication.settings.")) {
-    return Object.keys(DEFAULT_DUPLICATION_SETTINGS);
+}
+
+function settingFields(checkId: CheckId): readonly string[] {
+  switch (checkId) {
+    case "formatting":
+      return Object.keys(DEFAULT_FORMATTING_SETTINGS);
+    case "duplication":
+      return Object.keys(DEFAULT_DUPLICATION_SETTINGS);
+    default:
+      return [];
   }
-  if (path.startsWith("checks.formatting.")) {
-    return ["severity", "when", "settings"];
-  }
-  if (path.startsWith("checks.duplication.")) {
-    return ["severity", "when", "threshold", "settings"];
-  }
+}
+
+function checkPath(
+  path: string,
+): { checkId: CheckId; tail: string[] } | undefined {
+  const parts = path.split(".");
+  const checksIndex = parts.lastIndexOf("checks");
+  const checkId = parts[checksIndex + 1];
   if (
-    path.startsWith("checks.lint.") ||
-    path.startsWith("checks.reactCorrectness.") ||
-    path.startsWith("checks.reactAccessibility.")
+    checksIndex < 0 ||
+    checkId === undefined ||
+    !CHECK_IDS.includes(checkId as CheckId)
   ) {
-    return ["severity", "when", "rules"];
+    return undefined;
   }
-  return [];
+  return {
+    checkId: checkId as CheckId,
+    tail: parts.slice(checksIndex + 2),
+  };
+}
+
+function supportedNames(path: string): readonly string[] {
+  const parsed = checkPath(path);
+  if (parsed === undefined || parsed.tail.length === 0) return [];
+  if (parsed.tail[0] === "settings") {
+    return parsed.tail.length > 1 ? settingFields(parsed.checkId) : [];
+  }
+  return policyFields(parsed.checkId);
 }
 
 function invalidConfigMessage(

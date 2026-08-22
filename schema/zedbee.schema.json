@@ -20,6 +20,7 @@
     },
     "checks": {
       "description": "Repository-wide check policies, using severity shorthand or a policy object.",
+      "default": {},
       "type": "object",
       "properties": {
         "formatting": {
@@ -128,43 +129,6 @@
                   "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
-                },
-                "rules": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": ["off", "warn", "error"],
-                            "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                          },
-                          {
-                            "type": "number",
-                            "const": 0
-                          },
-                          {
-                            "type": "number",
-                            "const": 1
-                          },
-                          {
-                            "type": "number",
-                            "const": 2
-                          }
-                        ]
-                      },
-                      {
-                        "minItems": 1,
-                        "type": "array",
-                        "items": {}
-                      }
-                    ]
-                  }
                 }
               },
               "additionalProperties": false
@@ -459,43 +423,6 @@
                   "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
-                },
-                "rules": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": ["off", "warn", "error"],
-                            "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                          },
-                          {
-                            "type": "number",
-                            "const": 0
-                          },
-                          {
-                            "type": "number",
-                            "const": 1
-                          },
-                          {
-                            "type": "number",
-                            "const": 2
-                          }
-                        ]
-                      },
-                      {
-                        "minItems": 1,
-                        "type": "array",
-                        "items": {}
-                      }
-                    ]
-                  }
                 }
               },
               "additionalProperties": false
@@ -523,43 +450,6 @@
                   "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
-                },
-                "rules": {
-                  "type": "object",
-                  "propertyNames": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": ["off", "warn", "error"],
-                            "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                          },
-                          {
-                            "type": "number",
-                            "const": 0
-                          },
-                          {
-                            "type": "number",
-                            "const": 1
-                          },
-                          {
-                            "type": "number",
-                            "const": 2
-                          }
-                        ]
-                      },
-                      {
-                        "minItems": 1,
-                        "type": "array",
-                        "items": {}
-                      }
-                    ]
-                  }
                 }
               },
               "additionalProperties": false
@@ -600,8 +490,7 @@
           ]
         }
       },
-      "additionalProperties": false,
-      "default": {}
+      "additionalProperties": false
     },
     "overrides": {
       "description": "Ordered file-scoped policy patches. Later matching overrides take precedence.",
@@ -750,43 +639,6 @@
                         "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
-                      },
-                      "rules": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "additionalProperties": {
-                          "anyOf": [
-                            {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["off", "warn", "error"],
-                                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 0
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 1
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 2
-                                }
-                              ]
-                            },
-                            {
-                              "minItems": 1,
-                              "type": "array",
-                              "items": {}
-                            }
-                          ]
-                        }
                       }
                     },
                     "additionalProperties": false
@@ -1081,43 +933,6 @@
                         "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
-                      },
-                      "rules": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "additionalProperties": {
-                          "anyOf": [
-                            {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["off", "warn", "error"],
-                                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 0
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 1
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 2
-                                }
-                              ]
-                            },
-                            {
-                              "minItems": 1,
-                              "type": "array",
-                              "items": {}
-                            }
-                          ]
-                        }
                       }
                     },
                     "additionalProperties": false
@@ -1145,43 +960,6 @@
                         "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
-                      },
-                      "rules": {
-                        "type": "object",
-                        "propertyNames": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "additionalProperties": {
-                          "anyOf": [
-                            {
-                              "anyOf": [
-                                {
-                                  "type": "string",
-                                  "enum": ["off", "warn", "error"],
-                                  "description": "Whether a check is disabled, reports a warning, or blocks the commit."
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 0
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 1
-                                },
-                                {
-                                  "type": "number",
-                                  "const": 2
-                                }
-                              ]
-                            },
-                            {
-                              "minItems": 1,
-                              "type": "array",
-                              "items": {}
-                            }
-                          ]
-                        }
                       }
                     },
                     "additionalProperties": false

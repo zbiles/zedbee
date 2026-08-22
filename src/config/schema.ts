@@ -173,33 +173,6 @@ const commonPolicyFields = {
 } as const;
 
 const simplePolicyObjectSchema = z.object(commonPolicyFields).strict();
-const eslintRuleSeveritySchema = z.union([
-  checkSeveritySchema,
-  z.literal(0),
-  z.literal(1),
-  z.literal(2),
-]);
-const eslintRuleConfigurationSchema = z.union([
-  eslintRuleSeveritySchema,
-  z
-    .array(z.unknown())
-    .min(1)
-    .refine((value) => eslintRuleSeveritySchema.safeParse(value[0]).success, {
-      message: "First rule setting item must be a supported severity",
-    })
-    .transform(
-      (value) =>
-        value as [z.infer<typeof eslintRuleSeveritySchema>, ...unknown[]],
-    ),
-]);
-const rulePolicyObjectSchema = z
-  .object({
-    ...commonPolicyFields,
-    rules: z
-      .record(z.string().min(1), eslintRuleConfigurationSchema)
-      .optional(),
-  })
-  .strict();
 function complexityPolicyObjectSchema(defaultMaximum: number) {
   return z
     .object({
@@ -249,7 +222,6 @@ function policySchema<T extends z.ZodType>(objectSchema: T) {
 
 const simplePolicySchema = policySchema(simplePolicyObjectSchema);
 const formattingPolicySchema = policySchema(formattingPolicyObjectSchema);
-const rulePolicySchema = policySchema(rulePolicyObjectSchema);
 const cyclomaticComplexityPolicySchema = policySchema(
   complexityPolicyObjectSchema(20),
 );
@@ -270,7 +242,7 @@ const checksSchema = z
       "Prettier formatting for changed JavaScript and TypeScript files.",
     ),
     lint: describedPolicy(
-      rulePolicySchema,
+      simplePolicySchema,
       "ESLint correctness and maintainability findings in changed code.",
     ),
     types: describedPolicy(
@@ -306,11 +278,11 @@ const checksSchema = z
       "Unused files, exports, and dependencies reported by Knip.",
     ),
     reactCorrectness: describedPolicy(
-      rulePolicySchema,
+      simplePolicySchema,
       "React and Hooks correctness validation for changed components.",
     ),
     reactAccessibility: describedPolicy(
-      rulePolicySchema,
+      simplePolicySchema,
       "JSX accessibility validation for changed components.",
     ),
     vulnerabilities: describedPolicy(
@@ -393,7 +365,6 @@ const policyOverrideSchema = z
 export type CheckPolicyInput =
   | z.infer<typeof simplePolicySchema>
   | z.infer<typeof formattingPolicySchema>
-  | z.infer<typeof rulePolicySchema>
   | z.infer<typeof cyclomaticComplexityPolicySchema>
   | z.infer<typeof readabilityComplexityPolicySchema>
   | z.infer<typeof duplicationPolicySchema>

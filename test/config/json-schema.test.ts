@@ -203,6 +203,27 @@ describe("Zedbee configuration JSON Schema", () => {
       },
     },
     {
+      name: "root lint rules before bounded validation exists",
+      input: {
+        schemaVersion: 1,
+        checks: { lint: { rules: { "no-console": "warn" } } },
+      },
+    },
+    {
+      name: "override react rules before bounded validation exists",
+      input: {
+        schemaVersion: 1,
+        overrides: [
+          {
+            files: ["packages/web/**"],
+            checks: {
+              reactAccessibility: { rules: { "jsx-a11y/alt-text": "warn" } },
+            },
+          },
+        ],
+      },
+    },
+    {
       name: "unknown reporting key",
       input: { schemaVersion: 1, reporting: { surprise: true } },
     },
@@ -340,7 +361,7 @@ describe("Zedbee configuration JSON Schema", () => {
         checks: {
           default: object;
           description: string;
-          properties: {
+          properties: Record<string, { description: string } | undefined> & {
             duplication: { description: string };
             vulnerabilities: { description: string };
           };
@@ -396,6 +417,15 @@ describe("Zedbee configuration JSON Schema", () => {
     expect(
       schema.properties.checks.properties.vulnerabilities.description,
     ).toMatch(/online/i);
+    expect(
+      JSON.stringify(schema.properties.checks.properties.lint),
+    ).not.toContain("rules");
+    expect(
+      JSON.stringify(schema.properties.checks.properties.reactCorrectness),
+    ).not.toContain("rules");
+    expect(
+      JSON.stringify(schema.properties.checks.properties.reactAccessibility),
+    ).not.toContain("rules");
     expect(schema.properties.overrides.description).not.toBe("");
     expect(schema.properties.failOnIncomplete.description).not.toBe("");
     expect(configFileSchema.parse({ schemaVersion: 1 })).toEqual({

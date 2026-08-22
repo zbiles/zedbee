@@ -214,7 +214,7 @@ describe("loadConfig", () => {
         schemaVersion: 1,
         checks: {
           formatting: { settings: { printWidth: 100, singleQuote: true } },
-          lint: { when: "always", rules: { "no-console": "warn" } },
+          lint: { when: "always" },
           cyclomaticComplexity: { max: 20, blockWorsening: true },
           readabilityComplexity: {
             severity: "warn",
@@ -222,10 +222,8 @@ describe("loadConfig", () => {
             blockWorsening: false,
           },
           duplication: { threshold: 5, settings: { mode: "weak" } },
-          reactCorrectness: {
-            rules: { "react-hooks/rules-of-hooks": "error" },
-          },
-          reactAccessibility: { rules: { "jsx-a11y/alt-text": "warn" } },
+          reactCorrectness: { severity: "warn" },
+          reactAccessibility: { when: "always" },
           vulnerabilities: { onUnavailable: "warn" },
         },
       }),
@@ -245,7 +243,7 @@ describe("loadConfig", () => {
     expect(config.checks.lint).toEqual({
       severity: "error",
       when: "always",
-      rules: { "no-console": "warn" },
+      rules: {},
     });
     expect(config.checks.cyclomaticComplexity).toEqual({
       severity: "error",
@@ -266,10 +264,12 @@ describe("loadConfig", () => {
       settings: { minLines: 5, minTokens: 50, mode: "weak" },
     });
     expect(config.checks.reactCorrectness).toMatchObject({
-      rules: { "react-hooks/rules-of-hooks": "error" },
+      severity: "warn",
+      rules: {},
     });
     expect(config.checks.reactAccessibility).toMatchObject({
-      rules: { "jsx-a11y/alt-text": "warn" },
+      when: "always",
+      rules: {},
     });
     expect(config.checks.vulnerabilities).toEqual({
       severity: "off",
@@ -357,6 +357,16 @@ describe("loadConfig", () => {
         '{"schemaVersion":1,"checks":{"duplication":{"settings":{"mode":"medium"}}}}',
     },
     {
+      name: "root lint rules before bounded validation exists",
+      source:
+        '{"schemaVersion":1,"checks":{"lint":{"rules":{"no-console":"warn"}}}}',
+    },
+    {
+      name: "override react rules before bounded validation exists",
+      source:
+        '{"schemaVersion":1,"overrides":[{"files":["packages/web/**"],"checks":{"reactAccessibility":{"rules":{"jsx-a11y/alt-text":"warn"}}}}]}',
+    },
+    {
       name: "invalid source excerpt reporting policy",
       source: '{"schemaVersion":1,"reporting":{"sourceExcerpts":"sometimes"}}',
     },
@@ -433,6 +443,52 @@ describe("loadConfig", () => {
     expect(String(error)).toContain("checks.formatting.settings.parser");
     expect(String(error)).toContain("printWidth");
     expect(String(error)).not.toContain("secret-parser-name");
+  });
+
+  it("reports override setting paths with nearby supported setting names", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"overrides":[{"files":["packages/web/**"],"checks":{"formatting":{"settings":{"parser":"secret-parser-name"}}}}]}',
+    );
+
+    const error = await loadConfig(root).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: "CONFIG_INVALID" });
+    expect(String(error)).toContain(
+      "overrides.0.checks.formatting.settings.parser",
+    );
+    expect(String(error)).toContain("printWidth");
+    expect(String(error)).not.toContain("secret-parser-name");
+  });
+
+  it("reports policy object paths with nearby supported policy fields", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"checks":{"cyclomaticComplexity":{"maximum":20}}}',
+    );
+
+    const error = await loadConfig(root).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: "CONFIG_INVALID" });
+    expect(String(error)).toContain("checks.cyclomaticComplexity.maximum");
+    expect(String(error)).toContain("max");
+    expect(String(error)).toContain("blockWorsening");
+  });
+
+  it("omits supported-name suggestions when no nearby field is unambiguous", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"checks":{"mystery":"error"}}',
+    );
+
+    const error = await loadConfig(root).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: "CONFIG_INVALID" });
+    expect(String(error)).toContain("checks.mystery");
+    expect(String(error)).not.toContain("Supported settings include");
   });
 
   it.each([
