@@ -19,7 +19,10 @@ export type FilePolicyResolver = <K extends CheckId>(
 function baselineRenameMap(changeSet: ChangeSet): ReadonlyMap<string, string> {
   const renames = new Map<string, string>();
   for (const file of changeSet.files.values()) {
-    if (file.status !== "renamed" || file.previousPath === undefined) continue;
+    if (file.status !== "renamed") continue;
+    if (file.previousPath === undefined) {
+      throw new TypeError("Expected a renamed file to have a baseline path");
+    }
     const baselinePath = normalizeRepositoryRelativePath(file.previousPath);
     const targetPath = normalizeRepositoryRelativePath(file.path);
     const existing = renames.get(baselinePath);

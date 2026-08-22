@@ -41,6 +41,7 @@ describe("attributeMetricDelta", () => {
         "target-value:26",
       ],
     });
+    expect(finding.location).toEqual({ file: "src/parser.ts" });
   });
 
   it("does not stage an unchanged, decreased, or unrelated metric", () => {

@@ -20,6 +20,11 @@ import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
+import { prettierAdapter } from "../../src/checks/prettier/adapter.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import { createInspectionFixture } from "../inspection/fixture.js";
+import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
+import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -996,6 +1001,306 @@ describe("dispatchChecks", () => {
     ).toEqual([
       { id: "source", severity: "error" },
       { id: "test", severity: "warning" },
+    ]);
+    expect(completedEvent?.result).toEqual(finalResult);
+  });
+
+  it("runs a file-scoped check when one relevant workspace path remains enabled", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: "off" },
+      overrides: [
+        { files: ["apps/web/src/**"], checks: { lint: "error" } },
+        { files: ["apps/web/test/**"], checks: { lint: "off" } },
+      ],
+    });
+    const context = createContext(config);
+    const stagedPaths = ["apps/web/src/app.ts", "apps/web/test/app.test.ts"];
+    context.changeSet = {
+      files: new Map(
+        stagedPaths.map((path) => [
+          path,
+          {
+            path,
+            status: "modified" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      ),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "apps/web"
+          ? {
+              ...workspace,
+              sourceFiles: stagedPaths,
+            }
+          : workspace,
+      ),
+    };
+    let runs = 0;
+
+    const adapter: ObservationCheckAdapter = {
+      ...lintAdapter,
+      collect: async (runContext) => {
+        runs += 1;
+        return {
+          checkId: "lint",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(1);
+    expect(executions[0]?.policy?.severity).toBe("off");
+  });
+
+  it("keeps duplication scheduling workspace-wide for mixed file overrides", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { duplication: "off" },
+      overrides: [
+        { files: ["src/**"], checks: { duplication: "error" } },
+        { files: ["test/**"], checks: { duplication: "off" } },
+      ],
+    });
+    const context = createContext(config);
+    const stagedPaths = ["src/app.ts", "test/app.test.ts"];
+    context.changeSet = {
+      files: new Map(
+        stagedPaths.map((path) => [
+          path,
+          {
+            path,
+            status: "modified" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      ),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? { ...workspace, sourceFiles: stagedPaths }
+          : workspace,
+      ),
+    };
+    let runs = 0;
+    const adapter: ObservationCheckAdapter = {
+      ...duplicationAdapter,
+      collect: async (runContext) => {
+        runs += 1;
+        return {
+          checkId: "duplication",
+          target: runContext.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    };
+
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(0);
+    expect(executions).toEqual([]);
+  });
+
+  it("runs formatting when a supported staged Markdown path is enabled by override", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "off" },
+      overrides: [{ files: ["docs/**"], checks: { formatting: "error" } }],
+    });
+    const context = createContext(config);
+    const staged = {
+      path: "docs/guide.md",
+      status: "modified" as const,
+      addedRanges: [{ start: 1, end: 1 }],
+    };
+    context.changeSet = {
+      files: new Map([[staged.path, staged]]),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    let runs = 0;
+    const adapter: LegacyCheckResultAdapter = {
+      ...prettierAdapter,
+      runLegacy: async () => {
+        runs += 1;
+        return completed("formatting");
+      },
+    };
+
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(1);
+    expect(executions[0]?.policy?.severity).toBe("off");
+  });
+
+  it("does not schedule formatting for an enabled unsupported staged path", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "off" },
+      overrides: [{ files: ["images/**"], checks: { formatting: "error" } }],
+    });
+    const context = createContext(config);
+    const files = [
+      {
+        path: "src/app.ts",
+        status: "modified" as const,
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+      {
+        path: "images/logo.png",
+        status: "modified" as const,
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ];
+    context.changeSet = {
+      files: new Map(files.map((file) => [file.path, file])),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    context.targetInspection = {
+      ...context.targetInspection,
+      workspaces: context.targetInspection.workspaces.map((workspace) =>
+        workspace.relativeRoot === "."
+          ? { ...workspace, sourceFiles: ["src/app.ts"] }
+          : workspace,
+      ),
+    };
+    let runs = 0;
+    const adapter: LegacyCheckResultAdapter = {
+      ...prettierAdapter,
+      runLegacy: async () => {
+        runs += 1;
+        return completed("formatting");
+      },
+    };
+
+    const executions = await dispatchChecks([adapter], context);
+
+    expect(runs).toBe(0);
+    expect(executions).toEqual([]);
+  });
+
+  it("uses metric entity paths for identical live and final file policy", async () => {
+    const baseline = await createInspectionFixture();
+    const targetFixture = await createInspectionFixture();
+    for (const fixture of [baseline, targetFixture]) {
+      await fixture.writeJson("package.json", { name: "root" });
+      await fixture.write(
+        "src/off.ts",
+        "export function offMetric() { return 1; }\n",
+      );
+      await fixture.write(
+        "test/warn.ts",
+        "export function warnMetric() { return 1; }\n",
+      );
+    }
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        cyclomaticComplexity: {
+          severity: "error",
+          max: 10,
+          blockWorsening: true,
+        },
+      },
+      overrides: [
+        {
+          files: ["src/off.ts"],
+          checks: { cyclomaticComplexity: "off" },
+        },
+        {
+          files: ["test/warn.ts"],
+          checks: { cyclomaticComplexity: "warn" },
+        },
+      ],
+    });
+    const context = { ...createContext(config) };
+    const changedFiles = ["src/off.ts", "test/warn.ts"];
+    context.repositoryRoot = targetFixture.root;
+    context.snapshots = {
+      baselineDir: baseline.root,
+      targetDir: targetFixture.root,
+      baselineRef: "HEAD",
+      unsupportedEntries: [],
+    };
+    context.changeSet = {
+      files: new Map(
+        changedFiles.map((path) => [
+          path,
+          {
+            path,
+            status: "modified" as const,
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      ),
+      isEmpty: false,
+      containsAddedLine: () => true,
+    };
+    context.baselineInspection = await inspectRepository(baseline.root);
+    context.targetInspection = await inspectRepository(targetFixture.root);
+    const events: ScanEvent[] = [];
+    const metricObservation = (file: string, name: string): Observation => ({
+      check: "cyclomaticComplexity",
+      rule: "cyclomatic-complexity",
+      identity: `function:${file}:${name}`,
+      severity: "error",
+      message: "Complexity exceeds policy.",
+      entity: { kind: "function", name, file },
+      metric: { name: "cyclomatic-complexity", value: 11 },
+    });
+    const adapter: ObservationCheckAdapter = {
+      id: "cyclomaticComplexity",
+      output: "observations",
+      inspect: async () => ({
+        applies: true,
+        executionClass: "lightweight",
+        requiresBaseline: true,
+        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+      }),
+      collect: async (runContext) => ({
+        checkId: "cyclomaticComplexity",
+        target: runContext.target,
+        baselineObservations: [],
+        targetObservations: [
+          metricObservation("src/off.ts", "offMetric"),
+          metricObservation("test/warn.ts", "warnMetric"),
+        ],
+      }),
+    };
+
+    const executions = await dispatchChecks([adapter], context, {
+      onEvent: (event) => events.push(event),
+    });
+    const finalResult = evaluatePolicy(executions, config).results[0];
+    const completedEvent = events.find(
+      (event): event is Extract<ScanEvent, { type: "check-completed" }> =>
+        event.type === "check-completed",
+    );
+
+    expect(finalResult?.findings).toEqual([
+      expect.objectContaining({
+        severity: "warning",
+        location: { file: "test/warn.ts" },
+      }),
     ]);
     expect(completedEvent?.result).toEqual(finalResult);
   });

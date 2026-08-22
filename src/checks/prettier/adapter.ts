@@ -1,5 +1,5 @@
 import { lstat, readFile, readdir } from "node:fs/promises";
-import { extname, join, relative, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import * as prettier from "prettier";
 import type { CheckRunContext, LegacyCheckResultAdapter } from "../adapter.js";
 import type { CheckResult, Finding } from "../../core/types.js";
@@ -13,33 +13,15 @@ import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
 import { prettierOptions } from "./settings.js";
 import type { ResolvedFormattingPolicy } from "../../config/schema.js";
-
-const PARSERS = {
-  ".css": "css",
-  ".js": "babel",
-  ".json": "json",
-  ".jsonc": "json",
-  ".jsx": "babel",
-  ".md": "markdown",
-  ".markdown": "markdown",
-  ".ts": "typescript",
-  ".tsx": "typescript",
-  ".yaml": "yaml",
-  ".yml": "yaml",
-} as const;
-
-type SupportedExtension = keyof typeof PARSERS;
-
-function parserFor(
-  file: string,
-): (typeof PARSERS)[SupportedExtension] | undefined {
-  return PARSERS[extname(file).toLowerCase() as SupportedExtension];
-}
+import {
+  isSupportedPrettierPath,
+  prettierParserFor,
+} from "./supported-path.js";
 
 function relevantFiles(context: CheckRunContext): string[] {
   return [...context.changeSet.files.values()]
     .filter(
-      (file) => file.status !== "deleted" && parserFor(file.path) !== undefined,
+      (file) => file.status !== "deleted" && isSupportedPrettierPath(file.path),
     )
     .map((file) => file.path)
     .sort(compareCodeUnits);
@@ -59,7 +41,7 @@ async function allSupportedFiles(
       files.push(...(await allSupportedFiles(root, fullPath)));
     } else if (entry.isFile()) {
       const repositoryPath = relative(root, fullPath).split(sep).join("/");
-      if (parserFor(repositoryPath) !== undefined) {
+      if (isSupportedPrettierPath(repositoryPath)) {
         files.push(repositoryPath);
       }
     }
@@ -120,7 +102,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       };
     }
     const applies = [...context.changeSet.files.values()].some(
-      (file) => file.status !== "deleted" && parserFor(file.path) !== undefined,
+      (file) => file.status !== "deleted" && isSupportedPrettierPath(file.path),
     );
     return applies
       ? {
@@ -157,7 +139,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           continue;
         }
         const source = await readFile(targetPath, "utf8");
-        const parser = parserFor(file);
+        const parser = prettierParserFor(file);
         if (parser === undefined) {
           continue;
         }

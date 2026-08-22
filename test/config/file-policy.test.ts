@@ -99,6 +99,25 @@ describe("createFilePolicyResolver", () => {
     );
   });
 
+  it("rejects a renamed change without its baseline path", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+    });
+    const renamed = {
+      path: "src/new.ts",
+      status: "renamed" as const,
+      addedRanges: [],
+    };
+
+    expect(() =>
+      createFilePolicyResolver(
+        config,
+        changeSet(new Map([[renamed.path, renamed]])),
+      ),
+    ).toThrow(TypeError);
+  });
+
   it("applies every matching patch in declaration order", () => {
     const config = resolveConfig({
       schemaVersion: 1,

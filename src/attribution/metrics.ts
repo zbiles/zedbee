@@ -175,6 +175,7 @@ function matchesChangedEntity(
 
 function toFinding(target: Observation, attribution: Attribution): Finding {
   const identity = findingIdentity(target);
+  const entity = requireMetricEntity(target, "target");
   if (identity.scope.kind !== "entity") {
     throw new TypeError("Expected an entity-scoped target metric observation");
   }
@@ -184,7 +185,9 @@ function toFinding(target: Observation, attribution: Attribution): Finding {
     rule: target.rule,
     severity: target.severity,
     message: target.message,
-    ...(target.location === undefined ? {} : { location: target.location }),
+    ...(target.location === undefined
+      ? { location: Object.freeze({ file: entity.file }) }
+      : { location: target.location }),
     ...(target.remediation === undefined
       ? {}
       : { remediation: target.remediation }),

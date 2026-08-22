@@ -45,6 +45,7 @@ import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
 } from "../cache/store.js";
+import { shouldScheduleTarget } from "./policy-scheduling.js";
 
 export interface DispatchOptions {
   clock?: () => number;
@@ -827,6 +828,18 @@ export async function dispatchChecks(
           target,
           context.targetInspection,
         );
+        if (
+          !shouldScheduleTarget(
+            adapter.id as CheckId,
+            target,
+            policy,
+            context.targetInspection,
+            context.changeSet,
+            policyForFile,
+          )
+        ) {
+          continue;
+        }
       } catch {
         const label = checkLabel(adapter.id);
         const queuedAt = clock();
@@ -862,7 +875,6 @@ export async function dispatchChecks(
         scheduled.push(Promise.resolve(execution));
         continue;
       }
-      if (policy.severity === "off") continue;
       const executionPolicy = immutablePolicy(policy);
 
       if (applicability.networkDisclosure !== undefined) {
