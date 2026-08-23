@@ -31,7 +31,7 @@ describe("PixelBee", () => {
       "  ▄██ ▄██▄",
       "  ▀██ ███▀",
       " ▄▄█████▄ ",
-      "█▀███████▀",
+      "██████████",
       "▀████████▀",
       "   ▀▀▀▀▀  ",
     ]);
@@ -64,7 +64,7 @@ describe("PixelBee", () => {
     const lines = frame.split("\n");
 
     expect(lines).toHaveLength(6);
-    expect(lines[3]).toBe("▄▄▄▄  ▄▄▄▄  ▄▄▄▄ ▀███████▀█");
+    expect(lines[3]).toBe("▄▄▄▄  ▄▄▄▄  ▄▄▄▄ ██████████");
   });
 
   it("reports compact height for sparse header placement", async () => {
@@ -87,9 +87,23 @@ describe("PixelBee", () => {
         color: true,
       }),
     ).lastFrame()!;
+    const noColorNormal = render(
+      React.createElement(PixelBee, {
+        compact: true,
+        color: false,
+      }),
+    ).lastFrame()!;
+    const noColorSparse = render(
+      React.createElement(PixelBee, {
+        compact: true,
+        sparse: true,
+        color: false,
+      }),
+    ).lastFrame()!;
 
     expect(sparse.split("\n")).toHaveLength(6);
     expect(sparse).toBe(normal);
+    expect(noColorSparse).toBe(noColorNormal);
   });
 
   it("uses foreground and background colors for mixed compact half-cells", async () => {
