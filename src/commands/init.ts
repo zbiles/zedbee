@@ -40,6 +40,8 @@ export interface InitPromptOptions {
   readonly width: number;
   readonly color: boolean;
   readonly animations: boolean;
+  /** Deterministic render seam for tests; production resolves Ink's live size. */
+  readonly terminalSize?: Readonly<{ columns: number; rows: number }>;
 }
 
 export interface InitCommandDependencies {

@@ -190,6 +190,7 @@ describe("executeInitCommand", () => {
     const received: unknown[] = [];
     const deps = dependencies(root);
     deps.confirm = async (proposal, options, proposalForSelection) => {
+      expect(options).not.toHaveProperty("terminalSize");
       const reviewed = proposalForSelection(
         "thorough",
         ["lint", "types"],

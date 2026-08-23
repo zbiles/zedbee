@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -31,17 +32,47 @@ const proposal: InitProposal = {
   files: [],
 };
 
-function setupFrame(value: InitProposal, width = 80): string {
+const DEFAULT_TEST_ROWS = 120;
+const SHORT_TERMINAL = Object.freeze({ columns: 109, rows: 20 });
+
+function setupFrame(
+  value: InitProposal,
+  width = 80,
+  rows = DEFAULT_TEST_ROWS,
+): string {
   return render(
     <InitApp
       proposal={value}
       proposalForSelection={() => value}
       width={width}
+      terminalSize={{ columns: width, rows }}
       color={false}
       animations={false}
       onDecision={() => undefined}
     />,
   ).lastFrame()!;
+}
+
+function renderedLines(frame: string): readonly string[] {
+  return stripVTControlCharacters(frame).split("\n");
+}
+
+function visibleContentLines(frame: string): readonly string[] {
+  return renderedLines(frame).slice(1, -1);
+}
+
+function expectScrolledDownBy(
+  before: string,
+  after: string,
+  rowCount: number,
+): void {
+  const beforeRows = visibleContentLines(before);
+  const afterRows = visibleContentLines(after);
+  expect(afterRows.slice(0, -rowCount)).toEqual(beforeRows.slice(rowCount));
+}
+
+async function settleInput(): Promise<void> {
+  await new Promise((resolve) => setImmediate(resolve));
 }
 
 function fileChange(
@@ -59,7 +90,391 @@ function fileChange(
   };
 }
 
+function scrollableReviewProposal(): InitProposal {
+  return {
+    ...proposal,
+    files: [
+      fileChange(".zedbeerc.jsonc", null),
+      fileChange("package.json", "existing manifest"),
+      fileChange(".git/hooks/pre-commit", null),
+    ],
+  };
+}
+
 describe("InitApp", () => {
+  it("clips the whole branded setup frame to a short live terminal", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    const frame = view.lastFrame()!;
+    const lines = renderedLines(frame);
+
+    expect(lines).toHaveLength(20);
+    expect(frame).toContain("▀▀▀▀█ █▀▀▀▀");
+    expect(frame).toContain("➜ Profile:");
+    expect(frame).not.toContain("CHECKS");
+    expect(frame).not.toContain("VULNERABILITY SERVICE OUTAGES");
+    expect(frame).not.toContain("REVIEW CHANGES");
+    expect(
+      Math.max(...lines.map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(109);
+  });
+
+  it("reveals a newly focused setup row only after it crosses the viewport edge", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    view.stdin.write("\u001b[<65;20;8M");
+    view.stdin.write("\u001b[<65;20;8M");
+    await vi.waitFor(() =>
+      expect(visibleContentLines(view.lastFrame()!)[0]).toContain("█▀▀▀▀"),
+    );
+    const manuallyScrolledTop = visibleContentLines(view.lastFrame()!)[0];
+
+    view.stdin.write("\u001b[B");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("➜ [✽] formatting"),
+    );
+    expect(visibleContentLines(view.lastFrame()!)[0]).toBe(manuallyScrolledTop);
+
+    view.stdin.write("\u001b[B");
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    expect(visibleContentLines(view.lastFrame()!)[0]).toBe(manuallyScrolledTop);
+
+    view.stdin.write("\u001b[B");
+    await vi.waitFor(() =>
+      expect(visibleContentLines(view.lastFrame()!).at(-1)).toContain(
+        "➜ [ ] cyclomaticComplexity",
+      ),
+    );
+    expect(visibleContentLines(view.lastFrame()!)[0]).not.toBe(
+      manuallyScrolledTop,
+    );
+
+    const clippedRevealTop = visibleContentLines(view.lastFrame()!)[0];
+    view.stdin.write("\u001b[A");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("➜ [✽] types"));
+    expect(visibleContentLines(view.lastFrame()!)[0]).toBe(clippedRevealTop);
+  });
+
+  it("minimally reveals a clipped setup target above the viewport", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    for (let index = 0; index < CHECK_IDS.length; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("➜ [ ] vulnerabilities"),
+    );
+    const lowerTop = visibleContentLines(view.lastFrame()!)[0];
+
+    for (let index = 0; index < CHECK_IDS.length - 1; index += 1) {
+      view.stdin.write("\u001b[A");
+    }
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("➜ [✽] formatting"),
+    );
+    expect(visibleContentLines(view.lastFrame()!)[0]).toBe(lowerTop);
+
+    view.stdin.write("\u001b[A");
+    await vi.waitFor(() =>
+      expect(visibleContentLines(view.lastFrame()!)[0]).toContain("➜ Profile:"),
+    );
+  });
+
+  it("reveals Profile when setup focus wraps from the last control", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+
+    view.stdin.write("\u001b[B");
+    await vi.waitFor(() =>
+      expect(visibleContentLines(view.lastFrame()!)[0]).toContain("➜ Profile:"),
+    );
+  });
+
+  it("scrolls Review by rows and pages while restoring each phase offset", async () => {
+    const reviewProposal = scrollableReviewProposal();
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    view.stdin.write("\u001b[6~");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    const setupScrolled = view.lastFrame()!;
+
+    view.stdin.write("\r");
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("REVIEW CHANGES");
+      expect(view.lastFrame()).not.toContain("↑ MORE ABOVE");
+    });
+    const reviewTop = view.lastFrame()!;
+    expect(reviewTop).toContain("▀▀▀▀█ █▀▀▀▀");
+
+    view.stdin.write("\u001b[B");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    expectScrolledDownBy(reviewTop, view.lastFrame()!, 1);
+
+    view.stdin.write("\u001b[A");
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+
+    view.stdin.write("\u001b[6~");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    expectScrolledDownBy(reviewTop, view.lastFrame()!, 16);
+
+    view.stdin.write("\u001b[5~");
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+
+    view.stdin.write("\u001b[B");
+    view.stdin.write("\u001b[B");
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    const reviewScrolled = view.lastFrame()!;
+    expectScrolledDownBy(reviewTop, reviewScrolled, 3);
+
+    view.stdin.write("\u001b");
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(setupScrolled));
+
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewScrolled));
+  });
+
+  it.each([
+    ["Space", " "],
+    ["Enter", "\r"],
+    ["Y", "y"],
+  ])("applies with %s from a scrolled Review", async (_label, input) => {
+    const reviewProposal = scrollableReviewProposal();
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+
+    view.stdin.write("\r");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("REVIEW CHANGES"),
+    );
+    view.stdin.write("\u001b[6~");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    view.stdin.write(input);
+    await vi.waitFor(() =>
+      expect(onDecision).toHaveBeenCalledWith(reviewProposal),
+    );
+  });
+
+  it("keeps Review back and cancellation keys available while scrolled", async () => {
+    const reviewProposal = scrollableReviewProposal();
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+
+    view.stdin.write("\r");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("REVIEW CHANGES"),
+    );
+    view.stdin.write("\u001b[6~");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    view.stdin.write("\u001b");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("SETUP"));
+    expect(onDecision).not.toHaveBeenCalled();
+
+    view.stdin.write("\r");
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(view.lastFrame()).toContain("APPLY CHANGES");
+    });
+    view.stdin.write("n");
+    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+  });
+
+  it("keeps setup Escape cancellation available after manual scrolling", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    view.stdin.write("\u001b[6~");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    view.stdin.write("\u001b");
+    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+  });
+
+  it("scrolls three rows per wheel report and ignores clicks", async () => {
+    const reviewProposal = scrollableReviewProposal();
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    view.stdin.write("\r");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("REVIEW CHANGES"),
+    );
+    const reviewTop = view.lastFrame()!;
+
+    view.stdin.write("\u001b[<65;20;8M");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    const wheelDown = view.lastFrame()!;
+    expectScrolledDownBy(reviewTop, wheelDown, 3);
+
+    view.stdin.write("\u001b[<0;20;8M");
+    await settleInput();
+    expect(view.lastFrame()).toBe(wheelDown);
+
+    view.stdin.write("\u001b[<64;20;8M");
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+  });
+
+  it("clamps on a taller resize and uses the resized live width", async () => {
+    const elementFor = (columns: number, rows: number) => (
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns, rows }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />
+    );
+    const view = render(elementFor(109, 20));
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    for (let index = 0; index < 4; index += 1) {
+      view.stdin.write("\u001b[6~");
+    }
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
+    });
+
+    view.rerender(elementFor(109, 35));
+    await vi.waitFor(() =>
+      expect(renderedLines(view.lastFrame()!)).toHaveLength(35),
+    );
+    const resizedAtBottom = view.lastFrame()!;
+    expect(resizedAtBottom).toContain("↑ MORE ABOVE");
+    expect(resizedAtBottom).not.toContain("↓ MORE BELOW");
+
+    const reference = render(elementFor(109, 35));
+    await vi.waitFor(() =>
+      expect(reference.lastFrame()).toContain("↓ MORE BELOW"),
+    );
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      reference.stdin.write("\u001b[B");
+    }
+    await vi.waitFor(() =>
+      expect(reference.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
+    reference.stdin.write("\u001b[6~");
+    await vi.waitFor(() => {
+      expect(reference.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(reference.lastFrame()).not.toContain("↓ MORE BELOW");
+    });
+    expect(resizedAtBottom).toBe(reference.lastFrame());
+
+    view.rerender(elementFor(80, DEFAULT_TEST_ROWS));
+    await vi.waitFor(() =>
+      expect(renderedLines(view.lastFrame()!)).toHaveLength(DEFAULT_TEST_ROWS),
+    );
+    const narrowFrame = view.lastFrame()!;
+    expect(narrowFrame).toContain("▀▀▀▀█ █▀▀▀▀");
+    expect(
+      Math.max(...renderedLines(narrowFrame).map((line) => [...line].length)),
+    ).toBeLessThanOrEqual(80);
+  });
+
   it("aligns the profile description with the Profile label", () => {
     const lines = setupFrame(proposal).split("\n");
     const profileLine = lines.find((line) => line.includes("Profile:"))!;
@@ -117,6 +532,7 @@ describe("InitApp", () => {
           osvUnavailable,
         })}
         width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
         animations={false}
         onDecision={() => undefined}
@@ -155,6 +571,7 @@ describe("InitApp", () => {
         proposal={proposal}
         proposalForSelection={() => proposal}
         width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
         animations={false}
         onDecision={onDecision}
@@ -193,6 +610,7 @@ describe("InitApp", () => {
         proposal={reviewProposal}
         proposalForSelection={() => reviewProposal}
         width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
         animations={false}
         onDecision={() => undefined}
@@ -281,6 +699,7 @@ describe("InitApp", () => {
         proposal={proposal}
         proposalForSelection={proposalForSelection}
         width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
         animations={false}
         onDecision={onDecision}
@@ -371,6 +790,7 @@ describe("InitApp", () => {
         proposal={proposal}
         proposalForSelection={() => proposal}
         width={40}
+        terminalSize={{ columns: 40, rows: DEFAULT_TEST_ROWS }}
         color={false}
         animations={false}
         onDecision={() => undefined}

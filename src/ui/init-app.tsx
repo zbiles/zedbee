@@ -1,5 +1,14 @@
-import { useMemo, useState } from "react";
-import { Box, Text, render, useApp, useInput } from "ink";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  Box,
+  measureElement,
+  Text,
+  render,
+  useApp,
+  useInput,
+  useWindowSize,
+  type DOMElement,
+} from "ink";
 import {
   CHECK_IDS,
   PROFILE_IDS,
@@ -20,10 +29,21 @@ import {
   BrandedCommandPanel,
   BrandedCommandPanelRule,
 } from "./branded-command-frame.js";
+import {
+  clampScrollOffset,
+  minimalRevealOffset,
+  pageScrollStep,
+  parseSgrWheelDelta,
+} from "./terminal-viewport-model.js";
+import {
+  TerminalViewport,
+  type TerminalViewportMetrics,
+} from "./terminal-viewport.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
+  readonly terminalSize?: Readonly<{ columns: number; rows: number }>;
   readonly proposalForSelection: (
     profile: ProfileId,
     checks: readonly CheckId[] | undefined,
@@ -48,6 +68,7 @@ const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
 
 const INIT_EVENT_MAX_FPS = 30;
 const CURSOR_HOME = "\u001b[H";
+const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
 
 export function initMaxFps(): number {
   return INIT_EVENT_MAX_FPS;
@@ -73,12 +94,14 @@ function SetupSummary({
   profile,
   baseProfile,
   focused,
+  activeTargetRef,
   color,
 }: {
   readonly proposal: InitProposal;
   readonly profile: ProfileId | "custom";
   readonly baseProfile: ProfileId;
   readonly focused: boolean;
+  readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
   const installsHook = proposal.hook !== "none";
@@ -88,7 +111,7 @@ function SetupSummary({
       : PROFILE_EXPLANATIONS[profile];
   return (
     <Box flexDirection="column" paddingX={2}>
-      <Box>
+      <Box ref={focused ? activeTargetRef : undefined}>
         <Text {...colorProp(color, ZEDBEE_THEME.yellow)}>
           {focused ? "➜" : " "}{" "}
         </Text>
@@ -159,10 +182,12 @@ function SetupSummary({
 function CheckChoices({
   cursor,
   selected,
+  activeTargetRef,
   color,
 }: {
   readonly cursor: number;
   readonly selected: ReadonlySet<CheckId>;
+  readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
   return (
@@ -171,16 +196,17 @@ function CheckChoices({
         CHECKS
       </Text>
       {CHECK_IDS.map((check, index) => (
-        <Text
-          key={check}
-          {...colorProp(
-            color,
-            index === cursor ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
-          )}
-        >
-          {index === cursor ? "➜" : " "} [{selected.has(check) ? "✽" : " "}]{" "}
-          {check}
-        </Text>
+        <Box key={check} ref={index === cursor ? activeTargetRef : undefined}>
+          <Text
+            {...colorProp(
+              color,
+              index === cursor ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
+            )}
+          >
+            {index === cursor ? "➜" : " "} [{selected.has(check) ? "✽" : " "}]{" "}
+            {check}
+          </Text>
+        </Box>
       ))}
     </Box>
   );
@@ -189,10 +215,12 @@ function CheckChoices({
 function VulnerabilityOutageChoice({
   value,
   cursor,
+  activeTargetRef,
   color,
 }: {
   readonly value: InitOsvUnavailable;
   readonly cursor: number;
+  readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
   return (
@@ -203,24 +231,28 @@ function VulnerabilityOutageChoice({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         What should Zedbee do if OSV cannot be reached?
       </Text>
-      <Text
-        {...colorProp(
-          color,
-          cursor === 0 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
-        )}
-      >
-        {cursor === 0 ? "➜" : " "} [{value === "block" ? "✽" : " "}] Block the
-        commit (recommended)
-      </Text>
-      <Text
-        {...colorProp(
-          color,
-          cursor === 1 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
-        )}
-      >
-        {cursor === 1 ? "➜" : " "} [{value === "warn" ? "✽" : " "}] Warn and
-        allow the commit
-      </Text>
+      <Box ref={cursor === 0 ? activeTargetRef : undefined}>
+        <Text
+          {...colorProp(
+            color,
+            cursor === 0 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
+          )}
+        >
+          {cursor === 0 ? "➜" : " "} [{value === "block" ? "✽" : " "}] Block the
+          commit (recommended)
+        </Text>
+      </Box>
+      <Box ref={cursor === 1 ? activeTargetRef : undefined}>
+        <Text
+          {...colorProp(
+            color,
+            cursor === 1 ? ZEDBEE_THEME.yellow : ZEDBEE_THEME.secondary,
+          )}
+        >
+          {cursor === 1 ? "➜" : " "} [{value === "warn" ? "✽" : " "}] Warn and
+          allow the commit
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -281,14 +313,20 @@ function setupReviewFocusIndex(vulnerabilityScanningAvailable: boolean) {
 function InitActionButton({
   label,
   focused,
+  activeTargetRef,
   color,
 }: {
   readonly label: string;
   readonly focused: boolean;
+  readonly activeTargetRef?: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
   return (
-    <Box justifyContent="center" paddingX={2}>
+    <Box
+      ref={focused ? activeTargetRef : undefined}
+      justifyContent="center"
+      paddingX={2}
+    >
       <Box
         borderStyle="single"
         paddingX={2}
@@ -344,6 +382,7 @@ function SetupPanel({
   selected,
   osvUnavailable,
   width,
+  activeTargetRef,
   color,
 }: {
   readonly proposal: InitProposal;
@@ -353,6 +392,7 @@ function SetupPanel({
   readonly selected: ReadonlySet<CheckId>;
   readonly osvUnavailable: InitOsvUnavailable;
   readonly width: number;
+  readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
   return (
@@ -362,10 +402,16 @@ function SetupPanel({
         profile={profile}
         baseProfile={baseProfile}
         focused={focus === 0}
+        activeTargetRef={activeTargetRef}
         color={color}
       />
       <BrandedCommandPanelRule width={width} color={color} />
-      <CheckChoices cursor={focus - 1} selected={selected} color={color} />
+      <CheckChoices
+        cursor={focus - 1}
+        selected={selected}
+        activeTargetRef={activeTargetRef}
+        color={color}
+      />
       <NetworkDisclosures proposal={proposal} width={width} color={color} />
       {proposal.vulnerabilityScanningAvailable ? (
         <>
@@ -373,6 +419,7 @@ function SetupPanel({
           <VulnerabilityOutageChoice
             value={osvUnavailable}
             cursor={focus - CHECK_IDS.length - 1}
+            activeTargetRef={activeTargetRef}
             color={color}
           />
         </>
@@ -384,6 +431,7 @@ function SetupPanel({
           focus ===
           setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable)
         }
+        activeTargetRef={activeTargetRef}
         color={color}
       />
       <Text> </Text>
@@ -447,12 +495,23 @@ export function InitApp({
   proposal,
   proposalForSelection,
   width,
+  terminalSize,
   color,
   onDecision,
 }: InitAppProps) {
   const { exit } = useApp();
+  const liveSize = useWindowSize();
+  const columns = terminalSize?.columns ?? liveSize.columns ?? width;
+  const rows = terminalSize?.rows ?? liveSize.rows ?? 24;
   const [phase, setPhase] = useState<"configure" | "review">("configure");
   const [focus, setFocus] = useState(0);
+  const [setupOffset, setSetupOffset] = useState(0);
+  const [reviewOffset, setReviewOffset] = useState(0);
+  const [viewportMetrics, setViewportMetrics] =
+    useState<TerminalViewportMetrics>({
+      contentHeight: 0,
+      visibleHeight: rows,
+    });
   const [baseProfile, setBaseProfile] = useState<ProfileId>(proposal.profile);
   const [customized, setCustomized] = useState(false);
   const [selected, setSelected] = useState(
@@ -461,6 +520,12 @@ export function InitApp({
   const [osvUnavailable, setOsvUnavailable] = useState<InitOsvUnavailable>(
     proposal.osvUnavailable,
   );
+  const activeTargetRef = useRef<DOMElement>(null);
+  const contentRef = useRef<DOMElement>(null);
+  const phaseRef = useRef(phase);
+  const setupOffsetRef = useRef(setupOffset);
+  phaseRef.current = phase;
+  setupOffsetRef.current = setupOffset;
   const reviewedProposal = useMemo(
     () =>
       proposalForSelection(
@@ -471,10 +536,57 @@ export function InitApp({
     [baseProfile, osvUnavailable, proposalForSelection, selected],
   );
 
+  useEffect(() => {
+    if (phaseRef.current !== "configure") return;
+    const target = activeTargetRef.current;
+    const content = contentRef.current;
+    if (target === null || content === null) return;
+    const targetBounds = measureElement(target);
+    const contentBounds = measureElement(content);
+    if (targetBounds.height <= 0 || contentBounds.height <= 0) return;
+    const terminalHeight = Math.max(1, Math.trunc(rows));
+    const visibleHeight =
+      contentBounds.height > terminalHeight && terminalHeight >= 3
+        ? terminalHeight - 2
+        : terminalHeight;
+    const currentOffset = setupOffsetRef.current;
+    const nextOffset = minimalRevealOffset(
+      currentOffset,
+      visibleHeight,
+      targetBounds.y - contentBounds.y,
+      targetBounds.height,
+      contentBounds.height,
+    );
+    if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
+  }, [columns, focus, rows]);
+
+  const scrollBy = (delta: number) => {
+    const setOffset = phase === "configure" ? setSetupOffset : setReviewOffset;
+    setOffset((current) =>
+      clampScrollOffset(
+        current + delta,
+        viewportMetrics.contentHeight,
+        viewportMetrics.visibleHeight,
+      ),
+    );
+  };
+
   useInput((input, key) => {
     const normalized = input.toLowerCase();
+    const wheelDelta = parseSgrWheelDelta(input);
+    if (SGR_MOUSE_REPORT.test(input)) {
+      if (wheelDelta !== 0) scrollBy(wheelDelta);
+      return;
+    }
+    if (key.pageUp || key.pageDown) {
+      const direction = key.pageDown ? 1 : -1;
+      scrollBy(direction * pageScrollStep(viewportMetrics.visibleHeight));
+      return;
+    }
     if (phase === "review") {
-      if (normalized === "y" || key.return || input === " ") {
+      if (key.upArrow || key.downArrow) {
+        scrollBy(key.downArrow ? 1 : -1);
+      } else if (normalized === "y" || key.return || input === " ") {
         onDecision(reviewedProposal);
         exit();
       } else if (normalized === "n") {
@@ -548,28 +660,42 @@ export function InitApp({
     }
   });
 
-  const panelWidth = brandedCommandContentWidth(width);
+  const panelWidth = brandedCommandContentWidth(columns);
+  const activeOffset = phase === "configure" ? setupOffset : reviewOffset;
+  const setActiveOffset =
+    phase === "configure" ? setSetupOffset : setReviewOffset;
   return (
-    <BrandedCommandFrame width={width} color={color}>
-      {phase === "configure" ? (
-        <SetupPanel
-          proposal={reviewedProposal}
-          focus={focus}
-          profile={customized ? "custom" : baseProfile}
-          baseProfile={baseProfile}
-          selected={selected}
-          osvUnavailable={osvUnavailable}
-          width={panelWidth}
-          color={color}
-        />
-      ) : (
-        <ReviewPanel
-          proposal={reviewedProposal}
-          width={panelWidth}
-          color={color}
-        />
-      )}
-    </BrandedCommandFrame>
+    <TerminalViewport
+      width={columns}
+      height={rows}
+      offset={activeOffset}
+      color={color}
+      contentRef={contentRef}
+      onOffsetChange={setActiveOffset}
+      onMetricsChange={setViewportMetrics}
+    >
+      <BrandedCommandFrame width={columns} color={color}>
+        {phase === "configure" ? (
+          <SetupPanel
+            proposal={reviewedProposal}
+            focus={focus}
+            profile={customized ? "custom" : baseProfile}
+            baseProfile={baseProfile}
+            selected={selected}
+            osvUnavailable={osvUnavailable}
+            width={panelWidth}
+            activeTargetRef={activeTargetRef}
+            color={color}
+          />
+        ) : (
+          <ReviewPanel
+            proposal={reviewedProposal}
+            width={panelWidth}
+            color={color}
+          />
+        )}
+      </BrandedCommandFrame>
+    </TerminalViewport>
   );
 }
 
