@@ -243,7 +243,7 @@ describe("runInkScan", () => {
       chunk.includes("SCAN RESULT"),
     );
     expect(resultWrites).toHaveLength(1);
-    expect(resultWrites[0]).toContain("█████ █████ ████");
+    expect(resultWrites[0]).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(resultWrites[0]).toContain("COMPLETE REPORT");
     const rendered = output.join("");
     const temporaryScreenStart = rendered.indexOf("\u001b[?1049h");

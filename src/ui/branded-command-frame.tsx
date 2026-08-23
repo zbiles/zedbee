@@ -1,7 +1,11 @@
 import type { ReactNode } from "react";
 import { Box, Text } from "ink";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
-import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
+import {
+  PixelWordmark,
+  pixelWordmarkHeight,
+  pixelWordmarkWidth,
+} from "./pixel-wordmark.js";
 import { ZEDBEE_THEME } from "./theme.js";
 
 const SOLID_BORDER = {
@@ -84,8 +88,11 @@ export function BrandedCommandFrame({
   const beeWidth = pixelBeeWidth(compactBrand);
   const availableBrandWidth = Math.max(1, frameWidth - 7);
   const showWordmark = brandWidth <= availableBrandWidth;
+  const narrowFrame = !showWordmark;
   const showBee =
     showWordmark && brandWidth + 2 + beeWidth <= availableBrandWidth;
+  const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
+  const beeTop = compactBrand ? -2 : -5;
   const brandGroupWidth = showWordmark
     ? brandWidth + (showBee ? 2 + beeWidth : 0)
     : Math.min(availableBrandWidth, 6);
@@ -115,12 +122,16 @@ export function BrandedCommandFrame({
             paddingBottom={1}
           >
             <Box
-              height={5}
+              height={brandHeight}
               justifyContent="center"
               marginTop={2}
               marginBottom={2}
             >
-              <Box position="relative" width={brandGroupWidth} height={5}>
+              <Box
+                position="relative"
+                width={brandGroupWidth}
+                height={brandHeight}
+              >
                 {showWordmark ? (
                   <PixelWordmark color={color} compact={compactBrand} />
                 ) : (
@@ -132,7 +143,7 @@ export function BrandedCommandFrame({
                   </Text>
                 )}
                 {showBee ? (
-                  <Box position="absolute" left={brandWidth + 2} top={-5}>
+                  <Box position="absolute" left={brandWidth + 2} top={beeTop}>
                     <PixelBee compact={compactBrand} sparse color={color} />
                   </Box>
                 ) : null}

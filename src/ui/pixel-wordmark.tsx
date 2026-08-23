@@ -45,9 +45,5 @@ export function PixelWordmark({
     : WORDMARK_GRID.map((row) =>
         [...row].map((pixel) => (pixel === "1" ? "██" : "  ")).join(""),
       ).join("\n");
-  return (
-    <Text {...colorProp(color, ZEDBEE_THEME.wordmark)}>
-      {output}
-    </Text>
-  );
+  return <Text {...colorProp(color, ZEDBEE_THEME.wordmark)}>{output}</Text>;
 }

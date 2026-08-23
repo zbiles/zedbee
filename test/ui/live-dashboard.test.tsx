@@ -7,6 +7,8 @@ import {
   findingCheckLabel,
 } from "../../src/reporting/check-label.js";
 import { LiveDashboard } from "../../src/ui/live-dashboard.js";
+import { pixelBeeWidth } from "../../src/ui/pixel-bee.js";
+import { pixelWordmarkWidth } from "../../src/ui/pixel-wordmark.js";
 import { createFinding } from "../helpers/scan-report.js";
 
 function maxLineWidth(frame: string): number {
@@ -47,7 +49,7 @@ describe("LiveDashboard", () => {
     expect(findingCheckLabel("vulnerabilities")).toBe("OSV");
   });
 
-  it("centers the wordmark and dashless bee while its wings cross the heavy frame", () => {
+  it("uses compact shared height while centering the wordmark and aligned bee", () => {
     const frame = render(
       <LiveDashboard
         events={events}
@@ -60,25 +62,75 @@ describe("LiveDashboard", () => {
     ).lastFrame()!;
     const lines = frame.split("\n");
     const outerTop = lines.findIndex((line) => line === ` ${"█".repeat(94)}`);
-    const firstWing = lines.findIndex((line) => line.includes("██  ██"));
-    const brandMiddle = lines.find(
-      (line) =>
-        line.includes("█████ ████  █   █ ████  ████  ████") &&
-        line.includes("██████████"),
+    const panelsTop = lines.findIndex(
+      (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
     );
+    const wordmarkTop = lines.findIndex((line) => line.includes("▀▀▀▀█"));
+    const wordmarkLeft = lines[wordmarkTop]!.indexOf("▀▀▀▀█");
+    const wordmarkWidth = pixelWordmarkWidth(true);
+    const beeLeft = wordmarkLeft + wordmarkWidth + 2;
+    const beeWidth = pixelBeeWidth(true);
+    const firstWing = lines.findIndex((line) => {
+      const beeCells = line.slice(beeLeft, beeLeft + beeWidth);
+      return /[▀▄█]/u.test(beeCells) && !/^█+$/u.test(beeCells);
+    });
+    const lastBeeRow = lines.findLastIndex(
+      (line, index) =>
+        index < panelsTop &&
+        /[▀▄█]/u.test(line.slice(beeLeft, beeLeft + beeWidth)),
+    );
+    const brandMiddle = lines[wordmarkTop + 1]!;
+    const middleGroup = brandMiddle.slice(wordmarkLeft, beeLeft + beeWidth);
     const outerLeft = lines[outerTop]!.indexOf("█");
     const outerRight = lines[outerTop]!.lastIndexOf("█");
-    const groupLeft = brandMiddle?.indexOf("█") ?? -1;
-    const groupRight = brandMiddle?.lastIndexOf("█") ?? -1;
+    const groupLeft = wordmarkLeft + middleGroup.search(/[▀▄█]/u);
+    const groupRight =
+      wordmarkLeft +
+      Math.max(
+        middleGroup.lastIndexOf("▀"),
+        middleGroup.lastIndexOf("▄"),
+        middleGroup.lastIndexOf("█"),
+      );
 
-    expect(outerTop).toBeGreaterThan(0);
-    expect(firstWing).toBeGreaterThanOrEqual(0);
-    expect(firstWing).toBeLessThan(outerTop);
-    expect(brandMiddle).toBeDefined();
-    expect(brandMiddle).not.toContain("██████████ ████  ████  ████");
+    expect(outerTop).toBe(2);
+    expect(panelsTop).toBe(10);
+    expect(wordmarkTop).toBe(5);
+    expect(wordmarkTop - firstWing).toBe(2);
+    expect(lastBeeRow - (wordmarkTop + 2)).toBe(1);
+    expect(brandMiddle[beeLeft]).toMatch(/[▀▄█]/u);
     expect(
       Math.abs(groupLeft - outerLeft - (outerRight - groupRight)),
     ).toBeLessThanOrEqual(1);
+  });
+
+  it("preserves the full-size header rows and panel position at 130 columns", () => {
+    const frame = render(
+      <LiveDashboard
+        events={events}
+        startedAt={0}
+        elapsedMs={18}
+        width={130}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+    const panelsTop = lines.findIndex(
+      (line) => line.includes("┌") && line.match(/┌/gu)?.length === 2,
+    );
+    const wordmarkTop = lines.findIndex((line) =>
+      line.includes("██████████  ██████████"),
+    );
+    const wordmarkLeft = lines[wordmarkTop]!.indexOf("██████████");
+    const wordmarkWidth = pixelWordmarkWidth(false);
+    const wordmarkRows = lines
+      .slice(0, panelsTop)
+      .map((line) => line.slice(wordmarkLeft, wordmarkLeft + wordmarkWidth))
+      .filter((line) => /█/u.test(line) && !/^█+$/u.test(line));
+
+    expect(wordmarkTop).toBe(5);
+    expect(wordmarkRows).toHaveLength(5);
+    expect(panelsTop).toBe(12);
   });
 
   it("connects heading rules to both panel strokes and spans their full width", () => {
@@ -174,7 +226,11 @@ describe("LiveDashboard", () => {
         animations={false}
       />,
     ).lastFrame()!;
-    const progressLine = frame.split("\n").find((line) => line.includes("▄"));
+    const lines = frame.split("\n");
+    const summaryHeading = lines.findIndex((line) => line.includes("SUMMARY"));
+    const progressLine = lines.find(
+      (line, index) => index > summaryHeading && line.includes("▄"),
+    );
 
     expect(progressLine).toBeDefined();
     const chipLine = frame
@@ -236,7 +292,12 @@ describe("LiveDashboard", () => {
         { columns: width },
       );
       const lines = frame.split("\n");
-      const progressRowIndex = lines.findIndex((line) => line.includes("▄"));
+      const summaryHeading = lines.findIndex((line) =>
+        line.includes("SUMMARY"),
+      );
+      const progressRowIndex = lines.findIndex(
+        (line, index) => index > summaryHeading && line.includes("▄"),
+      );
       const progressRow = lines[progressRowIndex]!;
       const chipRowIndex = lines.findIndex(
         (line) =>
@@ -365,7 +426,7 @@ describe("LiveDashboard", () => {
       />,
     ).lastFrame()!;
 
-    expect(frame).toContain("█████ █████ ████");
+    expect(frame).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(frame).toContain("CHECKS");
     expect(frame).toContain("ACTIVITY");
     expect(frame).toContain("SUMMARY");

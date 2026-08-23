@@ -129,7 +129,7 @@ describe("ScanResultDashboard", () => {
 
     expect(output).toContain("SCAN RESULT");
     expect(output).toContain("COMMIT ALLOWED");
-    expect(output).toContain("█████ █████ ████");
+    expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(output).toContain("█");
     expect(output.match(/COMPLETE REPORT/gu)).toHaveLength(2);
     expect(output.match(/complete\.json/gu)).toHaveLength(2);

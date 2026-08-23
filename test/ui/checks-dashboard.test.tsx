@@ -140,7 +140,7 @@ describe("ChecksDashboard", () => {
     expect(frame).toContain("Reason: No React DOM workspace was found.");
     expect(frame).toContain("\u001b[38;2;232;184;76m");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
-    expect(frame).toContain("█████ █████ ████");
+    expect(frame).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(frame).toContain("┌");
     expect(frame).toContain("└");
     expect(

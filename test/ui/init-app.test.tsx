@@ -11,6 +11,8 @@ import {
   initMaxFps,
   initRenderOptions,
 } from "../../src/ui/init-app.js";
+import { pixelBeeWidth } from "../../src/ui/pixel-bee.js";
+import { pixelWordmarkWidth } from "../../src/ui/pixel-wordmark.js";
 
 const proposal: InitProposal = {
   repositoryRoot: "/repo",
@@ -285,7 +287,7 @@ describe("InitApp", () => {
       />,
     );
 
-    expect(view.lastFrame()).toContain("█████ █████ ████");
+    expect(view.lastFrame()).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(view.lastFrame()).toContain("SETUP");
     expect(view.lastFrame()).toContain("Install pre-commit hook: Yes");
     expect(view.lastFrame()).toContain("Method: Git pre-commit hook");
@@ -381,6 +383,34 @@ describe("InitApp", () => {
     expect(
       Math.max(...frame.split("\n").map((line) => [...line].length)),
     ).toBeLessThanOrEqual(40);
+  });
+
+  it("keeps the complete proportional brand visible at 109 columns", () => {
+    const frame = setupFrame(proposal, 109);
+    const lines = frame.split("\n");
+    const panelTop = lines.findIndex((line) => line.includes("┌"));
+    const wordmarkTop = lines.findIndex((line) => line.includes("▀▀▀▀█"));
+    const wordmarkLeft = lines[wordmarkTop]!.indexOf("▀▀▀▀█");
+    const wordmarkWidth = pixelWordmarkWidth(true);
+    const beeLeft = wordmarkLeft + wordmarkWidth + 2;
+    const beeWidth = pixelBeeWidth(true);
+    const brandRows = lines
+      .slice(0, panelTop)
+      .map((line) => line.slice(wordmarkLeft, beeLeft + beeWidth))
+      .filter((line) => !/^█+$/u.test(line));
+    const occupiedBrandRows = brandRows.filter((line) => /[▀▄█]/u.test(line));
+    const occupiedWordmarkRows = brandRows.filter((line) =>
+      /[▀▄█]/u.test(line.slice(0, wordmarkWidth)),
+    );
+    const occupiedBeeRows = brandRows.filter((line) =>
+      /[▀▄█]/u.test(line.slice(beeLeft - wordmarkLeft)),
+    );
+
+    expect(brandRows.some((line) => line.includes("▀"))).toBe(true);
+    expect(panelTop).toBe(10);
+    expect(occupiedBrandRows).toHaveLength(6);
+    expect(occupiedWordmarkRows).toHaveLength(3);
+    expect(occupiedBeeRows).toHaveLength(6);
   });
 
   it("uses a responsive refresh rate for keyboard interaction", () => {

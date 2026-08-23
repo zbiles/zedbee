@@ -8,7 +8,11 @@ import {
   pixelTextRows,
   type PixelLabel,
 } from "./pixel-clock.js";
-import { PixelWordmark, pixelWordmarkWidth } from "./pixel-wordmark.js";
+import {
+  PixelWordmark,
+  pixelWordmarkHeight,
+  pixelWordmarkWidth,
+} from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { checkLabel } from "../reporting/check-label.js";
 
@@ -481,7 +485,8 @@ export function LiveDashboard({
   const horizontalPadding = narrowFrame ? 1 : 3;
   const contentWidth = Math.max(1, frameWidth - 4 - horizontalPadding);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
-  const brandHeight = narrowFrame ? 1 : 5;
+  const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
+  const beeTop = compactBrand ? -2 : -5;
   const brandWidth = narrowFrame
     ? "ZEDBEE".length
     : pixelWordmarkWidth(compactBrand);
@@ -553,7 +558,7 @@ export function LiveDashboard({
                 <PixelWordmark color={color} compact={compactBrand} />
               )}
               {showBrandBee ? (
-                <Box position="absolute" left={brandWidth + 2} top={-5}>
+                <Box position="absolute" left={brandWidth + 2} top={beeTop}>
                   <PixelBee compact={compactBrand} sparse color={color} />
                 </Box>
               ) : null}

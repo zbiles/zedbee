@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  halfBlockGlyph,
-  pairPixelRows,
-} from "../../src/ui/compact-pixels.js";
+import { halfBlockGlyph, pairPixelRows } from "../../src/ui/compact-pixels.js";
 
 describe("compact pixels", () => {
   it.each([
