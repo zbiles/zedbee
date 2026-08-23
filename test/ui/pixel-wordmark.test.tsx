@@ -428,7 +428,7 @@ describe("PixelWordmark", () => {
     ).lastFrame()!;
     const progressLine = frame
       .split("\n")
-      .find((line) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "").includes("▄"));
+      .find((line) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "").includes("▄▄"));
 
     expect(progressLine).toBeDefined();
     expect(progressLine).toContain("\u001b[38;2;50;54;62m");
