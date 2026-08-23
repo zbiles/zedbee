@@ -13,6 +13,8 @@ afterEach(() => {
 
 describe("PixelWordmark", () => {
   it("renders the compact wordmark as three proportional half-block rows", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
     const React = await import("react");
     const { render } = await import("ink-testing-library");
     const { PixelWordmark, pixelWordmarkHeight } = await import(
@@ -30,6 +32,8 @@ describe("PixelWordmark", () => {
   });
 
   it("keeps the full-size wordmark at five rows with two-column pixels", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
     const React = await import("react");
     const { render } = await import("ink-testing-library");
     const { PixelWordmark, pixelWordmarkHeight } = await import(
