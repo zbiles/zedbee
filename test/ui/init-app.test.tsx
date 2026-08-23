@@ -1,6 +1,8 @@
+import { PassThrough } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
+import { render as renderInk } from "ink";
 import {
   CHECK_IDS,
   type CheckId,
@@ -14,6 +16,9 @@ import {
 } from "../../src/ui/init-app.js";
 import { pixelBeeWidth } from "../../src/ui/pixel-bee.js";
 import { pixelWordmarkWidth } from "../../src/ui/pixel-wordmark.js";
+
+const ENABLE_MOUSE = "\u001b[?1000h\u001b[?1006h";
+const DISABLE_MOUSE = "\u001b[?1006l\u001b[?1000l";
 
 const proposal: InitProposal = {
   repositoryRoot: "/repo",
@@ -35,12 +40,20 @@ const proposal: InitProposal = {
 const DEFAULT_TEST_ROWS = 120;
 const SHORT_TERMINAL = Object.freeze({ columns: 109, rows: 20 });
 
+function lastVisibleFrame(view: {
+  readonly frames: readonly string[];
+}): string {
+  return view.frames.findLast(
+    (frame) => stripVTControlCharacters(frame).trim().length > 0,
+  )!;
+}
+
 function setupFrame(
   value: InitProposal,
   width = 80,
   rows = DEFAULT_TEST_ROWS,
 ): string {
-  return render(
+  const view = render(
     <InitApp
       proposal={value}
       proposalForSelection={() => value}
@@ -50,7 +63,8 @@ function setupFrame(
       animations={false}
       onDecision={() => undefined}
     />,
-  ).lastFrame()!;
+  );
+  return lastVisibleFrame(view);
 }
 
 function renderedLines(frame: string): readonly string[] {
@@ -73,6 +87,25 @@ function expectScrolledDownBy(
 
 async function settleInput(): Promise<void> {
   await new Promise((resolve) => setImmediate(resolve));
+}
+
+function sequenceCount(frames: readonly string[], sequence: string): number {
+  return frames.reduce(
+    (count, frame) => count + frame.split(sequence).length - 1,
+    0,
+  );
+}
+
+async function expectSequenceCount(
+  frames: readonly string[],
+  sequence: string,
+  count: number,
+): Promise<void> {
+  await vi.waitFor(() => expect(sequenceCount(frames, sequence)).toBe(count));
+}
+
+function ThrowAfterMouseActivation(): never {
+  throw new Error("render failed after mouse activation");
 }
 
 function fileChange(
@@ -111,6 +144,178 @@ function tallReviewProposal(): InitProposal {
 }
 
 describe("InitApp", () => {
+  it("enables mouse reporting once on mount without rendering the controls in the panel", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
+    const panelFrames = view.frames.filter((frame) =>
+      stripVTControlCharacters(frame).includes("SETUP"),
+    );
+
+    expect(panelFrames).not.toHaveLength(0);
+    for (const frame of panelFrames) {
+      expect(frame).not.toContain(ENABLE_MOUSE);
+      expect(frame).not.toContain(DISABLE_MOUSE);
+    }
+  });
+
+  it("disables mouse reporting when Apply exits the review", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
+
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("APPLY CHANGES"));
+    view.stdin.write("y");
+
+    await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
+    expect(onDecision).toHaveBeenCalledOnce();
+    expect(onDecision).toHaveBeenCalledWith(proposal);
+  });
+
+  it("disables mouse reporting when setup is cancelled", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
+
+    view.stdin.write("n");
+
+    await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
+    expect(onDecision).toHaveBeenCalledOnce();
+    expect(onDecision).toHaveBeenCalledWith(false);
+  });
+
+  it("disables mouse reporting when the component is unmounted", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
+
+    view.unmount();
+
+    await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
+  });
+
+  it("disables mouse reporting before the renderer leaves the alternate screen", async () => {
+    const output: string[] = [];
+    const stdout = new PassThrough() as PassThrough & NodeJS.WriteStream;
+    const stderr = new PassThrough() as PassThrough & NodeJS.WriteStream;
+    const stdin = new PassThrough() as PassThrough & NodeJS.ReadStream;
+    Object.defineProperties(stdout, {
+      columns: { value: 80 },
+      isTTY: { value: true },
+      rows: { value: DEFAULT_TEST_ROWS },
+    });
+    Object.defineProperties(stdin, {
+      isTTY: { value: true },
+      ref: { value: vi.fn() },
+      setRawMode: { value: vi.fn() },
+      unref: { value: vi.fn() },
+    });
+    stdout.on("data", (chunk: Buffer) => output.push(chunk.toString()));
+    const cursorWrite = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const app = renderInk(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+      {
+        ...initRenderOptions(),
+        stdout,
+        stderr,
+        stdin,
+        debug: true,
+        interactive: true,
+      },
+    );
+
+    try {
+      await vi.waitFor(() => expect(output.join("")).toContain(ENABLE_MOUSE));
+      app.unmount();
+      await app.waitUntilExit();
+
+      const writes = output.join("");
+      const enableIndex = writes.indexOf(ENABLE_MOUSE);
+      const disableIndex = writes.indexOf(DISABLE_MOUSE);
+      const alternateScreenExit = writes.indexOf("\u001b[?1049l");
+      expect(disableIndex).toBeGreaterThan(enableIndex);
+      expect(alternateScreenExit).toBeGreaterThan(disableIndex);
+    } finally {
+      cursorWrite.mockRestore();
+      stdout.destroy();
+      stderr.destroy();
+      stdin.destroy();
+    }
+  });
+
+  it("disables mouse reporting when rendering fails after activation", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    try {
+      await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
+      view.rerender(<ThrowAfterMouseActivation />);
+      await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("clips the whole branded setup frame to a short live terminal", async () => {
     const view = render(
       <InitApp
@@ -819,22 +1024,23 @@ describe("InitApp", () => {
       />,
     );
 
-    expect(view.lastFrame()).toContain("▀▀▀▀█ █▀▀▀▀");
-    expect(view.lastFrame()).toContain("SETUP");
-    expect(view.lastFrame()).toContain("Install pre-commit hook: Yes");
-    expect(view.lastFrame()).toContain("Method: Git pre-commit hook");
-    expect(view.lastFrame()).toContain("CHECKS");
-    expect(view.lastFrame()).toContain("➜ Profile:");
-    expect(view.lastFrame()).toContain("[✽] formatting");
-    expect(view.lastFrame()).toContain("VULNERABILITY SERVICE OUTAGES");
-    expect(view.lastFrame()).toContain(
+    const initialFrame = lastVisibleFrame(view);
+    expect(initialFrame).toContain("▀▀▀▀█ █▀▀▀▀");
+    expect(initialFrame).toContain("SETUP");
+    expect(initialFrame).toContain("Install pre-commit hook: Yes");
+    expect(initialFrame).toContain("Method: Git pre-commit hook");
+    expect(initialFrame).toContain("CHECKS");
+    expect(initialFrame).toContain("➜ Profile:");
+    expect(initialFrame).toContain("[✽] formatting");
+    expect(initialFrame).toContain("VULNERABILITY SERVICE OUTAGES");
+    expect(initialFrame).toContain(
       "What should Zedbee do if OSV cannot be reached?",
     );
-    expect(view.lastFrame()).toContain("[✽] Block the commit (recommended)");
-    expect(view.lastFrame()).toContain("[ ] Warn and allow the commit");
-    expect(view.lastFrame()).toContain("Enter Review");
-    expect(view.lastFrame()).not.toContain("B/W Outage behavior");
-    expect(view.lastFrame()).not.toContain("exact:");
+    expect(initialFrame).toContain("[✽] Block the commit (recommended)");
+    expect(initialFrame).toContain("[ ] Warn and allow the commit");
+    expect(initialFrame).toContain("Enter Review");
+    expect(initialFrame).not.toContain("B/W Outage behavior");
+    expect(initialFrame).not.toContain("exact:");
 
     view.stdin.write("\u001b[C");
     await new Promise((resolve) => setImmediate(resolve));
@@ -910,7 +1116,7 @@ describe("InitApp", () => {
       />,
     );
 
-    const frame = view.lastFrame()!;
+    const frame = lastVisibleFrame(view);
     expect(frame).toContain("ZEDBEE");
     expect(frame).toContain("SETUP");
     expect(
@@ -961,5 +1167,48 @@ describe("InitApp", () => {
     expect(write).toHaveBeenCalledTimes(1);
     expect(write).toHaveBeenCalledWith("\u001b[H");
     write.mockRestore();
+  });
+});
+
+describe("runInitPrompt mouse fallback", () => {
+  it("defensively disables reporting when waitUntilExit rejects without React cleanup", async () => {
+    const failure = new Error("wait failed after mouse activation");
+    const waitUntilExit = vi.fn(async () => Promise.reject(failure));
+    const renderMock = vi.fn((_node: unknown, _options?: unknown) => {
+      process.stdout.write(ENABLE_MOUSE);
+      return { waitUntilExit };
+    });
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    vi.resetModules();
+    vi.doMock("ink", async () => {
+      const actual = await vi.importActual<typeof import("ink")>("ink");
+      return { ...actual, render: renderMock };
+    });
+
+    try {
+      const { runInitPrompt } = await import("../../src/ui/init-app.js");
+      await expect(
+        runInitPrompt(
+          proposal,
+          { width: 80, color: false, animations: false },
+          () => proposal,
+        ),
+      ).rejects.toThrow("wait failed after mouse activation");
+
+      expect(waitUntilExit).toHaveBeenCalledOnce();
+      expect(renderMock.mock.calls[0]?.[1]).toMatchObject({
+        alternateScreen: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      });
+      expect(write.mock.calls.map(([value]) => String(value))).toEqual([
+        ENABLE_MOUSE,
+        DISABLE_MOUSE,
+      ]);
+    } finally {
+      write.mockRestore();
+      vi.doUnmock("ink");
+      vi.resetModules();
+    }
   });
 });

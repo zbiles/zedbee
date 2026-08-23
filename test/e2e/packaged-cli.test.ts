@@ -499,6 +499,11 @@ describe("packaged Zedbee CLI", () => {
     ]);
 
     expect(result.exitCode).toBe(0);
+    expect(result.stdout).not.toContain("\u001b[?1000h");
+    expect(result.stdout).not.toContain("\u001b[?1006h");
+    expect(result.stdout).not.toContain("\u001b[?1006l");
+    expect(result.stdout).not.toContain("\u001b[?1000l");
+    expect(result.stderr).toBe("");
     expect(JSON.parse(result.stdout)).toMatchObject({ applied: true });
     expect(await repository.read(".zedbeerc.jsonc")).toContain(
       '"profile": "fast"',

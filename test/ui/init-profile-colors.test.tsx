@@ -36,7 +36,7 @@ describe("InitApp profile colors", () => {
       files: [],
     };
 
-    const frame = render(
+    const view = render(
       React.createElement(InitApp, {
         proposal,
         proposalForSelection: () => proposal,
@@ -45,7 +45,10 @@ describe("InitApp profile colors", () => {
         animations: false,
         onDecision: () => undefined,
       }),
-    ).lastFrame()!;
+    );
+    const frame = view.frames.findLast((candidate) =>
+      candidate.includes("recommended"),
+    )!;
 
     const profileLine = frame
       .split("\n")

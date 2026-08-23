@@ -6,6 +6,7 @@ import {
   render,
   useApp,
   useInput,
+  useStdout,
   useWindowSize,
   type DOMElement,
 } from "ink";
@@ -39,6 +40,7 @@ import {
   TerminalViewport,
   type TerminalViewportMetrics,
 } from "./terminal-viewport.js";
+import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface InitAppProps extends InitPromptOptions {
@@ -50,6 +52,7 @@ export interface InitAppProps extends InitPromptOptions {
     osvUnavailable: InitOsvUnavailable,
   ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
+  readonly onMouseCleanupReady?: (cleanup: () => void) => void;
 }
 
 const PROFILE_EXPLANATIONS = {
@@ -498,8 +501,10 @@ export function InitApp({
   terminalSize,
   color,
   onDecision,
+  onMouseCleanupReady,
 }: InitAppProps) {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const liveSize = useWindowSize();
   const columns = terminalSize?.columns ?? liveSize.columns ?? width;
   const rows = terminalSize?.rows ?? liveSize.rows ?? 24;
@@ -542,6 +547,12 @@ export function InitApp({
       ),
     [baseProfile, osvUnavailable, proposalForSelection, selected],
   );
+
+  useEffect(() => {
+    const cleanup = enableTerminalMouse(stdout);
+    onMouseCleanupReady?.(cleanup);
+    return cleanup;
+  }, [onMouseCleanupReady, stdout]);
 
   useEffect(() => {
     const previous = lastSetupRevealRef.current;
@@ -731,17 +742,25 @@ export async function runInitPrompt(
   ) => InitProposal,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
-  const app = render(
-    <InitApp
-      proposal={proposal}
-      proposalForSelection={proposalForSelection}
-      {...options}
-      onDecision={(value) => {
-        decision = value;
-      }}
-    />,
-    initRenderOptions(),
-  );
-  await app.waitUntilExit();
-  return decision;
+  let cleanupMouse = () => disableTerminalMouse(process.stdout);
+  try {
+    const app = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={proposalForSelection}
+        {...options}
+        onDecision={(value) => {
+          decision = value;
+        }}
+        onMouseCleanupReady={(cleanup) => {
+          cleanupMouse = cleanup;
+        }}
+      />,
+      initRenderOptions(),
+    );
+    await app.waitUntilExit();
+    return decision;
+  } finally {
+    cleanupMouse();
+  }
 }
