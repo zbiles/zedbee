@@ -101,6 +101,15 @@ function scrollableReviewProposal(): InitProposal {
   };
 }
 
+function tallReviewProposal(): InitProposal {
+  return {
+    ...proposal,
+    files: Array.from({ length: 16 }, (_, index) =>
+      fileChange(`generated-${String(index + 1).padStart(2, "0")}.txt`, null),
+    ),
+  };
+}
+
 describe("InitApp", () => {
   it("clips the whole branded setup frame to a short live terminal", async () => {
     const view = render(
@@ -292,6 +301,110 @@ describe("InitApp", () => {
 
     view.stdin.write("\r");
     await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewScrolled));
+  });
+
+  it("replays setup focus reveal after the terminal resizes during Review", async () => {
+    const elementFor = (rows: number) => (
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 109, rows }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />
+    );
+    const view = render(elementFor(DEFAULT_TEST_ROWS));
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await settleInput();
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("APPLY CHANGES"));
+
+    view.rerender(elementFor(20));
+    await vi.waitFor(() => {
+      expect(renderedLines(view.lastFrame()!)).toHaveLength(20);
+      expect(view.lastFrame()).toContain("↓ MORE BELOW");
+    });
+    view.stdin.write("b");
+
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("VULNERABILITY SERVICE OUTAGES");
+      expect(view.lastFrame()).toContain("REVIEW CHANGES");
+      expect(view.lastFrame()).not.toContain("APPLY CHANGES");
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(view.lastFrame()).toContain("↓ MORE BELOW");
+    });
+  });
+
+  it("restores a setup offset beyond the shorter Review scroll range", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+
+    for (let index = 0; index < 4; index += 1) {
+      view.stdin.write("\u001b[6~");
+    }
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
+    });
+    const setupBottom = view.lastFrame()!;
+
+    view.stdin.write("\r");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("REVIEW CHANGES"),
+    );
+    await settleInput();
+    view.stdin.write("b");
+
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(setupBottom));
+  });
+
+  it("restores a Review offset beyond the shorter setup scroll range", async () => {
+    const reviewProposal = tallReviewProposal();
+    const view = render(
+      <InitApp
+        proposal={reviewProposal}
+        proposalForSelection={() => reviewProposal}
+        width={80}
+        terminalSize={SHORT_TERMINAL}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    view.stdin.write("\r");
+    await vi.waitFor(() =>
+      expect(view.lastFrame()).toContain("REVIEW CHANGES"),
+    );
+    for (let index = 0; index < 8; index += 1) {
+      view.stdin.write("\u001b[6~");
+    }
+    await vi.waitFor(() => {
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE");
+      expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
+    });
+    const reviewBottom = view.lastFrame()!;
+
+    view.stdin.write("b");
+    await vi.waitFor(() => expect(view.lastFrame()).toContain("SETUP"));
+    view.stdin.write("\r");
+
+    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewBottom));
   });
 
   it.each([

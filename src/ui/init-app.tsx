@@ -522,9 +522,16 @@ export function InitApp({
   );
   const activeTargetRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
-  const phaseRef = useRef(phase);
   const setupOffsetRef = useRef(setupOffset);
-  phaseRef.current = phase;
+  const lastSetupRevealRef = useRef<
+    | Readonly<{
+        columns: number;
+        rows: number;
+        focus: number;
+      }>
+    | undefined
+  >(undefined);
+  const pendingSetupGeometryRef = useRef(false);
   setupOffsetRef.current = setupOffset;
   const reviewedProposal = useMemo(
     () =>
@@ -537,7 +544,21 @@ export function InitApp({
   );
 
   useEffect(() => {
-    if (phaseRef.current !== "configure") return;
+    const previous = lastSetupRevealRef.current;
+    const geometryChanged =
+      previous === undefined ||
+      previous.columns !== columns ||
+      previous.rows !== rows;
+    if (phase !== "configure") {
+      pendingSetupGeometryRef.current = geometryChanged;
+      return;
+    }
+    const focusChanged = previous === undefined || previous.focus !== focus;
+    const shouldReveal =
+      focusChanged || geometryChanged || pendingSetupGeometryRef.current;
+    pendingSetupGeometryRef.current = false;
+    lastSetupRevealRef.current = { columns, rows, focus };
+    if (!shouldReveal) return;
     const target = activeTargetRef.current;
     const content = contentRef.current;
     if (target === null || content === null) return;
@@ -558,7 +579,7 @@ export function InitApp({
       contentBounds.height,
     );
     if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
-  }, [columns, focus, rows]);
+  }, [columns, focus, phase, rows]);
 
   const scrollBy = (delta: number) => {
     const setOffset = phase === "configure" ? setSetupOffset : setReviewOffset;
@@ -666,6 +687,7 @@ export function InitApp({
     phase === "configure" ? setSetupOffset : setReviewOffset;
   return (
     <TerminalViewport
+      key={phase}
       width={columns}
       height={rows}
       offset={activeOffset}
