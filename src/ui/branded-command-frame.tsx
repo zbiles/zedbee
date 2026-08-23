@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Box, Text } from "ink";
-import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
+import { PixelBee, pixelBeeHeight, pixelBeeWidth } from "./pixel-bee.js";
 import {
   PixelWordmark,
   pixelWordmarkHeight,
@@ -92,7 +92,8 @@ export function BrandedCommandFrame({
   const showBee =
     showWordmark && brandWidth + 2 + beeWidth <= availableBrandWidth;
   const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
-  const beeTop = compactBrand ? -2 : -5;
+  const beeTop =
+    pixelWordmarkHeight(compactBrand) - pixelBeeHeight(compactBrand) + 1;
   const brandGroupWidth = showWordmark
     ? brandWidth + (showBee ? 2 + beeWidth : 0)
     : Math.min(availableBrandWidth, 6);

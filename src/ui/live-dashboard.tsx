@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
-import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
+import { PixelBee, pixelBeeHeight, pixelBeeWidth } from "./pixel-bee.js";
 import {
   PixelClock,
   pixelClockRows,
@@ -486,7 +486,8 @@ export function LiveDashboard({
   const contentWidth = Math.max(1, frameWidth - 4 - horizontalPadding);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
   const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
-  const beeTop = compactBrand ? -2 : -5;
+  const beeTop =
+    pixelWordmarkHeight(compactBrand) - pixelBeeHeight(compactBrand) + 1;
   const brandWidth = narrowFrame
     ? "ZEDBEE".length
     : pixelWordmarkWidth(compactBrand);

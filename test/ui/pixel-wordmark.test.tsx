@@ -8,6 +8,7 @@ afterEach(() => {
   } else {
     process.env.FORCE_COLOR = originalForceColor;
   }
+  vi.doUnmock("../../src/ui/pixel-bee.js");
   vi.resetModules();
 });
 
@@ -44,6 +45,61 @@ describe("PixelWordmark", () => {
     expect(pixelWordmarkHeight(false)).toBe(5);
     expect(lines).toHaveLength(5);
     expect(lines[0]).toContain("██████████");
+  });
+
+  it("positions both compact shared-header bees from their reported height", async () => {
+    vi.doMock("../../src/ui/pixel-bee.js", async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import("../../src/ui/pixel-bee.js")>();
+      return {
+        ...actual,
+        pixelBeeHeight: (compact: boolean) =>
+          actual.pixelBeeHeight(compact) - (compact ? 1 : 0),
+      };
+    });
+    const React = await import("react");
+    const { Text } = await import("ink");
+    const { render } = await import("ink-testing-library");
+    const { BrandedCommandFrame } =
+      await import("../../src/ui/branded-command-frame.js");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const { pixelBeeWidth } = await import("../../src/ui/pixel-bee.js");
+    const { pixelWordmarkWidth } =
+      await import("../../src/ui/pixel-wordmark.js");
+    const renderedBeeOffset = (frame: string): number => {
+      const lines = frame.split("\n");
+      const wordmarkTop = lines.findIndex((line) => line.includes("▀▀▀▀█"));
+      const wordmarkLeft = lines[wordmarkTop]!.indexOf("▀▀▀▀█");
+      const beeLeft = wordmarkLeft + pixelWordmarkWidth(true) + 2;
+      const beeWidth = pixelBeeWidth(true);
+      const beeTop = lines.findIndex((line) => {
+        const beeCells = line.slice(beeLeft, beeLeft + beeWidth);
+        return /[▀▄█]/u.test(beeCells) && !/^█+$/u.test(beeCells);
+      });
+      return wordmarkTop - beeTop;
+    };
+    const commandFrame = render(
+      React.createElement(BrandedCommandFrame, {
+        width: 109,
+        color: false,
+        children: React.createElement(Text, null, "CONTENT"),
+      }),
+    ).lastFrame()!;
+    const liveFrame = render(
+      React.createElement(LiveDashboard, {
+        events: [],
+        startedAt: 0,
+        elapsedMs: 0,
+        width: 96,
+        color: false,
+        animations: false,
+      }),
+    ).lastFrame()!;
+
+    expect([
+      renderedBeeOffset(commandFrame),
+      renderedBeeOffset(liveFrame),
+    ]).toEqual([1, 1]);
   });
 
   it("applies the black live-dashboard surface behind the frame and brand", async () => {
