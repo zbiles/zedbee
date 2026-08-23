@@ -61,6 +61,42 @@ describe("TerminalViewport", () => {
     });
   });
 
+  it.each([
+    [1, 0, [tenLines[0]]],
+    [1, 9, [tenLines[9]]],
+    [2, 0, tenLines.slice(0, 2)],
+    [2, 8, tenLines.slice(8, 10)],
+  ])(
+    "devotes all %i short viewport rows to reachable content at offset %i",
+    async (height, offset, expectedLines) => {
+      const onMetricsChange =
+        vi.fn<(metrics: TerminalViewportMetrics) => void>();
+      const view = render(
+        <TerminalViewport
+          width={width}
+          height={height}
+          offset={offset}
+          color={false}
+          onOffsetChange={() => undefined}
+          onMetricsChange={onMetricsChange}
+        >
+          <Fixture />
+        </TerminalViewport>,
+      );
+
+      await vi.waitFor(() => {
+        const frame = view.lastFrame()!;
+        expect(frame.split("\n")).toEqual(expectedLines);
+        expect(frame).not.toContain("MORE ABOVE");
+        expect(frame).not.toContain("MORE BELOW");
+        expect(onMetricsChange).toHaveBeenLastCalledWith({
+          contentHeight: 10,
+          visibleHeight: height,
+        });
+      });
+    },
+  );
+
   it("clips the complete child frame between stable overflow indicator rows", async () => {
     const top = viewport(6, 0);
     const middle = viewport(6, 3);
@@ -95,6 +131,46 @@ describe("TerminalViewport", () => {
     });
   });
 
+  it("uses single-arrow indicators that stay within one row at narrow widths", async () => {
+    const narrowViewport = (offset: number) =>
+      render(
+        <TerminalViewport
+          width={11}
+          height={5}
+          offset={offset}
+          color={false}
+          onOffsetChange={() => undefined}
+        >
+          <Box flexDirection="column">
+            {Array.from({ length: 10 }, (_, index) => (
+              <Text key={index}>{`L${index + 1}`}</Text>
+            ))}
+          </Box>
+        </TerminalViewport>,
+      );
+    const top = narrowViewport(0);
+    const middle = narrowViewport(3);
+    const bottom = narrowViewport(7);
+
+    await vi.waitFor(() => {
+      const topLines = top.lastFrame()!.split("\n");
+      const middleLines = middle.lastFrame()!.split("\n");
+      const bottomLines = bottom.lastFrame()!.split("\n");
+
+      expect(topLines).toHaveLength(5);
+      expect(middleLines).toHaveLength(5);
+      expect(bottomLines).toHaveLength(5);
+      expect(topLines[4]?.trim()).toBe("↓");
+      expect(middleLines[0]?.trim()).toBe("↑");
+      expect(middleLines[4]?.trim()).toBe("↓");
+      expect(bottomLines[0]?.trim()).toBe("↑");
+      expect(bottomLines[4]).toBe("");
+      expect(top.lastFrame()).not.toContain("MORE");
+      expect(middle.lastFrame()).not.toContain("MORE");
+      expect(bottom.lastFrame()).not.toContain("MORE");
+    });
+  });
+
   it("keeps the full content width instead of reserving a scrollbar column", async () => {
     const view = viewport(6, 0);
 
@@ -105,6 +181,38 @@ describe("TerminalViewport", () => {
       expect(lines).toHaveLength(6);
     });
   });
+
+  it.each([
+    [2, 1, 0],
+    [5, 10, 1],
+  ])(
+    "clips an over-wide child to the public viewport width at height %i",
+    async (height, contentLines, firstContentRow) => {
+      const view = render(
+        <TerminalViewport
+          width={10}
+          height={height}
+          offset={0}
+          color={false}
+          onOffsetChange={() => undefined}
+        >
+          <Box width={20} flexShrink={0} flexDirection="column">
+            {Array.from({ length: contentLines }, (_, index) => (
+              <Text key={index}>abcdefghijklmnopqrst</Text>
+            ))}
+          </Box>
+        </TerminalViewport>,
+      );
+
+      await vi.waitFor(() => {
+        const lines = view.lastFrame()!.split("\n");
+        expect(lines).toHaveLength(height);
+        expect(lines[firstContentRow]).toBe("abcdefghij");
+        expect(lines.every((line) => line.length <= 10)).toBe(true);
+        if (contentLines > height) expect(lines[height - 1]?.trim()).toBe("↓");
+      });
+    },
+  );
 
   it("requests a newly clamped offset when the viewport or content changes", async () => {
     const onOffsetChange = vi.fn<(offset: number) => void>();
@@ -141,6 +249,40 @@ describe("TerminalViewport", () => {
 
     view.rerender(viewFor(5, 6));
     await vi.waitFor(() => expect(onOffsetChange).toHaveBeenLastCalledWith(3));
+  });
+
+  it("deduplicates a clamp request across rerenders until the offset catches up", async () => {
+    const requests: number[] = [];
+    const viewFor = (height: number, offset: number) => (
+      <TerminalViewport
+        width={width}
+        height={height}
+        offset={offset}
+        color={false}
+        onOffsetChange={(nextOffset) => requests.push(nextOffset)}
+      >
+        <Fixture />
+      </TerminalViewport>
+    );
+    const view = render(viewFor(6, 99));
+
+    await vi.waitFor(() => expect(requests).toEqual([6]));
+
+    view.rerender(viewFor(6, 99));
+    view.rerender(viewFor(6, 99));
+    view.rerender(viewFor(6, 99));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(requests).toEqual([6]);
+
+    view.rerender(viewFor(5, 99));
+    await vi.waitFor(() => expect(requests).toEqual([6, 7]));
+
+    view.rerender(viewFor(5, 7));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(requests).toEqual([6, 7]);
+
+    view.rerender(viewFor(5, 99));
+    await vi.waitFor(() => expect(requests).toEqual([6, 7, 7]));
   });
 
   it("reports changed metrics and exposes the measured content element", async () => {

@@ -25,6 +25,13 @@ interface IndicatorRowProps {
   readonly children?: ReactNode;
 }
 
+interface ClampRequest {
+  readonly offset: number;
+  readonly contentHeight: number;
+  readonly visibleHeight: number;
+  readonly requestedOffset: number;
+}
+
 function IndicatorRow({ width, color, children }: IndicatorRowProps) {
   return (
     <Box
@@ -61,18 +68,46 @@ export function TerminalViewport({
   const contentHeight = measuredContent.height;
   const overflows =
     measuredContent.hasMeasured && contentHeight > terminalHeight;
-  const visibleHeight = overflows
+  const showIndicators = overflows && terminalHeight >= 3;
+  const visibleHeight = showIndicators
     ? Math.max(1, terminalHeight - 2)
     : terminalHeight;
   const clampedOffset = clampScrollOffset(offset, contentHeight, visibleHeight);
   const previousMetrics = useRef<TerminalViewportMetrics | undefined>(
     undefined,
   );
+  const previousClampRequest = useRef<ClampRequest | undefined>(undefined);
 
   useEffect(() => {
     if (!measuredContent.hasMeasured) return;
-    if (clampedOffset !== offset) onOffsetChange(clampedOffset);
-  }, [clampedOffset, measuredContent.hasMeasured, offset, onOffsetChange]);
+    if (clampedOffset === offset) {
+      previousClampRequest.current = undefined;
+      return;
+    }
+    const previous = previousClampRequest.current;
+    if (
+      previous?.offset === offset &&
+      previous.contentHeight === contentHeight &&
+      previous.visibleHeight === visibleHeight &&
+      previous.requestedOffset === clampedOffset
+    ) {
+      return;
+    }
+    previousClampRequest.current = {
+      offset,
+      contentHeight,
+      visibleHeight,
+      requestedOffset: clampedOffset,
+    };
+    onOffsetChange(clampedOffset);
+  }, [
+    clampedOffset,
+    contentHeight,
+    measuredContent.hasMeasured,
+    offset,
+    onOffsetChange,
+    visibleHeight,
+  ]);
 
   useEffect(() => {
     if (!measuredContent.hasMeasured || onMetricsChange === undefined) return;
@@ -106,12 +141,13 @@ export function TerminalViewport({
     </Box>
   );
 
-  if (!overflows) {
+  if (!showIndicators) {
     return (
       <Box
         width={terminalWidth}
         height={terminalHeight}
         flexDirection="column"
+        overflowX="hidden"
         overflowY="hidden"
       >
         {content}
@@ -121,22 +157,30 @@ export function TerminalViewport({
 
   const hasMoreAbove = clampedOffset > 0;
   const hasMoreBelow = clampedOffset + visibleHeight < contentHeight;
+  const aboveIndicator = terminalWidth >= 12 ? "↑ MORE ABOVE" : "↑";
+  const belowIndicator = terminalWidth >= 12 ? "↓ MORE BELOW" : "↓";
 
   return (
-    <Box width={terminalWidth} height={terminalHeight} flexDirection="column">
+    <Box
+      width={terminalWidth}
+      height={terminalHeight}
+      flexDirection="column"
+      overflowX="hidden"
+    >
       <IndicatorRow width={terminalWidth} color={color}>
-        {hasMoreAbove ? "↑ MORE ABOVE" : undefined}
+        {hasMoreAbove ? aboveIndicator : undefined}
       </IndicatorRow>
       <Box
         width={terminalWidth}
         height={visibleHeight}
         flexShrink={0}
+        overflowX="hidden"
         overflowY="hidden"
       >
         {content}
       </Box>
       <IndicatorRow width={terminalWidth} color={color}>
-        {hasMoreBelow ? "↓ MORE BELOW" : undefined}
+        {hasMoreBelow ? belowIndicator : undefined}
       </IndicatorRow>
     </Box>
   );
