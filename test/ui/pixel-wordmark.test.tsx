@@ -17,9 +17,8 @@ describe("PixelWordmark", () => {
     vi.resetModules();
     const React = await import("react");
     const { render } = await import("ink-testing-library");
-    const { PixelWordmark, pixelWordmarkHeight } = await import(
-      "../../src/ui/pixel-wordmark.js",
-    );
+    const { PixelWordmark, pixelWordmarkHeight } =
+      await import("../../src/ui/pixel-wordmark.js");
     const frame = render(
       React.createElement(PixelWordmark, { color: false, compact: true }),
     ).lastFrame()!;
@@ -36,12 +35,11 @@ describe("PixelWordmark", () => {
     vi.resetModules();
     const React = await import("react");
     const { render } = await import("ink-testing-library");
-    const { PixelWordmark, pixelWordmarkHeight } = await import(
-      "../../src/ui/pixel-wordmark.js",
-    );
-    const lines = render(
-      React.createElement(PixelWordmark, { color: false }),
-    ).lastFrame()!.split("\n");
+    const { PixelWordmark, pixelWordmarkHeight } =
+      await import("../../src/ui/pixel-wordmark.js");
+    const lines = render(React.createElement(PixelWordmark, { color: false }))
+      .lastFrame()!
+      .split("\n");
 
     expect(pixelWordmarkHeight(false)).toBe(5);
     expect(lines).toHaveLength(5);
@@ -426,9 +424,10 @@ describe("PixelWordmark", () => {
         animations: false,
       }),
     ).lastFrame()!;
-    const progressLine = frame
-      .split("\n")
-      .find((line) => line.replaceAll(/\u001b\[[0-9;]*m/gu, "").includes("▄▄"));
+    const progressLine = frame.split("\n").find((line) => {
+      const visible = line.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+      return /▄{10,}/u.test(visible);
+    });
 
     expect(progressLine).toBeDefined();
     expect(progressLine).toContain("\u001b[38;2;50;54;62m");

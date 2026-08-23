@@ -60,9 +60,9 @@ function CompactPixel({
 }: PixelPair & {
   color: boolean;
 }) {
-  const glyph = halfBlockGlyph(top !== "0", bottom !== "0");
   const foreground = top !== "0" ? top : bottom;
   const mixed = top !== "0" && bottom !== "0" && top !== bottom;
+  const glyph = mixed ? "▀" : halfBlockGlyph(top !== "0", bottom !== "0");
   return (
     <Text
       {...(color && foreground !== "0"
