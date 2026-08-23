@@ -12,6 +12,38 @@ afterEach(() => {
 });
 
 describe("PixelWordmark", () => {
+  it("renders the compact wordmark as three proportional half-block rows", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelWordmark, pixelWordmarkHeight } = await import(
+      "../../src/ui/pixel-wordmark.js",
+    );
+    const frame = render(
+      React.createElement(PixelWordmark, { color: false, compact: true }),
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+
+    expect(pixelWordmarkHeight(true)).toBe(3);
+    expect(lines).toHaveLength(3);
+    expect(lines[0]).toContain("█▀▀▀▀");
+    expect(lines[2]).toContain("▀▀▀▀▀");
+  });
+
+  it("keeps the full-size wordmark at five rows with two-column pixels", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelWordmark, pixelWordmarkHeight } = await import(
+      "../../src/ui/pixel-wordmark.js",
+    );
+    const lines = render(
+      React.createElement(PixelWordmark, { color: false }),
+    ).lastFrame()!.split("\n");
+
+    expect(pixelWordmarkHeight(false)).toBe(5);
+    expect(lines).toHaveLength(5);
+    expect(lines[0]).toContain("██████████");
+  });
+
   it("applies the black live-dashboard surface behind the frame and brand", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();

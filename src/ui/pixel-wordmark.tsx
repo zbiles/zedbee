@@ -1,5 +1,6 @@
 import { Text } from "ink";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
+import { halfBlockGlyph, pairPixelRows } from "./compact-pixels.js";
 
 const LETTERS = Object.freeze({
   Z: ["11111", "00001", "11111", "10000", "11111"],
@@ -20,6 +21,10 @@ export function pixelWordmarkWidth(compact: boolean): number {
   return WORDMARK_GRID[0]!.length * (compact ? 1 : 2);
 }
 
+export function pixelWordmarkHeight(compact: boolean): number {
+  return compact ? Math.ceil(WORDMARK_GRID.length / 2) : WORDMARK_GRID.length;
+}
+
 export function PixelWordmark({
   color,
   compact = false,
@@ -27,13 +32,22 @@ export function PixelWordmark({
   color: boolean;
   compact?: boolean;
 }) {
-  const filled = compact ? "█" : "██";
-  const empty = compact ? " " : "  ";
+  const output = compact
+    ? pairPixelRows(WORDMARK_GRID)
+        .map((row) =>
+          row
+            .map(({ top, bottom }) =>
+              halfBlockGlyph(top === "1", bottom === "1"),
+            )
+            .join(""),
+        )
+        .join("\n")
+    : WORDMARK_GRID.map((row) =>
+        [...row].map((pixel) => (pixel === "1" ? "██" : "  ")).join(""),
+      ).join("\n");
   return (
     <Text {...colorProp(color, ZEDBEE_THEME.wordmark)}>
-      {WORDMARK_GRID.map((row) =>
-        [...row].map((pixel) => (pixel === "1" ? filled : empty)).join(""),
-      ).join("\n")}
+      {output}
     </Text>
   );
 }
