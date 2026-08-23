@@ -1,31 +1,106 @@
-import { render } from "ink-testing-library";
-import { describe, expect, it } from "vitest";
-import { PixelBee } from "../../src/ui/pixel-bee.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const originalForceColor = process.env.FORCE_COLOR;
+
+beforeEach(() => {
+  process.env.FORCE_COLOR = "3";
+  vi.resetModules();
+});
+
+afterEach(() => {
+  if (originalForceColor === undefined) {
+    delete process.env.FORCE_COLOR;
+  } else {
+    process.env.FORCE_COLOR = originalForceColor;
+  }
+  vi.resetModules();
+});
 
 describe("PixelBee", () => {
-  it("uses the same two-column cell width for transparent and filled pixels", () => {
-    const frame = render(<PixelBee color={false} />).lastFrame()!;
-    const firstRow = frame.split("\n")[0]!;
-
-    expect(firstRow.indexOf("██")).toBe(6);
-  });
-
-  it("builds motion trails from the bee's square pixel cells", () => {
+  it("renders the compact bee as six proportional half-block rows", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelBee } = await import("../../src/ui/pixel-bee.js");
     const frame = render(
-      <PixelBee mirrored motion color={false} />,
-    ).lastFrame()!;
-    const stingerRow = frame.split("\n")[7]!;
-
-    expect(stingerRow).toMatch(/^████████ {4}████████ {4}████████ /u);
-  });
-
-  it("uses one terminal column per logical cell in the compact brand", () => {
-    const frame = render(
-      <PixelBee compact motion color={false} />,
+      React.createElement(PixelBee, { compact: true, color: false }),
     ).lastFrame()!;
     const lines = frame.split("\n");
 
-    expect(lines[0]!.indexOf("█")).toBe(3);
-    expect(lines[7]).toMatch(/^██████████ ████ {2}████ {2}████$/u);
+    expect(lines).toHaveLength(6);
+    expect(lines.map((line) => line.padEnd(10))).toEqual([
+      "  ▄██ ▄██▄",
+      "  ▀██ ███▀",
+      " ▄▄█████▄ ",
+      "██████████",
+      "▀████████▀",
+      "   ▀▀▀▀▀  ",
+    ]);
+  });
+
+  it("keeps full-size bee geometry unchanged", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelBee } = await import("../../src/ui/pixel-bee.js");
+    const lines = render(React.createElement(PixelBee, { color: false }))
+      .lastFrame()!
+      .split("\n");
+
+    expect(lines).toHaveLength(11);
+    expect(lines[0]!.indexOf("██")).toBe(6);
+  });
+
+  it("compacts mirrored motion trails to the stinger half-row", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelBee } = await import("../../src/ui/pixel-bee.js");
+    const frame = render(
+      React.createElement(PixelBee, {
+        compact: true,
+        mirrored: true,
+        motion: true,
+        color: false,
+      }),
+    ).lastFrame()!;
+    const lines = frame.split("\n");
+
+    expect(lines).toHaveLength(6);
+    expect(lines.join("\n")).toContain("████");
+  });
+
+  it("reports compact height for sparse header placement", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelBee, pixelBeeHeight } =
+      await import("../../src/ui/pixel-bee.js");
+    expect(pixelBeeHeight(true)).toBe(6);
+    expect(pixelBeeHeight(false)).toBe(11);
+    const lines = render(
+      React.createElement(PixelBee, {
+        compact: true,
+        sparse: true,
+        color: false,
+      }),
+    )
+      .lastFrame()!
+      .split("\n");
+
+    expect(lines).toHaveLength(6);
+  });
+
+  it("uses foreground and background colors for mixed compact half-cells", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render: renderWithColor } = await import("ink-testing-library");
+    const { PixelBee: ColoredPixelBee } =
+      await import("../../src/ui/pixel-bee.js");
+    const frame = renderWithColor(
+      React.createElement(ColoredPixelBee, { compact: true, color: true }),
+    ).lastFrame()!;
+
+    expect(frame).toMatch(/\u001b\[48;2;[^m]+m.*\u001b\[38;2;[^m]+m█/u);
+    expect(frame).toContain("\u001b[38;2;254;205;35m");
+    expect(frame).toContain("\u001b[38;2;243;244;246m");
+    expect(frame).toContain("\u001b[38;2;46;46;46m");
   });
 });

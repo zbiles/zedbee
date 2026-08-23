@@ -1,5 +1,10 @@
 import { Box, Text } from "ink";
 import { BEE_GRID, mirrorBee, motionDashGrid } from "./bee-grid.js";
+import {
+  halfBlockGlyph,
+  pairPixelRows,
+  type PixelPair,
+} from "./compact-pixels.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 type Pixel = "0" | "w" | "y" | "b";
@@ -16,6 +21,10 @@ function pixelColor(pixel: Pixel): string {
 
 export function pixelBeeWidth(compact: boolean): number {
   return BEE_GRID[0]!.length * (compact ? 1 : 2);
+}
+
+export function pixelBeeHeight(compact: boolean): number {
+  return compact ? Math.ceil(BEE_GRID.length / 2) : BEE_GRID.length;
 }
 
 function PixelRow({
@@ -40,6 +49,30 @@ function PixelRow({
           </Text>
         ),
       )}
+    </Text>
+  );
+}
+
+function CompactPixel({
+  top,
+  bottom,
+  color,
+}: PixelPair & {
+  color: boolean;
+}) {
+  const glyph = halfBlockGlyph(top !== "0", bottom !== "0");
+  const foreground = top !== "0" ? top : bottom;
+  const mixed = top !== "0" && bottom !== "0" && top !== bottom;
+  return (
+    <Text
+      {...(color && foreground !== "0"
+        ? { color: pixelColor(foreground as Pixel) }
+        : {})}
+      {...(color && mixed
+        ? { backgroundColor: pixelColor(bottom as Pixel) }
+        : {})}
+    >
+      {glyph}
     </Text>
   );
 }
@@ -77,6 +110,33 @@ function SparsePixels({
   );
 }
 
+function CompactSparsePixels({
+  rows,
+  left,
+  color,
+}: {
+  rows: readonly string[];
+  left: number;
+  color: boolean;
+}) {
+  return pairPixelRows(rows).flatMap((pairs, pairIndex) =>
+    pairs.flatMap(({ top, bottom }, columnIndex) =>
+      top === "0" && bottom === "0" ? (
+        []
+      ) : (
+        <Box
+          key={`${pairIndex}-${columnIndex}`}
+          position="absolute"
+          left={left + columnIndex}
+          top={pairIndex}
+        >
+          <CompactPixel top={top} bottom={bottom} color={color} />
+        </Box>
+      ),
+    ),
+  );
+}
+
 export function PixelBee({
   mirrored = false,
   motion = false,
@@ -106,22 +166,73 @@ export function PixelBee({
       <Box
         position="relative"
         width={beeWidth + (motion ? motionGap + dashWidth : 0)}
-        height={bee.length}
+        height={pixelBeeHeight(compact)}
       >
-        <SparsePixels
-          rows={bee}
-          left={beeLeft}
-          color={color}
-          compact={compact}
-        />
-        {motion ? (
+        {compact ? (
+          <CompactSparsePixels rows={bee} left={beeLeft} color={color} />
+        ) : (
           <SparsePixels
-            rows={dashes}
-            left={dashLeft}
+            rows={bee}
+            left={beeLeft}
             color={color}
             compact={compact}
           />
+        )}
+        {motion ? (
+          compact ? (
+            <CompactSparsePixels rows={dashes} left={dashLeft} color={color} />
+          ) : (
+            <SparsePixels
+              rows={dashes}
+              left={dashLeft}
+              color={color}
+              compact={compact}
+            />
+          )
         ) : null}
+      </Box>
+    );
+  }
+
+  if (compact) {
+    const pairedBee = pairPixelRows(bee);
+    const pairedDashes = pairPixelRows(dashes);
+    return (
+      <Box flexDirection="column">
+        {pairedBee.map((pairs, pairIndex) => (
+          <Box key={pairIndex} flexDirection="row">
+            {motion && mirrored
+              ? pairedDashes[pairIndex]!.map(({ top, bottom }, columnIndex) => (
+                  <CompactPixel
+                    key={`dash-${columnIndex}`}
+                    top={top}
+                    bottom={bottom}
+                    color={color}
+                  />
+                ))
+              : null}
+            {motion && mirrored ? <Text> </Text> : null}
+            {pairs.map(({ top, bottom }, columnIndex) => (
+              <CompactPixel
+                key={`bee-${columnIndex}`}
+                top={top}
+                bottom={bottom}
+                color={color}
+              />
+            ))}
+            {motion && !mirrored ? <Text> </Text> : null}
+            {motion && !mirrored
+              ? pairedDashes[pairIndex]!.map(({ top, bottom }, columnIndex) => (
+                  <CompactPixel
+                    key={`dash-${columnIndex}`}
+                    top={top}
+                    bottom={bottom}
+                    color={color}
+                  />
+                ))
+              : null}
+          </Box>
+        ))}
       </Box>
     );
   }
