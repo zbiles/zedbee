@@ -254,9 +254,9 @@ describe("executeScanCommand", () => {
       expect(output.match(/COMPLETE REPORT/gu)).toHaveLength(2);
       expect(output.match(/complete\.json/gu)).toHaveLength(2);
       if (selectedFormat === "ink") {
-        expect(output).toContain("█████ █████ ████");
+        expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {
-        expect(output).not.toContain("█████ █████ ████");
+        expect(output).not.toContain("▀▀▀▀█ █▀▀▀▀");
       }
     },
   );
@@ -302,9 +302,9 @@ describe("executeScanCommand", () => {
       expect(output).toContain("rule-25");
       expect(output).not.toContain("rule-26");
       if (selectedFormat === "ink") {
-        expect(output).toContain("█████ █████ ████");
+        expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {
-        expect(output).not.toContain("█████ █████ ████");
+        expect(output).not.toContain("▀▀▀▀█ █▀▀▀▀");
       }
     },
   );
@@ -387,9 +387,9 @@ describe("executeScanCommand", () => {
       expect(output).not.toContain("AGENT NEXT STEP");
       expect(output).not.toContain("complete.json");
       if (selectedFormat === "ink") {
-        expect(output).toContain("█████ █████ ████");
+        expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {
-        expect(output).not.toContain("█████ █████ ████");
+        expect(output).not.toContain("▀▀▀▀█ █▀▀▀▀");
       }
     },
   );
@@ -440,9 +440,9 @@ describe("executeScanCommand", () => {
       expect(output).toContain("REPORT WARNINGS");
       expect(output).toContain("expired.json");
       if (selectedFormat === "ink") {
-        expect(output).toContain("█████ █████ ████");
+        expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {
-        expect(output).not.toContain("█████ █████ ████");
+        expect(output).not.toContain("▀▀▀▀█ █▀▀▀▀");
       }
     },
   );
@@ -491,9 +491,9 @@ describe("executeScanCommand", () => {
       const output = terminal.stdout.join("");
       expect(output).toContain("REPORT UNAVAILABLE");
       if (selectedFormat === "ink") {
-        expect(output).toContain("█████ █████ ████");
+        expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {
-        expect(output).not.toContain("█████ █████ ████");
+        expect(output).not.toContain("▀▀▀▀█ █▀▀▀▀");
       }
     },
   );
