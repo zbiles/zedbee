@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { applyFixPlan } from "../../src/fixes/apply-plan.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import type { PreparedFixPlan } from "../../src/fixes/types.js";
+import { writeWorkingFile } from "../../src/fixes/write-working-file.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 
 function digest(source: string): string {
@@ -289,6 +290,197 @@ describe("applyFixPlan", () => {
       changedFiles: [],
       unchangedFiles: ["src/value.ts"],
       appliedFixes: 0,
+    });
+  });
+
+  it.each([
+    ["start", "abc", 0, "X", "Xabc"],
+    ["middle", "abc", 1, "Y", "aYbc"],
+    ["end", "abc", 3, "Z", "abcZ"],
+  ])(
+    "applies an unchanged-file zero-width exact insertion at %s",
+    async (_position, source, offset, replacement, expected) => {
+      const fixture = await createInspectionFixture();
+      await fixture.write("src/value.ts", source);
+      const result = await applyFixPlan(
+        prepared(fixture.root, "src/value.ts", source, source, [
+          {
+            kind: "exact-file",
+            checkId: "lint",
+            file: "src/value.ts",
+            baseSource: source,
+            edits: [
+              {
+                findingId: "insert",
+                severity: "error",
+                start: offset,
+                end: offset,
+                replacement,
+              },
+            ],
+          },
+        ]),
+      );
+      expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+        expected,
+      );
+      expect(result).toMatchObject({ exitCode: 0, appliedFixes: 1 });
+    },
+  );
+
+  it("conservatively conflicts with a working insertion at the same base boundary", async () => {
+    const fixture = await createInspectionFixture();
+    const base = "abc";
+    const working = "aXbc";
+    await fixture.write("src/value.ts", working);
+    const result = await applyFixPlan(
+      prepared(fixture.root, "src/value.ts", base, working, [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: base,
+          edits: [
+            {
+              findingId: "insert",
+              severity: "error",
+              start: 1,
+              end: 1,
+              replacement: "Y",
+            },
+          ],
+        },
+      ]),
+    );
+    expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+      working,
+    );
+    expect(result.issues).toEqual([
+      expect.objectContaining({ kind: "conflict", file: "src/value.ts" }),
+    ]);
+  });
+
+  it("reports a committed durability failure without asking callers to retry", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const value = 1;;\n";
+    await fixture.write("src/value.ts", source);
+    const result = await applyFixPlan(
+      prepared(fixture.root, "src/value.ts", source, source, [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: source,
+          edits: [
+            {
+              findingId: "extra",
+              severity: "error",
+              start: 16,
+              end: 17,
+              replacement: "",
+            },
+          ],
+        },
+      ]),
+      {
+        writeWorkingFile: (request) =>
+          writeWorkingFile({
+            ...request,
+            dependencies: {
+              syncDirectory: async () => {
+                throw new Error("directory sync failed");
+              },
+            },
+          }),
+      },
+    );
+    expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+      "const value = 1;\n",
+    );
+    expect(result).toMatchObject({
+      exitCode: 1,
+      appliedFixes: 1,
+      changedFiles: ["src/value.ts"],
+      issues: [
+        expect.objectContaining({
+          kind: "write",
+          message: expect.stringContaining("was replaced"),
+          remediation: expect.stringContaining("Do not retry"),
+        }),
+      ],
+    });
+  });
+
+  it("continues after an actual write failure while preserving another file's progress", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const value = 1;;\n";
+    await fixture.write("src/good.ts", source);
+    await fixture.write("src/bad.ts", source);
+    const candidate = (file: string) => ({
+      kind: "exact-file" as const,
+      checkId: "lint" as const,
+      file,
+      baseSource: source,
+      edits: [
+        {
+          findingId: file,
+          severity: "error" as const,
+          start: 16,
+          end: 17,
+          replacement: "",
+        },
+      ],
+    });
+    const plan = prepared(fixture.root, "src/good.ts", source, source, [
+      candidate("src/good.ts"),
+      candidate("src/bad.ts"),
+    ]);
+    const result = await applyFixPlan(
+      {
+        ...plan,
+        workingFiles: new Map([
+          ...plan.workingFiles,
+          [
+            "src/bad.ts",
+            {
+              path: "src/bad.ts",
+              content: source,
+              sha256: digest(source),
+              mode: 0o644,
+              hasUnstagedChanges: false,
+            },
+          ],
+        ]),
+      },
+      {
+        writeWorkingFile: async (request) => {
+          if (request.file === "src/bad.ts") {
+            await writeWorkingFile({
+              ...request,
+              dependencies: {
+                write: async (handle, contents) => {
+                  await handle.writeFile(contents.slice(0, 2), "utf8");
+                  throw new Error("injected partial write failure");
+                },
+              },
+            });
+            return;
+          }
+          await writeWorkingFile(request);
+        },
+      },
+    );
+    expect(await readFile(join(fixture.root, "src/good.ts"), "utf8")).toBe(
+      "const value = 1;\n",
+    );
+    expect(await readFile(join(fixture.root, "src/bad.ts"), "utf8")).toBe(
+      source,
+    );
+    expect(result).toMatchObject({
+      exitCode: 1,
+      appliedFixes: 1,
+      changedFiles: ["src/good.ts"],
+      issues: [expect.objectContaining({ kind: "write", file: "src/bad.ts" })],
     });
   });
 });

@@ -1,9 +1,13 @@
 import {
+  chmod,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  rename,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -172,5 +176,123 @@ describe("writeWorkingFile", () => {
       }),
     ).rejects.toThrow("changed");
     expect(await readFile(target, "utf8")).toBe("concurrent\n");
+  });
+
+  it("does not chmod, rename, or clean up a replaced temporary pathname", async () => {
+    const root = await fixture();
+    const directory = join(root, "src");
+    const outside = join(root, "outside.txt");
+    await writeFile(outside, "outside\n", { mode: 0o600 });
+    await chmod(outside, 0o600);
+
+    await expect(
+      writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "new\n",
+        dependencies: {
+          write: async (handle, source) => {
+            await handle.writeFile(source, "utf8");
+            const temporary = (await readdir(directory)).find((name) =>
+              name.startsWith(".zedbee-"),
+            );
+            if (temporary === undefined) throw new Error("missing temp");
+            await unlink(join(directory, temporary));
+            await symlink(outside, join(directory, temporary));
+          },
+        },
+      }),
+    ).rejects.toThrow("unsafe");
+    expect((await lstat(outside)).mode & 0o777).toBe(0o600);
+    expect(await readFile(outside, "utf8")).toBe("outside\n");
+    expect(
+      (await readdir(directory)).some((name) => name.startsWith(".zedbee-")),
+    ).toBe(true);
+  });
+
+  it("never cleans a temporary path through a swapped ancestor", async () => {
+    const root = await fixture();
+    const directory = join(root, "src");
+    const movedDirectory = join(root, "src-original");
+    const outside = await mkdtemp(join(tmpdir(), "zedbee-write-outside-"));
+    roots.push(outside);
+
+    await expect(
+      writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "new\n",
+        dependencies: {
+          write: async (handle, source) => {
+            await handle.writeFile(source, "utf8");
+            const temporary = (await readdir(directory)).find((name) =>
+              name.startsWith(".zedbee-"),
+            );
+            if (temporary === undefined) throw new Error("missing temp");
+            await rename(directory, movedDirectory);
+            await symlink(outside, directory, "dir");
+            await writeFile(join(outside, temporary), "outside\n");
+          },
+        },
+      }),
+    ).rejects.toThrow("unsafe");
+    expect(
+      await readFile(join(outside, (await readdir(outside))[0]!), "utf8"),
+    ).toBe("outside\n");
+    expect(
+      (await readdir(movedDirectory)).some((name) =>
+        name.startsWith(".zedbee-"),
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects a duplicate in-flight target", async () => {
+    const root = await fixture();
+    let release: (() => void) | undefined;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: (() => void) | undefined;
+    const writing = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const first = writeWorkingFile({
+      repositoryRoot: root,
+      file: "src/value.ts",
+      source: "first\n",
+      dependencies: {
+        write: async (handle, source) => {
+          await handle.writeFile(source, "utf8");
+          entered?.();
+          await blocked;
+        },
+      },
+    });
+    await writing;
+    await expect(
+      writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "second\n",
+      }),
+    ).rejects.toThrow("duplicate");
+    release?.();
+    await first;
+  });
+
+  it("invokes directory sync after a committed rename", async () => {
+    const root = await fixture();
+    const synced: string[] = [];
+    await writeWorkingFile({
+      repositoryRoot: root,
+      file: "src/value.ts",
+      source: "new\n",
+      dependencies: {
+        syncDirectory: async (directory) => {
+          synced.push(directory);
+        },
+      },
+    });
+    expect(synced).toEqual([join(root, "src")]);
   });
 });

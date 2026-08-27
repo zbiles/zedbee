@@ -6,6 +6,7 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { formatWorkingSource } from "./prettier-provider.js";
 import {
+  CommittedWriteError,
   writeWorkingFile,
   type WorkingFileIdentity,
   type WriteWorkingFileRequest,
@@ -90,6 +91,15 @@ function checkIds(
 }
 
 function overlaps(left: ExactFixEdit, right: ExactFixEdit): boolean {
+  if (left.start === left.end && right.start === right.end) {
+    return left.start === right.start;
+  }
+  if (left.start === left.end) {
+    return left.start >= right.start && left.start <= right.end;
+  }
+  if (right.start === right.end) {
+    return right.start >= left.start && right.start <= left.end;
+  }
   return left.start < right.end && right.start < left.end;
 }
 
@@ -126,14 +136,17 @@ function composeExact(
   working: string,
   edits: readonly ExactEdit[],
 ): string | undefined {
-  const baseToWorking = new Array<number>(base.length);
+  const baseToWorking = new Array<number>(base.length + 1);
   let baseOffset = 0;
   let workingOffset = 0;
+  baseToWorking[0] = 0;
   for (const component of diffChars(base, working)) {
     const length = component.value.length;
     if (component.added) {
-      const intersects = edits.some(
-        (edit) => edit.start < baseOffset && baseOffset < edit.end,
+      const intersects = edits.some((edit) =>
+        edit.start === edit.end
+          ? edit.start === baseOffset
+          : edit.start <= baseOffset && baseOffset <= edit.end,
       );
       if (intersects) return undefined;
       workingOffset += length;
@@ -141,8 +154,15 @@ function composeExact(
     }
     if (component.removed) {
       const end = baseOffset + length;
-      if (edits.some((edit) => edit.start < end && baseOffset < edit.end))
+      if (
+        edits.some((edit) =>
+          edit.start === edit.end
+            ? baseOffset <= edit.start && edit.start <= end
+            : edit.start < end && baseOffset < edit.end,
+        )
+      ) {
         return undefined;
+      }
       baseOffset = end;
       continue;
     }
@@ -151,17 +171,17 @@ function composeExact(
     }
     baseOffset += length;
     workingOffset += length;
+    baseToWorking[baseOffset] = workingOffset;
   }
   if (baseOffset !== base.length) return undefined;
   let merged = working;
   for (const edit of [...edits].sort(
     (left, right) => right.start - left.start || right.end - left.end,
   )) {
-    if (edit.start === edit.end) return undefined;
     const start = baseToWorking[edit.start];
-    const endStart = baseToWorking[edit.end - 1];
-    if (start === undefined || endStart === undefined) return undefined;
-    merged = `${merged.slice(0, start)}${edit.replacement}${merged.slice(endStart + 1)}`;
+    const end = baseToWorking[edit.end];
+    if (start === undefined || end === undefined) return undefined;
+    merged = `${merged.slice(0, start)}${edit.replacement}${merged.slice(end)}`;
   }
   return merged;
 }
@@ -322,7 +342,22 @@ export async function applyFixPlan(
       changedFiles.push(group.file);
       appliedFixes +=
         exact.edits.length + (formatCandidate === undefined ? 0 : 1);
-    } catch {
+    } catch (error) {
+      if (error instanceof CommittedWriteError) {
+        changedFiles.push(group.file);
+        appliedFixes +=
+          exact.edits.length + (formatCandidate === undefined ? 0 : 1);
+        issues.push(
+          issue(
+            "write",
+            group.file,
+            ids,
+            "The working file was replaced, but Zedbee could not confirm directory durability.",
+            "Do not retry automatically; inspect the file and filesystem durability before continuing.",
+          ),
+        );
+        continue;
+      }
       unchangedFiles.push(group.file);
       issues.push(
         issue(
