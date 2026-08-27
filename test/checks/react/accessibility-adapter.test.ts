@@ -88,6 +88,10 @@ async function accessibilityContext(dependencies: Record<string, string>) {
 }
 
 describe("reactAccessibilityAdapter", () => {
+  it("does not expose an exact-fix provider", () => {
+    expect(reactAccessibilityAdapter.planFixes).toBeUndefined();
+  });
+
   it("applies accessibility rule patches per file and skips the disabled group", async () => {
     const { fixtures, changedFiles, run } = await accessibilityContext({
       react: "19.0.0",

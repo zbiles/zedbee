@@ -17,6 +17,7 @@ import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { convertEslintMessage } from "./convert-message.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "./load-engine.js";
+import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
@@ -33,6 +34,12 @@ const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs)$/u;
 type LintEslintEngineFactory = (
   options: ManagedEslintOptions,
 ) => Pick<ESLint, "lintFiles">;
+
+interface PreparedLintSide {
+  readonly canonicalRoot: string;
+  readonly groups: ReturnType<typeof groupFilesByRules>;
+  readonly typedProject?: { readonly programs: readonly ts.Program[] };
+}
 
 function sourceChanged(
   workspace: WorkspaceInspection,
@@ -58,6 +65,65 @@ function workspaceFor(
   );
 }
 
+function typedFailure(path?: string): CheckIncompleteError {
+  return new CheckIncompleteError({
+    code: "TYPED_LINT_ANALYSIS_FAILED",
+    message:
+      "Typed lint could not analyze every requested TypeScript file with the configured project.",
+    remediation:
+      "Verify that the staged TypeScript configuration includes every staged TypeScript file, then retry. If it does, report a Zedbee typed-lint compatibility issue.",
+    ...(path === undefined ? {} : { path }),
+  });
+}
+
+async function prepareSide(
+  snapshotRoot: string,
+  repositoryRoot: string,
+  inspection: RepositoryInspection,
+  target: CheckTarget,
+  side: SnapshotSide,
+  policyForFile: FilePolicyResolver,
+  signal: AbortSignal,
+): Promise<PreparedLintSide | undefined> {
+  signal.throwIfAborted();
+  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
+  if (canonicalRoot !== inspection.snapshotRoot) {
+    throw new Error("Managed lint analysis failed.");
+  }
+  const workspace = workspaceFor(inspection, target);
+  if (workspace === undefined) return undefined;
+  const files = workspace.sourceFiles
+    .filter(
+      (path) => JAVASCRIPT_SOURCE.test(path) || TYPESCRIPT_SOURCE.test(path),
+    )
+    .sort(compareCodeUnits);
+  if (files.length === 0) return undefined;
+  const groups = groupFilesByRules(files, side, policyForFile, "lint");
+  if (groups.length === 0) return undefined;
+  const typescriptFiles = groups
+    .flatMap(({ files: groupFiles }) => groupFiles)
+    .filter((path) => TYPESCRIPT_SOURCE.test(path));
+  if (typescriptFiles.length === 0) return { canonicalRoot, groups };
+
+  try {
+    const input = await loadSnapshotProgramInput(
+      canonicalRoot,
+      repositoryRoot,
+      workspace,
+    );
+    const { programs } = createSnapshotProgram(input);
+    return { canonicalRoot, groups, typedProject: { programs } };
+  } catch {
+    throw new CheckIncompleteError({
+      code: "TYPED_LINT_SETUP_FAILED",
+      message:
+        "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
+      remediation:
+        "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
+    });
+  }
+}
+
 async function collectSide(
   snapshotRoot: string,
   repositoryRoot: string,
@@ -68,77 +134,37 @@ async function collectSide(
   engineFactory: LintEslintEngineFactory,
   signal: AbortSignal,
 ): Promise<readonly Observation[]> {
-  signal.throwIfAborted();
-  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
-  if (canonicalRoot !== inspection.snapshotRoot) {
-    throw new Error("Managed lint analysis failed.");
-  }
-  const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
-  const files = workspace.sourceFiles
-    .filter(
-      (path) => JAVASCRIPT_SOURCE.test(path) || TYPESCRIPT_SOURCE.test(path),
-    )
-    .sort(compareCodeUnits);
-  if (files.length === 0) return Object.freeze([]);
-  const groups = groupFilesByRules(files, side, policyForFile, "lint");
-  if (groups.length === 0) return Object.freeze([]);
-  const enabledFiles = groups.flatMap(({ files: groupFiles }) => groupFiles);
-  const typescriptFiles = enabledFiles.filter((path) =>
-    TYPESCRIPT_SOURCE.test(path),
+  const prepared = await prepareSide(
+    snapshotRoot,
+    repositoryRoot,
+    inspection,
+    target,
+    side,
+    policyForFile,
+    signal,
   );
-
-  let typedProject: { readonly programs: readonly ts.Program[] } | undefined;
-  if (typescriptFiles.length > 0) {
-    try {
-      const input = await loadSnapshotProgramInput(
-        canonicalRoot,
-        repositoryRoot,
-        workspace,
-      );
-      const { programs } = createSnapshotProgram(input);
-      typedProject = {
-        programs,
-      };
-    } catch {
-      throw new CheckIncompleteError({
-        code: "TYPED_LINT_SETUP_FAILED",
-        message:
-          "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
-        remediation:
-          "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
-      });
-    }
-  }
-
-  const typedFailure = (path?: string) =>
-    new CheckIncompleteError({
-      code: "TYPED_LINT_ANALYSIS_FAILED",
-      message:
-        "Typed lint could not analyze every requested TypeScript file with the configured project.",
-      remediation:
-        "Verify that the staged TypeScript configuration includes every staged TypeScript file, then retry. If it does, report a Zedbee typed-lint compatibility issue.",
-      ...(path === undefined ? {} : { path }),
-    });
+  if (prepared === undefined) return Object.freeze([]);
   const observations: Observation[] = [];
-  for (const group of groups) {
+  for (const group of prepared.groups) {
     signal.throwIfAborted();
     const groupHasTypescript = group.files.some((path) =>
       TYPESCRIPT_SOURCE.test(path),
     );
     try {
       const engine = engineFactory({
-        cwd: canonicalRoot,
+        cwd: prepared.canonicalRoot,
         mode: "lint",
         managedIgnores: [],
         ruleOverrides: group.rules,
-        ...(typedProject === undefined ? {} : { typedProject }),
+        ...(prepared.typedProject === undefined
+          ? {}
+          : { typedProject: prepared.typedProject }),
       });
       const results = await engine.lintFiles([...group.files]);
       signal.throwIfAborted();
       const allowed = new Set(group.files);
       for (const result of results) {
-        const path = relative(canonicalRoot, result.filePath)
+        const path = relative(prepared.canonicalRoot, result.filePath)
           .split(sep)
           .join("/");
         if (!allowed.has(path))
@@ -155,7 +181,7 @@ async function collectSide(
         }
         observations.push(
           ...result.messages.map((message) =>
-            convertEslintMessage(path, message, canonicalRoot),
+            convertEslintMessage(path, message, prepared.canonicalRoot),
           ),
         );
       }
@@ -207,6 +233,58 @@ export function createLintAdapter(
         requiresBaseline: true,
         targets: workspaces.map(targetFor),
       };
+    },
+
+    async planFixes(context, findings) {
+      const prepared = await prepareSide(
+        context.snapshots.targetDir,
+        context.repositoryRoot,
+        context.targetInspection,
+        context.target,
+        "target",
+        context.policyForFile,
+        context.signal,
+      );
+      if (prepared === undefined) return Object.freeze([]);
+      const candidates = [];
+      for (const group of prepared.groups) {
+        context.signal.throwIfAborted();
+        const groupHasTypescript = group.files.some((path) =>
+          TYPESCRIPT_SOURCE.test(path),
+        );
+        try {
+          candidates.push(
+            ...(await planManagedEslintFixes(
+              {
+                context,
+                checkId: "lint",
+                files: group.files,
+                createEngine: () =>
+                  engineFactory({
+                    cwd: prepared.canonicalRoot,
+                    mode: "lint",
+                    managedIgnores: [],
+                    ruleOverrides: group.rules,
+                    ...(prepared.typedProject === undefined
+                      ? {}
+                      : { typedProject: prepared.typedProject }),
+                  }),
+              },
+              findings,
+            )),
+          );
+        } catch (error) {
+          context.signal.throwIfAborted();
+          if (error instanceof CheckIncompleteError) throw error;
+          if (groupHasTypescript) {
+            throw typedFailure(
+              group.files.length === 1 ? group.files[0] : undefined,
+            );
+          }
+          throw new Error("Managed lint fix planning failed.");
+        }
+      }
+      return Object.freeze(candidates);
     },
 
     async collect(context): Promise<CheckObservationSet> {

@@ -31,6 +31,7 @@ import type {
 import { groupFilesByRules } from "../eslint/managed-config.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
+import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import {
   createReactVersionResolver,
   type ReactVersionResolver,
@@ -50,7 +51,11 @@ type ReactEslintEngineFactory = (
   options: ManagedEslintOptions,
 ) => Pick<ESLint, "lintFiles">;
 
-type PreparedSide = () => Promise<readonly Observation[]>;
+interface PreparedSide {
+  readonly canonicalRoot: string;
+  readonly groups: ReturnType<typeof groupFilesByRules>;
+  readonly reactVersion?: string;
+}
 
 type ReactVersionResolverFactory = (
   inspection: RepositoryInspection,
@@ -109,13 +114,11 @@ async function prepareSide(
   target: CheckTarget,
   id: "reactCorrectness" | "reactAccessibility",
   mode: ManagedEslintMode,
-  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
-  engineFactory: ReactEslintEngineFactory,
   resolveWorkspaceReactVersion: ResolveWorkspaceReactVersion,
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
-): Promise<PreparedSide> {
+): Promise<PreparedSide | undefined> {
   const failure =
     id === "reactCorrectness"
       ? "React correctness analysis failed."
@@ -125,76 +128,86 @@ async function prepareSide(
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
     if (canonicalRoot !== inspection.snapshotRoot) throw new Error(failure);
     const workspace = workspaceFor(inspection, target);
-    if (workspace === undefined) {
-      return async () => Object.freeze([]);
-    }
+    if (workspace === undefined) return undefined;
     const files = workspace.sourceFiles
       .filter((path) => SOURCE.test(path))
       .sort(compareCodeUnits);
-    if (files.length === 0) {
-      return async () => Object.freeze([]);
-    }
+    if (files.length === 0) return undefined;
     const groups = groupFilesByRules(files, side, policyForFile, id);
-    if (groups.length === 0) {
-      return async () => Object.freeze([]);
-    }
+    if (groups.length === 0) return undefined;
 
     const reactVersion =
       mode === "react-correctness"
         ? await resolveWorkspaceReactVersion(inspection, workspace)
         : undefined;
     signal.throwIfAborted();
-
-    return async () => {
-      const observations: Observation[] = [];
-      for (const group of groups) {
-        signal.throwIfAborted();
-        try {
-          const engine = engineFactory({
-            cwd: canonicalRoot,
-            mode,
-            managedIgnores: [],
-            ruleOverrides: group.rules,
-            ...(reactVersion === undefined
-              ? {}
-              : { reactVersion, reactCorrectnessConfigFactory }),
-          });
-          const results = await engine.lintFiles([...group.files]);
-          signal.throwIfAborted();
-          const allowed = new Set(group.files);
-          for (const result of results) {
-            const path = relative(canonicalRoot, result.filePath)
-              .split(sep)
-              .join("/");
-            if (!allowed.has(path)) throw new Error(failure);
-            observations.push(
-              ...result.messages.map((message) =>
-                convertEslintMessage(path, message, canonicalRoot, id),
-              ),
-            );
-          }
-        } catch (error) {
-          signal.throwIfAborted();
-          if (error instanceof CheckIncompleteError) throw error;
-          throw reactAnalysisFailure(
-            id,
-            group.files.length === 1 ? group.files[0] : undefined,
-          );
-        }
-      }
-      return Object.freeze(
-        observations.sort(
-          (left, right) =>
-            compareCodeUnits(left.identity, right.identity) ||
-            compareCodeUnits(left.message, right.message),
-        ),
-      );
+    return {
+      canonicalRoot,
+      groups,
+      ...(reactVersion === undefined ? {} : { reactVersion }),
     };
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof CheckIncompleteError) throw error;
     throw new Error(failure);
   }
+}
+
+async function collectPreparedSide(
+  prepared: PreparedSide | undefined,
+  id: "reactCorrectness" | "reactAccessibility",
+  mode: ManagedEslintMode,
+  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
+  engineFactory: ReactEslintEngineFactory,
+  signal: AbortSignal,
+): Promise<readonly Observation[]> {
+  if (prepared === undefined) return Object.freeze([]);
+  const observations: Observation[] = [];
+  for (const group of prepared.groups) {
+    signal.throwIfAborted();
+    try {
+      const engine = engineFactory({
+        cwd: prepared.canonicalRoot,
+        mode,
+        managedIgnores: [],
+        ruleOverrides: group.rules,
+        ...(prepared.reactVersion === undefined
+          ? {}
+          : {
+              reactVersion: prepared.reactVersion,
+              reactCorrectnessConfigFactory,
+            }),
+      });
+      const results = await engine.lintFiles([...group.files]);
+      signal.throwIfAborted();
+      const allowed = new Set(group.files);
+      for (const result of results) {
+        const path = relative(prepared.canonicalRoot, result.filePath)
+          .split(sep)
+          .join("/");
+        if (!allowed.has(path)) throw new Error("Unexpected ESLint result.");
+        observations.push(
+          ...result.messages.map((message) =>
+            convertEslintMessage(path, message, prepared.canonicalRoot, id),
+          ),
+        );
+      }
+    } catch (error) {
+      signal.throwIfAborted();
+      if (error instanceof CheckIncompleteError) throw error;
+      throw reactAnalysisFailure(
+        id,
+        group.files.length === 1 ? group.files[0] : undefined,
+      );
+    }
+  }
+  return Object.freeze(
+    observations.sort(
+      (left, right) =>
+        compareCodeUnits(left.identity, right.identity) ||
+        compareCodeUnits(left.message, right.message),
+    ),
+  );
 }
 
 export function createReactAdapter(
@@ -271,6 +284,63 @@ export function createReactAdapter(
         targets: workspaces.map(targetFor),
       };
     },
+    ...(id === "reactCorrectness"
+      ? {
+          async planFixes(context: CheckRunContext, findings) {
+            const prepared = await prepareSide(
+              context.snapshots.targetDir,
+              context.targetInspection,
+              context.target,
+              id,
+              mode,
+              resolveTargetReactVersion,
+              "target",
+              context.policyForFile,
+              context.signal,
+            );
+            if (prepared === undefined) return Object.freeze([]);
+            const candidates: Awaited<
+              ReturnType<typeof planManagedEslintFixes>
+            >[number][] = [];
+            for (const group of prepared.groups) {
+              context.signal.throwIfAborted();
+              try {
+                candidates.push(
+                  ...(await planManagedEslintFixes(
+                    {
+                      context,
+                      checkId: "reactCorrectness",
+                      files: group.files,
+                      createEngine: () =>
+                        engineFactory({
+                          cwd: prepared.canonicalRoot,
+                          mode,
+                          managedIgnores: [],
+                          ruleOverrides: group.rules,
+                          ...(prepared.reactVersion === undefined
+                            ? {}
+                            : {
+                                reactVersion: prepared.reactVersion,
+                                reactCorrectnessConfigFactory,
+                              }),
+                        }),
+                    },
+                    findings,
+                  )),
+                );
+              } catch (error) {
+                context.signal.throwIfAborted();
+                if (error instanceof CheckIncompleteError) throw error;
+                throw reactAnalysisFailure(
+                  "reactCorrectness",
+                  group.files.length === 1 ? group.files[0] : undefined,
+                );
+              }
+            }
+            return Object.freeze(candidates);
+          },
+        }
+      : {}),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
@@ -278,8 +348,6 @@ export function createReactAdapter(
         context.target,
         id,
         mode,
-        reactCorrectnessConfigFactory,
-        engineFactory,
         resolveBaselineReactVersion,
         "baseline",
         context.policyForFile,
@@ -291,8 +359,6 @@ export function createReactAdapter(
         context.target,
         id,
         mode,
-        reactCorrectnessConfigFactory,
-        engineFactory,
         resolveTargetReactVersion,
         "target",
         context.policyForFile,
@@ -300,8 +366,22 @@ export function createReactAdapter(
       );
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
-          collectBaseline(),
-          collectTarget(),
+          collectPreparedSide(
+            collectBaseline,
+            id,
+            mode,
+            reactCorrectnessConfigFactory,
+            engineFactory,
+            context.signal,
+          ),
+          collectPreparedSide(
+            collectTarget,
+            id,
+            mode,
+            reactCorrectnessConfigFactory,
+            engineFactory,
+            context.signal,
+          ),
           context.signal,
         );
       return {

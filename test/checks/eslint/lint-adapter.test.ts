@@ -85,6 +85,60 @@ async function context(
 }
 
 describe("lintAdapter", () => {
+  it("plans target-only official fixes with the same grouped per-file rules as analysis", async () => {
+    const fixtures = await pair();
+    const clean = "export const value = 1;\n";
+    const fixable = "export const value = 1;;\n";
+    for (const fixture of [fixtures.baseline, fixtures.live]) {
+      await fixture.write("src/value.js", clean);
+      await fixture.write("test/value.test.js", fixable);
+    }
+    await fixtures.staged.write("src/value.js", fixable);
+    await fixtures.staged.write("test/value.test.js", fixable);
+    const changeSet = changes([
+      {
+        path: "src/value.js",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const base = await context(fixtures, changeSet);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { lint: { rules: { "no-extra-semi": "error" } } },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-extra-semi": "off" } } },
+        },
+      ],
+    });
+    const run: CheckRunContext = {
+      ...base,
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+    };
+    const adapter = createLintAdapter();
+    const collected = await adapter.collect(run);
+    const result = await observationCheckResult("lint", collected, run, true);
+    const finding = result.findings.find(
+      ({ rule, location }) =>
+        rule === "no-extra-semi" && location?.file === "src/value.js",
+    );
+
+    expect(finding).toBeDefined();
+    await expect(adapter.planFixes?.(run, [finding!])).resolves.toEqual([
+      expect.objectContaining({
+        checkId: "lint",
+        file: "src/value.js",
+        baseSource: fixable,
+        edits: [expect.objectContaining({ findingId: finding!.id })],
+      }),
+    ]);
+  });
+
   it("applies per-file rules in grouped engines and reuses target rename policy on both sides", async () => {
     const fixtures = await pair();
     const safe = "/* global console */\nconsole.log('safe');\n";

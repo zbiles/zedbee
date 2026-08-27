@@ -1,0 +1,136 @@
+import { describe, expect, it } from "vitest";
+import type { CheckRunContext, CheckTarget } from "../../src/checks/adapter.js";
+import { observationCheckResult } from "../../src/checks/observation-result.js";
+import { createLintAdapter } from "../../src/checks/eslint/lint-adapter.js";
+import { createManagedEslint } from "../../src/checks/eslint/load-engine.js";
+import { resolveConfig } from "../../src/config/profiles.js";
+import type { ChangeSet, ChangedFile } from "../../src/git/change-set.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import { testFilePolicyResolver } from "../helpers/file-policy.js";
+import { createInspectionFixture } from "../inspection/fixture.js";
+import { planManagedEslintFixes } from "../../src/fixes/eslint-provider.js";
+
+const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
+
+function changeSet(files: readonly ChangedFile[]): ChangeSet {
+  const changed = new Map(files.map((file) => [file.path, file]));
+  return {
+    files: changed,
+    isEmpty: changed.size === 0,
+    containsAddedLine(file, line) {
+      return (
+        changed
+          .get(file)
+          ?.addedRanges.some(
+            (range) => line >= range.start && line <= range.end,
+          ) ?? false
+      );
+    },
+  };
+}
+
+describe("planManagedEslintFixes", () => {
+  it("plans only reported official lint fixes and never ESLint suggestions", async () => {
+    const [baseline, staged, live] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    const cleanSource = "export const used = 1;\n";
+    const fixableSource = "export const used = 1;;\nconst unused = 2;\n";
+    const unreportedSource = "export const preexisting = 1;;\n";
+    for (const fixture of [baseline, staged, live]) {
+      await fixture.writeJson("package.json", {
+        name: "fixture",
+        private: true,
+      });
+      await fixture.write("src/value.js", cleanSource);
+      await fixture.write("test/preexisting.js", unreportedSource);
+    }
+    await staged.write("src/value.js", fixableSource);
+
+    const changes = changeSet([
+      {
+        path: "src/value.js",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 2 }],
+      },
+    ]);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: {
+        lint: {
+          rules: { "no-extra-semi": "error", "no-unused-vars": "error" },
+        },
+      },
+      overrides: [
+        {
+          files: ["test/**"],
+          checks: { lint: { rules: { "no-unused-vars": "off" } } },
+        },
+      ],
+    });
+    const context: CheckRunContext = {
+      repositoryRoot: live.root,
+      changeSet: changes,
+      config,
+      snapshots: {
+        baselineDir: baseline.root,
+        targetDir: staged.root,
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+      },
+      baselineInspection: await inspectRepository(baseline.root),
+      targetInspection: await inspectRepository(staged.root),
+      target,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changes),
+      signal: new AbortController().signal,
+    };
+    const collected = await createLintAdapter().collect(context);
+    const reported = await observationCheckResult(
+      "lint",
+      collected,
+      context,
+      true,
+    );
+    const officialFix = reported.findings.find(
+      (finding) => finding.rule === "no-extra-semi",
+    );
+    expect(officialFix).toBeDefined();
+
+    const candidates = await planManagedEslintFixes(
+      {
+        context,
+        checkId: "lint",
+        files: ["src/value.js", "test/preexisting.js"],
+        createEngine: () =>
+          createManagedEslint({
+            cwd: context.targetInspection.snapshotRoot,
+            mode: "lint",
+            managedIgnores: [],
+            ruleOverrides: {
+              "no-extra-semi": "error",
+              "no-unused-vars": "error",
+            },
+          }),
+      },
+      [officialFix!],
+    );
+
+    expect(candidates).toEqual([
+      expect.objectContaining({
+        kind: "exact-file",
+        checkId: "lint",
+        file: "src/value.js",
+        baseSource: fixableSource,
+        edits: [expect.objectContaining({ findingId: officialFix!.id })],
+      }),
+    ]);
+    expect(JSON.stringify(candidates)).not.toContain("suggestions");
+    expect(JSON.stringify(candidates)).not.toContain("preexisting");
+    expect(Object.isFrozen(candidates)).toBe(true);
+    expect(Object.isFrozen(candidates[0])).toBe(true);
+  });
+});

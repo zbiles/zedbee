@@ -200,6 +200,36 @@ async function groupedReactContext(): Promise<CheckRunContext> {
 }
 
 describe("reactCorrectnessAdapter", () => {
+  it("plans a reported official React plugin fix from the target snapshot", async () => {
+    const source = 'export const App = () => <div class="button" />;\n';
+    const { run } = await reactContext("react", {
+      cleanSource: 'export const App = () => <div className="button" />;\n',
+      stagedSource: source,
+    });
+    const collected = await reactCorrectnessAdapter.collect(run);
+    const result = await observationCheckResult(
+      "reactCorrectness",
+      collected,
+      run,
+      true,
+    );
+    const finding = result.findings.find(
+      ({ rule }) => rule === "react/no-unknown-property",
+    );
+
+    expect(finding).toBeDefined();
+    await expect(
+      reactCorrectnessAdapter.planFixes?.(run, [finding!]),
+    ).resolves.toEqual([
+      expect.objectContaining({
+        checkId: "reactCorrectness",
+        file: "src/app.tsx",
+        baseSource: source,
+        edits: [expect.objectContaining({ findingId: finding!.id })],
+      }),
+    ]);
+  });
+
   it("applies grouped per-file rules with identical patches on both snapshot sides", async () => {
     const { fixtures, changedFiles, run } = await reactContext("react");
     const clean =
