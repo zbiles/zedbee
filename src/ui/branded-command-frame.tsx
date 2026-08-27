@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { Box, Text } from "ink";
-import { PixelBee, pixelBeeHeight, pixelBeeWidth } from "./pixel-bee.js";
+import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import {
+  PlainWordmark,
   PixelWordmark,
   pixelWordmarkHeight,
   pixelWordmarkWidth,
@@ -91,9 +92,8 @@ export function BrandedCommandFrame({
   const narrowFrame = !showWordmark;
   const showBee =
     showWordmark && brandWidth + 2 + beeWidth <= availableBrandWidth;
-  const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
-  const beeTop =
-    pixelWordmarkHeight(compactBrand) - pixelBeeHeight(compactBrand) + 1;
+  const brandHeight = narrowFrame ? 3 : pixelWordmarkHeight(compactBrand);
+  const beeTop = 0;
   const brandGroupWidth = showWordmark
     ? brandWidth + (showBee ? 2 + beeWidth : 0)
     : Math.min(availableBrandWidth, 6);
@@ -136,12 +136,7 @@ export function BrandedCommandFrame({
                 {showWordmark ? (
                   <PixelWordmark color={color} compact={compactBrand} />
                 ) : (
-                  <Text
-                    bold
-                    {...(color ? { color: ZEDBEE_THEME.wordmark } : {})}
-                  >
-                    ZEDBEE
-                  </Text>
+                  <PlainWordmark color={color} />
                 )}
                 {showBee ? (
                   <Box position="absolute" left={brandWidth + 2} top={beeTop}>

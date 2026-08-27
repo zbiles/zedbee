@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe("PixelWordmark", () => {
-  it("renders the compact wordmark as three proportional half-block rows", async () => {
+  it("renders the compact stacked wordmark as six proportional half-block rows", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
@@ -25,13 +25,18 @@ describe("PixelWordmark", () => {
     ).lastFrame()!;
     const lines = frame.split("\n");
 
-    expect(pixelWordmarkHeight(true)).toBe(3);
-    expect(lines).toHaveLength(3);
-    expect(lines[0]).toContain("█▀▀▀▀");
-    expect(lines[2]).toContain("▀▀▀▀▀");
+    expect(pixelWordmarkHeight(true)).toBe(6);
+    expect(lines.map((line) => line.trimEnd())).toEqual([
+      "▀▀▀▀█ █▀▀▀▀ █▀▀█▄ █▀▀▀▄ █▀▀▀▀ █▀▀▀▀",
+      "█▀▀▀▀ █▀▀▀  █   █ █▀▀▀▄ █▀▀▀  █▀▀▀",
+      "▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀▀",
+      "      █▀▀▀▀ █ ▄ █ █▀▀▀█ █▀▀▀█ █▀█▀█",
+      "      ▀▀▀▀█ ▀███▀ █▀▀▀█ █▀▀█▀ █ ▀ █",
+      "      ▀▀▀▀▀  ▀ ▀  ▀   ▀ ▀  ▀  ▀   ▀",
+    ]);
   });
 
-  it("keeps the full-size wordmark at five rows with two-column pixels", async () => {
+  it("stacks yellow SWARM beneath EDBEE with one blank logical row", async () => {
     process.env.FORCE_COLOR = "3";
     vi.resetModules();
     const React = await import("react");
@@ -42,12 +47,44 @@ describe("PixelWordmark", () => {
       .lastFrame()!
       .split("\n");
 
-    expect(pixelWordmarkHeight(false)).toBe(5);
-    expect(lines).toHaveLength(5);
-    expect(lines[0]).toContain("██████████");
+    const logicalRows = lines.map((line) =>
+      Array.from({ length: 35 }, (_, column) =>
+        line.padEnd(70).slice(column * 2, column * 2 + 2) === "██" ? "1" : "0",
+      ).join(""),
+    );
+
+    expect(pixelWordmarkHeight(false)).toBe(11);
+    expect(logicalRows).toEqual([
+      "11111011111011110011110011111011111",
+      "00001010000010011010001010000010000",
+      "11111011110010001011110011110011110",
+      "10000010000010001010001010000010000",
+      "11111011111011111011110011111011111",
+      "00000000000000000000000000000000000",
+      "00000011111010001011111011111011111",
+      "00000010000010101010001010001010101",
+      "00000011111011111011111011111010101",
+      "00000000001001110010001010010010001",
+      "00000011111001010010001010010010001",
+    ]);
   });
 
-  it("positions both compact shared-header bees from their reported height", async () => {
+  it("renders ZEDBEE off-white and SWARM yellow", async () => {
+    process.env.FORCE_COLOR = "3";
+    vi.resetModules();
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { PixelWordmark } = await import("../../src/ui/pixel-wordmark.js");
+
+    const frame = render(
+      React.createElement(PixelWordmark, { color: true }),
+    ).lastFrame()!;
+
+    expect(frame).toContain("\u001b[38;2;243;244;246m");
+    expect(frame).toContain("\u001b[38;2;254;205;35m");
+  });
+
+  it("keeps both compact shared-header bees top-aligned when their reported height changes", async () => {
     vi.doMock("../../src/ui/pixel-bee.js", async (importOriginal) => {
       const actual =
         await importOriginal<typeof import("../../src/ui/pixel-bee.js")>();
@@ -76,7 +113,7 @@ describe("PixelWordmark", () => {
         const beeCells = line.slice(beeLeft, beeLeft + beeWidth);
         return /[▀▄█]/u.test(beeCells) && !/^█+$/u.test(beeCells);
       });
-      return wordmarkTop - beeTop;
+      return beeTop - wordmarkTop;
     };
     const commandFrame = render(
       React.createElement(BrandedCommandFrame, {
@@ -99,7 +136,58 @@ describe("PixelWordmark", () => {
     expect([
       renderedBeeOffset(commandFrame),
       renderedBeeOffset(liveFrame),
-    ]).toEqual([1, 1]);
+    ]).toEqual([0, 0]);
+  });
+
+  it("aligns both compact shared-header wing tops with the wordmark top", async () => {
+    const React = await import("react");
+    const { Text } = await import("ink");
+    const { render } = await import("ink-testing-library");
+    const { BrandedCommandFrame } =
+      await import("../../src/ui/branded-command-frame.js");
+    const { LiveDashboard } = await import("../../src/ui/live-dashboard.js");
+    const { pixelBeeWidth } = await import("../../src/ui/pixel-bee.js");
+    const { pixelWordmarkWidth } =
+      await import("../../src/ui/pixel-wordmark.js");
+    const renderedBeeOffset = (frame: string): number => {
+      const lines = frame.split("\n");
+      const wordmarkTop = lines.findIndex((line) => line.includes("▀▀▀▀█"));
+      const wordmarkLeft = lines[wordmarkTop]!.indexOf("▀▀▀▀█");
+      const beeLeft = wordmarkLeft + pixelWordmarkWidth(true) + 2;
+      const beeWidth = pixelBeeWidth(true);
+      const beeTop = lines.findIndex((line, index) => {
+        const beeCells = line.slice(beeLeft, beeLeft + beeWidth);
+        return (
+          index >= wordmarkTop &&
+          /[▀▄█]/u.test(beeCells) &&
+          !/^█+$/u.test(beeCells)
+        );
+      });
+      return beeTop - wordmarkTop;
+    };
+
+    const commandFrame = render(
+      React.createElement(BrandedCommandFrame, {
+        width: 109,
+        color: false,
+        children: React.createElement(Text, null, "CONTENT"),
+      }),
+    ).lastFrame()!;
+    const liveFrame = render(
+      React.createElement(LiveDashboard, {
+        events: [],
+        startedAt: 0,
+        elapsedMs: 0,
+        width: 96,
+        color: false,
+        animations: false,
+      }),
+    ).lastFrame()!;
+
+    expect([
+      renderedBeeOffset(commandFrame),
+      renderedBeeOffset(liveFrame),
+    ]).toEqual([0, 0]);
   });
 
   it("applies the black live-dashboard surface behind the frame and brand", async () => {

@@ -79,24 +79,17 @@ describe("LiveDashboard", () => {
         index < panelsTop &&
         /[▀▄█]/u.test(line.slice(beeLeft, beeLeft + beeWidth)),
     );
-    const brandMiddle = lines[wordmarkTop + 1]!;
-    const middleGroup = brandMiddle.slice(wordmarkLeft, beeLeft + beeWidth);
+    const brandMiddle = lines[wordmarkTop + 3]!;
     const outerLeft = lines[outerTop]!.indexOf("█");
     const outerRight = lines[outerTop]!.lastIndexOf("█");
-    const groupLeft = wordmarkLeft + middleGroup.search(/[▀▄█]/u);
-    const groupRight =
-      wordmarkLeft +
-      Math.max(
-        middleGroup.lastIndexOf("▀"),
-        middleGroup.lastIndexOf("▄"),
-        middleGroup.lastIndexOf("█"),
-      );
+    const groupLeft = wordmarkLeft;
+    const groupRight = beeLeft + beeWidth - 1;
 
     expect(outerTop).toBe(2);
-    expect(panelsTop).toBe(10);
+    expect(panelsTop).toBe(13);
     expect(wordmarkTop).toBe(5);
-    expect(wordmarkTop - firstWing).toBe(2);
-    expect(lastBeeRow - (wordmarkTop + 2)).toBe(1);
+    expect(wordmarkTop - firstWing).toBe(0);
+    expect(lastBeeRow - (wordmarkTop + 5)).toBe(0);
     expect(brandMiddle[beeLeft]).toMatch(/[▀▄█]/u);
     expect(
       Math.abs(groupLeft - outerLeft - (outerRight - groupRight)),
@@ -129,8 +122,8 @@ describe("LiveDashboard", () => {
       .filter((line) => /█/u.test(line) && !/^█+$/u.test(line));
 
     expect(wordmarkTop).toBe(5);
-    expect(wordmarkRows).toHaveLength(5);
-    expect(panelsTop).toBe(12);
+    expect(wordmarkRows).toHaveLength(10);
+    expect(panelsTop).toBe(18);
   });
 
   it("connects heading rules to both panel strokes and spans their full width", () => {
@@ -822,6 +815,12 @@ describe("LiveDashboard", () => {
     ).lastFrame()!;
 
     expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain(" SWARM");
+    const brandRows = frame
+      .split("\n")
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => line.includes("ZEDBEE") || line.includes(" SWARM"));
+    expect(brandRows[1]!.index - brandRows[0]!.index).toBe(2);
     expect(maxLineWidth(frame)).toBeLessThanOrEqual(20);
   });
 

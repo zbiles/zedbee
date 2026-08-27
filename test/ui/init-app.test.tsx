@@ -350,7 +350,7 @@ describe("InitApp", () => {
         proposal={proposal}
         proposalForSelection={() => proposal}
         width={80}
-        terminalSize={SHORT_TERMINAL}
+        terminalSize={{ ...SHORT_TERMINAL, rows: 23 }}
         color={false}
         animations={false}
         onDecision={() => undefined}
@@ -1146,9 +1146,9 @@ describe("InitApp", () => {
     );
 
     expect(brandRows.some((line) => line.includes("▀"))).toBe(true);
-    expect(panelTop).toBe(10);
+    expect(panelTop).toBe(13);
     expect(occupiedBrandRows).toHaveLength(6);
-    expect(occupiedWordmarkRows).toHaveLength(3);
+    expect(occupiedWordmarkRows).toHaveLength(6);
     expect(occupiedBeeRows).toHaveLength(6);
   });
 

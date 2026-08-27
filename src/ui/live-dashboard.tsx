@@ -1,7 +1,7 @@
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
-import { PixelBee, pixelBeeHeight, pixelBeeWidth } from "./pixel-bee.js";
+import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import {
   PixelClock,
   pixelClockRows,
@@ -9,6 +9,7 @@ import {
   type PixelLabel,
 } from "./pixel-clock.js";
 import {
+  PlainWordmark,
   PixelWordmark,
   pixelWordmarkHeight,
   pixelWordmarkWidth,
@@ -485,9 +486,8 @@ export function LiveDashboard({
   const horizontalPadding = narrowFrame ? 1 : 3;
   const contentWidth = Math.max(1, frameWidth - 4 - horizontalPadding);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
-  const brandHeight = narrowFrame ? 1 : pixelWordmarkHeight(compactBrand);
-  const beeTop =
-    pixelWordmarkHeight(compactBrand) - pixelBeeHeight(compactBrand) + 1;
+  const brandHeight = narrowFrame ? 3 : pixelWordmarkHeight(compactBrand);
+  const beeTop = 0;
   const brandWidth = narrowFrame
     ? "ZEDBEE".length
     : pixelWordmarkWidth(compactBrand);
@@ -552,9 +552,7 @@ export function LiveDashboard({
               height={brandHeight}
             >
               {narrowFrame ? (
-                <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
-                  ZEDBEE
-                </Text>
+                <PlainWordmark color={color} />
               ) : (
                 <PixelWordmark color={color} compact={compactBrand} />
               )}

@@ -70,6 +70,12 @@ describe("DoctorDashboard", () => {
     ).lastFrame()!;
 
     expect(frame).toContain("ZEDBEE");
+    expect(frame).toContain(" SWARM");
+    const brandRows = frame
+      .split("\n")
+      .map((line, index) => ({ line, index }))
+      .filter(({ line }) => line.includes("ZEDBEE") || line.includes(" SWARM"));
+    expect(brandRows[1]!.index - brandRows[0]!.index).toBe(2);
     expect(frame).toContain("DOCTOR");
     expect(frame).not.toMatch(/\u001B\[(?:38|48);2;/u);
     const plainFrame = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
