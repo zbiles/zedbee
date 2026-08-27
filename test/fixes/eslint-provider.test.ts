@@ -98,7 +98,11 @@ describe("planManagedEslintFixes", () => {
     const officialFix = reported.findings.find(
       (finding) => finding.rule === "no-extra-semi",
     );
+    const suggestionOnly = reported.findings.find(
+      (finding) => finding.rule === "no-unused-vars",
+    );
     expect(officialFix).toBeDefined();
+    expect(suggestionOnly).toBeDefined();
 
     const candidates = await planManagedEslintFixes(
       {
@@ -116,7 +120,7 @@ describe("planManagedEslintFixes", () => {
             },
           }),
       },
-      [officialFix!],
+      [officialFix!, suggestionOnly!],
     );
 
     expect(candidates).toEqual([
@@ -125,7 +129,11 @@ describe("planManagedEslintFixes", () => {
         checkId: "lint",
         file: "src/value.js",
         baseSource: fixableSource,
-        edits: [expect.objectContaining({ findingId: officialFix!.id })],
+        edits: [
+          expect.objectContaining({
+            findingId: officialFix!.id,
+          }),
+        ],
       }),
     ]);
     expect(JSON.stringify(candidates)).not.toContain("suggestions");
