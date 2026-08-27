@@ -158,7 +158,6 @@ export async function planManagedEslintFixes(
       if (
         finding === undefined ||
         finding.rule !== observation.rule ||
-        finding.severity !== observation.severity ||
         (finding.severity !== "warning" && finding.severity !== "error")
       ) {
         continue;

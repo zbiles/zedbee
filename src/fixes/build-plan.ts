@@ -148,6 +148,9 @@ function selectedChecks(
   input: readonly FixableCheckId[] | undefined,
 ): readonly FixableCheckId[] {
   const selected = input === undefined ? FIXABLE_CHECK_IDS : input;
+  if (!selected.every((checkId) => FIXABLE_CHECK_IDS.includes(checkId))) {
+    throw new TypeError("Expected a supported managed fix check selector.");
+  }
   return Object.freeze([...new Set(selected)]);
 }
 

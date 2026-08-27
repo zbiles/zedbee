@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CheckExecutionResult } from "../../src/checks/adapter.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
@@ -8,13 +8,18 @@ import { resolveConfig } from "../../src/config/profiles.js";
 import type { CheckResult } from "../../src/core/types.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import { GitClient } from "../../src/git/client.js";
-import type { SnapshotPair } from "../../src/git/snapshot.js";
+import {
+  buildSnapshotPair,
+  type SnapshotPair,
+} from "../../src/git/snapshot.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import {
   buildFixPlan,
+  FixPlanCleanupError,
   renderFixPlanJson,
   type BuildFixPlanDependencies,
 } from "../../src/fixes/build-plan.js";
+import { createGitRepository } from "../helpers/git-repository.js";
 
 const directories: string[] = [];
 
@@ -340,5 +345,136 @@ describe("buildFixPlan", () => {
       }),
     ).rejects.toThrow("invalid config");
     expect(calls).toEqual([]);
+  });
+
+  it("rejects a non-fixable runtime selector at the builder boundary", async () => {
+    const files = await fixture();
+
+    await expect(
+      buildFixPlan({
+        repositoryRoot: files.root,
+        selectedChecks: ["types" as "lint"],
+        dependencies: planDependencies(files, []),
+      }),
+    ).rejects.toThrow("supported managed fix check");
+  });
+
+  it("collects staged formatter and lint fixes without changing index or working bytes", async () => {
+    const repository = await createGitRepository(
+      "zedbee-fix-plan-integration-",
+    );
+    const clean = "export const value = 1;\n";
+    const staged = "export const value = 1;;\n";
+    const working = "export const value = 1;;;\n";
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
+    await repository.write("src/value.js", clean);
+    await repository.commitAll("baseline");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: {
+          formatting: "error",
+          lint: {
+            severity: "warn",
+            rules: { "no-extra-semi": "error" },
+          },
+          reactCorrectness: "off",
+        },
+      }),
+    );
+    await repository.write("src/value.js", staged);
+    await repository.git(["add", "--", "src/value.js"]);
+    await repository.write("src/value.js", working);
+    const beforeIndex = await repository.git(["show", ":src/value.js"]);
+    const beforeStatus = await repository.git(["status", "--porcelain"]);
+
+    const plan = await buildFixPlan({
+      repositoryRoot: repository.root,
+      selectedChecks: ["formatting", "lint"],
+    });
+
+    expect(plan.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.js",
+          baseSource: staged,
+        }),
+        expect.objectContaining({
+          kind: "format-file",
+          checkId: "formatting",
+          file: "src/value.js",
+        }),
+      ]),
+    );
+    expect(plan.publicPlan.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "lint", warnings: 1 }),
+        expect.objectContaining({ checkId: "formatting" }),
+      ]),
+    );
+    expect(plan.workingFiles.get("src/value.js")).toMatchObject({
+      content: working,
+      hasUnstagedChanges: true,
+    });
+    await expect(repository.read("src/value.js")).resolves.toBe(working);
+    await expect(repository.git(["show", ":src/value.js"])).resolves.toEqual(
+      beforeIndex,
+    );
+    await expect(repository.git(["status", "--porcelain"])).resolves.toEqual(
+      beforeStatus,
+    );
+  });
+
+  it("reports an actionable snapshot path when final cleanup fails", async () => {
+    const repository = await createGitRepository("zedbee-fix-plan-cleanup-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write("src/value.ts", "export const value = 2;\n");
+    await repository.git(["add", "--", "src/value.ts"]);
+    const git = new GitClient(repository.root);
+    const pair = await buildSnapshotPair(repository.root, git);
+    const calls: string[] = [];
+
+    try {
+      await expect(
+        buildFixPlan({
+          repositoryRoot: repository.root,
+          selectedChecks: ["lint"],
+          dependencies: planDependencies(
+            {
+              root: repository.root,
+              baseline: pair.baselineDir,
+              target: pair.targetDir,
+            },
+            calls,
+            {
+              buildSnapshots: async () => ({
+                ...pair,
+                cleanup: async () => {
+                  calls.push("cleanup");
+                  throw new Error("injected cleanup failure");
+                },
+              }),
+            },
+          ),
+        }),
+      ).rejects.toMatchObject({
+        name: FixPlanCleanupError.name,
+        temporaryPath: dirname(pair.targetDir),
+      });
+      expect(calls).toEqual(["cleanup"]);
+    } finally {
+      await pair.cleanup();
+    }
   });
 });
