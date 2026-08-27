@@ -89,3 +89,21 @@ export interface PreparedFixPlan {
   readonly workingFiles: ReadonlyMap<string, WorkingFilePreview>;
   readonly temporaryReportMaxAgeMs: number;
 }
+
+export type FixIssueKind = "conflict" | "stale" | "write" | "format";
+
+export interface FixIssue {
+  readonly kind: FixIssueKind;
+  readonly file: string;
+  readonly checkIds: readonly FixableCheckId[];
+  readonly message: string;
+  readonly remediation: string;
+}
+
+export interface FixResult {
+  readonly exitCode: 0 | 1;
+  readonly appliedFixes: number;
+  readonly changedFiles: readonly string[];
+  readonly unchangedFiles: readonly string[];
+  readonly issues: readonly FixIssue[];
+}
