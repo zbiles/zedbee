@@ -11,6 +11,7 @@ import {
 } from "./format-diff.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
+import { planPrettierFixes } from "../../fixes/prettier-provider.js";
 import { prettierOptions } from "./settings.js";
 import {
   isSupportedPrettierPath,
@@ -64,7 +65,7 @@ function finding(file: string, startLine: number, endLine: number): Finding {
     message: "Staged code does not match Zedbee's managed Prettier format.",
     location: { file, startLine, endLine },
     remediation:
-      "Format the staged lines with Prettier, then stage the result.",
+      "Run zedbee fix formatting, review the working-file changes, and stage the desired result.",
     attribution: {
       kind: "transformation-diff",
       staged: true,
@@ -90,6 +91,10 @@ function skipped(): CheckResult {
 export const prettierAdapter: LegacyCheckResultAdapter = {
   id: "formatting",
   output: "legacy-check-result",
+
+  async planFixes(context, findings) {
+    return planPrettierFixes(context, findings);
+  },
 
   async inspect(context) {
     if (context.config.checks.formatting.when === "always") {

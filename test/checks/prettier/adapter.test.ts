@@ -305,6 +305,8 @@ describe("prettierAdapter.run", () => {
       check: "formatting",
       rule: "prettier",
       severity: "error",
+      remediation:
+        "Run zedbee fix formatting, review the working-file changes, and stage the desired result.",
       location: { file: "value.ts", startLine: 2, endLine: 2 },
       attribution: {
         kind: "transformation-diff",
