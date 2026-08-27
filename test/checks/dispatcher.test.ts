@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import type { CheckResult } from "../../src/core/types.js";
+import type { CheckResult, Finding } from "../../src/core/types.js";
 import type { Observation } from "../../src/core/types.js";
 import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
@@ -25,6 +25,7 @@ import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
 import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
+import type { CheckFixCandidate } from "../../src/fixes/types.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -2211,5 +2212,149 @@ describe("dispatchChecks", () => {
       "alpha",
       "zeta",
     ]);
+  });
+
+  it("collects immutable fix plans only when explicitly requested", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: "warn" },
+      overrides: [{ files: ["test/**"], checks: { formatting: "off" } }],
+    });
+    let providerCalls = 0;
+    let receivedFindings: readonly Finding[] | undefined;
+    const provider = async (
+      _context: CheckRunContext,
+      findings: readonly Finding[],
+    ): Promise<readonly CheckFixCandidate[]> => {
+      providerCalls += 1;
+      receivedFindings = findings;
+      return [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: "src/value.ts",
+          findingIds: findings.map((finding) => finding.id),
+          severities: findings.map(() => "warning" as const),
+          settings: config.checks.formatting.settings,
+        },
+      ];
+    };
+    const adapter = Object.assign(
+      createLegacyAdapter(async () => ({
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 0,
+        findings: [
+          {
+            id: "baseline-only",
+            check: "formatting",
+            rule: "prettier",
+            severity: "error",
+            message: "Unchanged issue",
+            location: { file: "src/value.ts", startLine: 1 },
+            attribution: { kind: "none", staged: false, evidence: [] },
+          },
+          {
+            id: "enabled-staged",
+            check: "formatting",
+            rule: "prettier",
+            severity: "info",
+            message: "Changed issue",
+            location: { file: "src/value.ts", startLine: 1 },
+            attribution: {
+              kind: "transformation-diff",
+              staged: true,
+              evidence: ["src/value.ts"],
+            },
+          },
+          {
+            id: "disabled-staged",
+            check: "formatting",
+            rule: "prettier",
+            severity: "error",
+            message: "Disabled file issue",
+            location: { file: "test/value.test.ts", startLine: 1 },
+            attribution: {
+              kind: "transformation-diff",
+              staged: true,
+              evidence: ["test/value.test.ts"],
+            },
+          },
+        ],
+      })),
+      { planFixes: provider },
+    );
+
+    const ordinary = await dispatchChecks([adapter], createContext(config));
+
+    expect(providerCalls).toBe(0);
+    expect(ordinary[0]?.fixCandidates).toBeUndefined();
+
+    const collected = await dispatchChecks([adapter], createContext(config), {
+      collectFixes: true,
+    });
+
+    expect(providerCalls).toBe(1);
+    expect(receivedFindings).toEqual([
+      expect.objectContaining({ id: "enabled-staged", severity: "warning" }),
+    ]);
+    expect(collected[0]?.fixCandidates).toEqual([
+      expect.objectContaining({
+        kind: "format-file",
+        file: "src/value.ts",
+        findingIds: ["enabled-staged"],
+        severities: ["warning"],
+      }),
+    ]);
+    expect(Object.isFrozen(collected[0]?.fixCandidates)).toBe(true);
+  });
+
+  it("contains fix provider failures without disclosing source text", async () => {
+    const provider = async () => {
+      throw new Error("const privateToken = 'not for reports'");
+    };
+    const adapter = Object.assign(
+      createLegacyAdapter(async () => ({
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 0,
+        findings: [
+          {
+            id: "staged",
+            check: "formatting",
+            rule: "prettier",
+            severity: "error",
+            message: "Changed issue",
+            attribution: {
+              kind: "transformation-diff",
+              staged: true,
+              evidence: ["src/value.ts"],
+            },
+          },
+        ],
+      })),
+      { planFixes: provider },
+    );
+
+    const [execution] = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ formatting: "error" })),
+      { collectFixes: true },
+    );
+
+    expect(execution?.result).toMatchObject({
+      checkId: "formatting",
+      status: "incomplete",
+      findings: [],
+      error: {
+        code: "FIX_PROVIDER_FAILED",
+        message: "Formatting could not prepare managed fixes.",
+        remediation:
+          "Update Zedbee or inspect the managed rule compatibility before retrying.",
+      },
+    });
+    expect(execution?.fixCandidates).toBeUndefined();
+    expect(JSON.stringify(execution)).not.toContain("privateToken");
   });
 });

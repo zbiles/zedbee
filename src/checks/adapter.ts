@@ -1,9 +1,10 @@
-import type { CheckResult, Observation } from "../core/types.js";
+import type { CheckResult, Finding, Observation } from "../core/types.js";
 import type { ResolvedCheckPolicy, ResolvedConfig } from "../config/schema.js";
 import type { ChangeSet } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
+import type { CheckFixCandidate } from "../fixes/types.js";
 
 export type ExecutionClass = "lightweight" | "project-analysis" | "network";
 
@@ -41,6 +42,8 @@ export interface CheckExecutionResult {
   /** A null policy marks a dispatcher failure that must remain visible. */
   readonly policy: Readonly<ResolvedCheckPolicy> | null;
   readonly policyForFile?: FilePolicyResolver;
+  /** Opt-in managed-fix plans stay outside results, events, and caches. */
+  readonly fixCandidates?: readonly CheckFixCandidate[];
 }
 
 export type CheckApplicability =
@@ -65,6 +68,11 @@ export interface CheckRunContext extends InspectionContext {
   readonly signal: AbortSignal;
 }
 
+export type CheckFixProvider = (
+  context: CheckRunContext,
+  findings: readonly Finding[],
+) => Promise<readonly CheckFixCandidate[]>;
+
 interface CheckAdapterBase {
   readonly id: string;
   /**
@@ -73,6 +81,8 @@ interface CheckAdapterBase {
    * receives the exact inspected-target policy.
    */
   inspect(context: InspectionContext): Promise<CheckApplicability>;
+  /** Called only by an explicitly fix-collecting dispatch. */
+  readonly planFixes?: CheckFixProvider;
 }
 
 export interface ObservationCheckAdapter extends CheckAdapterBase {

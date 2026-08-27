@@ -9,6 +9,7 @@ import {
   type FilePolicyResolver,
 } from "../config/file-policy.js";
 import type { CheckResult } from "../core/types.js";
+import type { CheckFixCandidate } from "../fixes/types.js";
 import type {
   CheckAdapter,
   CheckExecutionResult,
@@ -20,6 +21,7 @@ import type {
   InspectionContext,
   ObservationCheckAdapter,
   LegacyCheckResultAdapter,
+  CheckFixProvider,
 } from "./adapter.js";
 import type { ScanEvent } from "./events.js";
 import { observationCheckResult } from "./observation-result.js";
@@ -54,12 +56,15 @@ import {
   immutableConfigurationSnapshot,
   snapshotManagedPolicy,
 } from "../config/settings-registry.js";
+import { sanitizeFixCandidates } from "../fixes/sanitize.js";
 
 export interface DispatchOptions {
   clock?: () => number;
   onEvent?: (event: ScanEvent) => void;
   cache?: ObservationCache;
   cacheEngineIdentity?: (checkId: string) => string | undefined;
+  /** Invoke adapter fix providers after staged findings receive policy filtering. */
+  collectFixes?: boolean;
 }
 
 function checkPolicy(
@@ -111,12 +116,14 @@ function executionResult(
   policy: Readonly<ResolvedCheckPolicy> | null,
   target?: CheckTarget,
   policyForFile?: FilePolicyResolver,
+  fixCandidates?: readonly CheckFixCandidate[],
 ): CheckExecutionResult {
   return {
     result: sanitizeCheckResult(result),
     ...(target === undefined ? {} : { target }),
     policy,
     ...(policyForFile === undefined ? {} : { policyForFile }),
+    ...(fixCandidates === undefined ? {} : { fixCandidates }),
   };
 }
 
@@ -516,12 +523,14 @@ type AdapterSnapshot =
       output: "observations";
       inspect: ObservationCheckAdapter["inspect"];
       collect: ObservationCheckAdapter["collect"];
+      planFixes?: CheckFixProvider;
     }>
   | Readonly<{
       id: "formatting";
       output: "legacy-check-result";
       inspect: LegacyCheckResultAdapter["inspect"];
       runLegacy: LegacyCheckResultAdapter["runLegacy"];
+      planFixes?: CheckFixProvider;
     }>;
 
 type AdapterSnapshotResult =
@@ -547,8 +556,12 @@ function snapshotAdapter(raw: CheckAdapter): AdapterSnapshotResult {
     id = adapterId(candidate.id);
     const output = candidate.output;
     const inspect = candidate.inspect;
+    const planFixes = candidate.planFixes;
     if (typeof inspect !== "function") {
       throw new TypeError("Adapter returned an invalid inspect function");
+    }
+    if (planFixes !== undefined && typeof planFixes !== "function") {
+      throw new TypeError("Adapter returned an invalid fix provider");
     }
     const inspectFunction = inspect as ObservationCheckAdapter["inspect"];
     if (output === "observations") {
@@ -563,6 +576,9 @@ function snapshotAdapter(raw: CheckAdapter): AdapterSnapshotResult {
           output,
           inspect: inspectFunction,
           collect: collect as ObservationCheckAdapter["collect"],
+          ...(planFixes === undefined
+            ? {}
+            : { planFixes: planFixes as CheckFixProvider }),
         }),
       });
     }
@@ -578,6 +594,9 @@ function snapshotAdapter(raw: CheckAdapter): AdapterSnapshotResult {
           output,
           inspect: inspectFunction,
           runLegacy: runLegacy as LegacyCheckResultAdapter["runLegacy"],
+          ...(planFixes === undefined
+            ? {}
+            : { planFixes: planFixes as CheckFixProvider }),
         }),
       });
     }
@@ -896,10 +915,11 @@ export async function dispatchChecks(
             timestamp: started,
           });
           let result: CheckResult;
+          let runContext: CheckRunContext | undefined;
           const durationMs = (): number => Math.max(0, clock() - started);
           const label = checkLabel(adapter.id);
           try {
-            const runContext = scopedContext(
+            runContext = scopedContext(
               adapterContext,
               adapter.id,
               target,
@@ -1005,9 +1025,46 @@ export async function dispatchChecks(
                       "Check the analyzer installation and staged input, then retry.",
                   });
           }
-          const displayResult =
-            displayResultForPolicy(result, executionPolicy, policyForFile) ??
-            sanitizeCheckResult(result);
+          const policyDisplayResult = displayResultForPolicy(
+            result,
+            executionPolicy,
+            policyForFile,
+          );
+          let displayResult =
+            policyDisplayResult ?? sanitizeCheckResult(result);
+          let fixCandidates: readonly CheckFixCandidate[] | undefined;
+          if (
+            options.collectFixes === true &&
+            adapter.planFixes !== undefined &&
+            policyDisplayResult?.status === "completed" &&
+            policyDisplayResult.findings.length > 0 &&
+            runContext !== undefined
+          ) {
+            try {
+              fixCandidates = sanitizeFixCandidates(
+                await Reflect.apply(adapter.planFixes, undefined, [
+                  runContext,
+                  policyDisplayResult.findings,
+                ]),
+              );
+            } catch {
+              result = incompleteResult({
+                checkId: adapter.id,
+                target: target.id,
+                durationMs: durationMs(),
+                code: "FIX_PROVIDER_FAILED",
+                message: `${label} could not prepare managed fixes.`,
+                remediation:
+                  "Update Zedbee or inspect the managed rule compatibility before retrying.",
+              });
+              displayResult =
+                displayResultForPolicy(
+                  result,
+                  executionPolicy,
+                  policyForFile,
+                ) ?? sanitizeCheckResult(result);
+            }
+          }
           emit({
             type: "check-completed",
             checkId: adapter.id,
@@ -1020,6 +1077,7 @@ export async function dispatchChecks(
             executionPolicy,
             target,
             policyForFile,
+            fixCandidates,
           );
         }),
       );
