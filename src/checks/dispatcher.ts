@@ -1046,6 +1046,12 @@ export async function dispatchChecks(
                   runContext,
                   policyDisplayResult.findings,
                 ]),
+                {
+                  checkId: adapter.id,
+                  findingIds: policyDisplayResult.findings.map(
+                    (finding) => finding.id,
+                  ),
+                },
               );
             } catch {
               result = incompleteResult({

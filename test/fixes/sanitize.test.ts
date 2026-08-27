@@ -18,25 +18,32 @@ const settings = {
   singleAttributePerLine: false,
 };
 
+function candidateScope(checkId: string, findingIds: readonly string[]) {
+  return { checkId, findingIds };
+}
+
 describe("sanitizeFixCandidates", () => {
   it("deep-freezes a source-bearing exact candidate without serializing it", () => {
-    const [candidate] = sanitizeFixCandidates([
-      {
-        kind: "exact-file",
-        checkId: "lint",
-        file: "src/value.ts",
-        baseSource: "const value = 1\n",
-        edits: [
-          {
-            findingId: "finding-1",
-            severity: "error",
-            start: 5,
-            end: 10,
-            replacement: "answer",
-          },
-        ],
-      },
-    ]);
+    const [candidate] = sanitizeFixCandidates(
+      [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: "const value = 1\n",
+          edits: [
+            {
+              findingId: "finding-1",
+              severity: "error",
+              start: 5,
+              end: 10,
+              replacement: "answer",
+            },
+          ],
+        },
+      ],
+      candidateScope("lint", ["finding-1"]),
+    );
 
     expect(candidate).toMatchObject({
       kind: "exact-file",
@@ -51,46 +58,53 @@ describe("sanitizeFixCandidates", () => {
   });
 
   it("sorts exact edits deterministically and deeply freezes format settings", () => {
-    const candidates = sanitizeFixCandidates([
-      {
-        kind: "exact-file",
-        checkId: "reactCorrectness",
-        file: "src/view.tsx",
-        baseSource: "const value = 1\n",
-        edits: [
-          {
-            findingId: "later",
-            severity: "warning",
-            start: 12,
-            end: 13,
-            replacement: "2",
-          },
-          {
-            findingId: "first",
-            severity: "error",
-            start: 6,
-            end: 11,
-            replacement: "answer",
-          },
-        ],
-      },
-      {
-        kind: "format-file",
-        checkId: "formatting",
-        file: "src/value.ts",
-        findingIds: ["formatting-1"],
-        severities: ["warning"],
-        settings,
-      },
-    ]);
+    const [exactCandidate] = sanitizeFixCandidates(
+      [
+        {
+          kind: "exact-file",
+          checkId: "reactCorrectness",
+          file: "src/view.tsx",
+          baseSource: "const value = 1\n",
+          edits: [
+            {
+              findingId: "later",
+              severity: "warning",
+              start: 12,
+              end: 13,
+              replacement: "2",
+            },
+            {
+              findingId: "first",
+              severity: "error",
+              start: 6,
+              end: 11,
+              replacement: "answer",
+            },
+          ],
+        },
+      ],
+      candidateScope("reactCorrectness", ["first", "later"]),
+    );
+    const [formatCandidate] = sanitizeFixCandidates(
+      [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: "src/value.ts",
+          findingIds: ["formatting-1"],
+          severities: ["warning"],
+          settings,
+        },
+      ],
+      candidateScope("formatting", ["formatting-1"]),
+    );
 
-    expect(candidates[0]).toMatchObject({
+    expect(exactCandidate).toMatchObject({
       edits: [
         { findingId: "first", start: 6, end: 11 },
         { findingId: "later", start: 12, end: 13 },
       ],
     });
-    const formatCandidate = candidates[1];
     expect(formatCandidate?.kind).toBe("format-file");
     if (formatCandidate?.kind !== "format-file") {
       throw new Error("Expected format fix");
@@ -161,21 +175,87 @@ describe("sanitizeFixCandidates", () => {
       }));
     }
 
-    expect(() => sanitizeFixCandidates([candidate])).toThrow(TypeError);
+    expect(() =>
+      sanitizeFixCandidates(
+        [candidate],
+        candidateScope("lint", ["finding-1", "first", "second"]),
+      ),
+    ).toThrow(TypeError);
   });
 
   it("rejects format candidates with mismatched finding IDs and severities", () => {
     expect(() =>
-      sanitizeFixCandidates([
-        {
-          kind: "format-file",
-          checkId: "formatting",
-          file: "src/value.ts",
-          findingIds: ["formatting-1"],
-          severities: [],
-          settings,
-        },
-      ]),
+      sanitizeFixCandidates(
+        [
+          {
+            kind: "format-file",
+            checkId: "formatting",
+            file: "src/value.ts",
+            findingIds: ["formatting-1"],
+            severities: [],
+            settings,
+          },
+        ],
+        candidateScope("formatting", ["formatting-1"]),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects candidates that do not belong to the dispatched check", () => {
+    expect(() =>
+      sanitizeFixCandidates(
+        [
+          {
+            kind: "format-file",
+            checkId: "formatting",
+            file: "src/value.ts",
+            findingIds: ["staged-format"],
+            severities: ["warning"],
+            settings,
+          },
+        ],
+        candidateScope("lint", ["staged-format"]),
+      ),
+    ).toThrow(TypeError);
+  });
+
+  it("rejects exact and format candidates that reference findings outside the policy result", () => {
+    expect(() =>
+      sanitizeFixCandidates(
+        [
+          {
+            kind: "exact-file",
+            checkId: "lint",
+            file: "src/value.ts",
+            baseSource: "const value = 1\n",
+            edits: [
+              {
+                findingId: "unknown-exact",
+                severity: "error",
+                start: 6,
+                end: 11,
+                replacement: "answer",
+              },
+            ],
+          },
+        ],
+        candidateScope("lint", ["staged-exact"]),
+      ),
+    ).toThrow(TypeError);
+    expect(() =>
+      sanitizeFixCandidates(
+        [
+          {
+            kind: "format-file",
+            checkId: "formatting",
+            file: "src/value.ts",
+            findingIds: ["unknown-format"],
+            severities: ["warning"],
+            settings,
+          },
+        ],
+        candidateScope("formatting", ["staged-format"]),
+      ),
     ).toThrow(TypeError);
   });
 
@@ -197,7 +277,11 @@ describe("sanitizeFixCandidates", () => {
       edits: [],
     };
 
-    expect(() => sanitizeFixCandidates([inherited])).toThrow(TypeError);
-    expect(() => sanitizeFixCandidates([getterBacked])).toThrow(TypeError);
+    expect(() =>
+      sanitizeFixCandidates([inherited], candidateScope("lint", [])),
+    ).toThrow(TypeError);
+    expect(() =>
+      sanitizeFixCandidates([getterBacked], candidateScope("lint", [])),
+    ).toThrow(TypeError);
   });
 });

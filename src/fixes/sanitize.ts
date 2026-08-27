@@ -11,6 +11,11 @@ import type {
 
 type CandidateRecord = Record<PropertyKey, unknown>;
 
+export interface FixCandidateScope {
+  readonly checkId: string;
+  readonly findingIds: readonly string[];
+}
+
 function record(value: unknown, field: string): CandidateRecord {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`Expected ${field} to be an object`);
@@ -231,19 +236,57 @@ function sanitizeFormatCandidate(
   });
 }
 
+function snapshotScope(scope: FixCandidateScope): FixCandidateScope {
+  const input = record(scope, "fix candidate scope");
+  return freeze({
+    checkId: displayLabel(ownData(input, "checkId"), "fix check id"),
+    findingIds: ownArray(
+      ownData(input, "findingIds"),
+      "allowed fix finding IDs",
+    ).map((findingId) => displayLabel(findingId, "allowed fix finding id")),
+  });
+}
+
+function validateCandidateScope(
+  candidate: CheckFixCandidate,
+  scope: FixCandidateScope,
+): CheckFixCandidate {
+  if (candidate.checkId !== scope.checkId) {
+    throw new TypeError(
+      "Expected fix candidate to belong to the dispatched check",
+    );
+  }
+  const findingIds =
+    candidate.kind === "exact-file"
+      ? candidate.edits.map((edit) => edit.findingId)
+      : candidate.findingIds;
+  if (findingIds.some((findingId) => !scope.findingIds.includes(findingId))) {
+    throw new TypeError(
+      "Expected fix candidate findings to belong to the policy result",
+    );
+  }
+  return candidate;
+}
+
 /**
  * Copies adapter-provided fix plans into immutable, non-display snapshots.
  * Source-bearing fields intentionally stay out of result and report contracts.
  */
 export function sanitizeFixCandidates(
   candidates: readonly unknown[],
+  scope: FixCandidateScope,
 ): readonly CheckFixCandidate[] {
+  const snapshot = snapshotScope(scope);
   return freeze(
     ownArray(candidates, "fix candidates").map((candidate) => {
       const input = record(candidate, "fix candidate");
       const kind = ownData(input, "kind");
-      if (kind === "exact-file") return sanitizeExactCandidate(input);
-      if (kind === "format-file") return sanitizeFormatCandidate(input);
+      if (kind === "exact-file") {
+        return validateCandidateScope(sanitizeExactCandidate(input), snapshot);
+      }
+      if (kind === "format-file") {
+        return validateCandidateScope(sanitizeFormatCandidate(input), snapshot);
+      }
       throw new TypeError("Expected a supported fix candidate kind");
     }),
   );

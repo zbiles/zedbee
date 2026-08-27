@@ -2357,4 +2357,55 @@ describe("dispatchChecks", () => {
     expect(execution?.fixCandidates).toBeUndefined();
     expect(JSON.stringify(execution)).not.toContain("privateToken");
   });
+
+  it("fails closed when a provider returns a candidate for another check", async () => {
+    const provider = async (): Promise<readonly CheckFixCandidate[]> => [
+      {
+        kind: "exact-file",
+        checkId: "lint",
+        file: "src/value.ts",
+        baseSource: "const value = 1\n",
+        edits: [
+          {
+            findingId: "staged",
+            severity: "error",
+            start: 6,
+            end: 11,
+            replacement: "answer",
+          },
+        ],
+      },
+    ];
+    const adapter = Object.assign(
+      createLegacyAdapter(async () => ({
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 0,
+        findings: [
+          {
+            id: "staged",
+            check: "formatting",
+            rule: "prettier",
+            severity: "error",
+            message: "Changed issue",
+            attribution: {
+              kind: "transformation-diff",
+              staged: true,
+              evidence: ["src/value.ts"],
+            },
+          },
+        ],
+      })),
+      { planFixes: provider },
+    );
+
+    const [execution] = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ formatting: "error" })),
+      { collectFixes: true },
+    );
+
+    expect(execution?.result.error?.code).toBe("FIX_PROVIDER_FAILED");
+    expect(execution?.fixCandidates).toBeUndefined();
+  });
 });
