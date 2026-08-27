@@ -295,4 +295,62 @@ describe("writeWorkingFile", () => {
     });
     expect(synced).toEqual([join(root, "src")]);
   });
+
+  const temporaryFailureModes: readonly [
+    string,
+    {
+      readonly write?: true;
+      readonly chmodTemporary?: true;
+      readonly syncTemporary?: true;
+    },
+  ][] = [
+    ["partial write", { write: true }],
+    ["temporary chmod", { chmodTemporary: true }],
+    ["temporary sync", { syncTemporary: true }],
+  ];
+
+  it.each(temporaryFailureModes)(
+    "cleans a verified temporary file after an injected %s failure",
+    async (_operation, failure) => {
+      const root = await fixture();
+      const directory = join(root, "src");
+      await expect(
+        writeWorkingFile({
+          repositoryRoot: root,
+          file: "src/value.ts",
+          source: "new\n",
+          dependencies: {
+            ...(failure.write
+              ? {
+                  write: async (handle, source) => {
+                    await handle.writeFile(source.slice(0, 2), "utf8");
+                    throw new Error("partial write failure");
+                  },
+                }
+              : {}),
+            ...(failure.chmodTemporary
+              ? {
+                  chmodTemporary: async () => {
+                    throw new Error("chmod failure");
+                  },
+                }
+              : {}),
+            ...(failure.syncTemporary
+              ? {
+                  syncTemporary: async () => {
+                    throw new Error("sync failure");
+                  },
+                }
+              : {}),
+          },
+        }),
+      ).rejects.toThrow("failure");
+      expect(await readFile(join(directory, "value.ts"), "utf8")).toBe("old\n");
+      expect(
+        (await readdir(directory)).filter((name) =>
+          name.startsWith(".zedbee-"),
+        ),
+      ).toEqual([]);
+    },
+  );
 });

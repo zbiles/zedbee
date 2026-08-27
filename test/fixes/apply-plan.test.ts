@@ -360,6 +360,137 @@ describe("applyFixPlan", () => {
     ]);
   });
 
+  it.each([
+    ["start", "aXbc", "aXBc"],
+    ["end", "abXc", "aBXc"],
+  ])(
+    "preserves an unrelated working insertion at the non-zero exact range %s boundary",
+    async (_boundary, working, expected) => {
+      const fixture = await createInspectionFixture();
+      const base = "abc";
+      await fixture.write("src/value.ts", working);
+      const result = await applyFixPlan(
+        prepared(fixture.root, "src/value.ts", base, working, [
+          {
+            kind: "exact-file",
+            checkId: "lint",
+            file: "src/value.ts",
+            baseSource: base,
+            edits: [
+              {
+                findingId: "replace",
+                severity: "error",
+                start: 1,
+                end: 2,
+                replacement: "B",
+              },
+            ],
+          },
+        ]),
+      );
+      expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+        expected,
+      );
+      expect(result).toMatchObject({ exitCode: 0, appliedFixes: 1 });
+    },
+  );
+
+  it.each([
+    ["start", 1, "aYBc"],
+    ["end", 2, "aBYc"],
+  ])(
+    "applies a zero-width exact insertion touching a non-zero exact range %s endpoint",
+    async (_endpoint, offset, expected) => {
+      const fixture = await createInspectionFixture();
+      const source = "abc";
+      await fixture.write("src/value.ts", source);
+      const result = await applyFixPlan(
+        prepared(fixture.root, "src/value.ts", source, source, [
+          {
+            kind: "exact-file",
+            checkId: "lint",
+            file: "src/value.ts",
+            baseSource: source,
+            edits: [
+              {
+                findingId: "replace",
+                severity: "error",
+                start: 1,
+                end: 2,
+                replacement: "B",
+              },
+            ],
+          },
+          {
+            kind: "exact-file",
+            checkId: "reactCorrectness",
+            file: "src/value.ts",
+            baseSource: source,
+            edits: [
+              {
+                findingId: "insert",
+                severity: "warning",
+                start: offset,
+                end: offset,
+                replacement: "Y",
+              },
+            ],
+          },
+        ]),
+      );
+      expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+        expected,
+      );
+      expect(result).toMatchObject({ exitCode: 0, appliedFixes: 2 });
+    },
+  );
+
+  it("keeps two zero-width exact insertions at one boundary as a conflict", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "abc";
+    await fixture.write("src/value.ts", source);
+    const result = await applyFixPlan(
+      prepared(fixture.root, "src/value.ts", source, source, [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: source,
+          edits: [
+            {
+              findingId: "first",
+              severity: "error",
+              start: 1,
+              end: 1,
+              replacement: "X",
+            },
+          ],
+        },
+        {
+          kind: "exact-file",
+          checkId: "reactCorrectness",
+          file: "src/value.ts",
+          baseSource: source,
+          edits: [
+            {
+              findingId: "second",
+              severity: "warning",
+              start: 1,
+              end: 1,
+              replacement: "Y",
+            },
+          ],
+        },
+      ]),
+    );
+    expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+      source,
+    );
+    expect(result.issues).toEqual([
+      expect.objectContaining({ kind: "conflict", file: "src/value.ts" }),
+    ]);
+  });
+
   it("reports a committed durability failure without asking callers to retry", async () => {
     const fixture = await createInspectionFixture();
     const source = "const value = 1;;\n";

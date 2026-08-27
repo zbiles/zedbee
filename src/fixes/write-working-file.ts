@@ -41,6 +41,8 @@ export class CommittedWriteError extends Error {
 
 export interface WriteWorkingFileDependencies {
   write?(handle: FileHandle, source: string): Promise<void>;
+  chmodTemporary?(handle: FileHandle, mode: number): Promise<void>;
+  syncTemporary?(handle: FileHandle): Promise<void>;
   syncDirectory?(directory: string): Promise<void>;
 }
 
@@ -248,14 +250,22 @@ export async function writeWorkingFile(
       constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY,
       target.mode,
     );
+    temporaryIdentity = identity(await temporaryHandle.stat({ bigint: true }));
     if (request.dependencies?.write === undefined) {
       await temporaryHandle.writeFile(request.source, "utf8");
     } else {
       await request.dependencies.write(temporaryHandle, request.source);
     }
-    await temporaryHandle.chmod(target.mode);
-    await temporaryHandle.sync();
-    temporaryIdentity = identity(await temporaryHandle.stat({ bigint: true }));
+    if (request.dependencies?.chmodTemporary === undefined) {
+      await temporaryHandle.chmod(target.mode);
+    } else {
+      await request.dependencies.chmodTemporary(temporaryHandle, target.mode);
+    }
+    if (request.dependencies?.syncTemporary === undefined) {
+      await temporaryHandle.sync();
+    } else {
+      await request.dependencies.syncTemporary(temporaryHandle);
+    }
 
     await validateTarget(
       request.repositoryRoot,
