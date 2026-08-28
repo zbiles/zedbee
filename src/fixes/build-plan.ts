@@ -25,6 +25,7 @@ import { unsupportedEntryFailures } from "../scan/unsupported-inputs.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
+import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import {
   FIXABLE_CHECK_IDS,
   type CheckFixCandidate,
@@ -33,6 +34,8 @@ import {
   type FixPlanItem,
   type FixPlanSummary,
   type FixableCheckId,
+  type ExactFileFixCandidate,
+  type ExactFixEdit,
   type FormatFileFixCandidate,
   type PreparedFixPlan,
   type WorkingFilePreview,
@@ -167,29 +170,35 @@ function selectedAdapters(
   );
 }
 
-function candidateFindingIds(candidate: CheckFixCandidate): readonly string[] {
-  return candidate.kind === "exact-file"
-    ? candidate.edits.map((edit) => edit.findingId)
-    : candidate.findingIds;
-}
-
-function candidateSeverities(
-  candidate: CheckFixCandidate,
-): readonly ("warning" | "error")[] {
-  return candidate.kind === "exact-file"
-    ? candidate.edits.map((edit) => edit.severity)
-    : candidate.severities;
-}
-
-function itemFor(candidate: CheckFixCandidate): FixPlanItem {
-  const severities = candidateSeverities(candidate);
+function itemForExact(
+  candidate: ExactFileFixCandidate,
+  edit: ExactFixEdit,
+  reason?: string,
+): FixPlanItem {
   return Object.freeze({
     checkId: candidate.checkId,
     file: candidate.file,
-    findingIds: Object.freeze([...candidateFindingIds(candidate)]),
-    scope: candidate.kind === "exact-file" ? "finding" : "working-file",
-    blocking: severities.filter((severity) => severity === "error").length,
-    warnings: severities.filter((severity) => severity === "warning").length,
+    findingIds: Object.freeze([edit.findingId]),
+    scope: "finding" as const,
+    blocking: edit.severity === "error" ? 1 : 0,
+    warnings: edit.severity === "warning" ? 1 : 0,
+    status:
+      reason === undefined ? ("applicable" as const) : ("skipped" as const),
+    ...(reason === undefined ? {} : { reason }),
+  });
+}
+
+function itemForFormatting(candidate: FormatFileFixCandidate): FixPlanItem {
+  return Object.freeze({
+    checkId: candidate.checkId,
+    file: candidate.file,
+    findingIds: Object.freeze([...candidate.findingIds]),
+    scope: "working-file" as const,
+    blocking: candidate.severities.filter((severity) => severity === "error")
+      .length,
+    warnings: candidate.severities.filter((severity) => severity === "warning")
+      .length,
+    status: "applicable" as const,
   });
 }
 
@@ -197,8 +206,88 @@ function compareItems(left: FixPlanItem, right: FixPlanItem): number {
   return (
     compareCodeUnits(left.file, right.file) ||
     compareCodeUnits(left.checkId, right.checkId) ||
-    compareCodeUnits(left.scope, right.scope)
+    compareCodeUnits(left.scope, right.scope) ||
+    compareCodeUnits(left.findingIds[0] ?? "", right.findingIds[0] ?? "")
   );
+}
+
+interface PlannedCandidates {
+  readonly candidates: readonly CheckFixCandidate[];
+  readonly items: readonly FixPlanItem[];
+}
+
+const WORKING_OVERLAP_REASON = "Working changes overlap a managed exact fix.";
+const MANAGED_OVERLAP_REASON = "Managed exact fixes overlap each other.";
+const INCOMPATIBLE_BASE_REASON =
+  "Managed exact fixes use incompatible staged sources.";
+
+function planCandidates(
+  candidates: readonly CheckFixCandidate[],
+  workingFiles: ReadonlyMap<string, WorkingFilePreview>,
+): PlannedCandidates {
+  const reasons = new Map<ExactFixEdit, string>();
+  const exactByFile = new Map<string, ExactFileFixCandidate[]>();
+  for (const candidate of candidates) {
+    if (candidate.kind !== "exact-file") continue;
+    const existing = exactByFile.get(candidate.file);
+    if (existing === undefined) exactByFile.set(candidate.file, [candidate]);
+    else existing.push(candidate);
+  }
+
+  for (const [file, exactCandidates] of exactByFile) {
+    const baseSource = exactCandidates[0]!.baseSource;
+    const entries = exactCandidates.flatMap((candidate) =>
+      candidate.edits.map((edit) => ({ candidate, edit })),
+    );
+    if (
+      exactCandidates.some((candidate) => candidate.baseSource !== baseSource)
+    ) {
+      for (const { edit } of entries)
+        reasons.set(edit, INCOMPATIBLE_BASE_REASON);
+      continue;
+    }
+    for (let left = 0; left < entries.length; left += 1) {
+      for (let right = left + 1; right < entries.length; right += 1) {
+        if (exactFixesOverlap(entries[left]!.edit, entries[right]!.edit)) {
+          reasons.set(entries[left]!.edit, MANAGED_OVERLAP_REASON);
+          reasons.set(entries[right]!.edit, MANAGED_OVERLAP_REASON);
+        }
+      }
+    }
+    const preview = workingFiles.get(file);
+    for (const { edit } of entries) {
+      if (reasons.has(edit)) continue;
+      if (
+        preview === undefined ||
+        composeExactFixes(baseSource, preview.content, [edit]) === undefined
+      ) {
+        reasons.set(edit, WORKING_OVERLAP_REASON);
+      }
+    }
+  }
+
+  const items: FixPlanItem[] = [];
+  const applicable: CheckFixCandidate[] = [];
+  for (const candidate of candidates) {
+    if (candidate.kind === "format-file") {
+      items.push(itemForFormatting(candidate));
+      applicable.push(candidate);
+      continue;
+    }
+    const edits = candidate.edits.filter((edit) => !reasons.has(edit));
+    for (const edit of candidate.edits) {
+      items.push(itemForExact(candidate, edit, reasons.get(edit)));
+    }
+    if (edits.length > 0) {
+      applicable.push(
+        Object.freeze({ ...candidate, edits: Object.freeze(edits) }),
+      );
+    }
+  }
+  return Object.freeze({
+    candidates: Object.freeze(applicable),
+    items: Object.freeze(items.sort(compareItems)),
+  });
 }
 
 function resolvePolicyForFile(
@@ -322,26 +411,48 @@ async function workingFilePreviews(
 
 function publicPlan(
   selected: readonly FixableCheckId[],
-  candidates: readonly CheckFixCandidate[],
+  items: readonly FixPlanItem[],
   workingFiles: ReadonlyMap<string, WorkingFilePreview>,
   incomplete: boolean,
 ): FixPlan {
-  const items = candidates.map(itemFor).sort(compareItems);
   const files = [...workingFiles.values()]
-    .map((preview): FixPlanFile =>
-      Object.freeze({
+    .map((preview): FixPlanFile => {
+      const fileItems = items.filter((item) => item.file === preview.path);
+      const skippedFixes = fileItems.filter(
+        (item) => item.status === "skipped",
+      ).length;
+      const applicableFixes = fileItems.length - skippedFixes;
+      const reasons = [
+        ...new Set(
+          fileItems.flatMap((item) =>
+            item.status === "skipped" && item.reason !== undefined
+              ? [item.reason]
+              : [],
+          ),
+        ),
+      ];
+      return Object.freeze({
         path: preview.path,
-        fixes: items.filter((item) => item.file === preview.path).length,
+        fixes: fileItems.length,
+        applicableFixes,
+        skippedFixes,
+        status:
+          skippedFixes === 0
+            ? ("applicable" as const)
+            : applicableFixes === 0
+              ? ("skipped" as const)
+              : ("partial" as const),
+        reasons: Object.freeze(reasons),
         hasUnstagedChanges: preview.hasUnstagedChanges,
-      }),
-    )
+      });
+    })
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const summary: FixPlanSummary = Object.freeze({
     fixes: items.length,
     files: files.length,
     blocking: items.reduce((total, item) => total + item.blocking, 0),
     warnings: items.reduce((total, item) => total + item.warnings, 0),
-    skipped: 0,
+    skipped: items.filter((item) => item.status === "skipped").length,
   });
   return deepFreeze({
     schemaVersion: 1 as const,
@@ -444,10 +555,11 @@ export async function buildFixPlan(
     const incomplete = executions.some(
       (execution) => execution.result.status === "incomplete",
     );
+    const planned = planCandidates(candidates, workingFiles);
     return deepFreeze({
-      publicPlan: publicPlan(selected, candidates, workingFiles, incomplete),
+      publicPlan: publicPlan(selected, planned.items, workingFiles, incomplete),
       repositoryRoot: options.repositoryRoot,
-      candidates: Object.freeze([...candidates]),
+      candidates: planned.candidates,
       workingFiles,
       temporaryReportMaxAgeMs: parseTemporaryReportMaxAge(
         config.reporting.temporaryReportMaxAge,
@@ -482,6 +594,14 @@ export function renderFixPlanJson(plan: FixPlan): string {
       files: plan.files.map((file) => ({
         path: file.path,
         fixes: file.fixes,
+        ...(file.applicableFixes === undefined
+          ? {}
+          : { applicableFixes: file.applicableFixes }),
+        ...(file.skippedFixes === undefined
+          ? {}
+          : { skippedFixes: file.skippedFixes }),
+        ...(file.status === undefined ? {} : { status: file.status }),
+        ...(file.reasons === undefined ? {} : { reasons: [...file.reasons] }),
         hasUnstagedChanges: file.hasUnstagedChanges,
       })),
       items: plan.items.map((item) => ({
@@ -491,6 +611,8 @@ export function renderFixPlanJson(plan: FixPlan): string {
         scope: item.scope,
         blocking: item.blocking,
         warnings: item.warnings,
+        ...(item.status === undefined ? {} : { status: item.status }),
+        ...(item.reason === undefined ? {} : { reason: item.reason }),
       })),
     },
     null,

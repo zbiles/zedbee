@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { diffChars } from "diff";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import { formatWorkingSource } from "./prettier-provider.js";
 import {
   CommittedWriteError,
@@ -90,19 +90,6 @@ function checkIds(
   return candidates.map((candidate) => candidate.checkId);
 }
 
-function overlaps(left: ExactFixEdit, right: ExactFixEdit): boolean {
-  if (left.start === left.end && right.start === right.end) {
-    return left.start === right.start;
-  }
-  if (left.start === left.end) {
-    return left.start > right.start && left.start < right.end;
-  }
-  if (right.start === right.end) {
-    return right.start > left.start && right.start < left.end;
-  }
-  return left.start < right.end && right.start < left.end;
-}
-
 function exactEdits(candidates: readonly CheckFixCandidate[]): {
   readonly baseSource: string | undefined;
   readonly edits: readonly ExactEdit[];
@@ -126,75 +113,10 @@ function exactEdits(candidates: readonly CheckFixCandidate[]): {
     );
   const invalid =
     exact.some((candidate) => candidate.baseSource !== baseSource) ||
-    edits.some((edit, index) => index > 0 && overlaps(edits[index - 1]!, edit));
+    edits.some(
+      (edit, index) => index > 0 && exactFixesOverlap(edits[index - 1]!, edit),
+    );
   return { baseSource, edits, invalid };
-}
-
-/** Maps base UTF-16 offsets to current working UTF-16 offsets without text search. */
-function composeExact(
-  base: string,
-  working: string,
-  edits: readonly ExactEdit[],
-): string | undefined {
-  const baseToWorking = new Array<number>(base.length + 1);
-  const baseCharacterToWorking = new Array<number>(base.length);
-  let baseOffset = 0;
-  let workingOffset = 0;
-  baseToWorking[0] = 0;
-  for (const component of diffChars(base, working)) {
-    const length = component.value.length;
-    if (component.added) {
-      const intersects = edits.some((edit) =>
-        edit.start === edit.end
-          ? edit.start === baseOffset
-          : edit.start < baseOffset && baseOffset < edit.end,
-      );
-      if (intersects) return undefined;
-      workingOffset += length;
-      continue;
-    }
-    if (component.removed) {
-      const end = baseOffset + length;
-      if (
-        edits.some((edit) =>
-          edit.start === edit.end
-            ? baseOffset <= edit.start && edit.start <= end
-            : edit.start < end && baseOffset < edit.end,
-        )
-      ) {
-        return undefined;
-      }
-      baseOffset = end;
-      continue;
-    }
-    for (let offset = 0; offset < length; offset += 1) {
-      baseToWorking[baseOffset + offset] = workingOffset + offset;
-      baseCharacterToWorking[baseOffset + offset] = workingOffset + offset;
-    }
-    baseOffset += length;
-    workingOffset += length;
-    baseToWorking[baseOffset] = workingOffset;
-  }
-  if (baseOffset !== base.length) return undefined;
-  let merged = working;
-  for (const edit of [...edits].sort(
-    (left, right) => right.start - left.start || right.end - left.end,
-  )) {
-    const start =
-      edit.start === edit.end
-        ? baseToWorking[edit.start]
-        : baseCharacterToWorking[edit.start];
-    const end =
-      edit.start === edit.end
-        ? start
-        : (() => {
-            const lastCharacter = baseCharacterToWorking[edit.end - 1];
-            return lastCharacter === undefined ? undefined : lastCharacter + 1;
-          })();
-    if (start === undefined || end === undefined) return undefined;
-    merged = `${merged.slice(0, start)}${edit.replacement}${merged.slice(end)}`;
-  }
-  return merged;
 }
 
 function contained(root: string, candidate: string): boolean {
@@ -228,6 +150,23 @@ export async function applyFixPlan(
   const unchangedFiles: string[] = [];
   const issues: FixIssue[] = [];
   let appliedFixes = 0;
+  for (const item of plan.publicPlan.items) {
+    if (item.status !== "skipped") continue;
+    issues.push(
+      issue(
+        "conflict",
+        item.file,
+        [item.checkId],
+        item.reason ?? "Zedbee skipped a managed exact fix.",
+        "Resolve the overlapping edit and build a fresh fix plan.",
+      ),
+    );
+  }
+  for (const file of plan.publicPlan.files) {
+    if ((file.skippedFixes ?? 0) > 0 && (file.applicableFixes ?? 0) === 0) {
+      unchangedFiles.push(file.path);
+    }
+  }
   const read =
     dependencies.readWorkingFile ??
     ((root, file) => readFile(resolve(root, file), "utf8"));
@@ -298,7 +237,11 @@ export async function applyFixPlan(
     }
     let next = working;
     if (exact.baseSource !== undefined) {
-      const composed = composeExact(exact.baseSource, working, exact.edits);
+      const composed = composeExactFixes(
+        exact.baseSource,
+        working,
+        exact.edits,
+      );
       if (composed === undefined) {
         unchangedFiles.push(group.file);
         issues.push(

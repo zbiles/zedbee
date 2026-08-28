@@ -74,10 +74,11 @@ and then format both declarations because formatting sees the complete current
 working file. The Git index remains byte-for-byte unchanged.
 
 If an unstaged edit overlaps the exact range Zedbee planned to replace, that
-file is skipped as a conflict. Non-overlapping unstaged edits are preserved and
-can receive selected whole-file formatting. Zedbee also skips a file if it
-changes after the preview, if its exact fixes conflict, or if safe read,
-formatting, or atomic write checks fail.
+exact fix is marked as skipped before approval. Other safe exact fixes and
+selected whole-file formatting remain applicable, including on the same file.
+Non-overlapping unstaged edits are preserved. Zedbee skips the remaining actions
+for a file if it changes after the preview or if safe read, formatting, or
+atomic write checks fail.
 
 The plan describes `target: "index"` because findings come from the fresh staged
 snapshot. Application still targets working files only. Zedbee never stages or
@@ -104,7 +105,17 @@ and finding IDs:
     "warnings": 1,
     "skipped": 0
   },
-  "files": [{ "path": "src/value.ts", "fixes": 2, "hasUnstagedChanges": true }],
+  "files": [
+    {
+      "path": "src/value.ts",
+      "fixes": 2,
+      "applicableFixes": 2,
+      "skippedFixes": 0,
+      "status": "applicable",
+      "reasons": [],
+      "hasUnstagedChanges": true
+    }
+  ],
   "items": [
     {
       "checkId": "lint",
@@ -112,7 +123,8 @@ and finding IDs:
       "findingIds": ["example-id"],
       "scope": "finding",
       "blocking": 1,
-      "warnings": 0
+      "warnings": 0,
+      "status": "applicable"
     },
     {
       "checkId": "formatting",
@@ -120,7 +132,8 @@ and finding IDs:
       "findingIds": ["example-format-id"],
       "scope": "working-file",
       "blocking": 0,
-      "warnings": 1
+      "warnings": 1,
+      "status": "applicable"
     }
   ]
 }

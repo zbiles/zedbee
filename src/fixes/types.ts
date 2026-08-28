@@ -45,6 +45,10 @@ export interface FixPlanItem {
   readonly scope: "finding" | "working-file";
   readonly blocking: number;
   readonly warnings: number;
+  /** Present on freshly built plans; optional only for private legacy fixtures. */
+  readonly status?: "applicable" | "skipped";
+  /** Source-free explanation required when status is skipped. */
+  readonly reason?: string;
 }
 
 export interface FixPlanSummary {
@@ -57,7 +61,13 @@ export interface FixPlanSummary {
 
 export interface FixPlanFile {
   readonly path: string;
+  /** Individual exact edits plus at most one formatting action. */
   readonly fixes: number;
+  /** Present on freshly built plans; optional only for private legacy fixtures. */
+  readonly applicableFixes?: number;
+  readonly skippedFixes?: number;
+  readonly status?: "applicable" | "partial" | "skipped";
+  readonly reasons?: readonly string[];
   readonly hasUnstagedChanges: boolean;
 }
 

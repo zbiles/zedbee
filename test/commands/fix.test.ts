@@ -342,6 +342,67 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).not.toHaveBeenCalled();
   });
 
+  it("shows plan-time skipped exact edits to the confirmer before approval", async () => {
+    const terminal = io(true);
+    const prepared = plan({
+      summary: { fixes: 2, files: 2, blocking: 1, warnings: 1, skipped: 1 },
+      files: [
+        {
+          path: "src/overlap.ts",
+          fixes: 1,
+          applicableFixes: 0,
+          skippedFixes: 1,
+          hasUnstagedChanges: true,
+        },
+        {
+          path: "src/safe.ts",
+          fixes: 1,
+          applicableFixes: 1,
+          skippedFixes: 0,
+          hasUnstagedChanges: false,
+        },
+      ],
+      items: [
+        {
+          checkId: "lint",
+          file: "src/overlap.ts",
+          findingIds: ["overlap"],
+          scope: "finding",
+          blocking: 1,
+          warnings: 0,
+          status: "skipped",
+          reason: "Working changes overlap a managed exact fix.",
+        },
+        {
+          checkId: "lint",
+          file: "src/safe.ts",
+          findingIds: ["safe"],
+          scope: "finding",
+          blocking: 0,
+          warnings: 1,
+          status: "applicable",
+        },
+      ],
+    });
+    const deps = dependencies(prepared);
+    deps.confirm = vi.fn(async (publicPlan) => {
+      expect(publicPlan.summary.skipped).toBe(1);
+      expect(publicPlan.items[0]).toMatchObject({
+        status: "skipped",
+        reason: "Working changes overlap a managed exact fix.",
+      });
+      expect(publicPlan.items[1]).toMatchObject({ status: "applicable" });
+      return false;
+    });
+
+    await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(0);
+
+    expect(terminal.stdout.join("")).toContain(
+      'SKIP: "src/overlap.ts" — Working changes overlap a managed exact fix.',
+    );
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
+  });
+
   it("returns a source-free JSON preview without applying", async () => {
     const terminal = io(false);
     const deps = dependencies(
@@ -408,6 +469,53 @@ describe("executeFixCommand", () => {
       result: { appliedFixes: 1, unchangedFiles: ["src/other.ts"] },
     });
   });
+
+  it.each([
+    ["interactive approval", true],
+    ["--yes", false],
+  ])(
+    "prints blocking and warning plan counts plus the review-stage-rescan next step after %s",
+    async (_route, tty) => {
+      const terminal = io(tty);
+      const deps = dependencies(
+        plan({
+          summary: {
+            fixes: 3,
+            files: 2,
+            blocking: 2,
+            warnings: 1,
+            skipped: 1,
+          },
+        }),
+      );
+      deps.applyFixPlan = vi.fn(async () => ({
+        exitCode: 1 as const,
+        appliedFixes: 2,
+        changedFiles: ["src/value.ts"],
+        unchangedFiles: ["src/other.ts"],
+        issues: [
+          {
+            kind: "conflict" as const,
+            file: "src/other.ts",
+            checkIds: ["lint" as const],
+            message: "Working changes overlap a managed exact fix.",
+            remediation: "Resolve the overlapping edit and build a fresh plan.",
+          },
+        ],
+      }));
+
+      await expect(
+        executeFixCommand({ ...base, yes: !tty }, terminal, deps),
+      ).resolves.toBe(1);
+
+      const output = terminal.stdout.join("");
+      expect(output).toContain("Plan findings: 2 blocking; 1 warning");
+      expect(output).toContain(
+        "Next step: Review the working changes, stage the desired changes, then run zedbee scan again.",
+      );
+      expect(output).toContain("Working changes overlap a managed exact fix.");
+    },
+  );
 
   it("projects only approved public fields in a hostile applied JSON result", async () => {
     const terminal = io(false);
@@ -478,6 +586,43 @@ describe("executeFixCommand", () => {
     );
     expect(terminal.stderr.join("")).toMatch(/could not clean up\n$/u);
   });
+
+  it.each([
+    ["preview", false],
+    ["apply", true],
+  ])(
+    "does not persist a temporary sidecar for an oversized complete JSON %s",
+    async (_route, yes) => {
+      const terminal = io(false);
+      const deps = dependencies(
+        plan({
+          items: Array.from({ length: 26 }, (_, index) => ({
+            checkId: "lint" as const,
+            file: `src/${index}.ts`,
+            findingIds: [`lint-${index}`],
+            scope: "finding" as const,
+            blocking: 1,
+            warnings: 0,
+            status: "applicable" as const,
+          })),
+        }),
+      );
+
+      await executeFixCommand({ ...base, format: "json", yes }, terminal, deps);
+
+      expect(deps.store.maintain).toHaveBeenCalledOnce();
+      expect(deps.store.maintain).toHaveBeenCalledWith({
+        repositoryRoot: "/repo",
+        maxAgeMs: 86_400_000,
+      });
+      expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({
+        applied: yes,
+        items: expect.arrayContaining([
+          expect.objectContaining({ file: "src/25.ts" }),
+        ]),
+      });
+    },
+  );
 
   it("returns status 2 and a concise interruption message", async () => {
     const terminal = io(false);

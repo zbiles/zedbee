@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -19,6 +19,7 @@ import {
   renderFixPlanJson,
   type BuildFixPlanDependencies,
 } from "../../src/fixes/build-plan.js";
+import { applyFixPlan } from "../../src/fixes/apply-plan.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const directories: string[] = [];
@@ -429,6 +430,140 @@ describe("buildFixPlan", () => {
     await expect(repository.git(["status", "--porcelain"])).resolves.toEqual(
       beforeStatus,
     );
+  });
+
+  it("shows an existing exact-edit overlap in the public plan while a safe Git file remains applicable", async () => {
+    const repository = await createGitRepository("zedbee-fix-overlap-plan-");
+    const clean = "export const value = 1;\n";
+    const staged = "export const value = 1;;\n";
+    const overlappingWorking = "export const value = 1; /* mine */\n";
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
+    await repository.write("src/safe.js", clean);
+    await repository.write("src/overlap.js", clean);
+    await repository.commitAll("baseline");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: {
+          formatting: "off",
+          lint: {
+            severity: "error",
+            rules: { "no-extra-semi": "error" },
+          },
+          reactCorrectness: "off",
+        },
+      }),
+    );
+    await repository.write("src/safe.js", staged);
+    await repository.write("src/overlap.js", staged);
+    await repository.git(["add", "--", "src/safe.js", "src/overlap.js"]);
+    await repository.write("src/overlap.js", overlappingWorking);
+
+    const prepared = await buildFixPlan({
+      repositoryRoot: repository.root,
+      selectedChecks: ["lint"],
+    });
+
+    expect(prepared.publicPlan.summary).toMatchObject({ fixes: 2, skipped: 1 });
+    expect(prepared.publicPlan.files).toEqual([
+      expect.objectContaining({
+        path: "src/overlap.js",
+        applicableFixes: 0,
+        skippedFixes: 1,
+        status: "skipped",
+        reasons: ["Working changes overlap a managed exact fix."],
+      }),
+      expect.objectContaining({
+        path: "src/safe.js",
+        applicableFixes: 1,
+        skippedFixes: 0,
+        status: "applicable",
+        reasons: [],
+      }),
+    ]);
+    expect(prepared.publicPlan.items).toEqual([
+      expect.objectContaining({
+        file: "src/overlap.js",
+        status: "skipped",
+        reason: "Working changes overlap a managed exact fix.",
+      }),
+      expect.objectContaining({ file: "src/safe.js", status: "applicable" }),
+    ]);
+
+    const result = await applyFixPlan(prepared);
+    expect(result).toMatchObject({
+      exitCode: 1,
+      appliedFixes: 1,
+      changedFiles: ["src/safe.js"],
+      unchangedFiles: ["src/overlap.js"],
+      issues: [
+        expect.objectContaining({ kind: "conflict", file: "src/overlap.js" }),
+      ],
+    });
+    await expect(repository.read("src/safe.js")).resolves.toBe(clean);
+    await expect(repository.read("src/overlap.js")).resolves.toBe(
+      overlappingWorking,
+    );
+  });
+
+  it("reconciles each exact edit and one formatting action with the applied fix count", async () => {
+    const files = await fixture();
+    const source = "const one=1;;\nconst two=2;;\n";
+    await writeFile(join(files.root, "src", "value.ts"), source);
+    const firstExtra = source.indexOf(";;") + 1;
+    const secondExtra = source.lastIndexOf(";;") + 1;
+    const dependencies = planDependencies(files, [], {
+      dispatch: async () => [
+        {
+          result: completed,
+          policy: config.checks.lint,
+          target: { id: ".", kind: "repository", relativeRoot: "." },
+          policyForFile: (checkId, _path) => config.checks[checkId],
+          fixCandidates: [
+            {
+              kind: "exact-file",
+              checkId: "lint",
+              file: "src/value.ts",
+              baseSource: source,
+              edits: [
+                {
+                  findingId: "first",
+                  severity: "error",
+                  start: firstExtra,
+                  end: firstExtra + 1,
+                  replacement: "",
+                },
+                {
+                  findingId: "second",
+                  severity: "warning",
+                  start: secondExtra,
+                  end: secondExtra + 1,
+                  replacement: "",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    const prepared = await buildFixPlan({
+      repositoryRoot: files.root,
+      selectedChecks: ["formatting", "lint"],
+      dependencies,
+    });
+    const result = await applyFixPlan(prepared);
+
+    expect(prepared.publicPlan.summary).toMatchObject({ fixes: 3, skipped: 0 });
+    expect(prepared.publicPlan.items).toHaveLength(3);
+    expect(result.appliedFixes).toBe(prepared.publicPlan.summary.fixes);
+    await expect(
+      readFile(join(files.root, "src", "value.ts"), "utf8"),
+    ).resolves.toBe("const one = 1;\nconst two = 2;\n");
   });
 
   it("reports an actionable snapshot path when final cleanup fails", async () => {

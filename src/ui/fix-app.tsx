@@ -215,14 +215,23 @@ function FileSummaries({
     <>
       {files.map((file, index) => {
         const items = plan.items.filter((item) => item.file === file.path);
-        const blocking = items.reduce(
+        const applicableItems = items.filter(
+          (item) => item.status !== "skipped",
+        );
+        const skippedItems = items.filter((item) => item.status === "skipped");
+        const blocking = applicableItems.reduce(
           (count, item) => count + item.blocking,
           0,
         );
-        const warnings = items.reduce(
+        const warnings = applicableItems.reduce(
           (count, item) => count + item.warnings,
           0,
         );
+        const applicableFixes =
+          file.applicableFixes ??
+          (items.some((item) => item.status !== undefined)
+            ? applicableItems.length
+            : file.fixes);
         return (
           <Box key={file.path} flexDirection="column">
             <Box flexDirection="column" paddingX={2}>
@@ -233,20 +242,29 @@ function FileSummaries({
               >
                 {file.path}
               </Text>
-              {file.hasUnstagedChanges ? (
+              {applicableFixes > 0 && file.hasUnstagedChanges ? (
                 <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
                   APPLY —
-                  {items.some((item) => item.checkId === "formatting")
+                  {applicableItems.some((item) => item.checkId === "formatting")
                     ? " format current working file (includes unstaged changes)"
                     : " exact fixes preserve unrelated unstaged changes"}
                 </Text>
-              ) : (
+              ) : applicableFixes > 0 ? (
                 <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-                  APPLY — {countLabel(file.fixes, "fix")}
+                  APPLY — {countLabel(applicableFixes, "fix")}
                   {blocking > 0 ? ` · ${countLabel(blocking, "blocking")}` : ""}
                   {warnings > 0 ? ` · ${countLabel(warnings, "warning")}` : ""}
                 </Text>
-              )}
+              ) : null}
+              {skippedItems.map((item) => (
+                <Text
+                  key={`${item.checkId}:${item.findingIds.join(":")}`}
+                  wrap="wrap"
+                  {...colorProp(color, ZEDBEE_THEME.failure)}
+                >
+                  SKIP — {item.reason ?? "Managed exact fix is unavailable."}
+                </Text>
+              ))}
               <Text> </Text>
             </Box>
             {index < files.length - 1 ? (

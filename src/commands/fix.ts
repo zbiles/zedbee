@@ -120,9 +120,15 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
   ];
   const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
   for (const item of items) {
-    lines.push(
-      `${item.checkId}: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${item.findingIds.length} fixes)`,
-    );
+    if (item.status === "skipped") {
+      lines.push(
+        `SKIP: ${JSON.stringify(safeText(item.file, "fix file"))} — ${safeText(item.reason, "skip reason")}`,
+      );
+    } else {
+      lines.push(
+        `${item.checkId}: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${item.scope === "finding" ? 1 : item.findingIds.length} fixes)`,
+      );
+    }
   }
   if (plan.items.length > items.length) {
     lines.push(
@@ -153,6 +159,14 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
     files: rendered.files.map((file) => ({
       path: file.path,
       fixes: file.fixes,
+      ...(file.applicableFixes === undefined
+        ? {}
+        : { applicableFixes: file.applicableFixes }),
+      ...(file.skippedFixes === undefined
+        ? {}
+        : { skippedFixes: file.skippedFixes }),
+      ...(file.status === undefined ? {} : { status: file.status }),
+      ...(file.reasons === undefined ? {} : { reasons: [...file.reasons] }),
       hasUnstagedChanges: file.hasUnstagedChanges,
     })),
     items: rendered.items.map((item) => ({
@@ -162,6 +176,8 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
       scope: item.scope,
       blocking: item.blocking,
       warnings: item.warnings,
+      ...(item.status === undefined ? {} : { status: item.status }),
+      ...(item.reason === undefined ? {} : { reason: item.reason }),
     })),
     ...(result === undefined
       ? {}
@@ -183,7 +199,7 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
   };
 }
 
-function renderResultText(result: FixResult): string {
+function renderResultText(plan: FixPlan, result: FixResult): string {
   const lines = [
     result.exitCode === 0
       ? "Zedbee managed fixes applied."
@@ -191,6 +207,7 @@ function renderResultText(result: FixResult): string {
     `Applied fixes: ${result.appliedFixes}`,
     `Changed files: ${result.changedFiles.length}`,
     `Unchanged files: ${result.unchangedFiles.length}`,
+    `Plan findings: ${plan.summary.blocking} blocking; ${plan.summary.warnings} ${plan.summary.warnings === 1 ? "warning" : "warnings"}`,
   ];
   for (const issue of result.issues) {
     lines.push(
@@ -198,6 +215,9 @@ function renderResultText(result: FixResult): string {
       `Remediation: ${safeText(issue.remediation, "fix remediation")}`,
     );
   }
+  lines.push(
+    "Next step: Review the working changes, stage the desired changes, then run zedbee scan again.",
+  );
   return `${lines.join("\n")}\n`;
 }
 
@@ -218,13 +238,15 @@ function renderWarnings(warnings: readonly ReportMaintenanceWarning[]): string {
 async function maintainPlan(
   plan: PreparedFixPlan,
   store: TemporaryReportStore,
+  persistCompletePlan: boolean,
 ): Promise<{
   readonly reportPath?: string;
   readonly warnings: readonly ReportMaintenanceWarning[];
 }> {
   const json =
-    plan.publicPlan.items.length > COMPACT_DETAIL_LIMIT ||
-    plan.publicPlan.files.length > FIX_PLAN_FILE_SUMMARY_LIMIT
+    persistCompletePlan &&
+    (plan.publicPlan.items.length > COMPACT_DETAIL_LIMIT ||
+      plan.publicPlan.files.length > FIX_PLAN_FILE_SUMMARY_LIMIT)
       ? renderFixPlanJson(plan.publicPlan)
       : undefined;
   try {
@@ -272,8 +294,12 @@ export async function executeFixCommand(
       ...(configPath === undefined ? {} : { configPath }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
-    const maintenance = await maintainPlan(prepared, dependencies.store);
     const format = formatFor(options);
+    const maintenance = await maintainPlan(
+      prepared,
+      dependencies.store,
+      format === "text",
+    );
     const outputPlan = (applied: boolean, result?: FixResult): void => {
       if (format === "json") {
         io.writeStdout(
@@ -325,7 +351,7 @@ export async function executeFixCommand(
     if (format === "json") {
       outputPlan(true, result);
     } else {
-      io.writeStdout(renderResultText(result));
+      io.writeStdout(renderResultText(prepared.publicPlan, result));
     }
     io.writeStderr(renderWarnings(maintenance.warnings));
     return result.exitCode;

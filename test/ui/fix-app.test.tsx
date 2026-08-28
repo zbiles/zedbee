@@ -215,6 +215,59 @@ describe("FixApp", () => {
     expect(visibleFrame(view)).not.toContain("SKIP — unstaged changes");
   });
 
+  it("shows a plan-time exact conflict while keeping a safe file applicable", () => {
+    const conflictPlan: FixPlan = {
+      ...plan,
+      summary: { fixes: 2, files: 2, blocking: 1, warnings: 1, skipped: 1 },
+      files: [
+        {
+          path: "src/overlap.ts",
+          fixes: 1,
+          applicableFixes: 0,
+          skippedFixes: 1,
+          hasUnstagedChanges: true,
+        },
+        {
+          path: "src/safe.ts",
+          fixes: 1,
+          applicableFixes: 1,
+          skippedFixes: 0,
+          hasUnstagedChanges: false,
+        },
+      ],
+      items: [
+        {
+          checkId: "lint",
+          file: "src/overlap.ts",
+          findingIds: ["overlap"],
+          scope: "finding",
+          blocking: 1,
+          warnings: 0,
+          status: "skipped",
+          reason: "Working changes overlap a managed exact fix.",
+        },
+        {
+          checkId: "lint",
+          file: "src/safe.ts",
+          findingIds: ["safe"],
+          scope: "finding",
+          blocking: 0,
+          warnings: 1,
+          status: "applicable",
+        },
+      ],
+    };
+    const { view } = setup(conflictPlan, 120, 80, false, null);
+    const frame = visibleFrame(view);
+
+    expect(frame).toContain(
+      "SKIP — Working changes overlap a managed exact fix.",
+    );
+    expect(frame).toContain("src/safe.ts");
+    expect(frame).toContain("APPLY — 1 fix · 1 warning");
+    expect(frame).not.toContain("SKIP — unstaged changes");
+  });
+
   it("keeps all file actions visible when a truncated plan has no complete report", () => {
     const reportlessPlan: FixPlan = {
       ...plan,
