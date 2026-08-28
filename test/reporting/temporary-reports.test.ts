@@ -61,7 +61,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 const REPORT_NAME =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
+  /^zedbee-(?:scan-report|fix-plan)-[0-9]{14}(?:-[0-9]+)?\.json$/u;
 const LOCK_FILE_NAME = ".lifecycle.lock";
 const execFileAsync = promisify(execFile);
 
@@ -125,15 +125,16 @@ async function repositoryDirectory(
   const canonicalRepositoryRoot = await realpath(repositoryRoot);
   const repositoryHash = createHash("sha256")
     .update(canonicalRepositoryRoot, "utf8")
-    .digest("hex");
+    .digest("hex")
+    .slice(0, 32);
   const identity = userInfo();
-  const stableIdentity =
+  const namespace =
     Number.isSafeInteger(identity.uid) && identity.uid >= 0
-      ? `uid:${identity.uid}`
-      : `username:${identity.username}`;
-  const namespace = `zedbee-reports-${createHash("sha256")
-    .update(stableIdentity, "utf8")
-    .digest("hex")}`;
+      ? `zedbee-u${identity.uid}`
+      : `zedbee-user-${createHash("sha256")
+          .update(identity.username, "utf8")
+          .digest("hex")
+          .slice(0, 32)}`;
   return join(await realpath(temporaryRoot), namespace, repositoryHash);
 }
 
@@ -182,27 +183,18 @@ describe("temporary report store", () => {
       ]);
 
     expect(dirname(dirname(rootResult.reportPath!))).toBe(
-      join(
-        await realpath(temporaryRoot),
-        "zedbee-reports-6d422e16b2aa28e255047c0802dd6d6e4777266ef380db7d1ac8d558cb16b16d",
-      ),
+      join(await realpath(temporaryRoot), "zedbee-u0"),
     );
     expect(dirname(dirname(firstResult.reportPath!))).toBe(
-      join(
-        await realpath(temporaryRoot),
-        "zedbee-reports-dbf226aa5e80d199d75e850ec98e82c91a3ab2d0f48c1e46cd7a9af937af0b94",
-      ),
+      join(await realpath(temporaryRoot), "zedbee-u501"),
     );
     expect(dirname(dirname(secondResult.reportPath!))).toBe(
-      join(
-        await realpath(temporaryRoot),
-        "zedbee-reports-c143ebac66fb4fc0d62dbe48936100ba8337b388fe673cd97d8a3d49737849f6",
-      ),
+      join(await realpath(temporaryRoot), "zedbee-u502"),
     );
     expect(dirname(dirname(windowsResult.reportPath!))).toBe(
       join(
         await realpath(temporaryRoot),
-        "zedbee-reports-e30e18926069b174e464567ef62949ffe7ab8cb02a1a576ddc0bf7afdfb0875a",
+        "zedbee-user-349cba25e10ca9392b5a0733e36b4443",
       ),
     );
     expect(
@@ -228,22 +220,26 @@ describe("temporary report store", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("writes exact JSON into a hashed private layout", async () => {
+  it("writes exact JSON into a compact private layout with a readable scan name", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const canonicalRepositoryRoot = await realpath(repositoryRoot);
     const canonicalTemporaryRoot = await realpath(temporaryRoot);
     const expectedHash = createHash("sha256")
       .update(canonicalRepositoryRoot, "utf8")
-      .digest("hex");
+      .digest("hex")
+      .slice(0, 32);
     const json = '{"findings":[{"message":"exact bytes"}]}\n';
+    const now = new Date(2026, 7, 28, 11, 32, 45).getTime();
 
-    const result = await createTemporaryReportStore({ temporaryRoot }).maintain(
-      {
-        repositoryRoot,
-        maxAgeMs: 86_400_000,
-        json,
-      },
-    );
+    const result = await createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: 501, username: "person" },
+      now: () => now,
+    }).maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json,
+    });
 
     expect(result.reportPath).toBeDefined();
     expect(result.warnings).toEqual([]);
@@ -251,10 +247,8 @@ describe("temporary report store", () => {
     const repositoryDirectory = dirname(reportPath);
     expect(basename(repositoryDirectory)).toBe(expectedHash);
     expect(dirname(dirname(repositoryDirectory))).toBe(canonicalTemporaryRoot);
-    expect(basename(dirname(repositoryDirectory))).toMatch(
-      /^zedbee-reports-[0-9a-f]{64}$/u,
-    );
-    expect(basename(reportPath)).toMatch(REPORT_NAME);
+    expect(basename(dirname(repositoryDirectory))).toBe("zedbee-u501");
+    expect(basename(reportPath)).toBe("zedbee-scan-report-20260828113245.json");
     await expect(readFile(reportPath, "utf8")).resolves.toBe(json);
 
     const entries = await readdir(repositoryDirectory);
@@ -272,6 +266,66 @@ describe("temporary report store", () => {
         (await stat(join(repositoryDirectory, stateName!))).mode & 0o777,
       ).toBe(0o600);
     }
+  });
+
+  it("brands fix plans and adds a suffix only after a same-second collision", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const now = new Date(2026, 7, 28, 11, 32, 45).getTime();
+    const store = createTemporaryReportStore({
+      temporaryRoot,
+      userIdentity: { uid: 501, username: "person" },
+      now: () => now,
+    });
+
+    const first = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      reportKind: "fix-plan",
+      json: "first\n",
+    });
+    const second = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      reportKind: "fix-plan",
+      json: "second\n",
+    });
+
+    expect(basename(first.reportPath!)).toBe(
+      "zedbee-fix-plan-20260828113245.json",
+    );
+    expect(basename(second.reportPath!)).toBe(
+      "zedbee-fix-plan-20260828113245-2.json",
+    );
+    await expect(readFile(first.reportPath!, "utf8")).resolves.toBe("first\n");
+    await expect(readFile(second.reportPath!, "utf8")).resolves.toBe(
+      "second\n",
+    );
+  });
+
+  it("continues allocating readable suffixes beyond sixteen same-second reports", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const now = new Date(2026, 7, 28, 11, 32, 45).getTime();
+    const store = createTemporaryReportStore({
+      temporaryRoot,
+      now: () => now,
+    });
+
+    const reports = [];
+    for (let index = 0; index < 17; index += 1) {
+      reports.push(
+        await store.maintain({
+          repositoryRoot,
+          maxAgeMs: 86_400_000,
+          reportKind: "fix-plan",
+          json: `${index}\n`,
+        }),
+      );
+    }
+
+    expect(reports.every((report) => report.warnings.length === 0)).toBe(true);
+    expect(basename(reports[16]!.reportPath!)).toBe(
+      "zedbee-fix-plan-20260828113245-17.json",
+    );
   });
 
   it("does not publish a report path beneath an unsafe display root", async () => {
@@ -333,22 +387,19 @@ describe("temporary report store", () => {
 
   it("never overwrites a destination introduced while a report is being published", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
-    const store = createTemporaryReportStore({ temporaryRoot });
+    const now = new Date(2026, 7, 28, 11, 32, 45).getTime();
+    const store = createTemporaryReportStore({
+      temporaryRoot,
+      now: () => now,
+    });
     await store.maintain({ repositoryRoot, maxAgeMs: 86_400_000 });
     const managedDirectory = await repositoryDirectory(
       repositoryRoot,
       temporaryRoot,
     );
     const firstUuid = "11111111-1111-4111-8111-111111111111";
-    const secondUuid = "22222222-2222-4222-8222-222222222222";
-    const successfulUuid = "33333333-3333-4333-8333-333333333333";
-    const stateWriteUuid = "44444444-4444-4444-8444-444444444444";
-    uuidControl.values.push(
-      firstUuid,
-      secondUuid,
-      successfulUuid,
-      stateWriteUuid,
-    );
+    const stateWriteUuid = "22222222-2222-4222-8222-222222222222";
+    uuidControl.values.push(firstUuid, stateWriteUuid);
     const racerContents = "destination owned by racing writer\n";
     const racerTemporary = join(managedDirectory, ".racer.tmp");
     const json = `${"report payload".repeat(350_000)}\n`;
@@ -359,19 +410,14 @@ describe("temporary report store", () => {
     });
     const collision = (async (): Promise<string> => {
       const deadline = Date.now() + 2_000;
-      const replacingRenameTemporary = `.write-${secondUuid}.tmp`;
       const exclusiveLinkTemporary = `.report-${firstUuid}.tmp`;
       while (Date.now() < deadline) {
         const entries = await readdir(managedDirectory);
-        const temporaryName = entries.find(
-          (entry) =>
-            entry === replacingRenameTemporary ||
-            entry === exclusiveLinkTemporary,
-        );
-        if (temporaryName !== undefined) {
-          const collisionUuid =
-            temporaryName === replacingRenameTemporary ? firstUuid : secondUuid;
-          const collisionPath = join(managedDirectory, `${collisionUuid}.json`);
+        if (entries.includes(exclusiveLinkTemporary)) {
+          const collisionPath = join(
+            managedDirectory,
+            "zedbee-scan-report-20260828113245.json",
+          );
           await writeFile(racerTemporary, racerContents, {
             flag: "wx",
             mode: 0o600,
@@ -393,7 +439,7 @@ describe("temporary report store", () => {
         racerContents,
       );
       expect(maintained.reportPath).toBe(
-        join(managedDirectory, `${successfulUuid}.json`),
+        join(managedDirectory, "zedbee-scan-report-20260828113245-2.json"),
       );
       await expect(readFile(maintained.reportPath!, "utf8")).resolves.toBe(
         json,
@@ -402,7 +448,7 @@ describe("temporary report store", () => {
         schemaVersion: 2,
         reports: [
           {
-            fileName: `${successfulUuid}.json`,
+            fileName: "zedbee-scan-report-20260828113245-2.json",
             createdAtMs: expect.any(Number),
           },
         ],
@@ -868,9 +914,7 @@ describe("temporary report store", () => {
     });
     const state = await storedState(initial.reportPath!);
     const reports = Array.from({ length: 10_000 }, (_, index) => ({
-      fileName: `00000000-0000-4000-8000-${index
-        .toString(16)
-        .padStart(12, "0")}.json`,
+      fileName: `zedbee-scan-report-19700101000000-${index + 2}.json`,
       createdGeneration: 1,
     }));
     await writeFile(

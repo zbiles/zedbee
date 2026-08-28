@@ -28,6 +28,7 @@ export interface ReportMaintenanceWarning {
 export interface TemporaryReportRequest {
   readonly repositoryRoot: string;
   readonly maxAgeMs: number;
+  readonly reportKind?: "scan-report" | "fix-plan";
   readonly json?: string;
 }
 
@@ -72,19 +73,35 @@ const LOCK_FILE_NAME = ".lifecycle.lock";
 const LOCK_TIMEOUT_MS = 2_000;
 const LOCK_RETRY_MS = 25;
 const REPORT_NAME =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json$/u;
+  /^zedbee-(?:scan-report|fix-plan)-[0-9]{14}(?:-[0-9]+)?\.json$/u;
 
 function userNamespace(identity: TemporaryReportUserIdentity): string {
-  const stableIdentity =
-    Number.isSafeInteger(identity.uid) && identity.uid >= 0
-      ? `uid:${identity.uid}`
-      : typeof identity.username === "string" && identity.username.length > 0
-        ? `username:${identity.username}`
-        : undefined;
-  if (stableIdentity === undefined) {
+  if (Number.isSafeInteger(identity.uid) && identity.uid >= 0) {
+    return `zedbee-u${identity.uid}`;
+  }
+  if (typeof identity.username !== "string" || identity.username.length === 0) {
     throw new TypeError("Unable to resolve temporary-report user identity");
   }
-  return `zedbee-reports-${createHash("sha256").update(stableIdentity, "utf8").digest("hex")}`;
+  return `zedbee-user-${createHash("sha256")
+    .update(identity.username, "utf8")
+    .digest("hex")
+    .slice(0, 32)}`;
+}
+
+function reportTimestamp(nowMs: number): string {
+  const date = new Date(nowMs);
+  const year = date.getFullYear();
+  if (!Number.isInteger(year) || year < 0 || year > 9_999) {
+    throw new TypeError("Invalid temporary-report clock");
+  }
+  return [
+    String(year).padStart(4, "0"),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+  ].join("");
 }
 
 function warning(
@@ -614,6 +631,8 @@ async function rollbackReport(
 async function writeUniqueReport(
   repositoryDirectory: string,
   json: string,
+  reportKind: "scan-report" | "fix-plan",
+  nowMs: number,
   warnings: ReportMaintenanceWarning[],
 ): Promise<{ readonly fileName: string; readonly path: string }> {
   const temporary = join(repositoryDirectory, `.report-${randomUUID()}.tmp`);
@@ -627,8 +646,9 @@ async function writeUniqueReport(
     await handle.close();
     handle = undefined;
 
-    for (let attempt = 0; attempt < 16; attempt += 1) {
-      const fileName = `${randomUUID()}.json`;
+    const stem = `zedbee-${reportKind}-${reportTimestamp(nowMs)}`;
+    for (let attempt = 0; attempt < MAX_STATE_REPORTS; attempt += 1) {
+      const fileName = `${stem}${attempt === 0 ? "" : `-${attempt + 1}`}.json`;
       const path = trackedReportPath(repositoryDirectory, fileName);
       if (path === undefined) {
         throw new TypeError("Invalid generated report name");
@@ -817,7 +837,8 @@ export function createTemporaryReportStore(options?: {
         );
         const repositoryHash = createHash("sha256")
           .update(canonicalRepositoryRoot, "utf8")
-          .digest("hex");
+          .digest("hex")
+          .slice(0, 32);
         const repositoryDirectory = await ensureManagedDirectory(
           reportsRoot,
           repositoryHash,
@@ -839,13 +860,14 @@ export function createTemporaryReportStore(options?: {
         ];
 
         if (request.json !== undefined) {
+          const reportKind = request.reportKind ?? "scan-report";
           let hasCapacity = true;
           const capacityProbe: ReportLifecycleState = {
             schemaVersion: 2,
             reports: [
               ...reports,
               {
-                fileName: "00000000-0000-4000-8000-000000000000.json",
+                fileName: `zedbee-${reportKind}-${reportTimestamp(nowMs)}.json`,
                 createdAtMs: nowMs,
               },
             ],
@@ -866,6 +888,8 @@ export function createTemporaryReportStore(options?: {
               const report = await writeUniqueReport(
                 repositoryDirectory,
                 request.json,
+                reportKind,
+                nowMs,
                 warnings,
               );
               reportPath = report.path;

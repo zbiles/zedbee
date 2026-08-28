@@ -215,7 +215,12 @@ describe("FixApp", () => {
     expect(frame).toContain(".claude/skills/example/remotion.config.ts");
     expect(frame).toContain("Correct the TypeScript project setup");
     expect(frame).toContain("No files have been changed.");
+    const unchangedRow = frameLines.findIndex((line) =>
+      line.includes("No files have been changed."),
+    );
+    expect(frameLines[unchangedRow + 1]).toContain("└");
     expect(frame).toContain("APPLY FIXES");
+    expect(frame).toContain("Shift+drag Select text");
   });
 
   it("offers only Close when no trustworthy fixes are available", async () => {

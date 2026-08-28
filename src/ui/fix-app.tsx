@@ -378,7 +378,6 @@ function CheckStatusPanel({
           No files have been changed.
         </Text>
       </Box>
-      <Text> </Text>
     </BrandedCommandPanel>
   );
 }
@@ -461,8 +460,8 @@ function FixActions({
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
           {hasApplicableFixes
-            ? "Tab/←→ Focus · Space/Enter Activate · Esc Cancel · PgUp/PgDn Scroll"
-            : "Space/Enter Close · Esc Close · PgUp/PgDn Scroll"}
+            ? "Tab/←→ Focus · Space/Enter Activate · Esc Cancel · PgUp/PgDn Scroll · Shift+drag Select text"
+            : "Space/Enter Close · Esc Close · PgUp/PgDn Scroll · Shift+drag Select text"}
         </Text>
       </Box>
       <Text> </Text>

@@ -831,6 +831,7 @@ describe("executeFixCommand", () => {
       expect(deps.store.maintain).toHaveBeenCalledWith({
         repositoryRoot: "/repo",
         maxAgeMs: 86_400_000,
+        reportKind: "fix-plan",
       });
       expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({
         applied: yes,

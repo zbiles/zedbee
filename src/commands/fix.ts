@@ -336,6 +336,7 @@ async function maintainPlan(
     return await store.maintain({
       repositoryRoot: plan.repositoryRoot,
       maxAgeMs: plan.temporaryReportMaxAgeMs,
+      reportKind: "fix-plan",
       ...(json === undefined ? {} : { json }),
     });
   } catch {
