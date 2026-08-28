@@ -299,14 +299,16 @@ function checkStatusTone(
   return ZEDBEE_THEME.muted;
 }
 
-function CheckStatusPanel({
+export function CheckStatusPanel({
   plan,
   width,
   color,
+  footer,
 }: {
   readonly plan: FixPlan;
   readonly width: number;
   readonly color: boolean;
+  readonly footer?: string;
 }) {
   if (plan.checks === undefined || plan.checks.length === 0) return null;
   const compact = width < 48;
@@ -372,12 +374,16 @@ function CheckStatusPanel({
           ) : null}
         </Box>
       ))}
-      <BrandedCommandPanelRule width={width} color={color} />
-      <Box paddingX={2}>
-        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-          No files have been changed.
-        </Text>
-      </Box>
+      {footer === undefined ? null : (
+        <>
+          <BrandedCommandPanelRule width={width} color={color} />
+          <Box paddingX={2}>
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              {footer}
+            </Text>
+          </Box>
+        </>
+      )}
     </BrandedCommandPanel>
   );
 }
@@ -608,6 +614,7 @@ export function FixApp(props: FixAppProps) {
                 plan={plan}
                 width={brandedCommandContentWidth(columns)}
                 color={color}
+                footer="No files have been changed."
               />
             </>
           )}

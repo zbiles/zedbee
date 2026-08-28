@@ -19,6 +19,7 @@ import {
 } from "../reporting/temporary-reports.js";
 
 const COMPACT_DETAIL_LIMIT = 25;
+const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
 
 export interface FixCommandOptions {
   readonly cwd: string;
@@ -57,7 +58,21 @@ export interface FixCommandDependencies {
   applyFixPlan(plan: PreparedFixPlan): Promise<FixResult>;
   /** Injected by the interactive UI task; the command remains safe until then. */
   confirm(plan: FixPlan, options: FixPromptOptions): Promise<boolean>;
+  renderResultDashboard?(
+    plan: FixPlan,
+    result: FixResult,
+    options: { readonly width: number; readonly color: boolean },
+  ): Promise<void>;
   store: TemporaryReportStore;
+}
+
+async function renderResultDashboard(
+  plan: FixPlan,
+  result: FixResult,
+  options: { readonly width: number; readonly color: boolean },
+): Promise<void> {
+  const { runInkFixResult } = await import("../ui/fix-result-dashboard.js");
+  await runInkFixResult(plan, result, options);
 }
 
 const DEFAULT_DEPENDENCIES: FixCommandDependencies = {
@@ -71,6 +86,7 @@ const DEFAULT_DEPENDENCIES: FixCommandDependencies = {
     const { runFixPrompt } = await import("../ui/fix-app.js");
     return runFixPrompt(plan, options);
   },
+  renderResultDashboard,
   store: createTemporaryReportStore(),
 };
 
@@ -299,7 +315,7 @@ function renderResultText(plan: FixPlan, result: FixResult): string {
     );
   }
   lines.push(
-    "Next step: Review the working changes, stage the desired changes, then run zedbee scan again.",
+    "Next step: Review Zedbee's changes, stage the ones you want to keep, then run zedbee scan to verify the updated staged code and identify remaining findings.",
   );
   return `${lines.join("\n")}\n`;
 }
@@ -457,6 +473,21 @@ export async function executeFixCommand(
     const result = await dependencies.applyFixPlan(prepared);
     if (format === "json") {
       outputPlan(true, result);
+    } else if (
+      options.format === "auto" &&
+      io.stdoutIsTTY &&
+      io.width >= MINIMUM_RESULT_DASHBOARD_WIDTH &&
+      io.env.TERM !== "dumb" &&
+      io.env.CI === undefined
+    ) {
+      await (dependencies.renderResultDashboard ?? renderResultDashboard)(
+        prepared.publicPlan,
+        result,
+        {
+          width: io.width,
+          color: options.color && io.env.NO_COLOR === undefined,
+        },
+      );
     } else {
       io.writeStdout(renderResultText(prepared.publicPlan, result));
     }

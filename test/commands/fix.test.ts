@@ -284,6 +284,25 @@ describe("executeFixCommand", () => {
     );
   });
 
+  it("renders the permanent branded result after an automatic interactive apply", async () => {
+    const terminal = io(true);
+    terminal.env.NO_COLOR = "1";
+    const prepared = partialPlan();
+    const renderResultDashboard = vi.fn(async () => undefined);
+    const deps = { ...dependencies(prepared), renderResultDashboard };
+
+    await expect(
+      executeFixCommand({ ...base, format: "auto" }, terminal, deps),
+    ).resolves.toBe(1);
+
+    expect(renderResultDashboard).toHaveBeenCalledWith(
+      prepared.publicPlan,
+      expect.objectContaining({ appliedFixes: 0 }),
+      { width: 80, color: false },
+    );
+    expect(terminal.stdout.join("")).toBe("");
+  });
+
   it("applies trustworthy partial fixes with --yes but preserves the incomplete exit", async () => {
     const terminal = io(false);
     const deps = dependencies(partialPlan());
@@ -728,7 +747,7 @@ describe("executeFixCommand", () => {
       const output = terminal.stdout.join("");
       expect(output).toContain("Plan findings: 2 blocking; 1 warning");
       expect(output).toContain(
-        "Next step: Review the working changes, stage the desired changes, then run zedbee scan again.",
+        "Next step: Review Zedbee's changes, stage the ones you want to keep, then run zedbee scan to verify the updated staged code and identify remaining findings.",
       );
       expect(output).toContain("Working changes overlap a managed exact fix.");
     },
