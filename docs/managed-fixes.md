@@ -164,14 +164,21 @@ Inspect every reported issue before retrying.
 
 A durability warning can mean the working file was replaced but Zedbee could
 not confirm directory durability. That is partial progress with a nonzero exit;
-do not retry automatically. Inspect the file and filesystem first. An
-untrustworthy or incomplete fresh plan is never applied and exits 2.
+do not retry automatically. Inspect the file and filesystem first.
 
-| Status | Managed-fix meaning                                                                                                                             |
-| -----: | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-|    `0` | Preview/cancellation made no writes, or every approved file operation completed without an issue                                                |
-|    `1` | Some safe work may have completed, but at least one conflict, stale file, formatting failure, write failure, or durability warning was reported |
-|    `2` | Zedbee could not build a trustworthy complete plan; no plan was applied                                                                         |
+When one fix provider cannot finish, Zedbee keeps that check visibly marked
+incomplete but may still preview and apply actions produced by other providers
+that completed successfully. The incomplete provider contributes no actions,
+and the command exits 1 even when every approved trustworthy action succeeds.
+If no trustworthy actions remain, the interactive screen is read-only. A
+foundational failure that prevents Zedbee from building a trustworthy plan at
+all remains exit 2 and is never applied.
+
+| Status | Managed-fix meaning                                                                                                                                                          |
+| -----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|    `0` | Preview/cancellation made no writes, or every selected provider and approved file operation completed without an issue                                                       |
+|    `1` | Some safe work may have completed, but at least one provider was incomplete or a conflict, stale file, formatting failure, write failure, or durability warning was reported |
+|    `2` | Zedbee could not build a trustworthy complete plan; no plan was applied                                                                                                      |
 
 ## Review, stage, and rescan
 

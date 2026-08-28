@@ -30,6 +30,7 @@ import {
   FIXABLE_CHECK_IDS,
   type CheckFixCandidate,
   type FixPlan,
+  type FixPlanCheck,
   type FixPlanFile,
   type FixPlanItem,
   type FixPlanSummary,
@@ -427,15 +428,26 @@ function collectCandidates(
   executions: readonly CheckExecutionResult[],
   selected: ReadonlySet<FixableCheckId>,
 ): readonly CheckFixCandidate[] {
+  const incompleteChecks = new Set(
+    executions
+      .filter((execution) => execution.result.status === "incomplete")
+      .map((execution) => execution.result.checkId),
+  );
   const candidates = executions.flatMap((execution) =>
     execution.result.status === "completed"
       ? (execution.fixCandidates ?? [])
       : [],
   );
-  const filtered = candidates.filter((candidate) =>
-    selected.has(candidate.checkId),
+  const filtered = candidates.filter(
+    (candidate) =>
+      selected.has(candidate.checkId) &&
+      !incompleteChecks.has(candidate.checkId),
   );
-  return addFormattingForExactCandidates(filtered, selected, executions);
+  return Object.freeze(
+    addFormattingForExactCandidates(filtered, selected, executions).filter(
+      (candidate) => !incompleteChecks.has(candidate.checkId),
+    ),
+  );
 }
 
 async function workingFilePreviews(
@@ -485,7 +497,7 @@ function publicPlan(
   selected: readonly FixableCheckId[],
   items: readonly FixPlanItem[],
   workingFiles: ReadonlyMap<string, WorkingFilePreview>,
-  incomplete: boolean,
+  checks: readonly FixPlanCheck[],
 ): FixPlan {
   const fixesFor = (item: FixPlanItem): number =>
     item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
@@ -538,11 +550,87 @@ function publicPlan(
     schemaVersion: 1 as const,
     target: "index" as const,
     selectedChecks: selected,
-    exitCode: incomplete ? (2 as const) : (0 as const),
+    exitCode: checks.some((check) => check.status === "incomplete")
+      ? (1 as const)
+      : (0 as const),
+    checks,
     summary,
     files,
     items,
   });
+}
+
+function planChecks(
+  selected: readonly FixableCheckId[],
+  executions: readonly CheckExecutionResult[],
+  items: readonly FixPlanItem[],
+): readonly FixPlanCheck[] {
+  const fixesFor = (item: FixPlanItem): number =>
+    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
+  return Object.freeze(
+    selected.map((checkId): FixPlanCheck => {
+      const checkExecutions = executions.filter(
+        (execution) => execution.result.checkId === checkId,
+      );
+      const incomplete = checkExecutions.filter(
+        (execution) => execution.result.status === "incomplete",
+      );
+      const completed = checkExecutions.some(
+        (execution) => execution.result.status === "completed",
+      );
+      const fixes = items
+        .filter((item) => item.checkId === checkId && item.status !== "skipped")
+        .reduce((total, item) => total + fixesFor(item), 0);
+      const issues = incomplete.flatMap((execution) => {
+        const error = execution.result.error;
+        return error === undefined
+          ? [
+              {
+                code: "CHECK_INCOMPLETE",
+                message: "The check could not finish.",
+              },
+            ]
+          : [
+              {
+                code: error.code,
+                message: error.message,
+                ...(error.path === undefined ? {} : { path: error.path }),
+                ...(error.remediation === undefined
+                  ? {}
+                  : { remediation: error.remediation }),
+              },
+            ];
+      });
+      if (incomplete.length > 0) {
+        return Object.freeze({
+          checkId,
+          status: "incomplete" as const,
+          fixes,
+          issues: Object.freeze(issues),
+        });
+      }
+      if (completed || fixes > 0) {
+        return Object.freeze({
+          checkId,
+          status: "completed" as const,
+          fixes,
+          issues: Object.freeze([]),
+        });
+      }
+      const reasons = checkExecutions.flatMap((execution) =>
+        execution.result.skipReason === undefined
+          ? []
+          : [execution.result.skipReason],
+      );
+      return Object.freeze({
+        checkId,
+        status: "not-applicable" as const,
+        fixes: 0,
+        issues: Object.freeze([]),
+        reason: reasons[0] ?? "No applicable target was found.",
+      });
+    }),
+  );
 }
 
 function unsupportedInputError(): Error {
@@ -583,7 +671,12 @@ export async function buildFixPlan(
     const changeSet = await dependencies.readChangeSet(git);
     if (changeSet.isEmpty) {
       return deepFreeze({
-        publicPlan: publicPlan(selected, [], readonlyMap([]), false),
+        publicPlan: publicPlan(
+          selected,
+          [],
+          readonlyMap([]),
+          planChecks(selected, [], []),
+        ),
         repositoryRoot: options.repositoryRoot,
         candidates: Object.freeze([]),
         workingFiles: readonlyMap([]),
@@ -632,12 +725,10 @@ export async function buildFixPlan(
       signal,
       dependencies,
     );
-    const incomplete = executions.some(
-      (execution) => execution.result.status === "incomplete",
-    );
     const planned = planCandidates(candidates, workingFiles);
+    const checks = planChecks(selected, executions, planned.items);
     return deepFreeze({
-      publicPlan: publicPlan(selected, planned.items, workingFiles, incomplete),
+      publicPlan: publicPlan(selected, planned.items, workingFiles, checks),
       repositoryRoot: options.repositoryRoot,
       candidates: planned.candidates,
       workingFiles,
@@ -664,6 +755,24 @@ export function renderFixPlanJson(plan: FixPlan): string {
       target: plan.target,
       selectedChecks: [...plan.selectedChecks],
       exitCode: plan.exitCode,
+      ...(plan.checks === undefined
+        ? {}
+        : {
+            checks: plan.checks.map((check) => ({
+              checkId: check.checkId,
+              status: check.status,
+              fixes: check.fixes,
+              issues: check.issues.map((issue) => ({
+                code: issue.code,
+                message: issue.message,
+                ...(issue.path === undefined ? {} : { path: issue.path }),
+                ...(issue.remediation === undefined
+                  ? {}
+                  : { remediation: issue.remediation }),
+              })),
+              ...(check.reason === undefined ? {} : { reason: check.reason }),
+            })),
+          }),
       summary: {
         fixes: plan.summary.fixes,
         files: plan.summary.files,

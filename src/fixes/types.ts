@@ -73,13 +73,31 @@ export interface FixPlanFile {
   readonly hasUnstagedChanges: boolean;
 }
 
+export interface FixPlanCheckIssue {
+  readonly code: string;
+  readonly message: string;
+  readonly path?: string;
+  readonly remediation?: string;
+}
+
+export interface FixPlanCheck {
+  readonly checkId: FixableCheckId;
+  readonly status: "completed" | "incomplete" | "not-applicable";
+  /** Trustworthy actions contributed by completed executions of this check. */
+  readonly fixes: number;
+  readonly issues: readonly FixPlanCheckIssue[];
+  readonly reason?: string;
+}
+
 /** A source-free, JSON-safe summary of a fresh staged fix analysis. */
 export interface FixPlan {
   readonly schemaVersion: 1;
   readonly target: "index";
   readonly selectedChecks: readonly FixableCheckId[];
-  /** An incomplete selected check produces exit status 2. */
-  readonly exitCode: 0 | 2;
+  /** One or more incomplete selected checks produce partial status 1. */
+  readonly exitCode: 0 | 1 | 2;
+  /** Present on freshly built plans; optional only for private legacy fixtures. */
+  readonly checks?: readonly FixPlanCheck[];
   readonly summary: FixPlanSummary;
   readonly files: readonly FixPlanFile[];
   readonly items: readonly FixPlanItem[];

@@ -93,6 +93,64 @@ function hostilePlan(): PreparedFixPlan {
   return prepared;
 }
 
+function partialPlan(withFix = true): PreparedFixPlan {
+  return plan({
+    exitCode: 1,
+    checks: [
+      {
+        checkId: "formatting",
+        status: "completed",
+        fixes: withFix ? 1 : 0,
+        issues: [],
+      },
+      {
+        checkId: "lint",
+        status: "incomplete",
+        fixes: 0,
+        issues: [
+          {
+            code: "TYPED_LINT_ANALYSIS_FAILED",
+            message: "Typed lint analysis could not inspect this file.",
+            path: "src/value.ts",
+            remediation:
+              "Correct the TypeScript project setup and run Zedbee again.",
+          },
+        ],
+      },
+      {
+        checkId: "reactCorrectness",
+        status: "not-applicable",
+        fixes: 0,
+        issues: [],
+        reason: "No React renderer detected",
+      },
+    ],
+    summary: {
+      fixes: withFix ? 1 : 0,
+      files: withFix ? 1 : 0,
+      blocking: withFix ? 1 : 0,
+      warnings: 0,
+      skipped: 0,
+    },
+    files: withFix
+      ? [{ path: "src/value.ts", fixes: 1, hasUnstagedChanges: false }]
+      : [],
+    items: withFix
+      ? [
+          {
+            checkId: "formatting",
+            file: "src/value.ts",
+            findingIds: ["format-1"],
+            scope: "working-file",
+            fixes: 1,
+            blocking: 1,
+            warnings: 0,
+          },
+        ]
+      : [],
+  });
+}
+
 function expectPublicPlan(
   output: unknown,
   applied: boolean,
@@ -197,6 +255,93 @@ describe("executeFixCommand", () => {
       animations: false,
     });
     expect(deps.applyFixPlan).toHaveBeenCalledOnce();
+  });
+
+  it("previews and applies trustworthy fixes when another selected check is incomplete", async () => {
+    const terminal = io(true);
+    const deps = dependencies(partialPlan());
+    deps.applyFixPlan = vi.fn(async () => ({
+      exitCode: 0 as const,
+      appliedFixes: 1,
+      changedFiles: ["src/value.ts"],
+      unchangedFiles: [],
+      issues: [],
+    }));
+
+    await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(1);
+
+    expect(deps.confirm).toHaveBeenCalledOnce();
+    expect(deps.applyFixPlan).toHaveBeenCalledOnce();
+    const output = terminal.stdout.join("");
+    expect(output).toContain("Zedbee managed fixes partially applied.");
+    expect(output).toContain("formatting: READY — 1 fix available");
+    expect(output).toContain("lint: INCOMPLETE");
+    expect(output).toContain("TYPED LINT ANALYSIS FAILED");
+    expect(output).toContain("src/value.ts");
+    expect(output).toContain("Correct the TypeScript project setup");
+    expect(output).toContain(
+      "reactCorrectness: NOT APPLICABLE — No React renderer detected",
+    );
+  });
+
+  it("applies trustworthy partial fixes with --yes but preserves the incomplete exit", async () => {
+    const terminal = io(false);
+    const deps = dependencies(partialPlan());
+
+    await expect(
+      executeFixCommand({ ...base, yes: true }, terminal, deps),
+    ).resolves.toBe(1);
+
+    expect(deps.confirm).not.toHaveBeenCalled();
+    expect(deps.applyFixPlan).toHaveBeenCalledOnce();
+  });
+
+  it("keeps every provider state in a source-free partial JSON preview", async () => {
+    const terminal = io(false);
+    const deps = dependencies(partialPlan());
+
+    await expect(
+      executeFixCommand({ ...base, format: "json" }, terminal, deps),
+    ).resolves.toBe(0);
+
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
+    expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({
+      applied: false,
+      exitCode: 1,
+      checks: [
+        { checkId: "formatting", status: "completed", fixes: 1 },
+        {
+          checkId: "lint",
+          status: "incomplete",
+          issues: [
+            {
+              code: "TYPED_LINT_ANALYSIS_FAILED",
+              path: "src/value.ts",
+            },
+          ],
+        },
+        {
+          checkId: "reactCorrectness",
+          status: "not-applicable",
+          reason: "No React renderer detected",
+        },
+      ],
+    });
+    expect(terminal.stdout.join("")).not.toContain("replacement");
+    expect(terminal.stdout.join("")).not.toContain("baseSource");
+  });
+
+  it("opens a read-only prompt when incomplete checks leave no trustworthy fixes", async () => {
+    const terminal = io(true);
+    const deps = dependencies(partialPlan(false));
+    deps.confirm = vi.fn(async () => false);
+
+    await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(1);
+
+    expect(deps.confirm).toHaveBeenCalledOnce();
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
+    expect(terminal.stdout.join("")).toContain("Zedbee fix closed.");
+    expect(terminal.stdout.join("")).not.toContain("Zedbee fix cancelled.");
   });
 
   it("passes the persisted complete-plan path into the interactive confirmation", async () => {

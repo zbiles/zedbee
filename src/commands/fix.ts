@@ -124,6 +124,36 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
     `${fixLabel(plan.summary.fixes)} across ${fileLabel(plan.summary.files)}`,
     `Blocking: ${plan.summary.blocking}; warnings: ${plan.summary.warnings}; skipped: ${plan.summary.skipped}`,
   ];
+  for (const check of plan.checks ?? []) {
+    if (check.status === "completed") {
+      lines.push(
+        `${check.checkId}: READY — ${fixLabel(check.fixes)} available`,
+      );
+      continue;
+    }
+    if (check.status === "not-applicable") {
+      lines.push(
+        `${check.checkId}: NOT APPLICABLE — ${safeText(check.reason, "check reason")}`,
+      );
+      continue;
+    }
+    lines.push(`${check.checkId}: INCOMPLETE`);
+    for (const issue of check.issues) {
+      lines.push(
+        `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+        ...(issue.path === undefined
+          ? []
+          : [
+              `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+            ]),
+        ...(issue.remediation === undefined
+          ? []
+          : [
+              `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+            ]),
+      );
+    }
+  }
   const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
   for (const item of items) {
     if (item.status === "skipped") {
@@ -155,6 +185,24 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
     target: rendered.target,
     selectedChecks: [...rendered.selectedChecks],
     exitCode: rendered.exitCode,
+    ...(rendered.checks === undefined
+      ? {}
+      : {
+          checks: rendered.checks.map((check) => ({
+            checkId: check.checkId,
+            status: check.status,
+            fixes: check.fixes,
+            issues: check.issues.map((issue) => ({
+              code: issue.code,
+              message: issue.message,
+              ...(issue.path === undefined ? {} : { path: issue.path }),
+              ...(issue.remediation === undefined
+                ? {}
+                : { remediation: issue.remediation }),
+            })),
+            ...(check.reason === undefined ? {} : { reason: check.reason }),
+          })),
+        }),
     summary: {
       fixes: rendered.summary.fixes,
       files: rendered.summary.files,
@@ -208,7 +256,7 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
 
 function renderResultText(plan: FixPlan, result: FixResult): string {
   const lines = [
-    result.exitCode === 0
+    result.exitCode === 0 && plan.exitCode === 0
       ? "Zedbee managed fixes applied."
       : "Zedbee managed fixes partially applied.",
     `Applied fixes: ${result.appliedFixes}`,
@@ -216,6 +264,34 @@ function renderResultText(plan: FixPlan, result: FixResult): string {
     `Unchanged files: ${result.unchangedFiles.length}`,
     `Plan findings: ${plan.summary.blocking} blocking; ${plan.summary.warnings} ${plan.summary.warnings === 1 ? "warning" : "warnings"}`,
   ];
+  for (const check of plan.checks ?? []) {
+    if (check.status === "completed") {
+      lines.push(
+        `${check.checkId}: READY — ${check.fixes} ${check.fixes === 1 ? "fix" : "fixes"} available`,
+      );
+    } else if (check.status === "incomplete") {
+      lines.push(`${check.checkId}: INCOMPLETE`);
+      for (const issue of check.issues) {
+        lines.push(
+          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+          ...(issue.path === undefined
+            ? []
+            : [
+                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+              ]),
+          ...(issue.remediation === undefined
+            ? []
+            : [
+                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+              ]),
+        );
+      }
+    } else if (check.status === "not-applicable") {
+      lines.push(
+        `${check.checkId}: NOT APPLICABLE — ${safeText(check.reason, "check reason")}`,
+      );
+    }
+  }
   for (const issue of result.issues) {
     lines.push(
       `${issue.kind}: ${JSON.stringify(safeText(issue.file, "fix file"))} — ${safeText(issue.message, "fix issue")}`,
@@ -325,6 +401,10 @@ export async function executeFixCommand(
       return 2;
     }
 
+    const hasApplicableFixes =
+      prepared.publicPlan.items.some((item) => item.status !== "skipped") ||
+      prepared.publicPlan.exitCode !== 1;
+
     let confirmed = options.yes;
     if (!confirmed && format === "text" && io.stdinIsTTY && io.stdoutIsTTY) {
       confirmed = await dependencies.confirm(prepared.publicPlan, {
@@ -338,19 +418,38 @@ export async function executeFixCommand(
       });
       if (!confirmed) {
         outputPlan(false);
-        io.writeStdout("Zedbee fix cancelled.\n");
+        io.writeStdout(
+          hasApplicableFixes
+            ? "Zedbee fix cancelled.\n"
+            : "Zedbee fix closed.\n",
+        );
         io.writeStderr(renderWarnings(maintenance.warnings));
-        return 0;
+        return hasApplicableFixes ? 0 : prepared.publicPlan.exitCode;
       }
     }
 
     if (!confirmed) {
       outputPlan(false);
       if (format === "text") {
-        io.writeStdout("Run zedbee fix --yes to apply this plan.\n");
+        io.writeStdout(
+          hasApplicableFixes
+            ? "Run zedbee fix --yes to apply this plan.\n"
+            : "No trustworthy managed fixes are available to apply.\n",
+        );
       }
       io.writeStderr(renderWarnings(maintenance.warnings));
-      return 0;
+      return hasApplicableFixes ? 0 : prepared.publicPlan.exitCode;
+    }
+
+    if (!hasApplicableFixes) {
+      outputPlan(false);
+      if (format === "text") {
+        io.writeStdout(
+          "No trustworthy managed fixes are available to apply.\n",
+        );
+      }
+      io.writeStderr(renderWarnings(maintenance.warnings));
+      return prepared.publicPlan.exitCode;
     }
 
     options.signal?.throwIfAborted();
@@ -361,7 +460,7 @@ export async function executeFixCommand(
       io.writeStdout(renderResultText(prepared.publicPlan, result));
     }
     io.writeStderr(renderWarnings(maintenance.warnings));
-    return result.exitCode;
+    return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
   } catch {
     if (options.signal?.aborted === true) {
       io.writeStderr("Zedbee fix was interrupted.\n");

@@ -15,6 +15,16 @@ const plan: FixPlan = {
   target: "index",
   selectedChecks: ["formatting", "lint", "reactCorrectness"],
   exitCode: 0,
+  checks: [
+    { checkId: "formatting", status: "completed", fixes: 1, issues: [] },
+    { checkId: "lint", status: "completed", fixes: 2, issues: [] },
+    {
+      checkId: "reactCorrectness",
+      status: "completed",
+      fixes: 1,
+      issues: [],
+    },
+  ],
   summary: { fixes: 4, files: 3, blocking: 1, warnings: 2, skipped: 1 },
   files: [
     { path: "src/app.ts", fixes: 2, hasUnstagedChanges: false },
@@ -118,6 +128,89 @@ describe("FixApp", () => {
     expect(stripVTControlCharacters(frame)).toContain("➜ APPLY FIXES");
     expect(stripVTControlCharacters(frame)).toContain("CANCEL");
     expect(stripVTControlCharacters(frame)).not.toContain("lint-1");
+  });
+
+  it("shows completed, incomplete, and not-applicable checks before partial approval", () => {
+    const partial: FixPlan = {
+      ...plan,
+      exitCode: 1,
+      checks: [
+        {
+          checkId: "formatting",
+          status: "completed",
+          fixes: 24,
+          issues: [],
+        },
+        {
+          checkId: "lint",
+          status: "incomplete",
+          fixes: 0,
+          issues: [
+            {
+              code: "TYPED_LINT_ANALYSIS_FAILED",
+              message: "Typed lint analysis could not inspect this file.",
+              path: ".claude/skills/example/remotion.config.ts",
+              remediation:
+                "Correct the TypeScript project setup and run Zedbee again.",
+            },
+          ],
+        },
+        {
+          checkId: "reactCorrectness",
+          status: "not-applicable",
+          fixes: 0,
+          issues: [],
+          reason: "No React renderer detected",
+        },
+      ],
+    };
+    const { view } = setup(partial, 140, 100, false, null);
+    const frame = visibleFrame(view);
+
+    expect(frame).toContain("CHECK STATUS");
+    expect(frame).toContain("formatting");
+    expect(frame).toContain("READY — 24 fixes available");
+    expect(frame).toContain("lint");
+    expect(frame).toContain(
+      "INCOMPLETE — Typed lint analysis could not inspect this file.",
+    );
+    expect(frame).toContain(".claude/skills/example/remotion.config.ts");
+    expect(frame).toContain("Correct the TypeScript project setup");
+    expect(frame).toContain("reactCorrectness");
+    expect(frame).toContain("NOT APPLICABLE — No React renderer detected");
+    expect(frame).toContain("No files have been changed.");
+    expect(frame).toContain("APPLY FIXES");
+  });
+
+  it("offers only Close when no trustworthy fixes are available", async () => {
+    const readOnly: FixPlan = {
+      ...plan,
+      exitCode: 1,
+      checks: [
+        {
+          checkId: "lint",
+          status: "incomplete",
+          fixes: 0,
+          issues: [
+            {
+              code: "TYPED_LINT_ANALYSIS_FAILED",
+              message: "Typed lint analysis could not finish.",
+            },
+          ],
+        },
+      ],
+      summary: { fixes: 0, files: 0, blocking: 0, warnings: 0, skipped: 0 },
+      files: [],
+      items: [],
+    };
+    const { onDecision, view } = setup(readOnly, 100, 60, false, null);
+    const frame = visibleFrame(view);
+
+    expect(frame).toContain("➜ CLOSE");
+    expect(frame).not.toContain("APPLY FIXES");
+    expect(frame).not.toContain("CANCEL");
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
   });
 
   it("renders grammatical file and finding summary labels", () => {

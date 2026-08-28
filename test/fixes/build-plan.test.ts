@@ -217,15 +217,41 @@ describe("buildFixPlan", () => {
     expect(hostileJson).not.toContain(files.root);
   });
 
-  it("cleans snapshots when a provider result is incomplete", async () => {
+  it("keeps completed fixes while reporting incomplete and not-applicable providers", async () => {
     const files = await fixture();
     const calls: string[] = [];
+    const formatting: CheckExecutionResult = {
+      result: {
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 1,
+        findings: [],
+      },
+      policy: config.checks.formatting,
+      fixCandidates: [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: "src/value.ts",
+          findingIds: ["format-finding"],
+          severities: ["error"],
+          settings: DEFAULT_FORMATTING_SETTINGS,
+        },
+      ],
+    };
     const incomplete: CheckExecutionResult = {
       result: {
         checkId: "lint",
         status: "incomplete",
         durationMs: 1,
         findings: [],
+        error: {
+          code: "TYPED_LINT_ANALYSIS_FAILED",
+          message: "Typed lint analysis could not inspect this file.",
+          path: "src/value.ts",
+          remediation:
+            "Correct the TypeScript project setup and run Zedbee again.",
+        },
       },
       policy: config.checks.lint,
       fixCandidates: [
@@ -246,17 +272,169 @@ describe("buildFixPlan", () => {
         },
       ],
     };
+    const completedLint: CheckExecutionResult = {
+      result: {
+        checkId: "lint",
+        status: "completed",
+        durationMs: 1,
+        findings: [],
+      },
+      policy: config.checks.lint,
+      fixCandidates: [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: "const answer=42\n",
+          edits: [
+            {
+              findingId: "completed-but-untrustworthy",
+              severity: "error",
+              start: 6,
+              end: 12,
+              replacement: "result",
+            },
+          ],
+        },
+      ],
+    };
+    const notApplicable: CheckExecutionResult = {
+      result: {
+        checkId: "reactCorrectness",
+        status: "skipped",
+        durationMs: 0,
+        findings: [],
+        skipReason: "No React renderer detected",
+      },
+      policy: config.checks.reactCorrectness,
+    };
 
     const plan = await buildFixPlan({
       repositoryRoot: files.root,
-      selectedChecks: ["lint"],
+      selectedChecks: ["formatting", "lint", "reactCorrectness"],
       dependencies: planDependencies(files, calls, {
-        dispatch: async () => [incomplete],
+        dispatch: async () => [
+          formatting,
+          completedLint,
+          incomplete,
+          notApplicable,
+        ],
       }),
     });
 
-    expect(plan.publicPlan.exitCode).toBe(2);
-    expect(plan.publicPlan.items).toEqual([]);
+    expect(plan.publicPlan.exitCode).toBe(1);
+    expect(plan.publicPlan.summary.fixes).toBe(1);
+    expect(plan.publicPlan.items).toEqual([
+      expect.objectContaining({
+        checkId: "formatting",
+        file: "src/value.ts",
+        scope: "working-file",
+      }),
+    ]);
+    expect(plan.publicPlan.checks).toEqual([
+      {
+        checkId: "formatting",
+        status: "completed",
+        fixes: 1,
+        issues: [],
+      },
+      {
+        checkId: "lint",
+        status: "incomplete",
+        fixes: 0,
+        issues: [
+          {
+            code: "TYPED_LINT_ANALYSIS_FAILED",
+            message: "Typed lint analysis could not inspect this file.",
+            path: "src/value.ts",
+            remediation:
+              "Correct the TypeScript project setup and run Zedbee again.",
+          },
+        ],
+      },
+      {
+        checkId: "reactCorrectness",
+        status: "not-applicable",
+        fixes: 0,
+        issues: [],
+        reason: "No React renderer detected",
+      },
+    ]);
+    expect(plan.candidates).toEqual([
+      expect.objectContaining({ checkId: "formatting" }),
+    ]);
+    expect(Object.isFrozen(plan.publicPlan.checks)).toBe(true);
+    expect(renderFixPlanJson(plan.publicPlan)).toContain(
+      '"code": "TYPED_LINT_ANALYSIS_FAILED"',
+    );
+    expect(renderFixPlanJson(plan.publicPlan)).not.toContain("replacement");
+    expect(calls).toEqual(["cleanup"]);
+  });
+
+  it("does not synthesize formatting actions when formatting is incomplete", async () => {
+    const files = await fixture();
+    const calls: string[] = [];
+    const incompleteFormatting: CheckExecutionResult = {
+      result: {
+        checkId: "formatting",
+        status: "incomplete",
+        durationMs: 1,
+        findings: [],
+        error: {
+          code: "FORMATTING_FAILED",
+          message: "Formatting analysis could not finish.",
+        },
+      },
+      policy: config.checks.formatting,
+      policyForFile: (checkId, _path) => config.checks[checkId],
+    };
+    const completedLint: CheckExecutionResult = {
+      result: completed,
+      policy: config.checks.lint,
+      policyForFile: (checkId, _path) => config.checks[checkId],
+      fixCandidates: [
+        {
+          kind: "exact-file",
+          checkId: "lint",
+          file: "src/value.ts",
+          baseSource: "const answer=42\n",
+          edits: [
+            {
+              findingId: "lint-finding",
+              severity: "error",
+              start: 6,
+              end: 12,
+              replacement: "result",
+            },
+          ],
+        },
+      ],
+    };
+
+    const plan = await buildFixPlan({
+      repositoryRoot: files.root,
+      selectedChecks: ["formatting", "lint"],
+      dependencies: planDependencies(files, calls, {
+        dispatch: async () => [incompleteFormatting, completedLint],
+      }),
+    });
+
+    expect(plan.publicPlan.checks).toEqual([
+      expect.objectContaining({
+        checkId: "formatting",
+        status: "incomplete",
+        fixes: 0,
+      }),
+      expect.objectContaining({
+        checkId: "lint",
+        status: "completed",
+        fixes: 1,
+      }),
+    ]);
+    expect(plan.publicPlan.items.map((item) => item.checkId)).toEqual(["lint"]);
+    expect(plan.candidates.map((candidate) => candidate.checkId)).toEqual([
+      "lint",
+    ]);
     expect(calls).toEqual(["cleanup"]);
   });
 

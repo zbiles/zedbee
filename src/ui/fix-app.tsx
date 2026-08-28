@@ -285,6 +285,77 @@ function FileSummaries({
   );
 }
 
+function CheckStatuses({
+  plan,
+  color,
+}: {
+  readonly plan: FixPlan;
+  readonly color: boolean;
+}) {
+  if (plan.checks === undefined || plan.checks.length === 0) return null;
+  return (
+    <Box flexDirection="column" paddingX={2}>
+      <Text> </Text>
+      <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+        CHECK STATUS
+      </Text>
+      <Text> </Text>
+      {plan.checks.map((check) => (
+        <Box key={check.checkId} flexDirection="column" paddingBottom={1}>
+          <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {check.checkId}
+          </Text>
+          {check.status === "completed" ? (
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.pass)}>
+              READY — {countLabel(check.fixes, "fix")} available
+            </Text>
+          ) : check.status === "not-applicable" ? (
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              NOT APPLICABLE —{" "}
+              {check.reason ?? "No applicable target was found."}
+            </Text>
+          ) : (
+            <>
+              {check.issues.length === 0 ? (
+                <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.failure)}>
+                  INCOMPLETE — The check could not finish.
+                </Text>
+              ) : null}
+              {check.issues.map((issue) => (
+                <Box
+                  key={`${issue.code}:${issue.path ?? ""}`}
+                  flexDirection="column"
+                >
+                  <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.failure)}>
+                    INCOMPLETE — {issue.message}
+                  </Text>
+                  {issue.path === undefined ? null : (
+                    <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
+                      {issue.path}
+                    </Text>
+                  )}
+                  {issue.remediation === undefined ? null : (
+                    <Text
+                      wrap="wrap"
+                      {...colorProp(color, ZEDBEE_THEME.secondary)}
+                    >
+                      {issue.remediation}
+                    </Text>
+                  )}
+                </Box>
+              ))}
+            </>
+          )}
+        </Box>
+      ))}
+      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+        No files have been changed.
+      </Text>
+      <Text> </Text>
+    </Box>
+  );
+}
+
 function FixPlanPanel({
   plan,
   width,
@@ -300,6 +371,8 @@ function FixPlanPanel({
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
+  const hasApplicableFixes =
+    plan.items.some((item) => item.status !== "skipped") || plan.exitCode !== 1;
   return (
     <BrandedCommandPanel title="FIX PLAN" width={width} color={color}>
       <PlanSummary
@@ -314,24 +387,39 @@ function FixPlanPanel({
         {...(reportPath === undefined ? {} : { reportPath })}
         color={color}
       />
+      <BrandedCommandPanelRule width={width} color={color} />
+      <CheckStatuses plan={plan} color={color} />
       <Text> </Text>
-      <FixActionButton
-        label="APPLY FIXES"
-        focused={focus === 0}
-        activeTargetRef={activeTargetRef}
-        color={color}
-      />
-      <Text> </Text>
-      <FixActionButton
-        label="CANCEL"
-        focused={focus === 1}
-        activeTargetRef={activeTargetRef}
-        color={color}
-      />
+      {hasApplicableFixes ? (
+        <>
+          <FixActionButton
+            label="APPLY FIXES"
+            focused={focus === 0}
+            activeTargetRef={activeTargetRef}
+            color={color}
+          />
+          <Text> </Text>
+          <FixActionButton
+            label="CANCEL"
+            focused={focus === 1}
+            activeTargetRef={activeTargetRef}
+            color={color}
+          />
+        </>
+      ) : (
+        <FixActionButton
+          label="CLOSE"
+          focused
+          activeTargetRef={activeTargetRef}
+          color={color}
+        />
+      )}
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          Tab/←→ Focus · Space/Enter Activate · Esc Cancel · PgUp/PgDn Scroll
+          {hasApplicableFixes
+            ? "Tab/←→ Focus · Space/Enter Activate · Esc Cancel · PgUp/PgDn Scroll"
+            : "Space/Enter Close · Esc Close · PgUp/PgDn Scroll"}
         </Text>
       </Box>
       <Text> </Text>
@@ -362,6 +450,8 @@ export function FixApp(props: FixAppProps) {
       visibleHeight: rows,
     });
   const activeTargetRef = useRef<DOMElement>(null);
+  const hasApplicableFixes =
+    plan.items.some((item) => item.status !== "skipped") || plan.exitCode !== 1;
   const contentRef = useRef<DOMElement>(null);
   const offsetRef = useRef(offset);
   const lastRevealRef = useRef<
@@ -437,20 +527,18 @@ export function FixApp(props: FixAppProps) {
       return;
     }
     if (key.tab || key.leftArrow || key.rightArrow) {
-      setFocus((current) =>
-        key.leftArrow ? (current + 1) % 2 : (current + 1) % 2,
-      );
+      if (hasApplicableFixes) setFocus((current) => (current + 1) % 2);
       return;
     }
     if (key.upArrow || key.downArrow) {
       if (viewportMetrics.contentHeight > viewportMetrics.visibleHeight) {
         scrollBy(key.downArrow ? 1 : -1);
       } else {
-        setFocus((current) => (current + 1) % 2);
+        if (hasApplicableFixes) setFocus((current) => (current + 1) % 2);
       }
       return;
     }
-    if (key.return || input === " ") decide(focus === 0);
+    if (key.return || input === " ") decide(hasApplicableFixes && focus === 0);
   });
 
   return (
