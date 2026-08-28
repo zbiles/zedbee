@@ -26,6 +26,7 @@ const checks: readonly CheckDescription[] = [
     network: "none",
     engine: { name: "Prettier", version: "3.9.6", license: "MIT" },
     limitation: "Reports differences without rewriting the index.",
+    automaticFix: "zedbee fix formatting",
     configuration: {
       customized: true,
       values: {
@@ -36,6 +37,66 @@ const checks: readonly CheckDescription[] = [
         },
         "settings.tabWidth": {
           value: 2,
+          source: "profile",
+          customized: false,
+        },
+        "settings.useTabs": {
+          value: false,
+          source: "profile",
+          customized: false,
+        },
+        "settings.semi": {
+          value: true,
+          source: "profile",
+          customized: false,
+        },
+        "settings.singleQuote": {
+          value: false,
+          source: "profile",
+          customized: false,
+        },
+        "settings.quoteProps": {
+          value: "as-needed",
+          source: "profile",
+          customized: false,
+        },
+        "settings.jsxSingleQuote": {
+          value: false,
+          source: "profile",
+          customized: false,
+        },
+        "settings.trailingComma": {
+          value: "all",
+          source: "profile",
+          customized: false,
+        },
+        "settings.bracketSpacing": {
+          value: true,
+          source: "profile",
+          customized: false,
+        },
+        "settings.bracketSameLine": {
+          value: false,
+          source: "profile",
+          customized: false,
+        },
+        "settings.arrowParens": {
+          value: "always",
+          source: "profile",
+          customized: false,
+        },
+        "settings.proseWrap": {
+          value: "preserve",
+          source: "profile",
+          customized: false,
+        },
+        "settings.endOfLine": {
+          value: "lf",
+          source: "profile",
+          customized: false,
+        },
+        "settings.singleAttributePerLine": {
+          value: false,
           source: "profile",
           customized: false,
         },
@@ -131,14 +192,41 @@ describe("ChecksDashboard", () => {
     expect(frame).toContain("NOT APPLICABLE");
     expect(frame).toContain("Engine: Prettier 3.9.6 (MIT)");
     expect(frame).toContain(
-      "Configuration: 1 profile value, 1 repository value",
+      "Configuration: 13 profile values, 1 repository value",
     );
-    expect(frame).toContain(
-      "settings.printWidth: 100 (repository) (customized)",
+    const output = frame.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+    const settingLabels = [
+      "printWidth",
+      "tabWidth",
+      "useTabs",
+      "semi",
+      "singleQuote",
+      "quoteProps",
+      "jsxSingleQuote",
+      "trailingComma",
+      "bracketSpacing",
+      "bracketSameLine",
+      "arrowParens",
+      "proseWrap",
+      "endOfLine",
+      "singleAttributePerLine",
+    ];
+    const settingPositions = settingLabels.map((label) =>
+      output.indexOf(`${label}:`),
     );
+    expect(settingPositions.every((position) => position >= 0)).toBe(true);
+    expect(settingPositions).toEqual(
+      [...settingPositions].sort((a, b) => a - b),
+    );
+    expect(output).toContain("Effective settings:");
+    expect(output).toContain("printWidth: 100 (repository) (customized)");
+    expect(output).toContain("tabWidth: 2 (profile)");
+    expect(output).toContain("Automatic fix: zedbee fix formatting");
+    expect(output).not.toContain("settings.printWidth");
     expect(frame).toContain("Override test/**: settings.tabWidth: 4");
     expect(frame).toContain("Reason: No React DOM workspace was found.");
     expect(frame).toContain("\u001b[38;2;232;184;76m");
+    expect(frame).toContain("\u001b[38;2;146;152;165m");
     expect(frame).toContain("\u001b[38;2;254;205;35m");
     expect(frame).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(frame).toContain("┌");
@@ -215,9 +303,7 @@ describe("ChecksDashboard", () => {
     expect(output).toHaveLength(1);
     expect(rendered.match(/CHECKS/gu)).toHaveLength(1);
     expect(rendered).toContain("Checks staged formatting.");
-    expect(rendered).toContain(
-      "settings.printWidth: 100 (repository) (customized)",
-    );
+    expect(rendered).toContain("printWidth: 100 (repository) (customized)");
     expect(rendered).not.toContain("\u001b[2J\u001b[3J\u001b[H");
   });
 

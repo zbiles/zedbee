@@ -38,6 +38,7 @@ export interface CheckDescription {
     readonly license: string;
   };
   readonly limitation: string;
+  readonly automaticFix?: string;
   readonly configuration: CheckConfigurationDescription;
   readonly reason?: string;
 }

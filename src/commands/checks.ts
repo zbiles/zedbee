@@ -28,7 +28,7 @@ import {
   immutableConfigurationSnapshot,
   isConfigurableRuleCheckId,
   managedPolicyScalarKeys,
-  managedSettingKeys,
+  managedSettingDefinition,
 } from "../config/settings-registry.js";
 import type { SettingOrigin } from "../config/settings-definition.js";
 import {
@@ -87,6 +87,7 @@ interface CatalogEntry {
   readonly engine: CheckDescription["engine"];
   readonly executionClass: ExecutionClass;
   readonly limitation: string;
+  readonly automaticFix?: string;
 }
 
 const eslint = { name: "ESLint", version: "9.39.5", license: "MIT" } as const;
@@ -95,8 +96,8 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
     description: "Checks staged formatting.",
     engine: { name: "Prettier", version: "3.9.6", license: "MIT" },
     executionClass: "lightweight",
-    limitation:
-      "Reports formatting differences; it does not rewrite the index.",
+    limitation: "Reports formatting differences; scans do not modify files.",
+    automaticFix: "zedbee fix formatting",
   },
   lint: {
     description: "Checks JavaScript and TypeScript correctness rules.",
@@ -289,11 +290,9 @@ async function renderDashboard(
 }
 
 function orderedRecord<T>(entries: readonly (readonly [string, T])[]) {
-  return Object.freeze(
-    Object.fromEntries(
-      [...entries].sort(([left], [right]) => compareCodeUnits(left, right)),
-    ),
-  ) as Readonly<Record<string, T>>;
+  return Object.freeze(Object.fromEntries(entries)) as Readonly<
+    Record<string, T>
+  >;
 }
 
 function repositoryValueSource(
@@ -318,7 +317,10 @@ function policyValueEntries(
   }
   if ("settings" in policy) {
     const settings = policy.settings as Readonly<Record<string, unknown>>;
-    for (const key of managedSettingKeys(checkId)) {
+    const definition = managedSettingDefinition(checkId);
+    const settingKeys =
+      definition === undefined ? [] : Object.keys(definition.describe);
+    for (const key of settingKeys) {
       entries.push([`settings.${key}`, settings[key]]);
     }
   }
@@ -413,10 +415,13 @@ function renderText(result: ChecksCommandResult): string {
     .map((check) => {
       const targets =
         check.targets.length === 0 ? "none" : check.targets.join(", ");
-      const configurationLines = configurationTextLines(check.configuration)
+      const configurationLines = configurationTextLines(
+        check.configuration,
+        check.id === "formatting" ? "settings." : undefined,
+      )
         .map((line) => `  ${line}`)
         .join("\n");
-      return `${check.id} [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}\n  ${check.description}\n${configurationLines}\n  Limitation: ${check.limitation}${check.reason === undefined ? "" : `\n  Reason: ${check.reason}`}`;
+      return `${check.id} [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}\n  ${check.description}\n${configurationLines}${check.automaticFix === undefined ? "" : `\n  Automatic fix: ${check.automaticFix}`}\n  Limitation: ${check.limitation}${check.reason === undefined ? "" : `\n  Reason: ${check.reason}`}`;
     })
     .join("\n")}\n`;
 }
@@ -459,6 +464,9 @@ export async function executeChecksCommand(
             id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
           engine: Object.freeze({ ...CATALOG[id].engine }),
           limitation: CATALOG[id].limitation,
+          ...(CATALOG[id].automaticFix === undefined
+            ? {}
+            : { automaticFix: CATALOG[id].automaticFix }),
           configuration: describeConfiguration(id, config),
           ...(runtime.reason === undefined ? {} : { reason: runtime.reason }),
         });

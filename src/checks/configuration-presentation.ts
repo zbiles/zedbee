@@ -84,6 +84,17 @@ export function configurationValueLine(
   }`;
 }
 
+export function effectiveSettingsLines(
+  configuration: CheckConfigurationDescription,
+  prefix: string,
+): readonly string[] {
+  return Object.entries(configuration.values)
+    .filter(([key]) => key.startsWith(prefix))
+    .map(([key, value]) =>
+      configurationValueLine(key.slice(prefix.length), value),
+    );
+}
+
 export function configurationOverrideLine(
   files: readonly string[],
   values: Readonly<Record<string, unknown>>,
@@ -104,7 +115,19 @@ export function configurationOverrideLine(
 
 export function configurationTextLines(
   configuration: CheckConfigurationDescription,
+  effectiveSettingsPrefix?: string,
 ): readonly string[] {
+  if (effectiveSettingsPrefix !== undefined) {
+    const overrides = configuration.overrides.map(({ files, values }) =>
+      configurationOverrideLine(files, values),
+    );
+    return [
+      configurationSummary(configuration),
+      "Effective settings:",
+      ...effectiveSettingsLines(configuration, effectiveSettingsPrefix),
+      ...overrides,
+    ];
+  }
   const customizedValues = Object.entries(configuration.values)
     .filter(([, value]) => value.customized)
     .map(([key, value]) => configurationValueLine(key, value));

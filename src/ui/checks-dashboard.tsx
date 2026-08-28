@@ -34,6 +34,12 @@ function CheckEntry({
   const customizedValues = Object.entries(check.configuration.values).filter(
     ([, value]) => value.customized,
   );
+  const effectiveSettings =
+    check.id === "formatting"
+      ? Object.entries(check.configuration.values).filter(([key]) =>
+          key.startsWith("settings."),
+        )
+      : [];
 
   return (
     <Box flexDirection="column" paddingX={2}>
@@ -67,11 +73,37 @@ function CheckEntry({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         {configurationSummary(check.configuration)}
       </Text>
-      {customizedValues.map(([key, value]) => (
-        <Text key={key} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-          {configurationValueLine(key, value)}
+      {check.id === "formatting" ? <Text> </Text> : null}
+      {check.id === "formatting" ? (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Effective settings:
+        </Text>
+      ) : null}
+      {effectiveSettings.map(([key, value]) => (
+        <Text
+          key={key}
+          wrap="wrap"
+          {...colorProp(
+            color,
+            value.source === "repository"
+              ? ZEDBEE_THEME.warning
+              : ZEDBEE_THEME.secondary,
+          )}
+        >
+          {configurationValueLine(key.slice("settings.".length), value)}
         </Text>
       ))}
+      {check.id === "formatting"
+        ? null
+        : customizedValues.map(([key, value]) => (
+            <Text
+              key={key}
+              wrap="wrap"
+              {...colorProp(color, ZEDBEE_THEME.warning)}
+            >
+              {configurationValueLine(key, value)}
+            </Text>
+          ))}
       {check.configuration.overrides.map((override, index) => (
         <Text
           key={`${index}:${override.files.join("|")}:${Object.keys(
@@ -83,6 +115,11 @@ function CheckEntry({
           {configurationOverrideLine(override.files, override.values)}
         </Text>
       ))}
+      {check.automaticFix === undefined ? null : (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Automatic fix: {check.automaticFix}
+        </Text>
+      )}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
         Limitation: {check.limitation}
       </Text>

@@ -63,6 +63,23 @@ const dependencies: ChecksCommandDependencies = {
     ),
 };
 
+const formattingSettingLabels = [
+  "printWidth",
+  "tabWidth",
+  "useTabs",
+  "semi",
+  "singleQuote",
+  "quoteProps",
+  "jsxSingleQuote",
+  "trailingComma",
+  "bracketSpacing",
+  "bracketSameLine",
+  "arrowParens",
+  "proseWrap",
+  "endOfLine",
+  "singleAttributePerLine",
+] as const;
+
 function configuredDependencies(
   config: ResolvedConfig,
 ): ChecksCommandDependencies {
@@ -390,22 +407,10 @@ describe("executeChecksCommand", () => {
         },
       ],
     });
-    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual([
-      "settings.arrowParens",
-      "settings.bracketSameLine",
-      "settings.bracketSpacing",
-      "settings.endOfLine",
-      "settings.jsxSingleQuote",
-      "settings.printWidth",
-      "settings.proseWrap",
-      "settings.quoteProps",
-      "settings.semi",
-      "settings.singleAttributePerLine",
-      "settings.singleQuote",
-      "settings.tabWidth",
-      "settings.trailingComma",
-      "settings.useTabs",
-    ]);
+    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual(
+      formattingSettingLabels.map((label) => `settings.${label}`),
+    );
+    expect(formatting?.automaticFix).toBe("zedbee fix formatting");
     const lint = result.checks.find(({ id }) => id === "lint");
     expect(Object.keys(lint?.configuration.values ?? {})).toEqual([
       "rules.eqeqeq",
@@ -601,12 +606,21 @@ describe("executeChecksCommand", () => {
     expect(first.stdout.join("")).toContain(
       "Configuration: 13 profile values, 1 repository value",
     );
-    expect(first.stdout.join("")).toContain(
-      "settings.printWidth: 100 (repository) (customized)",
+    const output = first.stdout.join("");
+    const settingPositions = formattingSettingLabels.map((label) =>
+      output.indexOf(`${label}:`),
     );
+    expect(settingPositions.every((position) => position >= 0)).toBe(true);
+    expect(settingPositions).toEqual(
+      [...settingPositions].sort((a, b) => a - b),
+    );
+    expect(output).toContain("printWidth: 100 (repository) (customized)");
+    expect(output).toContain("tabWidth: 2 (profile)");
+    expect(output).not.toContain("settings.printWidth");
     expect(first.stdout.join("")).toContain(
       "Override test/**: settings.tabWidth: 4",
     );
+    expect(output).toContain("Automatic fix: zedbee fix formatting");
 
     const failed = terminal();
     const result = await executeChecksCommand(
