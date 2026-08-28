@@ -21,7 +21,10 @@ Run a scan directly:
 npx zedbee scan
 ```
 
-Zedbee does not modify source files and does not provide automatic fixing in v1.
+Scans never modify source files. `zedbee fix` is a separate, approval-gated
+workflow that rescans current staged code, previews supported managed fixes, and
+writes only working files. Zedbee never stages or commits. See the
+[managed-fixes guide](docs/managed-fixes.md).
 
 For guided setup, preview the detected project, recommended policy, network use, and exact hook/config edits:
 
@@ -37,10 +40,21 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zedbee init`   | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
 | `zedbee scan`   | Scan the exact staged snapshot and return pass, blocked, or incomplete                                                                                       |
+| `zedbee fix`    | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
 | `zedbee checks` | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
 | `zedbee doctor` | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, Secretlint, lockfile parsing, licenses, and bounded OSV connectivity without running a scan |
 
 `init` supports `--profile fast|recommended|thorough`, `--hook auto|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--yes`, and text/JSON output. Interactive setup exposes the same check toggles and OSV outage choice without requiring documentation lookup. `scan`, `checks`, and `doctor` accept `--config <path>`.
+
+Bare `zedbee fix` selects `formatting`, `lint`, and `reactCorrectness`; a named
+selector limits the plan to that supported check. Interactive terminals preview
+and request confirmation. Redirected and JSON use is preview-only unless
+`--yes`, the automation approval flag, is present. Managed lint and React fixes
+apply only exact reported official fixes; selected Prettier formatting runs
+after them over each complete current working file, including unstaged work.
+Warnings and blockers are both eligible. Suggestions and unsupported checks
+remain manual. Review, stage, and rescan after applying; see the
+[complete managed-fix contract](docs/managed-fixes.md).
 
 `zedbee doctor` defaults to responsive automatic output. Doctor uses the yellow Zedbee frame with one full-width `DOCTOR` panel in a wide interactive terminal. A narrow terminal, redirected output, CI environment, or `TERM=dumb` receives compact plain text instead. `zedbee doctor --format text` always forces the plain view, while `zedbee doctor --format json` is deterministic and ANSI-free. `--no-color` keeps an eligible framed layout but removes semantic status colors.
 
@@ -187,11 +201,11 @@ For coding tools and CI, prefer `zedbee scan --format json` or `zedbee scan --fo
 
 ## Exit codes
 
-| Code | Meaning                                                 |
-| ---: | ------------------------------------------------------- |
-|  `0` | Scan completed with no blocking findings                |
-|  `1` | Scan completed and repository policy blocked the commit |
-|  `2` | Zedbee or an enabled check could not complete           |
+| Code | Scan meaning                                            | Managed-fix meaning                                                                                    |
+| ---: | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+|  `0` | Scan completed with no blocking findings                | Preview/cancel made no writes, or every approved file operation completed without an issue             |
+|  `1` | Scan completed and repository policy blocked the commit | Partial completion: safe files may be applied while skipped fixes and their reasons are reported       |
+|  `2` | Zedbee or an enabled check could not complete           | The current staged code could not produce a trustworthy complete fix plan, so the plan was not applied |
 
 Interrupted scans clean temporary snapshots before returning the platform's conventional interruption status.
 

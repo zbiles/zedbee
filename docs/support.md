@@ -73,6 +73,19 @@ SARIF remains non-interactive and retains the normal scan exit status: exit code
 
 Coding tools must process the complete report path and respect exit code 2 as incomplete—not clean. Fixing only the visible preview is insufficient. The path appears only after the report exists completely. Cleanup and write warnings are non-blocking maintenance diagnostics; a report failure, including a write failure, restores full terminal output with all findings, provides no false path or configured guidance, preserves the canonical scan outcome, and prints fixed `REPORT UNAVAILABLE` alerts twice. Each fixed alert confirms that nothing was hidden and all findings are shown above. `REPORT DELIVERY WARNING` is a detail panel for report-maintenance information, not the fixed failure alert. Automatic reports use the disk source-excerpt policy: default interactive excerpts are omitted from the file unless `reporting.sourceExcerpts` is `always` or `--include-source` is used; secret content remains redacted.
 
+## Managed fixes
+
+Managed fix support is limited to complete-file Prettier formatting and exact
+reported official fixes from `lint` and `reactCorrectness`. Suggestions and all
+other checks are manual. `zedbee fix` never stages or commits.
+
+A managed fix conflict skips the affected file while partial progress continues
+on independent safe files and returns a nonzero result. Stale previews,
+overlapping exact edits, formatting failures, safe-write failures, and
+durability uncertainty are also reported. A file replacement whose directory
+durability could not be confirmed is not safe to retry automatically. Review
+every changed and skipped file, stage intended results, and rescan.
+
 ## Not currently supported
 
 - Semgrep-compatible taint, interfile, reachability, framework-pack, or live-registry analysis;
@@ -80,4 +93,4 @@ Coding tools must process the complete report path and respect exit code 2 as in
 - an offline OSV database;
 - legacy binary `bun.lockb` vulnerability parsing;
 - repository path ignore/suppression rules for known Git LFS pointers or other unsupported staged inputs;
-- automatic fixing or mutation of the Git index.
+- automatic staging, committing, or mutation of the Git index.

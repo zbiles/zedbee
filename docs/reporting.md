@@ -1,5 +1,20 @@
 # Reporting and enterprise export
 
+## Managed fix plans
+
+A managed fix JSON preview remains schema version 1, is source-free, and
+contains no replayable patch. It reports only repository-relative paths,
+selected checks, counts, finding IDs, scopes, unstaged-change flags, approval
+state, and source-free apply issues. Source text, replacements, hashes, and
+private execution material are excluded. `zedbee fix --format json` previews
+without writing; `zedbee fix --yes --format json` applies and includes the
+result. See the [managed-fixes guide](managed-fixes.md).
+
+Large human-readable plans may receive a complete temporary JSON plan path.
+That path is printed only after persistence succeeds, maintenance warnings are
+non-blocking, and the file follows the same configured temporary-report cleanup
+age. Redirect explicit JSON when durable fix-plan metadata is required.
+
 ## Automatic terminal output
 
 An automatic scan (`zedbee scan` or `zedbee scan --format auto`) always writes a complete versioned JSON report to operating-system temporary storage. A pass with zero findings still receives a report. Its complete report path appears before the final output and after the final result; the path is printed only after a complete report exists. A wide ordinary TTY uses branded Ink. A narrow terminal, redirected output, CI, `TERM=dumb`, or screen-reader output uses a linear ANSI-free result.

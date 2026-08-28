@@ -74,7 +74,12 @@ export function isFixCancellationInput(
 }
 
 function countLabel(count: number, singular: string): string {
-  const plural = singular === "fix" ? "fixes" : `${singular}s`;
+  const plural =
+    singular === "fix"
+      ? "fixes"
+      : singular === "blocking" || singular === "skipped"
+        ? singular
+        : `${singular}s`;
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
@@ -145,7 +150,8 @@ function PlanSummary({
         Checks: {plan.selectedChecks.join(", ") || "none"}
       </Text>
       <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-        {plan.summary.fixes} fixes across {plan.summary.files} files
+        {countLabel(plan.summary.fixes, "fix")} across{" "}
+        {countLabel(plan.summary.files, "file")}
       </Text>
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         <Text

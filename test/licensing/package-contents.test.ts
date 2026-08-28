@@ -14,6 +14,7 @@ describe("package contents", () => {
       };
     const complete = [...REQUIRED_PACKAGE_FILES];
 
+    expect(REQUIRED_PACKAGE_FILES).toContain("docs/managed-fixes.md");
     expect(() => assertRequiredPackageFiles(complete)).not.toThrow();
     for (const required of REQUIRED_PACKAGE_FILES) {
       expect(() =>

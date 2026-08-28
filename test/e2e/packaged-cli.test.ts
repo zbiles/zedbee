@@ -19,6 +19,7 @@ const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 let packDirectory: string;
 let temporaryReportRoot: string;
 let tarballPath: string;
+let tarballFiles: readonly string[];
 
 async function runNpm(args: readonly string[], cwd: string) {
   return execa("npm", args, {
@@ -40,8 +41,12 @@ beforeAll(async () => {
     packageRoot,
   );
   expect(packed.exitCode).toBe(0);
-  const metadata = JSON.parse(packed.stdout) as Array<{ filename: string }>;
+  const metadata = JSON.parse(packed.stdout) as Array<{
+    filename: string;
+    files: Array<{ path: string }>;
+  }>;
   tarballPath = join(packDirectory, metadata[0]!.filename);
+  tarballFiles = metadata[0]!.files.map(({ path }) => path).sort();
 }, 30_000);
 
 afterAll(async () => {
@@ -163,6 +168,218 @@ async function temporaryJsonReports(
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("ships the public managed-fix guide without private planning artifacts", () => {
+    expect(tarballFiles).toContain("docs/managed-fixes.md");
+    expect(tarballFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/(?:^|\/)\.superpowers(?:\/|$)/u),
+        expect.stringMatching(/(?:^|\/)(?:plan|spec)s?(?:\/|\.|$)/iu),
+      ]),
+    );
+  });
+
+  it("previews and applies exact plus whole-file fixes without changing the index or writing a report", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: {
+          formatting: "error",
+          lint: {
+            severity: "error",
+            rules: { "no-extra-semi": "error" },
+          },
+          reactCorrectness: "off",
+        },
+      })}\n`,
+    );
+    await repository.commitAll("managed fix policy");
+    const staged = "export const value = 1;;\n";
+    const working = `${staged}const unstaged={value:2}\n`;
+    await repository.write("src/value.js", staged);
+    await repository.git(["add", "--", "src/value.js"]);
+    await repository.write("src/value.js", working);
+    await repository.write("notes.txt", "unrelated unstaged work\n");
+    const beforeTree = (await repository.git(["write-tree"])).stdout;
+    const beforeIndex = (await repository.git(["show", ":src/value.js"]))
+      .stdout;
+    const reportsBefore = await temporaryJsonReports();
+
+    const preview = await runPackagedCli(repository.root, [
+      "fix",
+      "--format",
+      "json",
+    ]);
+    const previewJson = JSON.parse(preview.stdout) as {
+      applied: boolean;
+      schemaVersion: number;
+      target: string;
+      selectedChecks: string[];
+      items: Array<{ checkId: string; scope: string }>;
+    };
+
+    expect(preview.exitCode, preview.stderr).toBe(0);
+    expect(previewJson).toMatchObject({
+      applied: false,
+      schemaVersion: 1,
+      target: "index",
+      selectedChecks: ["formatting", "lint", "reactCorrectness"],
+    });
+    expect(previewJson.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "lint", scope: "finding" }),
+        expect.objectContaining({
+          checkId: "formatting",
+          scope: "working-file",
+        }),
+      ]),
+    );
+    expect(await repository.read("src/value.js")).toBe(working);
+    expect(await temporaryJsonReports()).toEqual(reportsBefore);
+
+    const applied = await runPackagedCli(repository.root, [
+      "fix",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    const appliedJson = JSON.parse(applied.stdout) as {
+      applied: boolean;
+      schemaVersion: number;
+      result: {
+        exitCode: number;
+        appliedFixes: number;
+        changedFiles: string[];
+        issues: unknown[];
+      };
+    };
+
+    expect(applied.exitCode, applied.stderr).toBe(0);
+    expect(appliedJson).toMatchObject({
+      applied: true,
+      schemaVersion: 1,
+      result: {
+        exitCode: 0,
+        appliedFixes: 2,
+        changedFiles: ["src/value.js"],
+        issues: [],
+      },
+    });
+    expect(await repository.read("src/value.js")).toBe(
+      "export const value = 1;\nconst unstaged = { value: 2 };\n",
+    );
+    expect(await repository.read("notes.txt")).toBe(
+      "unrelated unstaged work\n",
+    );
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeTree);
+    expect((await repository.git(["show", ":src/value.js"])).stdout).toBe(
+      beforeIndex,
+    );
+    expect(await temporaryJsonReports()).toEqual(reportsBefore);
+    for (const privateField of [
+      "baseSource",
+      "replacement",
+      "sha256",
+      staged.trim(),
+      working.trim(),
+    ]) {
+      expect(applied.stdout).not.toContain(privateField);
+    }
+  }, 30_000);
+
+  it("preserves partial progress when an unstaged exact edit overlaps", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: {
+          formatting: "off",
+          lint: {
+            severity: "error",
+            rules: { "no-extra-semi": "error" },
+          },
+          reactCorrectness: "off",
+        },
+      })}\n`,
+    );
+    await repository.commitAll("managed lint policy");
+    const conflictStaged = "export const conflict = 1;;\n";
+    const conflictWorking = "export const conflict = 1;\n";
+    const safeStaged = "export const safe = 1;;\n";
+    await repository.write("src/conflict.js", conflictStaged);
+    await repository.write("src/safe.js", safeStaged);
+    await repository.git(["add", "--", "src/conflict.js", "src/safe.js"]);
+    await repository.write("src/conflict.js", conflictWorking);
+    const beforeTree = (await repository.git(["write-tree"])).stdout;
+    const reportsBefore = await temporaryJsonReports();
+
+    const result = await runPackagedCli(repository.root, [
+      "fix",
+      "lint",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    const output = JSON.parse(result.stdout) as {
+      applied: boolean;
+      result: {
+        exitCode: number;
+        changedFiles: string[];
+        unchangedFiles: string[];
+        issues: Array<{
+          kind: string;
+          file: string;
+          message: string;
+          remediation: string;
+        }>;
+      };
+    };
+
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(output).toMatchObject({
+      applied: true,
+      result: {
+        exitCode: 1,
+        changedFiles: ["src/safe.js"],
+        unchangedFiles: ["src/conflict.js"],
+        issues: [
+          {
+            kind: "conflict",
+            file: "src/conflict.js",
+            message: expect.stringMatching(/overlap/i),
+            remediation: expect.stringMatching(/resolve/i),
+          },
+        ],
+      },
+    });
+    expect(await repository.read("src/conflict.js")).toBe(conflictWorking);
+    expect(await repository.read("src/safe.js")).toBe(
+      "export const safe = 1;\n",
+    );
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeTree);
+    expect(await temporaryJsonReports()).toEqual(reportsBefore);
+  }, 30_000);
+
+  it("rejects an unsupported managed-fix selector from the installed package", async () => {
+    const repository = await createInstalledRepository();
+
+    const result = await runPackagedCli(repository.root, [
+      "fix",
+      "reactAccessibility",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toMatch(/allowed choices|invalid argument/i);
+  }, 30_000);
+
   it("runs through the executable npm bin launcher", async () => {
     const repository = await createInstalledRepository();
     const launcher = join(

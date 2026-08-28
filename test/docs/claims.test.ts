@@ -331,4 +331,68 @@ describe("public documentation claims", () => {
       /`zedbee checks`[^.]*effective settings[^.]*overrides/i,
     );
   });
+
+  it("documents the complete managed-fix contract without promising index mutation", async () => {
+    const [guide, readme, checks, reporting, privacy, support] =
+      await Promise.all([
+        read("docs/managed-fixes.md"),
+        read("README.md"),
+        read("docs/checks.md"),
+        read("docs/reporting.md"),
+        read("docs/privacy.md"),
+        read("docs/support.md"),
+      ]);
+    const publicDocs = [
+      guide,
+      readme,
+      checks,
+      reporting,
+      privacy,
+      support,
+    ].join("\n");
+
+    for (const command of [
+      "npx zedbee fix",
+      "npx zedbee fix formatting",
+      "npx zedbee fix lint",
+      "npx zedbee fix reactCorrectness",
+      "npx zedbee fix --yes --format json",
+    ]) {
+      expect(guide).toContain(command);
+    }
+    expect(guide).toMatch(/rescans?[^.]*current staged code/i);
+    expect(guide).toMatch(/bare[^.]*all three[^.]*fixable checks/i);
+    expect(guide).toMatch(/named selector[^.]*only[^.]*selected check/i);
+    expect(guide).toMatch(/blocking[^.]*warning[^.]*included/i);
+    expect(guide).toMatch(
+      /Prettier[^.]*complete current working file[^.]*unstaged work/i,
+    );
+    expect(guide).toMatch(
+      /ESLint[^.]*React correctness[^.]*exact[^.]*reported official fixes/i,
+    );
+    expect(guide).toMatch(/suggestions[^.]*remain manual/i);
+    expect(guide).toMatch(/unsupported checks[^.]*remain manual/i);
+    expect(guide).toMatch(/exact fixes[^.]*before[^.]*formatting/i);
+    expect(guide).toMatch(/interactive[^.]*preview[^.]*confirmation/i);
+    expect(guide).toMatch(/`--yes`[^.]*automation approval flag/i);
+    expect(guide).toMatch(
+      /partial completion[^.]*safe files[^.]*skipped fixes[^.]*exit(?:s| status)? 1/i,
+    );
+    expect(guide).toMatch(/never stages or\s+commits/i);
+    expect(guide).toMatch(/schema version 1[^.]*no replayable patch/i);
+
+    expect(readme).toContain("docs/managed-fixes.md");
+    expect(readme).toMatch(/`zedbee fix`[^.]*current staged code/i);
+    expect(readme).toMatch(/never stages or\s+commits/i);
+    expect(checks).toMatch(/managed fix[^.]*exact reported official fixes/i);
+    expect(checks).toMatch(/suggestions[^.]*manual/i);
+    expect(reporting).toMatch(
+      /managed fix[^.]*schema version 1[^.]*source-free[^.]*no replayable patch/i,
+    );
+    expect(privacy).toMatch(/managed fix[^.]*source-free[^.]*no source text/i);
+    expect(support).toMatch(
+      /managed fix[^.]*conflict[^.]*partial progress[^.]*nonzero/i,
+    );
+    expect(publicDocs).toMatch(/review[^.]*stage[^.]*rescan/i);
+  });
 });

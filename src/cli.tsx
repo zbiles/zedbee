@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Argument, Command, Option } from "commander";
 import { executeChecksCommand } from "./commands/checks.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
-import { executeFixCommand, parseFixCheck } from "./commands/fix.js";
+import { executeFixCommand } from "./commands/fix.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
@@ -199,9 +199,9 @@ export async function main(
     .command("fix")
     .description("preview and apply managed fixes to working files")
     .addArgument(
-      new Argument("[check]", "managed fix check selector")
-        .choices([...FIXABLE_CHECK_IDS])
-        .argParser(parseFixCheck),
+      new Argument("[check]", "managed fix check selector").choices([
+        ...FIXABLE_CHECK_IDS,
+      ]),
     )
     .addOption(
       new Option("--format <format>", "output format")

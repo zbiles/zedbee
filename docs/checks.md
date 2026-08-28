@@ -4,7 +4,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 
 | Check ID                 | Coverage                                                    | Scope and attribution                                                                                                          | Important limitation                                                                                             |
 | ------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `formatting`             | Prettier formatting                                         | Transforms staged target files and intersects formatting changes with added lines                                              | Reports only; v1 never applies fixes                                                                             |
+| `formatting`             | Prettier formatting                                         | Transforms staged target files and intersects formatting changes with added lines                                              | Managed fixing formats the complete current working file, including unstaged work                                |
 | `lint`                   | ESLint, typescript-eslint, and managed correctness rules    | Compares workspace diagnostics and attributes locations/entities                                                               | Does not load project ESLint plugins or executable config                                                        |
 | `types`                  | TypeScript diagnostics                                      | Compares isolated baseline/target programs for each workspace                                                                  | TypeScript source requires a contained staged `tsconfig.json`                                                    |
 | `cyclomaticComplexity`   | Branch-path complexity                                      | Compares changed syntax entities against `max` and worsening policy                                                            | Thresholds require team calibration                                                                              |
@@ -31,6 +31,21 @@ Complete JSON, text, and SARIF exports report every attributed finding. Automati
 - `thorough`: every check, including project analysis and OSV vulnerability comparison.
 
 Every check can be set to severity `off`, `warn`, or `error`. A warning remains visible but does not block. An enabled check that cannot complete returns exit code 2 when `failOnIncomplete` is enabled.
+
+## Managed fix availability
+
+`zedbee fix` rescans the current index and includes warning and blocking
+candidates for `formatting`, `lint`, and `reactCorrectness`. The managed fix
+boundary for lint and React is exact reported official fixes only. Analyzer
+suggestions remain manual, as do every finding from unsupported checks such as
+types, accessibility, complexity, security, secrets, duplication, architecture,
+dead code, and vulnerabilities.
+
+Exact lint and React fixes are composed with non-overlapping working changes.
+When formatting is selected, Prettier then formats the complete current working
+file, including unstaged work. Zedbee never mutates the index. Use
+[`zedbee fix`](managed-fixes.md) for preview, selection, conflicts, partial
+progress, JSON, and the review-stage-rescan workflow.
 
 ## Managed customization
 

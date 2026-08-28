@@ -120,6 +120,25 @@ describe("FixApp", () => {
     expect(stripVTControlCharacters(frame)).not.toContain("lint-1");
   });
 
+  it("renders grammatical file and finding summary labels", () => {
+    const grammaticalPlan: FixPlan = {
+      ...plan,
+      summary: {
+        fixes: 2,
+        files: 1,
+        blocking: 3,
+        warnings: 1,
+        skipped: 0,
+      },
+    };
+    const { view } = setup(grammaticalPlan, 120, 80);
+    const frame = visibleFrame(view);
+
+    expect(frame).toContain("2 fixes across 1 file");
+    expect(frame).toContain("3 blocking · 1 warning · 0 skipped");
+    expect(frame).not.toMatch(/1 files|blockings|skippeds/u);
+  });
+
   it.each([
     ["Space", " "],
     ["Enter", "\r"],
