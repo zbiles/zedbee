@@ -43,6 +43,8 @@ export interface FixPromptOptions {
   readonly width: number;
   readonly color: boolean;
   readonly animations: boolean;
+  /** Opaque temporary report location, when a complete plan was persisted. */
+  readonly reportPath?: string;
 }
 
 export interface FixCommandDependencies {
@@ -63,8 +65,9 @@ const DEFAULT_DEPENDENCIES: FixCommandDependencies = {
   },
   buildFixPlan,
   applyFixPlan,
-  async confirm() {
-    return false;
+  async confirm(plan, options) {
+    const { runFixPrompt } = await import("../ui/fix-app.js");
+    return runFixPrompt(plan, options);
   },
   store: createTemporaryReportStore(),
 };
@@ -292,6 +295,9 @@ export async function executeFixCommand(
         width: io.width,
         color: options.color && io.env.NO_COLOR === undefined,
         animations: options.animations && io.env.NO_COLOR === undefined,
+        ...(maintenance.reportPath === undefined
+          ? {}
+          : { reportPath: maintenance.reportPath }),
       });
       if (!confirmed) {
         outputPlan(false);

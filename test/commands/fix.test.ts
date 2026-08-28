@@ -199,6 +199,26 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).toHaveBeenCalledOnce();
   });
 
+  it("passes the persisted complete-plan path into the interactive confirmation", async () => {
+    const terminal = io(true);
+    const deps = dependencies();
+    deps.store = {
+      maintain: vi.fn(async () => ({
+        reportPath: "/tmp/zedbee/fix-plan.json",
+        warnings: [],
+      })),
+    };
+
+    await executeFixCommand(base, terminal, deps);
+
+    expect(deps.confirm).toHaveBeenCalledWith(expect.any(Object), {
+      width: 80,
+      color: true,
+      animations: true,
+      reportPath: "/tmp/zedbee/fix-plan.json",
+    });
+  });
+
   it("reports a cancelled interactive plan without writing", async () => {
     const terminal = io(true);
     const deps = dependencies();
