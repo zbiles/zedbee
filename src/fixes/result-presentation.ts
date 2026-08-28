@@ -22,7 +22,7 @@ export function presentFixResult(
   );
   const outcome: FixResultOutcome =
     result.exitCode !== 0
-      ? result.appliedFixes > 0
+      ? result.appliedFixes > 0 || alreadyFixedFiles.length > 0
         ? "partially-applied"
         : "failed"
       : result.appliedFixes === 0 && alreadyFixedFiles.length > 0
