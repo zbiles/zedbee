@@ -310,6 +310,91 @@ describe("renderText", () => {
     expect(output).not.toContain("SCAN RESULT");
   });
 
+  it("renders managed commands in complete non-abbreviated text", () => {
+    const finding = createFinding({
+      check: "lint",
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+        scope: "finding",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    });
+    const output = renderText(
+      createReport({
+        outcome: "blocked",
+        exitCode: 1,
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 1,
+          incomplete: 0,
+          findings: [finding],
+        },
+      }),
+      { width: 100, color: false },
+    );
+
+    expect(output).toContain("NEXT STEP");
+    expect(output.match(/npx --no-install zedbee fix lint/gu)).toHaveLength(1);
+  });
+
+  it("integrates abbreviated automatic commands into the closing callout once", () => {
+    const finding = createFinding({
+      check: "lint",
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+        scope: "finding",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    });
+    const reportPath = "/private/tmp/zedbee-reports/complete.json";
+    const output = renderText(
+      createReport({
+        outcome: "blocked",
+        exitCode: 1,
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 2,
+          incomplete: 0,
+          findings: [finding, createFinding({ id: "hidden" })],
+        },
+        presentationPolicy: {
+          terminalFindingLimit: 1,
+          temporaryReportMaxAge: "24h",
+          persistSourceExcerpts: false,
+          agentGuidance: { opening: "", nextStep: "Apply the managed fix." },
+        },
+      }),
+      {
+        width: 100,
+        color: false,
+        presentation: {
+          automatic: true,
+          reportStatus: "available",
+          findings: [finding],
+          totalFindingCount: 2,
+          abbreviated: true,
+          reportPath,
+          maximumAge: "24h",
+          warnings: [],
+        },
+      },
+    );
+
+    expect(output).not.toContain("NEXT STEPS");
+    expect(output.match(/Showing 1 of 2 findings\./gu)).toHaveLength(1);
+    expect(output.match(/complete\.json/gu)).toHaveLength(2);
+    expect(output.match(/npx --no-install zedbee fix lint/gu)).toHaveLength(1);
+    expect(output.indexOf("AGENT NEXT STEP")).toBeLessThan(
+      output.indexOf("npx --no-install zedbee fix lint"),
+    );
+  });
+
   it("provides neutral outcome-aware guidance for abbreviated reports", () => {
     const base = {
       shown: 25,

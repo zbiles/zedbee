@@ -1,9 +1,12 @@
-import type { Finding } from "../core/types.js";
+import type { Finding, ManagedAutomaticFix } from "../core/types.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
-import { nextStepsLines } from "../reporting/next-steps.js";
+import {
+  managedFixGuidanceLines,
+  nextStepsLines,
+} from "../reporting/next-steps.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import {
   buildReportCallouts,
@@ -253,12 +256,43 @@ function reportWarningsSectionLines(
 function calloutLines(
   callouts: readonly ReportCalloutLine[],
   width: number,
+  automaticFixes: readonly ManagedAutomaticFix[] = [],
 ): string[] {
-  return callouts.flatMap((line) =>
-    line.kind === "text"
-      ? wrapWords(line.value, width)
-      : chunkTerminalCells(opaqueTemporaryReportPath(line.path), width),
+  const managedFixes = managedFixGuidanceLines(automaticFixes);
+  const hasCompleteReport = callouts.some(
+    (line) => line.kind === "text" && line.value === "COMPLETE REPORT",
   );
+  return [
+    ...callouts.flatMap((line) => [
+      ...(line.kind === "text" && line.value === "COMPLETE REPORT"
+        ? managedFixes.flatMap((value) => wrapWords(value, width))
+        : []),
+      ...(line.kind === "text"
+        ? wrapWords(line.value, width)
+        : chunkTerminalCells(opaqueTemporaryReportPath(line.path), width)),
+    ]),
+    ...(hasCompleteReport
+      ? []
+      : managedFixes.flatMap((value) => wrapWords(value, width))),
+  ];
+}
+
+function completeManagedFixLines(
+  findings: readonly Finding[],
+  width: number,
+): string[] {
+  const managedFixes = managedFixGuidanceLines(
+    findings.flatMap((finding) =>
+      finding.automaticFix === undefined ? [] : [finding.automaticFix],
+    ),
+  );
+  return managedFixes.length === 0
+    ? []
+    : [
+        "",
+        "NEXT STEP",
+        ...managedFixes.flatMap((line) => wrapWords(line, width)),
+      ];
 }
 
 function automaticHeadline(
@@ -339,8 +373,7 @@ function automaticTextLines(
       wrapWords(line, width),
     ),
     "",
-    ...calloutLines(callouts.closing, width),
-    ...guidanceLines(report, presentation, width),
+    ...calloutLines(callouts.closing, width, sections.automaticFixes),
   ];
 }
 
@@ -424,6 +457,7 @@ export function renderText(
     ...incompleteSectionLines(sanitized.checks, width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
+    ...completeManagedFixLines(sanitized.summaryFindings, width),
     ...guidanceLines(report, options.presentation, width),
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),

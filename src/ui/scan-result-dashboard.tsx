@@ -6,6 +6,8 @@ import {
 } from "../reporting/report-callouts.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { buildScanResultSections } from "../reporting/result-sections.js";
+import { managedFixGuidanceLines } from "../reporting/next-steps.js";
+import type { ManagedAutomaticFix } from "../core/types.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import { chunkTerminalCells } from "../renderers/terminal-cells.js";
 import type { ScanReport } from "../scan/report.js";
@@ -30,44 +32,72 @@ function Callouts({
   lines,
   width,
   color,
+  automaticFixes = [],
 }: {
   readonly lines: readonly ReportCalloutLine[];
   readonly width: number;
   readonly color: boolean;
+  readonly automaticFixes?: readonly ManagedAutomaticFix[];
 }) {
   if (lines.length === 0) return null;
   const contentWidth = Math.max(1, width - 2);
+  const managedFixes = managedFixGuidanceLines(automaticFixes);
+  const hasCompleteReport = lines.some(
+    (line) => line.kind === "text" && line.value === "COMPLETE REPORT",
+  );
   return (
     <Box flexDirection="column" width={width} paddingX={1} marginY={1}>
-      {lines.flatMap((line, index) =>
-        line.kind === "text" ? (
-          <Text
-            key={`text:${index}`}
-            bold={calloutHeading(line.value)}
-            wrap="wrap"
-            {...colorProp(
-              color,
-              calloutHeading(line.value)
-                ? ZEDBEE_THEME.secondary
-                : ZEDBEE_THEME.primary,
-            )}
-          >
-            {line.value}
-          </Text>
-        ) : (
-          chunkTerminalCells(
-            opaqueTemporaryReportPath(line.path),
-            contentWidth,
-          ).map((pathLine, pathIndex) => (
+      {lines.flatMap((line, index) => [
+        ...(line.kind === "text" && line.value === "COMPLETE REPORT"
+          ? managedFixes.map((value, fixIndex) => (
+              <Text
+                key={`managed-fix:${index}:${fixIndex}`}
+                wrap="wrap"
+                {...colorProp(color, ZEDBEE_THEME.primary)}
+              >
+                {value}
+              </Text>
+            ))
+          : []),
+        ...(line.kind === "text"
+          ? [
+              <Text
+                key={`text:${index}`}
+                bold={calloutHeading(line.value)}
+                wrap="wrap"
+                {...colorProp(
+                  color,
+                  calloutHeading(line.value)
+                    ? ZEDBEE_THEME.secondary
+                    : ZEDBEE_THEME.primary,
+                )}
+              >
+                {line.value}
+              </Text>,
+            ]
+          : chunkTerminalCells(
+              opaqueTemporaryReportPath(line.path),
+              contentWidth,
+            ).map((pathLine, pathIndex) => (
+              <Text
+                key={`path:${index}:${pathIndex}`}
+                {...colorProp(color, ZEDBEE_THEME.primary)}
+              >
+                {pathLine}
+              </Text>
+            ))),
+      ])}
+      {hasCompleteReport
+        ? null
+        : managedFixes.map((value, index) => (
             <Text
-              key={`path:${index}:${pathIndex}`}
+              key={`managed-fix:tail:${index}`}
+              wrap="wrap"
               {...colorProp(color, ZEDBEE_THEME.primary)}
             >
-              {pathLine}
+              {value}
             </Text>
-          ))
-        ),
-      )}
+          ))}
     </Box>
   );
 }
@@ -457,7 +487,12 @@ export function ScanResultDashboard({
           />
         </BrandedCommandPanel>
       </BrandedCommandFrame>
-      <Callouts lines={callouts.closing} width={width} color={color} />
+      <Callouts
+        lines={callouts.closing}
+        width={width}
+        color={color}
+        automaticFixes={sections.automaticFixes}
+      />
     </Box>
   );
 }

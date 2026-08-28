@@ -13,6 +13,24 @@ export interface NextStepsInput {
   readonly automaticFixes?: readonly ManagedAutomaticFix[];
 }
 
+export function managedFixGuidanceLines(
+  automaticFixes: readonly ManagedAutomaticFix[],
+): readonly string[] {
+  const commands = [
+    ...new Set(
+      automaticFixes.map((automaticFix) => automaticFix.command.join(" ")),
+    ),
+  ].sort(compareCodeUnits);
+  return Object.freeze(
+    commands.length === 0
+      ? []
+      : [
+          "Managed fix commands write the working tree; they do not stage changes.",
+          ...commands,
+        ],
+  );
+}
+
 function outcomeInstructions(
   outcome: ScanReport["outcome"],
 ): readonly string[] {
@@ -34,13 +52,7 @@ function outcomeInstructions(
 
 export function nextStepsLines(input: NextStepsInput): readonly string[] {
   const age = formatTemporaryReportMaxAge(input.maximumAge);
-  const commands = [
-    ...new Set(
-      (input.automaticFixes ?? []).map((automaticFix) =>
-        automaticFix.command.join(" "),
-      ),
-    ),
-  ].sort(compareCodeUnits);
+  const managedFixes = managedFixGuidanceLines(input.automaticFixes ?? []);
   return Object.freeze([
     "NEXT STEPS",
     "",
@@ -50,12 +62,7 @@ export function nextStepsLines(input: NextStepsInput): readonly string[] {
     "The operating system may remove it sooner.",
     "",
     ...outcomeInstructions(input.outcome),
-    ...(commands.length === 0
-      ? []
-      : [
-          "Managed fix commands write the working tree; they do not stage changes.",
-          ...commands,
-        ]),
+    ...managedFixes,
     "The terminal output is abbreviated; do not treat it as the complete report.",
   ]);
 }

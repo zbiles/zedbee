@@ -1,7 +1,10 @@
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
-import { nextStepsLines } from "../reporting/next-steps.js";
+import {
+  managedFixGuidanceLines,
+  nextStepsLines,
+} from "../reporting/next-steps.js";
 import { buildScanResultSections } from "../reporting/result-sections.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
@@ -93,8 +96,31 @@ function NextSteps({
   width: number;
   color: boolean;
 }) {
+  const automaticFixes = buildScanResultSections(
+    report,
+    presentation,
+  ).automaticFixes;
+  const managedFixes = managedFixGuidanceLines(automaticFixes);
+  if (!presentation.abbreviated) {
+    if (managedFixes.length === 0) return null;
+    return (
+      <Box flexDirection="column" width={width} marginTop={1}>
+        <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          NEXT STEP
+        </Text>
+        {managedFixes.map((line, index) => (
+          <Text
+            key={`${line}:${index}`}
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.primary)}
+          >
+            {line}
+          </Text>
+        ))}
+      </Box>
+    );
+  }
   if (
-    !presentation.abbreviated ||
     presentation.reportPath === undefined ||
     presentation.maximumAge === undefined
   ) {
@@ -106,8 +132,7 @@ function NextSteps({
     total: presentation.totalFindingCount,
     reportPath: presentation.reportPath,
     maximumAge: presentation.maximumAge,
-    automaticFixes: buildScanResultSections(report, presentation)
-      .automaticFixes,
+    automaticFixes,
   });
   return (
     <Box flexDirection="column" width={width} marginTop={1}>

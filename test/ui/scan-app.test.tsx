@@ -12,6 +12,51 @@ const events: ScanEvent[] = [
 ];
 
 describe("ScanApp", () => {
+  it("renders managed commands for complete explicit Ink output", () => {
+    const finding = createFinding({
+      check: "formatting",
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+        scope: "working-file",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+    const frame = render(
+      <ScanApp
+        events={events}
+        elapsedMs={15}
+        width={96}
+        color={false}
+        animations={false}
+        report={report}
+        presentation={{
+          automatic: false,
+          reportStatus: "not-requested",
+          findings: [finding],
+          totalFindingCount: 1,
+          abbreviated: false,
+          warnings: [],
+        }}
+      />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("NEXT STEP");
+    expect(frame).toContain("npx --no-install zedbee fix formatting");
+  });
+
   it("renders opaque report and warning paths at narrow width", () => {
     const previousNoColor = process.env.NO_COLOR;
     process.env.NO_COLOR = "1";
