@@ -219,6 +219,48 @@ describe("executeFixCommand", () => {
     });
   });
 
+  it("persists a complete source-free plan before the UI truncates its thirteenth file", async () => {
+    const terminal = io(true);
+    const deps = dependencies(
+      plan({
+        summary: { fixes: 13, files: 13, blocking: 0, warnings: 0, skipped: 0 },
+        files: Array.from({ length: 13 }, (_, index) => ({
+          path: `src/${index}.ts`,
+          fixes: 1,
+          hasUnstagedChanges: false,
+        })),
+        items: Array.from({ length: 13 }, (_, index) => ({
+          checkId: "lint" as const,
+          file: `src/${index}.ts`,
+          findingIds: [`lint-${index}`],
+          scope: "finding" as const,
+          blocking: 0,
+          warnings: 0,
+        })),
+      }),
+    );
+    deps.store = {
+      maintain: vi.fn(async () => ({
+        reportPath: "/tmp/zedbee/fix-plan.json",
+        warnings: [],
+      })),
+    };
+
+    await executeFixCommand(base, terminal, deps);
+
+    expect(deps.store.maintain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        json: expect.not.stringContaining("baseSource"),
+      }),
+    );
+    expect(deps.confirm).toHaveBeenCalledWith(expect.any(Object), {
+      width: 80,
+      color: true,
+      animations: true,
+      reportPath: "/tmp/zedbee/fix-plan.json",
+    });
+  });
+
   it("reports a cancelled interactive plan without writing", async () => {
     const terminal = io(true);
     const deps = dependencies();
@@ -227,6 +269,21 @@ describe("executeFixCommand", () => {
     await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(0);
     expect(deps.applyFixPlan).not.toHaveBeenCalled();
     expect(terminal.stdout.join("")).toContain("Zedbee fix cancelled.");
+  });
+
+  it("prints permanent cancellation output only after the interactive prompt exits", async () => {
+    const terminal = io(true);
+    const deps = dependencies();
+    deps.confirm = vi.fn(async () => {
+      expect(terminal.stdout.join("")).toBe("");
+      return false;
+    });
+
+    await executeFixCommand(base, terminal, deps);
+
+    expect(terminal.stdout.join("")).toContain("Zedbee managed fix plan.");
+    expect(terminal.stdout.join("")).toContain("Zedbee fix cancelled.");
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
   });
 
   it("returns a source-free JSON preview without applying", async () => {

@@ -6,6 +6,9 @@ export const FIXABLE_CHECK_IDS = Object.freeze([
   "reactCorrectness",
 ] as const);
 
+/** Number of file actions the interactive confirmation can show at once. */
+export const FIX_PLAN_FILE_SUMMARY_LIMIT = 12;
+
 export type FixableCheckId = (typeof FIXABLE_CHECK_IDS)[number];
 
 export interface ExactFixEdit {

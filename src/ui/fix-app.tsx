@@ -10,7 +10,7 @@ import {
   useWindowSize,
   type DOMElement,
 } from "ink";
-import type { FixPlan } from "../fixes/types.js";
+import { FIX_PLAN_FILE_SUMMARY_LIMIT, type FixPlan } from "../fixes/types.js";
 import type { FixPromptOptions } from "../commands/fix.js";
 import {
   brandedCommandContentWidth,
@@ -33,7 +33,6 @@ import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 const CURSOR_HOME = "\u001b[H";
 const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
-const MAX_FILE_SUMMARIES = 12;
 const FIX_EVENT_MAX_FPS = 30;
 
 export interface FixAppProps extends FixPromptOptions {
@@ -61,6 +60,17 @@ export function fixRenderOptions() {
       process.stdout.write(CURSOR_HOME);
     },
   });
+}
+
+export function isFixCancellationInput(
+  input: string,
+  key: Readonly<{ ctrl?: boolean; escape?: boolean }>,
+): boolean {
+  return (
+    input === "\u0003" ||
+    (key.ctrl === true && input.toLowerCase() === "c") ||
+    key.escape === true
+  );
 }
 
 function countLabel(count: number, singular: string): string {
@@ -166,8 +176,8 @@ function PlanSummary({
       </Text>
       {unstaged > 0 ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-          CONFLICT RISK: {countLabel(unstaged, "unstaged file")} will be
-          skipped.
+          {countLabel(unstaged, "file")} {unstaged === 1 ? "has" : "have"}{" "}
+          unstaged work.
         </Text>
       ) : null}
       {reportPath === undefined ? null : (
@@ -189,7 +199,7 @@ function FileSummaries({
   readonly width: number;
   readonly color: boolean;
 }) {
-  const files = plan.files.slice(0, MAX_FILE_SUMMARIES);
+  const files = plan.files.slice(0, FIX_PLAN_FILE_SUMMARY_LIMIT);
   return (
     <>
       {files.map((file, index) => {
@@ -214,7 +224,10 @@ function FileSummaries({
               </Text>
               {file.hasUnstagedChanges ? (
                 <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-                  SKIP — unstaged changes (conflict risk)
+                  APPLY —
+                  {items.some((item) => item.checkId === "formatting")
+                    ? " format current working file (includes unstaged changes)"
+                    : " exact fixes preserve unrelated unstaged changes"}
                 </Text>
               ) : (
                 <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
@@ -284,7 +297,7 @@ function FixPlanPanel({
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          Tab/←→ Focus · Space/Enter Apply · Esc Cancel · PgUp/PgDn Scroll
+          Tab/←→ Focus · Space/Enter Activate · Esc Cancel · PgUp/PgDn Scroll
         </Text>
       </Box>
       <Text> </Text>
@@ -379,11 +392,7 @@ export function FixApp(props: FixAppProps) {
       if (wheelDelta !== 0) scrollBy(wheelDelta);
       return;
     }
-    if (
-      input === "\u0003" ||
-      (key.ctrl && input.toLowerCase() === "c") ||
-      key.escape
-    ) {
+    if (isFixCancellationInput(input, key)) {
       decide(false);
       return;
     }

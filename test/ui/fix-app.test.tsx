@@ -1,8 +1,14 @@
+import { PassThrough } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
+import { render as renderInk } from "ink";
 import { render } from "ink-testing-library";
 import { describe, expect, it, vi } from "vitest";
 import type { FixPlan } from "../../src/fixes/types.js";
-import { FixApp } from "../../src/ui/fix-app.js";
+import {
+  FixApp,
+  fixRenderOptions,
+  isFixCancellationInput,
+} from "../../src/ui/fix-app.js";
 
 const plan: FixPlan = {
   schemaVersion: 1,
@@ -70,6 +76,12 @@ function lines(frame: string): readonly string[] {
 }
 
 describe("FixApp", () => {
+  it("recognizes terminal control-C as cancellation when alternate-screen input is delegated", () => {
+    expect(isFixCancellationInput("\u0003", {})).toBe(true);
+    expect(isFixCancellationInput("c", { ctrl: true })).toBe(true);
+    expect(isFixCancellationInput("c", {})).toBe(false);
+  });
+
   it("renders the branded framed plan with bounded summaries and safe file actions", () => {
     const { view } = setup(plan, 140, 80, true);
     const frame = visibleFrame(view);
@@ -83,14 +95,16 @@ describe("FixApp", () => {
     expect(stripVTControlCharacters(frame)).toContain("1 blocking");
     expect(stripVTControlCharacters(frame)).toContain("2 warnings");
     expect(stripVTControlCharacters(frame)).toContain("1 skipped");
-    expect(stripVTControlCharacters(frame)).toContain("1 unstaged file");
+    expect(stripVTControlCharacters(frame)).toContain(
+      "1 file has unstaged work",
+    );
     expect(stripVTControlCharacters(frame)).toContain("src/app.ts");
     expect(stripVTControlCharacters(frame)).toContain("2 fixes · 1 blocking");
     expect(stripVTControlCharacters(frame)).toContain(
       "src/components/Badge.tsx",
     );
     expect(stripVTControlCharacters(frame)).toContain(
-      "SKIP — unstaged changes",
+      "APPLY — format current working file (includes unstaged changes)",
     );
     expect(stripVTControlCharacters(frame)).toContain(
       "Complete plan: /tmp/zedbee/fix-plan.json",
@@ -100,18 +114,80 @@ describe("FixApp", () => {
     expect(stripVTControlCharacters(frame)).not.toContain("lint-1");
   });
 
-  it("moves focus with Tab and applies only from the focused control", async () => {
-    const { onDecision, view } = setup();
+  it.each([
+    ["Space", " "],
+    ["Enter", "\r"],
+  ])(
+    "applies with %s from the focused Apply control",
+    async (_label, input) => {
+      const { onDecision, view } = setup();
 
-    view.stdin.write("\t");
-    await vi.waitFor(() => expect(visibleFrame(view)).toContain("➜ CANCEL"));
-    view.stdin.write("\u001b[C");
+      view.stdin.write(input);
+      await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(true));
+    },
+  );
+
+  it.each([
+    ["Space", " "],
+    ["Enter", "\r"],
+  ])(
+    "cancels with %s from the focused Cancel control",
+    async (_label, input) => {
+      const { onDecision, view } = setup();
+
+      view.stdin.write("\t");
+      await vi.waitFor(() => expect(visibleFrame(view)).toContain("➜ CANCEL"));
+      view.stdin.write(input);
+
+      await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+    },
+  );
+
+  it("cleans up mouse reporting when Apply exits", async () => {
+    const apply = setup();
     await vi.waitFor(() =>
-      expect(visibleFrame(view)).toContain("➜ APPLY FIXES"),
+      expect(apply.view.frames.join("")).toContain(
+        "\u001b[?1000h\u001b[?1006h",
+      ),
     );
-    view.stdin.write(" ");
 
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(true));
+    apply.view.stdin.write("\r");
+
+    await vi.waitFor(() => expect(apply.onDecision).toHaveBeenCalledWith(true));
+    expect(apply.view.frames.join("")).toContain("\u001b[?1006l\u001b[?1000l");
+  });
+
+  it("cleans up mouse reporting when the focused Cancel control exits", async () => {
+    const cancel = setup();
+    await vi.waitFor(() =>
+      expect(cancel.view.frames.join("")).toContain(
+        "\u001b[?1000h\u001b[?1006h",
+      ),
+    );
+    cancel.view.stdin.write("\t");
+    await vi.waitFor(() =>
+      expect(visibleFrame(cancel.view)).toContain("➜ CANCEL"),
+    );
+    cancel.view.stdin.write("\r");
+
+    await vi.waitFor(() =>
+      expect(cancel.onDecision).toHaveBeenCalledWith(false),
+    );
+    expect(cancel.view.frames.join("")).toContain("\u001b[?1006l\u001b[?1000l");
+  });
+
+  it("explains that exact fixes preserve unrelated unstaged work", () => {
+    const exactPlan: FixPlan = {
+      ...plan,
+      files: [{ path: "src/app.ts", fixes: 2, hasUnstagedChanges: true }],
+      items: [plan.items[0]!],
+    };
+    const { view } = setup(exactPlan);
+
+    expect(visibleFrame(view)).toContain(
+      "APPLY — exact fixes preserve unrelated unstaged changes",
+    );
+    expect(visibleFrame(view)).not.toContain("SKIP — unstaged changes");
   });
 
   it("cancels with Escape while releasing terminal mouse reporting", async () => {
@@ -198,5 +274,114 @@ describe("FixApp", () => {
     view.rerender(elementFor(30));
     await vi.waitFor(() => expect(lines(visibleFrame(view))).toHaveLength(30));
     expect(visibleFrame(view)).toContain("➜ CANCEL");
+  });
+
+  it("homes the alternate screen exactly once", () => {
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const options = fixRenderOptions();
+
+    options.onRender?.();
+    options.onRender?.();
+
+    expect(options).toMatchObject({
+      alternateScreen: true,
+      exitOnCtrlC: false,
+    });
+    expect(write).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith("\u001b[H");
+    write.mockRestore();
+  });
+
+  it("disables mouse reporting before the renderer leaves the alternate screen", async () => {
+    const output: string[] = [];
+    const stdout = new PassThrough() as PassThrough & NodeJS.WriteStream;
+    const stderr = new PassThrough() as PassThrough & NodeJS.WriteStream;
+    const stdin = new PassThrough() as PassThrough & NodeJS.ReadStream;
+    Object.defineProperties(stdout, {
+      columns: { value: 80 },
+      isTTY: { value: true },
+      rows: { value: 40 },
+    });
+    Object.defineProperties(stdin, {
+      isTTY: { value: true },
+      ref: { value: vi.fn() },
+      setRawMode: { value: vi.fn() },
+      unref: { value: vi.fn() },
+    });
+    stdout.on("data", (chunk: Buffer) => output.push(chunk.toString()));
+    const cursorWrite = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const app = renderInk(
+      <FixApp
+        plan={plan}
+        width={80}
+        terminalSize={{ columns: 80, rows: 40 }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+      {
+        ...fixRenderOptions(),
+        stdout,
+        stderr,
+        stdin,
+        debug: true,
+        interactive: true,
+      },
+    );
+
+    try {
+      await vi.waitFor(() =>
+        expect(output.join("")).toContain("\u001b[?1000h\u001b[?1006h"),
+      );
+      app.unmount();
+      await app.waitUntilExit();
+
+      const writes = output.join("");
+      expect(writes.indexOf("\u001b[?1006l\u001b[?1000l")).toBeLessThan(
+        writes.indexOf("\u001b[?1049l"),
+      );
+    } finally {
+      cursorWrite.mockRestore();
+      stdout.destroy();
+      stderr.destroy();
+      stdin.destroy();
+    }
+  });
+
+  it("defensively disables mouse reporting when prompt rendering rejects", async () => {
+    const failure = new Error("wait failed after mouse activation");
+    const waitUntilExit = vi.fn(async () => Promise.reject(failure));
+    const renderMock = vi.fn((_node: unknown, _options?: unknown) => {
+      process.stdout.write("\u001b[?1000h\u001b[?1006h");
+      return { waitUntilExit };
+    });
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    vi.resetModules();
+    vi.doMock("ink", async () => {
+      const actual = await vi.importActual<typeof import("ink")>("ink");
+      return { ...actual, render: renderMock };
+    });
+
+    try {
+      const { runFixPrompt } = await import("../../src/ui/fix-app.js");
+      await expect(
+        runFixPrompt(plan, { width: 80, color: false, animations: false }),
+      ).rejects.toThrow("wait failed after mouse activation");
+
+      expect(waitUntilExit).toHaveBeenCalledOnce();
+      expect(renderMock.mock.calls[0]?.[1]).toMatchObject({
+        alternateScreen: true,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      });
+      expect(write.mock.calls.map(([value]) => String(value))).toEqual([
+        "\u001b[?1000h\u001b[?1006h",
+        "\u001b[?1006l\u001b[?1000l",
+      ]);
+    } finally {
+      write.mockRestore();
+      vi.doUnmock("ink");
+      vi.resetModules();
+    }
   });
 });

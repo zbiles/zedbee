@@ -3,6 +3,7 @@ import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
 import { applyFixPlan } from "../fixes/apply-plan.js";
 import {
   FIXABLE_CHECK_IDS,
+  FIX_PLAN_FILE_SUMMARY_LIMIT,
   type FixPlan,
   type FixResult,
   type FixableCheckId,
@@ -221,7 +222,8 @@ async function maintainPlan(
   readonly warnings: readonly ReportMaintenanceWarning[];
 }> {
   const json =
-    plan.publicPlan.items.length > COMPACT_DETAIL_LIMIT
+    plan.publicPlan.items.length > COMPACT_DETAIL_LIMIT ||
+    plan.publicPlan.files.length > FIX_PLAN_FILE_SUMMARY_LIMIT
       ? renderFixPlanJson(plan.publicPlan)
       : undefined;
   try {
