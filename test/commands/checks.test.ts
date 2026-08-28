@@ -502,6 +502,63 @@ describe("executeChecksCommand", () => {
     expect(output).not.toMatch(/\u001b\[[0-9;]*m/u);
   });
 
+  it("keeps non-formatting configuration values alphabetized in JSON and text", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "thorough",
+      checks: {
+        duplication: { threshold: 6, settings: { minLines: 8 } },
+      },
+    });
+    const json = terminal();
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      json,
+      configuredDependencies(config),
+    );
+    const duplication = result.checks.find(({ id }) => id === "duplication");
+
+    expect(Object.keys(duplication?.configuration.values ?? {})).toEqual([
+      "settings.minLines",
+      "settings.minTokens",
+      "settings.mode",
+      "threshold",
+    ]);
+    expect(duplication?.configuration.values).toMatchObject({
+      "settings.minLines": { value: 8, source: "repository" },
+      threshold: { value: 6, source: "repository" },
+    });
+    expect(
+      Object.keys(
+        JSON.parse(json.stdout.join("")).checks.find(
+          ({ id }: { id: string }) => id === "duplication",
+        ).configuration.values,
+      ),
+    ).toEqual([
+      "settings.minLines",
+      "settings.minTokens",
+      "settings.mode",
+      "threshold",
+    ]);
+
+    const text = terminal();
+    await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: false },
+      text,
+      configuredDependencies(config),
+    );
+    const output = text.stdout.join("");
+    const duplicationOutput = output.slice(
+      output.indexOf("duplication ["),
+      output.indexOf("dependencyArchitecture ["),
+    );
+    expect(duplicationOutput).toContain("settings.minLines: 8 (repository)");
+    expect(duplicationOutput).toContain("threshold: 6 (repository)");
+    expect(duplicationOutput.indexOf("settings.minLines:")).toBeLessThan(
+      duplicationOutput.indexOf("threshold:"),
+    );
+  });
+
   it("detaches and deep-freezes nested configuration values in descriptions", async () => {
     const repositoryOption = {
       selector: "CallExpression",

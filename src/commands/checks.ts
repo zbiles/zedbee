@@ -289,8 +289,14 @@ async function renderDashboard(
   await runInkChecks(checks, options);
 }
 
-function orderedRecord<T>(entries: readonly (readonly [string, T])[]) {
-  return Object.freeze(Object.fromEntries(entries)) as Readonly<
+function orderedRecord<T>(
+  entries: readonly (readonly [string, T])[],
+  preserveOrder = false,
+) {
+  const orderedEntries = preserveOrder
+    ? entries
+    : [...entries].sort(([left], [right]) => compareCodeUnits(left, right));
+  return Object.freeze(Object.fromEntries(orderedEntries)) as Readonly<
     Record<string, T>
   >;
 }
@@ -376,6 +382,7 @@ function describeConfiguration(
         }),
       ] as const;
     }),
+    checkId === "formatting",
   );
   const overrides = Object.freeze(
     config.overrides
