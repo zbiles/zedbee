@@ -261,6 +261,62 @@ describe("executeFixCommand", () => {
     });
   });
 
+  it("does not advertise a report path after persistence fails for a thirteen-file prompt", async () => {
+    const terminal = io(true);
+    const deps = dependencies(
+      plan({
+        summary: { fixes: 13, files: 13, blocking: 0, warnings: 0, skipped: 0 },
+        files: Array.from({ length: 13 }, (_, index) => ({
+          path: `src/${index}.ts`,
+          fixes: 1,
+          hasUnstagedChanges: false,
+        })),
+        items: Array.from({ length: 13 }, (_, index) => ({
+          checkId: "lint" as const,
+          file: `src/${index}.ts`,
+          findingIds: [`lint-${index}`],
+          scope: "finding" as const,
+          blocking: 0,
+          warnings: 0,
+        })),
+      }),
+    );
+    deps.store = {
+      maintain: vi.fn(async () => Promise.reject(new Error("disk full"))),
+    };
+    deps.confirm = vi.fn(async () => false);
+
+    await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(0);
+
+    expect(deps.confirm).toHaveBeenCalledWith(expect.any(Object), {
+      width: 80,
+      color: true,
+      animations: true,
+    });
+    expect(terminal.stdout.join("")).not.toContain("baseSource");
+    expect(terminal.stdout.join("")).not.toContain("Complete plan:");
+    expect(terminal.stderr.join("")).toContain("TEMP REPORT WRITE FAILED");
+  });
+
+  it("passes its abort signal into an active interactive confirmation", async () => {
+    const terminal = io(true);
+    const controller = new AbortController();
+    const deps = dependencies();
+    deps.confirm = vi.fn(async (_plan, promptOptions) => {
+      expect(promptOptions.signal).toBe(controller.signal);
+      controller.abort();
+      await new Promise((resolve) => setImmediate(resolve));
+      promptOptions.signal?.throwIfAborted();
+      return false;
+    });
+
+    await expect(
+      executeFixCommand({ ...base, signal: controller.signal }, terminal, deps),
+    ).resolves.toBe(2);
+    expect(terminal.stderr.join("")).toBe("Zedbee fix was interrupted.\n");
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
+  });
+
   it("reports a cancelled interactive plan without writing", async () => {
     const terminal = io(true);
     const deps = dependencies();

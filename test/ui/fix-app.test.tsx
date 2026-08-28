@@ -55,7 +55,13 @@ function visibleFrame(view: { readonly frames: readonly string[] }): string {
   )!;
 }
 
-function setup(value = plan, columns = 100, rows = 80, color = false) {
+function setup(
+  value = plan,
+  columns = 100,
+  rows = 80,
+  color = false,
+  reportPath: string | null = "/tmp/zedbee/fix-plan.json",
+) {
   const onDecision = vi.fn();
   const view = render(
     <FixApp
@@ -64,7 +70,7 @@ function setup(value = plan, columns = 100, rows = 80, color = false) {
       terminalSize={{ columns, rows }}
       color={color}
       animations={false}
-      reportPath="/tmp/zedbee/fix-plan.json"
+      {...(reportPath === null ? {} : { reportPath })}
       onDecision={onDecision}
     />,
   );
@@ -188,6 +194,32 @@ describe("FixApp", () => {
       "APPLY — exact fixes preserve unrelated unstaged changes",
     );
     expect(visibleFrame(view)).not.toContain("SKIP — unstaged changes");
+  });
+
+  it("keeps all file actions visible when a truncated plan has no complete report", () => {
+    const reportlessPlan: FixPlan = {
+      ...plan,
+      summary: { fixes: 13, files: 13, blocking: 0, warnings: 0, skipped: 0 },
+      files: Array.from({ length: 13 }, (_, index) => ({
+        path: `src/${index}.ts`,
+        fixes: 1,
+        hasUnstagedChanges: false,
+      })),
+      items: Array.from({ length: 13 }, (_, index) => ({
+        checkId: "lint" as const,
+        file: `src/${index}.ts`,
+        findingIds: [`lint-${index}`],
+        scope: "finding" as const,
+        blocking: 0,
+        warnings: 0,
+      })),
+    };
+    const { view } = setup(reportlessPlan, 100, 200, false, null);
+
+    expect(visibleFrame(view)).toContain("src/12.ts");
+    expect(visibleFrame(view)).not.toContain("Showing 12 of 13 planned files");
+    expect(visibleFrame(view)).not.toContain("Complete plan:");
+    expect(visibleFrame(view)).not.toContain("lint-12");
   });
 
   it("cancels with Escape while releasing terminal mouse reporting", async () => {
@@ -380,6 +412,82 @@ describe("FixApp", () => {
       ]);
     } finally {
       write.mockRestore();
+      vi.doUnmock("ink");
+      vi.resetModules();
+    }
+  });
+
+  it("unmounts an active prompt and rejects when its abort signal fires", async () => {
+    const controller = new AbortController();
+    let resolveExit: (() => void) | undefined;
+    const waitUntilExit = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveExit = resolve;
+        }),
+    );
+    const unmount = vi.fn(() => {
+      process.stdout.write("\u001b[?1006l\u001b[?1000l");
+      process.stdout.write("\u001b[?1049l");
+      resolveExit?.();
+    });
+    const renderMock = vi.fn(() => {
+      process.stdout.write("\u001b[?1000h\u001b[?1006h");
+      return { unmount, waitUntilExit };
+    });
+    const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    vi.resetModules();
+    vi.doMock("ink", async () => {
+      const actual = await vi.importActual<typeof import("ink")>("ink");
+      return { ...actual, render: renderMock };
+    });
+
+    try {
+      const { runFixPrompt } = await import("../../src/ui/fix-app.js");
+      const pending = runFixPrompt(plan, {
+        width: 80,
+        color: false,
+        animations: false,
+        signal: controller.signal,
+      });
+      await vi.waitFor(() => expect(renderMock).toHaveBeenCalledOnce());
+      controller.abort();
+
+      await expect(pending).rejects.toThrow();
+      expect(unmount).toHaveBeenCalledOnce();
+      const writes = write.mock.calls.map(([value]) => String(value)).join("");
+      expect(writes.indexOf("\u001b[?1006l\u001b[?1000l")).toBeLessThan(
+        writes.indexOf("\u001b[?1049l"),
+      );
+    } finally {
+      write.mockRestore();
+      vi.doUnmock("ink");
+      vi.resetModules();
+    }
+  });
+
+  it("rejects an already-aborted prompt without rendering", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const renderMock = vi.fn();
+    vi.resetModules();
+    vi.doMock("ink", async () => {
+      const actual = await vi.importActual<typeof import("ink")>("ink");
+      return { ...actual, render: renderMock };
+    });
+
+    try {
+      const { runFixPrompt } = await import("../../src/ui/fix-app.js");
+      await expect(
+        runFixPrompt(plan, {
+          width: 80,
+          color: false,
+          animations: false,
+          signal: controller.signal,
+        }),
+      ).rejects.toThrow();
+      expect(renderMock).not.toHaveBeenCalled();
+    } finally {
       vi.doUnmock("ink");
       vi.resetModules();
     }

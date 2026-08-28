@@ -193,13 +193,18 @@ function PlanSummary({
 function FileSummaries({
   plan,
   width,
+  reportPath,
   color,
 }: {
   readonly plan: FixPlan;
   readonly width: number;
+  readonly reportPath?: string;
   readonly color: boolean;
 }) {
-  const files = plan.files.slice(0, FIX_PLAN_FILE_SUMMARY_LIMIT);
+  const files =
+    reportPath === undefined
+      ? plan.files
+      : plan.files.slice(0, FIX_PLAN_FILE_SUMMARY_LIMIT);
   return (
     <>
       {files.map((file, index) => {
@@ -244,7 +249,7 @@ function FileSummaries({
           </Box>
         );
       })}
-      {plan.files.length > files.length ? (
+      {reportPath !== undefined && plan.files.length > files.length ? (
         <Box paddingX={2} paddingBottom={1}>
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
             Showing {files.length} of {plan.files.length} planned files. See the
@@ -279,7 +284,12 @@ function FixPlanPanel({
         color={color}
       />
       <BrandedCommandPanelRule width={width} color={color} />
-      <FileSummaries plan={plan} width={width} color={color} />
+      <FileSummaries
+        plan={plan}
+        width={width}
+        {...(reportPath === undefined ? {} : { reportPath })}
+        color={color}
+      />
       <Text> </Text>
       <FixActionButton
         label="APPLY FIXES"
@@ -447,10 +457,17 @@ export async function runFixPrompt(
   plan: FixPlan,
   options: FixPromptOptions,
 ): Promise<boolean> {
+  options.signal?.throwIfAborted();
   let decision = false;
   let cleanupMouse = () => disableTerminalMouse(process.stdout);
+  let app: ReturnType<typeof render> | undefined;
+  const abort = (): void => {
+    app?.unmount();
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    const app = render(
+    options.signal?.throwIfAborted();
+    app = render(
       <FixApp
         plan={plan}
         {...options}
@@ -463,9 +480,12 @@ export async function runFixPrompt(
       />,
       fixRenderOptions(),
     );
+    if (options.signal?.aborted === true) abort();
     await app.waitUntilExit();
+    options.signal?.throwIfAborted();
     return decision;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     cleanupMouse();
   }
 }

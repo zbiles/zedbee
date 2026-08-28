@@ -44,6 +44,7 @@ export interface FixPromptOptions {
   readonly width: number;
   readonly color: boolean;
   readonly animations: boolean;
+  readonly signal?: AbortSignal;
   /** Opaque temporary report location, when a complete plan was persisted. */
   readonly reportPath?: string;
 }
@@ -297,6 +298,7 @@ export async function executeFixCommand(
         width: io.width,
         color: options.color && io.env.NO_COLOR === undefined,
         animations: options.animations && io.env.NO_COLOR === undefined,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(maintenance.reportPath === undefined
           ? {}
           : { reportPath: maintenance.reportPath }),
