@@ -13,9 +13,11 @@ Preview every supported kind of fix:
 npx zedbee fix
 ```
 
-In an interactive terminal, the preview is followed by a confirmation. In a
-narrow terminal or redirected process, Zedbee prints a linear preview and does
-not write. `--yes` is the automation approval flag:
+In an interactive terminal, the preview is followed by a confirmation. A narrow
+TTY remains a framed interactive, scrollable UI where you can Apply or Cancel;
+width changes the viewport, not the approval behavior. A non-TTY invocation
+without `--yes` prints a linear preview and does not write. `--yes` is the
+automation approval flag:
 
 ```bash
 npx zedbee fix --yes
@@ -111,6 +113,14 @@ and finding IDs:
       "scope": "finding",
       "blocking": 1,
       "warnings": 0
+    },
+    {
+      "checkId": "formatting",
+      "file": "src/value.ts",
+      "findingIds": ["example-format-id"],
+      "scope": "working-file",
+      "blocking": 0,
+      "warnings": 1
     }
   ]
 }

@@ -395,4 +395,63 @@ describe("public documentation claims", () => {
     );
     expect(publicDocs).toMatch(/review[^.]*stage[^.]*rescan/i);
   });
+
+  it("keeps narrow TTY fix previews framed, interactive, and scrollable", async () => {
+    const guide = await read("docs/managed-fixes.md");
+
+    expect(guide).toMatch(
+      /narrow\s+TTY[^.]*framed[^.]*interactive[^.]*scrollable[^.]*Apply[^.]*Cancel/i,
+    );
+    expect(guide).toMatch(
+      /non-TTY[^.]*without `--yes`[^.]*linear[^.]*does not write/i,
+    );
+    expect(guide).not.toMatch(/narrow terminal[^.]*linear preview/i);
+  });
+
+  it("publishes a structurally consistent managed-fix JSON example", async () => {
+    const guide = await read("docs/managed-fixes.md");
+    const fenced = guide.match(
+      /## Preview and JSON[\s\S]*?```json\n([\s\S]*?)\n```/u,
+    );
+    expect(fenced).not.toBeNull();
+    const example = JSON.parse(fenced![1]!) as {
+      selectedChecks: string[];
+      summary: {
+        fixes: number;
+        files: number;
+        blocking: number;
+        warnings: number;
+        skipped: number;
+      };
+      files: Array<{ path: string; fixes: number }>;
+      items: Array<{
+        checkId: string;
+        file: string;
+        blocking: number;
+        warnings: number;
+      }>;
+    };
+
+    expect(example.summary.files).toBe(example.files.length);
+    expect(example.summary.fixes).toBe(example.items.length);
+    expect(example.summary.blocking).toBe(
+      example.items.reduce((total, item) => total + item.blocking, 0),
+    );
+    expect(example.summary.warnings).toBe(
+      example.items.reduce((total, item) => total + item.warnings, 0),
+    );
+    expect(example.summary.skipped).toBe(0);
+    expect(example.files.reduce((total, file) => total + file.fixes, 0)).toBe(
+      example.items.length,
+    );
+    for (const file of example.files) {
+      expect(file.fixes).toBe(
+        example.items.filter((item) => item.file === file.path).length,
+      );
+    }
+    for (const item of example.items) {
+      expect(example.selectedChecks).toContain(item.checkId);
+      expect(example.files.map((file) => file.path)).toContain(item.file);
+    }
+  });
 });
