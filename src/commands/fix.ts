@@ -1,6 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
 import { applyFixPlan } from "../fixes/apply-plan.js";
+import { presentFixResult } from "../fixes/result-presentation.js";
 import {
   FIXABLE_CHECK_IDS,
   FIX_PLAN_FILE_SUMMARY_LIMIT,
@@ -271,19 +272,33 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
 }
 
 function renderResultText(plan: FixPlan, result: FixResult): string {
-  const lines = [
-    result.exitCode === 0 && plan.exitCode === 0
+  const presentation = presentFixResult(plan, result);
+  const headline =
+    presentation.outcome === "applied"
       ? "Zedbee managed fixes applied."
-      : "Zedbee managed fixes partially applied.",
+      : presentation.outcome === "already-present"
+        ? "Zedbee managed fixes are already present in the working tree."
+        : presentation.outcome === "partially-applied"
+          ? "Zedbee managed fixes partially applied."
+          : "Zedbee managed fixes failed.";
+  const lines = [
+    headline,
     `Applied fixes: ${result.appliedFixes}`,
     `Changed files: ${result.changedFiles.length}`,
-    `Unchanged files: ${result.unchangedFiles.length}`,
+    `Already fixed files: ${presentation.alreadyFixedFiles.length}`,
+    `Unresolved files: ${presentation.unresolvedFiles.length}`,
     `Plan findings: ${plan.summary.blocking} blocking; ${plan.summary.warnings} ${plan.summary.warnings === 1 ? "warning" : "warnings"}`,
   ];
+  if (presentation.alreadyFixedFiles.length > 0) {
+    lines.push(
+      `${presentation.alreadyFixedFiles.length} ${presentation.alreadyFixedFiles.length === 1 ? "file already contains" : "files already contain"} the planned fixes in the working tree.`,
+      "Stage the files you want to keep before running zedbee scan.",
+    );
+  }
   for (const check of plan.checks ?? []) {
     if (check.status === "completed") {
       lines.push(
-        `${check.checkId}: READY — ${check.fixes} ${check.fixes === 1 ? "fix" : "fixes"} available`,
+        `${check.checkId}: READY — ${check.fixes} ${check.fixes === 1 ? "fix" : "fixes"} found in plan`,
       );
     } else if (check.status === "incomplete") {
       lines.push(`${check.checkId}: INCOMPLETE`);

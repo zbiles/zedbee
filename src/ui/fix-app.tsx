@@ -304,11 +304,13 @@ export function CheckStatusPanel({
   width,
   color,
   footer,
+  completedDescription = "available",
 }: {
   readonly plan: FixPlan;
   readonly width: number;
   readonly color: boolean;
   readonly footer?: string;
+  readonly completedDescription?: string;
 }) {
   if (plan.checks === undefined || plan.checks.length === 0) return null;
   const compact = width < 48;
@@ -330,7 +332,7 @@ export function CheckStatusPanel({
           <Box flexDirection="column" paddingX={2}>
             {check.status === "completed" ? (
               <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-                {countLabel(check.fixes, "fix")} available
+                {countLabel(check.fixes, "fix")} {completedDescription}
               </Text>
             ) : check.status === "not-applicable" ? (
               <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>

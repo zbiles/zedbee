@@ -155,4 +155,43 @@ describe("FixResultDashboard", () => {
     ).toBe(false);
     consoleError.mockRestore();
   });
+
+  it("explains when every planned fix is already present in the working tree", async () => {
+    const React = await import("react");
+    const { render } = await import("ink-testing-library");
+    const { FixResultDashboard } =
+      await import("../../src/ui/fix-result-dashboard.js");
+    const frame = render(
+      React.createElement(FixResultDashboard, {
+        plan,
+        result: {
+          exitCode: 0,
+          appliedFixes: 0,
+          changedFiles: [],
+          unchangedFiles: Array.from(
+            { length: 24 },
+            (_, index) => `src/${index}.ts`,
+          ),
+          issues: [],
+        },
+        width: 120,
+        color: false,
+      }),
+    ).lastFrame()!;
+    const plain = stripVTControlCharacters(frame);
+
+    expect(plain).toContain("FIXES ALREADY PRESENT");
+    expect(plain).not.toContain("FAILED");
+    expect(plain).toContain("Already fixed files");
+    expect(plain).toContain("24");
+    expect(plain).toContain("Unresolved files");
+    expect(plain).toContain("24 fixes found in plan");
+    expect(plain).not.toContain("24 fixes available");
+    expect(plain).toContain(
+      "24 files already contain their planned fixes in the working tree.",
+    );
+    expect(plain).toContain(
+      "Stage the files you want to keep before running zedbee scan.",
+    );
+  });
 });

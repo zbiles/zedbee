@@ -274,7 +274,7 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).toHaveBeenCalledOnce();
     const output = terminal.stdout.join("");
     expect(output).toContain("Zedbee managed fixes partially applied.");
-    expect(output).toContain("formatting: READY — 1 fix available");
+    expect(output).toContain("formatting: READY — 1 fix found in plan");
     expect(output).toContain("lint: INCOMPLETE");
     expect(output).toContain("TYPED LINT ANALYSIS FAILED");
     expect(output).toContain("src/value.ts");
@@ -326,6 +326,32 @@ describe("executeFixCommand", () => {
     expect(terminal.stderr.join("")).not.toContain(
       "Zedbee could not complete the managed fix.",
     );
+  });
+
+  it("explains a no-op apply when the planned fixes are already in the working tree", async () => {
+    const terminal = io(false);
+    const deps = dependencies(partialPlan());
+    deps.applyFixPlan = vi.fn(async () => ({
+      exitCode: 0 as const,
+      appliedFixes: 0,
+      changedFiles: [],
+      unchangedFiles: ["src/value.ts"],
+      issues: [],
+    }));
+
+    await expect(
+      executeFixCommand({ ...base, yes: true }, terminal, deps),
+    ).resolves.toBe(1);
+
+    const output = terminal.stdout.join("");
+    expect(output).toContain(
+      "Zedbee managed fixes are already present in the working tree.",
+    );
+    expect(output).toContain("Already fixed files: 1");
+    expect(output).toContain("Unresolved files: 0");
+    expect(output).toContain("formatting: READY — 1 fix found in plan");
+    expect(output).not.toContain("formatting: READY — 1 fix available");
+    expect(output).not.toContain("Zedbee managed fixes partially applied.");
   });
 
   it.each([

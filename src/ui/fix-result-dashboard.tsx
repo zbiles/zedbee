@@ -1,6 +1,10 @@
 import { Box, Text } from "ink";
 import type { FixPlan, FixResult } from "../fixes/types.js";
 import {
+  presentFixResult,
+  type FixResultPresentation,
+} from "../fixes/result-presentation.js";
+import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
   BrandedCommandPanel,
@@ -15,13 +19,16 @@ const NEXT_STEP_PREFIX =
 const NEXT_STEP_SUFFIX =
   " to verify the updated staged code and identify remaining findings.";
 
-function outcomeFor(plan: FixPlan, result: FixResult) {
-  if (plan.exitCode === 0 && result.exitCode === 0) {
+function outcomeFor(outcome: FixResultPresentation["outcome"]) {
+  if (outcome === "applied")
     return { label: "APPLIED", tone: ZEDBEE_THEME.pass } as const;
-  }
-  if (result.appliedFixes > 0) {
+  if (outcome === "partially-applied")
     return { label: "PARTIALLY APPLIED", tone: ZEDBEE_THEME.warning } as const;
-  }
+  if (outcome === "already-present")
+    return {
+      label: "FIXES ALREADY PRESENT",
+      tone: ZEDBEE_THEME.warning,
+    } as const;
   return { label: "FAILED", tone: ZEDBEE_THEME.failure } as const;
 }
 
@@ -56,7 +63,8 @@ function FixResultPanel({
   readonly width: number;
   readonly color: boolean;
 }) {
-  const outcome = outcomeFor(plan, result);
+  const presentation = presentFixResult(plan, result);
+  const outcome = outcomeFor(presentation.outcome);
   return (
     <BrandedCommandPanel title="FIX RESULT" width={width} color={color}>
       <Text> </Text>
@@ -77,8 +85,13 @@ function FixResultPanel({
         color={color}
       />
       <SummaryRow
-        label="Unchanged files"
-        value={result.unchangedFiles.length}
+        label="Already fixed files"
+        value={presentation.alreadyFixedFiles.length}
+        color={color}
+      />
+      <SummaryRow
+        label="Unresolved files"
+        value={presentation.unresolvedFiles.length}
         color={color}
       />
       <SummaryRow
@@ -88,6 +101,20 @@ function FixResultPanel({
         }`}
         color={color}
       />
+      {presentation.alreadyFixedFiles.length > 0 ? (
+        <Box flexDirection="column" paddingX={2}>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {presentation.alreadyFixedFiles.length}{" "}
+            {presentation.alreadyFixedFiles.length === 1
+              ? "file already contains"
+              : "files already contain"}{" "}
+            their planned fixes in the working tree.
+          </Text>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            Stage the files you want to keep before running zedbee scan.
+          </Text>
+        </Box>
+      ) : null}
       <Text> </Text>
     </BrandedCommandPanel>
   );
@@ -180,7 +207,12 @@ export function FixResultDashboard({
       {hasChecks ? (
         <>
           <Text> </Text>
-          <CheckStatusPanel plan={plan} width={contentWidth} color={color} />
+          <CheckStatusPanel
+            plan={plan}
+            width={contentWidth}
+            color={color}
+            completedDescription="found in plan"
+          />
         </>
       ) : null}
       {hasIssues ? (
