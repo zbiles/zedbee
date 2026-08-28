@@ -131,17 +131,32 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
 }
 
 function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
+  const rendered = JSON.parse(renderFixPlanJson(plan)) as FixPlan;
   return {
     applied,
-    schemaVersion: plan.schemaVersion,
-    target: plan.target,
-    selectedChecks: [...plan.selectedChecks],
-    exitCode: plan.exitCode,
-    summary: { ...plan.summary },
-    files: plan.files.map((file) => ({ ...file })),
-    items: plan.items.map((item) => ({
-      ...item,
+    schemaVersion: rendered.schemaVersion,
+    target: rendered.target,
+    selectedChecks: [...rendered.selectedChecks],
+    exitCode: rendered.exitCode,
+    summary: {
+      fixes: rendered.summary.fixes,
+      files: rendered.summary.files,
+      blocking: rendered.summary.blocking,
+      warnings: rendered.summary.warnings,
+      skipped: rendered.summary.skipped,
+    },
+    files: rendered.files.map((file) => ({
+      path: file.path,
+      fixes: file.fixes,
+      hasUnstagedChanges: file.hasUnstagedChanges,
+    })),
+    items: rendered.items.map((item) => ({
+      checkId: item.checkId,
+      file: item.file,
       findingIds: [...item.findingIds],
+      scope: item.scope,
+      blocking: item.blocking,
+      warnings: item.warnings,
     })),
     ...(result === undefined
       ? {}

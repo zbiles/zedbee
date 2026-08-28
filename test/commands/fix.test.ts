@@ -65,6 +65,61 @@ function dependencies(prepared = plan()): FixCommandDependencies {
   };
 }
 
+function hostilePlan(): PreparedFixPlan {
+  const prepared = plan({
+    summary: { fixes: 1, files: 1, blocking: 1, warnings: 0, skipped: 0 },
+    files: [
+      {
+        path: "src/value.ts",
+        fixes: 1,
+        hasUnstagedChanges: false,
+      },
+    ],
+    items: [
+      {
+        checkId: "lint",
+        file: "src/value.ts",
+        findingIds: ["lint-1"],
+        scope: "finding",
+        blocking: 1,
+        warnings: 0,
+      },
+    ],
+  });
+  Object.assign(prepared.publicPlan, { repositoryRoot: "/private/repo" });
+  Object.assign(prepared.publicPlan.summary, { baseSource: "private source" });
+  Object.assign(prepared.publicPlan.files[0]!, { replacement: "private edit" });
+  Object.assign(prepared.publicPlan.items[0]!, { repositoryRoot: "/private" });
+  return prepared;
+}
+
+function expectPublicPlan(
+  output: unknown,
+  applied: boolean,
+  result?: unknown,
+): void {
+  expect(output).toEqual({
+    applied,
+    schemaVersion: 1,
+    target: "index",
+    selectedChecks: [...FIXABLE_CHECK_IDS],
+    exitCode: 0,
+    summary: { fixes: 1, files: 1, blocking: 1, warnings: 0, skipped: 0 },
+    files: [{ path: "src/value.ts", fixes: 1, hasUnstagedChanges: false }],
+    items: [
+      {
+        checkId: "lint",
+        file: "src/value.ts",
+        findingIds: ["lint-1"],
+        scope: "finding",
+        blocking: 1,
+        warnings: 0,
+      },
+    ],
+    ...(result === undefined ? {} : { result }),
+  });
+}
+
 const base = {
   cwd: "/repo",
   yes: false,
@@ -182,6 +237,17 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).not.toHaveBeenCalled();
   });
 
+  it("projects only approved public fields in a hostile JSON preview", async () => {
+    const terminal = io(false);
+    const deps = dependencies(hostilePlan());
+
+    await expect(
+      executeFixCommand({ ...base, format: "json" }, terminal, deps),
+    ).resolves.toBe(0);
+
+    expectPublicPlan(JSON.parse(terminal.stdout.join("")), false);
+  });
+
   it("returns a JSON apply result and preserves partial success", async () => {
     const terminal = io(false);
     const deps = dependencies();
@@ -207,6 +273,30 @@ describe("executeFixCommand", () => {
     expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({
       applied: true,
       result: { appliedFixes: 1, unchangedFiles: ["src/other.ts"] },
+    });
+  });
+
+  it("projects only approved public fields in a hostile applied JSON result", async () => {
+    const terminal = io(false);
+    const deps = dependencies(hostilePlan());
+    deps.applyFixPlan = vi.fn(async () => ({
+      exitCode: 0 as const,
+      appliedFixes: 1,
+      changedFiles: ["src/value.ts"],
+      unchangedFiles: [],
+      issues: [],
+    }));
+
+    await expect(
+      executeFixCommand({ ...base, yes: true, format: "json" }, terminal, deps),
+    ).resolves.toBe(0);
+
+    expectPublicPlan(JSON.parse(terminal.stdout.join("")), true, {
+      exitCode: 0,
+      appliedFixes: 1,
+      changedFiles: ["src/value.ts"],
+      unchangedFiles: [],
+      issues: [],
     });
   });
 
