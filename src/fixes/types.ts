@@ -43,6 +43,8 @@ export interface FixPlanItem {
   readonly file: string;
   readonly findingIds: readonly string[];
   readonly scope: "finding" | "working-file";
+  /** Exact edit count, or one for a whole-file formatting action. */
+  readonly fixes?: number;
   readonly blocking: number;
   readonly warnings: number;
   /** Present on freshly built plans; optional only for private legacy fixtures. */

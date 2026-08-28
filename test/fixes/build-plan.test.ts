@@ -20,6 +20,7 @@ import {
   type BuildFixPlanDependencies,
 } from "../../src/fixes/build-plan.js";
 import { applyFixPlan } from "../../src/fixes/apply-plan.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const directories: string[] = [];
@@ -187,7 +188,7 @@ describe("buildFixPlan", () => {
       schemaVersion: 1,
       target: "index",
       selectedChecks: ["formatting", "lint", "reactCorrectness"],
-      summary: { fixes: 2, files: 1, blocking: 2, warnings: 0, skipped: 0 },
+      summary: { fixes: 2, files: 1, blocking: 1, warnings: 0, skipped: 0 },
     });
     expect(plan.publicPlan.items).toEqual([
       expect.objectContaining({ checkId: "formatting", scope: "working-file" }),
@@ -546,6 +547,14 @@ describe("buildFixPlan", () => {
                 },
               ],
             },
+            {
+              kind: "format-file",
+              checkId: "formatting",
+              file: "src/value.ts",
+              findingIds: ["format-only"],
+              severities: ["warning"],
+              settings: DEFAULT_FORMATTING_SETTINGS,
+            },
           ],
         },
       ],
@@ -558,8 +567,34 @@ describe("buildFixPlan", () => {
     });
     const result = await applyFixPlan(prepared);
 
-    expect(prepared.publicPlan.summary).toMatchObject({ fixes: 3, skipped: 0 });
-    expect(prepared.publicPlan.items).toHaveLength(3);
+    expect(prepared.publicPlan.summary).toEqual({
+      fixes: 3,
+      files: 1,
+      blocking: 1,
+      warnings: 2,
+      skipped: 0,
+    });
+    expect(prepared.publicPlan.items).toEqual([
+      expect.objectContaining({
+        checkId: "formatting",
+        fixes: 1,
+        blocking: 0,
+        warnings: 1,
+      }),
+      expect.objectContaining({
+        checkId: "lint",
+        findingIds: ["first", "second"],
+        fixes: 2,
+        blocking: 1,
+        warnings: 1,
+      }),
+    ]);
+    expect(
+      prepared.publicPlan.items.reduce(
+        (total, item) => total + (item.fixes ?? 0),
+        0,
+      ),
+    ).toBe(prepared.publicPlan.summary.fixes);
     expect(result.appliedFixes).toBe(prepared.publicPlan.summary.fixes);
     await expect(
       readFile(join(files.root, "src", "value.ts"), "utf8"),

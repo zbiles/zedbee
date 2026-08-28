@@ -87,9 +87,10 @@ commit.
 
 ## Preview and JSON
 
-A typical compact plan reports selected checks, fix and file counts, blocking
-and warning counts, file paths, whether each file already has unstaged changes,
-and finding IDs:
+A typical compact plan reports selected checks, fix-action and file counts,
+unique blocking and warning finding counts, file paths, whether each file
+already has unstaged changes, and finding IDs. Each exact edit is one fix; one
+whole-file formatting action is one fix even when several findings lead to it:
 
 ```json
 {
@@ -99,17 +100,17 @@ and finding IDs:
   "selectedChecks": ["formatting", "lint", "reactCorrectness"],
   "exitCode": 0,
   "summary": {
-    "fixes": 2,
+    "fixes": 3,
     "files": 1,
     "blocking": 1,
-    "warnings": 1,
+    "warnings": 2,
     "skipped": 0
   },
   "files": [
     {
       "path": "src/value.ts",
-      "fixes": 2,
-      "applicableFixes": 2,
+      "fixes": 3,
+      "applicableFixes": 3,
       "skippedFixes": 0,
       "status": "applicable",
       "reasons": [],
@@ -118,20 +119,22 @@ and finding IDs:
   ],
   "items": [
     {
-      "checkId": "lint",
+      "checkId": "formatting",
       "file": "src/value.ts",
-      "findingIds": ["example-id"],
-      "scope": "finding",
-      "blocking": 1,
-      "warnings": 0,
+      "findingIds": ["format-warning", "lint-error", "lint-warning"],
+      "scope": "working-file",
+      "fixes": 1,
+      "blocking": 0,
+      "warnings": 1,
       "status": "applicable"
     },
     {
-      "checkId": "formatting",
+      "checkId": "lint",
       "file": "src/value.ts",
-      "findingIds": ["example-format-id"],
-      "scope": "working-file",
-      "blocking": 0,
+      "findingIds": ["lint-error", "lint-warning"],
+      "scope": "finding",
+      "fixes": 2,
+      "blocking": 1,
       "warnings": 1,
       "status": "applicable"
     }

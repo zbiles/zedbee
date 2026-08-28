@@ -170,36 +170,101 @@ function selectedAdapters(
   );
 }
 
+interface FixPlanItemDraft {
+  readonly checkId: FixableCheckId;
+  readonly file: string;
+  readonly findingIds: readonly string[];
+  readonly scope: "finding" | "working-file";
+  readonly fixes: number;
+  readonly status: "applicable" | "skipped";
+  readonly reason?: string;
+  readonly severities: readonly Readonly<{
+    findingId: string;
+    severity: "warning" | "error";
+  }>[];
+}
+
 function itemForExact(
   candidate: ExactFileFixCandidate,
-  edit: ExactFixEdit,
+  edits: readonly ExactFixEdit[],
   reason?: string,
-): FixPlanItem {
+): FixPlanItemDraft {
   return Object.freeze({
     checkId: candidate.checkId,
     file: candidate.file,
-    findingIds: Object.freeze([edit.findingId]),
+    findingIds: Object.freeze([
+      ...new Set(edits.map((edit) => edit.findingId)),
+    ]),
     scope: "finding" as const,
-    blocking: edit.severity === "error" ? 1 : 0,
-    warnings: edit.severity === "warning" ? 1 : 0,
+    fixes: edits.length,
     status:
       reason === undefined ? ("applicable" as const) : ("skipped" as const),
     ...(reason === undefined ? {} : { reason }),
+    severities: Object.freeze(
+      edits.map((edit) => ({
+        findingId: edit.findingId,
+        severity: edit.severity,
+      })),
+    ),
   });
 }
 
-function itemForFormatting(candidate: FormatFileFixCandidate): FixPlanItem {
+function itemForFormatting(
+  candidate: FormatFileFixCandidate,
+): FixPlanItemDraft {
   return Object.freeze({
     checkId: candidate.checkId,
     file: candidate.file,
-    findingIds: Object.freeze([...candidate.findingIds]),
+    findingIds: Object.freeze([...new Set(candidate.findingIds)]),
     scope: "working-file" as const,
-    blocking: candidate.severities.filter((severity) => severity === "error")
-      .length,
-    warnings: candidate.severities.filter((severity) => severity === "warning")
-      .length,
+    fixes: 1,
     status: "applicable" as const,
+    severities: Object.freeze(
+      candidate.findingIds.map((findingId, index) => ({
+        findingId,
+        severity: candidate.severities[index]!,
+      })),
+    ),
   });
+}
+
+function finalizeItems(
+  drafts: readonly FixPlanItemDraft[],
+): readonly FixPlanItem[] {
+  const countedFindings = new Set<string>();
+  return Object.freeze(
+    drafts
+      .map((draft): FixPlanItem => {
+        const severities = new Map<string, "warning" | "error">();
+        for (const entry of draft.severities) {
+          if (
+            severities.get(entry.findingId) !== "error" ||
+            entry.severity === "error"
+          ) {
+            severities.set(entry.findingId, entry.severity);
+          }
+        }
+        const unique = [...severities].filter(([findingId]) => {
+          if (countedFindings.has(findingId)) return false;
+          countedFindings.add(findingId);
+          return true;
+        });
+        return Object.freeze({
+          checkId: draft.checkId,
+          file: draft.file,
+          findingIds: draft.findingIds,
+          scope: draft.scope,
+          fixes: draft.fixes,
+          blocking: unique.filter(([, severity]) => severity === "error")
+            .length,
+          warnings: unique.filter(([, severity]) => severity === "warning")
+            .length,
+          status: draft.status,
+          ...(draft.reason === undefined ? {} : { reason: draft.reason }),
+        });
+      })
+      .sort(compareItems),
+  );
 }
 
 function compareItems(left: FixPlanItem, right: FixPlanItem): number {
@@ -266,17 +331,24 @@ function planCandidates(
     }
   }
 
-  const items: FixPlanItem[] = [];
+  const itemDrafts: FixPlanItemDraft[] = [];
   const applicable: CheckFixCandidate[] = [];
   for (const candidate of candidates) {
     if (candidate.kind === "format-file") {
-      items.push(itemForFormatting(candidate));
+      itemDrafts.push(itemForFormatting(candidate));
       applicable.push(candidate);
       continue;
     }
     const edits = candidate.edits.filter((edit) => !reasons.has(edit));
+    const partitions = new Map<string | undefined, ExactFixEdit[]>();
     for (const edit of candidate.edits) {
-      items.push(itemForExact(candidate, edit, reasons.get(edit)));
+      const reason = reasons.get(edit);
+      const partition = partitions.get(reason);
+      if (partition === undefined) partitions.set(reason, [edit]);
+      else partition.push(edit);
+    }
+    for (const [reason, partition] of partitions) {
+      itemDrafts.push(itemForExact(candidate, partition, reason));
     }
     if (edits.length > 0) {
       applicable.push(
@@ -286,7 +358,7 @@ function planCandidates(
   }
   return Object.freeze({
     candidates: Object.freeze(applicable),
-    items: Object.freeze(items.sort(compareItems)),
+    items: finalizeItems(itemDrafts),
   });
 }
 
@@ -415,13 +487,19 @@ function publicPlan(
   workingFiles: ReadonlyMap<string, WorkingFilePreview>,
   incomplete: boolean,
 ): FixPlan {
+  const fixesFor = (item: FixPlanItem): number =>
+    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const files = [...workingFiles.values()]
     .map((preview): FixPlanFile => {
       const fileItems = items.filter((item) => item.file === preview.path);
-      const skippedFixes = fileItems.filter(
-        (item) => item.status === "skipped",
-      ).length;
-      const applicableFixes = fileItems.length - skippedFixes;
+      const fixes = fileItems.reduce(
+        (total, item) => total + fixesFor(item),
+        0,
+      );
+      const skippedFixes = fileItems
+        .filter((item) => item.status === "skipped")
+        .reduce((total, item) => total + fixesFor(item), 0);
+      const applicableFixes = fixes - skippedFixes;
       const reasons = [
         ...new Set(
           fileItems.flatMap((item) =>
@@ -433,7 +511,7 @@ function publicPlan(
       ];
       return Object.freeze({
         path: preview.path,
-        fixes: fileItems.length,
+        fixes,
         applicableFixes,
         skippedFixes,
         status:
@@ -448,11 +526,13 @@ function publicPlan(
     })
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const summary: FixPlanSummary = Object.freeze({
-    fixes: items.length,
+    fixes: items.reduce((total, item) => total + fixesFor(item), 0),
     files: files.length,
     blocking: items.reduce((total, item) => total + item.blocking, 0),
     warnings: items.reduce((total, item) => total + item.warnings, 0),
-    skipped: items.filter((item) => item.status === "skipped").length,
+    skipped: items
+      .filter((item) => item.status === "skipped")
+      .reduce((total, item) => total + fixesFor(item), 0),
   });
   return deepFreeze({
     schemaVersion: 1 as const,
@@ -609,6 +689,7 @@ export function renderFixPlanJson(plan: FixPlan): string {
         file: item.file,
         findingIds: [...item.findingIds],
         scope: item.scope,
+        ...(item.fixes === undefined ? {} : { fixes: item.fixes }),
         blocking: item.blocking,
         warnings: item.warnings,
         ...(item.status === undefined ? {} : { status: item.status }),

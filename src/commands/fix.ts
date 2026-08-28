@@ -112,10 +112,16 @@ function safeText(value: unknown, field: string): string {
 }
 
 function renderPlanText(plan: FixPlan, reportPath?: string): string {
+  const fixLabel = (count: number): string =>
+    `${count} ${count === 1 ? "fix" : "fixes"}`;
+  const fileLabel = (count: number): string =>
+    `${count} ${count === 1 ? "file" : "files"}`;
+  const fixesFor = (item: FixPlan["items"][number]): number =>
+    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const lines = [
     "Zedbee managed fix plan.",
     `Checks: ${plan.selectedChecks.join(", ")}`,
-    `Fixes: ${plan.summary.fixes} across ${plan.summary.files} files`,
+    `${fixLabel(plan.summary.fixes)} across ${fileLabel(plan.summary.files)}`,
     `Blocking: ${plan.summary.blocking}; warnings: ${plan.summary.warnings}; skipped: ${plan.summary.skipped}`,
   ];
   const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
@@ -126,13 +132,13 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
       );
     } else {
       lines.push(
-        `${item.checkId}: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${item.scope === "finding" ? 1 : item.findingIds.length} fixes)`,
+        `${item.checkId}: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${fixLabel(fixesFor(item))})`,
       );
     }
   }
   if (plan.items.length > items.length) {
     lines.push(
-      `Showing ${items.length} of ${plan.items.length} planned fixes.`,
+      `Showing ${items.reduce((total, item) => total + fixesFor(item), 0)} of ${plan.summary.fixes} planned fixes.`,
     );
   }
   if (reportPath !== undefined) {
@@ -174,6 +180,7 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
       file: item.file,
       findingIds: [...item.findingIds],
       scope: item.scope,
+      ...(item.fixes === undefined ? {} : { fixes: item.fixes }),
       blocking: item.blocking,
       warnings: item.warnings,
       ...(item.status === undefined ? {} : { status: item.status }),

@@ -427,13 +427,17 @@ describe("public documentation claims", () => {
       items: Array<{
         checkId: string;
         file: string;
+        findingIds: string[];
+        fixes: number;
         blocking: number;
         warnings: number;
       }>;
     };
 
     expect(example.summary.files).toBe(example.files.length);
-    expect(example.summary.fixes).toBe(example.items.length);
+    expect(example.summary.fixes).toBe(
+      example.items.reduce((total, item) => total + item.fixes, 0),
+    );
     expect(example.summary.blocking).toBe(
       example.items.reduce((total, item) => total + item.blocking, 0),
     );
@@ -442,13 +446,26 @@ describe("public documentation claims", () => {
     );
     expect(example.summary.skipped).toBe(0);
     expect(example.files.reduce((total, file) => total + file.fixes, 0)).toBe(
-      example.items.length,
+      example.summary.fixes,
     );
     for (const file of example.files) {
       expect(file.fixes).toBe(
-        example.items.filter((item) => item.file === file.path).length,
+        example.items
+          .filter((item) => item.file === file.path)
+          .reduce((total, item) => total + item.fixes, 0),
       );
     }
+    expect(example.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "lint", fixes: 2 }),
+        expect.objectContaining({ checkId: "formatting", fixes: 1 }),
+      ]),
+    );
+    expect(example.summary.blocking).toBe(1);
+    expect(example.summary.warnings).toBe(2);
+    expect(new Set(example.items.flatMap((item) => item.findingIds)).size).toBe(
+      3,
+    );
     for (const item of example.items) {
       expect(example.selectedChecks).toContain(item.checkId);
       expect(example.files.map((file) => file.path)).toContain(item.file);

@@ -403,6 +403,78 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).not.toHaveBeenCalled();
   });
 
+  it("reconciles multi-edit and formatting action counts in text and complete JSON", async () => {
+    const prepared = plan({
+      summary: { fixes: 3, files: 1, blocking: 1, warnings: 2, skipped: 0 },
+      files: [
+        {
+          path: "src/value.ts",
+          fixes: 3,
+          applicableFixes: 3,
+          skippedFixes: 0,
+          status: "applicable",
+          reasons: [],
+          hasUnstagedChanges: false,
+        },
+      ],
+      items: [
+        {
+          checkId: "lint",
+          file: "src/value.ts",
+          findingIds: ["lint-error", "lint-warning"],
+          scope: "finding",
+          fixes: 2,
+          blocking: 1,
+          warnings: 1,
+          status: "applicable",
+        },
+        {
+          checkId: "formatting",
+          file: "src/value.ts",
+          findingIds: ["format-warning", "lint-error", "lint-warning"],
+          scope: "working-file",
+          fixes: 1,
+          blocking: 0,
+          warnings: 1,
+          status: "applicable",
+        },
+      ],
+    });
+    const textTerminal = io(false);
+    await executeFixCommand(base, textTerminal, dependencies(prepared));
+    const textOutput = textTerminal.stdout.join("");
+
+    expect(textOutput).toContain("3 fixes across 1 file");
+    expect(textOutput).toContain('lint: "src/value.ts" (finding, 2 fixes)');
+    expect(textOutput).toContain(
+      'formatting: "src/value.ts" (working-file, 1 fix)',
+    );
+    expect(textOutput).not.toContain("1 fixes");
+
+    const jsonTerminal = io(false);
+    await executeFixCommand(
+      { ...base, format: "json" },
+      jsonTerminal,
+      dependencies(prepared),
+    );
+    const output = JSON.parse(jsonTerminal.stdout.join("")) as {
+      summary: { fixes: number; blocking: number; warnings: number };
+      files: Array<{ fixes: number }>;
+      items: Array<{ checkId: string; fixes: number }>;
+    };
+    expect(output.summary).toMatchObject({
+      fixes: 3,
+      blocking: 1,
+      warnings: 2,
+    });
+    expect(output.items).toEqual([
+      expect.objectContaining({ checkId: "lint", fixes: 2 }),
+      expect.objectContaining({ checkId: "formatting", fixes: 1 }),
+    ]);
+    expect(output.items.reduce((total, item) => total + item.fixes, 0)).toBe(3);
+    expect(output.files[0]?.fixes).toBe(3);
+  });
+
   it("returns a source-free JSON preview without applying", async () => {
     const terminal = io(false);
     const deps = dependencies(
