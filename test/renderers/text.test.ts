@@ -348,6 +348,49 @@ describe("renderText", () => {
     );
   });
 
+  it("lists each managed fix command once in abbreviated next steps", () => {
+    const lines = nextStepsLines({
+      outcome: "blocked",
+      shown: 2,
+      total: 3,
+      reportPath: "/temporary/path/zedbee-report.json",
+      maximumAge: "24h",
+      automaticFixes: [
+        {
+          available: true,
+          command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+          scope: "finding",
+          writes: "working-tree",
+          stagesChanges: false,
+        },
+        {
+          available: true,
+          command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+          scope: "finding",
+          writes: "working-tree",
+          stagesChanges: false,
+        },
+        {
+          available: true,
+          command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+          scope: "working-file",
+          writes: "working-tree",
+          stagesChanges: false,
+        },
+      ],
+    } as Parameters<typeof nextStepsLines>[0]);
+
+    expect(lines).toContain(
+      "Managed fix commands write the working tree; they do not stage changes.",
+    );
+    expect(
+      lines.filter((line) => line === "npx --no-install zedbee fix lint"),
+    ).toHaveLength(1);
+    expect(
+      lines.filter((line) => line === "npx --no-install zedbee fix formatting"),
+    ).toHaveLength(1);
+  });
+
   it("renders only preview findings while retaining canonical diagnostics and disclosures", () => {
     const shown = createFinding({ id: "shown", rule: "shown-rule" });
     const hidden = createFinding({ id: "hidden", rule: "hidden-rule" });

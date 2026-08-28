@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type {
   FindingIdentity,
   FindingIdentityScope,
+  ManagedAutomaticFix,
   Observation,
   ObservationEntity,
   ObservationMetric,
@@ -18,6 +19,122 @@ export const MAX_REPOSITORY_SEGMENT_CODE_POINTS = 255;
 // Internal keys may combine multiple maximum-length repository paths and a
 // lockfile's bounded dependency ancestry before they are hashed.
 const MAX_CANONICAL_IDENTITY_LENGTH = 128 * 1024;
+
+const MANAGED_AUTOMATIC_FIXES = Object.freeze({
+  lint: Object.freeze({
+    available: true as const,
+    command: Object.freeze(["npx", "--no-install", "zedbee", "fix", "lint"]),
+    scope: "finding" as const,
+    writes: "working-tree" as const,
+    stagesChanges: false as const,
+  }),
+  reactCorrectness: Object.freeze({
+    available: true as const,
+    command: Object.freeze([
+      "npx",
+      "--no-install",
+      "zedbee",
+      "fix",
+      "reactCorrectness",
+    ]),
+    scope: "finding" as const,
+    writes: "working-tree" as const,
+    stagesChanges: false as const,
+  }),
+  formatting: Object.freeze({
+    available: true as const,
+    command: Object.freeze([
+      "npx",
+      "--no-install",
+      "zedbee",
+      "fix",
+      "formatting",
+    ]),
+    scope: "working-file" as const,
+    writes: "working-tree" as const,
+    stagesChanges: false as const,
+  }),
+} satisfies Readonly<Record<string, ManagedAutomaticFix>>);
+
+function exactOwnDataFields(
+  value: unknown,
+  fields: readonly string[],
+): Record<string, unknown> {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("Expected supported automatic fix metadata");
+  }
+  const input = value as Record<string, unknown>;
+  const names = Object.getOwnPropertyNames(input);
+  if (
+    names.length !== fields.length ||
+    Object.getOwnPropertySymbols(input).length !== 0 ||
+    fields.some((field) => !names.includes(field))
+  ) {
+    throw new TypeError("Expected supported automatic fix metadata");
+  }
+  for (const field of fields) {
+    const descriptor = Object.getOwnPropertyDescriptor(input, field);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      throw new TypeError("Expected supported automatic fix metadata");
+    }
+  }
+  return input;
+}
+
+function matchesCommand(
+  candidate: readonly unknown[],
+  expected: readonly string[],
+): boolean {
+  return (
+    candidate.length === expected.length &&
+    candidate.every((part, index) => part === expected[index])
+  );
+}
+
+/** Returns canonical, deeply frozen metadata only for supported managed fixes. */
+export function normalizeManagedAutomaticFix(
+  value: unknown,
+  check?: string,
+): ManagedAutomaticFix {
+  const input = exactOwnDataFields(value, [
+    "available",
+    "command",
+    "scope",
+    "writes",
+    "stagesChanges",
+  ]);
+  if (Array.isArray(input)) {
+    throw new TypeError("Expected supported automatic fix metadata");
+  }
+  const commandValue = input.command;
+  if (!Array.isArray(commandValue)) {
+    throw new TypeError("Expected supported automatic fix command");
+  }
+  const command = exactOwnDataFields(
+    commandValue,
+    [...commandValue.keys()].map(String).concat("length"),
+  );
+  const parts = commandValue.map((_, index) => command[String(index)]);
+  const match = Object.entries(MANAGED_AUTOMATIC_FIXES).find(
+    ([candidateCheck, automaticFix]) =>
+      (check === undefined || candidateCheck === check) &&
+      input.available === true &&
+      input.scope === automaticFix.scope &&
+      input.writes === automaticFix.writes &&
+      input.stagesChanges === false &&
+      matchesCommand(parts, automaticFix.command),
+  );
+  if (match === undefined) {
+    throw new TypeError("Expected supported automatic fix metadata");
+  }
+  return match[1];
+}
+
+export function managedAutomaticFixFor(
+  check: string,
+): ManagedAutomaticFix | undefined {
+  return MANAGED_AUTOMATIC_FIXES[check as keyof typeof MANAGED_AUTOMATIC_FIXES];
+}
 
 function codePointLength(value: string): number {
   return Array.from(value).length;
@@ -186,6 +303,7 @@ export function normalizeObservation(observation: Observation): Observation {
   const entityValue = input.entity;
   const metricValue = input.metric;
   const remediationValue = input.remediation;
+  const automaticFixValue = input.automaticFix;
 
   const location =
     locationValue === undefined
@@ -203,9 +321,14 @@ export function normalizeObservation(observation: Observation): Observation {
     comparisonIdentityValue === undefined
       ? undefined
       : canonicalIdentityText(comparisonIdentityValue, "comparison identity");
+  const check = canonicalText(checkValue, "check");
+  const automaticFix =
+    automaticFixValue === undefined
+      ? undefined
+      : normalizeManagedAutomaticFix(automaticFixValue, check);
 
   return Object.freeze({
-    check: canonicalText(checkValue, "check"),
+    check,
     rule: canonicalText(ruleValue, "rule"),
     identity: canonicalIdentityText(identityValue, "identity"),
     ...(comparisonIdentity === undefined ? {} : { comparisonIdentity }),
@@ -215,6 +338,7 @@ export function normalizeObservation(observation: Observation): Observation {
     ...(entity === undefined ? {} : { entity }),
     ...(metric === undefined ? {} : { metric }),
     ...(remediation === undefined ? {} : { remediation }),
+    ...(automaticFix === undefined ? {} : { automaticFix }),
   });
 }
 

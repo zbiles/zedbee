@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
 import { nextStepsLines } from "../reporting/next-steps.js";
+import { buildScanResultSections } from "../reporting/result-sections.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
@@ -105,6 +106,8 @@ function NextSteps({
     total: presentation.totalFindingCount,
     reportPath: presentation.reportPath,
     maximumAge: presentation.maximumAge,
+    automaticFixes: buildScanResultSections(report, presentation)
+      .automaticFixes,
   });
   return (
     <Box flexDirection="column" width={width} marginTop={1}>

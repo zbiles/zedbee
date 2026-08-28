@@ -4,6 +4,7 @@ import type {
   Severity,
   SourceLocation,
 } from "../../core/types.js";
+import { managedAutomaticFixFor } from "../../attribution/fingerprint.js";
 
 function positiveInteger(value: unknown): number | undefined {
   return Number.isSafeInteger(value) && (value as number) > 0
@@ -54,6 +55,8 @@ export function convertEslintMessage(
     : (message.ruleId ?? "eslint/unknown");
   const severity: Severity = message.severity === 1 ? "warning" : "error";
   const normalizedLocation = location(repositoryPath, message);
+  const automaticFix =
+    message.fix === undefined ? undefined : managedAutomaticFixFor(check);
   return {
     check,
     rule,
@@ -61,5 +64,6 @@ export function convertEslintMessage(
     severity,
     message: sanitizeMessage(message.message, snapshotRoot),
     location: normalizedLocation,
+    ...(automaticFix === undefined ? {} : { automaticFix }),
   };
 }

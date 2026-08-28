@@ -24,6 +24,46 @@ function automaticPresentation(
 }
 
 describe("buildScanResultSections", () => {
+  it("deduplicates managed fixes from visible and complete findings", () => {
+    const lintFix = {
+      available: true,
+      command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+      scope: "finding",
+      writes: "working-tree",
+      stagesChanges: false,
+    } as const;
+    const formattingFix = {
+      available: true,
+      command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+      scope: "working-file",
+      writes: "working-tree",
+      stagesChanges: false,
+    } as const;
+    const visible = {
+      ...createFinding({ id: "visible", check: "lint" }),
+      automaticFix: lintFix,
+    };
+    const hidden = {
+      ...createFinding({ id: "hidden", check: "formatting" }),
+      automaticFix: formattingFix,
+    };
+    const report = createReport({
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 3,
+        incomplete: 0,
+        findings: [visible, hidden],
+      },
+    });
+    const sections = buildScanResultSections(
+      report,
+      automaticPresentation([visible, visible]),
+    );
+
+    expect(sections.automaticFixes).toEqual([formattingFix, lintFix]);
+  });
+
   it("uses the already-selected combined preview while retaining every non-finding section", () => {
     const firstWarning = createFinding({
       id: "warning-one",

@@ -14,7 +14,75 @@ import {
 } from "../../src/checks/sanitize-target.js";
 import type { CheckResult } from "../../src/core/types.js";
 
+const lintAutomaticFix = {
+  available: true,
+  command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+  scope: "finding",
+  writes: "working-tree",
+  stagesChanges: false,
+} as const;
+
 describe("public result sanitizer contract", () => {
+  it("copies only supported source-free automatic fix guidance", () => {
+    const result = sanitizeCheckResult({
+      checkId: "lint",
+      status: "completed",
+      durationMs: 0,
+      findings: [
+        {
+          id: "finding",
+          check: "lint",
+          rule: "rule",
+          severity: "error",
+          message: "message",
+          automaticFix: lintAutomaticFix,
+          attribution: { kind: "none", staged: false, evidence: [] },
+        },
+      ],
+    } as CheckResult);
+
+    expect(result.findings[0]?.automaticFix).toEqual(lintAutomaticFix);
+    expect(Object.isFrozen(result.findings[0]?.automaticFix?.command)).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [
+      "malformed command",
+      { ...lintAutomaticFix, command: ["zedbee fix lint"] },
+    ],
+    [
+      "control character command",
+      {
+        ...lintAutomaticFix,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint\n"],
+      },
+    ],
+    ["unsupported availability", { ...lintAutomaticFix, available: false }],
+    ["staging behavior", { ...lintAutomaticFix, stagesChanges: true }],
+    ["extra payload", { ...lintAutomaticFix, replacement: "const secret = 1" }],
+  ])("rejects %s automatic fix metadata", (_label, automaticFix) => {
+    expect(() =>
+      sanitizeCheckResult({
+        checkId: "lint",
+        status: "completed",
+        durationMs: 0,
+        findings: [
+          {
+            id: "finding",
+            check: "lint",
+            rule: "rule",
+            severity: "error",
+            message: "message",
+            automaticFix,
+            attribution: { kind: "none", staged: false, evidence: [] },
+          },
+        ],
+      } as CheckResult),
+    ).toThrow(/automatic fix|supported/i);
+  });
+
   it("requires an intentional sanitizer update for every new public field", () => {
     // Each production registry also `satisfies Record<keyof Contract, true>`,
     // so adding a contract field without updating the sanitizer fails typecheck.
@@ -36,6 +104,7 @@ describe("public result sanitizer contract", () => {
       "message",
       "location",
       "remediation",
+      "automaticFix",
       "sourceExcerpt",
       "attribution",
     ]);

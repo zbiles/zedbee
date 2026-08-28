@@ -29,6 +29,15 @@ export interface SourceExcerpt {
   readonly truncated: boolean;
 }
 
+/** Source-free guidance for a fresh managed fix operation. */
+export interface ManagedAutomaticFix {
+  readonly available: true;
+  readonly command: readonly string[];
+  readonly scope: "finding" | "working-file";
+  readonly writes: "working-tree";
+  readonly stagesChanges: false;
+}
+
 export interface Finding {
   id: string;
   check: string;
@@ -37,6 +46,7 @@ export interface Finding {
   message: string;
   location?: SourceLocation;
   remediation?: string;
+  automaticFix?: ManagedAutomaticFix;
   sourceExcerpt?: SourceExcerpt;
   attribution: Attribution;
 }
@@ -77,6 +87,7 @@ export interface Observation {
   readonly entity?: ObservationEntity;
   readonly metric?: ObservationMetric;
   readonly remediation?: string;
+  readonly automaticFix?: ManagedAutomaticFix;
 }
 
 export type FindingIdentityScope =

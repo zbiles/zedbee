@@ -26,6 +26,17 @@ function serializeFinding(finding: Finding): Record<string, unknown> {
     ...(finding.remediation === undefined
       ? {}
       : { remediation: finding.remediation }),
+    ...(finding.automaticFix === undefined
+      ? {}
+      : {
+          automaticFix: {
+            available: true,
+            command: [...finding.automaticFix.command],
+            scope: finding.automaticFix.scope,
+            writes: finding.automaticFix.writes,
+            stagesChanges: false,
+          },
+        }),
     ...(sourceExcerpt === undefined ? {} : { sourceExcerpt }),
     attribution: {
       kind: finding.attribution.kind,

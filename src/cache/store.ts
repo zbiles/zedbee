@@ -156,7 +156,7 @@ export class ObservationCacheStore implements ObservationCache {
       const envelope = JSON.parse(serialized) as Record<string, unknown>;
       const payloadText = JSON.stringify(envelope.payload);
       if (
-        envelope.schemaVersion !== 1 ||
+        envelope.schemaVersion !== 2 ||
         typeof envelope.integrity !== "string" ||
         envelope.integrity !== digest(payloadText)
       ) {
@@ -179,7 +179,7 @@ export class ObservationCacheStore implements ObservationCache {
       const payload = sanitizeCacheableObservationSet(value);
       const payloadText = JSON.stringify(payload);
       const serialized = `${JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         integrity: digest(payloadText),
         payload,
       })}\n`;

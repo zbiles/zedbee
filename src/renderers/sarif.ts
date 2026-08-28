@@ -148,6 +148,14 @@ function createResult(
       ...(finding.remediation === undefined
         ? {}
         : { remediation: finding.remediation }),
+      ...(finding.automaticFix === undefined
+        ? {}
+        : {
+            "zedbee/automaticFixCommand": [...finding.automaticFix.command],
+            "zedbee/automaticFixScope": finding.automaticFix.scope,
+            "zedbee/automaticFixWrites": finding.automaticFix.writes,
+            "zedbee/automaticFixStagesChanges": false,
+          }),
       ...(finding.sourceExcerpt?.redacted === false
         ? { sourceExcerptTruncated: finding.sourceExcerpt.truncated }
         : {}),

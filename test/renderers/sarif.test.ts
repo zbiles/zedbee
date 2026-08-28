@@ -49,6 +49,53 @@ function reportFromIncompletePolicy(
 }
 
 describe("renderSarif", () => {
+  it("exposes managed fix commands as result metadata without SARIF patches", () => {
+    const finding = createFinding({
+      check: "lint",
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+        scope: "finding",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    });
+    const document = JSON.parse(
+      renderSarif(
+        createReport({
+          summary: {
+            passed: 0,
+            warnings: 0,
+            failed: 1,
+            incomplete: 0,
+            findings: [finding],
+          },
+        }),
+      ),
+    ) as {
+      runs: Array<{
+        results: Array<{ properties: Record<string, unknown> }>;
+      }>;
+    };
+    const result = document.runs[0]?.results[0];
+
+    expect(result?.properties).toMatchObject({
+      "zedbee/automaticFixCommand": [
+        "npx",
+        "--no-install",
+        "zedbee",
+        "fix",
+        "lint",
+      ],
+      "zedbee/automaticFixScope": "finding",
+      "zedbee/automaticFixWrites": "working-tree",
+      "zedbee/automaticFixStagesChanges": false,
+    });
+    expect(JSON.stringify(result)).not.toMatch(
+      /artifactChanges|replacement|baseSource|sourceText/u,
+    );
+  });
+
   it("renders a deterministic SARIF 2.1.0 document envelope", () => {
     const report = createReport({
       presentationPolicy: {

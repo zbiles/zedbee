@@ -106,6 +106,9 @@ function copyFinding(
     ...(finding.remediation === undefined
       ? {}
       : { remediation: finding.remediation }),
+    ...(finding.automaticFix === undefined
+      ? {}
+      : { automaticFix: finding.automaticFix }),
     ...(sourceExcerpt === undefined
       ? {}
       : { sourceExcerpt: Object.freeze({ ...sourceExcerpt }) }),

@@ -9,6 +9,55 @@ import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 describe("renderJson", () => {
+  it("serializes source-free managed fix command metadata without changing schema version", () => {
+    const finding = createFinding({
+      check: "formatting",
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+        scope: "working-file",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    });
+    const parsed = JSON.parse(
+      renderJson(
+        createReport({
+          checks: [
+            {
+              checkId: "formatting",
+              status: "completed",
+              durationMs: 0,
+              findings: [finding],
+            },
+          ],
+          summary: {
+            passed: 0,
+            warnings: 0,
+            failed: 1,
+            incomplete: 0,
+            findings: [finding],
+          },
+        }),
+      ),
+    ) as {
+      schemaVersion: number;
+      checks: Array<{ findings: Array<Record<string, unknown>> }>;
+    };
+
+    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.checks[0]?.findings[0]?.automaticFix).toEqual({
+      available: true,
+      command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+      scope: "working-file",
+      writes: "working-tree",
+      stagesChanges: false,
+    });
+    expect(JSON.stringify(parsed)).not.toMatch(
+      /replacement|baseSource|sourceText|artifactChanges/u,
+    );
+  });
+
   it("serializes the versioned contract deterministically without terminal decoration", () => {
     const finding = createFinding({
       attribution: {

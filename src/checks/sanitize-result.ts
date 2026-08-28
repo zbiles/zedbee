@@ -8,7 +8,10 @@ import type {
   SourceLocation,
 } from "../core/types.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
-import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import {
+  normalizeManagedAutomaticFix,
+  normalizeRepositoryRelativePath,
+} from "../attribution/fingerprint.js";
 import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
@@ -82,6 +85,7 @@ export const PUBLIC_FINDING_FIELDS = {
   message: true,
   location: true,
   remediation: true,
+  automaticFix: true,
   sourceExcerpt: true,
   attribution: true,
 } as const satisfies Readonly<Record<keyof Finding, true>>;
@@ -206,6 +210,10 @@ function sanitizeFinding(finding: Finding): Finding {
     finding.location === undefined
       ? undefined
       : sanitizeLocation(finding.location);
+  const automaticFix =
+    finding.automaticFix === undefined
+      ? undefined
+      : normalizeManagedAutomaticFix(finding.automaticFix, check);
   return {
     id: displayLabel(finding.id, "finding id"),
     check,
@@ -222,6 +230,7 @@ function sanitizeFinding(finding: Finding): Finding {
             allowEmpty: true,
           }),
         }),
+    ...(automaticFix === undefined ? {} : { automaticFix }),
     ...(finding.sourceExcerpt === undefined
       ? {}
       : {
@@ -298,9 +307,7 @@ export function sanitizeCheckResult(
             allowEmpty: true,
           }),
         }),
-    ...(incompleteDisposition === undefined
-      ? {}
-      : { incompleteDisposition }),
+    ...(incompleteDisposition === undefined ? {} : { incompleteDisposition }),
   };
 }
 

@@ -42,8 +42,15 @@ describe("convertEslintMessage", () => {
       },
     });
     expect(JSON.stringify(observation)).not.toMatch(
-      /zedbee-snapshot-secret|const secret|reveal source|suggestions|fix|source/,
+      /zedbee-snapshot-secret|const secret|reveal source|suggestions/,
     );
+    expect(observation.automaticFix).toEqual({
+      available: true,
+      command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+      scope: "finding",
+      writes: "working-tree",
+      stagesChanges: false,
+    });
   });
 
   it("uses the rule and range, not mutable message prose, as stable identity", () => {
@@ -96,5 +103,41 @@ describe("convertEslintMessage", () => {
 
     expect(observation.message).toContain("https://typescript-eslint.io/rules");
     expect(observation.message).not.toMatch(/C:|secret|\/opt|build\/value/);
+  });
+
+  it("only marks exact managed lint and React diagnostics with an ESLint fix", () => {
+    const message = {
+      ruleId: "no-undef",
+      severity: 2,
+      message: "Undefined name.",
+      line: 1,
+      column: 1,
+      nodeType: "Identifier",
+      fix: { range: [0, 1], text: "value" },
+    } as unknown as Linter.LintMessage;
+
+    expect(
+      convertEslintMessage(
+        "src/value.ts",
+        message,
+        "/snapshot",
+        "reactCorrectness",
+      ).automaticFix?.command,
+    ).toEqual(["npx", "--no-install", "zedbee", "fix", "reactCorrectness"]);
+    expect(
+      convertEslintMessage(
+        "src/value.ts",
+        message,
+        "/snapshot",
+        "reactAccessibility",
+      ).automaticFix,
+    ).toBeUndefined();
+    expect(
+      convertEslintMessage(
+        "src/value.ts",
+        { ...message, fix: undefined },
+        "/snapshot",
+      ).automaticFix,
+    ).toBeUndefined();
   });
 });

@@ -86,6 +86,9 @@ function normalizeTarget(observation: Observation): NormalizedTarget {
     snapshot.severity,
     snapshot.message,
     snapshot.remediation ?? "",
+    snapshot.automaticFix === undefined
+      ? ""
+      : JSON.stringify(snapshot.automaticFix.command),
   ]);
   return {
     fingerprint,
@@ -178,6 +181,9 @@ function finding(target: NormalizedTarget, attribution: Attribution): Finding {
     ...(observation.remediation === undefined
       ? {}
       : { remediation: observation.remediation }),
+    ...(observation.automaticFix === undefined
+      ? {}
+      : { automaticFix: observation.automaticFix }),
     attribution,
   };
 }

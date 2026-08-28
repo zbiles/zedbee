@@ -19,6 +19,23 @@ describe("fingerprintObservation", () => {
     ).toBe(fingerprintObservation(observation));
   });
 
+  it("keeps identity stable when managed fix availability changes", () => {
+    const withAutomaticFix = {
+      ...observation,
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+        scope: "finding",
+        writes: "working-tree",
+        stagesChanges: false,
+      },
+    } as Observation;
+
+    expect(fingerprintObservation(withAutomaticFix)).toBe(
+      fingerprintObservation(observation),
+    );
+  });
+
   it("uses a deterministic SHA-256 digest of canonical identity fields", () => {
     expect(fingerprintObservation(observation)).toBe(
       "7f83aa76d4f81cd96b0546f6a99ac53956adf3a022a9a2520f19682caedd3ddd",
@@ -134,7 +151,9 @@ describe("fingerprintObservation", () => {
     ).toMatchObject({ identity, comparisonIdentity });
     expect(() =>
       normalizeObservation(
-        createObservation({ identity: `function:${"x".repeat(128 * 1024 + 1)}` }),
+        createObservation({
+          identity: `function:${"x".repeat(128 * 1024 + 1)}`,
+        }),
       ),
     ).toThrow(/canonical identity/i);
   });

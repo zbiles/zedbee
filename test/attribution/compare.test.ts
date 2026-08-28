@@ -82,6 +82,33 @@ describe("compareObservationSets", () => {
     expect(JSON.stringify(finding)).not.toContain("target-value");
   });
 
+  it("preserves source-free managed fix availability without changing the finding id", () => {
+    const fixable = createObservation({
+      check: "lint",
+      rule: "no-unsafe-call",
+      identity: "diagnostic:no-unsafe-call",
+    });
+    const withAutomaticFix = {
+      ...fixable,
+      automaticFix: {
+        available: true,
+        command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+        scope: "finding",
+        writes: "working-tree",
+        stagesChanges: false,
+      } as const,
+    };
+    const [finding] = compareObservationSets([], [withAutomaticFix], {
+      ...noChangeEvidence,
+      changedPaths: ["src/value.ts"],
+      addedRanges: [{ file: "src/value.ts", start: 2, end: 2 }],
+    });
+
+    expect(finding?.id).toBe(fingerprintObservation(fixable));
+    expect(finding?.automaticFix).toEqual(withAutomaticFix.automaticFix);
+    expect(Object.isFrozen(finding?.automaticFix?.command)).toBe(true);
+  });
+
   it("requires changed entity evidence for an entity-scoped target-only finding", () => {
     const entityTarget = createObservation({
       identity: "function:src/parser.ts:parseOrder",

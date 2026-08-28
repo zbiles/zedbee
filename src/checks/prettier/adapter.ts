@@ -5,6 +5,7 @@ import type { CheckRunContext, LegacyCheckResultAdapter } from "../adapter.js";
 import type { CheckResult, Finding } from "../../core/types.js";
 import type { ChangedFile } from "../../git/change-set.js";
 import { formattingFingerprint } from "./fingerprint.js";
+import { managedAutomaticFixFor } from "../../attribution/fingerprint.js";
 import {
   formattingTransformationRanges,
   intersectRanges,
@@ -66,6 +67,7 @@ function finding(file: string, startLine: number, endLine: number): Finding {
     location: { file, startLine, endLine },
     remediation:
       "Run zedbee fix formatting, review the working-file changes, and stage the desired result.",
+    automaticFix: managedAutomaticFixFor("formatting")!,
     attribution: {
       kind: "transformation-diff",
       staged: true,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -104,18 +105,23 @@ describe("observation cache", () => {
     });
     const cacheKey = "a".repeat(64);
     const value = {
-      checkId: "cyclomaticComplexity",
+      checkId: "lint",
       target: { id: ".", kind: "repository" as const, relativeRoot: "." },
       baselineObservations: [],
       targetObservations: [
         {
-          check: "cyclomaticComplexity",
-          rule: "max",
-          identity: "function:src/value.ts:run",
+          check: "lint",
+          rule: "no-unsafe-call",
+          identity: "diagnostic:no-unsafe-call",
           severity: "error" as const,
           message: "Complexity is 21.",
-          entity: { kind: "function", name: "run", file: "src/value.ts" },
-          metric: { name: "cyclomatic-complexity", value: 21, limit: 20 },
+          automaticFix: {
+            available: true,
+            command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+            scope: "finding",
+            writes: "working-tree",
+            stagesChanges: false,
+          } as const,
         },
       ],
     };
@@ -130,6 +136,33 @@ describe("observation cache", () => {
     expect(serialized).not.toContain("snapshotRoot");
     expect(serialized).not.toContain("rawOutput");
     await writeFile(path, `${serialized.slice(0, -2)}x`);
+    await expect(store.get(cacheKey)).resolves.toBeUndefined();
+  });
+
+  it("treats the prior observation cache envelope as a miss", async () => {
+    const root = await cacheRoot("zedbee-cache-legacy-");
+    const store = new ObservationCacheStore({ root });
+    const cacheKey = "e".repeat(64);
+    const payload = {
+      checkId: "lint",
+      target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+      baselineObservations: [],
+      targetObservations: [],
+    };
+    const payloadText = JSON.stringify(payload);
+
+    await store.set(cacheKey, payload);
+    await writeFile(
+      join(root, `${cacheKey}.json`),
+      `${JSON.stringify({
+        schemaVersion: 1,
+        integrity: createHash("sha256")
+          .update(payloadText, "utf8")
+          .digest("hex"),
+        payload,
+      })}\n`,
+    );
+
     await expect(store.get(cacheKey)).resolves.toBeUndefined();
   });
 

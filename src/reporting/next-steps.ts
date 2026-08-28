@@ -1,4 +1,6 @@
 import type { ScanReport } from "../scan/report.js";
+import type { ManagedAutomaticFix } from "../core/types.js";
+import { compareCodeUnits } from "../core/compare.js";
 import { formatTemporaryReportMaxAge } from "./report-age.js";
 import { opaqueTemporaryReportPath } from "./report-path.js";
 
@@ -8,6 +10,7 @@ export interface NextStepsInput {
   readonly total: number;
   readonly reportPath: string;
   readonly maximumAge: string;
+  readonly automaticFixes?: readonly ManagedAutomaticFix[];
 }
 
 function outcomeInstructions(
@@ -31,6 +34,13 @@ function outcomeInstructions(
 
 export function nextStepsLines(input: NextStepsInput): readonly string[] {
   const age = formatTemporaryReportMaxAge(input.maximumAge);
+  const commands = [
+    ...new Set(
+      (input.automaticFixes ?? []).map((automaticFix) =>
+        automaticFix.command.join(" "),
+      ),
+    ),
+  ].sort(compareCodeUnits);
   return Object.freeze([
     "NEXT STEPS",
     "",
@@ -40,6 +50,12 @@ export function nextStepsLines(input: NextStepsInput): readonly string[] {
     "The operating system may remove it sooner.",
     "",
     ...outcomeInstructions(input.outcome),
+    ...(commands.length === 0
+      ? []
+      : [
+          "Managed fix commands write the working tree; they do not stage changes.",
+          ...commands,
+        ]),
     "The terminal output is abbreviated; do not treat it as the complete report.",
   ]);
 }

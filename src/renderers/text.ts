@@ -340,6 +340,7 @@ function automaticTextLines(
     ),
     "",
     ...calloutLines(callouts.closing, width),
+    ...guidanceLines(report, presentation, width),
   ];
 }
 
@@ -363,6 +364,8 @@ function guidanceLines(
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
       maximumAge: presentation.maximumAge,
+      automaticFixes: buildScanResultSections(report, presentation)
+        .automaticFixes,
     }).flatMap((line) =>
       line === ""
         ? [""]
