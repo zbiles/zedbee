@@ -106,7 +106,10 @@ function ApplicationIssuesPanel({
   return (
     <BrandedCommandPanel title="APPLICATION ISSUES" width={width} color={color}>
       {result.issues.map((issue, index) => (
-        <Box key={`${issue.kind}:${issue.file}`} flexDirection="column">
+        <Box
+          key={`${issue.kind}:${issue.file}:${issue.checkIds.join(",")}:${index}`}
+          flexDirection="column"
+        >
           <Box flexDirection="column" paddingX={2}>
             <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.failure)}>
               {issue.kind.toUpperCase()} — {issue.file}

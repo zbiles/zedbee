@@ -108,6 +108,9 @@ describe("FixResultDashboard", () => {
     const { render } = await import("ink-testing-library");
     const { FixResultDashboard } =
       await import("../../src/ui/fix-result-dashboard.js");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
     const frame = render(
       React.createElement(FixResultDashboard, {
         plan: { ...plan, exitCode: 0, checks: [] },
@@ -125,6 +128,13 @@ describe("FixResultDashboard", () => {
               message: "The working file changed after preview.",
               remediation: "Build a fresh fix plan and try again.",
             },
+            {
+              kind: "stale",
+              file: "src/stale.ts",
+              checkIds: ["reactCorrectness"],
+              message: "A second planned fix also became stale.",
+              remediation: "Refresh the plan before applying it.",
+            },
           ],
         },
         width: 100,
@@ -136,5 +146,13 @@ describe("FixResultDashboard", () => {
     expect(frame).toContain("src/stale.ts");
     expect(frame).toContain("The working file changed after preview.");
     expect(frame).toContain("Build a fresh fix plan and try again.");
+    expect(frame).toContain("A second planned fix also became stale.");
+    expect(frame).toContain("Refresh the plan before applying it.");
+    expect(
+      consoleError.mock.calls.some((call) =>
+        call.some((value) => String(value).includes("same key")),
+      ),
+    ).toBe(false);
+    consoleError.mockRestore();
   });
 });

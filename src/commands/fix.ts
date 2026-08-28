@@ -480,14 +480,18 @@ export async function executeFixCommand(
       io.env.TERM !== "dumb" &&
       io.env.CI === undefined
     ) {
-      await (dependencies.renderResultDashboard ?? renderResultDashboard)(
-        prepared.publicPlan,
-        result,
-        {
-          width: io.width,
-          color: options.color && io.env.NO_COLOR === undefined,
-        },
-      );
+      try {
+        await (dependencies.renderResultDashboard ?? renderResultDashboard)(
+          prepared.publicPlan,
+          result,
+          {
+            width: io.width,
+            color: options.color && io.env.NO_COLOR === undefined,
+          },
+        );
+      } catch {
+        io.writeStdout(renderResultText(prepared.publicPlan, result));
+      }
     } else {
       io.writeStdout(renderResultText(prepared.publicPlan, result));
     }

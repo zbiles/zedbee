@@ -303,6 +303,61 @@ describe("executeFixCommand", () => {
     expect(terminal.stdout.join("")).toBe("");
   });
 
+  it("preserves the applied result when the branded result cannot render", async () => {
+    const terminal = io(true);
+    const prepared = partialPlan();
+    const deps = {
+      ...dependencies(prepared),
+      renderResultDashboard: vi.fn(async () => {
+        throw new Error("render unavailable");
+      }),
+    };
+
+    await expect(
+      executeFixCommand({ ...base, format: "auto" }, terminal, deps),
+    ).resolves.toBe(1);
+
+    const output = terminal.stdout.join("");
+    expect(output).toContain("Zedbee managed fixes partially applied.");
+    expect(output).toContain("Applied fixes: 0");
+    expect(output).toContain(
+      "Next step: Review Zedbee's changes, stage the ones you want to keep, then run zedbee scan to verify the updated staged code and identify remaining findings.",
+    );
+    expect(terminal.stderr.join("")).not.toContain(
+      "Zedbee could not complete the managed fix.",
+    );
+  });
+
+  it.each([
+    ["narrow terminal", { width: 79 }],
+    ["dumb terminal", { env: { TERM: "dumb" } }],
+    ["CI", { env: { CI: "1" } }],
+    ["non-interactive output", { stdoutIsTTY: false }],
+    ["explicit text", { format: "text" as const }],
+  ])("keeps %s fix results linear", async (_label, route) => {
+    const terminal = io(true);
+    Object.assign(terminal, {
+      ...("width" in route ? { width: route.width } : {}),
+      ...("stdoutIsTTY" in route ? { stdoutIsTTY: route.stdoutIsTTY } : {}),
+    });
+    if ("env" in route) Object.assign(terminal.env, route.env);
+    const renderResultDashboard = vi.fn(async () => undefined);
+    const deps = { ...dependencies(), renderResultDashboard };
+
+    await executeFixCommand(
+      {
+        ...base,
+        yes: true,
+        format: "format" in route ? route.format : "auto",
+      },
+      terminal,
+      deps,
+    );
+
+    expect(renderResultDashboard).not.toHaveBeenCalled();
+    expect(terminal.stdout.join("")).toContain("Zedbee managed fixes applied.");
+  });
+
   it("applies trustworthy partial fixes with --yes but preserves the incomplete exit", async () => {
     const terminal = io(false);
     const deps = dependencies(partialPlan());
