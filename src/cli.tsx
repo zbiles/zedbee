@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Command, Option } from "commander";
+import { Argument, Command, Option } from "commander";
 import { executeChecksCommand } from "./commands/checks.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
+import { executeFixCommand, parseFixCheck } from "./commands/fix.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
+import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
 import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
 import type { RequestedOutputFormat } from "./scan/reporting-options.js";
 import {
@@ -42,6 +44,14 @@ interface CommanderInitOptions {
   osvUnavailable: InitOsvUnavailable;
   yes: boolean;
   format: "text" | "json";
+  color: boolean;
+  animations: boolean;
+}
+
+interface CommanderFixOptions {
+  format: "auto" | "text" | "json";
+  config?: string;
+  yes: boolean;
   color: boolean;
   animations: boolean;
 }
@@ -184,6 +194,53 @@ export async function main(
         },
       );
     });
+
+  program
+    .command("fix")
+    .description("preview and apply managed fixes to working files")
+    .addArgument(
+      new Argument("[check]", "managed fix check selector")
+        .choices([...FIXABLE_CHECK_IDS])
+        .argParser(parseFixCheck),
+    )
+    .addOption(
+      new Option("--format <format>", "output format")
+        .choices(["auto", "text", "json"])
+        .default("auto"),
+    )
+    .option("--config <path>", "path to a JSONC Zedbee configuration")
+    .option("--yes", "apply the exact plan without confirmation", false)
+    .option("--no-color", "disable color")
+    .option("--no-animations", "disable animations")
+    .action(
+      async (
+        check: FixableCheckId | undefined,
+        options: CommanderFixOptions,
+      ) => {
+        exitCode = await executeFixCommand(
+          {
+            cwd: process.cwd(),
+            ...(check === undefined ? {} : { check }),
+            yes: options.yes,
+            format: options.format,
+            color: options.color,
+            animations: options.animations,
+            ...(options.config === undefined
+              ? {}
+              : { configPath: options.config }),
+            signal: controller.signal,
+          },
+          {
+            stdinIsTTY: process.stdin.isTTY === true,
+            stdoutIsTTY: process.stdout.isTTY === true,
+            width: normalizeTerminalWidth(process.stdout.columns),
+            env: process.env,
+            writeStdout: (value) => process.stdout.write(value),
+            writeStderr: (value) => process.stderr.write(value),
+          },
+        );
+      },
+    );
 
   program
     .command("checks")
