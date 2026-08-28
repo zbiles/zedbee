@@ -125,8 +125,14 @@ describe("FixApp", () => {
     expect(stripVTControlCharacters(frame)).toContain(
       "Complete plan: /tmp/zedbee/fix-plan.json",
     );
-    expect(stripVTControlCharacters(frame)).toContain("➜ APPLY FIXES");
+    expect(stripVTControlCharacters(frame)).toContain("APPLY FIXES");
     expect(stripVTControlCharacters(frame)).toContain("CANCEL");
+    expect(stripVTControlCharacters(frame)).not.toContain("➜");
+    expect(
+      lines(frame).some(
+        (line) => line.includes("APPLY FIXES") && line.includes("CANCEL"),
+      ),
+    ).toBe(true);
     expect(stripVTControlCharacters(frame)).not.toContain("lint-1");
   });
 
@@ -167,17 +173,47 @@ describe("FixApp", () => {
     const { view } = setup(partial, 140, 100, false, null);
     const frame = visibleFrame(view);
 
-    expect(frame).toContain("CHECK STATUS");
-    expect(frame).toContain("formatting");
-    expect(frame).toContain("READY — 24 fixes available");
-    expect(frame).toContain("lint");
-    expect(frame).toContain(
-      "INCOMPLETE — Typed lint analysis could not inspect this file.",
+    const frameLines = lines(frame);
+    const fixHeading = frameLines.findIndex((line) =>
+      line.includes("FIX PLAN"),
     );
+    const statusHeading = frameLines.findIndex((line) =>
+      line.includes("CHECK STATUS"),
+    );
+    const betweenPanels = frameLines.slice(fixHeading + 1, statusHeading);
+    expect(fixHeading).toBeGreaterThan(-1);
+    expect(statusHeading).toBeGreaterThan(fixHeading);
+    expect(betweenPanels.some((line) => line.includes("└"))).toBe(true);
+    expect(betweenPanels.some((line) => line.includes("┌"))).toBe(true);
+
+    const formattingRow = frameLines.findIndex(
+      (line, index) => index > statusHeading && line.includes("formatting"),
+    );
+    const lintRow = frameLines.findIndex(
+      (line, index) => index > statusHeading && line.includes("lint"),
+    );
+    const reactRow = frameLines.findIndex(
+      (line, index) =>
+        index > statusHeading && line.includes("reactCorrectness"),
+    );
+    expect(frameLines[formattingRow]).toContain("READY");
+    expect(frameLines[formattingRow]!.indexOf("READY")).toBeGreaterThan(
+      frameLines[formattingRow]!.indexOf("formatting"),
+    );
+    expect(frameLines[formattingRow + 1]).toContain("24 fixes available");
+    expect(frameLines[lintRow]).toContain("INCOMPLETE");
+    expect(frameLines[lintRow + 1]).toContain(
+      "Typed lint analysis could not inspect this file.",
+    );
+    expect(frameLines[reactRow]).toContain("NOT APPLICABLE");
+    expect(frameLines[reactRow + 1]).toContain("No React renderer detected");
+    expect(
+      frameLines
+        .slice(formattingRow + 1, lintRow)
+        .some((line) => line.includes("├")),
+    ).toBe(true);
     expect(frame).toContain(".claude/skills/example/remotion.config.ts");
     expect(frame).toContain("Correct the TypeScript project setup");
-    expect(frame).toContain("reactCorrectness");
-    expect(frame).toContain("NOT APPLICABLE — No React renderer detected");
     expect(frame).toContain("No files have been changed.");
     expect(frame).toContain("APPLY FIXES");
   });
@@ -206,7 +242,8 @@ describe("FixApp", () => {
     const { onDecision, view } = setup(readOnly, 100, 60, false, null);
     const frame = visibleFrame(view);
 
-    expect(frame).toContain("➜ CLOSE");
+    expect(frame).toContain("CLOSE");
+    expect(frame).not.toContain("➜");
     expect(frame).not.toContain("APPLY FIXES");
     expect(frame).not.toContain("CANCEL");
     view.stdin.write("\r");
@@ -254,7 +291,7 @@ describe("FixApp", () => {
       const { onDecision, view } = setup();
 
       view.stdin.write("\t");
-      await vi.waitFor(() => expect(visibleFrame(view)).toContain("➜ CANCEL"));
+      await new Promise((resolve) => setImmediate(resolve));
       view.stdin.write(input);
 
       await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
@@ -283,9 +320,7 @@ describe("FixApp", () => {
       ),
     );
     cancel.view.stdin.write("\t");
-    await vi.waitFor(() =>
-      expect(visibleFrame(cancel.view)).toContain("➜ CANCEL"),
-    );
+    await new Promise((resolve) => setImmediate(resolve));
     cancel.view.stdin.write("\r");
 
     await vi.waitFor(() =>
@@ -431,13 +466,36 @@ describe("FixApp", () => {
   });
 
   it("keeps the plan readable within a narrow terminal", () => {
-    const { view } = setup(plan, 40, 80);
+    const narrowPlan: FixPlan = {
+      ...plan,
+      checks: [
+        {
+          checkId: "reactCorrectness",
+          status: "not-applicable",
+          fixes: 0,
+          reason: "No React renderer detected",
+          issues: [],
+        },
+      ],
+    };
+    const { view } = setup(narrowPlan, 40, 80);
     const frame = visibleFrame(view);
+    const frameLines = lines(frame);
 
     expect(frame).toContain("ZEDBEE");
     expect(frame).toContain("FIX PLAN");
     expect(
-      Math.max(...lines(frame).map((line) => [...line].length)),
+      frameLines.some(
+        (line) => line.includes("reactCorrectness") && line.includes("N/A"),
+      ),
+    ).toBe(true);
+    expect(
+      frameLines.some(
+        (line) => line.includes("APPLY FIXES") && line.includes("CANCEL"),
+      ),
+    ).toBe(true);
+    expect(
+      Math.max(...frameLines.map((line) => [...line].length)),
     ).toBeLessThanOrEqual(40);
   });
 
@@ -466,11 +524,12 @@ describe("FixApp", () => {
       expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
     );
     view.stdin.write("\t");
-    await vi.waitFor(() => expect(visibleFrame(view)).toContain("➜ CANCEL"));
+    await new Promise((resolve) => setImmediate(resolve));
 
     view.rerender(elementFor(30));
     await vi.waitFor(() => expect(lines(visibleFrame(view))).toHaveLength(30));
-    expect(visibleFrame(view)).toContain("➜ CANCEL");
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
   });
 
   it("homes the alternate screen exactly once", () => {

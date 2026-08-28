@@ -87,22 +87,20 @@ function FixActionButton({
   label,
   focused,
   activeTargetRef,
+  compact = false,
   color,
 }: {
   readonly label: string;
   readonly focused: boolean;
   readonly activeTargetRef?: RefObject<DOMElement | null>;
+  readonly compact?: boolean;
   readonly color: boolean;
 }) {
   return (
-    <Box
-      ref={focused ? activeTargetRef : undefined}
-      justifyContent="center"
-      paddingX={2}
-    >
+    <Box ref={focused ? activeTargetRef : undefined}>
       <Box
         borderStyle="single"
-        paddingX={2}
+        paddingX={compact ? 1 : 2}
         {...(color
           ? {
               borderColor: ZEDBEE_THEME.yellow,
@@ -121,7 +119,6 @@ function FixActionButton({
               }
             : {})}
         >
-          {focused ? "➜ " : "  "}
           {label}
         </Text>
       </Box>
@@ -285,74 +282,104 @@ function FileSummaries({
   );
 }
 
-function CheckStatuses({
+function checkStatusLabel(
+  status: NonNullable<FixPlan["checks"]>[number]["status"],
+  compact: boolean,
+): string {
+  if (status === "completed") return "READY";
+  if (status === "incomplete") return "INCOMPLETE";
+  return compact ? "N/A" : "NOT APPLICABLE";
+}
+
+function checkStatusTone(
+  status: NonNullable<FixPlan["checks"]>[number]["status"],
+): string {
+  if (status === "completed") return ZEDBEE_THEME.pass;
+  if (status === "incomplete") return ZEDBEE_THEME.failure;
+  return ZEDBEE_THEME.muted;
+}
+
+function CheckStatusPanel({
   plan,
+  width,
   color,
 }: {
   readonly plan: FixPlan;
+  readonly width: number;
   readonly color: boolean;
 }) {
   if (plan.checks === undefined || plan.checks.length === 0) return null;
+  const compact = width < 48;
   return (
-    <Box flexDirection="column" paddingX={2}>
-      <Text> </Text>
-      <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-        CHECK STATUS
-      </Text>
-      <Text> </Text>
-      {plan.checks.map((check) => (
-        <Box key={check.checkId} flexDirection="column" paddingBottom={1}>
-          <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
-            {check.checkId}
-          </Text>
-          {check.status === "completed" ? (
-            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.pass)}>
-              READY — {countLabel(check.fixes, "fix")} available
+    <BrandedCommandPanel title="CHECK STATUS" width={width} color={color}>
+      {plan.checks.map((check, index) => (
+        <Box key={check.checkId} flexDirection="column">
+          <Box paddingX={2}>
+            <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+              {check.checkId}
             </Text>
-          ) : check.status === "not-applicable" ? (
-            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-              NOT APPLICABLE —{" "}
-              {check.reason ?? "No applicable target was found."}
+            <Box flexGrow={1} minWidth={1}>
+              <Text> </Text>
+            </Box>
+            <Text bold {...colorProp(color, checkStatusTone(check.status))}>
+              {checkStatusLabel(check.status, compact)}
             </Text>
-          ) : (
-            <>
-              {check.issues.length === 0 ? (
-                <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.failure)}>
-                  INCOMPLETE — The check could not finish.
-                </Text>
-              ) : null}
-              {check.issues.map((issue) => (
+          </Box>
+          <Box flexDirection="column" paddingX={2}>
+            {check.status === "completed" ? (
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                {countLabel(check.fixes, "fix")} available
+              </Text>
+            ) : check.status === "not-applicable" ? (
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                {check.reason ?? "No applicable target was found."}
+              </Text>
+            ) : check.issues.length === 0 ? (
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                The check could not finish.
+              </Text>
+            ) : (
+              check.issues.map((issue) => (
                 <Box
                   key={`${issue.code}:${issue.path ?? ""}`}
                   flexDirection="column"
                 >
-                  <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.failure)}>
-                    INCOMPLETE — {issue.message}
+                  <Text
+                    wrap="wrap"
+                    {...colorProp(color, ZEDBEE_THEME.secondary)}
+                  >
+                    {issue.message}
                   </Text>
                   {issue.path === undefined ? null : (
                     <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-                      {issue.path}
+                      Path: {issue.path}
                     </Text>
                   )}
                   {issue.remediation === undefined ? null : (
                     <Text
                       wrap="wrap"
-                      {...colorProp(color, ZEDBEE_THEME.secondary)}
+                      {...colorProp(color, ZEDBEE_THEME.warning)}
                     >
-                      {issue.remediation}
+                      Remediation: {issue.remediation}
                     </Text>
                   )}
                 </Box>
-              ))}
-            </>
-          )}
+              ))
+            )}
+          </Box>
+          {index < plan.checks!.length - 1 ? (
+            <BrandedCommandPanelRule width={width} color={color} />
+          ) : null}
         </Box>
       ))}
-      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        No files have been changed.
-      </Text>
+      <BrandedCommandPanelRule width={width} color={color} />
+      <Box paddingX={2}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          No files have been changed.
+        </Text>
+      </Box>
       <Text> </Text>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 
@@ -360,19 +387,13 @@ function FixPlanPanel({
   plan,
   width,
   reportPath,
-  focus,
-  activeTargetRef,
   color,
 }: {
   readonly plan: FixPlan;
   readonly width: number;
   readonly reportPath?: string;
-  readonly focus: number;
-  readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
-  const hasApplicableFixes =
-    plan.items.some((item) => item.status !== "skipped") || plan.exitCode !== 1;
   return (
     <BrandedCommandPanel title="FIX PLAN" width={width} color={color}>
       <PlanSummary
@@ -387,33 +408,55 @@ function FixPlanPanel({
         {...(reportPath === undefined ? {} : { reportPath })}
         color={color}
       />
-      <BrandedCommandPanelRule width={width} color={color} />
-      <CheckStatuses plan={plan} color={color} />
       <Text> </Text>
-      {hasApplicableFixes ? (
-        <>
+    </BrandedCommandPanel>
+  );
+}
+
+function FixActions({
+  hasApplicableFixes,
+  focus,
+  activeTargetRef,
+  width,
+  color,
+}: {
+  readonly hasApplicableFixes: boolean;
+  readonly focus: number;
+  readonly activeTargetRef: RefObject<DOMElement | null>;
+  readonly width: number;
+  readonly color: boolean;
+}) {
+  const compact = width < 48;
+  return (
+    <Box flexDirection="column" width={width}>
+      <Box justifyContent="center">
+        {hasApplicableFixes ? (
+          <>
+            <FixActionButton
+              label="APPLY FIXES"
+              focused={focus === 0}
+              activeTargetRef={activeTargetRef}
+              compact={compact}
+              color={color}
+            />
+            <Box width={compact ? 1 : 3} />
+            <FixActionButton
+              label="CANCEL"
+              focused={focus === 1}
+              activeTargetRef={activeTargetRef}
+              compact={compact}
+              color={color}
+            />
+          </>
+        ) : (
           <FixActionButton
-            label="APPLY FIXES"
-            focused={focus === 0}
+            label="CLOSE"
+            focused
             activeTargetRef={activeTargetRef}
             color={color}
           />
-          <Text> </Text>
-          <FixActionButton
-            label="CANCEL"
-            focused={focus === 1}
-            activeTargetRef={activeTargetRef}
-            color={color}
-          />
-        </>
-      ) : (
-        <FixActionButton
-          label="CLOSE"
-          focused
-          activeTargetRef={activeTargetRef}
-          color={color}
-        />
-      )}
+        )}
+      </Box>
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
@@ -423,7 +466,7 @@ function FixPlanPanel({
         </Text>
       </Box>
       <Text> </Text>
-    </BrandedCommandPanel>
+    </Box>
   );
 }
 
@@ -552,14 +595,32 @@ export function FixApp(props: FixAppProps) {
       onMetricsChange={setViewportMetrics}
     >
       <BrandedCommandFrame width={columns} color={color}>
-        <FixPlanPanel
-          plan={plan}
-          width={brandedCommandContentWidth(columns)}
-          {...(reportPath === undefined ? {} : { reportPath })}
-          focus={focus}
-          activeTargetRef={activeTargetRef}
-          color={color}
-        />
+        <Box flexDirection="column">
+          <FixPlanPanel
+            plan={plan}
+            width={brandedCommandContentWidth(columns)}
+            {...(reportPath === undefined ? {} : { reportPath })}
+            color={color}
+          />
+          {plan.checks === undefined || plan.checks.length === 0 ? null : (
+            <>
+              <Text> </Text>
+              <CheckStatusPanel
+                plan={plan}
+                width={brandedCommandContentWidth(columns)}
+                color={color}
+              />
+            </>
+          )}
+          <Text> </Text>
+          <FixActions
+            hasApplicableFixes={hasApplicableFixes}
+            focus={focus}
+            activeTargetRef={activeTargetRef}
+            width={brandedCommandContentWidth(columns)}
+            color={color}
+          />
+        </Box>
       </BrandedCommandFrame>
     </TerminalViewport>
   );
