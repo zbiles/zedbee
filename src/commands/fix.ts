@@ -287,7 +287,7 @@ function renderResultText(plan: FixPlan, result: FixResult): string {
     `Changed files: ${result.changedFiles.length}`,
     `Already fixed files: ${presentation.alreadyFixedFiles.length}`,
     `Unresolved files: ${presentation.unresolvedFiles.length}`,
-    `Plan findings: ${plan.summary.blocking} blocking; ${plan.summary.warnings} ${plan.summary.warnings === 1 ? "warning" : "warnings"}`,
+    "",
   ];
   if (presentation.alreadyFixedFiles.length > 0) {
     lines.push(

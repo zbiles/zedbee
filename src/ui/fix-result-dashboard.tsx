@@ -10,7 +10,6 @@ import {
   BrandedCommandPanel,
   BrandedCommandPanelRule,
 } from "./branded-command-frame.js";
-import { CheckStatusPanel } from "./fix-app.js";
 import { renderStaticInk } from "./render-static.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -94,13 +93,7 @@ function FixResultPanel({
         value={presentation.unresolvedFiles.length}
         color={color}
       />
-      <SummaryRow
-        label="Plan findings"
-        value={`${plan.summary.blocking} blocking · ${plan.summary.warnings} ${
-          plan.summary.warnings === 1 ? "warning" : "warnings"
-        }`}
-        color={color}
-      />
+      <Text> </Text>
       {presentation.alreadyFixedFiles.length > 0 ? (
         <Box flexDirection="column" paddingX={2}>
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
@@ -111,7 +104,11 @@ function FixResultPanel({
             their planned fixes in the working tree.
           </Text>
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-            Stage the files you want to keep before running zedbee scan.
+            Stage the files you want to keep before running{" "}
+            <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>
+              zedbee scan
+            </Text>
+            .
           </Text>
         </Box>
       ) : null}
@@ -194,7 +191,6 @@ export function FixResultDashboard({
   readonly color: boolean;
 }) {
   const contentWidth = brandedCommandContentWidth(width);
-  const hasChecks = (plan.checks?.length ?? 0) > 0;
   const hasIssues = result.issues.length > 0;
   return (
     <BrandedCommandFrame width={width} color={color}>
@@ -204,17 +200,6 @@ export function FixResultDashboard({
         width={contentWidth}
         color={color}
       />
-      {hasChecks ? (
-        <>
-          <Text> </Text>
-          <CheckStatusPanel
-            plan={plan}
-            width={contentWidth}
-            color={color}
-            completedDescription="found in plan"
-          />
-        </>
-      ) : null}
       {hasIssues ? (
         <>
           <Text> </Text>

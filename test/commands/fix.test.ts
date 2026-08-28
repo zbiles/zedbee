@@ -791,11 +791,13 @@ describe("executeFixCommand", () => {
     ["interactive approval", true],
     ["--yes", false],
   ])(
-    "prints blocking and warning plan counts plus the review-stage-rescan next step after %s",
+    "keeps provider status and the review-stage-rescan next step after %s",
     async (_route, tty) => {
       const terminal = io(tty);
+      const providerChecks = partialPlan().publicPlan.checks!;
       const deps = dependencies(
         plan({
+          checks: providerChecks,
           summary: {
             fixes: 3,
             files: 2,
@@ -826,7 +828,9 @@ describe("executeFixCommand", () => {
       ).resolves.toBe(1);
 
       const output = terminal.stdout.join("");
-      expect(output).toContain("Plan findings: 2 blocking; 1 warning");
+      expect(output).not.toContain("Plan findings:");
+      expect(output).toContain("Unresolved files: 1\n\n");
+      expect(output).toContain("lint: INCOMPLETE");
       expect(output).toContain(
         "Next step: Review Zedbee's changes, stage the ones you want to keep, then run zedbee scan to verify the updated staged code and identify remaining findings.",
       );

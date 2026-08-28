@@ -62,7 +62,7 @@ afterEach(() => {
 });
 
 describe("FixResultDashboard", () => {
-  it("keeps a partial apply result, check details, and verification guidance in the branded permanent frame", async () => {
+  it("keeps a partial apply result and verification guidance in a distilled branded frame", async () => {
     const React = await import("react");
     const { render } = await import("ink-testing-library");
     const { FixResultDashboard } =
@@ -81,19 +81,12 @@ describe("FixResultDashboard", () => {
     expect(plain).toContain("PARTIALLY APPLIED");
     expect(plain).toContain("Applied fixes");
     expect(plain).toContain("24");
-    expect(plain).toContain("435 blocking · 0 warnings");
-    expect(plain).toContain("CHECK STATUS");
-    expect(plain).toContain("formatting");
-    expect(plain).toContain("READY");
-    expect(plain).toContain("lint");
-    expect(plain).toContain("INCOMPLETE");
-    expect(plain).toContain(
+    expect(plain).not.toContain("Plan findings");
+    expect(plain).not.toContain("435 blocking · 0 warnings");
+    expect(plain).not.toContain("CHECK STATUS");
+    expect(plain).not.toContain(
       "Typed lint could not inspect every requested file.",
     );
-    expect(plain).toContain(".claude/skills/example/remotion.config.ts");
-    expect(plain).toContain("Correct the TypeScript project setup and retry.");
-    expect(plain).toContain("reactCorrectness");
-    expect(plain).toContain("NOT APPLICABLE");
     expect(plain).not.toContain("No files have been changed.");
     expect(plain).toContain("NEXT STEP");
     expect(plain).toContain(
@@ -175,7 +168,7 @@ describe("FixResultDashboard", () => {
           issues: [],
         },
         width: 120,
-        color: false,
+        color: true,
       }),
     ).lastFrame()!;
     const plain = stripVTControlCharacters(frame);
@@ -185,13 +178,27 @@ describe("FixResultDashboard", () => {
     expect(plain).toContain("Already fixed files");
     expect(plain).toContain("24");
     expect(plain).toContain("Unresolved files");
-    expect(plain).toContain("24 fixes found in plan");
-    expect(plain).not.toContain("24 fixes available");
+    expect(plain).not.toContain("fixes found in plan");
+    expect(plain).not.toContain("fixes available");
     expect(plain).toContain(
       "24 files already contain their planned fixes in the working tree.",
     );
     expect(plain).toContain(
       "Stage the files you want to keep before running zedbee scan.",
+    );
+    expect(plain).not.toContain("Plan findings");
+    const unresolvedRow = plain
+      .split("\n")
+      .findIndex((line) => line.includes("Unresolved files"));
+    const explanationRow = plain
+      .split("\n")
+      .findIndex((line) => line.includes("already contain their planned"));
+    expect(unresolvedRow).toBeGreaterThanOrEqual(0);
+    expect(explanationRow).toBe(unresolvedRow + 2);
+    const commandOffset = frame.indexOf("zedbee scan");
+    expect(commandOffset).toBeGreaterThanOrEqual(0);
+    expect(frame.slice(commandOffset - 80, commandOffset)).toContain(
+      "\u001b[38;2;243;244;246m",
     );
   });
 });
