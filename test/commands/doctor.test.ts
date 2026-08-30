@@ -564,7 +564,7 @@ describe("executeDoctorCommand", () => {
     expect(io.stdout.join("")).toContain("\u001b[38;5;145m: Git is ready.");
     expect(io.stdout.join("")).toContain("\u001b[38;5;221mWARNING");
     expect(io.stdout.join("")).toContain(
-      "\u001b[38;5;231m  Remediation: Run \u001b[39m\u001b[38;5;221mzedbee init\u001b[39m\u001b[38;5;231m to configure a hook.\u001b[39m",
+      "\u001b[38;5;221m  Remediation:\u001b[39m\u001b[38;5;231m Run \u001b[39m\u001b[38;5;221mzedbee init\u001b[39m\u001b[38;5;231m to configure a hook.\u001b[39m",
     );
     expect(io.stdout.join("")).toContain(
       "Git is ready.\u001b[39m\n\n\u001b[38;5;221mWARNING",

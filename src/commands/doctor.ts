@@ -60,7 +60,7 @@ function renderRemediation(diagnostic: Diagnostic, color: boolean): string {
   if (diagnostic.id !== "hook-state" || commandIndex < 0) {
     return `\n${terminalText(`  Remediation: ${diagnostic.remediation}`, "reason", color)}`;
   }
-  return `\n${terminalText(`  Remediation: ${diagnostic.remediation.slice(0, commandIndex)}`, "primary", color)}${terminalText(INIT_COMMAND, "reason", color)}${terminalText(diagnostic.remediation.slice(commandIndex + INIT_COMMAND.length), "primary", color)}`;
+  return `\n${terminalText("  Remediation:", "reason", color)}${terminalText(` ${diagnostic.remediation.slice(0, commandIndex)}`, "primary", color)}${terminalText(INIT_COMMAND, "reason", color)}${terminalText(diagnostic.remediation.slice(commandIndex + INIT_COMMAND.length), "primary", color)}`;
 }
 
 function renderText(result: DoctorCommandResult, color: boolean): string {
