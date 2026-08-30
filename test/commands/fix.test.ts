@@ -49,6 +49,10 @@ function io(
   };
 }
 
+function stripAnsi(value: string): string {
+  return value.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+}
+
 function applicablePlan(): PreparedFixPlan {
   return plan({
     summary: { fixes: 1, files: 1, blocking: 1, warnings: 0, skipped: 0 },
@@ -322,7 +326,7 @@ describe("executeFixCommand", () => {
 
     expect(deps.confirm).toHaveBeenCalledOnce();
     expect(deps.applyFixPlan).toHaveBeenCalledOnce();
-    const output = terminal.stdout.join("");
+    const output = stripAnsi(terminal.stdout.join(""));
     expect(output).toContain("Zedbee managed fixes partially applied.");
     expect(output).toContain("formatting: READY — 1 fix found in plan");
     expect(output).toContain("lint: INCOMPLETE");
@@ -492,6 +496,22 @@ describe("executeFixCommand", () => {
     expect(deps.applyFixPlan).not.toHaveBeenCalled();
     expect(terminal.stdout.join("")).toContain("Zedbee fix closed.");
     expect(terminal.stdout.join("")).not.toContain("Zedbee fix cancelled.");
+  });
+
+  it("styles and separates checks in the permanent text plan", async () => {
+    const terminal = io(true);
+    const deps = dependencies(partialPlan(true));
+    deps.confirm = vi.fn(async () => false);
+
+    await executeFixCommand(base, terminal, deps);
+
+    const output = terminal.stdout.join("");
+    expect(output).toContain("\u001b[38;5;231mformatting");
+    expect(output).toContain("\u001b[38;5;115mREADY");
+    expect(output).toContain("\u001b[38;5;231mlint");
+    expect(output).toContain("\u001b[38;5;210mINCOMPLETE");
+    expect(output).toContain("\u001b[38;5;221mRemediation:");
+    expect(output).toContain("available\u001b[39m\n\n\u001b[38;5;231mlint");
   });
 
   it("passes the persisted complete-plan path into the interactive confirmation", async () => {
@@ -879,7 +899,7 @@ describe("executeFixCommand", () => {
         executeFixCommand({ ...base, yes: !tty }, terminal, deps),
       ).resolves.toBe(1);
 
-      const output = terminal.stdout.join("");
+      const output = stripAnsi(terminal.stdout.join(""));
       expect(output).not.toContain("Plan findings:");
       expect(output).toContain("Unresolved files: 1\n\n");
       expect(output).toContain("lint: INCOMPLETE");

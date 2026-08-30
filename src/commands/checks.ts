@@ -36,6 +36,10 @@ import {
   resolveScheduledTargetPolicy,
 } from "../checks/policy-scheduling.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
+import {
+  terminalColorEnabled,
+  terminalText,
+} from "../renderers/terminal-style.js";
 
 export type {
   CheckApplicabilityDescription,
@@ -417,7 +421,7 @@ function describeConfiguration(
   });
 }
 
-function renderText(result: ChecksCommandResult): string {
+function renderText(result: ChecksCommandResult, color: boolean): string {
   return `${result.checks
     .map((check) => {
       const targets =
@@ -428,9 +432,30 @@ function renderText(result: ChecksCommandResult): string {
       )
         .map((line) => `  ${line}`)
         .join("\n");
-      return `${check.id} [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}\n  ${check.description}\n${configurationLines}${check.automaticFix === undefined ? "" : `\n  Automatic fix: ${check.automaticFix}`}\n  Limitation: ${check.limitation}${check.reason === undefined ? "" : `\n  Reason: ${check.reason}`}`;
+      const header = `${terminalText(check.id, "primary", color)}${terminalText(` [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}`, "secondary", color)}`;
+      const body = [
+        terminalText(`  ${check.description}`, "secondary", color),
+        ...configurationLines
+          .split("\n")
+          .filter((line) => line.length > 0)
+          .map((line) => terminalText(line, "secondary", color)),
+        ...(check.automaticFix === undefined
+          ? []
+          : [
+              terminalText(
+                `  Automatic fix: ${check.automaticFix}`,
+                "secondary",
+                color,
+              ),
+            ]),
+        terminalText(`  Limitation: ${check.limitation}`, "secondary", color),
+        ...(check.reason === undefined
+          ? []
+          : [terminalText(`  Reason: ${check.reason}`, "reason", color)]),
+      ];
+      return [header, ...body].join("\n");
     })
-    .join("\n")}\n`;
+    .join("\n\n")}\n`;
 }
 
 export async function executeChecksCommand(
@@ -494,7 +519,12 @@ export async function executeChecksCommand(
         color: options.color && io.env.NO_COLOR === undefined,
       });
     } else {
-      io.writeStdout(renderText(result));
+      io.writeStdout(
+        renderText(
+          result,
+          terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+        ),
+      );
     }
     return result;
   } catch {

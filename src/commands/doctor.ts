@@ -4,6 +4,11 @@ import {
   type Diagnostic,
   type DiagnosticContext,
 } from "../doctor/diagnostics.js";
+import {
+  terminalColorEnabled,
+  terminalText,
+  type TerminalTextTone,
+} from "../renderers/terminal-style.js";
 
 export type DoctorOutputFormat = "auto" | "text" | "json";
 
@@ -48,16 +53,22 @@ const DEFAULT_DEPENDENCIES: DoctorCommandDependencies = {
 
 const MINIMUM_DASHBOARD_WIDTH = 80;
 
-function renderText(result: DoctorCommandResult): string {
+function renderText(result: DoctorCommandResult, color: boolean): string {
   return `${result.diagnostics
     .map((diagnostic) => {
       const remediation =
         diagnostic.remediation === undefined
           ? ""
-          : `\n  Remediation: ${diagnostic.remediation}`;
-      return `${diagnostic.status.toUpperCase()} ${diagnostic.id}: ${diagnostic.message}${remediation}`;
+          : `\n${terminalText(`  Remediation: ${diagnostic.remediation}`, "reason", color)}`;
+      const statusTone: TerminalTextTone =
+        diagnostic.status === "pass"
+          ? "pass"
+          : diagnostic.status === "warning"
+            ? "warning"
+            : "failure";
+      return `${terminalText(diagnostic.status.toUpperCase(), statusTone, color)} ${terminalText(diagnostic.id, "primary", color)}${terminalText(`: ${diagnostic.message}`, "secondary", color)}${remediation}`;
     })
-    .join("\n")}\n`;
+    .join("\n\n")}\n`;
 }
 
 export async function executeDoctorCommand(
@@ -96,7 +107,12 @@ export async function executeDoctorCommand(
         },
       );
     } else {
-      io.writeStdout(renderText(result));
+      io.writeStdout(
+        renderText(
+          result,
+          terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+        ),
+      );
     }
     return result;
   } catch {

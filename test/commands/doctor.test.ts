@@ -50,6 +50,10 @@ function terminal(
   };
 }
 
+function stripAnsi(value: string): string {
+  return value.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+}
+
 function doctorOptions(
   overrides: Partial<DoctorCommandOptions> = {},
 ): DoctorCommandOptions {
@@ -507,28 +511,38 @@ describe("executeDoctorCommand", () => {
   });
 
   it.each([
-    ["narrow terminal", terminal({ stdoutIsTTY: true, width: 79 }), {}],
-    ["redirected output", terminal({ stdoutIsTTY: false, width: 120 }), {}],
+    ["narrow terminal", terminal({ stdoutIsTTY: true, width: 79 }), {}, true],
+    [
+      "redirected output",
+      terminal({ stdoutIsTTY: false, width: 120 }),
+      {},
+      false,
+    ],
     [
       "dumb terminal",
       terminal({ stdoutIsTTY: true, width: 120, env: { TERM: "dumb" } }),
       { environment: { TERM: "dumb" } },
+      false,
     ],
     [
       "CI pseudo-terminal",
       terminal({ stdoutIsTTY: true, width: 120, env: { CI: "true" } }),
       { environment: { CI: "true" } },
+      false,
     ],
-  ] as const)("uses plain text for %s", async (_name, io, overrides) => {
-    await executeDoctorCommand(doctorOptions(overrides), io, {
-      diagnose: async () => [
-        { id: "git", status: "pass", message: "Git is ready." },
-      ],
-    });
+  ] as const)(
+    "uses linear text for %s",
+    async (_name, io, overrides, expectsColor) => {
+      await executeDoctorCommand(doctorOptions(overrides), io, {
+        diagnose: async () => [
+          { id: "git", status: "pass", message: "Git is ready." },
+        ],
+      });
 
-    expect(io.stdout.join("")).toBe("PASS git: Git is ready.\n");
-    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
-  });
+      expect(stripAnsi(io.stdout.join(""))).toBe("PASS git: Git is ready.\n");
+      expect(/\u001B\[[0-9;]*m/u.test(io.stdout.join(""))).toBe(expectsColor);
+    },
+  );
 
   it("lets explicit text force the plain view in a wide terminal", async () => {
     const io = terminal({ stdoutIsTTY: true, width: 120 });
@@ -536,10 +550,25 @@ describe("executeDoctorCommand", () => {
     await executeDoctorCommand(doctorOptions({ format: "text" }), io, {
       diagnose: async () => [
         { id: "git", status: "pass", message: "Git is ready." },
+        {
+          id: "hook-state",
+          status: "warning",
+          message: "No hook is installed.",
+          remediation: "Run zedbee init.",
+        },
       ],
     });
 
-    expect(io.stdout.join("")).toBe("PASS git: Git is ready.\n");
+    expect(io.stdout.join("")).toContain("\u001b[38;5;115mPASS");
+    expect(io.stdout.join("")).toContain("\u001b[38;5;231mgit");
+    expect(io.stdout.join("")).toContain("\u001b[38;5;145m: Git is ready.");
+    expect(io.stdout.join("")).toContain("\u001b[38;5;221mWARNING");
+    expect(io.stdout.join("")).toContain(
+      "\u001b[38;5;221m  Remediation: Run zedbee init.",
+    );
+    expect(io.stdout.join("")).toContain(
+      "Git is ready.\u001b[39m\n\n\u001b[38;5;221mWARNING",
+    );
   });
 
   it("returns zero for pass/warning diagnostics and deterministic JSON", async () => {

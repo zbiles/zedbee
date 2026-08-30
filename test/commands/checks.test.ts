@@ -29,6 +29,10 @@ function terminal(): ChecksCommandIO & { stdout: string[]; stderr: string[] } {
   };
 }
 
+function stripAnsi(value: string): string {
+  return value.replaceAll(/\u001b\[[0-9;]*m/gu, "");
+}
+
 const dependencies: ChecksCommandDependencies = {
   resolveRepositoryRoot: async () => "/repo",
   loadConfig: async () =>
@@ -285,21 +289,26 @@ describe("executeChecksCommand", () => {
   });
 
   it.each([
-    ["narrow terminal", true, 79, {}],
-    ["redirected output", false, 120, {}],
-    ["dumb terminal", true, 120, { TERM: "dumb" }],
-    ["CI pseudo-terminal", true, 120, { CI: "true" }],
-  ] as const)("uses plain text for a %s", async (_name, tty, width, env) => {
-    const io = { ...terminal(), stdoutIsTTY: tty, width, env };
-    await executeChecksCommand(
-      { cwd: "/repo", format: "auto", color: true },
-      io,
-      dependencies,
-    );
+    ["narrow terminal", true, 79, {}, true],
+    ["redirected output", false, 120, {}, false],
+    ["dumb terminal", true, 120, { TERM: "dumb" }, false],
+    ["CI pseudo-terminal", true, 120, { CI: "true" }, false],
+  ] as const)(
+    "uses linear text for a %s",
+    async (_name, tty, width, env, expectsColor) => {
+      const io = { ...terminal(), stdoutIsTTY: tty, width, env };
+      await executeChecksCommand(
+        { cwd: "/repo", format: "auto", color: true },
+        io,
+        dependencies,
+      );
 
-    expect(io.stdout.join("")).toContain("formatting [error/relevant]");
-    expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
-  });
+      expect(stripAnsi(io.stdout.join(""))).toContain(
+        "formatting [error/relevant]",
+      );
+      expect(/\u001B\[[0-9;]*m/u.test(io.stdout.join(""))).toBe(expectsColor);
+    },
+  );
 
   it("lets explicit text force the plain view and NO_COLOR disable dashboard color", async () => {
     const plain = { ...terminal(), stdoutIsTTY: true, width: 120 };
@@ -308,7 +317,10 @@ describe("executeChecksCommand", () => {
       plain,
       dependencies,
     );
-    expect(plain.stdout.join("")).toContain("formatting [error/relevant]");
+    expect(stripAnsi(plain.stdout.join(""))).toContain(
+      "formatting [error/relevant]",
+    );
+    expect(plain.stdout.join("")).toMatch(/\u001B\[[0-9;]*m/u);
 
     const noColor = {
       ...terminal(),
@@ -645,21 +657,64 @@ describe("executeChecksCommand", () => {
     expect(hasUnpairedSurrogate(output)).toBe(false);
   });
 
-  it("renders deterministic ANSI-free text and fails closed on inspection errors", async () => {
+  it("uses the interactive color hierarchy and separates checks in a narrow TTY", async () => {
     const first = terminal();
     const second = terminal();
+    Object.assign(first, { stdoutIsTTY: true, width: 79 });
+    Object.assign(second, { stdoutIsTTY: true, width: 79 });
     await executeChecksCommand(
-      { cwd: "/repo", format: "text", color: true },
+      { cwd: "/repo", format: "auto", color: true },
       first,
-      dependencies,
+      {
+        ...dependencies,
+        inspectChecks: async () =>
+          new Map(
+            CHECK_IDS.map((id) => [
+              id,
+              {
+                applicable: id !== "types",
+                targets: id === "types" ? [] : ["."],
+                executionClass: "project-analysis" as const,
+                ...(id === "types"
+                  ? { reason: "No supported staged TypeScript source files" }
+                  : {}),
+              },
+            ]),
+          ),
+      },
     );
     await executeChecksCommand(
-      { cwd: "/repo", format: "text", color: true },
+      { cwd: "/repo", format: "auto", color: true },
       second,
-      dependencies,
+      {
+        ...dependencies,
+        inspectChecks: async () =>
+          new Map(
+            CHECK_IDS.map((id) => [
+              id,
+              {
+                applicable: id !== "types",
+                targets: id === "types" ? [] : ["."],
+                executionClass: "project-analysis" as const,
+                ...(id === "types"
+                  ? { reason: "No supported staged TypeScript source files" }
+                  : {}),
+              },
+            ]),
+          ),
+      },
     );
     expect(first.stdout).toEqual(second.stdout);
-    expect(first.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+    expect(first.stdout.join("")).toContain("\u001b[38;5;231mformatting");
+    expect(first.stdout.join("")).toContain(
+      "\u001b[38;5;145m  Checks staged formatting.",
+    );
+    expect(first.stdout.join("")).toContain(
+      "\u001b[38;5;221m  Reason: No supported staged TypeScript source files",
+    );
+    expect(first.stdout.join("")).toContain(
+      "scans do not modify files.\u001b[39m\n\n\u001b[38;5;231mlint",
+    );
     expect(first.stdout.join("")).toContain(
       "Configuration: 13 profile values, 1 repository value",
     );
@@ -678,6 +733,14 @@ describe("executeChecksCommand", () => {
       "Override test/**: settings.tabWidth: 4",
     );
     expect(output).toContain("Automatic fix: zedbee fix formatting");
+
+    const redirected = terminal();
+    await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: true },
+      redirected,
+      dependencies,
+    );
+    expect(redirected.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
 
     const failed = terminal();
     const result = await executeChecksCommand(

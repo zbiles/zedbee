@@ -1060,6 +1060,51 @@ describe("renderText", () => {
     ).toBeLessThanOrEqual(44);
   });
 
+  it("uses white section names, gray body text, and yellow remediation when color is enabled", () => {
+    const finding = createFinding({
+      message: "A blocking issue was found.",
+      remediation: "Run the managed fix.",
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const output = renderText(report, { width: 80, color: true });
+
+    expect(output).toContain("\u001b[38;5;231mTHAT STINGS");
+    expect(output).toContain("\u001b[38;5;145mA check failed. Commit blocked.");
+    expect(output).toContain("\u001b[38;5;231mPrettier  prettier");
+    expect(output).toContain("\u001b[38;5;145m       Issue:");
+    expect(output).toContain("\u001b[38;5;221m       Fix:");
+  });
+
+  it("renders every managed finding check name in white", () => {
+    const finding = createFinding({ check: "structuralSecurity" });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    expect(renderText(report, { width: 80, color: true })).toContain(
+      "\u001b[38;5;231mast-grep  prettier",
+    );
+  });
+
   it("replaces a bidi format control before rendering source text", () => {
     const finding = createFinding({
       sourceExcerpt: {

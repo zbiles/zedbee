@@ -1,4 +1,5 @@
 import type { Finding, ManagedAutomaticFix } from "../core/types.js";
+import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -16,6 +17,7 @@ import { buildScanResultSections } from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { incompleteSectionLines } from "./incomplete.js";
+import { terminalText, type TerminalTextTone } from "./terminal-style.js";
 import {
   chunkTerminalCells,
   padStartTerminalCells,
@@ -29,6 +31,51 @@ export interface TextRendererOptions {
   color: boolean;
   verbose?: boolean;
   presentation?: TerminalPresentation;
+}
+
+const PRIMARY_TEXT_HEADINGS = new Set([
+  "THAT STINGS",
+  "SCAN INCOMPLETE",
+  "BEE-UTIFUL",
+  "COMMIT BLOCKED",
+  "COMMIT ALLOWED",
+  "BLOCKING FINDINGS",
+  "WARNINGS",
+  "NETWORK DISCLOSURE",
+  "DISCLOSURES",
+  "REPORT WARNINGS",
+  "REPORT MAINTENANCE WARNING",
+  "REPORT DELIVERY WARNING",
+  "INCOMPLETE CHECKS",
+  "SCAN RESULT",
+  "NEXT STEP",
+  "COMPLETE REPORT",
+]);
+
+const FINDING_TEXT_LABELS = new Set(
+  [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
+);
+
+function textLineTone(line: string): TerminalTextTone {
+  const trimmed = line.trimStart();
+  if (PRIMARY_TEXT_HEADINGS.has(line)) return "primary";
+  if (/^(?:Fix|Reason|Remediation): /u.test(trimmed)) return "reason";
+  if (
+    !line.startsWith(" ") &&
+    [...FINDING_TEXT_LABELS].some(
+      (label) => line === label || line.startsWith(`${label}  `),
+    )
+  ) {
+    return "primary";
+  }
+  return "secondary";
+}
+
+function styleTextLines(lines: readonly string[], color: boolean): string[] {
+  if (!color) return [...lines];
+  return lines.map((line) =>
+    line.length === 0 ? line : terminalText(line, textLineTone(line), true),
+  );
 }
 
 function wrapWords(value: string, width: number, indent = ""): string[] {
@@ -437,12 +484,15 @@ export function renderText(
   const sanitized = validateReportDisplayStrings(report);
   const width = Math.max(20, options.width);
   if (options.presentation?.automatic === true) {
-    return `${automaticTextLines(
-      report,
-      sanitized,
-      options.presentation,
-      width,
-      options.verbose === true,
+    return `${styleTextLines(
+      automaticTextLines(
+        report,
+        sanitized,
+        options.presentation,
+        width,
+        options.verbose === true,
+      ),
+      options.color,
     ).join("\n")}\n`;
   }
   const displayedFindings =
@@ -462,5 +512,5 @@ export function renderText(
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),
   ];
-  return `${lines.join("\n")}\n`;
+  return `${styleTextLines(lines, options.color).join("\n")}\n`;
 }

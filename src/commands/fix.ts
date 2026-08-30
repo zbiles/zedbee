@@ -19,6 +19,10 @@ import {
   type ReportMaintenanceWarning,
   type TemporaryReportStore,
 } from "../reporting/temporary-reports.js";
+import {
+  terminalColorEnabled,
+  terminalText,
+} from "../renderers/terminal-style.js";
 
 const COMPACT_DETAIL_LIMIT = 25;
 const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
@@ -129,7 +133,11 @@ function safeText(value: unknown, field: string): string {
   }
 }
 
-function renderPlanText(plan: FixPlan, reportPath?: string): string {
+function renderPlanText(
+  plan: FixPlan,
+  reportPath?: string,
+  color = false,
+): string {
   const fixLabel = (count: number): string =>
     `${count} ${count === 1 ? "fix" : "fixes"}`;
   const fileLabel = (count: number): string =>
@@ -137,50 +145,82 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
   const fixesFor = (item: FixPlan["items"][number]): number =>
     item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const lines = [
-    "Zedbee managed fix plan.",
-    `Checks: ${plan.selectedChecks.join(", ")}`,
-    `${fixLabel(plan.summary.fixes)} across ${fileLabel(plan.summary.files)}`,
-    `Blocking: ${plan.summary.blocking}; warnings: ${plan.summary.warnings}; skipped: ${plan.summary.skipped}`,
+    terminalText("Zedbee managed fix plan.", "primary", color),
+    terminalText(
+      `Checks: ${plan.selectedChecks.join(", ")}`,
+      "secondary",
+      color,
+    ),
+    terminalText(
+      `${fixLabel(plan.summary.fixes)} across ${fileLabel(plan.summary.files)}`,
+      "secondary",
+      color,
+    ),
+    terminalText(
+      `Blocking: ${plan.summary.blocking}; warnings: ${plan.summary.warnings}; skipped: ${plan.summary.skipped}`,
+      "secondary",
+      color,
+    ),
   ];
   for (const check of plan.checks ?? []) {
+    lines.push("");
     if (check.status === "completed") {
       lines.push(
-        `${check.checkId}: READY — ${fixLabel(check.fixes)} available`,
+        `${terminalText(check.checkId, "primary", color)}${terminalText(": ", "secondary", color)}${terminalText("READY", "pass", color)}${terminalText(` — ${fixLabel(check.fixes)} available`, "secondary", color)}`,
       );
       continue;
     }
     if (check.status === "not-applicable") {
       lines.push(
-        `${check.checkId}: NOT APPLICABLE — ${safeText(check.reason, "check reason")}`,
+        `${terminalText(check.checkId, "primary", color)}${terminalText(": NOT APPLICABLE — ", "secondary", color)}${terminalText(safeText(check.reason, "check reason"), "reason", color)}`,
       );
       continue;
     }
-    lines.push(`${check.checkId}: INCOMPLETE`);
+    lines.push(
+      `${terminalText(check.checkId, "primary", color)}${terminalText(": ", "secondary", color)}${terminalText("INCOMPLETE", "failure", color)}`,
+    );
     for (const issue of check.issues) {
       lines.push(
-        `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+        terminalText(
+          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+          "secondary",
+          color,
+        ),
         ...(issue.path === undefined
           ? []
           : [
-              `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+              terminalText(
+                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+                "secondary",
+                color,
+              ),
             ]),
         ...(issue.remediation === undefined
           ? []
           : [
-              `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+              terminalText(
+                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+                "reason",
+                color,
+              ),
             ]),
       );
     }
   }
+  if ((plan.checks?.length ?? 0) > 0 && plan.items.length > 0) lines.push("");
   const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
   for (const item of items) {
     if (item.status === "skipped") {
       lines.push(
-        `SKIP: ${JSON.stringify(safeText(item.file, "fix file"))} — ${safeText(item.reason, "skip reason")}`,
+        terminalText(
+          `SKIP: ${JSON.stringify(safeText(item.file, "fix file"))} — ${safeText(item.reason, "skip reason")}`,
+          "reason",
+          color,
+        ),
       );
     } else {
       lines.push(
-        `${item.checkId}: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${fixLabel(fixesFor(item))})`,
+        `${terminalText(item.checkId, "primary", color)}${terminalText(`: ${JSON.stringify(safeText(item.file, "fix file"))} (${item.scope}, ${fixLabel(fixesFor(item))})`, "secondary", color)}`,
       );
     }
   }
@@ -190,7 +230,13 @@ function renderPlanText(plan: FixPlan, reportPath?: string): string {
     );
   }
   if (reportPath !== undefined) {
-    lines.push(`Complete plan: ${opaqueTemporaryReportPath(reportPath)}`);
+    lines.push(
+      terminalText(
+        `Complete plan: ${opaqueTemporaryReportPath(reportPath)}`,
+        "secondary",
+        color,
+      ),
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -272,7 +318,40 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
   };
 }
 
-function renderResultText(plan: FixPlan, result: FixResult): string {
+function styleFixResultLine(line: string, color: boolean): string {
+  if (!color || line.length === 0) return line;
+  if (
+    line.startsWith("Zedbee managed fixes") ||
+    line.startsWith("Zedbee managed fix")
+  ) {
+    return terminalText(line, "primary", true);
+  }
+  if (/^(?:Remediation|Next step): /u.test(line)) {
+    return terminalText(line, "reason", true);
+  }
+  const checkId = FIXABLE_CHECK_IDS.find((id) => line.startsWith(`${id}:`));
+  if (checkId !== undefined) {
+    const remainder = line.slice(checkId.length);
+    const status = /^: (READY|INCOMPLETE|NOT APPLICABLE)(.*)$/u.exec(remainder);
+    if (status !== null) {
+      const statusTone =
+        status[1] === "READY"
+          ? "pass"
+          : status[1] === "INCOMPLETE"
+            ? "failure"
+            : "secondary";
+      return `${terminalText(checkId, "primary", true)}${terminalText(": ", "secondary", true)}${terminalText(status[1]!, statusTone, true)}${terminalText(status[2]!, status[1] === "NOT APPLICABLE" ? "reason" : "secondary", true)}`;
+    }
+    return `${terminalText(checkId, "primary", true)}${terminalText(remainder, "secondary", true)}`;
+  }
+  return terminalText(line, "secondary", true);
+}
+
+function renderResultText(
+  plan: FixPlan,
+  result: FixResult,
+  color = false,
+): string {
   const presentation = presentFixResult(plan, result);
   const headline =
     presentation.outcome === "applied"
@@ -297,6 +376,7 @@ function renderResultText(plan: FixPlan, result: FixResult): string {
     );
   }
   for (const check of plan.checks ?? []) {
+    if (lines.at(-1) !== "") lines.push("");
     if (check.status === "completed") {
       lines.push(
         `${check.checkId}: READY — ${check.fixes} ${check.fixes === 1 ? "fix" : "fixes"} found in plan`,
@@ -333,7 +413,7 @@ function renderResultText(plan: FixPlan, result: FixResult): string {
   lines.push(
     "Next step: Review Zedbee's changes, stage the ones you want to keep, then run zedbee scan to verify the updated staged code and identify remaining findings.",
   );
-  return `${lines.join("\n")}\n`;
+  return `${lines.map((line) => styleFixResultLine(line, color)).join("\n")}\n`;
 }
 
 function renderWarnings(warnings: readonly ReportMaintenanceWarning[]): string {
@@ -423,7 +503,11 @@ export async function executeFixCommand(
         );
       } else {
         io.writeStdout(
-          renderPlanText(prepared.publicPlan, maintenance.reportPath),
+          renderPlanText(
+            prepared.publicPlan,
+            maintenance.reportPath,
+            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+          ),
         );
       }
     };
@@ -504,10 +588,22 @@ export async function executeFixCommand(
           },
         );
       } catch {
-        io.writeStdout(renderResultText(prepared.publicPlan, result));
+        io.writeStdout(
+          renderResultText(
+            prepared.publicPlan,
+            result,
+            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+          ),
+        );
       }
     } else {
-      io.writeStdout(renderResultText(prepared.publicPlan, result));
+      io.writeStdout(
+        renderResultText(
+          prepared.publicPlan,
+          result,
+          terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+        ),
+      );
     }
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;

@@ -3,6 +3,7 @@ import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
 import { renderSarif } from "../renderers/sarif.js";
 import { renderText } from "../renderers/text.js";
+import { terminalColorEnabled } from "../renderers/terminal-style.js";
 import {
   prepareTerminalPresentation,
   type PreparePresentationOptions,
@@ -254,7 +255,7 @@ export async function executeScanCommand(
       io.writeStdout(
         renderText(report, {
           width: io.width,
-          color: false,
+          color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
           presentation,
         }),
       );
