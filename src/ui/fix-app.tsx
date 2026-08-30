@@ -11,6 +11,7 @@ import {
   type DOMElement,
 } from "ink";
 import { FIX_PLAN_FILE_SUMMARY_LIMIT, type FixPlan } from "../fixes/types.js";
+import { hasApplicableFixes as planHasApplicableFixes } from "../fixes/availability.js";
 import type { FixPromptOptions } from "../commands/fix.js";
 import {
   brandedCommandContentWidth,
@@ -500,8 +501,7 @@ export function FixApp(props: FixAppProps) {
       visibleHeight: rows,
     });
   const activeTargetRef = useRef<DOMElement>(null);
-  const hasApplicableFixes =
-    plan.items.some((item) => item.status !== "skipped") || plan.exitCode !== 1;
+  const hasApplicableFixes = planHasApplicableFixes(plan);
   const contentRef = useRef<DOMElement>(null);
   const offsetRef = useRef(offset);
   const lastRevealRef = useRef<

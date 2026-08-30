@@ -49,7 +49,31 @@ function io(
   };
 }
 
-function dependencies(prepared = plan()): FixCommandDependencies {
+function applicablePlan(): PreparedFixPlan {
+  return plan({
+    summary: { fixes: 1, files: 1, blocking: 1, warnings: 0, skipped: 0 },
+    files: [
+      {
+        path: "src/value.ts",
+        fixes: 1,
+        hasUnstagedChanges: false,
+      },
+    ],
+    items: [
+      {
+        checkId: "lint",
+        file: "src/value.ts",
+        findingIds: ["lint-1"],
+        scope: "finding",
+        fixes: 1,
+        blocking: 1,
+        warnings: 0,
+      },
+    ],
+  });
+}
+
+function dependencies(prepared = applicablePlan()): FixCommandDependencies {
   return {
     resolveRepositoryRoot: async () => "/repo",
     buildFixPlan: vi.fn(async () => prepared),
@@ -63,6 +87,19 @@ function dependencies(prepared = plan()): FixCommandDependencies {
     confirm: vi.fn(async () => true),
     store: { maintain: vi.fn(async () => ({ warnings: [] })) },
   };
+}
+
+function completedPlanWithoutFixes(): PreparedFixPlan {
+  return plan({
+    checks: [
+      {
+        checkId: "lint",
+        status: "completed",
+        fixes: 0,
+        issues: [],
+      },
+    ],
+  });
 }
 
 function hostilePlan(): PreparedFixPlan {
@@ -202,6 +239,19 @@ describe("parseFixCheck", () => {
 });
 
 describe("executeFixCommand", () => {
+  it("does not apply when analysis completes without a trustworthy fix", async () => {
+    const terminal = io(true);
+    const deps = dependencies(completedPlanWithoutFixes());
+    deps.confirm = vi.fn(async () => false);
+
+    await expect(executeFixCommand(base, terminal, deps)).resolves.toBe(0);
+
+    expect(deps.confirm).toHaveBeenCalledOnce();
+    expect(deps.applyFixPlan).not.toHaveBeenCalled();
+    expect(terminal.stdout.join("")).toContain("Zedbee fix closed.");
+    expect(terminal.stdout.join("")).not.toContain("Zedbee fix cancelled.");
+  });
+
   it("selects every supported check for a bare --yes command without prompting", async () => {
     const terminal = io(false);
     const deps = dependencies();
@@ -798,6 +848,8 @@ describe("executeFixCommand", () => {
       const deps = dependencies(
         plan({
           checks: providerChecks,
+          files: applicablePlan().publicPlan.files,
+          items: applicablePlan().publicPlan.items,
           summary: {
             fixes: 3,
             files: 2,

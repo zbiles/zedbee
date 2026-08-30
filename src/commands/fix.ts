@@ -10,6 +10,7 @@ import {
   type FixableCheckId,
   type PreparedFixPlan,
 } from "../fixes/types.js";
+import { hasApplicableFixes } from "../fixes/availability.js";
 import { displayProse } from "../core/display-text.js";
 import { GitClient } from "../git/client.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
@@ -433,9 +434,7 @@ export async function executeFixCommand(
       return 2;
     }
 
-    const hasApplicableFixes =
-      prepared.publicPlan.items.some((item) => item.status !== "skipped") ||
-      prepared.publicPlan.exitCode !== 1;
+    const applicableFixesAvailable = hasApplicableFixes(prepared.publicPlan);
 
     let confirmed = options.yes;
     if (!confirmed && format === "text" && io.stdinIsTTY && io.stdoutIsTTY) {
@@ -451,12 +450,12 @@ export async function executeFixCommand(
       if (!confirmed) {
         outputPlan(false);
         io.writeStdout(
-          hasApplicableFixes
+          applicableFixesAvailable
             ? "Zedbee fix cancelled.\n"
             : "Zedbee fix closed.\n",
         );
         io.writeStderr(renderWarnings(maintenance.warnings));
-        return hasApplicableFixes ? 0 : prepared.publicPlan.exitCode;
+        return applicableFixesAvailable ? 0 : prepared.publicPlan.exitCode;
       }
     }
 
@@ -464,16 +463,16 @@ export async function executeFixCommand(
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(
-          hasApplicableFixes
+          applicableFixesAvailable
             ? "Run zedbee fix --yes to apply this plan.\n"
             : "No trustworthy managed fixes are available to apply.\n",
         );
       }
       io.writeStderr(renderWarnings(maintenance.warnings));
-      return hasApplicableFixes ? 0 : prepared.publicPlan.exitCode;
+      return applicableFixesAvailable ? 0 : prepared.publicPlan.exitCode;
     }
 
-    if (!hasApplicableFixes) {
+    if (!applicableFixesAvailable) {
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(

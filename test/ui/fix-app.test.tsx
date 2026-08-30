@@ -255,6 +255,37 @@ describe("FixApp", () => {
     await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
   });
 
+  it("offers only Close when completed analysis has no fixes", async () => {
+    const completedWithoutFixes: FixPlan = {
+      ...plan,
+      exitCode: 0,
+      checks: [
+        {
+          checkId: "lint",
+          status: "completed",
+          fixes: 0,
+          issues: [],
+        },
+      ],
+      summary: { fixes: 0, files: 0, blocking: 0, warnings: 0, skipped: 0 },
+      files: [],
+      items: [],
+    };
+    const { onDecision, view } = setup(
+      completedWithoutFixes,
+      100,
+      60,
+      false,
+      null,
+    );
+    const frame = visibleFrame(view);
+
+    expect(frame).toContain("CLOSE");
+    expect(frame).not.toContain("APPLY FIXES");
+    view.stdin.write("\r");
+    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+  });
+
   it("renders grammatical file and finding summary labels", () => {
     const grammaticalPlan: FixPlan = {
       ...plan,

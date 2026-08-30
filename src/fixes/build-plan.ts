@@ -498,9 +498,21 @@ function publicPlan(
   items: readonly FixPlanItem[],
   workingFiles: ReadonlyMap<string, WorkingFilePreview>,
   checks: readonly FixPlanCheck[],
+  decision?: PolicyDecision,
 ): FixPlan {
   const fixesFor = (item: FixPlanItem): number =>
     item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
+  const applicableFindingIds = new Set(
+    items
+      .filter((item) => item.status !== "skipped")
+      .flatMap((item) => item.findingIds),
+  );
+  const hasUnresolvedBlockingFinding =
+    decision?.summary.findings.some(
+      (finding) =>
+        finding.severity === "error" &&
+        !applicableFindingIds.has(finding.id),
+    ) ?? false;
   const files = [...workingFiles.values()]
     .map((preview): FixPlanFile => {
       const fileItems = items.filter((item) => item.file === preview.path);
@@ -550,9 +562,11 @@ function publicPlan(
     schemaVersion: 1 as const,
     target: "index" as const,
     selectedChecks: selected,
-    exitCode: checks.some((check) => check.status === "incomplete")
-      ? (1 as const)
-      : (0 as const),
+    exitCode:
+      checks.some((check) => check.status === "incomplete") ||
+      hasUnresolvedBlockingFinding
+        ? (1 as const)
+        : (0 as const),
     checks,
     summary,
     files,
@@ -715,7 +729,7 @@ export async function buildFixPlan(
       },
       { collectFixes: true },
     );
-    dependencies.evaluate(executions, config);
+    const decision = dependencies.evaluate(executions, config);
     signal.throwIfAborted();
     const candidates = collectCandidates(executions, selectedSet);
     const workingFiles = await workingFilePreviews(
@@ -728,7 +742,13 @@ export async function buildFixPlan(
     const planned = planCandidates(candidates, workingFiles);
     const checks = planChecks(selected, executions, planned.items);
     return deepFreeze({
-      publicPlan: publicPlan(selected, planned.items, workingFiles, checks),
+      publicPlan: publicPlan(
+        selected,
+        planned.items,
+        workingFiles,
+        checks,
+        decision,
+      ),
       repositoryRoot: options.repositoryRoot,
       candidates: planned.candidates,
       workingFiles,

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CheckExecutionResult } from "../../src/checks/adapter.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
-import type { CheckResult } from "../../src/core/types.js";
+import type { CheckResult, Finding } from "../../src/core/types.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import { GitClient } from "../../src/git/client.js";
 import {
@@ -80,6 +80,20 @@ const completed: CheckResult = {
   status: "completed",
   durationMs: 1,
   findings: [],
+};
+
+const blockingFinding: Finding = {
+  id: "lint-finding",
+  check: "lint",
+  rule: "no-unused-vars",
+  severity: "error",
+  message: "Value is never used.",
+  location: { file: "src/value.ts", startLine: 1 },
+  attribution: {
+    kind: "range-overlap",
+    staged: true,
+    evidence: ["src/value.ts:1"],
+  },
 };
 
 async function fixture(): Promise<{
@@ -174,6 +188,77 @@ function planDependencies(
 }
 
 describe("buildFixPlan", () => {
+  it("keeps the plan clear when every blocking finding has an applicable fix", async () => {
+    const files = await fixture();
+    const calls: string[] = [];
+
+    const plan = await buildFixPlan({
+      repositoryRoot: files.root,
+      selectedChecks: ["lint"],
+      dependencies: planDependencies(files, calls, {
+        evaluate: () => ({
+          exitCode: 1,
+          outcome: "blocked",
+          results: [{ ...completed, findings: [blockingFinding] }],
+          summary: {
+            passed: 0,
+            warnings: 0,
+            failed: 1,
+            incomplete: 0,
+            findings: [blockingFinding],
+          },
+        }),
+      }),
+    });
+
+    expect(plan.publicPlan.exitCode).toBe(0);
+    expect(plan.publicPlan.items).toEqual([
+      expect.objectContaining({
+        checkId: "lint",
+        findingIds: [blockingFinding.id],
+        status: "applicable",
+      }),
+    ]);
+    expect(calls).toEqual(["cleanup"]);
+  });
+
+  it("keeps a blocking non-fixable finding in the plan exit status", async () => {
+    const files = await fixture();
+    const calls: string[] = [];
+
+    const plan = await buildFixPlan({
+      repositoryRoot: files.root,
+      selectedChecks: ["lint"],
+      dependencies: planDependencies(files, calls, {
+        dispatch: async () => [
+          {
+            result: completed,
+            policy: config.checks.lint,
+            target: { id: ".", kind: "repository", relativeRoot: "." },
+            fixCandidates: [],
+          },
+        ],
+        evaluate: () => ({
+          exitCode: 1,
+          outcome: "blocked",
+          results: [{ ...completed, findings: [blockingFinding] }],
+          summary: {
+            passed: 0,
+            warnings: 0,
+            failed: 1,
+            incomplete: 0,
+            findings: [blockingFinding],
+          },
+        }),
+      }),
+    });
+
+    expect(plan.publicPlan.exitCode).toBe(1);
+    expect(plan.publicPlan.items).toEqual([]);
+    expect(plan.candidates).toEqual([]);
+    expect(calls).toEqual(["cleanup"]);
+  });
+
   it("builds a deeply immutable source-free plan from a fresh fix-collecting staged analysis", async () => {
     const files = await fixture();
     const calls: string[] = [];
