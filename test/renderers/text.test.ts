@@ -1086,6 +1086,33 @@ describe("renderText", () => {
     expect(output).toContain("\u001b[38;5;221m       Fix:");
   });
 
+  it("colors the Fix label and zedbee fix command yellow while keeping its explanation white", () => {
+    const finding = createFinding({
+      remediation:
+        "Run npx --no-install zedbee fix formatting, then stage the result.",
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+
+    const output = renderText(report, { width: 100, color: true });
+
+    expect(output).toContain(
+      "\u001b[38;5;221m       Fix:\u001b[39m" +
+        "\u001b[38;5;231m Run npx --no-install \u001b[39m" +
+        "\u001b[38;5;221mzedbee fix\u001b[39m" +
+        "\u001b[38;5;231m formatting, then stage the result.\u001b[39m",
+    );
+  });
+
   it("renders every managed finding check name in white", () => {
     const finding = createFinding({ check: "structuralSecurity" });
     const report = createReport({

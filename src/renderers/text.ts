@@ -56,6 +56,10 @@ const FINDING_TEXT_LABELS = new Set(
   [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
 );
 
+const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
+const FIX_CONTINUATION_PREFIX = " ".repeat("       Fix: ".length);
+const MANAGED_FIX_COMMAND = "zedbee fix";
+
 function textLineTone(line: string): TerminalTextTone {
   const trimmed = line.trimStart();
   if (PRIMARY_TEXT_HEADINGS.has(line)) return "primary";
@@ -73,9 +77,37 @@ function textLineTone(line: string): TerminalTextTone {
 
 function styleTextLines(lines: readonly string[], color: boolean): string[] {
   if (!color) return [...lines];
-  return lines.map((line) =>
-    line.length === 0 ? line : terminalText(line, textLineTone(line), true),
-  );
+  let insideFix = false;
+  return lines.map((line) => {
+    const fix = FIX_LABEL_PATTERN.exec(line);
+    if (fix !== null) {
+      insideFix = true;
+      return `${terminalText(fix[1]!, "reason", true)}${styleFixExplanation(fix[2]!)}`;
+    }
+    if (
+      insideFix &&
+      line.startsWith(FIX_CONTINUATION_PREFIX) &&
+      line.trim().length > 0
+    ) {
+      return styleFixExplanation(line);
+    }
+    insideFix = false;
+    return line.length === 0
+      ? line
+      : terminalText(line, textLineTone(line), true);
+  });
+}
+
+function styleFixExplanation(value: string): string {
+  return value
+    .split(MANAGED_FIX_COMMAND)
+    .flatMap((part, index, parts) => [
+      terminalText(part, "primary", true),
+      ...(index === parts.length - 1
+        ? []
+        : [terminalText(MANAGED_FIX_COMMAND, "reason", true)]),
+    ])
+    .join("");
 }
 
 function wrapWords(value: string, width: number, indent = ""): string[] {
