@@ -112,7 +112,7 @@ function expectPanelsTouch(
 }
 
 describe("ScanResultDashboard", () => {
-  it("places deduplicated managed commands in automatic next-step guidance", () => {
+  it("keeps generated managed-fix guidance out of the permanent post-frame callout", () => {
     const finding = createFinding({
       id: "fixable",
       check: "lint",
@@ -148,13 +148,12 @@ describe("ScanResultDashboard", () => {
     );
 
     expect(output).toContain("AGENT NEXT STEP");
-    expect(output).toContain(
+    expect(output).toContain("Apply a managed fix.");
+    expect(output).toContain("COMPLETE REPORT");
+    expect(output).not.toContain(
       "Managed fix commands write the working tree; they do not stage changes.",
     );
-    expect(output.match(/npx --no-install zedbee fix lint/gu)).toHaveLength(1);
-    expect(output.indexOf("AGENT NEXT STEP")).toBeLessThan(
-      output.indexOf("npx --no-install zedbee fix lint"),
-    );
+    expect(output).not.toContain("npx --no-install zedbee fix lint");
   });
 
   it("frames a passing result and prints the complete report above and below", () => {

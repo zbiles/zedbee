@@ -432,9 +432,15 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
       )
         .map((line) => `  ${line}`)
         .join("\n");
-      const header = `${terminalText(check.id, "primary", color)}${terminalText(` [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}`, "secondary", color)}`;
+      const header = terminalText(check.id, "primary", color);
       const body = [
         terminalText(`  ${check.description}`, "secondary", color),
+        terminalText(`  Limitation: ${check.limitation}`, "secondary", color),
+        terminalText(
+          `  [${check.severity}/${check.timing}] ${check.applicability}; ${check.executionClass}; targets: ${targets}; engine: ${check.engine.name} ${check.engine.version} (${check.engine.license}); network: ${check.network}`,
+          "secondary",
+          color,
+        ),
         ...configurationLines
           .split("\n")
           .filter((line) => line.length > 0)
@@ -448,7 +454,6 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
                 color,
               ),
             ]),
-        terminalText(`  Limitation: ${check.limitation}`, "secondary", color),
         ...(check.reason === undefined
           ? []
           : [terminalText(`  Reason: ${check.reason}`, "reason", color)]),

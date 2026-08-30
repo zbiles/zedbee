@@ -304,7 +304,7 @@ describe("executeChecksCommand", () => {
       );
 
       expect(stripAnsi(io.stdout.join(""))).toContain(
-        "formatting [error/relevant]",
+        "formatting\n  Checks staged formatting.\n  Limitation:",
       );
       expect(/\u001B\[[0-9;]*m/u.test(io.stdout.join(""))).toBe(expectsColor);
     },
@@ -318,7 +318,7 @@ describe("executeChecksCommand", () => {
       dependencies,
     );
     expect(stripAnsi(plain.stdout.join(""))).toContain(
-      "formatting [error/relevant]",
+      "formatting\n  Checks staged formatting.\n  Limitation:",
     );
     expect(plain.stdout.join("")).toMatch(/\u001B\[[0-9;]*m/u);
 
@@ -340,6 +340,33 @@ describe("executeChecksCommand", () => {
       },
     );
     expect(renders).toEqual([{ width: 120, color: false }]);
+  });
+
+  it("explains each narrow check before listing its limitation and settings", async () => {
+    const io = { ...terminal(), stdoutIsTTY: true, width: 79 };
+
+    await executeChecksCommand(
+      { cwd: "/repo", format: "auto", color: true },
+      io,
+      dependencies,
+    );
+
+    const output = stripAnsi(io.stdout.join(""));
+    const formatting = output.slice(
+      output.indexOf("formatting"),
+      output.indexOf("\n\nlint"),
+    );
+    const lines = formatting.split("\n");
+
+    expect(lines[0]).toBe("formatting");
+    expect(lines[1]).toBe("  Checks staged formatting.");
+    expect(lines[2]).toBe(
+      "  Limitation: Reports formatting differences; scans do not modify files.",
+    );
+    expect(lines[3]).toContain("[error/relevant] applicable");
+    expect(formatting.indexOf("Limitation:")).toBeLessThan(
+      formatting.indexOf("printWidth:"),
+    );
   });
 
   it("returns every check in canonical order with complete machine-readable metadata", async () => {
@@ -561,8 +588,8 @@ describe("executeChecksCommand", () => {
     );
     const output = text.stdout.join("");
     const duplicationOutput = output.slice(
-      output.indexOf("duplication ["),
-      output.indexOf("dependencyArchitecture ["),
+      output.indexOf("duplication\n"),
+      output.indexOf("dependencyArchitecture\n"),
     );
     expect(duplicationOutput).toContain("settings.minLines: 8 (repository)");
     expect(duplicationOutput).toContain("threshold: 6 (repository)");
@@ -713,7 +740,7 @@ describe("executeChecksCommand", () => {
       "\u001b[38;5;221m  Reason: No supported staged TypeScript source files",
     );
     expect(first.stdout.join("")).toContain(
-      "scans do not modify files.\u001b[39m\n\n\u001b[38;5;231mlint",
+      "Automatic fix: zedbee fix formatting\u001b[39m\n\n\u001b[38;5;231mlint",
     );
     expect(first.stdout.join("")).toContain(
       "Configuration: 13 profile values, 1 repository value",

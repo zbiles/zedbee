@@ -52,14 +52,21 @@ const DEFAULT_DEPENDENCIES: DoctorCommandDependencies = {
 };
 
 const MINIMUM_DASHBOARD_WIDTH = 80;
+const INIT_COMMAND = "zedbee init";
+
+function renderRemediation(diagnostic: Diagnostic, color: boolean): string {
+  if (diagnostic.remediation === undefined) return "";
+  const commandIndex = diagnostic.remediation.indexOf(INIT_COMMAND);
+  if (diagnostic.id !== "hook-state" || commandIndex < 0) {
+    return `\n${terminalText(`  Remediation: ${diagnostic.remediation}`, "reason", color)}`;
+  }
+  return `\n${terminalText(`  Remediation: ${diagnostic.remediation.slice(0, commandIndex)}`, "primary", color)}${terminalText(INIT_COMMAND, "reason", color)}${terminalText(diagnostic.remediation.slice(commandIndex + INIT_COMMAND.length), "primary", color)}`;
+}
 
 function renderText(result: DoctorCommandResult, color: boolean): string {
   return `${result.diagnostics
     .map((diagnostic) => {
-      const remediation =
-        diagnostic.remediation === undefined
-          ? ""
-          : `\n${terminalText(`  Remediation: ${diagnostic.remediation}`, "reason", color)}`;
+      const remediation = renderRemediation(diagnostic, color);
       const statusTone: TerminalTextTone =
         diagnostic.status === "pass"
           ? "pass"
