@@ -397,6 +397,17 @@ export function resolveConfig(
       temporaryReportMaxAge: file?.reporting?.temporaryReportMaxAge ?? "24h",
       agentGuidance: normalizeAgentGuidance(file?.reporting?.agentGuidance),
     }),
+    resources: Object.freeze({
+      ...(file?.resources?.git?.softTimeout === undefined
+        ? {}
+        : { gitSoftTimeout: file.resources.git.softTimeout }),
+      ...(file?.resources?.git?.hardTimeout === undefined
+        ? {}
+        : { gitHardTimeout: file.resources.git.hardTimeout }),
+      ...(file?.resources?.git?.outputLimitBytes === undefined
+        ? {}
+        : { gitOutputLimitBytes: file.resources.git.outputLimitBytes }),
+    }),
     configurationOrigins: freezeOrigins(mutableOrigins),
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };

@@ -266,6 +266,7 @@ function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
     ) as ResolvedConfig["checks"],
     overrides: Object.freeze(config.overrides.map(snapshotOverride)),
     reporting: immutableConfigurationSnapshot(config.reporting),
+    resources: immutableConfigurationSnapshot(config.resources),
     configurationOrigins: snapshotConfigurationOrigins(
       config.configurationOrigins,
     ),

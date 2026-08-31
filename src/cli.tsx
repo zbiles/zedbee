@@ -23,6 +23,7 @@ interface CommanderScanOptions {
   source: boolean;
   color: boolean;
   animations: boolean;
+  timeout?: string | false;
 }
 
 interface CommanderChecksOptions {
@@ -165,6 +166,12 @@ export async function main(
       ),
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
+    .option("--timeout <duration>", "set the Git hard timeout for this scan")
+    .addOption(
+      new Option("--no-timeout", "disable configured Git hard timeouts").conflicts(
+        "timeout",
+      ),
+    )
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderScanOptions) => {
@@ -182,6 +189,10 @@ export async function main(
             : options.source === false
               ? { sourceExcerpts: "exclude" as const }
               : {}),
+          ...(typeof options.timeout === "string"
+            ? { timeout: options.timeout }
+            : {}),
+          ...(options.timeout === false ? { noTimeout: true } : {}),
           signal: controller.signal,
         },
         {

@@ -4646,6 +4646,34 @@
       },
       "additionalProperties": false
     },
+    "resources": {
+      "description": "Optional resource limits for Git commands during scans.",
+      "type": "object",
+      "properties": {
+        "git": {
+          "type": "object",
+          "properties": {
+            "softTimeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m|h)$",
+              "description": "Positive whole-number duration ending in ms, s, m, or h."
+            },
+            "hardTimeout": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*(ms|s|m|h)$",
+              "description": "Positive whole-number duration ending in ms, s, m, or h."
+            },
+            "outputLimitBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "failOnIncomplete": {
       "description": "Block the commit when a configured check cannot complete reliably.",
       "default": true,

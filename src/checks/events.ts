@@ -25,8 +25,13 @@ export interface NetworkDisclosureEvent extends CheckEventBase {
   metadata: readonly string[];
 }
 
+export interface GitSoftTimeoutEvent extends CheckEventBase {
+  type: "git-soft-timeout";
+}
+
 export type ScanEvent =
   | CheckQueuedEvent
   | CheckRunningEvent
   | CheckCompletedEvent
-  | NetworkDisclosureEvent;
+  | NetworkDisclosureEvent
+  | GitSoftTimeoutEvent;

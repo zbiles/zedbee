@@ -1,4 +1,8 @@
-export type GitErrorCode = "GIT_ABORTED" | "GIT_COMMAND_FAILED";
+export type GitErrorCode =
+  | "GIT_ABORTED"
+  | "GIT_COMMAND_FAILED"
+  | "GIT_HARD_TIMEOUT"
+  | "GIT_OUTPUT_LIMIT_EXCEEDED";
 
 export class GitCommandError extends Error {
   readonly code: GitErrorCode;

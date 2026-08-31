@@ -32,6 +32,8 @@ export interface ScanCommandOptions {
   animations: boolean;
   configPath?: string;
   sourceExcerpts?: SourceExcerptOverride;
+  timeout?: string;
+  noTimeout?: boolean;
   signal?: AbortSignal;
 }
 
@@ -222,6 +224,8 @@ export async function executeScanCommand(
         : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      ...(options.noTimeout ? { noTimeout: true } : {}),
     };
     const color = options.color && io.env.NO_COLOR === undefined;
     const requestedInkFormat: InkRenderOptions["requestedFormat"] =

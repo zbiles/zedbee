@@ -75,4 +75,28 @@ describe("GitClient", () => {
       code: "GIT_ABORTED",
     });
   });
+
+  it("forwards a configured hard-timeout signal to a real Git invocation", async () => {
+    const repository = await createGitRepository();
+    await repository.git(["config", "alias.zedbee-wait", "!sleep 1"]);
+    const client = new GitClient(repository.root, {
+      resourcePolicy: {
+        gitSoftTimeoutMs: undefined,
+        gitHardTimeoutMs: 25,
+        gitOutputLimitBytes: 1024,
+      },
+    });
+
+    await expect(
+      Promise.race([
+        client.run(["zedbee-wait"]),
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(
+            () => reject(new Error("Git hard timeout did not cancel the process.")),
+            250,
+          );
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
+  });
 });

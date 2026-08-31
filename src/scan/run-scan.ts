@@ -24,6 +24,8 @@ import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
 import { readStagedChangeSet, type ChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
+import { GitCommandError } from "../git/errors.js";
+import { resolveScanResourcePolicy } from "./resource-policy.js";
 import {
   buildSnapshotPair,
   SnapshotConstructionCleanupError,
@@ -67,7 +69,10 @@ export interface RunScanDependencies {
     repositoryRoot: string,
     configPath?: string,
   ): Promise<ResolvedConfig>;
-  createGitClient(repositoryRoot: string): GitClient;
+  createGitClient(
+    repositoryRoot: string,
+    options?: ConstructorParameters<typeof GitClient>[1],
+  ): GitClient;
   readChangeSet(git: GitClient, signal?: AbortSignal): Promise<ChangeSet>;
   buildSnapshots(
     repositoryRoot: string,
@@ -92,6 +97,8 @@ export interface RunScanOptions {
   configPath?: string;
   reportingSurface?: ReportingSurface;
   sourceExcerpts?: SourceExcerptOverride;
+  timeout?: string;
+  noTimeout?: boolean;
   signal?: AbortSignal;
   onEvent?: (event: ScanEvent) => void;
   dependencies?: RunScanDependencies;
@@ -116,7 +123,8 @@ export const DEFAULT_CHECK_ADAPTERS: readonly CheckAdapter[] = Object.freeze([
 
 const DEFAULT_DEPENDENCIES: RunScanDependencies = {
   loadConfig,
-  createGitClient: (repositoryRoot) => new GitClient(repositoryRoot),
+  createGitClient: (repositoryRoot, options) =>
+    new GitClient(repositoryRoot, options),
   readChangeSet: readStagedChangeSet,
   buildSnapshots: buildSnapshotPair,
   inspectRepository,
@@ -203,6 +211,24 @@ function phaseFailure(
   error: unknown,
   phase: ActiveScanPhase,
 ): ScanFailureInput {
+  if (error instanceof GitCommandError) {
+    if (error.code === "GIT_OUTPUT_LIMIT_EXCEEDED") {
+      return {
+        code: error.code,
+        message: "Zedbee stopped a Git command after it exceeded the configured output limit.",
+        remediation:
+          "Increase resources.git.outputLimitBytes and run the scan again.",
+      };
+    }
+    if (error.code === "GIT_HARD_TIMEOUT") {
+      return {
+        code: error.code,
+        message: "Zedbee stopped a Git command after it exceeded the configured hard timeout.",
+        remediation:
+          "Increase resources.git.hardTimeout or run zedbee scan with --no-timeout.",
+      };
+    }
+  }
   if (phase === "configuration" && error instanceof ConfigError) {
     return error.code === "CONFIG_UNSUPPORTED"
       ? {
@@ -303,6 +329,10 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       options.repositoryRoot,
       options.configPath,
     );
+    const resourcePolicy = resolveScanResourcePolicy(config.resources, {
+      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      ...(options.noTimeout ? { noTimeout: true } : {}),
+    });
     includeSourceExcerpts = shouldIncludeSourceExcerpts(
       config.reporting.sourceExcerpts,
       options.reportingSurface,
@@ -318,7 +348,16 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       agentGuidance: config.reporting.agentGuidance,
     });
     activePhase = "change-discovery";
-    const git = dependencies.createGitClient(options.repositoryRoot);
+    const git = dependencies.createGitClient(options.repositoryRoot, {
+      resourcePolicy,
+      onSoftTimeout: () =>
+        options.onEvent?.({
+          type: "git-soft-timeout",
+          checkId: "zedbee",
+          target: ".",
+          timestamp: dependencies.clock(),
+        }),
+    });
     const changeSet = await dependencies.readChangeSet(git, options.signal);
     const policyForFile = createFilePolicyResolver(config, changeSet);
     stagedFileCount = changeSet.files.size;

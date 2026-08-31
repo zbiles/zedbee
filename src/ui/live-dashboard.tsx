@@ -58,7 +58,12 @@ function stateLabel(checkId: string, target: string): string {
 function statesFrom(events: readonly ScanEvent[]): CheckState[] {
   const states = new Map<string, CheckState>();
   for (const event of events) {
-    if (event.type === "network-disclosure") continue;
+    if (
+      event.type === "network-disclosure" ||
+      event.type === "git-soft-timeout"
+    ) {
+      continue;
+    }
     const key = `${event.checkId}\u0000${event.target}`;
     const existing = states.get(key);
     if (event.type === "check-queued") {
@@ -133,6 +138,9 @@ function activityText(event: ScanEvent): string | undefined {
   if (event.type === "network-disclosure") {
     return `${label}: online metadata → ${event.services.join(", ")}`;
   }
+  if (event.type === "git-soft-timeout") {
+    return "Zedbee: Git command is still running after the configured soft timeout";
+  }
   if (event.type === "check-running") {
     return `${label}: checking…`;
   }
@@ -154,6 +162,7 @@ function activityText(event: ScanEvent): string | undefined {
 
 function activityColor(event: ScanEvent): string {
   if (event.type === "network-disclosure") return ZEDBEE_THEME.warning;
+  if (event.type === "git-soft-timeout") return ZEDBEE_THEME.warning;
   if (event.type === "check-running") return ZEDBEE_THEME.pass;
   if (event.type === "check-completed") {
     return statusColor(resultStatus(event.result));

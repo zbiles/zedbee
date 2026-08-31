@@ -51,6 +51,12 @@ export interface ResolvedReportingPolicy {
   readonly agentGuidance: AgentGuidance;
 }
 
+export interface ResolvedResourcePolicy {
+  readonly gitSoftTimeout?: string;
+  readonly gitHardTimeout?: string;
+  readonly gitOutputLimitBytes?: number;
+}
+
 export interface ResolvedCheckPolicyBase {
   severity: CheckSeverity;
   when: CheckTiming;
@@ -118,6 +124,7 @@ export interface ResolvedConfig {
   readonly checks: Readonly<ResolvedCheckPolicies>;
   readonly overrides: readonly ResolvedPolicyOverride[];
   readonly reporting: Readonly<ResolvedReportingPolicy>;
+  readonly resources: Readonly<ResolvedResourcePolicy>;
   readonly configurationOrigins: ResolvedConfigurationOrigins;
   readonly failOnIncomplete: boolean;
   readonly configPath?: string;
@@ -384,6 +391,25 @@ const reportingSchema = z
   })
   .strict();
 
+const resourceDurationSchema = z
+  .string()
+  .regex(/^[1-9][0-9]*(ms|s|m|h)$/u)
+  .meta({
+    description: "Positive whole-number duration ending in ms, s, m, or h.",
+  });
+const resourcesSchema = z
+  .object({
+    git: z
+      .object({
+        softTimeout: resourceDurationSchema.optional(),
+        hardTimeout: resourceDurationSchema.optional(),
+        outputLimitBytes: positiveSafeIntegerSchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 // Availability behavior and duplication settings are repository/workspace-wide
 // because neither can vary safely for an individual file target.
 const overrideChecksSchema = checksSchema.extend({
@@ -458,6 +484,9 @@ export const configFileSchema = z
       default: [],
     }),
     reporting: reportingSchema.optional(),
+    resources: resourcesSchema.optional().meta({
+      description: "Optional resource limits for Git commands during scans.",
+    }),
     failOnIncomplete: z.boolean().optional().meta({
       description:
         "Block the commit when a configured check cannot complete reliably.",

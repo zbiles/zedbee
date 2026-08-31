@@ -16,7 +16,7 @@ import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { ConfigError } from "../../src/config/load-config.js";
-import type { GitClient } from "../../src/git/client.js";
+import { GitClient, type GitOutput } from "../../src/git/client.js";
 import { GitCommandError } from "../../src/git/errors.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
@@ -237,7 +237,136 @@ function dependencies(
   };
 }
 
+function delayedGitCommand(delayMs: number) {
+  return async (
+    _args: readonly string[],
+    options: Readonly<{ signal?: AbortSignal }>,
+  ): Promise<GitOutput> =>
+    new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => resolve({ stdout: "", stderr: "", exitCode: 0 }),
+        delayMs,
+      );
+      options.signal?.addEventListener(
+        "abort",
+        () => {
+          clearTimeout(timer);
+          reject(new Error("cancelled"));
+        },
+        { once: true },
+      );
+    });
+}
+
 describe("runScan", () => {
+  it("maps a bounded Git output failure to a sanitized incomplete report", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        readChangeSet: async () => {
+          throw new GitCommandError(
+            "GIT_OUTPUT_LIMIT_EXCEEDED",
+            "sensitive Git output",
+          );
+        },
+      }),
+    });
+
+    expect(report.checks[0]?.error?.code).toBe("GIT_OUTPUT_LIMIT_EXCEEDED");
+    expect(report.outcome).toBe("incomplete");
+    expect(JSON.stringify(report)).not.toContain("sensitive");
+  });
+
+  it("continues after a configured Git soft timeout", async () => {
+    const events: unknown[] = [];
+    const softTimeoutConfig = resolveConfig({
+      schemaVersion: 1,
+      resources: { git: { softTimeout: "5ms" } },
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      onEvent: (event) => events.push(event),
+      dependencies: dependencies([], {
+        loadConfig: async () => softTimeoutConfig,
+        createGitClient: (root, options) =>
+          new GitClient(root, {
+            ...options,
+            runCommand: delayedGitCommand(20),
+          }),
+        readChangeSet: async (git, signal) => {
+          await git.run(
+            ["status"],
+            signal === undefined ? {} : { signal },
+          );
+          return nonEmptyChangeSet;
+        },
+      }),
+    });
+
+    expect(report.outcome).toBe("pass");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "git-soft-timeout" }),
+    );
+  });
+
+  it("returns incomplete after an explicitly configured Git hard timeout", async () => {
+    const hardTimeoutConfig = resolveConfig({
+      schemaVersion: 1,
+      resources: { git: { hardTimeout: "5ms" } },
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => hardTimeoutConfig,
+        createGitClient: (root, options) =>
+          new GitClient(root, {
+            ...options,
+            runCommand: delayedGitCommand(20),
+          }),
+        readChangeSet: async (git, signal) => {
+          await git.run(
+            ["status"],
+            signal === undefined ? {} : { signal },
+          );
+          return nonEmptyChangeSet;
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      checks: [{ error: { code: "GIT_HARD_TIMEOUT" } }],
+    });
+  });
+
+  it("bypasses a configured Git hard timeout when noTimeout is set", async () => {
+    const hardTimeoutConfig = resolveConfig({
+      schemaVersion: 1,
+      resources: { git: { hardTimeout: "5ms" } },
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      noTimeout: true,
+      dependencies: dependencies([], {
+        loadConfig: async () => hardTimeoutConfig,
+        createGitClient: (root, options) =>
+          new GitClient(root, {
+            ...options,
+            runCommand: delayedGitCommand(20),
+          }),
+        readChangeSet: async (git, signal) => {
+          await git.run(
+            ["status"],
+            signal === undefined ? {} : { signal },
+          );
+          return nonEmptyChangeSet;
+        },
+      }),
+    });
+
+    expect(report.outcome).toBe("pass");
+  });
+
   it("propagates its abort signal to staged change discovery", async () => {
     const controller = new AbortController();
     let resolveStarted: (() => void) | undefined;
