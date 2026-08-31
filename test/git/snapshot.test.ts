@@ -323,6 +323,63 @@ describe("buildSnapshotPair", () => {
     expect(await pathExists(snapshotRoot!)).toBe(false);
   });
 
+  it("aborts baseline checkout-index and removes its temporary snapshot root", async () => {
+    let snapshotRoot: string | undefined;
+    let signalReceived = false;
+    let markBaselineCheckoutStarted: (() => void) | undefined;
+    const baselineCheckoutStarted = new Promise<void>((resolve) => {
+      markBaselineCheckoutStarted = resolve;
+    });
+    let checkoutCount = 0;
+    const git = {
+      async run(
+        args: readonly string[],
+        options: { signal?: AbortSignal } = {},
+      ) {
+        if (args[0] !== "checkout-index") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+        const checkoutDir = prefix
+          .slice("--prefix=".length)
+          .replace(/[/\\]+$/u, "");
+        snapshotRoot = dirname(checkoutDir);
+        if (checkoutCount++ === 0) {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        markBaselineCheckoutStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          const abort = () => {
+            signalReceived = true;
+            reject(new GitCommandError("GIT_ABORTED", "Git command was aborted."));
+          };
+          if (options.signal?.aborted === true) {
+            abort();
+          } else {
+            options.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      },
+      async tryRun() {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+    onTestFinished(async () => {
+      if (snapshotRoot !== undefined) {
+        await rm(snapshotRoot, { recursive: true, force: true });
+      }
+    });
+    const controller = new AbortController();
+    const build = buildSnapshotPair("/repo", git, controller.signal);
+    await baselineCheckoutStarted;
+    controller.abort();
+
+    await expect(build).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    expect(signalReceived).toBe(true);
+    expect(snapshotRoot).toBeDefined();
+    expect(await pathExists(snapshotRoot!)).toBe(false);
+  });
+
   it.runIf(process.platform !== "win32")(
     "preserves a safe construction failure and validated path when construction cleanup also fails",
     async () => {

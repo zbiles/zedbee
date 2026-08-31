@@ -336,6 +336,49 @@ describe("runScan", () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
+  it("cleans snapshots and preserves the abort outcome after construction", async () => {
+    const controller = new AbortController();
+    const abortError = new GitCommandError(
+      "GIT_ABORTED",
+      "Git command was aborted.",
+    );
+    let cleanupCalls = 0;
+    let resolveDispatchStarted: (() => void) | undefined;
+    const dispatchStarted = new Promise<void>((resolve) => {
+      resolveDispatchStarted = resolve;
+    });
+    const deps = dependencies([], {
+      buildSnapshots: async () => ({
+        baselineDir: "/tmp/baseline",
+        targetDir: "/tmp/target",
+        baselineRef: "HEAD",
+        unsupportedEntries: [],
+        cleanup: async () => {
+          cleanupCalls++;
+        },
+      }),
+      dispatch: async (_adapters, { signal }) => {
+        resolveDispatchStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(abortError), {
+            once: true,
+          });
+        });
+      },
+    });
+
+    const pending = runScan({
+      repositoryRoot: "/repo",
+      signal: controller.signal,
+      dependencies: deps,
+    });
+    await dispatchStarted;
+    controller.abort();
+
+    await expect(pending).rejects.toBe(abortError);
+    expect(cleanupCalls).toBe(1);
+  });
+
   it("uses the effective target policy for unsupported inputs", () => {
     const changeSet = addedChangeSet("src/matched.ts", "src/other.ts");
     const changedPaths = new Set(changeSet.files.keys());
