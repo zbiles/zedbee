@@ -81,7 +81,10 @@ function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
   return { path: to, status: "modified", addedRanges: addedRanges(file) };
 }
 
-export async function readStagedChangeSet(git: GitClient): Promise<ChangeSet> {
+export async function readStagedChangeSet(
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
   const patch = await git.run([
     "diff",
     "--cached",
@@ -91,7 +94,7 @@ export async function readStagedChangeSet(git: GitClient): Promise<ChangeSet> {
     "--find-renames",
     "--src-prefix=a/",
     "--dst-prefix=b/",
-  ]);
+  ], signal === undefined ? {} : { signal });
   const changedFiles = parseDiff(patch.stdout)
     .map(toChangedFile)
     .filter((file): file is ChangedFile => file !== undefined)

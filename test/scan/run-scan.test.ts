@@ -17,6 +17,7 @@ import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { ConfigError } from "../../src/config/load-config.js";
 import type { GitClient } from "../../src/git/client.js";
+import { GitCommandError } from "../../src/git/errors.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
 import { buildSnapshotPair, SnapshotError } from "../../src/git/snapshot.js";
@@ -237,6 +238,104 @@ function dependencies(
 }
 
 describe("runScan", () => {
+  it("propagates its abort signal to staged change discovery", async () => {
+    const controller = new AbortController();
+    let resolveStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const deps = dependencies([], {
+      readChangeSet: async (_git, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        resolveStarted?.();
+        return new Promise<ChangeSet>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+              ),
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const pending = runScan({
+      repositoryRoot: "/repo",
+      signal: controller.signal,
+      dependencies: deps,
+    });
+    await started;
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new Error("change discovery did not receive the abort signal"),
+              ),
+            100,
+          );
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
+  it("propagates its abort signal to snapshot construction", async () => {
+    const controller = new AbortController();
+    let resolveStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const deps = dependencies([], {
+      buildSnapshots: async (_repositoryRoot, _git, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        resolveStarted?.();
+        return new Promise<SnapshotPair>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+              ),
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const pending = runScan({
+      repositoryRoot: "/repo",
+      signal: controller.signal,
+      dependencies: deps,
+    });
+    await started;
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(
+            () =>
+              reject(
+                new Error("snapshot construction did not receive the abort signal"),
+              ),
+            100,
+          );
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
   it("uses the effective target policy for unsupported inputs", () => {
     const changeSet = addedChangeSet("src/matched.ts", "src/other.ts");
     const changedPaths = new Set(changeSet.files.keys());

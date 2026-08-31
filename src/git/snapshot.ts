@@ -234,8 +234,13 @@ async function removeIntentToAddPlaceholders(
 export async function buildSnapshotPair(
   repositoryRoot: string,
   git: GitClient,
+  signal?: AbortSignal,
 ): Promise<SnapshotPair> {
-  const unresolved = await git.run(["ls-files", "--unmerged", "-z"]);
+  const gitOptions = signal === undefined ? {} : { signal };
+  const unresolved = await git.run(
+    ["ls-files", "--unmerged", "-z"],
+    gitOptions,
+  );
   if (unresolved.stdout !== "") {
     throw new SnapshotError(
       "UNRESOLVED_INDEX",
@@ -282,11 +287,11 @@ export async function buildSnapshotPair(
     await mkdir(targetDir);
 
     const stagedEntries = parseStagedEntries(
-      (await git.run(["ls-files", "--stage", "-z"])).stdout,
+      (await git.run(["ls-files", "--stage", "-z"], gitOptions)).stdout,
     );
     validateStagedEntryPaths(repositoryRoot, stagedEntries);
     const intentToAddPaths = parseIntentToAddPaths(
-      (await git.run(["ls-files", "--debug", "-z"])).stdout,
+      (await git.run(["ls-files", "--debug", "-z"], gitOptions)).stdout,
     );
 
     await git.run([
@@ -294,7 +299,7 @@ export async function buildSnapshotPair(
       "--all",
       "--force",
       `--prefix=${targetDir}${sep}`,
-    ]);
+    ], gitOptions);
 
     await removeIntentToAddPlaceholders(targetDir, intentToAddPaths);
 
@@ -303,14 +308,17 @@ export async function buildSnapshotPair(
       stagedEntries.filter((entry) => !intentToAddPaths.has(entry.path)),
     );
 
-    const head = await git.tryRun(["rev-parse", "--verify", "HEAD"]);
+    const head = await git.tryRun(
+      ["rev-parse", "--verify", "HEAD"],
+      gitOptions,
+    );
     const baselineRef = head.exitCode === 0 ? "HEAD" : null;
     if (baselineRef === "HEAD") {
       const env = { GIT_INDEX_FILE: alternateIndex };
-      await git.run(["read-tree", "HEAD"], { env });
+      await git.run(["read-tree", "HEAD"], { env, ...gitOptions });
       await git.run(
         ["checkout-index", "--all", "--force", `--prefix=${baselineDir}${sep}`],
-        { env },
+        { env, ...gitOptions },
       );
     }
 

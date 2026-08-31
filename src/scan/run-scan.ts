@@ -68,8 +68,12 @@ export interface RunScanDependencies {
     configPath?: string,
   ): Promise<ResolvedConfig>;
   createGitClient(repositoryRoot: string): GitClient;
-  readChangeSet(git: GitClient): Promise<ChangeSet>;
-  buildSnapshots(repositoryRoot: string, git: GitClient): Promise<SnapshotPair>;
+  readChangeSet(git: GitClient, signal?: AbortSignal): Promise<ChangeSet>;
+  buildSnapshots(
+    repositoryRoot: string,
+    git: GitClient,
+    signal?: AbortSignal,
+  ): Promise<SnapshotPair>;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
   baselineForEmptyChange(git: GitClient): Promise<"HEAD" | null>;
   dispatch: typeof dispatchChecks;
@@ -315,7 +319,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     });
     activePhase = "change-discovery";
     const git = dependencies.createGitClient(options.repositoryRoot);
-    const changeSet = await dependencies.readChangeSet(git);
+    const changeSet = await dependencies.readChangeSet(git, options.signal);
     const policyForFile = createFilePolicyResolver(config, changeSet);
     stagedFileCount = changeSet.files.size;
 
@@ -342,6 +346,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       snapshots = await dependencies.buildSnapshots(
         options.repositoryRoot,
         git,
+        options.signal,
       );
       baseline = snapshots.baselineRef;
       const unsupportedFailures = unsupportedEntryFailures(
