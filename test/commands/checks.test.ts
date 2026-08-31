@@ -5,6 +5,7 @@ import {
   type ChecksCommandIO,
 } from "../../src/commands/checks.js";
 import { CHECK_IDS, type ResolvedConfig } from "../../src/config/schema.js";
+import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { GitClient } from "../../src/git/client.js";
@@ -247,6 +248,7 @@ describe("executeChecksCommand", () => {
           baselineInspection,
           targetInspection,
           signal: new AbortController().signal,
+          policyForFile: createFilePolicyResolver(config, changeSet),
         },
       );
       const lint = described.checks.find(({ id }) => id === "lint");

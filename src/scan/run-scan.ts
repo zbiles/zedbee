@@ -18,6 +18,7 @@ import { structuralSecurityAdapter } from "../checks/structural-security/adapter
 import { typescriptAdapter } from "../checks/typescript/adapter.js";
 import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
 import { ConfigError, loadConfig } from "../config/load-config.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
@@ -315,6 +316,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     activePhase = "change-discovery";
     const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
+    const policyForFile = createFilePolicyResolver(config, changeSet);
     stagedFileCount = changeSet.files.size;
 
     if (changeSet.isEmpty) {
@@ -344,8 +346,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       baseline = snapshots.baselineRef;
       const unsupportedFailures = unsupportedEntryFailures(
         snapshots.unsupportedEntries,
-        config,
         new Set(changeSet.files.keys()),
+        policyForFile,
       );
       if (unsupportedFailures.length > 0) {
         report = createIncompleteReport(reportContext(), unsupportedFailures);
@@ -372,6 +374,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
             baselineInspection,
             targetInspection,
             signal,
+            policyForFile,
           },
           dispatchOptions(
             options.onEvent,

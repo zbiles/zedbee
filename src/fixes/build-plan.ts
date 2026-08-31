@@ -3,7 +3,10 @@ import { lstat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { dispatchChecks } from "../checks/dispatcher.js";
-import type { FilePolicyResolver } from "../config/file-policy.js";
+import {
+  createFilePolicyResolver,
+  type FilePolicyResolver,
+} from "../config/file-policy.js";
 import { loadConfig } from "../config/load-config.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -683,6 +686,7 @@ export async function buildFixPlan(
     );
     const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
+    const policyForFile = createFilePolicyResolver(config, changeSet);
     if (changeSet.isEmpty) {
       return deepFreeze({
         publicPlan: publicPlan(
@@ -703,8 +707,8 @@ export async function buildFixPlan(
     snapshots = await dependencies.buildSnapshots(options.repositoryRoot, git);
     const unsupported = unsupportedEntryFailures(
       snapshots.unsupportedEntries,
-      config,
       new Set(changeSet.files.keys()),
+      policyForFile,
     );
     if (unsupported.length > 0) throw unsupportedInputError();
     signal.throwIfAborted();
@@ -726,6 +730,7 @@ export async function buildFixPlan(
         baselineInspection,
         targetInspection,
         signal,
+        policyForFile,
       },
       { collectFixes: true },
     );

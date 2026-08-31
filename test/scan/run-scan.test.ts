@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import type { CheckResult } from "../../src/core/types.js";
+import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { ConfigError } from "../../src/config/load-config.js";
@@ -30,6 +31,7 @@ import {
 import type { ScanEvent } from "../../src/checks/events.js";
 import { prepareTerminalPresentation } from "../../src/reporting/presentation.js";
 import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
+import { unsupportedEntryFailures } from "../../src/scan/unsupported-inputs.js";
 import type {
   TemporaryReportRequest,
   TemporaryReportStore,
@@ -110,6 +112,32 @@ function snapshotsWithUnsupported(path: string, kind: "binary"): SnapshotPair {
     unsupportedEntries: [{ path, kind }],
     cleanup: async () => undefined,
   };
+}
+
+function configWithRootLintDisabledForSource(): ResolvedConfig {
+  return resolveConfig({
+    schemaVersion: 1,
+    profile: "fast",
+    checks: {
+      formatting: "off",
+      lint: "error",
+      types: "off",
+      cyclomaticComplexity: "off",
+      readabilityComplexity: "off",
+      structuralSecurity: "off",
+      secrets: "off",
+      duplication: "off",
+      dependencyArchitecture: "off",
+      deadCode: "off",
+      reactCorrectness: "off",
+      reactAccessibility: "off",
+      vulnerabilities: "off",
+    },
+    overrides: [
+      { files: ["src/**"], checks: { lint: "off" } },
+      { files: ["src/other.ts"], checks: { types: "error" } },
+    ],
+  });
 }
 
 const passing: CheckResult = {
@@ -209,6 +237,28 @@ function dependencies(
 }
 
 describe("runScan", () => {
+  it("uses the effective target policy for unsupported inputs", () => {
+    const changeSet = addedChangeSet("src/matched.ts", "src/other.ts");
+    const changedPaths = new Set(changeSet.files.keys());
+    const policyForFile = createFilePolicyResolver(
+      configWithRootLintDisabledForSource(),
+      changeSet,
+    );
+    const entries = [
+      { path: "src/matched.ts", kind: "binary" },
+      { path: "src/other.ts", kind: "binary" },
+    ] as const;
+
+    expect(
+      unsupportedEntryFailures([entries[0]], changedPaths, policyForFile),
+    ).toEqual([]);
+    expect(
+      unsupportedEntryFailures(entries, changedPaths, policyForFile),
+    ).toMatchObject([
+      { code: "UNSUPPORTED_BINARY_INPUT", path: "src/other.ts" },
+    ]);
+  });
+
   it("publishes the managed adapters in deterministic check order", () => {
     expect(DEFAULT_CHECK_ADAPTERS.map(({ id }) => id)).toEqual([
       "formatting",
@@ -359,15 +409,15 @@ describe("runScan", () => {
     expect(report).toMatchObject({
       outcome: "incomplete",
       exitCode: 2,
-      summary: { incomplete: 4 },
+      summary: { incomplete: 5 },
     });
     expect(report.checks.map(({ error }) => error)).toMatchObject([
       { code: "GIT_LFS_POINTER", path: "assets/first.dat" },
+      { code: "UNSUPPORTED_BINARY_INPUT", path: "assets/photo.png" },
       { code: "GIT_LFS_POINTER", path: "assets/second.dat" },
       { code: "UNSUPPORTED_BINARY_INPUT", path: "src/generated.js" },
       { code: "GIT_SUBMODULE_UNAVAILABLE", path: "vendor/demo" },
     ]);
-    expect(JSON.stringify(report)).not.toContain("assets/photo.png");
     expect(dispatchCalls).toBe(0);
   });
 
@@ -580,7 +630,7 @@ describe("runScan", () => {
     expect(dispatchCalls).toBe(1);
   });
 
-  it("allows ordinary binary assets to proceed to configured checks", async () => {
+  it("reports binary assets to enabled path-agnostic checks", async () => {
     let dispatchCalls = 0;
     const report = await runScan({
       repositoryRoot: "/repo",
@@ -618,8 +668,16 @@ describe("runScan", () => {
       }),
     });
 
-    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
-    expect(dispatchCalls).toBe(1);
+    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          code: "UNSUPPORTED_BINARY_INPUT",
+          path: "assets/photo.png",
+        }),
+      }),
+    );
+    expect(dispatchCalls).toBe(0);
   });
 
   it("preserves findings and disclosures when snapshot cleanup fails", async () => {

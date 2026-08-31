@@ -5,7 +5,6 @@ import {
   type ResolvedCheckPolicy,
 } from "../config/schema.js";
 import {
-  createFilePolicyResolver,
   type FilePolicyResolver,
 } from "../config/file-policy.js";
 import type { CheckResult } from "../core/types.js";
@@ -78,10 +77,10 @@ function checkPolicy(
 }
 
 type DispatchContext = InspectionContext &
-  Pick<CheckRunContext, "snapshots" | "signal">;
-type TrustedDispatchContext = DispatchContext & {
-  readonly policyForFile: FilePolicyResolver;
-};
+  Pick<CheckRunContext, "snapshots" | "signal"> & {
+    readonly policyForFile: FilePolicyResolver;
+  };
+type TrustedDispatchContext = DispatchContext;
 
 const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   formatting: "Formatting",
@@ -460,6 +459,7 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
     baselineInspection: snapshotInspection(context.baselineInspection),
     targetInspection: snapshotInspection(context.targetInspection),
     signal: context.signal,
+    policyForFile: context.policyForFile,
   });
 }
 
@@ -711,15 +711,7 @@ export async function dispatchChecks(
     "project-analysis": pLimit(1),
     network: pLimit(1),
   } as const;
-  const baseContext = adapterBaseContext(context);
-  const policyForFile = createFilePolicyResolver(
-    baseContext.config,
-    baseContext.changeSet,
-  );
-  const adapterContext: TrustedDispatchContext = Object.freeze({
-    ...baseContext,
-    policyForFile,
-  });
+  const adapterContext: TrustedDispatchContext = adapterBaseContext(context);
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
   const adapterSnapshots = adapters.map(snapshotAdapter);
@@ -846,7 +838,7 @@ export async function dispatchChecks(
           target,
           context.targetInspection,
           context.changeSet,
-          policyForFile,
+          adapterContext.policyForFile,
         );
         if (scheduledPolicy === undefined) continue;
         policy = scheduledPolicy;
@@ -1028,7 +1020,7 @@ export async function dispatchChecks(
           const policyDisplayResult = displayResultForPolicy(
             result,
             executionPolicy,
-            policyForFile,
+            adapterContext.policyForFile,
           );
           let displayResult =
             policyDisplayResult ?? sanitizeCheckResult(result);
@@ -1067,7 +1059,7 @@ export async function dispatchChecks(
                 displayResultForPolicy(
                   result,
                   executionPolicy,
-                  policyForFile,
+                  adapterContext.policyForFile,
                 ) ?? sanitizeCheckResult(result);
             }
           }
@@ -1082,7 +1074,7 @@ export async function dispatchChecks(
             result,
             executionPolicy,
             target,
-            policyForFile,
+            adapterContext.policyForFile,
             fixCandidates,
           );
         }),
