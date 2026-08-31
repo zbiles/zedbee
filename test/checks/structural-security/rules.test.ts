@@ -1,7 +1,201 @@
-import { describe, expect, it } from "vitest";
-import { collectStructuralSecurityObservations } from "../../../src/checks/structural-security/rules.js";
+import { Lang, parse, SgNode, SgRoot } from "@ast-grep/napi";
+import { describe, expect, it, vi } from "vitest";
+import {
+  collectStructuralSecurityObservations,
+  structuralRules,
+} from "../../../src/checks/structural-security/rules.js";
 
 describe("collectStructuralSecurityObservations", () => {
+  it("keeps AST work linear as repeated imported requests grow", () => {
+    const countWork = (requests: number) => {
+      const source =
+        'import * as http from "node:http";\n' +
+        'http.request("http://service.test", { headers: { authorization: token } });\n'.repeat(
+          requests,
+        );
+      const kinds = vi.spyOn(SgNode.prototype, "kind");
+      const children = vi.spyOn(SgNode.prototype, "children");
+      try {
+        const findings = collectStructuralSecurityObservations(
+          "src/requests.ts",
+          source,
+        );
+        expect(findings).toHaveLength(requests);
+        expect(
+          findings.every(
+            (finding) => finding.rule === "credential-over-insecure-http",
+          ),
+        ).toBe(true);
+        return kinds.mock.calls.length + children.mock.calls.length;
+      } finally {
+        kinds.mockRestore();
+        children.mockRestore();
+      }
+    };
+
+    const small = countWork(8);
+    const large = countWork(32);
+    expect(large).toBeLessThan(small * 5);
+  });
+
+  it("preserves exact findings and source ranges across all rules", () => {
+    const source = [
+      'import { exec } from "node:child_process";',
+      'import vm from "node:vm";',
+      'import { createHash } from "node:crypto";',
+      'import request from "request";',
+      "eval(source);",
+      "new Function(source);",
+      "exec(command);",
+      "vm.runInNewContext(source);",
+      "({ rejectUnauthorized: false });",
+      'createHash("md5").update(password);',
+      'request({ url: "http://service.test", token: secret });',
+    ].join("\n");
+    const findings = collectStructuralSecurityObservations(
+      "src/all.ts",
+      source,
+    );
+
+    expect(
+      findings
+        .map(({ rule, location }) => ({ rule, location }))
+        .sort(
+          (left, right) =>
+            (left.location?.startLine ?? 0) - (right.location?.startLine ?? 0),
+        ),
+    ).toEqual([
+      {
+        rule: "direct-eval",
+        location: {
+          file: "src/all.ts",
+          startLine: 5,
+          startColumn: 1,
+          endLine: 5,
+          endColumn: 13,
+        },
+      },
+      {
+        rule: "function-constructor",
+        location: {
+          file: "src/all.ts",
+          startLine: 6,
+          startColumn: 1,
+          endLine: 6,
+          endColumn: 21,
+        },
+      },
+      {
+        rule: "child-process-string-exec",
+        location: {
+          file: "src/all.ts",
+          startLine: 7,
+          startColumn: 1,
+          endLine: 7,
+          endColumn: 14,
+        },
+      },
+      {
+        rule: "dynamic-vm-execution",
+        location: {
+          file: "src/all.ts",
+          startLine: 8,
+          startColumn: 1,
+          endLine: 8,
+          endColumn: 27,
+        },
+      },
+      {
+        rule: "tls-verification-disabled",
+        location: {
+          file: "src/all.ts",
+          startLine: 9,
+          startColumn: 4,
+          endLine: 9,
+          endColumn: 29,
+        },
+      },
+      {
+        rule: "weak-password-hash",
+        location: {
+          file: "src/all.ts",
+          startLine: 10,
+          startColumn: 1,
+          endLine: 10,
+          endColumn: 35,
+        },
+      },
+      {
+        rule: "credential-over-insecure-http",
+        location: {
+          file: "src/all.ts",
+          startLine: 11,
+          startColumn: 9,
+          endLine: 11,
+          endColumn: 54,
+        },
+      },
+    ]);
+  });
+
+  it("shares one root traversal across all checks", () => {
+    const roots = vi.spyOn(SgRoot.prototype, "root");
+    try {
+      expect(
+        collectStructuralSecurityObservations("src/safe.ts", "consume(value);"),
+      ).toEqual([]);
+      expect(roots).toHaveBeenCalledTimes(1);
+    } finally {
+      roots.mockRestore();
+    }
+  });
+
+  it("rechecks nodes and bindings each time a public rule receives a root", () => {
+    const rule = structuralRules.find(
+      (candidate) => candidate.id === "direct-eval",
+    )!;
+    let current = parse(Lang.TypeScript, "eval(source);");
+    const root: SgRoot = {
+      root: () => current.root(),
+      filename: () => "anonymous",
+    };
+
+    expect(rule.matches(root).map((node) => node.text())).toEqual([
+      "eval(source)",
+    ]);
+    current = parse(Lang.TypeScript, "function run(eval) { eval(source); }");
+    expect(rule.matches(root)).toEqual([]);
+    current = parse(Lang.TypeScript, "eval(other);");
+    expect(rule.matches(root).map((node) => node.text())).toEqual([
+      "eval(other)",
+    ]);
+  });
+
+  it.each([
+    "function run(http) {}",
+    "function run({ client: http }) {}",
+    "const run = http => http;",
+    "const { client: http } = service;",
+    "function http() {}",
+    "const run = function http() {};",
+    "function* http() {}",
+    "const run = function* http() {};",
+    "class http {}",
+    "const run = class http {};",
+    "try {} catch (http) {}",
+  ])("preserves file-wide request shadowing for %s", (binding) => {
+    const source = [
+      'import * as http from "node:http";',
+      binding,
+      'http.request("http://service.test", { token: secret });',
+      'http.request("http://service.test", { token: other });',
+    ].join("\n");
+
+    expect(
+      collectStructuralSecurityObservations("src/shadowed.js", source),
+    ).toEqual([]);
+  });
+
   it.each([
     {
       rule: "direct-eval",

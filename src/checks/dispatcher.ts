@@ -39,7 +39,7 @@ import { displayResultForPolicy } from "../policy/evaluate.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import {
-  createObservationCacheKey,
+  createObservationCacheKeyBuilder,
   effectiveBehaviorFingerprint,
   observationCacheEngineIdentity,
 } from "../cache/key.js";
@@ -386,6 +386,7 @@ async function collectObservations(
   cachePolicy: Readonly<ResolvedCheckPolicy>,
   behavior: unknown,
   options: DispatchOptions,
+  cacheKeyFor: ReturnType<typeof createObservationCacheKeyBuilder>,
 ): Promise<CheckObservationSet> {
   const engineIdentity = (
     options.cacheEngineIdentity ?? observationCacheEngineIdentity
@@ -396,13 +397,11 @@ async function collectObservations(
   let cacheKey: string | undefined;
   if (options.cache !== undefined && engineIdentity !== undefined) {
     try {
-      cacheKey = await createObservationCacheKey({
+      cacheKey = await cacheKeyFor({
         checkId: adapter.id,
         engineIdentity,
         policy: cachePolicy,
         target: runContext.target,
-        baselineRoot: runContext.snapshots.baselineDir,
-        targetRoot: runContext.snapshots.targetDir,
         relevantConfig: {
           schemaVersion: runContext.config.schemaVersion,
           behavior,
@@ -713,6 +712,10 @@ export async function dispatchChecks(
     network: pLimit(1),
   } as const;
   const adapterContext: TrustedDispatchContext = adapterBaseContext(context);
+  const cacheKeyFor = createObservationCacheKeyBuilder(
+    adapterContext.snapshots.baselineDir,
+    adapterContext.snapshots.targetDir,
+  );
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
   const adapterSnapshots = adapters.map(snapshotAdapter);
@@ -946,6 +949,7 @@ export async function dispatchChecks(
                     )
                   : undefined,
                 options,
+                cacheKeyFor,
               );
               try {
                 adapterResult = await observationCheckResult(

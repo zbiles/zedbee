@@ -12,6 +12,19 @@ export interface StructuralRule {
   matches(root: SgRoot): readonly SgNode[];
 }
 
+interface RuleContext {
+  readonly nodes: readonly SgNode[];
+  readonly nonImportBindings: Map<string, boolean>;
+}
+
+interface ContextualStructuralRule extends Omit<StructuralRule, "matches"> {
+  matches(context: RuleContext): readonly SgNode[];
+}
+
+function createRuleContext(root: SgRoot): RuleContext {
+  return { nodes: nodes(root), nonImportBindings: new Map() };
+}
+
 function nodes(root: SgRoot): readonly SgNode[] {
   const found: SgNode[] = [];
   const visit = (node: SgNode): void => {
@@ -79,8 +92,10 @@ function importLocalNames(node: SgNode): ReadonlySet<string> {
   return locals;
 }
 
-function hasNonImportBinding(root: SgRoot, name: string): boolean {
-  return nodes(root).some((node) => {
+function hasNonImportBinding(context: RuleContext, name: string): boolean {
+  const cached = context.nonImportBindings.get(name);
+  if (cached !== undefined) return cached;
+  const result = context.nodes.some((node) => {
     const kind = node.kind();
     if (kind === "formal_parameters") return identifierNames(node).has(name);
     if (kind === "arrow_function") {
@@ -111,12 +126,14 @@ function hasNonImportBinding(root: SgRoot, name: string): boolean {
     }
     return false;
   });
+  context.nonImportBindings.set(name, result);
+  return result;
 }
 
-function hasAnyBinding(root: SgRoot, name: string): boolean {
+function hasAnyBinding(context: RuleContext, name: string): boolean {
   return (
-    hasNonImportBinding(root, name) ||
-    nodes(root).some(
+    hasNonImportBinding(context, name) ||
+    context.nodes.some(
       (node) =>
         node.kind() === "import_statement" && importLocalNames(node).has(name),
     )
@@ -124,7 +141,7 @@ function hasAnyBinding(root: SgRoot, name: string): boolean {
 }
 
 function moduleBindings(
-  root: SgRoot,
+  context: RuleContext,
   moduleNames: readonly string[],
 ): { namespaces: ReadonlySet<string>; named: ReadonlyMap<string, string> } {
   const namespaces = new Set<string>();
@@ -132,7 +149,7 @@ function moduleBindings(
   const modulePattern = moduleNames
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
     .join("|");
-  for (const node of nodes(root)) {
+  for (const node of context.nodes) {
     if (node.kind() === "import_statement") {
       const text = node.text();
       if (!new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u").test(text))
@@ -186,19 +203,19 @@ function moduleBindings(
 }
 
 function importedCalls(
-  root: SgRoot,
+  context: RuleContext,
   modules: readonly string[],
   methods: ReadonlySet<string>,
 ): readonly SgNode[] {
-  const bindings = moduleBindings(root, modules);
-  return nodes(root).filter((node) => {
+  const bindings = moduleBindings(context, modules);
+  return context.nodes.filter((node) => {
     const callee = callCallee(node)?.text();
     if (callee === undefined) return false;
     const direct = bindings.named.get(callee);
     if (
       direct !== undefined &&
       methods.has(direct) &&
-      !hasNonImportBinding(root, callee)
+      !hasNonImportBinding(context, callee)
     )
       return true;
     const member = callee.match(
@@ -207,35 +224,35 @@ function importedCalls(
     return (
       member?.[1] !== undefined &&
       bindings.namespaces.has(member[1]) &&
-      !hasNonImportBinding(root, member[1]) &&
+      !hasNonImportBinding(context, member[1]) &&
       methods.has(member[2] ?? "")
     );
   });
 }
 
-const directEval: StructuralRule = {
+const directEval: ContextualStructuralRule = {
   id: "direct-eval",
   message: "Direct eval executes text as code in the current scope.",
   remediation: "Replace eval with a typed parser or an explicit operation map.",
-  matches: (root) =>
-    hasAnyBinding(root, "eval")
+  matches: (context) =>
+    hasAnyBinding(context, "eval")
       ? []
-      : nodes(root).filter(
+      : context.nodes.filter(
           (node) =>
             node.kind() === "call_expression" &&
             callCallee(node)?.text() === "eval",
         ),
 };
 
-const functionConstructor: StructuralRule = {
+const functionConstructor: ContextualStructuralRule = {
   id: "function-constructor",
   message: "The Function constructor compiles text as executable code.",
   remediation:
     "Replace dynamic code construction with ordinary functions or a constrained interpreter.",
-  matches: (root) =>
-    hasAnyBinding(root, "Function")
+  matches: (context) =>
+    hasAnyBinding(context, "Function")
       ? []
-      : nodes(root).filter((node) => {
+      : context.nodes.filter((node) => {
           const kind = node.kind();
           if (kind === "call_expression")
             return callCallee(node)?.text() === "Function";
@@ -246,39 +263,39 @@ const functionConstructor: StructuralRule = {
         }),
 };
 
-const childProcessExec: StructuralRule = {
+const childProcessExec: ContextualStructuralRule = {
   id: "child-process-string-exec",
   message: "child_process.exec passes a command string through a shell.",
   remediation:
     "Use execFile or spawn with a fixed executable and a separate argument array.",
-  matches: (root) =>
+  matches: (context) =>
     importedCalls(
-      root,
+      context,
       ["child_process", "node:child_process"],
       new Set(["exec", "execSync"]),
     ),
 };
 
-const dynamicVm: StructuralRule = {
+const dynamicVm: ContextualStructuralRule = {
   id: "dynamic-vm-execution",
   message: "The Node vm API executes dynamically supplied code.",
   remediation:
     "Avoid executing untrusted text; use a constrained parser or isolate execution outside the process.",
-  matches: (root) =>
+  matches: (context) =>
     importedCalls(
-      root,
+      context,
       ["vm", "node:vm"],
       new Set(["runInContext", "runInNewContext", "runInThisContext"]),
     ),
 };
 
-const tlsDisabled: StructuralRule = {
+const tlsDisabled: ContextualStructuralRule = {
   id: "tls-verification-disabled",
   message: "TLS certificate verification is explicitly disabled.",
   remediation:
     "Remove rejectUnauthorized: false and use a trusted CA configuration.",
-  matches: (root) =>
-    nodes(root).filter(
+  matches: (context) =>
+    context.nodes.filter(
       (node) =>
         propertyName(node) === "rejectUnauthorized" &&
         propertyValue(node)?.kind() === "false",
@@ -289,7 +306,7 @@ const PASSWORD_VALUE = /\b(?:password|passwd|pwd)\b/iu;
 const WEAK_HASH = /^(?:['"])(?:md5|sha-?1)(?:['"])$/iu;
 
 function isWeakHashCall(
-  root: SgRoot,
+  context: RuleContext,
   node: SgNode,
   bindings: ReturnType<typeof moduleBindings>,
 ): boolean {
@@ -297,28 +314,28 @@ function isWeakHashCall(
   if (callee === undefined) return false;
   const direct =
     bindings.named.get(callee) === "createHash" &&
-    !hasNonImportBinding(root, callee);
+    !hasNonImportBinding(context, callee);
   const member = callee.match(
     /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.createHash$/u,
   );
   const namespaced =
     member?.[1] !== undefined &&
     bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(root, member[1]);
+    !hasNonImportBinding(context, member[1]);
   return (
     (direct || namespaced) &&
     WEAK_HASH.test(callArguments(node)[0]?.text() ?? "")
   );
 }
 
-const weakPasswordHash: StructuralRule = {
+const weakPasswordHash: ContextualStructuralRule = {
   id: "weak-password-hash",
   message: "MD5 and SHA-1 are unsuitable for password hashing.",
   remediation:
     "Use a password-hashing function such as scrypt, Argon2, or bcrypt with appropriate parameters.",
-  matches(root) {
-    const bindings = moduleBindings(root, ["crypto", "node:crypto"]);
-    return nodes(root).filter((node) => {
+  matches(context) {
+    const bindings = moduleBindings(context, ["crypto", "node:crypto"]);
+    return context.nodes.filter((node) => {
       if (node.kind() !== "call_expression") return false;
       const callee = callCallee(node);
       if (callee?.kind() !== "member_expression") return false;
@@ -327,7 +344,7 @@ const weakPasswordHash: StructuralRule = {
       const receiver = parts[0];
       return (
         receiver !== undefined &&
-        isWeakHashCall(root, receiver, bindings) &&
+        isWeakHashCall(context, receiver, bindings) &&
         PASSWORD_VALUE.test(callArguments(node)[0]?.text() ?? "")
       );
     });
@@ -344,7 +361,7 @@ function staticString(node: SgNode | undefined): string | undefined {
 }
 
 function isRequestOptions(
-  root: SgRoot,
+  context: RuleContext,
   node: SgNode,
   bindings: ReturnType<typeof moduleBindings>,
 ): boolean {
@@ -356,14 +373,14 @@ function isRequestOptions(
   const direct =
     (bindings.namespaces.has(callee) ||
       bindings.named.get(callee) === "request") &&
-    !hasNonImportBinding(root, callee);
+    !hasNonImportBinding(context, callee);
   const member = callee.match(
     /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.request$/u,
   );
   const namespaced =
     member?.[1] !== undefined &&
     bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(root, member[1]);
+    !hasNonImportBinding(context, member[1]);
   return direct || namespaced;
 }
 
@@ -389,21 +406,21 @@ function callHasStaticHttpUrl(node: SgNode): boolean {
   );
 }
 
-const insecureCredentialRequest: StructuralRule = {
+const insecureCredentialRequest: ContextualStructuralRule = {
   id: "credential-over-insecure-http",
   message: "Credentials are attached to a request using an insecure HTTP URL.",
   remediation:
     "Use HTTPS and keep credentials out of URLs and plaintext transports.",
-  matches(root) {
-    const bindings = moduleBindings(root, [
+  matches(context) {
+    const bindings = moduleBindings(context, [
       "request",
       "http",
       "node:http",
       "https",
       "node:https",
     ]);
-    return nodes(root).filter((node) => {
-      if (node.kind() !== "object" || !isRequestOptions(root, node, bindings))
+    return context.nodes.filter((node) => {
+      if (node.kind() !== "object" || !isRequestOptions(context, node, bindings))
         return false;
       const descendants = [node, ...node.findAll({ rule: { kind: "pair" } })];
       const insecureUrl =
@@ -420,7 +437,7 @@ const insecureCredentialRequest: StructuralRule = {
   },
 };
 
-export const structuralRules: readonly StructuralRule[] = Object.freeze([
+const contextualRules: readonly ContextualStructuralRule[] = Object.freeze([
   directEval,
   functionConstructor,
   childProcessExec,
@@ -429,6 +446,15 @@ export const structuralRules: readonly StructuralRule[] = Object.freeze([
   weakPasswordHash,
   insecureCredentialRequest,
 ]);
+
+// Standalone rule calls get fresh state, even if a caller reuses a root wrapper.
+// The collector instead shares one context for its immutable parsed source.
+export const structuralRules: readonly StructuralRule[] = Object.freeze(
+  contextualRules.map((rule) => ({
+    ...rule,
+    matches: (root: SgRoot) => rule.matches(createRuleContext(root)),
+  })),
+);
 
 function languageFor(file: string): Lang {
   switch (extname(file).toLowerCase()) {
@@ -466,17 +492,17 @@ export function collectStructuralSecurityObservations(
   try {
     const normalizedFile = normalizeRepositoryRelativePath(file);
     const root = parse(languageFor(normalizedFile), source);
-    const parsedNodes = nodes(root);
+    const context = createRuleContext(root);
     if (
-      parsedNodes.some(
+      context.nodes.some(
         (node, index) =>
           node.kind() === "ERROR" ||
           (index > 0 && node.range().start.index === node.range().end.index),
       )
     )
       throw new Error("parse failed");
-    const observations = structuralRules.flatMap((rule) =>
-      rule.matches(root).map((match): Observation => {
+    const observations = contextualRules.flatMap((rule) =>
+      rule.matches(context).map((match): Observation => {
         const normalizedLocation = location(normalizedFile, match);
         return {
           check: "structuralSecurity",

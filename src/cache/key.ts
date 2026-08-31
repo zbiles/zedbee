@@ -169,10 +169,40 @@ async function snapshotIdentity(root: string): Promise<readonly unknown[]> {
 export async function createObservationCacheKey(
   input: ObservationCacheKeyInput,
 ): Promise<string> {
-  const [baseline, target] = await Promise.all([
-    snapshotIdentity(input.baselineRoot),
-    snapshotIdentity(input.targetRoot),
-  ]);
+  return createObservationCacheKeyBuilder(
+    input.baselineRoot,
+    input.targetRoot,
+  )(input);
+}
+
+type SnapshotBoundKeyInput = Omit<
+  ObservationCacheKeyInput,
+  "baselineRoot" | "targetRoot"
+>;
+
+/** Internal to one dispatch over immutable snapshots; never attach to adapters. */
+export function createObservationCacheKeyBuilder(
+  baselineRoot: string,
+  targetRoot: string,
+): (input: SnapshotBoundKeyInput) => Promise<string> {
+  let identities:
+    Promise<readonly [readonly unknown[], readonly unknown[]]> | undefined;
+  return async (input) => {
+    // Share in-flight work as well as results. A rejected inventory disables
+    // caching for this dispatch; a new dispatch will capture fresh identities.
+    const [baseline, target] = await (identities ??= Promise.all([
+      snapshotIdentity(baselineRoot),
+      snapshotIdentity(targetRoot),
+    ]));
+    return observationCacheKey(input, baseline, target);
+  };
+}
+
+function observationCacheKey(
+  input: SnapshotBoundKeyInput,
+  baseline: readonly unknown[],
+  target: readonly unknown[],
+): string {
   const payload = stable({
     schema: "zedbee-observation-cache-key-v1",
     checkId: input.checkId,

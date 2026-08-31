@@ -47,12 +47,12 @@ function workspaceFor(
   );
 }
 
-function positionOffset(source: string, line: number, column: number): number {
+function lineStarts(source: string): readonly number[] {
   const starts = [0];
   for (let index = 0; index < source.length; index += 1) {
     if (source.charCodeAt(index) === 10) starts.push(index + 1);
   }
-  return (starts[line - 1] ?? source.length) + column - 1;
+  return starts;
 }
 
 function observationsFromMessages(
@@ -65,13 +65,15 @@ function observationsFromMessages(
   if (messages.some((message) => message.fatal === true)) {
     throw new Error("Complexity analysis failed.");
   }
+  const starts = lineStarts(source);
   const mapped = messages.flatMap((message): Observation[] => {
     const metric = parseComplexityMetric(message);
     if (metric === undefined) return [];
     if (message.line === undefined || message.column === undefined) {
       throw new Error("Complexity analysis failed.");
     }
-    const offset = positionOffset(source, message.line, message.column);
+    const offset =
+      (starts[message.line - 1] ?? source.length) + message.column - 1;
     const containing = spans
       .filter(
         ({ startOffset, endOffset }) =>
@@ -83,14 +85,15 @@ function observationsFromMessages(
           left.startOffset -
           (right.endOffset - right.startOffset),
       )[0];
-    const followingOnLine = spans
-      .filter(
-        ({ startOffset }) =>
-          startOffset >= offset &&
-          !source.slice(offset, startOffset).includes("\n"),
-      )
-      .sort((left, right) => left.startOffset - right.startOffset)[0];
-    const span = containing ?? followingOnLine;
+    const span =
+      containing ??
+      spans
+        .filter(
+          ({ startOffset }) =>
+            startOffset >= offset &&
+            !source.slice(offset, startOffset).includes("\n"),
+        )
+        .sort((left, right) => left.startOffset - right.startOffset)[0];
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
     const check =

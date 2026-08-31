@@ -65,6 +65,8 @@ A target-only score above `max` and a staged score that crosses `max` are blocki
 
 ### Prettier settings
 
+Formatting comparisons have a two-second limit per file. If a comparison takes longer, Zedbee reports `FORMATTING_DIFF_TIMEOUT` and marks the check incomplete. It does not guess which staged lines changed or treat the file as passing. Run `zedbee fix formatting`, review and stage the formatting changes, then scan again.
+
 The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
 
 | Field                    |       Default | Accepted value                                 |

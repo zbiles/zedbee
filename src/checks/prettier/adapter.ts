@@ -12,6 +12,7 @@ import {
 } from "./format-diff.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import { planPrettierFixes } from "../../fixes/prettier-provider.js";
 import { prettierOptions } from "./settings.js";
 import {
@@ -158,9 +159,10 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           filepath: file,
           parser,
         });
-        const transformations = formattingTransformationRanges(
+        const transformations = await formattingTransformationRanges(
           source,
           formatted,
+          { signal: context.signal },
         );
         const attributed = intersectRanges(
           transformations,
@@ -169,7 +171,18 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
         findings.push(
           ...attributed.map((range) => finding(file, range.start, range.end)),
         );
-      } catch {
+      } catch (error) {
+        if (context.signal.aborted) throw error;
+        if (error instanceof CheckIncompleteError) {
+          return incompleteResult({
+            checkId: "formatting",
+            durationMs: 0,
+            code: error.code,
+            message: `The formatting comparison for ${file} exceeded its time limit.`,
+            path: file,
+            remediation: error.remediation,
+          });
+        }
         return incompleteResult({
           checkId: "formatting",
           durationMs: 0,

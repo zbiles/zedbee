@@ -36,6 +36,11 @@ function contained(root: string, candidate: string): boolean {
   );
 }
 
+function directoryKey(path: string): string {
+  // Match path.relative's case-insensitive containment on Windows.
+  return sep === "\\" ? path.toLowerCase() : path;
+}
+
 function repositoryPath(
   snapshotRoot: string,
   path: string,
@@ -100,6 +105,17 @@ export function createSnapshotProgram(
       source,
     ]),
   );
+  const snapshotDirectories = new Set<string>();
+  for (const file of files.keys()) {
+    // Include the file itself: the original containment check accepted equality.
+    let directory = directoryKey(file);
+    while (!snapshotDirectories.has(directory)) {
+      snapshotDirectories.add(directory);
+      const parent = dirname(directory);
+      if (parent === directory) break;
+      directory = parent;
+    }
+  }
   for (const [path, source] of Object.entries(input.files)) {
     const preprocessed = ts.preProcessFile(source, true, true);
     for (const reference of preprocessed.importedFiles) {
@@ -154,8 +170,7 @@ export function createSnapshotProgram(
     },
     directoryExists: (path) => {
       const absolute = resolve(path);
-      if ([...files.keys()].some((file) => contained(absolute, file)))
-        return true;
+      if (snapshotDirectories.has(directoryKey(absolute))) return true;
       if (contained(repositoryRoot, absolute)) return true;
       return (
         (contained(packageRoot, absolute) ||

@@ -1,4 +1,6 @@
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
+import * as formatDiff from "../../../src/checks/prettier/format-diff.js";
+import { CheckIncompleteError } from "../../../src/checks/incomplete-error.js";
 import type { ConfigFile, ResolvedConfig } from "../../../src/config/schema.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import { prettierAdapter } from "../../../src/checks/prettier/adapter.js";
@@ -368,5 +370,34 @@ describe("prettierAdapter.run", () => {
     });
     expect(JSON.stringify(result)).not.toContain(invalidSource);
     expect(JSON.stringify(result)).not.toContain("do-not-render");
+  });
+
+  it("reports comparison timeouts as incomplete rather than passing the file", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const staged={value:1}\n");
+    await repository.git(["add", "--", "value.ts"]);
+    const compare = vi
+      .spyOn(formatDiff, "formattingTransformationRanges")
+      .mockRejectedValueOnce(
+        new CheckIncompleteError({
+          code: "FORMATTING_DIFF_TIMEOUT",
+          message: "The formatting comparison exceeded its time limit.",
+          remediation: "Format and stage the file, then scan again.",
+        }),
+      );
+    onTestFinished(() => compare.mockRestore());
+
+    const result = await runAdapter(repository);
+
+    expect(result).toMatchObject({
+      status: "incomplete",
+      findings: [],
+      error: {
+        code: "FORMATTING_DIFF_TIMEOUT",
+        message:
+          "The formatting comparison for value.ts exceeded its time limit.",
+        path: "value.ts",
+      },
+    });
   });
 });

@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as fsPromises from "node:fs/promises";
+import { join } from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  createObservationCacheKey,
+  createObservationCacheKeyBuilder,
   effectiveBehaviorFingerprint,
   observationCacheEngineIdentity,
 } from "../../src/cache/key.js";
@@ -15,6 +20,17 @@ import type { ChangeSet, ChangedFile } from "../../src/git/change-set.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
+
+// Count real filesystem work without replacing reads or registry validation.
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) };
+});
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, readdir: vi.fn(actual.readdir) };
+});
+beforeEach(() => vi.clearAllMocks());
 
 function contextFor(
   snapshotRoot: string,
@@ -125,6 +141,246 @@ function behavior(
 }
 
 describe("observation cache keys", () => {
+  it("inventories and hashes each snapshot once across concurrent checks and workspaces", async () => {
+    const [baseline, target] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    const roots = ["one", "two"];
+    for (const fixture of [baseline, target]) {
+      for (const root of roots) {
+        await fixture.write(`${root}/value.ts`, "export const value = 1;\n");
+      }
+    }
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: { severity: "error" },
+        cyclomaticComplexity: { severity: "error" },
+      },
+    });
+    const context = contextFor(
+      target.root,
+      "^19.0.0",
+      config,
+      roots.map((root) => `${root}/value.ts`),
+    );
+    const workspaces = roots.map((root) => ({
+      ...context.targetInspection.workspaces[0]!,
+      relativeRoot: root,
+      manifestPath: `${root}/package.json`,
+      sourceFiles: [`${root}/value.ts`],
+    }));
+    const inputs: CheckRunContext = {
+      ...context,
+      snapshots: { ...context.snapshots, baselineDir: baseline.root },
+      baselineInspection: {
+        ...context.baselineInspection,
+        snapshotRoot: baseline.root,
+        workspaces,
+      },
+      targetInspection: { ...context.targetInspection, workspaces },
+    };
+    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
+      ...adapterFor(id),
+      inspect: async () => ({
+        applies: true as const,
+        executionClass: "lightweight" as const,
+        requiresBaseline: false,
+        targets: roots.map((root) => ({
+          id: root,
+          kind: "workspace" as const,
+          relativeRoot: root,
+        })),
+      }),
+    }));
+    const keys: string[] = [];
+    const streamReads = vi.mocked(fs.createReadStream);
+    const inventories = vi.mocked(fsPromises.readdir);
+    const results = await dispatchChecks(checks, inputs, {
+      cache: {
+        get: async (key) => {
+          keys.push(key);
+          return undefined;
+        },
+        set: async () => undefined,
+      },
+    });
+
+    expect(results.map(({ result }) => result.status)).toEqual(
+      Array(4).fill("completed"),
+    );
+    expect(new Set(keys).size).toBe(4);
+    // Two files and three directories per snapshot, regardless of key count.
+    expect(streamReads).toHaveBeenCalledTimes(4);
+    expect(inventories).toHaveBeenCalledTimes(6);
+  });
+
+  it.each(["disabled", "uncacheable", "skipped"])(
+    "does not inventory snapshots when caching is %s",
+    async (mode) => {
+      const fixture = await createInspectionFixture();
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+      const streamReads = vi.mocked(fs.createReadStream);
+      const inventories = vi.mocked(fsPromises.readdir);
+      const cache: ObservationCache = {
+        get: async () => {
+          throw new Error("unexpected cache read");
+        },
+        set: async () => {
+          throw new Error("unexpected cache write");
+        },
+      };
+      const results = await dispatchChecks(
+        [
+          mode === "skipped"
+            ? {
+                ...adapter,
+                inspect: async () => ({
+                  applies: false as const,
+                  reason: "No applicable source.",
+                }),
+              }
+            : adapter,
+        ],
+        contextFor(fixture.root, "^19.0.0"),
+        {
+          ...(mode === "disabled" ? {} : { cache }),
+          ...(mode === "uncacheable"
+            ? { cacheEngineIdentity: () => undefined }
+            : {}),
+        },
+      );
+
+      expect(results[0]?.result.status).toBe(
+        mode === "skipped" ? "skipped" : "completed",
+      );
+      expect(streamReads).not.toHaveBeenCalled();
+      expect(inventories).not.toHaveBeenCalled();
+    },
+  );
+
+  it("invalidates shared snapshot identities between dispatches at the same paths", async () => {
+    const [baseline, target] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    await baseline.write("src/value.ts", "export const value = 1;\n");
+    await target.write("src/value.ts", "export const value = 2;\n");
+    const context = contextFor(target.root, "^19.0.0");
+    const inputs = {
+      ...context,
+      snapshots: { ...context.snapshots, baselineDir: baseline.root },
+    };
+    const keys: string[] = [];
+    const cache: ObservationCache = {
+      get: async (key) => {
+        keys.push(key);
+        return undefined;
+      },
+      set: async () => undefined,
+    };
+    await dispatchChecks([adapter], inputs, { cache });
+    await target.write("src/value.ts", "export const value = 3;\n");
+    await dispatchChecks([adapter], inputs, { cache });
+    await baseline.write("src/value.ts", "export const value = 0;\n");
+    await dispatchChecks([adapter], inputs, { cache });
+
+    expect(new Set(keys).size).toBe(3);
+  });
+
+  it("falls back for every check after unsafe snapshot inventory and recovers on the next dispatch", async () => {
+    const [fixture, outside] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    await fixture.write("src/value.ts", "export const value = 1;\n");
+    await outside.write("private.txt", "must not be read");
+    await fixture.symlink(join(outside.root, "private.txt"), "escape.txt");
+    const keys: string[] = [];
+    const collected: string[] = [];
+    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
+      ...adapter,
+      id,
+      collect: async (context: CheckRunContext) => {
+        collected.push(id);
+        return {
+          checkId: id,
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      },
+    }));
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: {
+        lint: { severity: "error" },
+        cyclomaticComplexity: { severity: "error" },
+      },
+    });
+    const inputs = contextFor(fixture.root, "^19.0.0", config);
+    const cache: ObservationCache = {
+      get: async (key) => {
+        keys.push(key);
+        return undefined;
+      },
+      set: async () => undefined,
+    };
+    const streamReads = vi.mocked(fs.createReadStream);
+    const results = await dispatchChecks(checks, inputs, { cache });
+
+    expect(results.map(({ result }) => result.status)).toEqual([
+      "completed",
+      "completed",
+    ]);
+    expect(collected.sort()).toEqual(["cyclomaticComplexity", "lint"]);
+    expect(keys).toHaveLength(0);
+    expect(streamReads).not.toHaveBeenCalled();
+    await fsPromises.rm(join(fixture.root, "escape.txt"));
+    await dispatchChecks(checks, inputs, { cache });
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("retains v1 key bytes including symlinks and keeps standalone calls fresh", async () => {
+    const [baseline, target] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    await baseline.write("value.txt", "alpha\n");
+    await target.write("value.txt", "beta\n");
+    await baseline.symlink("value.txt", "alias.txt");
+    await target.symlink("value.txt", "alias.txt");
+    const input = {
+      checkId: "lint",
+      engineIdentity: "test-engine-v1",
+      policy: { severity: "error" as const, when: "relevant" as const },
+      target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+      baselineRoot: baseline.root,
+      targetRoot: target.root,
+      relevantConfig: {
+        rules: { second: ["warn", { allow: ["a", "b"] }], first: "error" },
+      },
+      nodeVersion: "24.0.0",
+      platform: "linux",
+      arch: "x64",
+      zedbeeVersion: "0.1.0",
+    };
+    const original = await createObservationCacheKey(input);
+    expect(original).toBe(
+      "852450c593c2c0fc157d63dfbab2b43f848588094f677e532875a883d01b8d47",
+    );
+    const cacheKeyFor = createObservationCacheKeyBuilder(
+      baseline.root,
+      target.root,
+    );
+    expect(await cacheKeyFor(input)).toBe(
+      "852450c593c2c0fc157d63dfbab2b43f848588094f677e532875a883d01b8d47",
+    );
+    await target.write("value.txt", "changed\n");
+    expect(await createObservationCacheKey(input)).not.toBe(original);
+  });
+
   it("versions React correctness calibration in the engine identity", () => {
     expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
       "zedbee-react-calibration-v2",
