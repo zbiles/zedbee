@@ -33,6 +33,60 @@ afterAll(async () => {
 });
 
 describe("raw pre-commit hook", () => {
+  it("writes Git soft-timeout progress to hook stderr without corrupting JSON output", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "zedbee-hook-timeout-fixture",
+        version: "1.0.0",
+        private: true,
+      }),
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        resources: { git: { softTimeout: "1ms" } },
+      }),
+    );
+    await repository.write(
+      "tsconfig.json",
+      '{"compilerOptions":{"strict":true},"include":["**/*.ts"]}\n',
+    );
+    await repository.commitAll("fixture setup");
+
+    const hookPath = join(repository.root, ".git", "hooks", "pre-commit");
+    const reportPath = join(repository.root, ".zedbee-hook-report.json");
+    const cliPath = join(packageRoot, "dist", "cli.js");
+    await writeFile(
+      hookPath,
+      [
+        "#!/bin/sh",
+        `${JSON.stringify(process.execPath)} ${JSON.stringify(cliPath)} scan --format json > ${JSON.stringify(reportPath)}`,
+        "",
+      ].join("\n"),
+    );
+    await chmod(hookPath, 0o755);
+
+    await repository.write("formatted.ts", "export const formatted = true;\n");
+    await repository.git(["add", "--", "formatted.ts"]);
+    const committed = await repository.git([
+      "commit",
+      "--message",
+      "soft timeout warning",
+    ]);
+
+    const hookReport = await readFile(reportPath, "utf8");
+    expect(committed.exitCode, committed.stderr).toBe(0);
+    expect(committed.stderr).toContain("GIT SOFT TIMEOUT");
+    expect(JSON.parse(hookReport)).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+    });
+  }, 30_000);
+
   it("allows formatted commits, blocks formatting regressions, and preserves existing hook work", async () => {
     const repository = await createGitRepository();
     await repository.write(
