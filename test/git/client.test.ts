@@ -99,4 +99,21 @@ describe("GitClient", () => {
       ]),
     ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
   });
+
+  it("maps a real Git output buffer breach to a sanitized error", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = true;\n");
+    await repository.commitAll("Git output buffer limit exceeded by this message");
+    const client = new GitClient(repository.root);
+
+    const error = await client
+      .run(["log", "--format=%B"], { maxOutputBytes: 8 })
+      .catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({
+      name: "GitCommandError",
+      code: "GIT_OUTPUT_LIMIT_EXCEEDED",
+    });
+    expect(String(error)).not.toContain(repository.root);
+  });
 });

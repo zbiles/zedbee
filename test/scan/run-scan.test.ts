@@ -259,6 +259,53 @@ function delayedGitCommand(delayMs: number) {
 }
 
 describe("runScan", () => {
+  it("propagates its abort signal to empty-index baseline resolution", async () => {
+    const controller = new AbortController();
+    let resolveStarted: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let receivedSignal: AbortSignal | undefined;
+    const deps = dependencies([], {
+      readChangeSet: async () => emptyChangeSet,
+      baselineForEmptyChange: async (_git, signal?: AbortSignal) => {
+        receivedSignal = signal;
+        resolveStarted?.();
+        return new Promise<"HEAD" | null>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () =>
+              reject(
+                new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+              ),
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const pending = runScan({
+      repositoryRoot: "/repo",
+      signal: controller.signal,
+      dependencies: deps,
+    });
+    await started;
+    controller.abort();
+
+    await expect(
+      Promise.race([
+        pending,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(
+            () => reject(new Error("baseline resolution did not receive the abort signal")),
+            100,
+          );
+        }),
+      ]),
+    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
   it("maps a bounded Git output failure to a sanitized incomplete report", async () => {
     const report = await runScan({
       repositoryRoot: "/repo",

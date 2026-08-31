@@ -97,6 +97,12 @@ function writeMaintenanceWarnings(
   if (output !== "") io.writeStderr(output);
 }
 
+function writeGitSoftTimeoutWarning(io: ScanCommandIO): void {
+  io.writeStderr(
+    "GIT SOFT TIMEOUT\nA Git command is still running after resources.git.softTimeout. Zedbee is waiting for it to finish.\n",
+  );
+}
+
 export function selectOutputFormat(
   requested: RequestedOutputFormat,
   _stdinIsTTY: boolean,
@@ -226,6 +232,15 @@ export async function executeScanCommand(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
+      ...(format === "ink"
+        ? {}
+        : {
+            onEvent(event) {
+              if (event.type === "git-soft-timeout") {
+                writeGitSoftTimeoutWarning(io);
+              }
+            },
+          }),
     };
     const color = options.color && io.env.NO_COLOR === undefined;
     const requestedInkFormat: InkRenderOptions["requestedFormat"] =

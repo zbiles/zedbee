@@ -18,6 +18,7 @@ type ResourceConfiguration = Readonly<{
 }>;
 
 const DURATION_PATTERN = /^([1-9][0-9]*)(ms|s|m|h)$/u;
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
 const DURATION_MULTIPLIERS: Readonly<Record<string, number>> = {
   ms: 1,
   s: 1_000,
@@ -42,7 +43,11 @@ export function parseScanDuration(value: unknown, field: string): number {
     throw new TypeError(`${field} must be a positive whole-number duration.`);
   }
   const milliseconds = Number(match[1]) * DURATION_MULTIPLIERS[match[2]]!;
-  if (!Number.isSafeInteger(milliseconds) || milliseconds <= 0) {
+  if (
+    !Number.isSafeInteger(milliseconds) ||
+    milliseconds <= 0 ||
+    milliseconds > MAX_TIMER_DELAY_MS
+  ) {
     throw new TypeError(`${field} must resolve to a positive whole millisecond.`);
   }
   return milliseconds;

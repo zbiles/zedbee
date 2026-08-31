@@ -80,7 +80,10 @@ export interface RunScanDependencies {
     signal?: AbortSignal,
   ): Promise<SnapshotPair>;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
-  baselineForEmptyChange(git: GitClient): Promise<"HEAD" | null>;
+  baselineForEmptyChange(
+    git: GitClient,
+    signal?: AbortSignal,
+  ): Promise<"HEAD" | null>;
   dispatch: typeof dispatchChecks;
   evaluate(
     results: readonly CheckExecutionResult[],
@@ -128,8 +131,13 @@ const DEFAULT_DEPENDENCIES: RunScanDependencies = {
   readChangeSet: readStagedChangeSet,
   buildSnapshots: buildSnapshotPair,
   inspectRepository,
-  async baselineForEmptyChange(git) {
-    return (await git.tryRun(["rev-parse", "--verify", "HEAD"])).exitCode === 0
+  async baselineForEmptyChange(git, signal) {
+    return (
+      await git.tryRun(
+        ["rev-parse", "--verify", "HEAD"],
+        signal === undefined ? {} : { signal },
+      )
+    ).exitCode === 0
       ? "HEAD"
       : null;
   },
@@ -364,7 +372,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
 
     if (changeSet.isEmpty) {
       activePhase = "baseline-resolution";
-      baseline = await dependencies.baselineForEmptyChange(git);
+      baseline = await dependencies.baselineForEmptyChange(git, options.signal);
       report = {
         schemaVersion: 1,
         outcome: "pass",

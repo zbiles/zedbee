@@ -45,6 +45,7 @@ describe("resolveScanResourcePolicy", () => {
     [{ gitHardTimeout: "0s" }],
     [{ gitHardTimeout: "2.5s" }],
     [{ gitHardTimeout: "25" }],
+    [{ gitHardTimeout: "600h" }],
     [{ gitOutputLimitBytes: 0 }],
     [{ gitOutputLimitBytes: 1.5 }],
     [{ gitSoftTimeout: "30s", gitHardTimeout: "30s" }],

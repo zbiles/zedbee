@@ -29,6 +29,15 @@ function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
 
+function isOutputLimitExceeded(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "isMaxBuffer" in error &&
+    error.isMaxBuffer === true
+  );
+}
+
 export class GitClient {
   constructor(
     readonly repositoryRoot: string,
@@ -93,6 +102,12 @@ export class GitClient {
         cancelSignal: signal,
       });
 
+      if (isOutputLimitExceeded(result)) {
+        throw new GitCommandError(
+          "GIT_OUTPUT_LIMIT_EXCEEDED",
+          "Git command exceeded its configured output limit.",
+        );
+      }
       if (hardTimedOut) {
         throw new GitCommandError(
           "GIT_HARD_TIMEOUT",
@@ -128,12 +143,7 @@ export class GitClient {
           "Git command exceeded its configured hard timeout.",
         );
       }
-      if (
-        typeof error === "object" &&
-        error !== null &&
-        "isMaxBuffer" in error &&
-        error.isMaxBuffer === true
-      ) {
+      if (isOutputLimitExceeded(error)) {
         throw new GitCommandError(
           "GIT_OUTPUT_LIMIT_EXCEEDED",
           "Git command exceeded its configured output limit.",

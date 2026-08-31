@@ -531,6 +531,35 @@ describe("executeScanCommand", () => {
     },
   );
 
+  it.each(["text", "json", "sarif"] as const)(
+    "writes a Git soft-timeout warning to stderr for %s without contaminating stdout",
+    async (format) => {
+      const terminal = io(false);
+      const deps = dependencies();
+      deps.scan = async (options) => {
+        options.onEvent?.({
+          type: "git-soft-timeout",
+          checkId: "zedbee",
+          target: ".",
+          timestamp: 1,
+        });
+        return createReport();
+      };
+
+      const exitCode = await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        terminal,
+        deps,
+      );
+
+      expect(exitCode).toBe(0);
+      expect(terminal.stderr.join("")).toContain("GIT SOFT TIMEOUT");
+      if (format !== "text") {
+        expect(() => JSON.parse(terminal.stdout.join(""))).not.toThrow();
+      }
+    },
+  );
+
   it.each(["json", "sarif"] as const)(
     "emits no partial %s document when presentation serialization fails",
     async (format) => {
