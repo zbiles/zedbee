@@ -79,6 +79,39 @@ function addedChangeSet(...paths: readonly string[]): ChangeSet {
   };
 }
 
+function configWithLintEnabledOnlyFor(files: readonly string[]): ResolvedConfig {
+  return resolveConfig({
+    schemaVersion: 1,
+    profile: "fast",
+    checks: {
+      formatting: "off",
+      lint: "off",
+      types: "off",
+      cyclomaticComplexity: "off",
+      readabilityComplexity: "off",
+      structuralSecurity: "off",
+      secrets: "off",
+      duplication: "off",
+      dependencyArchitecture: "off",
+      deadCode: "off",
+      reactCorrectness: "off",
+      reactAccessibility: "off",
+      vulnerabilities: "off",
+    },
+    overrides: [{ files, checks: { lint: "error" } }],
+  });
+}
+
+function snapshotsWithUnsupported(path: string, kind: "binary"): SnapshotPair {
+  return {
+    baselineDir: "/tmp/baseline",
+    targetDir: "/tmp/target",
+    baselineRef: "HEAD",
+    unsupportedEntries: [{ path, kind }],
+    cleanup: async () => undefined,
+  };
+}
+
 const passing: CheckResult = {
   checkId: "formatting",
   status: "completed",
@@ -415,6 +448,102 @@ describe("runScan", () => {
         error: { code: "UNSUPPORTED_BINARY_INPUT", path: "binary.js" },
       },
     ]);
+  });
+
+  it("does not reject a binary outside an enabled path override", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readChangeSet: async () => addedChangeSet("vendor/generated.ts"),
+        buildSnapshots: async () =>
+          snapshotsWithUnsupported("vendor/generated.ts", "binary"),
+      }),
+    });
+
+    expect(report.checks).not.toContainEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({ code: "UNSUPPORTED_BINARY_INPUT" }),
+      }),
+    );
+  });
+
+  it("rejects a binary inside an enabled path override", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readChangeSet: async () => addedChangeSet("src/generated.ts"),
+        buildSnapshots: async () =>
+          snapshotsWithUnsupported("src/generated.ts", "binary"),
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        status: "incomplete",
+        error: expect.objectContaining({
+          code: "UNSUPPORTED_BINARY_INPUT",
+          path: "src/generated.ts",
+        }),
+      }),
+    );
+  });
+
+  it("allows irrelevant binary artifacts to proceed", async () => {
+    let dispatchCalls = 0;
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readChangeSet: async () => addedChangeSet("assets/photo.png"),
+        buildSnapshots: async () =>
+          snapshotsWithUnsupported("assets/photo.png", "binary"),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(dispatchCalls).toBe(1);
+  });
+
+  it("uses a renamed file's target path for override relevance", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readChangeSet: async () => ({
+          files: new Map([
+            [
+              "src/generated.ts",
+              {
+                path: "src/generated.ts",
+                previousPath: "vendor/generated.ts",
+                status: "renamed",
+                addedRanges: [],
+              },
+            ],
+          ]),
+          isEmpty: false,
+          containsAddedLine: () => false,
+        }),
+        buildSnapshots: async () =>
+          snapshotsWithUnsupported("src/generated.ts", "binary"),
+      }),
+    });
+
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          code: "UNSUPPORTED_BINARY_INPUT",
+          path: "src/generated.ts",
+        }),
+      }),
+    );
   });
 
   it("allows ordinary binary assets to proceed to configured checks", async () => {

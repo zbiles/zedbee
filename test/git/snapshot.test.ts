@@ -16,7 +16,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
-import { GitClient } from "../../src/git/client.js";
+import { GitClient, GitCommandError } from "../../src/git/client.js";
 import { buildSnapshotPair } from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
@@ -249,6 +249,77 @@ describe("buildSnapshotPair", () => {
 
     expect(await pathExists(temporaryParent)).toBe(false);
     expect(await pathExists(repository.root)).toBe(true);
+  });
+
+  it("aborts checkout-index and removes its temporary snapshot root", async () => {
+    let snapshotRoot: string | undefined;
+    let signalReceived = false;
+    let markCheckoutStarted: (() => void) | undefined;
+    const checkoutStarted = new Promise<void>((resolve) => {
+      markCheckoutStarted = resolve;
+    });
+    const git = {
+      async run(
+        args: readonly string[],
+        options: { signal?: AbortSignal } = {},
+      ) {
+        if (args[0] !== "checkout-index") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+        const targetDir = prefix
+          .slice("--prefix=".length)
+          .replace(/[/\\]+$/u, "");
+        snapshotRoot = dirname(targetDir);
+        markCheckoutStarted?.();
+        return new Promise<never>((_resolve, reject) => {
+          const abort = () => {
+            signalReceived = true;
+            reject(new GitCommandError("GIT_ABORTED", "Git command was aborted."));
+          };
+          if (options.signal?.aborted === true) {
+            abort();
+          } else {
+            options.signal?.addEventListener("abort", abort, { once: true });
+          }
+        });
+      },
+      async tryRun() {
+        return { stdout: "", stderr: "", exitCode: 1 };
+      },
+    } as unknown as GitClient;
+    onTestFinished(async () => {
+      if (snapshotRoot !== undefined) {
+        await rm(snapshotRoot, { recursive: true, force: true });
+      }
+    });
+    const controller = new AbortController();
+    const buildWithSignal = buildSnapshotPair as unknown as (
+      repositoryRoot: string,
+      client: GitClient,
+      signal: AbortSignal,
+    ) => Promise<unknown>;
+    const build = buildWithSignal("/repo", git, controller.signal);
+    await checkoutStarted;
+    controller.abort();
+
+    const failure = await Promise.race([
+      build.then(
+        () => new Error("snapshot construction unexpectedly completed"),
+        (error: unknown) => error,
+      ),
+      new Promise<Error>((resolve) => {
+        setTimeout(
+          () => resolve(new Error("checkout-index did not receive abort signal")),
+          100,
+        );
+      }),
+    ]);
+
+    expect(signalReceived).toBe(true);
+    expect(failure).toMatchObject({ code: "GIT_ABORTED" });
+    expect(snapshotRoot).toBeDefined();
+    expect(await pathExists(snapshotRoot!)).toBe(false);
   });
 
   it.runIf(process.platform !== "win32")(
