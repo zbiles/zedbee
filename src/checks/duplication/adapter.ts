@@ -85,6 +85,8 @@ async function collectSide(
       threshold: policyThreshold,
       silent: true,
       gitignore: true,
+      // Explicit file arguments can otherwise yield ambiguous report basenames.
+      absolute: true,
     });
     try {
       const cliPath = fileURLToPath(import.meta.resolve("jscpd/run-jscpd.js"));

@@ -101,6 +101,8 @@ Duplication uses these workspace-wide values:
 
 `lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and may change only with a Zedbee engine upgrade.
 
+`lint.typeInformation` accepts `"required"` or `"when-available"` and defaults to `"required"`. Typed lint loads every contained TypeScript project in a workspace. A file covered by any loaded project receives type-aware rules. An uncovered file blocks typed lint under `"required"`. Under an explicit `"when-available"` file policy, it receives the bundled basic TypeScript rules without rules that require project type information. This setting is file-scoped and can be limited with an override such as `{ "files": ["tools/*.ts"], "checks": { "lint": { "typeInformation": "when-available" } } }`.
+
 ```jsonc
 {
   "schemaVersion": 1,

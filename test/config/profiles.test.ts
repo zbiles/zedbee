@@ -12,6 +12,12 @@ describe("managed check profiles", () => {
     });
   });
 
+  it("requires TypeScript project information for lint by default", () => {
+    expect(resolveConfig(undefined).checks.lint.typeInformation).toBe(
+      "required",
+    );
+  });
+
   it("resolves configured terminal presentation and maximum report age", () => {
     expect(
       resolveConfig({

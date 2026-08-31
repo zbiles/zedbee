@@ -131,6 +131,64 @@ function metricAt(
 }
 
 describe("observationCheckResult", () => {
+  it("attributes manifest entities without parsing them as JavaScript", async () => {
+    const target = { id: ".", kind: "workspace" as const, relativeRoot: "." };
+    const runContext = await context(
+      "deadCode",
+      target,
+      { severity: "error", when: "relevant" },
+      {
+        files: new Map([
+          [
+            "package.json",
+            {
+              path: "package.json",
+              status: "modified",
+              addedRanges: [{ start: 1, end: 1 }],
+            },
+          ],
+        ]),
+        isEmpty: false,
+        containsAddedLine: (file, line) =>
+          file === "package.json" && line === 1,
+      },
+    );
+
+    const result = await observationCheckResult(
+      "deadCode",
+      {
+        checkId: "deadCode",
+        target,
+        baselineObservations: [],
+        targetObservations: [
+          {
+            ...located("deadCode", "package.json"),
+            identity: "dependencies:package.json:unused",
+            entity: {
+              kind: "knip-dependencies",
+              name: "unused",
+              file: "package.json",
+            },
+          },
+        ],
+        projectDelta: true,
+      },
+      runContext,
+      true,
+    );
+
+    expect(result.status).toBe("completed");
+    expect(result.findings).toEqual([
+      expect.objectContaining({
+        location: expect.objectContaining({ file: "package.json" }),
+        attribution: expect.objectContaining({
+          staged: true,
+          evidence: expect.arrayContaining(["project-delta"]),
+        }),
+      }),
+    ]);
+  });
+
   it("rejects target and baseline paths not owned by the exact workspace", async () => {
     const target = {
       id: "apps/web",

@@ -75,6 +75,10 @@ export interface ResolvedRulePolicy extends ResolvedCheckPolicyBase {
   rules: Readonly<Record<string, EslintRuleConfiguration>>;
 }
 
+export interface ResolvedLintPolicy extends ResolvedRulePolicy {
+  typeInformation: "required" | "when-available";
+}
+
 export interface ResolvedComplexityPolicy extends ResolvedCheckPolicyBase {
   max: number;
   blockWorsening: boolean;
@@ -82,7 +86,7 @@ export interface ResolvedComplexityPolicy extends ResolvedCheckPolicyBase {
 
 export interface ResolvedCheckPolicies {
   readonly formatting: ResolvedFormattingPolicy;
-  readonly lint: ResolvedRulePolicy;
+  readonly lint: ResolvedLintPolicy;
   readonly types: ResolvedCheckPolicyBase;
   readonly cyclomaticComplexity: ResolvedComplexityPolicy;
   readonly readabilityComplexity: ResolvedComplexityPolicy;
@@ -109,6 +113,7 @@ export type ResolvedCheckPolicyPatch = Readonly<
     readonly settings?:
       Partial<FormattingSettings> | Partial<DuplicationSettings>;
     readonly rules?: Readonly<Record<string, EslintRuleConfiguration>>;
+    readonly typeInformation?: "required" | "when-available";
   }
 >;
 
@@ -212,6 +217,18 @@ function rulePolicyObjectSchema(checkId: RuleCheckId) {
     .object({
       ...commonPolicyFields,
       rules: eslintRuleSettingsSchema.optional(),
+      ...(checkId === "lint"
+        ? {
+            typeInformation: z
+              .enum(["required", "when-available"])
+              .optional()
+              .meta({
+                description:
+                  'Require a TypeScript project or use basic lint when project information is unavailable. Defaults to "required".',
+                default: "required",
+              }),
+          }
+        : {}),
     })
     .strict()
     .superRefine((policy, context) => {

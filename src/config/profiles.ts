@@ -74,7 +74,11 @@ function baseChecks(profile: ProfileId): MutableCheckPolicies {
       ...common("formatting"),
       settings: DEFAULT_FORMATTING_SETTINGS,
     },
-    lint: { ...common("lint"), rules: Object.freeze({}) },
+    lint: {
+      ...common("lint"),
+      rules: Object.freeze({}),
+      typeInformation: "required",
+    },
     types: common("types"),
     cyclomaticComplexity: {
       ...common("cyclomaticComplexity"),
@@ -132,6 +136,7 @@ function policyPatch(
     rules?: ResolvedCheckPolicyPatch["rules"];
     blockWorsening?: boolean;
     onUnavailable?: "block" | "warn";
+    typeInformation?: "required" | "when-available";
   } = {};
   if (objectInput.severity !== undefined) patch.severity = objectInput.severity;
   if (objectInput.when !== undefined) patch.when = objectInput.when;
@@ -145,16 +150,16 @@ function policyPatch(
     if (!isRuleCheckId(checkId)) {
       throw new TypeError(`${checkId} does not support managed rule overrides`);
     }
-    patch.rules = validateManagedRuleConfiguration(
-      checkId,
-      objectInput.rules,
-    );
+    patch.rules = validateManagedRuleConfiguration(checkId, objectInput.rules);
   }
   if (objectInput.blockWorsening !== undefined) {
     patch.blockWorsening = objectInput.blockWorsening;
   }
   if (objectInput.onUnavailable !== undefined) {
     patch.onUnavailable = objectInput.onUnavailable;
+  }
+  if (objectInput.typeInformation !== undefined) {
+    patch.typeInformation = objectInput.typeInformation;
   }
   return Object.freeze(patch) as ResolvedCheckPolicyPatch;
 }
@@ -303,6 +308,9 @@ function recordPatchOrigins(
   }
   if (patch.onUnavailable !== undefined) {
     recordOrigin(origins, checkId, "onUnavailable", origin);
+  }
+  if (patch.typeInformation !== undefined) {
+    recordOrigin(origins, checkId, "typeInformation", origin);
   }
   if (patch.settings !== undefined) {
     for (const key of Object.keys(patch.settings)) {

@@ -311,6 +311,62 @@ function IncompleteChecksPanel({
                         tone={ZEDBEE_THEME.secondary}
                       />
                     )}
+                    {error.snapshot === undefined ? null : (
+                      <LabeledValue
+                        label="Checked version"
+                        value={
+                          error.snapshot === "last-commit"
+                            ? "Previous commit"
+                            : "Staged files"
+                        }
+                        width={contentWidth}
+                        color={color}
+                        tone={ZEDBEE_THEME.secondary}
+                      />
+                    )}
+                    {error.projectPaths === undefined ? null : (
+                      <LabeledValue
+                        label={
+                          error.projectPaths.length === 1
+                            ? "Loaded project"
+                            : "Loaded projects"
+                        }
+                        value={error.projectPaths.join(", ")}
+                        width={contentWidth}
+                        color={color}
+                        tone={ZEDBEE_THEME.secondary}
+                      />
+                    )}
+                    {error.paths === undefined ? null : (
+                      <>
+                        <LabeledValue
+                          label="Affected files"
+                          value={String(error.paths.length)}
+                          width={contentWidth}
+                          color={color}
+                          tone={ZEDBEE_THEME.secondary}
+                        />
+                        {error.paths.slice(0, 10).map((path) => (
+                          <LabeledValue
+                            key={path}
+                            label="File"
+                            value={path}
+                            width={contentWidth}
+                            color={color}
+                            tone={ZEDBEE_THEME.secondary}
+                          />
+                        ))}
+                        {error.paths.length <= 10 ? null : (
+                          <LabeledValue
+                            label="More files"
+                            value={String(error.paths.length - 10)}
+                            width={contentWidth}
+                            color={color}
+                            tone={ZEDBEE_THEME.secondary}
+                          />
+                        )}
+                      </>
+                    )}
                     {error.temporaryPath === undefined ? null : (
                       <LabeledValue
                         label="Cleanup"

@@ -221,6 +221,30 @@ export async function loadSnapshotProgramInput(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
 ): Promise<SnapshotProgramInput> {
+  const prepared = await prepareSnapshotProgramFiles(snapshotRoot);
+  return programInputForConfig(
+    prepared,
+    repositoryRoot,
+    workspace,
+    preferredConfig(workspace),
+    true,
+  );
+}
+
+export interface SnapshotProgramProject {
+  readonly configPath: string;
+  readonly input: SnapshotProgramInput;
+}
+
+interface PreparedSnapshotProgramFiles {
+  readonly canonicalRoot: string;
+  readonly registry: SnapshotRegistry;
+  readonly files: Map<string, string>;
+}
+
+async function prepareSnapshotProgramFiles(
+  snapshotRoot: string,
+): Promise<PreparedSnapshotProgramFiles> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   const registry = await captureSnapshotRegistry(canonicalRoot);
   const files = new Map<string, string>();
@@ -232,7 +256,17 @@ export async function loadSnapshotProgramInput(
       await readContainedFile(registry, entry.repositoryPath),
     );
   }
-  const configPath = preferredConfig(workspace);
+  return { canonicalRoot, registry, files };
+}
+
+async function programInputForConfig(
+  prepared: PreparedSnapshotProgramFiles,
+  repositoryRoot: string,
+  workspace: WorkspaceInspection,
+  configPath: string,
+  fallbackToWorkspace: boolean,
+): Promise<SnapshotProgramInput> {
+  const { canonicalRoot, registry, files } = prepared;
   if (registry.resolve(configPath)?.targetKind !== "file") {
     throw new TypeError("Missing TypeScript configuration");
   }
@@ -266,8 +300,17 @@ export async function loadSnapshotProgramInput(
   const parsedRoots = parsed.fileNames
     .map((path) => normalize(relative(canonicalRoot, path)))
     .filter((path) => allowedRoots.has(path));
-  const rootNames = parsedRoots.length > 0 ? parsedRoots : [...allowedRoots];
-  if (rootNames.length === 0) throw new TypeError("No TypeScript source files");
+  const rootNames =
+    parsedRoots.length > 0 || !fallbackToWorkspace
+      ? parsedRoots
+      : [...allowedRoots];
+  if (
+    rootNames.length === 0 &&
+    (parsed.projectReferences === undefined ||
+      parsed.projectReferences.length === 0)
+  ) {
+    throw new TypeError("No TypeScript source files");
+  }
   const sources: Record<string, string> = {};
   for (const [absolute, source] of files) {
     const path = normalize(relative(canonicalRoot, absolute));
@@ -283,4 +326,56 @@ export async function loadSnapshotProgramInput(
       ? {}
       : { projectReferences: parsed.projectReferences }),
   };
+}
+
+/** Loads every contained TypeScript project without inventing file coverage. */
+export async function loadSnapshotProgramProjects(
+  snapshotRoot: string,
+  repositoryRoot: string,
+  workspace: WorkspaceInspection,
+): Promise<readonly SnapshotProgramProject[]> {
+  const prepared = await prepareSnapshotProgramFiles(snapshotRoot);
+  const preferred = preferredConfig(workspace);
+  const configPaths = [
+    preferred,
+    ...workspace.tsconfigPaths.filter((path) => path !== preferred),
+  ];
+  if (configPaths.length === 0)
+    throw new TypeError("Missing TypeScript configuration");
+  const projects: SnapshotProgramProject[] = [];
+  const referencedConfigs = new Set<string>();
+  for (const configPath of configPaths) {
+    if (referencedConfigs.has(configPath)) continue;
+    try {
+      const input = await programInputForConfig(
+        prepared,
+        repositoryRoot,
+        workspace,
+        configPath,
+        false,
+      );
+      projects.push({
+        configPath,
+        input,
+      });
+      for (const reference of input.projectReferences ?? []) {
+        const path = normalize(
+          relative(prepared.canonicalRoot, reference.path),
+        );
+        referencedConfigs.add(
+          path.endsWith(".json") ? path : posix.join(path, "tsconfig.json"),
+        );
+      }
+    } catch (error) {
+      if (
+        error instanceof TypeError &&
+        error.message === "No TypeScript source files"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+  if (projects.length === 0) throw new TypeError("No TypeScript projects");
+  return Object.freeze(projects);
 }

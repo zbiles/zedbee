@@ -341,8 +341,13 @@ describe("ScanResultDashboard", () => {
             durationMs: 3,
             findings: [],
             error: {
-              code: "LINT_FAILED",
-              message: "Lint could not finish.",
+              code: "TYPED_LINT_PROJECT_MISMATCH",
+              message:
+                "Zedbee found TypeScript files outside every loaded project.",
+              path: "tools/remotion.config.ts",
+              paths: ["docs/.vitepress/config.mts", "tools/remotion.config.ts"],
+              snapshot: "last-commit",
+              projectPaths: ["tools/tsconfig.json"],
             },
           },
         ],
@@ -351,6 +356,11 @@ describe("ScanResultDashboard", () => {
     );
 
     expectPanelsTouch(output, "BLOCKING FINDINGS", "INCOMPLETE CHECKS");
+    expect(output).toContain("Checked version: Previous commit");
+    expect(output).toContain("Loaded project: tools/tsconfig.json");
+    expect(output).toContain("Affected files: 2");
+    expect(output).toContain("File: docs/.vitepress/config.mts");
+    expect(output).toContain("File: tools/remotion.config.ts");
   });
 
   it("balances every result panel with a blank row above its content", () => {

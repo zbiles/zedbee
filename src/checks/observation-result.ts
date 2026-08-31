@@ -114,6 +114,14 @@ async function changedEntities(
   const files = [
     ...new Set(
       targetObservations
+        // Only syntax entities can match collectChangedEntities identities.
+        // Analyzer entities, such as Knip dependencies in package.json, still
+        // participate in baseline comparison and project-delta attribution.
+        .filter((observation) =>
+          ["function", "class", "method"].includes(
+            observation.entity?.kind ?? "",
+          ),
+        )
         .map((observation) => observation.entity?.file)
         .filter((file): file is string => file !== undefined)
         .filter(

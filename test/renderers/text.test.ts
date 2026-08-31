@@ -205,8 +205,13 @@ describe("renderText", () => {
           durationMs: 2,
           findings: [],
           error: {
-            code: "TYPED_LINT_ANALYSIS_FAILED",
-            message: "Typed lint could not analyze the configured project.",
+            code: "TYPED_LINT_PROJECT_MISMATCH",
+            message:
+              "Zedbee found TypeScript files outside its loaded projects.",
+            path: "docs/config.mts",
+            paths: ["docs/config.mts", "docs/theme.ts"],
+            snapshot: "last-commit",
+            projectPaths: ["tools/tsconfig.json"],
           },
         },
       ],
@@ -229,6 +234,11 @@ describe("renderText", () => {
     expect(output.indexOf("INCOMPLETE CHECKS")).toBeLessThan(
       output.indexOf("SCAN RESULT"),
     );
+    expect(output).toContain("Checked version: Previous commit");
+    expect(output).toContain("Loaded project: tools/tsconfig.json");
+    expect(output).toContain("Affected files: 2");
+    expect(output).toContain("docs/config.mts");
+    expect(output).toContain("docs/theme.ts");
     expect(output).toMatch(
       /A required check could not finish\. Review INCOMPLETE CHECKS\s+above for details\. Commit blocked\./u,
     );

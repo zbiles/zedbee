@@ -21,6 +21,9 @@ const checks: readonly CheckResult[] = [
       code: "SNAPSHOT_CLEANUP_FAILED",
       message: "Zedbee could not remove its temporary snapshot.",
       path: "src/app.ts",
+      paths: ["src/app.ts", "src/other.ts"],
+      snapshot: "staged",
+      projectPaths: ["tsconfig.json"],
       temporaryPath: cleanupPath,
       remediation,
     },
@@ -76,6 +79,10 @@ describe("IncompleteList", () => {
     );
     expect(frame).toContain("Zedbee could not remove its temporary snapshot.");
     expect(frame).toContain("Path: src/app.ts");
+    expect(frame).toContain("Checked version: Staged files");
+    expect(frame).toContain("Loaded project: tsconfig.json");
+    expect(frame).toContain("Affected files: 2");
+    expect(frame).toContain("src/other.ts");
     expect(frame).toContain(`Cleanup: ${cleanupPath}`);
     expect(frame).toContain(`Fix: ${remediation}`);
   });

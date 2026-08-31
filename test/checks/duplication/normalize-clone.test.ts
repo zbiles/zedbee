@@ -100,6 +100,20 @@ describe("clone normalization", () => {
     ]);
   });
 
+  it.each(["/outside/src/a.ts", "/snapshot-other/src/a.ts"])(
+    "rejects an absolute clone path outside the snapshot: %s",
+    (name) => {
+      expect(() =>
+        normalizeClone(
+          rawClone({ firstFile: { ...rawClone().firstFile, name } }),
+          "/snapshot",
+          ".",
+          ["src/a.ts", "src/b.ts"],
+        ),
+      ).toThrow("Expected a normalized repository-relative path");
+    },
+  );
+
   it.each([
     null,
     {},

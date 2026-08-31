@@ -197,6 +197,11 @@ function createNotification(
       ...(check.target === undefined ? {} : { target: check.target }),
       durationMs: check.durationMs,
       ...(error.path === undefined ? {} : { path: error.path }),
+      ...(error.paths === undefined ? {} : { paths: [...error.paths] }),
+      ...(error.snapshot === undefined ? {} : { snapshot: error.snapshot }),
+      ...(error.projectPaths === undefined
+        ? {}
+        : { projectPaths: [...error.projectPaths] }),
       ...(error.temporaryPath === undefined
         ? {}
         : { temporaryPath: error.temporaryPath }),

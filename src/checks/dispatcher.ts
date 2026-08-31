@@ -4,9 +4,7 @@ import {
   type CheckId,
   type ResolvedCheckPolicy,
 } from "../config/schema.js";
-import {
-  type FilePolicyResolver,
-} from "../config/file-policy.js";
+import { type FilePolicyResolver } from "../config/file-policy.js";
 import type { CheckResult } from "../core/types.js";
 import type { CheckFixCandidate } from "../fixes/types.js";
 import type {
@@ -1008,6 +1006,15 @@ export async function dispatchChecks(
                     message: error.message,
                     remediation: error.remediation,
                     ...(error.path === undefined ? {} : { path: error.path }),
+                    ...(error.paths === undefined
+                      ? {}
+                      : { paths: error.paths }),
+                    ...(error.snapshot === undefined
+                      ? {}
+                      : { snapshot: error.snapshot }),
+                    ...(error.projectPaths === undefined
+                      ? {}
+                      : { projectPaths: error.projectPaths }),
                     ...(error.disposition === undefined
                       ? {}
                       : { disposition: error.disposition }),

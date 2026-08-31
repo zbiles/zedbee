@@ -93,6 +93,7 @@ function changes(path: string, end: number, start = 1): ChangeSet {
 
 async function duplicationContext(
   targetChanged = true,
+  paths = { template: "src/template.ts", changed: "src/changed.ts" },
 ): Promise<CheckRunContext> {
   const [baseline, staged, live] = await Promise.all([
     createInspectionFixture(),
@@ -103,20 +104,20 @@ async function duplicationContext(
     await fixture.writeJson("package.json", { name: "fixture", private: true });
     await fixture.write("src/debt-a.ts", source("debtA", "debt"));
     await fixture.write("src/debt-b.ts", source("debtB", "debt"));
-    await fixture.write("src/template.ts", source("template", "new"));
+    await fixture.write(paths.template, source("template", "new"));
   }
   await baseline.write(
-    "src/changed.ts",
+    paths.changed,
     "export function changed() { return 'baseline'; }\n",
   );
   await staged.write(
-    "src/changed.ts",
+    paths.changed,
     targetChanged
       ? source("changed", "new")
       : "export function changed() { return 'target'; }\n",
   );
   await live.write(
-    "src/changed.ts",
+    paths.changed,
     "export function changed() { return 'live'; }\n",
   );
   const config = resolveConfig({
@@ -126,7 +127,7 @@ async function duplicationContext(
   });
   return {
     repositoryRoot: live.root,
-    changeSet: changes("src/changed.ts", targetChanged ? 20 : 1),
+    changeSet: changes(paths.changed, targetChanged ? 20 : 1),
     config,
     snapshots: {
       baselineDir: baseline.root,
@@ -326,6 +327,40 @@ describe("duplication policy", () => {
     expect(
       result.findings.filter(({ attribution }) => attribution.staged),
     ).toEqual([]);
+  });
+
+  it("attributes clones to their source paths when separate directories share a basename", async () => {
+    const context = await duplicationContext(true, {
+      template: "src/template/index.ts",
+      changed: "src/changed/index.ts",
+    });
+    const set = await duplicationAdapter.collect(context);
+    const result = await observationCheckResult(
+      "duplication",
+      set,
+      context,
+      true,
+    );
+
+    expect(set.targetObservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: expect.objectContaining({ file: "src/template/index.ts" }),
+        }),
+        expect.objectContaining({
+          location: expect.objectContaining({ file: "src/changed/index.ts" }),
+        }),
+      ]),
+    );
+    expect(
+      result.findings.filter(({ attribution }) => attribution.staged),
+    ).toEqual([
+      expect.objectContaining({
+        location: expect.objectContaining({ file: "src/changed/index.ts" }),
+        attribution: expect.objectContaining({ kind: "range-overlap" }),
+      }),
+    ]);
+    expect(JSON.stringify(result)).not.toContain(context.snapshots.targetDir);
   });
 
   it("attributes an enlarged clone only to its changed fragment", async () => {

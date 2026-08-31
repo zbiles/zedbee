@@ -186,7 +186,7 @@ export function immutableConfigurationSnapshot<T>(value: T): Readonly<T> {
 
 const POLICY_KEYS = Object.freeze({
   formatting: ["severity", "settings", "when"],
-  lint: ["rules", "severity", "when"],
+  lint: ["rules", "severity", "typeInformation", "when"],
   types: ["severity", "when"],
   cyclomaticComplexity: ["blockWorsening", "max", "severity", "when"],
   readabilityComplexity: ["blockWorsening", "max", "severity", "when"],

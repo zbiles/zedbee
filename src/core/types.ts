@@ -120,6 +120,9 @@ export interface CheckError {
   code: string;
   message: string;
   path?: string;
+  paths?: readonly string[];
+  snapshot?: "last-commit" | "staged";
+  projectPaths?: readonly string[];
   temporaryPath?: string;
   remediation?: string;
 }

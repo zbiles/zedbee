@@ -20,12 +20,12 @@ import type { ChangeSet } from "../git/change-set.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 
 const ENGINE_IDENTITIES = Object.freeze({
-  lint: "eslint@9.39.5+typescript-eslint@8.67.0+zedbee-rules-v1",
+  lint: "eslint@9.39.5+typescript-eslint@8.67.0+zedbee-rules-v2+zedbee-multi-project-v1",
   types: "typescript@6.0.3+zedbee-program-v1",
   cyclomaticComplexity: "eslint@9.39.5+complexity-v1",
   readabilityComplexity: "eslint@9.39.5+zedbee-readability-v1",
   structuralSecurity: "ast-grep@0.45.1+zedbee-structural-rules-v1",
-  duplication: "jscpd@5.0.15+zedbee-clone-normalization-v1",
+  duplication: "jscpd@5.0.15+zedbee-clone-normalization-v2",
   dependencyArchitecture: "dependency-cruiser@18.2.0+zedbee-rules-v1",
   deadCode: "knip@6.32.2+zedbee-managed-config-v1",
   reactCorrectness:

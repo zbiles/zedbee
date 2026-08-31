@@ -1413,6 +1413,12 @@
                   },
                   "additionalProperties": false,
                   "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
+                },
+                "typeInformation": {
+                  "description": "Require a TypeScript project or use basic lint when project information is unavailable. Defaults to \"required\".",
+                  "default": "required",
+                  "type": "string",
+                  "enum": ["required", "when-available"]
                 }
               },
               "additionalProperties": false
@@ -3734,6 +3740,12 @@
                         },
                         "additionalProperties": false,
                         "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
+                      },
+                      "typeInformation": {
+                        "description": "Require a TypeScript project or use basic lint when project information is unavailable. Defaults to \"required\".",
+                        "default": "required",
+                        "type": "string",
+                        "enum": ["required", "when-available"]
                       }
                     },
                     "additionalProperties": false

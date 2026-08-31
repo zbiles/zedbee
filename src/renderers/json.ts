@@ -54,6 +54,15 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
           code: check.error.code,
           message: check.error.message,
           ...(check.error.path === undefined ? {} : { path: check.error.path }),
+          ...(check.error.paths === undefined
+            ? {}
+            : { paths: [...check.error.paths] }),
+          ...(check.error.snapshot === undefined
+            ? {}
+            : { snapshot: check.error.snapshot }),
+          ...(check.error.projectPaths === undefined
+            ? {}
+            : { projectPaths: [...check.error.projectPaths] }),
           ...(check.error.temporaryPath === undefined
             ? {}
             : { temporaryPath: check.error.temporaryPath }),

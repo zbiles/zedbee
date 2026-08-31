@@ -13,6 +13,26 @@ function changeSet(files: ChangeSet["files"] = new Map()): ChangeSet {
 }
 
 describe("createFilePolicyResolver", () => {
+  it("allows basic lint only for explicitly selected TypeScript files", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["tools/*.ts"],
+          checks: { lint: { typeInformation: "when-available" } },
+        },
+      ],
+    });
+    const resolve = createFilePolicyResolver(config, changeSet());
+
+    expect(resolve("lint", "tools/config.ts", "target").typeInformation).toBe(
+      "when-available",
+    );
+    expect(resolve("lint", "src/app.ts", "target").typeInformation).toBe(
+      "required",
+    );
+  });
+
   it("rejects workspace-wide duplication fields in file overrides", () => {
     for (const duplication of [
       { threshold: 7.5 },

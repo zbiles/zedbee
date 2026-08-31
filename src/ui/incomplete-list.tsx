@@ -82,6 +82,62 @@ export function IncompleteList({
                     tone={ZEDBEE_THEME.secondary}
                   />
                 )}
+                {error.snapshot === undefined ? null : (
+                  <Field
+                    label="Checked version"
+                    value={
+                      error.snapshot === "last-commit"
+                        ? "Previous commit"
+                        : "Staged files"
+                    }
+                    width={width}
+                    color={color}
+                    tone={ZEDBEE_THEME.secondary}
+                  />
+                )}
+                {error.projectPaths === undefined ? null : (
+                  <Field
+                    label={
+                      error.projectPaths.length === 1
+                        ? "Loaded project"
+                        : "Loaded projects"
+                    }
+                    value={error.projectPaths.join(", ")}
+                    width={width}
+                    color={color}
+                    tone={ZEDBEE_THEME.secondary}
+                  />
+                )}
+                {error.paths === undefined ? null : (
+                  <>
+                    <Field
+                      label="Affected files"
+                      value={String(error.paths.length)}
+                      width={width}
+                      color={color}
+                      tone={ZEDBEE_THEME.secondary}
+                    />
+                    {error.paths.slice(0, 10).map((path) => (
+                      <Field
+                        key={path}
+                        label="File"
+                        value={path}
+                        width={width}
+                        color={color}
+                        tone={ZEDBEE_THEME.secondary}
+                      />
+                    ))}
+                    {error.paths.length <= 10 ? null : (
+                      <Field
+                        label="More files"
+                        value={String(error.paths.length - 10)}
+                        width={width}
+                        color={color}
+                        tone={ZEDBEE_THEME.secondary}
+                      />
+                    )}
+                  </>
+                )}
                 {error.temporaryPath === undefined ? null : (
                   <Field
                     label="Cleanup"

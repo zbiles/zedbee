@@ -244,6 +244,7 @@ describe("loadConfig", () => {
       severity: "error",
       when: "always",
       rules: {},
+      typeInformation: "required",
     });
     expect(config.checks.cyclomaticComplexity).toEqual({
       severity: "error",

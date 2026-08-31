@@ -369,6 +369,9 @@ describe("renderJson", () => {
             code: "PRETTIER_FAILED",
             message: "Prettier could not analyze the staged file.",
             path: "src\\value.ts",
+            paths: ["src\\value.ts", "src\\other.ts"],
+            snapshot: "staged",
+            projectPaths: ["configs\\tsconfig.json"],
           },
         },
       ],
@@ -376,12 +379,25 @@ describe("renderJson", () => {
 
     const parsed = JSON.parse(renderJson(report)) as {
       checks: Array<{
-        error: { path: string };
+        error: {
+          path: string;
+          paths: string[];
+          snapshot: string;
+          projectPaths: string[];
+        };
         findings: Array<{ sourceExcerpt: { text: string } }>;
       }>;
     };
 
     expect(parsed.checks[0]?.error.path).toBe("src/value.ts");
+    expect(parsed.checks[0]?.error.paths).toEqual([
+      "src/other.ts",
+      "src/value.ts",
+    ]);
+    expect(parsed.checks[0]?.error.snapshot).toBe("staged");
+    expect(parsed.checks[0]?.error.projectPaths).toEqual([
+      "configs/tsconfig.json",
+    ]);
     expect(parsed.checks[0]?.findings[0]?.sourceExcerpt.text).toBe(
       "  const BIDI_MARKER = 'before�after';�[31m",
     );

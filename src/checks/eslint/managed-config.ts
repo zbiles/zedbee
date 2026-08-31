@@ -45,6 +45,7 @@ export interface ManagedConfigOptions {
   readonly typedProject?: {
     readonly programs: readonly ts.Program[];
   };
+  readonly typeInformation?: "basic";
 }
 
 export interface FileRuleGroup {
@@ -214,6 +215,20 @@ export function managedConfig(
             : { plugins: { ...presetConfig.plugins } }),
         });
       }
+    } else if (options.typeInformation === "basic") {
+      for (const preset of tseslint.configs.recommended) {
+        const presetConfig = preset as Linter.Config;
+        config.push({
+          ...presetConfig,
+          files: TYPESCRIPT_FILES,
+          ...(presetConfig.rules === undefined
+            ? {}
+            : { rules: { ...presetConfig.rules } }),
+          ...(presetConfig.plugins === undefined
+            ? {}
+            : { plugins: { ...presetConfig.plugins } }),
+        });
+      }
     }
   }
   const plugins = modePlugins(options);
@@ -223,10 +238,27 @@ export function managedConfig(
     if (checkId === undefined) {
       throw new TypeError("Managed complexity does not accept rule overrides.");
     }
-    const rules = validateManagedRuleConfiguration(
+    let rules = validateManagedRuleConfiguration(
       checkId,
       options.ruleOverrides,
     );
+    if (options.mode === "lint" && options.typeInformation === "basic") {
+      rules = Object.freeze(
+        Object.fromEntries(
+          Object.entries(rules).filter(([ruleId]) => {
+            if (!ruleId.startsWith("@typescript-eslint/")) return true;
+            const name = ruleId.slice("@typescript-eslint/".length);
+            const plugin = tseslint.plugin as unknown as {
+              rules?: Record<string, unknown>;
+            };
+            const rule = plugin.rules?.[name] as
+              | { meta?: { docs?: { requiresTypeChecking?: boolean } } }
+              | undefined;
+            return rule?.meta?.docs?.requiresTypeChecking !== true;
+          }),
+        ),
+      );
+    }
     if (Object.keys(rules).length > 0) {
       config.push({
         files: SOURCE_FILES,

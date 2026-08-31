@@ -8,16 +8,21 @@ import {
   effectiveBehaviorFingerprint,
   observationCacheEngineIdentity,
 } from "../../src/cache/key.js";
-import type { ObservationCache } from "../../src/cache/store.js";
+import {
+  ObservationCacheStore,
+  type ObservationCache,
+} from "../../src/cache/store.js";
 import type {
   CheckAdapter,
   CheckRunContext,
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
 import type { ChangeSet, ChangedFile } from "../../src/git/change-set.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
 
@@ -141,6 +146,92 @@ function behavior(
 }
 
 describe("observation cache keys", () => {
+  it("does not reuse cached duplication paths from basename normalization", async () => {
+    const [fixture, cacheFixture] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    const source = [
+      "export function example(value: number) {",
+      "  const result = {};",
+      ...Array.from(
+        { length: 14 },
+        (_, index) => `  result.item${index} = value + ${index};`,
+      ),
+      "  return result;",
+      "}",
+      "",
+    ].join("\n");
+    const sourceFiles = [
+      "components/a/index.ts",
+      "components/b/index.ts",
+      "index.ts",
+    ];
+    await fixture.writeJson("package.json", { name: "fixture", private: true });
+    await fixture.write(sourceFiles[0]!, source);
+    await fixture.write(sourceFiles[1]!, source);
+    await fixture.write("index.ts", "export const unrelated = true;\n");
+    const inspection = await inspectRepository(fixture.root);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: { duplication: { severity: "error", threshold: 0 } },
+    });
+    const context = {
+      ...contextFor(inspection.snapshotRoot, "^19.0.0", config, sourceFiles),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    const cache = new ObservationCacheStore({ root: cacheFixture.root });
+    const legacyOptions = {
+      cache,
+      cacheEngineIdentity: () => "jscpd@5.0.15+zedbee-clone-normalization-v1",
+    };
+    // The previous adapter accepted nested index.ts clones as root index.ts
+    // when the unrelated root file was also in the inspected source inventory.
+    const legacyAdapter = {
+      ...duplicationAdapter,
+      collect: async (context: CheckRunContext) => ({
+        checkId: "duplication",
+        target: context.target,
+        baselineObservations: [],
+        targetObservations: [1, 2].map((fragment) => ({
+          check: "duplication",
+          rule: "duplicate-fragment",
+          identity: `clone:legacy/fragment=${fragment}`,
+          severity: "error" as const,
+          message: "Duplicated code exceeds the configured project threshold.",
+          location: { file: "index.ts", startLine: 1, endLine: 18 },
+        })),
+      }),
+    };
+    await dispatchChecks([legacyAdapter], context, legacyOptions);
+    const [legacyHit] = await dispatchChecks(
+      [
+        {
+          ...legacyAdapter,
+          collect: async () => {
+            throw new Error("Expected cached legacy observations");
+          },
+        },
+      ],
+      context,
+      legacyOptions,
+    );
+    expect(legacyHit?.result.status).toBe("completed");
+    expect(
+      legacyHit?.result.findings.map(({ location }) => location?.file),
+    ).toEqual(["index.ts", "index.ts"]);
+
+    const [current] = await dispatchChecks([duplicationAdapter], context, {
+      cache,
+    });
+
+    expect(current?.result.status).toBe("completed");
+    expect(
+      current?.result.findings.map(({ location }) => location?.file).sort(),
+    ).toEqual(["components/a/index.ts", "components/b/index.ts"]);
+  });
+
   it("inventories and hashes each snapshot once across concurrent checks and workspaces", async () => {
     const [baseline, target] = await Promise.all([
       createInspectionFixture(),
@@ -384,6 +475,12 @@ describe("observation cache keys", () => {
   it("versions React correctness calibration in the engine identity", () => {
     expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
       "zedbee-react-calibration-v2",
+    );
+  });
+
+  it("versions multi-project typed lint in the engine identity", () => {
+    expect(observationCacheEngineIdentity("lint")).toContain(
+      "zedbee-multi-project-v1",
     );
   });
 

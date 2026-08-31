@@ -85,6 +85,43 @@ async function context(
 }
 
 describe("lintAdapter", () => {
+  it("loads separate TypeScript projects in one repository workspace", async () => {
+    const fixtures = await pair();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      for (const root of [".agents/tool", ".claude/tool"]) {
+        await fixture.writeJson(`${root}/tsconfig.json`, {
+          compilerOptions: {
+            strict: true,
+            target: "ES2022",
+            module: "ES2022",
+            moduleResolution: "Bundler",
+          },
+          include: ["src/**/*"],
+        });
+        await fixture.write(
+          `${root}/src/value.ts`,
+          "export const value: number = 1;\n",
+        );
+      }
+    }
+    const run = await context(
+      fixtures,
+      changes([
+        {
+          path: ".agents/tool/src/value.ts",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
+    );
+
+    const adapter = createLintAdapter();
+    const result = await adapter.collect(run);
+
+    expect(result.baselineObservations).toEqual([]);
+    expect(result.targetObservations).toEqual([]);
+  });
+
   it("plans target-only official fixes with the same grouped per-file rules as analysis", async () => {
     const fixtures = await pair();
     const clean = "export const value = 1;\n";
@@ -934,6 +971,10 @@ describe("lintAdapter", () => {
         "docs/config.mts",
         "export const title: string = 'Docs';\n",
       );
+      await fixture.write(
+        "docs/theme.ts",
+        "export const theme: string = 'light';\n",
+      );
     }
     const run = await context(
       fixtures,
@@ -948,12 +989,63 @@ describe("lintAdapter", () => {
 
     await expect(lintAdapter.collect(run)).rejects.toMatchObject({
       name: "CheckIncompleteError",
-      code: "TYPED_LINT_ANALYSIS_FAILED",
+      code: "TYPED_LINT_PROJECT_MISMATCH",
       message:
-        "Typed lint could not analyze every requested TypeScript file with the configured project.",
+        "Zedbee found TypeScript files that are not included in any loaded TypeScript project. Typed lint stopped because unrelated project settings could produce inaccurate results.",
+      path: "docs/config.mts",
+      paths: ["docs/config.mts", "docs/theme.ts"],
+      snapshot: "last-commit",
+      projectPaths: ["tools/tsconfig.json"],
       remediation:
-        "Verify that the staged TypeScript configuration includes every staged TypeScript file, then retry. If it does, report a Zedbee typed-lint compatibility issue.",
+        'Add these files to "files" or "include" in the correct tsconfig.json. If they belong to another project, ensure Zedbee can find that project\'s tsconfig.json. If they are intentionally outside a project, set checks.lint.typeInformation to "when-available" for those files to run basic lint instead.',
     });
+  });
+
+  it("runs basic TypeScript lint only when uncovered files explicitly allow it", async () => {
+    const fixtures = await pair();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.writeJson("tools/tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*"],
+      });
+      await fixture.write("tools/src/value.ts", "export const value = 1;\n");
+      await fixture.write("docs/config.mts", "const unused = 1;\n");
+    }
+    const changeSet = changes([
+      {
+        path: "docs/config.mts",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["docs/**"],
+          checks: { lint: { typeInformation: "when-available" } },
+        },
+      ],
+    });
+    const run = {
+      ...(await context(fixtures, changeSet)),
+      config,
+      policy: config.checks.lint,
+      policyForFile: testFilePolicyResolver(config, changeSet),
+    };
+
+    const adapter = createLintAdapter();
+    const result = await adapter.collect(run);
+
+    expect(result.targetObservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: "@typescript-eslint/no-unused-vars",
+          location: expect.objectContaining({ file: "docs/config.mts" }),
+        }),
+      ]),
+    );
+    await expect(adapter.planFixes?.(run, [])).resolves.toEqual([]);
   });
 
   it.each([

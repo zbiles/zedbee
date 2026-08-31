@@ -172,6 +172,29 @@ describe("managedConfig", () => {
     ).toEqual(managedConfig({ mode: "lint", managedIgnores: [] }));
   });
 
+  test("removes configured rules that need types from basic TypeScript lint", () => {
+    const config = managedConfig({
+      mode: "lint",
+      managedIgnores: [],
+      typeInformation: "basic",
+      ruleOverrides: {
+        "@typescript-eslint/no-floating-promises": "error",
+        "@typescript-eslint/no-unused-vars": "warn",
+      },
+    });
+
+    expect(config.at(-1)?.rules).toEqual({
+      "@typescript-eslint/no-unused-vars": "warn",
+    });
+    expect(
+      config.some(
+        (entry) =>
+          entry.rules?.["@typescript-eslint/no-floating-promises"] !==
+          undefined,
+      ),
+    ).toBe(false);
+  });
+
   test("groups identical effective rules deterministically and skips off files", () => {
     const resolve = ((_checkId: string, file: string, _side: string) => ({
       severity: file === "generated/off.js" ? "off" : "error",

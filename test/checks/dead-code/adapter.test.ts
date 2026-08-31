@@ -1,4 +1,4 @@
-import { access } from "node:fs/promises";
+import { access, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
@@ -6,6 +6,7 @@ import type {
   CheckTarget,
 } from "../../../src/checks/adapter.js";
 import { deadCodeAdapter } from "../../../src/checks/dead-code/adapter.js";
+import { dispatchChecks } from "../../../src/checks/dispatcher.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
@@ -163,6 +164,50 @@ describe("deadCodeAdapter", () => {
     );
     expect(await stagedFindings(runContext)).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({
+          rule: "dependencies",
+          location: expect.objectContaining({ file: "package.json" }),
+          attribution: expect.objectContaining({
+            staged: true,
+            evidence: expect.arrayContaining(["project-delta"]),
+          }),
+        }),
+      ]),
+    );
+  });
+
+  it("completes a staged manifest change while retaining old and newly unused dependencies", async () => {
+    const original = await context(
+      "export const used = 1;\n",
+      "export const used = 1;\n",
+      { dependencies: { "left-pad": "1.3.0" } },
+    );
+    await writeFile(
+      join(original.snapshots.targetDir, "package.json"),
+      JSON.stringify({
+        name: "fixture",
+        private: true,
+        main: "src/index.ts",
+        dependencies: { "left-pad": "1.3.0", "is-number": "7.0.0" },
+      }),
+    );
+    const runContext = {
+      ...original,
+      changeSet: changes("package.json"),
+      targetInspection: await inspectRepository(original.snapshots.targetDir),
+    };
+
+    const [execution] = await dispatchChecks([deadCodeAdapter], runContext);
+
+    expect(execution?.result.status).toBe("completed");
+    expect(execution?.result.findings).toHaveLength(2);
+    expect(execution?.result.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: "dependencies",
+          location: expect.objectContaining({ file: "package.json" }),
+          attribution: expect.objectContaining({ staged: false }),
+        }),
         expect.objectContaining({
           rule: "dependencies",
           location: expect.objectContaining({ file: "package.json" }),

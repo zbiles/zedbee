@@ -7,6 +7,9 @@ export interface CheckIncompleteErrorOptions {
   readonly message: string;
   readonly remediation: string;
   readonly path?: string;
+  readonly paths?: readonly string[];
+  readonly snapshot?: "last-commit" | "staged";
+  readonly projectPaths?: readonly string[];
   readonly disposition?: IncompleteDisposition;
 }
 
@@ -15,6 +18,9 @@ export class CheckIncompleteError extends Error {
   readonly code: string;
   readonly remediation: string;
   readonly path?: string;
+  readonly paths?: readonly string[];
+  readonly snapshot?: "last-commit" | "staged";
+  readonly projectPaths?: readonly string[];
   readonly disposition?: IncompleteDisposition;
 
   constructor(options: CheckIncompleteErrorOptions) {
@@ -31,6 +37,26 @@ export class CheckIncompleteError extends Error {
     );
     if (options.path !== undefined) {
       this.path = normalizeRepositoryRelativePath(options.path);
+    }
+    if (options.paths !== undefined) {
+      this.paths = Object.freeze(
+        [...new Set(options.paths.map(normalizeRepositoryRelativePath))].sort(),
+      );
+    }
+    if (
+      options.snapshot !== undefined &&
+      options.snapshot !== "last-commit" &&
+      options.snapshot !== "staged"
+    ) {
+      throw new TypeError("Expected a valid snapshot label");
+    }
+    if (options.snapshot !== undefined) this.snapshot = options.snapshot;
+    if (options.projectPaths !== undefined) {
+      this.projectPaths = Object.freeze(
+        [
+          ...new Set(options.projectPaths.map(normalizeRepositoryRelativePath)),
+        ].sort(),
+      );
     }
     if (
       options.disposition !== undefined &&

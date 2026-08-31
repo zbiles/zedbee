@@ -130,6 +130,9 @@ describe("public result sanitizer contract", () => {
       "code",
       "message",
       "path",
+      "paths",
+      "snapshot",
+      "projectPaths",
       "temporaryPath",
       "remediation",
     ]);

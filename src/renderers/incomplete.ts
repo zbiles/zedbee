@@ -35,6 +35,33 @@ export function incompleteDiagnosticLines(
   if (error.path !== undefined) {
     lines.push(...fieldLines("Path", error.path, width));
   }
+  if (error.snapshot !== undefined) {
+    lines.push(
+      ...fieldLines(
+        "Checked version",
+        error.snapshot === "last-commit" ? "Previous commit" : "Staged files",
+        width,
+      ),
+    );
+  }
+  if (error.projectPaths !== undefined) {
+    const label =
+      error.projectPaths.length === 1 ? "Loaded project" : "Loaded projects";
+    lines.push(...fieldLines(label, error.projectPaths.join(", "), width));
+  }
+  if (error.paths !== undefined) {
+    lines.push(
+      ...fieldLines("Affected files", String(error.paths.length), width),
+    );
+    for (const path of error.paths.slice(0, 10)) {
+      lines.push(...fieldLines("File", path, width));
+    }
+    if (error.paths.length > 10) {
+      lines.push(
+        ...fieldLines("More files", String(error.paths.length - 10), width),
+      );
+    }
+  }
   if (error.temporaryPath !== undefined) {
     lines.push(...fieldLines("Cleanup", error.temporaryPath, width));
   }

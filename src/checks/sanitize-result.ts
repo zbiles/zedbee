@@ -15,6 +15,7 @@ import {
 import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
+import { compareCodeUnits } from "../core/compare.js";
 
 const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
   "range-overlap",
@@ -115,6 +116,9 @@ export const PUBLIC_CHECK_ERROR_FIELDS = {
   code: true,
   message: true,
   path: true,
+  paths: true,
+  snapshot: true,
+  projectPaths: true,
   temporaryPath: true,
   remediation: true,
 } as const satisfies Readonly<Record<keyof CheckError, true>>;
@@ -262,6 +266,33 @@ function sanitizeError(
     ...(error.path === undefined
       ? {}
       : { path: normalizeRepositoryRelativePath(error.path) }),
+    ...(error.paths === undefined
+      ? {}
+      : {
+          paths: Object.freeze(
+            [...new Set(error.paths.map(normalizeRepositoryRelativePath))].sort(
+              compareCodeUnits,
+            ),
+          ),
+        }),
+    ...(error.snapshot === undefined
+      ? {}
+      : error.snapshot === "last-commit" || error.snapshot === "staged"
+        ? { snapshot: error.snapshot }
+        : (() => {
+            throw new TypeError("Adapter returned an invalid snapshot label");
+          })()),
+    ...(error.projectPaths === undefined
+      ? {}
+      : {
+          projectPaths: Object.freeze(
+            [
+              ...new Set(
+                error.projectPaths.map(normalizeRepositoryRelativePath),
+              ),
+            ].sort(compareCodeUnits),
+          ),
+        }),
     ...(temporaryPath === undefined ? {} : { temporaryPath }),
     ...(error.remediation === undefined
       ? {}
