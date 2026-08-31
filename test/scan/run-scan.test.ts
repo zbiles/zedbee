@@ -409,15 +409,15 @@ describe("runScan", () => {
     expect(report).toMatchObject({
       outcome: "incomplete",
       exitCode: 2,
-      summary: { incomplete: 5 },
+      summary: { incomplete: 4 },
     });
     expect(report.checks.map(({ error }) => error)).toMatchObject([
       { code: "GIT_LFS_POINTER", path: "assets/first.dat" },
-      { code: "UNSUPPORTED_BINARY_INPUT", path: "assets/photo.png" },
       { code: "GIT_LFS_POINTER", path: "assets/second.dat" },
       { code: "UNSUPPORTED_BINARY_INPUT", path: "src/generated.js" },
       { code: "GIT_SUBMODULE_UNAVAILABLE", path: "vendor/demo" },
     ]);
+    expect(JSON.stringify(report)).not.toContain("assets/photo.png");
     expect(dispatchCalls).toBe(0);
   });
 
@@ -630,7 +630,7 @@ describe("runScan", () => {
     expect(dispatchCalls).toBe(1);
   });
 
-  it("reports binary assets to enabled path-agnostic checks", async () => {
+  it("allows ordinary binary assets to proceed with secrets enabled", async () => {
     let dispatchCalls = 0;
     const report = await runScan({
       repositoryRoot: "/repo",
@@ -668,16 +668,8 @@ describe("runScan", () => {
       }),
     });
 
-    expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
-    expect(report.checks).toContainEqual(
-      expect.objectContaining({
-        error: expect.objectContaining({
-          code: "UNSUPPORTED_BINARY_INPUT",
-          path: "assets/photo.png",
-        }),
-      }),
-    );
-    expect(dispatchCalls).toBe(0);
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(dispatchCalls).toBe(1);
   });
 
   it("preserves findings and disclosures when snapshot cleanup fails", async () => {

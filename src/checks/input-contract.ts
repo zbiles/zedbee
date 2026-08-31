@@ -51,6 +51,10 @@ function immutableSet<T>(values: readonly T[]): ReadonlySet<T> {
 }
 
 const TEXT_ARTIFACTS = immutableSet<ArtifactKind>(["text"]);
+const TEXT_AND_BINARY_ARTIFACTS = immutableSet<ArtifactKind>([
+  "text",
+  "binary",
+]);
 
 function supportsJavaScriptSource(repositoryPath: string): boolean {
   return JAVASCRIPT_SOURCE.test(repositoryPath);
@@ -75,11 +79,12 @@ function supportsNoPath(): boolean {
 function contract(
   checkId: CheckId,
   supportsPath: CheckInputContract["supportsPath"],
+  acceptedArtifacts: ReadonlySet<ArtifactKind> = TEXT_ARTIFACTS,
 ): CheckInputContract {
   return Object.freeze({
     checkId,
     supportsPath,
-    acceptedArtifacts: TEXT_ARTIFACTS,
+    acceptedArtifacts,
   });
 }
 
@@ -97,7 +102,11 @@ const INPUT_CONTRACTS: Readonly<Record<CheckId, CheckInputContract>> =
       supportsJavaScriptSource,
     ),
     structuralSecurity: contract("structuralSecurity", supportsJavaScriptSource),
-    secrets: contract("secrets", supportsAnyPath),
+    secrets: contract(
+      "secrets",
+      supportsAnyPath,
+      TEXT_AND_BINARY_ARTIFACTS,
+    ),
     duplication: contract("duplication", supportsNoPath),
     dependencyArchitecture: contract(
       "dependencyArchitecture",

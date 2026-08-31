@@ -37,7 +37,9 @@ describe("check input contracts", () => {
       expect(() => artifacts.add("binary")).toThrow(TypeError);
       expect(() => artifacts.delete("text")).toThrow(TypeError);
       expect(() => artifacts.clear()).toThrow(TypeError);
-      expect([...contract.acceptedArtifacts]).toEqual(["text"]);
+      expect([...contract.acceptedArtifacts]).toEqual(
+        checkId === "secrets" ? ["text", "binary"] : ["text"],
+      );
     }
   });
 
@@ -72,11 +74,14 @@ describe("check input contracts", () => {
     ).toBe(false);
   });
 
-  it("explicitly accepts text from arbitrary staged paths for secrets", () => {
+  it("lets secrets safely skip binary content while rejecting pointers", () => {
     const contract = inputContractFor("secrets");
 
     expect(contract.supportsPath("assets/photo.png")).toBe(true);
-    expect([...contract.acceptedArtifacts]).toEqual(["text"]);
+    expect([...contract.acceptedArtifacts]).toEqual(["text", "binary"]);
+    expect(cannotAnalyzeArtifact("secrets", "assets/photo.png", "binary")).toBe(
+      false,
+    );
   });
 
   it("does not associate repository-wide checks with individual paths", () => {
