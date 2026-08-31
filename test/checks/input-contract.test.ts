@@ -1,0 +1,99 @@
+import { describe, expect, it } from "vitest";
+import { CHECK_IDS } from "../../src/config/schema.js";
+import {
+  cannotAnalyzeArtifact,
+  inputContractFor,
+} from "../../src/checks/input-contract.js";
+
+const JAVASCRIPT_SOURCE_CHECKS = [
+  "lint",
+  "cyclomaticComplexity",
+  "readabilityComplexity",
+  "structuralSecurity",
+  "reactCorrectness",
+  "reactAccessibility",
+] as const;
+
+const REPOSITORY_WIDE_CHECKS = [
+  "duplication",
+  "dependencyArchitecture",
+  "deadCode",
+] as const;
+
+describe("check input contracts", () => {
+  it("assigns an immutable contract to every managed check", () => {
+    for (const checkId of CHECK_IDS) {
+      const contract = inputContractFor(checkId);
+
+      expect(contract.checkId).toBe(checkId);
+      expect(Object.isFrozen(contract)).toBe(true);
+      expect(Object.isFrozen(contract.acceptedArtifacts)).toBe(true);
+    }
+  });
+
+  it("accepts JavaScript and TypeScript source only for source analyzers", () => {
+    for (const checkId of JAVASCRIPT_SOURCE_CHECKS) {
+      expect(inputContractFor(checkId).supportsPath("src/app.ts")).toBe(true);
+      expect(inputContractFor(checkId).supportsPath("package.json")).toBe(false);
+    }
+
+    expect(inputContractFor("types").supportsPath("src/app.ts")).toBe(true);
+    expect(inputContractFor("types").supportsPath("src/app.js")).toBe(false);
+  });
+
+  it("uses Prettier's path support for formatting", () => {
+    expect(inputContractFor("formatting").supportsPath("package.json")).toBe(
+      true,
+    );
+    expect(inputContractFor("formatting").supportsPath("assets/photo.png")).toBe(
+      false,
+    );
+  });
+
+  it("limits vulnerability analysis to known lockfiles", () => {
+    expect(
+      inputContractFor("vulnerabilities").supportsPath("package-lock.json"),
+    ).toBe(true);
+    expect(
+      inputContractFor("vulnerabilities").supportsPath("packages/web/yarn.lock"),
+    ).toBe(true);
+    expect(
+      inputContractFor("vulnerabilities").supportsPath("package.json"),
+    ).toBe(false);
+  });
+
+  it("explicitly accepts text from arbitrary staged paths for secrets", () => {
+    const contract = inputContractFor("secrets");
+
+    expect(contract.supportsPath("assets/photo.png")).toBe(true);
+    expect(contract.acceptedArtifacts).toEqual(new Set(["text"]));
+  });
+
+  it("does not associate repository-wide checks with individual paths", () => {
+    for (const checkId of REPOSITORY_WIDE_CHECKS) {
+      expect(inputContractFor(checkId).supportsPath("src/app.ts")).toBe(false);
+      expect(cannotAnalyzeArtifact(checkId, "src/app.ts", "binary")).toBe(
+        false,
+      );
+    }
+  });
+
+  it("rejects unsupported artifacts only when the check consumes their path", () => {
+    expect(cannotAnalyzeArtifact("lint", "src/app.ts", "binary")).toBe(true);
+    expect(
+      cannotAnalyzeArtifact("formatting", "package.json", "binary"),
+    ).toBe(true);
+    expect(
+      cannotAnalyzeArtifact("vulnerabilities", "package-lock.json", "binary"),
+    ).toBe(true);
+    expect(
+      cannotAnalyzeArtifact("formatting", "package.json", "git-lfs-pointer"),
+    ).toBe(true);
+    expect(cannotAnalyzeArtifact("secrets", "vendor", "submodule")).toBe(
+      true,
+    );
+    expect(cannotAnalyzeArtifact("lint", "assets/photo.png", "binary")).toBe(
+      false,
+    );
+  });
+});
