@@ -18,9 +18,39 @@ const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const VULNERABILITY_LOCKFILE =
   /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock|bun\.lockb)$/u;
 
-const TEXT_ARTIFACTS: ReadonlySet<ArtifactKind> = Object.freeze(
-  new Set<ArtifactKind>(["text"]),
-);
+function immutableSet<T>(values: readonly T[]): ReadonlySet<T> {
+  const items = Object.freeze([...values]);
+  const set: ReadonlySet<T> = {
+    get size() {
+      return items.length;
+    },
+    has(value) {
+      return items.includes(value);
+    },
+    entries() {
+      return items
+        .map((value) => [value, value] as [T, T])
+        [Symbol.iterator]();
+    },
+    keys() {
+      return items[Symbol.iterator]();
+    },
+    values() {
+      return items[Symbol.iterator]();
+    },
+    forEach(callbackfn, thisArg) {
+      for (const value of items) {
+        callbackfn.call(thisArg, value, value, set);
+      }
+    },
+    [Symbol.iterator]() {
+      return items[Symbol.iterator]();
+    },
+  };
+  return Object.freeze(set);
+}
+
+const TEXT_ARTIFACTS = immutableSet<ArtifactKind>(["text"]);
 
 function supportsJavaScriptSource(repositoryPath: string): boolean {
   return JAVASCRIPT_SOURCE.test(repositoryPath);

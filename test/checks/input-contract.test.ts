@@ -3,6 +3,7 @@ import { CHECK_IDS } from "../../src/config/schema.js";
 import {
   cannotAnalyzeArtifact,
   inputContractFor,
+  type ArtifactKind,
 } from "../../src/checks/input-contract.js";
 
 const JAVASCRIPT_SOURCE_CHECKS = [
@@ -21,13 +22,22 @@ const REPOSITORY_WIDE_CHECKS = [
 ] as const;
 
 describe("check input contracts", () => {
-  it("assigns an immutable contract to every managed check", () => {
+  it("prevents callers from changing accepted artifacts", () => {
     for (const checkId of CHECK_IDS) {
       const contract = inputContractFor(checkId);
+      const artifacts = contract.acceptedArtifacts as unknown as {
+        add(value: ArtifactKind): void;
+        delete(value: ArtifactKind): void;
+        clear(): void;
+      };
 
       expect(contract.checkId).toBe(checkId);
       expect(Object.isFrozen(contract)).toBe(true);
       expect(Object.isFrozen(contract.acceptedArtifacts)).toBe(true);
+      expect(() => artifacts.add("binary")).toThrow(TypeError);
+      expect(() => artifacts.delete("text")).toThrow(TypeError);
+      expect(() => artifacts.clear()).toThrow(TypeError);
+      expect([...contract.acceptedArtifacts]).toEqual(["text"]);
     }
   });
 
@@ -66,7 +76,7 @@ describe("check input contracts", () => {
     const contract = inputContractFor("secrets");
 
     expect(contract.supportsPath("assets/photo.png")).toBe(true);
-    expect(contract.acceptedArtifacts).toEqual(new Set(["text"]));
+    expect([...contract.acceptedArtifacts]).toEqual(["text"]);
   });
 
   it("does not associate repository-wide checks with individual paths", () => {
