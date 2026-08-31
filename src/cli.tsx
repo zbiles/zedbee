@@ -57,6 +57,16 @@ interface CommanderFixOptions {
   animations: boolean;
 }
 
+export function scanTimeoutOverrides(
+  argv: readonly string[],
+  timeout: string | false | undefined,
+): Readonly<{ timeout?: string; noTimeout?: true }> {
+  if (argv.includes("--no-timeout")) {
+    return { noTimeout: true };
+  }
+  return typeof timeout === "string" ? { timeout } : {};
+}
+
 export async function main(
   argv: readonly string[] = process.argv,
 ): Promise<number> {
@@ -168,9 +178,7 @@ export async function main(
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
     .addOption(
-      new Option("--no-timeout", "disable configured Git hard timeouts").conflicts(
-        "timeout",
-      ),
+      new Option("--no-timeout", "disable configured Git hard timeouts"),
     )
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
@@ -189,10 +197,7 @@ export async function main(
             : options.source === false
               ? { sourceExcerpts: "exclude" as const }
               : {}),
-          ...(typeof options.timeout === "string"
-            ? { timeout: options.timeout }
-            : {}),
-          ...(options.timeout === false ? { noTimeout: true } : {}),
+          ...scanTimeoutOverrides(argv, options.timeout),
           signal: controller.signal,
         },
         {
