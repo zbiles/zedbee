@@ -39,7 +39,28 @@ Repository source code and file hashes are not sent. Zedbee emits the service/ca
 
 There is no offline database mode. `checks.vulnerabilities.onUnavailable` controls an actual OSV outage or offline machine: `block` fails closed with an incomplete scan, while `warn` reports the incomplete check and permits the commit if no other policy blocks it. `zedbee init` asks for this choice whenever vulnerability scanning is available.
 
-## Cache
+## Update notifications
+
+Interactive CLI commands may request `https://registry.npmjs.org/zedbee/latest`
+in a detached background process. This request retrieves Zedbee's public release
+metadata; it does not send repository code, dependency lists, file hashes, or
+the installed Zedbee version. npm receives ordinary connection metadata such
+as the requesting IP address. Redirects are rejected, the response size and
+request duration are bounded, and failures do not affect command results.
+
+The updater stores only the check timestamp, release name/version, and optional
+Node.js engine requirement in `zedbee/update.json` beneath `XDG_CACHE_HOME`
+(when absolute), or `~/.cache` otherwise. This cache is separate from scan
+observations. Checks are attempted at most daily during ordinary use, including
+after a failed request; concurrent workers share a refresh lock. Cached notices
+older than seven days are ignored. No update is automatically installed.
+
+Set `ZEDBEE_NO_UPDATE_CHECK=1` or `NO_UPDATE_NOTIFIER=1` to prevent both requests
+and notices. CI, redirected output, JSON, SARIF, and help/version-only invocations
+do not start an update check. Update information is informational terminal output
+and is not included in scan findings, temporary reports, or structured exports.
+
+## Scan cache
 
 When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata. It must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt or incompatible entries are treated as misses.
 

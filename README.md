@@ -21,6 +21,18 @@ Run a scan directly:
 npx zedbee scan
 ```
 
+Interactive commands can show an `UPDATE AVAILABLE` notice after their result.
+Zedbee checks npm's public `latest` release in a background process and caches
+the result for a day; a newly discovered update appears on a subsequent run.
+Only newer stable releases compatible with your Node.js version are suggested.
+The notice provides a manual update command for the detected project package
+manager. It never installs anything, changes scan results, or waits for npm.
+Unpublished packages, offline checks, and cache failures are silent.
+
+Set `ZEDBEE_NO_UPDATE_CHECK=1` or `NO_UPDATE_NOTIFIER=1` to disable both checking
+and notices. CI, redirected output, JSON, and SARIF also disable both. See the
+[privacy guide](docs/privacy.md#update-notifications) for the network and cache details.
+
 Scans never modify source files. `zedbee fix` is a separate, approval-gated
 workflow that rescans current staged code, previews supported managed fixes, and
 writes only working files. Zedbee never stages or commits. See the

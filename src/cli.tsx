@@ -2,6 +2,10 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Argument, Command, Option } from "commander";
+import { ZEDBEE_VERSION } from "./core/package-version.js";
+import { terminalColorEnabled } from "./renderers/terminal-style.js";
+import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
+import type { UpdateNotice } from "./updates/metadata.js";
 import { executeChecksCommand } from "./commands/checks.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeFixCommand } from "./commands/fix.js";
@@ -13,6 +17,7 @@ import type { RequestedOutputFormat } from "./scan/reporting-options.js";
 import {
   executeScanCommand,
   normalizeTerminalWidth,
+  selectOutputFormat,
   signalExitCode,
 } from "./commands/scan.js";
 
@@ -75,6 +80,33 @@ export async function main(
     .description("Diff-aware pre-commit scanning for JavaScript and TypeScript")
     .showHelpAfterError();
   let exitCode = 0;
+  let updateNotice: UpdateNotice | undefined;
+  let updateColor = false;
+  let updateIndented = false;
+  program.hook("preAction", (_program, action) => {
+    const options = action.opts();
+    updateIndented =
+      action.name() === "scan" &&
+      selectOutputFormat(
+        options.format as RequestedOutputFormat,
+        process.stdin.isTTY === true,
+        process.stdout.isTTY === true,
+        normalizeTerminalWidth(process.stdout.columns),
+        process.env,
+      ) === "ink";
+    updateNotice = getUpdateNotice({
+      env: process.env,
+      isTTY: process.stdout.isTTY === true,
+      format: String(options.format ?? "auto"),
+      currentVersion: ZEDBEE_VERSION,
+      nodeVersion: process.versions.node,
+    });
+    updateColor = terminalColorEnabled(
+      options.color !== false,
+      process.stdout.isTTY === true,
+      process.env,
+    );
+  });
   let interrupted: "SIGINT" | "SIGTERM" | undefined;
   const controller = new AbortController();
   const interrupt = (signal: "SIGINT" | "SIGTERM"): void => {
@@ -323,6 +355,19 @@ export async function main(
 
   try {
     await program.parseAsync([...argv]);
+    if (interrupted === undefined && updateNotice !== undefined) {
+      try {
+        process.stdout.write(
+          renderUpdateNotice(updateNotice, {
+            cwd: process.cwd(),
+            color: updateColor,
+            indent: updateIndented,
+          }),
+        );
+      } catch {
+        /* A notice cannot change a command's result. */
+      }
+    }
   } finally {
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
