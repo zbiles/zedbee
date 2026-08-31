@@ -98,7 +98,7 @@ function configWithLintEnabledOnlyFor(files: readonly string[]): ResolvedConfig 
       reactAccessibility: "off",
       vulnerabilities: "off",
     },
-    overrides: [{ files, checks: { lint: "error" } }],
+    overrides: [{ files: [...files], checks: { lint: "error" } }],
   });
 }
 

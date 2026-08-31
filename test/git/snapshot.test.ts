@@ -16,7 +16,8 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
-import { GitClient, GitCommandError } from "../../src/git/client.js";
+import { GitClient } from "../../src/git/client.js";
+import { GitCommandError } from "../../src/git/errors.js";
 import { buildSnapshotPair } from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
