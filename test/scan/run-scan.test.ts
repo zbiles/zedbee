@@ -546,6 +546,40 @@ describe("runScan", () => {
     );
   });
 
+  it("ignores a renamed file's baseline path for override relevance", async () => {
+    let dispatchCalls = 0;
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readChangeSet: async () => ({
+          files: new Map([
+            [
+              "vendor/generated.ts",
+              {
+                path: "vendor/generated.ts",
+                previousPath: "src/generated.ts",
+                status: "renamed",
+                addedRanges: [],
+              },
+            ],
+          ]),
+          isEmpty: false,
+          containsAddedLine: () => false,
+        }),
+        buildSnapshots: async () =>
+          snapshotsWithUnsupported("vendor/generated.ts", "binary"),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(dispatchCalls).toBe(1);
+  });
+
   it("allows ordinary binary assets to proceed to configured checks", async () => {
     let dispatchCalls = 0;
     const report = await runScan({
