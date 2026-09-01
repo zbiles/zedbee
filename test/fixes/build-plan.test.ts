@@ -123,6 +123,7 @@ function planDependencies(
     baselineDir: fixture.baseline,
     targetDir: fixture.target,
     baselineRef: "HEAD",
+    targetRef: "index",
     unsupportedEntries: [],
     cleanup: async () => {
       calls.push("cleanup");
@@ -558,6 +559,7 @@ describe("buildFixPlan", () => {
             baselineDir: files.baseline,
             targetDir: files.target,
             baselineRef: "HEAD",
+            targetRef: "index",
             unsupportedEntries: [{ path: "src/value.ts", kind: "binary" }],
             cleanup: async () => {
               calls.push("cleanup");

@@ -77,6 +77,7 @@ function createContext(config: ResolvedConfig): CheckRunContext {
     baselineDir: "/tmp/baseline",
     targetDir: "/tmp/target",
     baselineRef: "HEAD",
+    targetRef: "index",
     unsupportedEntries: [],
     cleanup: async () => undefined,
   };
@@ -1460,6 +1461,7 @@ describe("dispatchChecks", () => {
       baselineDir: baseline.root,
       targetDir: targetFixture.root,
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     };
     context.changeSet = {

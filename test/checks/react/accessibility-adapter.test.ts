@@ -77,6 +77,7 @@ async function accessibilityContext(dependencies: Record<string, string>) {
         baselineDir: baseline.root,
         targetDir: staged.root,
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
       },
       target: { id: ".", kind: "workspace", relativeRoot: "." },

@@ -100,6 +100,7 @@ async function context(options: {
       baselineDir: baseline.root,
       targetDir: target.root,
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     },
     baselineInspection: await inspectRepository(baseline.root),

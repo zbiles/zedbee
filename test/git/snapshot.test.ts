@@ -13,7 +13,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
@@ -21,6 +21,7 @@ import { GitCommandError } from "../../src/git/errors.js";
 import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
+  type SnapshotPair,
 } from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
@@ -28,6 +29,32 @@ import {
   validateSnapshotPath,
 } from "../../src/git/snapshot-path.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+
+const snapshotRootFailure = vi.hoisted(() => ({
+  failCanonicalization: false,
+  temporaryParent: "",
+}));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    async mkdtemp(...args: Parameters<typeof actual.mkdtemp>) {
+      const created = await actual.mkdtemp(...args);
+      snapshotRootFailure.temporaryParent = created;
+      return created;
+    },
+    async realpath(path: Parameters<typeof actual.realpath>[0]) {
+      if (
+        snapshotRootFailure.failCanonicalization &&
+        path === snapshotRootFailure.temporaryParent
+      ) {
+        throw new Error("canonicalization failed");
+      }
+      return actual.realpath(path);
+    },
+  };
+});
 
 async function pathExists(path: string): Promise<boolean> {
   try {
@@ -39,6 +66,37 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 describe("buildSnapshotPair", () => {
+  it("cleans an owned temporary root when canonicalization fails", async () => {
+    snapshotRootFailure.failCanonicalization = true;
+    const git = {
+      async run() {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    try {
+      await expect(buildSnapshotPair("/repo", git)).rejects.toThrow(
+        "canonicalization failed",
+      );
+      expect(snapshotRootFailure.temporaryParent).not.toBe("");
+      expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+    } finally {
+      snapshotRootFailure.failCanonicalization = false;
+      snapshotRootFailure.temporaryParent = "";
+    }
+  });
+
+  it("requires a target reference in snapshot pairs", () => {
+    type RequiredTargetReference = SnapshotPair extends {
+      targetRef: string;
+    }
+      ? true
+      : false;
+    const targetReferenceIsRequired: RequiredTargetReference = true;
+
+    expect(targetReferenceIsRequired).toBe(true);
+  });
+
   it("creates a canonical trusted snapshot root below the canonical OS temp root", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = 1;\n");
@@ -541,6 +599,31 @@ describe("buildSnapshotPair", () => {
       ).toBe(false);
     },
   );
+
+  it("rejects malformed staged-entry output before checkout", async () => {
+    const calls: string[][] = [];
+    const git = {
+      async run(args: readonly string[]) {
+        calls.push([...args]);
+        if (args[0] === "ls-files" && args[1] === "--stage") {
+          return {
+            stdout: "100644 0123456789012345678901234567890123456789 0\tvalid.ts",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      async tryRun() {
+        return { stdout: "", stderr: "", exitCode: 1 };
+      },
+    } as unknown as GitClient;
+
+    await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({
+      code: "INVALID_INDEX_PATH",
+    });
+    expect(calls.some(([command]) => command === "checkout-index")).toBe(false);
+  });
 
   it("records submodule gitlinks as unsupported index entries", async () => {
     const repository = await createGitRepository();

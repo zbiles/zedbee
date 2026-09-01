@@ -110,6 +110,7 @@ function snapshotsWithUnsupported(path: string, kind: "binary"): SnapshotPair {
     baselineDir: "/tmp/baseline",
     targetDir: "/tmp/target",
     baselineRef: "HEAD",
+    targetRef: "index",
     unsupportedEntries: [{ path, kind }],
     cleanup: async () => undefined,
   };
@@ -177,6 +178,7 @@ function dependencies(
     baselineDir: "/tmp/baseline",
     targetDir: "/tmp/target",
     baselineRef: "HEAD",
+    targetRef: "index",
     unsupportedEntries: [],
     cleanup: async () => {
       calls.push("clean snapshots");
@@ -528,6 +530,7 @@ describe("runScan", () => {
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => {
           cleanupCalls++;
@@ -646,6 +649,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [{ path: "asset.dat", kind: "git-lfs-pointer" }],
           cleanup: async () => undefined,
         }),
@@ -708,6 +712,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [
             { path: "vendor/demo", kind: "submodule" },
             { path: "src/generated.js", kind: "binary" },
@@ -748,6 +753,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [{ path: "legacy/binary.js", kind: "binary" }],
           cleanup: async () => undefined,
         }),
@@ -804,6 +810,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [{ path: "binary.js", kind: "binary" }],
           cleanup: async () => undefined,
         }),
@@ -971,6 +978,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [{ path: "assets/photo.png", kind: "binary" }],
           cleanup: async () => undefined,
         }),
@@ -1007,6 +1015,7 @@ describe("runScan", () => {
         baselineDir: join(canonicalSnapshotRoot, "baseline"),
         targetDir: join(canonicalSnapshotRoot, "target"),
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => {
           throw new Error("sensitive cleanup failure");
@@ -1091,6 +1100,7 @@ describe("runScan", () => {
           baselineDir: join(canonicalSnapshotRoot, "baseline"),
           targetDir: join(canonicalSnapshotRoot, "target"),
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [],
           cleanup: async () => {
             await rename(canonicalSnapshotRoot, movedSnapshotRoot);
@@ -1223,6 +1233,7 @@ describe("runScan", () => {
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => {
           controller.abort(abortReason);
@@ -1252,6 +1263,7 @@ describe("runScan", () => {
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => {
           controller.abort(abortReason);
@@ -1445,6 +1457,7 @@ describe("runScan", () => {
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [
             { path: "assets/large.dat", kind: "git-lfs-pointer" },
           ],
@@ -2029,6 +2042,7 @@ describe("runScan", () => {
           baselineDir,
           targetDir,
           baselineRef: "HEAD",
+          targetRef: "index",
           unsupportedEntries: [],
           cleanup: async () => {
             calls.push("clean snapshots");
@@ -2106,6 +2120,7 @@ describe("runScan", () => {
         baselineDir,
         targetDir,
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => undefined,
       }),
@@ -2318,6 +2333,7 @@ describe("runScan", () => {
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
         cleanup: async () => {
           calls.push("clean snapshots");

@@ -81,6 +81,7 @@ function contextFor(
       baselineDir: snapshotRoot,
       targetDir: snapshotRoot,
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     },
     baselineInspection: inspection,

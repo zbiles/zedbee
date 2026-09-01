@@ -174,6 +174,37 @@ describe("readCommitChangeSet", () => {
       ],
     ]);
   });
+
+  it.each([
+    ["staged", (git: GitClient) => readStagedChangeSet(git)],
+    ["commit", (git: GitClient) =>
+      readCommitChangeSet(git, "baseline-oid", "target-oid")],
+  ])("fails closed when %s diff output is not a patch", async (_kind, read) => {
+    const git = {
+      async run() {
+        return { stdout: "not Git diff output", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    await expect(read(git)).rejects.toThrow("Git returned invalid diff output.");
+  });
+
+  it("fails closed when a diff hunk is truncated", async () => {
+    const git = {
+      async run() {
+        return {
+          stdout:
+            "diff --git a/value.ts b/value.ts\nindex 1111111..2222222 100644\n--- a/value.ts\n+++ b/value.ts\n@@ -1 +1 @@\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    } as unknown as GitClient;
+
+    await expect(readStagedChangeSet(git)).rejects.toThrow(
+      "Git returned invalid diff output.",
+    );
+  });
 });
 
 describe("mergeLineRanges", () => {

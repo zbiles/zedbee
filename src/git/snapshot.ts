@@ -32,7 +32,7 @@ export interface SnapshotPair {
   baselineDir: string;
   targetDir: string;
   baselineRef: string | null;
-  targetRef?: "index" | string;
+  targetRef: "index" | string;
   unsupportedEntries: readonly UnsupportedIndexEntry[];
   cleanup(): Promise<void>;
 }
@@ -83,17 +83,27 @@ interface StagedEntry {
 }
 
 function parseStagedEntries(output: string): StagedEntry[] {
-  return output
-    .split("\0")
-    .filter((record) => record !== "")
-    .map((record) => {
-      const separator = record.indexOf("\t");
-      const header = separator === -1 ? record : record.slice(0, separator);
-      return {
-        mode: header.split(" ")[0] ?? "",
-        path: separator === -1 ? "" : record.slice(separator + 1),
-      };
-    });
+  if (output === "") {
+    return [];
+  }
+  if (!output.endsWith("\0")) {
+    throw new SnapshotError(
+      "INVALID_INDEX_PATH",
+      "Zedbee refused an invalid staged repository path.",
+    );
+  }
+  return output.slice(0, -1).split("\0").map((record) => {
+    const match = /^([0-7]{6}) ([\da-f]{40}|[\da-f]{64}) ([0-3])\t([\s\S]+)$/iu.exec(
+      record,
+    );
+    if (match === null) {
+      throw new SnapshotError(
+        "INVALID_INDEX_PATH",
+        "Zedbee refused an invalid staged repository path.",
+      );
+    }
+    return { mode: match[1]!, path: match[4]! };
+  });
 }
 
 const INTENT_TO_ADD_FLAG = 0x20000000;
@@ -232,6 +242,18 @@ async function removeIntentToAddPlaceholders(
   }
 }
 
+async function createCanonicalSnapshotParent(): Promise<ValidatedSnapshotPath> {
+  const temporaryParent = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
+  try {
+    return await validateSnapshotPath(await realpath(temporaryParent));
+  } catch (error) {
+    await rm(temporaryParent, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
+    throw error;
+  }
+}
+
 async function materializeCommitTree(
   repositoryRoot: string,
   git: GitClient,
@@ -266,10 +288,7 @@ export async function buildCommitSnapshotPair(
   targetCommit: string,
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
-  const temporaryParent = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
-  const canonicalParent = await validateSnapshotPath(
-    await realpath(temporaryParent),
-  );
+  const canonicalParent = await createCanonicalSnapshotParent();
   const baselineDir = join(canonicalParent, "baseline");
   const targetDir = join(canonicalParent, "target");
   const baselineIndex = join(canonicalParent, "baseline-index");
@@ -369,10 +388,7 @@ export async function buildSnapshotPair(
     );
   }
 
-  const temporaryParent = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
-  const canonicalParent = await validateSnapshotPath(
-    await realpath(temporaryParent),
-  );
+  const canonicalParent = await createCanonicalSnapshotParent();
   const baselineDir = join(canonicalParent, "baseline");
   const targetDir = join(canonicalParent, "target");
   const alternateIndex = join(canonicalParent, "baseline-index");

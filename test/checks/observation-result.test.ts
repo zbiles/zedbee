@@ -76,6 +76,7 @@ async function context(
       baselineDir: fixtures.baseline.root,
       targetDir: fixtures.target.root,
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     },
     baselineInspection: await inspectRepository(fixtures.baseline.root),

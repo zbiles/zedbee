@@ -1,11 +1,44 @@
-import { mkdtemp, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { runScan } from "../../src/scan/run-scan.js";
+import { GitClient } from "../../src/git/client.js";
+import { buildCommitSnapshotPair } from "../../src/git/snapshot.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 describe("advanced staged Git states", () => {
+  it("materializes immutable commit sources despite later index and working-tree changes", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write("value.ts", "export const value = 2;\n");
+    await repository.commitAll("target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write("value.ts", "export const value = 3;\n");
+    await repository.git(["add", "--", "value.ts"]);
+    await repository.write("value.ts", "export const value = 4;\n");
+    const beforeIndex = await repository.git(["write-tree"]);
+
+    const pair = await buildCommitSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+      baselineCommit,
+      targetCommit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(await readFile(join(pair.baselineDir, "value.ts"), "utf8")).toBe(
+      "export const value = 1;\n",
+    );
+    expect(await readFile(join(pair.targetDir, "value.ts"), "utf8")).toBe(
+      "export const value = 2;\n",
+    );
+    await pair.cleanup();
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeIndex.stdout);
+  });
+
   it("returns incomplete for a staged Git LFS pointer", async () => {
     const repository = await createGitRepository();
     await repository.write("package.json", '{"name":"fixture"}\n');

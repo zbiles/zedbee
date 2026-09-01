@@ -55,6 +55,7 @@ async function structuralSecurityContext() {
         baselineDir: baseline.root,
         targetDir: staged.root,
         baselineRef: "HEAD",
+        targetRef: "index",
         unsupportedEntries: [],
       },
       baselineInspection: await inspectRepository(baseline.root),

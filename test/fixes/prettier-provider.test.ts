@@ -61,6 +61,7 @@ function context(): CheckRunContext {
       baselineDir: "/tmp/baseline",
       targetDir: "/tmp/target",
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     },
     baselineInspection: { ...inspection, snapshotRoot: "/tmp/baseline" },

@@ -81,11 +81,78 @@ function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
   return { path: to, status: "modified", addedRanges: addedRanges(file) };
 }
 
+function invalidPatch(): never {
+  throw new Error("Git returned invalid diff output.");
+}
+
+function validPatchFile(file: parseDiff.File): boolean {
+  const from = normalizePath(file.from);
+  const to = normalizePath(file.to);
+  if (from === undefined && to === undefined) {
+    return false;
+  }
+  return file.chunks.every((chunk) => {
+    if (
+      !Number.isInteger(chunk.oldStart) ||
+      !Number.isInteger(chunk.oldLines) ||
+      !Number.isInteger(chunk.newStart) ||
+      !Number.isInteger(chunk.newLines) ||
+      chunk.oldStart < 0 ||
+      chunk.oldLines < 0 ||
+      chunk.newStart < 0 ||
+      chunk.newLines < 0
+    ) {
+      return false;
+    }
+    const changes = chunk.changes.filter(
+      (change) => change.content !== "\\ No newline at end of file",
+    );
+    if (
+      changes.some(
+        (change) => change.type === "normal" && change.content === "",
+      )
+    ) {
+      return false;
+    }
+    const oldLines = changes.filter(
+      (change) => change.type === "normal" || change.type === "del",
+    ).length;
+    const newLines = changes.filter(
+      (change) => change.type === "normal" || change.type === "add",
+    ).length;
+    return oldLines === chunk.oldLines && newLines === chunk.newLines;
+  });
+}
+
 function changeSetFromPatch(patch: string): ChangeSet {
-  const changedFiles = parseDiff(patch)
-    .map(toChangedFile)
-    .filter((file): file is ChangedFile => file !== undefined)
+  if (patch === "") {
+    return changeSetFromFiles([]);
+  }
+
+  let files: parseDiff.File[];
+  try {
+    files = parseDiff(patch);
+  } catch {
+    return invalidPatch();
+  }
+  const headers = patch.match(/^diff --git /gmu) ?? [];
+  if (headers.length === 0 || headers.length !== files.length) {
+    return invalidPatch();
+  }
+  const changedFiles = files
+    .map((file) => {
+      const changedFile = toChangedFile(file);
+      if (changedFile === undefined || !validPatchFile(file)) {
+        return invalidPatch();
+      }
+      return changedFile;
+    })
     .sort((left, right) => compareCodeUnits(left.path, right.path));
+
+  return changeSetFromFiles(changedFiles);
+}
+
+function changeSetFromFiles(changedFiles: readonly ChangedFile[]): ChangeSet {
   const files = new Map(changedFiles.map((file) => [file.path, file]));
   const orderedFiles = new Map(
     [...files].sort(([left], [right]) => compareCodeUnits(left, right)),

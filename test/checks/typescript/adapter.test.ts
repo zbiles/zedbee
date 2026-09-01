@@ -63,6 +63,7 @@ async function context(
       baselineDir: value.baseline.root,
       targetDir: value.staged.root,
       baselineRef: "HEAD",
+      targetRef: "index",
       unsupportedEntries: [],
     },
     baselineInspection: await inspectRepository(value.baseline.root),
