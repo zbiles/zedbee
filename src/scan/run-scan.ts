@@ -624,11 +624,17 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           const excludedPaths = new Set(
             snapshots.unsupportedEntries.map((entry) => entry.path),
           );
+          for (const path of snapshots.symlinkPaths ?? []) {
+            excludedPaths.add(path);
+          }
           const baselineUnsupportedPaths = new Set(
             (snapshots.baselineUnsupportedEntries ?? []).map(
               (entry) => entry.path,
             ),
           );
+          for (const path of snapshots.baselineSymlinkPaths ?? []) {
+            baselineUnsupportedPaths.add(path);
+          }
           const wholeFilePaths = [...changeSet.files.values()]
             .filter((file) => {
               const baselinePath = file.previousPath ?? file.path;

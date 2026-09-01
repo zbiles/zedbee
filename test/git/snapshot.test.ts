@@ -590,6 +590,8 @@ describe("buildSnapshotPair", () => {
       expect(
         await readFile(join(snapshots.targetDir, "link.txt"), "utf8"),
       ).toBe("target\n");
+      expect(snapshots.baselineSymlinkPaths).toEqual([]);
+      expect(snapshots.symlinkPaths).toEqual(["link.txt"]);
     },
   );
 

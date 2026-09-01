@@ -38,6 +38,8 @@ export interface SnapshotPair {
   baselineRef: string | null;
   targetRef: "index" | string;
   baselineUnsupportedEntries?: readonly UnsupportedIndexEntry[];
+  baselineSymlinkPaths?: readonly string[];
+  symlinkPaths?: readonly string[];
   unsupportedEntries: readonly UnsupportedIndexEntry[];
   cleanup(): Promise<void>;
 }
@@ -606,6 +608,12 @@ export async function buildCommitSnapshotPair(
       targetCommit,
       signal,
     );
+    const baselineSymlinkPaths = baselineEntries
+      .filter((entry) => entry.mode === "120000")
+      .map((entry) => entry.path);
+    const symlinkPaths = targetEntries
+      .filter((entry) => entry.mode === "120000")
+      .map((entry) => entry.path);
     const baselineUnsupportedEntries = await materializeEntries(
       git,
       baselineEntries,
@@ -626,6 +634,8 @@ export async function buildCommitSnapshotPair(
       baselineRef: baselineCommit,
       targetRef: targetCommit,
       baselineUnsupportedEntries,
+      baselineSymlinkPaths,
+      symlinkPaths,
       unsupportedEntries,
       cleanup: root.cleanup,
     };
@@ -660,6 +670,9 @@ export async function buildSnapshotPair(
     const selectedEntries = stagedEntries.filter(
       (entry) => !intentToAddPaths.has(entry.path),
     );
+    const symlinkPaths = selectedEntries
+      .filter((entry) => entry.mode === "120000")
+      .map((entry) => entry.path);
     const unsupportedEntries = await materializeEntries(
       git,
       selectedEntries,
@@ -671,6 +684,7 @@ export async function buildSnapshotPair(
     const head = await git.tryRun(["rev-parse", "--verify", "HEAD"], options);
     const baselineRef = head.exitCode === 0 ? "HEAD" : null;
     let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];
+    let baselineSymlinkPaths: readonly string[] = [];
     if (baselineRef === "HEAD") {
       const baselineEntries = await readCommitEntries(
         repositoryRoot,
@@ -685,6 +699,9 @@ export async function buildSnapshotPair(
         true,
         signal,
       );
+      baselineSymlinkPaths = baselineEntries
+        .filter((entry) => entry.mode === "120000")
+        .map((entry) => entry.path);
     }
     return {
       baselineDir: root.baselineDir,
@@ -692,6 +709,8 @@ export async function buildSnapshotPair(
       baselineRef,
       targetRef: "index",
       baselineUnsupportedEntries,
+      baselineSymlinkPaths,
+      symlinkPaths,
       unsupportedEntries,
       cleanup: root.cleanup,
     };

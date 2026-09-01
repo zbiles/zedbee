@@ -5,6 +5,7 @@ import {
   readdir,
   realpath,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -390,6 +391,63 @@ describe("committed base scans", () => {
       changedFileCount: 1,
     });
   }, 30_000);
+
+  it.runIf(process.platform !== "win32")(
+    "handles committed regular-file and symlink type changes without duplicate patch paths",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write(".zedbeerc.jsonc", weakConfig);
+      await repository.write("target.txt", "target\n");
+      await repository.write("to-link.dat", "before\n");
+      await symlink("target.txt", join(repository.root, "to-file.dat"));
+      await repository.commitAll("baseline types");
+      await repository.git(["switch", "-c", "feature"]);
+      await rm(join(repository.root, "to-link.dat"));
+      await symlink("target.txt", join(repository.root, "to-link.dat"));
+      await rm(join(repository.root, "to-file.dat"));
+      await repository.write("to-file.dat", "one\ntwo\n");
+      await repository.commitAll("target types");
+
+      const report = await runScan({
+        repositoryRoot: repository.root,
+        baseRef: "main",
+      });
+
+      expect(report, JSON.stringify(report)).toMatchObject({
+        outcome: "pass",
+        exitCode: 0,
+        changedFileCount: 2,
+      });
+    },
+    30_000,
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "handles staged regular-file and symlink type changes without duplicate patch paths",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write(".zedbeerc.jsonc", weakConfig);
+      await repository.write("target.txt", "target\n");
+      await repository.write("to-link.dat", "before\n");
+      await symlink("target.txt", join(repository.root, "to-file.dat"));
+      await repository.commitAll("baseline types");
+      await rm(join(repository.root, "to-link.dat"));
+      await symlink("target.txt", join(repository.root, "to-link.dat"));
+      await rm(join(repository.root, "to-file.dat"));
+      await repository.write("to-file.dat", "one\ntwo\n");
+      await repository.git(["add", "--all"]);
+
+      const report = await runScan({ repositoryRoot: repository.root });
+
+      expect(report, JSON.stringify(report)).toMatchObject({
+        outcome: "pass",
+        exitCode: 0,
+        mode: "index",
+        changedFileCount: 2,
+      });
+    },
+    30_000,
+  );
 
   it("fails closed for a relevant NUL beyond the first 8192 bytes", async () => {
     const repository = await createGitRepository();
