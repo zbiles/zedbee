@@ -115,6 +115,9 @@ export function generateConfigJsonSchema(): ConfigJsonSchema {
   if (properties?.overrides !== undefined) {
     properties.overrides.default = [];
   }
+  if (properties?.pathExclusions !== undefined) {
+    properties.pathExclusions.default = [];
+  }
   patchRuleSettingsSchema(
     (
       properties?.checks as

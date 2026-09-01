@@ -20,7 +20,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 
 ## Incomplete staged inputs
 
-Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. Materialize the LFS object, stage it again, and rerun the scan. Configurable ignore lists for intentionally unsupported staged paths are deferred beyond v1.
+Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. Materialize the LFS object, stage it again, and rerun the scan. For intentional exclusions, use repository config `pathExclusions`.
 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
 

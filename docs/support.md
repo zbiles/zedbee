@@ -106,5 +106,4 @@ every changed and skipped file, stage intended results, and rescan.
 - Git-history secret scanning;
 - an offline OSV database;
 - legacy binary `bun.lockb` vulnerability parsing;
-- repository path ignore/suppression rules for known Git LFS pointers or other unsupported selected inputs;
 - automatic staging, committing, or mutation of the Git index.

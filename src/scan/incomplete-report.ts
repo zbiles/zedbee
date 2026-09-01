@@ -7,6 +7,7 @@ import type {
   ScanPresentationPolicy,
   ScanReport,
 } from "./report.js";
+import type { PathExclusion } from "../config/schema.js";
 import {
   sanitizeScanSourceIdentity,
   type ScanSourceIdentity,
@@ -25,6 +26,8 @@ export interface ScanReportContext {
   readonly changedFileCount: number | null;
   readonly startedAt: string;
   readonly durationMs: number;
+  readonly configuredPathExclusions: readonly PathExclusion[];
+  readonly appliedPathExclusions: readonly PathExclusion[];
   readonly networkDisclosures: readonly NetworkDisclosure[];
   readonly presentationPolicy: ScanPresentationPolicy;
 }
@@ -70,6 +73,8 @@ export function createIncompleteReport(
     changedFileCount: context.changedFileCount,
     startedAt: context.startedAt,
     durationMs: context.durationMs,
+    configuredPathExclusions: context.configuredPathExclusions,
+    appliedPathExclusions: context.appliedPathExclusions,
     networkDisclosures: context.networkDisclosures,
     presentationPolicy: context.presentationPolicy,
     summary: summarizeChecks(results),

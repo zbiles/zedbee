@@ -123,11 +123,18 @@ export interface ResolvedPolicyOverride {
   readonly configurationOrigins: ResolvedConfigurationOrigins;
 }
 
+export interface PathExclusion {
+  readonly files: readonly string[];
+  readonly checks: readonly CheckId[];
+  readonly reason: string;
+}
+
 export interface ResolvedConfig {
   readonly schemaVersion: 1;
   readonly profile: ProfileId;
   readonly checks: Readonly<ResolvedCheckPolicies>;
   readonly overrides: readonly ResolvedPolicyOverride[];
+  readonly pathExclusions: readonly PathExclusion[];
   readonly reporting: Readonly<ResolvedReportingPolicy>;
   readonly resources: Readonly<ResolvedResourcePolicy>;
   readonly configurationOrigins: ResolvedConfigurationOrigins;
@@ -166,6 +173,24 @@ const temporaryReportMaxAgeSchema = z
   );
 
 const safeDisplayProsePattern = /^(?!.*[\p{Cc}\p{Cf}\u2028\u2029]).*$/u;
+function safeBoundedDisplayProseSchema(field: string, max: number) {
+  return z
+    .string()
+    .max(max)
+    .regex(safeDisplayProsePattern)
+    .refine(
+      (value) => {
+        try {
+          displayProse(value, field, { allowEmpty: true });
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      { message: `Expected safe ${field} display text` },
+    );
+}
+
 function safeDisplayProseSchema(field: string) {
   return z
     .string()
@@ -452,6 +477,54 @@ const repositoryRelativeGlobSchema = z
       "Repository-relative forward-slash glob selecting files for this override.",
   });
 
+const pathExclusionPatternSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(256, "Glob pattern must be at most 256 UTF-16 code units")
+  .regex(/^[^\\]*$/, "Glob patterns must use forward slashes")
+  .regex(/^(?!\/)/, "Glob patterns must be repository-relative")
+  .regex(/^(?![A-Za-z]:)/, "Glob patterns must not use drive paths")
+  .regex(
+    /^(?!.*(?:^|\/)\.\.(?:\/|$))/,
+    "Glob patterns must not traverse parent directories",
+  )
+  .regex(/^(?!(?:\.\/)+$)/, "Glob patterns must not be empty")
+  .regex(/^(?!!)/, "Glob pattern exclusions cannot be negated")
+  .regex(/^[^{}]*$/u, "Brace patterns are not supported")
+  .regex(/^(?!.*[@+*?!]\()/u, "Extended-glob patterns are not supported")
+  .transform((pattern) => pattern.replace(/^(?:\.\/)+/, ""))
+  .meta({
+    description:
+      "Repository-relative forward-slash glob selecting files to suppress.",
+  });
+
+const pathExclusionCheckIdSchema = z
+  .array(z.enum(CHECK_IDS))
+  .min(1, "At least one check id is required")
+  .max(CHECK_IDS.length);
+
+const pathExclusionReasonSchema = safeBoundedDisplayProseSchema(
+  "path exclusion reason",
+  200,
+)
+  .trim()
+  .min(1, "Path exclusion reason is required")
+  .meta({
+    description: "Why these paths are intentionally suppressed.",
+  });
+
+const pathExclusionSchema = z
+  .object({
+    files: z.array(pathExclusionPatternSchema).min(1).max(32).meta({
+      description:
+        "One or more repository-relative globs for this exclusion entry.",
+    }),
+    checks: pathExclusionCheckIdSchema,
+    reason: pathExclusionReasonSchema,
+  })
+  .strict();
+
 const policyOverrideSchema = z
   .object({
     files: z.array(repositoryRelativeGlobSchema).min(1).meta({
@@ -463,6 +536,10 @@ const policyOverrideSchema = z
     }),
   })
   .strict();
+
+const pathExclusionsSchema = z
+  .array(pathExclusionSchema)
+  .max(100, "Limit path exclusions to 100 entries.");
 
 export type CheckPolicyInput =
   | z.infer<typeof simplePolicySchema>
@@ -498,6 +575,11 @@ export const configFileSchema = z
     overrides: z.array(policyOverrideSchema).optional().meta({
       description:
         "Ordered file-scoped policy patches. Later matching overrides take precedence.",
+      default: [],
+    }),
+    pathExclusions: pathExclusionsSchema.optional().meta({
+      description:
+        "Ordered repository/path-scoped check suppressions for matching paths.",
       default: [],
     }),
     reporting: reportingSchema.optional(),

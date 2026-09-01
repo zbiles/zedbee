@@ -1,6 +1,7 @@
 import type { CheckResult, RunSummary } from "../core/types.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import type { ScanMode } from "./source-mode.js";
+import type { PathExclusion } from "../config/schema.js";
 
 export interface NetworkDisclosure {
   readonly checkId: string;
@@ -30,6 +31,8 @@ export interface ScanReport {
   startedAt: string;
   durationMs: number;
   networkDisclosures: readonly NetworkDisclosure[];
+  readonly configuredPathExclusions: readonly PathExclusion[];
+  readonly appliedPathExclusions: readonly PathExclusion[];
   readonly presentationPolicy: ScanPresentationPolicy;
   summary: RunSummary;
   checks: readonly CheckResult[];

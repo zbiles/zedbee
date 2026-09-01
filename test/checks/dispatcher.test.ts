@@ -914,11 +914,17 @@ describe("dispatchChecks", () => {
     expect(decision.results[0]?.findings[0]?.severity).toBe("error");
   });
 
-  it("detaches and deeply freezes nested managed rule options before adapters receive them", async () => {
+  it("detaches and deeply freezes configuration before adapters receive it", async () => {
     const sourceOption = { allow: ["warn"] };
+    const sourceExclusion = {
+      files: ["generated/**"],
+      checks: ["lint"] as const,
+      reason: "Generated files are intentionally excluded.",
+    };
     const resolved = resolveConfig({ schemaVersion: 1, profile: "fast" });
     const config = {
       ...resolved,
+      pathExclusions: [sourceExclusion],
       checks: {
         ...resolved.checks,
         lint: {
@@ -932,6 +938,7 @@ describe("dispatchChecks", () => {
       },
     } satisfies ResolvedConfig;
     let adapterOption: { readonly allow: readonly string[] } | undefined;
+    let adapterExclusion: ResolvedConfig["pathExclusions"][number] | undefined;
     const assertSnapshot = (adapterContext: CheckRunContext) => {
       const configuration = adapterContext.config.checks.lint.rules[
         "no-console"
@@ -943,6 +950,14 @@ describe("dispatchChecks", () => {
       expect(Object.isFrozen(configuration)).toBe(true);
       expect(Object.isFrozen(adapterOption)).toBe(true);
       expect(Object.isFrozen(adapterOption.allow)).toBe(true);
+      adapterExclusion = adapterContext.config.pathExclusions[0];
+      expect(adapterExclusion).not.toBe(sourceExclusion);
+      expect(adapterExclusion?.files).not.toBe(sourceExclusion.files);
+      expect(adapterExclusion?.checks).not.toBe(sourceExclusion.checks);
+      expect(Object.isFrozen(adapterContext.config.pathExclusions)).toBe(true);
+      expect(Object.isFrozen(adapterExclusion)).toBe(true);
+      expect(Object.isFrozen(adapterExclusion?.files)).toBe(true);
+      expect(Object.isFrozen(adapterExclusion?.checks)).toBe(true);
     };
     const adapter: ObservationCheckAdapter = {
       id: "lint",
@@ -969,8 +984,10 @@ describe("dispatchChecks", () => {
 
     await dispatchChecks([adapter], createContext(config));
     sourceOption.allow.push("error");
+    sourceExclusion.files.push("later/**");
 
     expect(adapterOption?.allow).toEqual(["warn"]);
+    expect(adapterExclusion?.files).toEqual(["generated/**"]);
   });
 
   it("rejects executable rule option values before invoking adapters", async () => {

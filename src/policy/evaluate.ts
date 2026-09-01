@@ -44,6 +44,16 @@ export function displayResultForPolicy(
     findings: sanitizedResult.findings
       .filter((finding) => finding.attribution.staged)
       .flatMap((finding) => {
+        const pathExcluded =
+          policyForFile !== undefined &&
+          checkId !== undefined &&
+          finding.location?.file !== undefined &&
+          (policyForFile.pathExclusionsForFile?.(
+            checkId,
+            finding.location.file,
+            "target",
+          ).length ?? 0) > 0;
+        if (pathExcluded) return [];
         const filePolicy =
           policyForFile !== undefined &&
           checkId !== undefined &&

@@ -235,6 +235,59 @@ describe("evaluatePolicy", () => {
     ]);
   });
 
+  it("suppresses only matching duplication fragments through path exclusions", () => {
+    const duplicationConfig = resolveConfig({
+      schemaVersion: 1,
+      profile: "thorough",
+      pathExclusions: [
+        {
+          files: ["generated/**"],
+          checks: ["duplication"],
+          reason: "Generated duplicates are not maintained by hand.",
+        },
+      ],
+    });
+    const policyForFile = createFilePolicyResolver(duplicationConfig, {
+      files: new Map(),
+      isEmpty: true,
+      containsAddedLine: () => false,
+    });
+    const duplicateResult: CheckResult = {
+      checkId: "duplication",
+      status: "completed",
+      durationMs: 4,
+      findings: [
+        {
+          ...finding(true, "error", "generated/copy.ts"),
+          id: "generated-duplicate",
+          check: "duplication",
+          rule: "duplicate-fragment",
+        },
+        {
+          ...finding(true, "error", "src/maintained.ts"),
+          id: "maintained-duplicate",
+          check: "duplication",
+          rule: "duplicate-fragment",
+        },
+      ],
+    };
+
+    const decision = evaluatePolicy(
+      [
+        {
+          result: duplicateResult,
+          policy: duplicationConfig.checks.duplication,
+          policyForFile,
+        },
+      ],
+      duplicationConfig,
+    );
+
+    expect(decision.results[0]?.findings.map(({ id }) => id)).toEqual([
+      "maintained-duplicate",
+    ]);
+  });
+
   it("returns incomplete ahead of an ordinary policy block by default", () => {
     expect(
       evaluatePolicy(

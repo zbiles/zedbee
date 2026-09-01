@@ -23,7 +23,7 @@ import {
   loadConfigFromIndex,
 } from "../config/load-config.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
-import type { ResolvedConfig } from "../config/schema.js";
+import { type ResolvedConfig, type PathExclusion } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
 import {
@@ -32,6 +32,7 @@ import {
   addWholeFileLineRanges,
   discoverCommitChangeSet,
   discoverStagedChangeSet,
+  type ChangeSet,
   readCommitChangeSet,
   readStagedChangeSet,
 } from "../git/change-set.js";
@@ -56,6 +57,7 @@ import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
+import type { FilePolicyResolver } from "../config/file-policy.js";
 import type {
   NetworkDisclosure,
   ScanPresentationPolicy,
@@ -193,6 +195,36 @@ function deepFreeze<T>(value: T): T {
     Object.freeze(value);
   }
   return value;
+}
+
+function appliedPathExclusionsForConfig(
+  changeSet: ChangeSet,
+  policyForFile: FilePolicyResolver,
+): readonly PathExclusion[] {
+  const seen = new Set<string>();
+  const matches: PathExclusion[] = [];
+  if (policyForFile.pathExclusionsForPath === undefined) {
+    return matches;
+  }
+
+  for (const file of changeSet.files.values()) {
+    const pathsToCheck: [string, "target" | "baseline"][] = [
+      [file.path, "target"],
+      ...(file.previousPath === undefined || file.status !== "renamed"
+        ? []
+        : [[file.previousPath, "baseline"] as [string, "baseline"]]),
+    ];
+    for (const [path, side] of pathsToCheck) {
+      for (const exclusion of policyForFile.pathExclusionsForPath(path, side)) {
+        const signature = JSON.stringify(exclusion);
+        if (seen.has(signature)) continue;
+        seen.add(signature);
+        matches.push(exclusion);
+      }
+    }
+  }
+
+  return Object.freeze(matches);
 }
 
 type ActiveScanPhase =
@@ -443,6 +475,10 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   let abortedError: unknown;
   let shouldRethrow = false;
   let includeSourceExcerpts = false;
+  let configuredPathExclusions: readonly PathExclusion[] = [];
+  let appliedPathExclusions: readonly PathExclusion[] = [];
+  let policyForFile: FilePolicyResolver | undefined;
+  let config: ResolvedConfig | undefined;
   let presentationPolicy: ScanPresentationPolicy = Object.freeze({
     terminalFindingLimit: 25,
     temporaryReportMaxAge: "24h",
@@ -456,6 +492,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     changedFileCount,
     startedAt,
     durationMs: Math.max(0, dependencies.clock() - started),
+    configuredPathExclusions,
+    appliedPathExclusions,
     networkDisclosures,
     presentationPolicy,
   });
@@ -471,7 +509,6 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     const bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy: bootstrapResourcePolicy,
     });
-    let config: ResolvedConfig;
     let baseComparison:
       | Awaited<ReturnType<RunScanDependencies["resolveBaseComparison"]>>
       | undefined;
@@ -483,6 +520,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         options.configPath,
         options.signal,
       );
+      configuredPathExclusions = config.pathExclusions;
     } else {
       activePhase = "baseline-resolution";
       baseComparison = await dependencies.resolveBaseComparison(
@@ -504,6 +542,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         options.configPath,
         options.signal,
       );
+      configuredPathExclusions = config.pathExclusions;
     }
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
@@ -558,7 +597,11 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
                 baseComparison.targetCommit,
                 options.signal,
               );
-    const policyForFile = createFilePolicyResolver(config, changeSet);
+    policyForFile = createFilePolicyResolver(config, changeSet);
+    appliedPathExclusions = appliedPathExclusionsForConfig(
+      changeSet,
+      policyForFile,
+    );
     changedFileCount = changeSet.files.size;
 
     if (changeSet.isEmpty) {
@@ -582,6 +625,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         changedFileCount,
         startedAt,
         durationMs: Math.max(0, dependencies.clock() - started),
+        configuredPathExclusions,
+        appliedPathExclusions,
         networkDisclosures,
         presentationPolicy,
         summary: summarizeChecks([]),
@@ -721,6 +766,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           changedFileCount,
           startedAt,
           durationMs: Math.max(0, dependencies.clock() - started),
+          configuredPathExclusions,
+          appliedPathExclusions,
           networkDisclosures,
           presentationPolicy,
           summary: summarizeChecks(reportedResults),

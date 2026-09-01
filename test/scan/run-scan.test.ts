@@ -1327,6 +1327,139 @@ describe("runScan", () => {
     expect(dispatchCalls).toBe(1);
   });
 
+  it("allows an explicitly excluded unsupported path to proceed", async () => {
+    const configured = resolveConfig({
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "error",
+        lint: "off",
+        types: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        secrets: "off",
+        duplication: "off",
+        dependencyArchitecture: "off",
+        deadCode: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+        vulnerabilities: "off",
+      },
+      pathExclusions: [
+        {
+          files: ["generated/**"],
+          checks: ["formatting"],
+          reason: "Generated files are intentionally not formatted.",
+        },
+      ],
+    });
+    let dispatchCalls = 0;
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadIndexConfig: async () => configured,
+        readIndexChangeSet: async () => addedChangeSet("generated/file.js"),
+        buildIndexSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          targetRef: "index",
+          unsupportedEntries: [
+            { path: "generated/file.js", kind: "git-lfs-pointer" },
+          ],
+          cleanup: async () => undefined,
+        }),
+        dispatch: async () => {
+          dispatchCalls += 1;
+          return [
+            {
+              result: passing,
+              policy: configured.checks.formatting,
+            },
+          ];
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({ outcome: "pass", exitCode: 0 });
+    expect(report.appliedPathExclusions).toEqual(configured.pathExclusions);
+    expect(dispatchCalls).toBe(1);
+  });
+
+  it("records configured and applied path exclusions in scan reports", async () => {
+    const configured = resolveConfig({
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "error",
+        lint: "off",
+        types: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        secrets: "off",
+        duplication: "off",
+        dependencyArchitecture: "off",
+        deadCode: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+        vulnerabilities: "off",
+      },
+      pathExclusions: [
+        {
+          files: ["src/legacy/**", "./docs/**"],
+          checks: ["formatting"],
+          reason: "Legacy files are intentionally excluded.",
+        },
+      ],
+    });
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: dependencies([], {
+        loadIndexConfig: async () => configured,
+        readIndexChangeSet: async () =>
+          addedChangeSet("src/legacy/file.ts", "src/current/file.ts"),
+        buildIndexSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: "HEAD",
+          targetRef: "index",
+          unsupportedEntries: [],
+          cleanup: async () => undefined,
+        }),
+        dispatch: async () => [
+          {
+            result: {
+              ...passing,
+              checkId: "formatting",
+              status: "completed",
+              durationMs: 1,
+              findings: [],
+            },
+            policy: configured.checks.formatting,
+          },
+        ],
+      }),
+    });
+
+    expect(report.configuredPathExclusions).toEqual([
+      {
+        files: ["src/legacy/**", "docs/**"],
+        checks: ["formatting"],
+        reason: "Legacy files are intentionally excluded.",
+      },
+    ]);
+    expect(report.appliedPathExclusions).toEqual([
+      {
+        files: ["src/legacy/**", "docs/**"],
+        checks: ["formatting"],
+        reason: "Legacy files are intentionally excluded.",
+      },
+    ]);
+    expect(report.summary.findings).toHaveLength(0);
+  });
+
   it("treats a file-scoped enabled check as relevant to binary input", async () => {
     const overrideConfig = resolveConfig({
       schemaVersion: 1,
@@ -2536,6 +2669,8 @@ describe("runScan", () => {
       "changedFileCount",
       "startedAt",
       "durationMs",
+      "configuredPathExclusions",
+      "appliedPathExclusions",
       "networkDisclosures",
       "presentationPolicy",
       "summary",

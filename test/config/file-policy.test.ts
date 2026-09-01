@@ -166,4 +166,72 @@ describe("createFilePolicyResolver", () => {
       config.checks.lint,
     );
   });
+
+  it("suppresses matching paths when pathExclusions are configured", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "off",
+        lint: "error",
+        types: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        secrets: "off",
+        duplication: "off",
+        dependencyArchitecture: "off",
+        deadCode: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+        vulnerabilities: "off",
+      },
+      pathExclusions: [
+        {
+          files: ["generated/**", "src/legacy/**"],
+          checks: ["formatting", "lint"],
+          reason: "Generated files are not review targets.",
+        },
+      ],
+    });
+    const resolve = createFilePolicyResolver(
+      config,
+      changeSet(
+        new Map([
+          [
+            "generated/file.ts",
+            {
+              path: "generated/file.ts",
+              status: "added",
+              addedRanges: [{ start: 1, end: 1 }],
+            },
+          ],
+        ]),
+      ),
+    );
+
+    expect(resolve("lint", "generated/file.ts", "target").severity).toBe("off");
+    expect(resolve("lint", "src/legacy/main.ts", "target").severity).toBe(
+      "off",
+    );
+    expect(resolve("lint", "src/regular/main.ts", "target").severity).toBe(
+      "error",
+    );
+    expect(resolve("formatting", "generated/file.ts", "target").severity).toBe(
+      "off",
+    );
+    expect(resolve("types", "generated/file.ts", "target").severity).toBe(
+      "off",
+    );
+    expect(resolve.pathExclusionsForFile).toBeDefined();
+    expect(
+      resolve.pathExclusionsForFile?.("lint", "generated/file.ts", "target"),
+    ).toEqual([
+      {
+        files: ["generated/**", "src/legacy/**"],
+        checks: ["formatting", "lint"],
+        reason: "Generated files are not review targets.",
+      },
+    ]);
+  });
 });

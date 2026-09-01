@@ -91,7 +91,7 @@ npx zedbee scan --base origin/main --format sarif > zedbee.sarif
 
 Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked files are ignored. The command does not change `HEAD`, refs, the index, or the working tree, and cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
 
-In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Git LFS pointers and submodule pointers in either the selected index or committed target cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported selected paths is deferred beyond v1.
+In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Git LFS pointers and submodule pointers in either the selected index or committed target cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. Intentional per-path suppressions are configured with `pathExclusions`.
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by the selected target changes.
 
@@ -135,6 +135,13 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
       },
     },
   ],
+  "pathExclusions": [
+    {
+      "files": ["**/*.snap", "coverage/**"],
+      "checks": ["formatting", "lint", "types"],
+      "reason": "Known snapshot and generated files are intentionally excluded.",
+    },
+  ],
   "reporting": {
     "sourceExcerpts": "interactive",
     "terminalFindingLimit": 25,
@@ -151,6 +158,8 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. Exactly seven configurable checks expose additional managed settings: `formatting`, `lint`, `cyclomaticComplexity`, `readabilityComplexity`, `duplication`, `reactCorrectness`, and `reactAccessibility`. The complete option tables, defaults, rule boundaries, and override examples are in the [check guide](docs/checks.md).
 
 Overrides are evaluated in array order for each repository-relative file. Every matching patch is applied, and a later matching override takes precedence for the fields it supplies. This is true per-file behavior: two selected target files in the same workspace can receive different formatting, rule, complexity, severity, and timing policy. Duplication is the exception because jscpd compares a workspace as a whole; its `threshold`, `minLines`, `minTokens`, and `mode` settings are workspace-wide and are rejected in file overrides.
+
+`pathExclusions` suppresses named checks for exact files or directory globs. Each entry must include at least one repository-relative path, at least one check ID, and a short reason. Exclusions are applied after file overrides, so a matching exclusion always wins for the named checks. Patterns use forward slashes and support ordinary `*`, `**`, and `?` matching; absolute paths, parent traversal, negation, braces, and extended globs are rejected. Other checks still inspect the path. JSON reports include the configured exclusions and identify the ones that matched the selected changes.
 
 Run `zedbee checks` to inspect effective settings, their profile or repository source, and configured file overrides without running analysis. Use `zedbee checks --format json` for the complete machine-readable view. `zedbee init` deliberately writes only the selected profile/checks and existing guidance; the shipped editor schema, this documentation, and `zedbee checks` are the settings discovery surface.
 
@@ -266,7 +275,7 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 - For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
 - Typed lint checks unchanged workspace source files too, using each snapshot's contained TypeScript projects. In each snapshot, every TypeScript file selected for typed lint must belong to at least one loaded project. Updating only the selected target configuration may leave the baseline snapshot uncovered.
 - For files intentionally outside every TypeScript project, a file override can set `checks.lint.typeInformation` to `"when-available"`. Zedbee then runs basic TypeScript lint without rules that require type information. The default is `"required"`; Zedbee never reduces coverage silently.
-- Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; path-ignore policy is not yet configurable.
+- Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; use `pathExclusions` to intentionally suppress paths for specific checks.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
 - pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.

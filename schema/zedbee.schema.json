@@ -4608,6 +4608,95 @@
       },
       "default": []
     },
+    "pathExclusions": {
+      "description": "Ordered repository/path-scoped check suppressions for matching paths.",
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "minItems": 1,
+            "maxItems": 32,
+            "type": "array",
+            "items": {
+              "description": "Repository-relative forward-slash glob selecting files to suppress.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256,
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[^\\\\]*$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!\\/)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?![A-Za-z]:)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!(?:\\.\\/)+$)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!!)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[^{}]*$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!.*[@+*?!]\\()"
+                }
+              ]
+            },
+            "description": "One or more repository-relative globs for this exclusion entry."
+          },
+          "checks": {
+            "minItems": 1,
+            "maxItems": 13,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "formatting",
+                "lint",
+                "types",
+                "cyclomaticComplexity",
+                "readabilityComplexity",
+                "structuralSecurity",
+                "secrets",
+                "duplication",
+                "dependencyArchitecture",
+                "deadCode",
+                "reactCorrectness",
+                "reactAccessibility",
+                "vulnerabilities"
+              ]
+            }
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$",
+            "description": "Why these paths are intentionally suppressed."
+          }
+        },
+        "required": ["files", "checks", "reason"],
+        "additionalProperties": false
+      },
+      "default": []
+    },
     "reporting": {
       "type": "object",
       "properties": {

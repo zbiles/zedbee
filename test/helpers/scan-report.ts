@@ -84,6 +84,8 @@ export function createReport(overrides: Partial<ScanReport> = {}): ScanReport {
     changedFileCount: 1,
     startedAt: "2026-08-15T00:00:00.000Z",
     durationMs: 15,
+    configuredPathExclusions: [],
+    appliedPathExclusions: [],
     networkDisclosures: [],
     presentationPolicy: {
       terminalFindingLimit: 25,

@@ -80,6 +80,13 @@ const validExamples = [
         },
       },
     ],
+    pathExclusions: [
+      {
+        files: ["generated/**", "fixtures/**"],
+        checks: ["formatting", "lint"],
+        reason: "Generated assets can be noisy in this repo.",
+      },
+    ],
     failOnIncomplete: false,
   },
 ] as const;
@@ -377,6 +384,71 @@ describe("Zedbee configuration JSON Schema", () => {
       },
     },
     {
+      name: "invalid empty path exclusion checks",
+      input: {
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            files: ["src/**"],
+            checks: [],
+            reason: "No checks requested",
+          },
+        ],
+      },
+    },
+    {
+      name: "unsafe path exclusion reason",
+      input: {
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            files: ["src/**"],
+            checks: ["lint"],
+            reason: "unsafe\u001b[2J",
+          },
+        ],
+      },
+    },
+    {
+      name: "negated path exclusion glob",
+      input: {
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            files: ["!src/**"],
+            checks: ["lint"],
+            reason: "Negation makes suppression scope hard to audit.",
+          },
+        ],
+      },
+    },
+    {
+      name: "brace path exclusion glob",
+      input: {
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            files: ["{src,test}/**"],
+            checks: ["lint"],
+            reason: "Brace expansion is intentionally unsupported.",
+          },
+        ],
+      },
+    },
+    {
+      name: "extended path exclusion glob",
+      input: {
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            files: ["+(src)/**"],
+            checks: ["lint"],
+            reason: "Extended globs are intentionally unsupported.",
+          },
+        ],
+      },
+    },
+    {
       name: "absolute override glob",
       input: {
         schemaVersion: 1,
@@ -420,6 +492,7 @@ describe("Zedbee configuration JSON Schema", () => {
           };
         };
         overrides: { default: unknown[]; description: string };
+        pathExclusions: { default: unknown[]; description: string };
         reporting: {
           properties: {
             sourceExcerpts: { default: string };
@@ -444,6 +517,7 @@ describe("Zedbee configuration JSON Schema", () => {
         profile: { default: "recommended" },
         checks: { default: {} },
         overrides: { default: [] },
+        pathExclusions: { default: [] },
         reporting: {
           properties: {
             sourceExcerpts: { default: "interactive" },

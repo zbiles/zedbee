@@ -102,6 +102,12 @@ export function renderJson(report: ScanReport): string {
     changedFileCount: report.changedFileCount,
     startedAt: report.startedAt,
     durationMs: report.durationMs,
+    ...(report.configuredPathExclusions.length === 0
+      ? {}
+      : { configuredPathExclusions: report.configuredPathExclusions }),
+    ...(report.appliedPathExclusions.length === 0
+      ? {}
+      : { appliedPathExclusions: report.appliedPathExclusions }),
     networkDisclosures: report.networkDisclosures.map((disclosure) => ({
       checkId: disclosure.checkId,
       target: disclosure.target,

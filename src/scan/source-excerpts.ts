@@ -198,6 +198,8 @@ export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
     changedFileCount: report.changedFileCount,
     startedAt: report.startedAt,
     durationMs: report.durationMs,
+    configuredPathExclusions: report.configuredPathExclusions,
+    appliedPathExclusions: report.appliedPathExclusions,
     networkDisclosures: report.networkDisclosures.map((disclosure) => ({
       checkId: disclosure.checkId,
       target: disclosure.target,

@@ -55,6 +55,7 @@ describe("loadConfig", () => {
     });
     expect(config.failOnIncomplete).toBe(true);
     expect(config.overrides).toEqual([]);
+    expect(config.pathExclusions).toEqual([]);
     expect(config.reporting).toEqual({
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
@@ -193,6 +194,35 @@ describe("loadConfig", () => {
       },
     });
     expect(config.failOnIncomplete).toBe(false);
+  });
+
+  it("loads configured path exclusions with normalized reason text", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: { formatting: "warn" },
+        pathExclusions: [
+          {
+            files: ["test/**", "./fixtures/legacy/**"],
+            checks: ["formatting", "lint"],
+            reason: " legacy path checks disabled intentionally ",
+          },
+        ],
+      }),
+    );
+
+    const config = await loadConfig(root);
+
+    expect(config.pathExclusions).toEqual([
+      {
+        files: ["test/**", "fixtures/legacy/**"],
+        checks: ["formatting", "lint"],
+        reason: "legacy path checks disabled intentionally",
+      },
+    ]);
   });
 
   it("loads an explicit JSONC path selected by the CLI", async () => {

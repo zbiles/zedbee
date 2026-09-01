@@ -5,6 +5,7 @@ import {
   type CheckSeverity,
   type CheckTiming,
   type ConfigFile,
+  type PathExclusion,
   type ProfileId,
   type ResolvedCheckPolicies,
   type ResolvedCheckPolicy,
@@ -354,6 +355,21 @@ function resolveOverrides(
   });
 }
 
+function resolvePathExclusions(
+  file: ConfigFile | undefined,
+): readonly PathExclusion[] {
+  return (file?.pathExclusions ?? []).map((entry) => {
+    const checks = Object.freeze([...entry.checks]);
+    return {
+      files: Object.freeze(
+        entry.files.map((pattern) => pattern.replace(/^(?:\.\/)+/, "")),
+      ),
+      checks,
+      reason: entry.reason.trim(),
+    };
+  });
+}
+
 export function resolveConfig(
   file: ConfigFile | undefined,
   configPath?: string,
@@ -399,6 +415,7 @@ export function resolveConfig(
     profile,
     checks: Object.freeze(checks),
     overrides: resolveOverrides(file),
+    pathExclusions: resolvePathExclusions(file),
     reporting: Object.freeze({
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
       terminalFindingLimit: file?.reporting?.terminalFindingLimit ?? 25,

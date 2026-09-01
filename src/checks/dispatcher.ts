@@ -254,6 +254,9 @@ function snapshotConfig(config: ResolvedConfig): ResolvedConfig {
   return Object.freeze({
     schemaVersion: config.schemaVersion,
     profile: config.profile,
+    pathExclusions: immutableConfigurationSnapshot(
+      config.pathExclusions,
+    ) as ResolvedConfig["pathExclusions"],
     checks: Object.freeze(
       Object.fromEntries(
         Object.entries(config.checks).map(([id, policy]) => [
