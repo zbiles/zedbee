@@ -31,11 +31,43 @@ function run(command, args, options) {
     timeout: options.timeout ?? 180_000,
     maxBuffer: MAX_COMMAND_OUTPUT,
   });
-  if (result.status !== 0) {
+  const expectedStatuses = options.expectedStatuses ?? [0];
+  if (!expectedStatuses.includes(result.status)) {
     const detail = (result.stderr || result.stdout || "No output").trim();
     throw new Error(`${options.label} failed.\n${detail}`);
   }
   return result.stdout;
+}
+
+export function assertReleaseBaseScanReport(report, expected) {
+  const hasExpectedFinding =
+    report !== null &&
+    typeof report === "object" &&
+    Array.isArray(report.checks) &&
+    report.checks.some(
+      (check) =>
+        check?.checkId === "formatting" &&
+        Array.isArray(check.findings) &&
+        check.findings.some(
+          (finding) => finding?.location?.file === "branch.ts",
+        ),
+    );
+  if (
+    report === null ||
+    typeof report !== "object" ||
+    report.mode !== "base" ||
+    report.baseline !== expected.baseline ||
+    report.target !== expected.target ||
+    report.requestedBase !== expected.baseline ||
+    report.changedFileCount !== 1 ||
+    report.outcome !== "blocked" ||
+    report.exitCode !== 1 ||
+    !hasExpectedFinding
+  ) {
+    throw new Error(
+      "Installed CLI did not block the committed base-mode smoke scan.",
+    );
+  }
 }
 
 function parseJson(value, label) {
@@ -208,6 +240,65 @@ function smokeReleaseArtifact(artifactPath, manifest) {
         "Installed CLI doctor did not pass after initialization.",
       );
     }
+
+    run("git", ["add", "--all"], {
+      cwd: fixture,
+      label: "Base-mode fixture staging",
+    });
+    run(
+      "git",
+      ["commit", "--no-gpg-sign", "-m", "base-mode fixture policy"],
+      { cwd: fixture, label: "Base-mode fixture commit" },
+    );
+    const baseline = run("git", ["rev-parse", "HEAD"], {
+      cwd: fixture,
+      label: "Base-mode baseline resolution",
+    }).trim();
+    writeFileSync(
+      join(fixture, "branch.ts"),
+      "export const branch={value:1}\n",
+    );
+    run("git", ["add", "--", "branch.ts"], {
+      cwd: fixture,
+      label: "Base-mode finding staging",
+    });
+    run(
+      "git",
+      [
+        "commit",
+        "--no-gpg-sign",
+        "--no-verify",
+        "-m",
+        "base-mode committed finding",
+      ],
+      { cwd: fixture, label: "Base-mode finding commit" },
+    );
+    const target = run("git", ["rev-parse", "HEAD"], {
+      cwd: fixture,
+      label: "Base-mode target resolution",
+    }).trim();
+    const baseReport = parseJson(
+      run(
+        process.execPath,
+        [
+          cli,
+          "scan",
+          "--base",
+          baseline,
+          "--format",
+          "json",
+          "--no-color",
+          "--no-animations",
+        ],
+        {
+          cwd: fixture,
+          label: "Installed CLI committed base-mode scan",
+          expectedStatuses: [1],
+        },
+      ),
+      "Installed CLI committed base-mode scan",
+    );
+    assertReleaseBaseScanReport(baseReport, { baseline, target });
 
     writeFileSync(join(fixture, "value.ts"), "export const value = 1;\n");
     run("git", ["add", "--", "value.ts"], {

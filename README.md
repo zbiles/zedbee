@@ -78,6 +78,19 @@ Zedbee treats the Git index as the proposed commit. If you stage a file and edit
 
 `zedbee scan`, `zedbee fix`, and `zedbee checks` also read repository configuration from the Git index. A newly staged `.zedbeerc.jsonc` takes effect immediately; an unstaged or untracked copy cannot weaken the policy applied to staged code. When the index has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
 
+### Committed branch scans in CI
+
+An ordinary `zedbee scan` examines the Git index. A clean pull-request checkout therefore has zero index changes; it does not automatically scan the commits on the checked-out branch. Fetch the base branch history and request committed base mode explicitly:
+
+```sh
+git fetch --no-tags origin main
+npx zedbee scan --base origin/main --format sarif > zedbee.sarif
+```
+
+`--base <ref>` resolves the unique merge base of the locally available ref and committed `HEAD`, then scans only the committed changes from that merge base through `HEAD`. If the base branch advances after the feature branch splits, base-only commits are not treated as feature changes. The named ref and enough common history must already exist locally. Zedbee never fetches automatically; a shallow checkout without the required ancestry is incomplete and exits 2, so configure sufficient fetch depth or fetch more history before retrying.
+
+Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked files are ignored. The command does not change `HEAD`, refs, the index, or the working tree, and cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
+
 An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by staged work.

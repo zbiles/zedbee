@@ -56,6 +56,15 @@ npx zedbee scan --format sarif > zedbee.sarif
 
 These explicit formats create no sidecar or automatic temporary report. Text is stable human-readable output, JSON is Zedbee's versioned machine contract, and SARIF is the enterprise interchange format. Redirect explicit JSON or SARIF when durable output is required. Coding tools that receive a complete-report path must process it and respect exit code 2 as incomplete required analysis; they must not treat a preview or an incomplete scan as clean.
 
+For a clean CI checkout, fetch the intended base ref and export an explicit committed comparison:
+
+```sh
+git fetch --no-tags origin main
+npx zedbee scan --base origin/main --format sarif > zedbee.sarif
+```
+
+Ordinary `scan` remains an index comparison and sees no changes when a clean checkout's index matches `HEAD`. `--base origin/main` reports `mode: "base"`, the requested base, the resolved unique merge-base commit, committed `HEAD` as the target, and the number of changed paths between those commits. The base ref and sufficient ancestry must already exist locally; Zedbee never fetches automatically. Missing shallow history is reported as incomplete with exit code 2. Base-mode policy and source come from committed `HEAD`, never staged, unstaged, or untracked checkout files. `fix --base` is intentionally unavailable because committed report inputs are immutable.
+
 ## SARIF 2.1.0
 
 For enterprise ingestion, redirect the SARIF format your workflow consumes:
@@ -78,4 +87,4 @@ For incomplete scans, the SARIF invocation has `executionSuccessful: false`, and
 
 Explicit output is complete even when automatic terminal presentation is constrained: terminal finding limits never abbreviate explicitly requested text, JSON, or SARIF. Future terminal presentation changes do not alter this export contract.
 
-SARIF follows the configured source-excerpt policy. Redirected SARIF omits ordinary source excerpts by default; use `--include-source` to opt in, `--no-source` to suppress them, or configure `reporting.sourceExcerpts`. Secret findings remain redacted in every format. Like all scan output, SARIF is based on the exact staged Git-index snapshot, not later working-tree edits.
+SARIF follows the configured source-excerpt policy. Redirected SARIF omits ordinary source excerpts by default; use `--include-source` to opt in, `--no-source` to suppress them, or configure `reporting.sourceExcerpts`. Secret findings remain redacted in every format. Index-mode SARIF uses the exact staged Git-index snapshot; base-mode SARIF uses committed `HEAD`. Neither observes later working-tree edits.

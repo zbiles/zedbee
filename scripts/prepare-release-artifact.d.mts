@@ -8,4 +8,9 @@ export function releaseArtifactFilename(
   manifest: ReleaseManifest,
 ): string;
 
+export function assertReleaseBaseScanReport(
+  report: unknown,
+  expected: Readonly<{ baseline: string; target: string }>,
+): void;
+
 export function prepareReleaseArtifact(cwd?: string): string;

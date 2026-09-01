@@ -10,7 +10,10 @@ import {
   assertAllowedPackageFiles,
   assertPackMetadata,
 } from "../../scripts/check-package-contents.mjs";
-import { releaseArtifactFilename } from "../../scripts/prepare-release-artifact.mjs";
+import {
+  assertReleaseBaseScanReport,
+  releaseArtifactFilename,
+} from "../../scripts/prepare-release-artifact.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -231,6 +234,62 @@ describe("release verification contract", () => {
           version: "0.1.0",
         }),
       ).toThrow(/release artifact/u);
+    }
+  });
+
+  it("requires the release smoke scan to block one committed base-mode file", () => {
+    expect(() =>
+      assertReleaseBaseScanReport(
+        {
+          mode: "base",
+          baseline: "base-oid",
+          target: "target-oid",
+          requestedBase: "base-oid",
+          changedFileCount: 1,
+          outcome: "blocked",
+          exitCode: 1,
+          checks: [
+            {
+              checkId: "formatting",
+              findings: [{ location: { file: "branch.ts" } }],
+            },
+          ],
+        },
+        { baseline: "base-oid", target: "target-oid" },
+      ),
+    ).not.toThrow();
+
+    for (const invalid of [
+      { mode: "index" },
+      { baseline: "other-base" },
+      { target: "other-target" },
+      { requestedBase: "other-base" },
+      { changedFileCount: 0 },
+      { outcome: "pass" },
+      { exitCode: 0 },
+      { checks: [] },
+    ]) {
+      expect(() =>
+        assertReleaseBaseScanReport(
+          {
+            mode: "base",
+            baseline: "base-oid",
+            target: "target-oid",
+            requestedBase: "base-oid",
+            changedFileCount: 1,
+            outcome: "blocked",
+            exitCode: 1,
+            checks: [
+              {
+                checkId: "formatting",
+                findings: [{ location: { file: "branch.ts" } }],
+              },
+            ],
+            ...invalid,
+          },
+          { baseline: "base-oid", target: "target-oid" },
+        ),
+      ).toThrow(/committed base-mode smoke scan/u);
     }
   });
 

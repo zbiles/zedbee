@@ -178,6 +178,66 @@ describe("packaged Zedbee CLI", () => {
     );
   });
 
+  it("scans committed branch findings in base mode from the packed CLI", async () => {
+    const repository = await createInstalledRepository();
+    const baseline = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write("src/branch.ts", "export const branch={value:1}\n");
+    await repository.commitAll("committed branch finding");
+    const target = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const beforeTree = (await repository.git(["write-tree"])).stdout;
+    const beforeStatus = (
+      await repository.git(["status", "--porcelain=v1", "-z"])
+    ).stdout;
+
+    const result = await runPackagedCli(repository.root, [
+      "scan",
+      "--base",
+      baseline,
+      "--format",
+      "json",
+    ]);
+    const report = JSON.parse(result.stdout) as {
+      mode: string;
+      baseline: string | null;
+      target: string | null;
+      requestedBase?: string;
+      changedFileCount: number | null;
+      outcome: string;
+      exitCode: number;
+      checks: Array<{
+        checkId: string;
+        findings: Array<{ location?: { file: string } }>;
+      }>;
+    };
+
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(report).toMatchObject({
+      mode: "base",
+      baseline,
+      target,
+      requestedBase: baseline,
+      changedFileCount: 1,
+      outcome: "blocked",
+      exitCode: 1,
+    });
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "formatting",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              location: expect.objectContaining({ file: "src/branch.ts" }),
+            }),
+          ]),
+        }),
+      ]),
+    );
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeTree);
+    expect(
+      (await repository.git(["status", "--porcelain=v1", "-z"])).stdout,
+    ).toBe(beforeStatus);
+  }, 30_000);
+
   it("previews and applies exact plus whole-file fixes without changing the index or writing a report", async () => {
     const repository = await createInstalledRepository();
     await repository.write(
