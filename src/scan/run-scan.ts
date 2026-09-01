@@ -26,7 +26,14 @@ import { createFilePolicyResolver } from "../config/file-policy.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
-import { readCommitChangeSet, readStagedChangeSet } from "../git/change-set.js";
+import {
+  addCommitLineRanges,
+  addStagedLineRanges,
+  discoverCommitChangeSet,
+  discoverStagedChangeSet,
+  readCommitChangeSet,
+  readStagedChangeSet,
+} from "../git/change-set.js";
 import {
   BaseComparisonError,
   resolveBaseComparison,
@@ -90,6 +97,10 @@ export interface RunScanDependencies {
   ): GitClient;
   readIndexChangeSet: typeof readStagedChangeSet;
   readCommitChangeSet: typeof readCommitChangeSet;
+  discoverIndexChangeSet?: typeof discoverStagedChangeSet;
+  discoverCommitChangeSet?: typeof discoverCommitChangeSet;
+  addIndexLineRanges?: typeof addStagedLineRanges;
+  addCommitLineRanges?: typeof addCommitLineRanges;
   buildIndexSnapshots: typeof buildSnapshotPair;
   buildCommitSnapshots: typeof buildCommitSnapshotPair;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
@@ -146,6 +157,10 @@ const DEFAULT_DEPENDENCIES: RunScanDependencies = {
     new GitClient(repositoryRoot, options),
   readIndexChangeSet: readStagedChangeSet,
   readCommitChangeSet,
+  discoverIndexChangeSet: discoverStagedChangeSet,
+  discoverCommitChangeSet,
+  addIndexLineRanges: addStagedLineRanges,
+  addCommitLineRanges,
   buildIndexSnapshots: buildSnapshotPair,
   buildCommitSnapshots: buildCommitSnapshotPair,
   inspectRepository,
@@ -517,15 +532,30 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           timestamp: dependencies.clock(),
         }),
     });
-    const changeSet =
+    const splitChangeDiscovery =
       baseComparison === undefined
-        ? await dependencies.readIndexChangeSet(git, options.signal)
-        : await dependencies.readCommitChangeSet(
-            git,
-            baseComparison.baselineCommit,
-            baseComparison.targetCommit,
-            options.signal,
-          );
+        ? dependencies.discoverIndexChangeSet !== undefined &&
+          dependencies.addIndexLineRanges !== undefined
+        : dependencies.discoverCommitChangeSet !== undefined &&
+          dependencies.addCommitLineRanges !== undefined;
+    let changeSet =
+      splitChangeDiscovery && baseComparison === undefined
+        ? await dependencies.discoverIndexChangeSet!(git, options.signal)
+        : splitChangeDiscovery
+          ? await dependencies.discoverCommitChangeSet!(
+              git,
+              baseComparison!.baselineCommit,
+              baseComparison!.targetCommit,
+              options.signal,
+            )
+          : baseComparison === undefined
+            ? await dependencies.readIndexChangeSet(git, options.signal)
+            : await dependencies.readCommitChangeSet(
+                git,
+                baseComparison.baselineCommit,
+                baseComparison.targetCommit,
+                options.signal,
+              );
     const policyForFile = createFilePolicyResolver(config, changeSet);
     changedFileCount = changeSet.files.size;
 
@@ -587,6 +617,28 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       if (unsupportedFailures.length > 0) {
         report = createIncompleteReport(reportContext(), unsupportedFailures);
       } else {
+        if (splitChangeDiscovery) {
+          activePhase = "change-discovery";
+          const excludedPaths = new Set(
+            snapshots.unsupportedEntries.map((entry) => entry.path),
+          );
+          changeSet =
+            baseComparison === undefined
+              ? await dependencies.addIndexLineRanges!(
+                  git,
+                  changeSet,
+                  excludedPaths,
+                  options.signal,
+                )
+              : await dependencies.addCommitLineRanges!(
+                  git,
+                  changeSet,
+                  excludedPaths,
+                  baseComparison.baselineCommit,
+                  baseComparison.targetCommit,
+                  options.signal,
+                );
+        }
         activePhase = "baseline-inspection";
         const baselineInspection = await dependencies.inspectRepository(
           snapshots.baselineDir,

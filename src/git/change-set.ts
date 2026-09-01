@@ -186,6 +186,206 @@ function changeSetFromFiles(changedFiles: readonly ChangedFile[]): ChangeSet {
   };
 }
 
+function changeSetFromNameStatus(output: string): ChangeSet {
+  if (output === "") return changeSetFromFiles([]);
+  if (!output.endsWith("\0")) return invalidPatch();
+  const fields = output.slice(0, -1).split("\0");
+  const files: ChangedFile[] = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    if (status === undefined) return invalidPatch();
+    if (/^R\d{1,3}$/u.test(status)) {
+      const previousPath = fields[index++];
+      const path = fields[index++];
+      if (!previousPath || !path) return invalidPatch();
+      files.push({
+        path,
+        previousPath,
+        status: "renamed",
+        addedRanges: [],
+      });
+      continue;
+    }
+    const path = fields[index++];
+    if (!path) return invalidPatch();
+    if (status === "A") {
+      files.push({ path, status: "added", addedRanges: [] });
+    } else if (status === "D") {
+      files.push({ path, status: "deleted", addedRanges: [] });
+    } else if (status === "M" || status === "T") {
+      files.push({ path, status: "modified", addedRanges: [] });
+    } else {
+      return invalidPatch();
+    }
+  }
+  if (new Set(files.map((file) => file.path)).size !== files.length) {
+    return invalidPatch();
+  }
+  return changeSetFromFiles(files);
+}
+
+function applyAddedRanges(metadata: ChangeSet, patch: ChangeSet): ChangeSet {
+  for (const path of patch.files.keys()) {
+    if (!metadata.files.has(path)) return invalidPatch();
+  }
+  return changeSetFromFiles(
+    [...metadata.files.values()].map((file) => ({
+      ...file,
+      addedRanges: patch.files.get(file.path)?.addedRanges ?? [],
+    })),
+  );
+}
+
+const COMMON_DIFF_OPTIONS = [
+  "--no-relative",
+  "--ignore-submodules=none",
+  "--submodule=short",
+  "--unified=0",
+  "--no-color",
+  "--no-ext-diff",
+  "--no-textconv",
+  "--diff-algorithm=myers",
+  "--indent-heuristic",
+] as const;
+
+const COMMIT_DIFF_OPTIONS = [
+  ...COMMON_DIFF_OPTIONS,
+  "--find-renames=50%",
+  "-l0",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+] as const;
+
+const STAGED_DIFF_OPTIONS = [
+  ...COMMON_DIFF_OPTIONS,
+  "--find-renames",
+  "--src-prefix=a/",
+  "--dst-prefix=b/",
+] as const;
+
+export async function discoverStagedChangeSet(
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const metadata = await git.run(
+    [
+      "diff",
+      "--cached",
+      "--name-status",
+      "-z",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--find-renames",
+    ],
+    signal === undefined ? {} : { signal },
+  );
+  return changeSetFromNameStatus(metadata.stdout);
+}
+
+export async function discoverCommitChangeSet(
+  git: GitClient,
+  baselineCommit: string,
+  targetCommit: string,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const metadata = await git.run(
+    [
+      "diff",
+      "--name-status",
+      "-z",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--find-renames=50%",
+      "-l0",
+      "--end-of-options",
+      baselineCommit,
+      targetCommit,
+    ],
+    {
+      env: { GIT_ATTR_SOURCE: targetCommit },
+      ...(signal === undefined ? {} : { signal }),
+    },
+  );
+  return changeSetFromNameStatus(metadata.stdout);
+}
+
+function textTargets(
+  metadata: ChangeSet,
+  excludedPaths: ReadonlySet<string>,
+): string[] {
+  return [
+    ...new Set(
+      [...metadata.files.values()].flatMap((file) =>
+        file.status === "deleted" || excludedPaths.has(file.path)
+          ? []
+          : file.previousPath === undefined
+            ? [file.path]
+            : [file.previousPath, file.path],
+      ),
+    ),
+  ];
+}
+
+function literalPathspecs(paths: readonly string[]): string[] {
+  return paths.map((path) => `:(literal)${path}`);
+}
+
+export async function addStagedLineRanges(
+  git: GitClient,
+  metadata: ChangeSet,
+  excludedPaths: ReadonlySet<string>,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const paths = textTargets(metadata, excludedPaths);
+  if (paths.length === 0) return metadata;
+  const patch = await git.run(
+    [
+      "diff",
+      "--cached",
+      ...STAGED_DIFF_OPTIONS,
+      "--text",
+      "--",
+      ...literalPathspecs(paths),
+    ],
+    signal === undefined ? {} : { signal },
+  );
+  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
+}
+
+export async function addCommitLineRanges(
+  git: GitClient,
+  metadata: ChangeSet,
+  excludedPaths: ReadonlySet<string>,
+  baselineCommit: string,
+  targetCommit: string,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const paths = textTargets(metadata, excludedPaths);
+  if (paths.length === 0) return metadata;
+  const patch = await git.run(
+    [
+      "diff",
+      ...COMMIT_DIFF_OPTIONS,
+      "--text",
+      baselineCommit,
+      targetCommit,
+      "--",
+      ...literalPathspecs(paths),
+    ],
+    {
+      env: { GIT_ATTR_SOURCE: targetCommit },
+      ...(signal === undefined ? {} : { signal }),
+    },
+  );
+  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
+}
+
 export async function readStagedChangeSet(
   git: GitClient,
   signal?: AbortSignal,
@@ -194,6 +394,9 @@ export async function readStagedChangeSet(
     [
       "diff",
       "--cached",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
       "--unified=0",
       "--no-color",
       "--no-ext-diff",
@@ -215,6 +418,9 @@ export async function readCommitChangeSet(
   const patch = await git.run(
     [
       "diff",
+      "--no-relative",
+      "--ignore-submodules=none",
+      "--submodule=short",
       "--unified=0",
       "--no-color",
       "--no-ext-diff",

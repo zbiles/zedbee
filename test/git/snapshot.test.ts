@@ -113,6 +113,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 const TEST_BLOB = "0123456789012345678901234567890123456789";
+const MAX_SYMLINK_TARGET_BYTES = 1024 * 1024;
 
 function stagedRecord(path = "value.ts"): string {
   return `100644 ${TEST_BLOB} 0\t${path}\0`;
@@ -127,6 +128,87 @@ function debugRecord(path = "value.ts"): string {
 }
 
 describe("buildSnapshotPair", () => {
+  it.each(["a".repeat(40), "b".repeat(64)])(
+    "rejects an oversized staged symlink before pulling its body and cleans up (%s)",
+    async (objectId) => {
+      let bodyPulls = 0;
+      const git = {
+        async run(args: readonly string[]) {
+          if (args[1] === "--stage") {
+            return {
+              stdout: `120000 ${objectId} 0\tlink.txt\0`,
+              stderr: "",
+              exitCode: 0,
+            };
+          }
+          if (args[1] === "--debug") {
+            return { stdout: debugRecord("link.txt"), stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async streamBlobs(ids: readonly string[], visit: GitBlobVisitor) {
+          if (ids.length === 0) return;
+          await visit({
+            objectId,
+            size: MAX_SYMLINK_TARGET_BYTES + 1,
+            chunks: {
+              async *[Symbol.asyncIterator]() {
+                bodyPulls += 1;
+                throw new Error("oversized symlink body must not be pulled");
+              },
+            },
+          });
+        },
+        async tryRun() {
+          return { stdout: "", stderr: "", exitCode: 1 };
+        },
+      } as unknown as GitClient;
+
+      await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({
+        code: "INVALID_INDEX_PATH",
+        message: "Zedbee refused an invalid selected repository path.",
+      });
+      expect(bodyPulls).toBe(0);
+      expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+    },
+  );
+
+  it("rejects an oversized committed symlink before pulling its body", async () => {
+    const objectId = "c".repeat(64);
+    let bodyPulls = 0;
+    const git = {
+      async run(args: readonly string[]) {
+        return {
+          stdout:
+            args.at(-1) === "target-oid"
+              ? `120000 blob ${objectId}\tlink.txt\0`
+              : "",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+      async streamBlobs(ids: readonly string[], visit: GitBlobVisitor) {
+        if (ids.length === 0) return;
+        await visit({
+          objectId,
+          size: MAX_SYMLINK_TARGET_BYTES + 1,
+          chunks: {
+            async *[Symbol.asyncIterator]() {
+              bodyPulls += 1;
+              throw new Error("oversized symlink body must not be pulled");
+            },
+          },
+        });
+      },
+    } as unknown as GitClient;
+
+    await expect(
+      buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
+    ).rejects.toMatchObject({ code: "INVALID_INDEX_PATH" });
+    expect(bodyPulls).toBe(0);
+    expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+  });
+
   it("cleans an owned temporary root when canonicalization fails", async () => {
     snapshotRootFailure.failCanonicalization = true;
     const git = {
@@ -876,6 +958,24 @@ describe("buildSnapshotPair", () => {
       { path: "binary.dat", kind: "binary" },
       { path: "large.dat", kind: "git-lfs-pointer" },
     ]);
+  });
+
+  it("classifies a NUL anywhere in a staged regular blob as binary", async () => {
+    const repository = await createGitRepository();
+    const bytes = Buffer.concat([Buffer.alloc(9000, 0x61), Buffer.from([0])]);
+    await writeFile(join(repository.root, "late-nul.bin"), bytes);
+    await repository.git(["add", "--", "late-nul.bin"]);
+
+    const snapshots = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
+    onTestFinished(snapshots.cleanup);
+
+    expect(snapshots.unsupportedEntries).toContainEqual({
+      path: "late-nul.bin",
+      kind: "binary",
+    });
   });
 
   it("removes intent-to-add placeholders from the target snapshot", async () => {

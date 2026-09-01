@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import {
+  addCommitLineRanges,
+  discoverCommitChangeSet,
   mergeLineRanges,
   readCommitChangeSet,
   readStagedChangeSet,
@@ -149,6 +151,49 @@ describe("readCommitChangeSet", () => {
     expect(changeSet.containsAddedLine("rename-new.ts", 2)).toBe(true);
   });
 
+  it("adds text ranges after bounded commit metadata without changing rename status", async () => {
+    const repository = await createGitRepository();
+    await repository.write("old.ts", "line1\nline3\n");
+    await repository.write(":(literal)magic.ts", "before\n");
+    await repository.commitAll("baseline");
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.git(["mv", "old.ts", "new.ts"]);
+    await repository.write("new.ts", "line1\nline2\nline3\n");
+    await repository.write(":(literal)magic.ts", "after\n");
+    await repository.commitAll("target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const git = new GitClient(repository.root);
+
+    const metadata = await discoverCommitChangeSet(
+      git,
+      baselineCommit,
+      targetCommit,
+    );
+    expect(metadata.files.get("new.ts")).toEqual({
+      path: "new.ts",
+      previousPath: "old.ts",
+      status: "renamed",
+      addedRanges: [],
+    });
+
+    const changeSet = await addCommitLineRanges(
+      git,
+      metadata,
+      new Set(),
+      baselineCommit,
+      targetCommit,
+    );
+    expect(changeSet.files.get("new.ts")).toEqual({
+      path: "new.ts",
+      previousPath: "old.ts",
+      status: "renamed",
+      addedRanges: [{ start: 2, end: 2 }],
+    });
+    expect(changeSet.files.get(":(literal)magic.ts")?.addedRanges).toEqual([
+      { start: 1, end: 1 },
+    ]);
+  });
+
   it("passes the validated commit IDs to an attribute-insensitive diff", async () => {
     const calls: Array<{
       args: string[];
@@ -170,6 +215,9 @@ describe("readCommitChangeSet", () => {
       {
         args: [
           "diff",
+          "--no-relative",
+          "--ignore-submodules=none",
+          "--submodule=short",
           "--unified=0",
           "--no-color",
           "--no-ext-diff",
@@ -188,6 +236,41 @@ describe("readCommitChangeSet", () => {
         options: { env: { GIT_ATTR_SOURCE: "target-oid" } },
       },
     ]);
+  });
+
+  it("does not let repository config hide staged or committed gitlink changes", async () => {
+    const repository = await createGitRepository();
+    await repository.write("root.ts", "export const root = 1;\n");
+    await repository.commitAll("root");
+    const firstCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.git([
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${firstCommit},vendor/demo`,
+    ]);
+    await repository.git(["commit", "--message", "baseline gitlink"]);
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.git([
+      "update-index",
+      "--cacheinfo",
+      `160000,${baselineCommit},vendor/demo`,
+    ]);
+    await repository.git(["config", "diff.ignoreSubmodules", "all"]);
+    await repository.git(["config", "diff.submodule", "log"]);
+    const client = new GitClient(repository.root);
+
+    expect((await readStagedChangeSet(client)).files.has("vendor/demo")).toBe(
+      true,
+    );
+
+    await repository.git(["commit", "--message", "target gitlink"]);
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    expect(
+      (
+        await readCommitChangeSet(client, baselineCommit, targetCommit)
+      ).files.has("vendor/demo"),
+    ).toBe(true);
   });
 
   it.runIf(process.platform !== "win32")(

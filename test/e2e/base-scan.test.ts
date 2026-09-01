@@ -272,6 +272,81 @@ describe("committed base scans", () => {
     await expectNoSnapshots(snapshotRoot);
   }, 30_000);
 
+  it("does not send an irrelevant changed binary through the bounded text diff", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        resources: { git: { outputLimitBytes: 1024 } },
+        checks: {
+          formatting: "error",
+          lint: "off",
+          types: "off",
+          cyclomaticComplexity: "off",
+          readabilityComplexity: "off",
+          structuralSecurity: "off",
+          secrets: "off",
+          duplication: "off",
+          dependencyArchitecture: "off",
+          deadCode: "off",
+          reactCorrectness: "off",
+          reactAccessibility: "off",
+          vulnerabilities: "off",
+        },
+      })}\n`,
+    );
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.git(["switch", "-c", "feature"]);
+    await repository.write("src/value.ts", "export const value = 2;\n");
+    await writeFile(join(repository.root, "asset.bin"), Buffer.alloc(4096, 0));
+    await repository.commitAll("text and irrelevant binary");
+
+    const report = await runScan({
+      repositoryRoot: repository.root,
+      baseRef: "main",
+    });
+
+    expect(report, JSON.stringify(report)).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      changedFileCount: 2,
+    });
+  }, 30_000);
+
+  it("fails closed for a relevant NUL beyond the first 8192 bytes", async () => {
+    const repository = await createGitRepository();
+    await repository.write(".zedbeerc.jsonc", strictConfig);
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.git(["switch", "-c", "feature"]);
+    await repository.write(
+      "src/late-nul.js",
+      `${"export const value = 1;\n".repeat(400)}\0binary\n`,
+    );
+    await repository.commitAll("late NUL");
+
+    const report = await runScan({
+      repositoryRoot: repository.root,
+      baseRef: "main",
+    });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      checks: [
+        expect.objectContaining({
+          error: expect.objectContaining({
+            code: "UNSUPPORTED_BINARY_INPUT",
+            path: "src/late-nul.js",
+          }),
+        }),
+      ],
+    });
+  }, 30_000);
+
   it("reports no index changes for the same clean checkout without --base", async () => {
     const { repository } = await createBaseFixture();
 

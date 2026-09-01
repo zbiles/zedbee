@@ -88,6 +88,8 @@ interface SnapshotEntry {
   path: string;
 }
 
+const MAX_SYMLINK_TARGET_BYTES = 1024 * 1024;
+
 const OBJECT_ID = "(?:[\\da-f]{40}|[\\da-f]{64})";
 const STAGED_ENTRY = new RegExp(
   `^([0-7]{6}) (${OBJECT_ID}) ([0-3])\\t([\\s\\S]+)$`,
@@ -278,7 +280,7 @@ async function writeRegularBlob(
   entry: SnapshotEntry,
   blob: GitBlobStream,
   signal?: AbortSignal,
-): Promise<Buffer> {
+): Promise<{ prefix: Buffer; containsNul: boolean }> {
   await createParentDirectories(destinationRoot, entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined) return invalidSelectedPath();
@@ -293,6 +295,7 @@ async function writeRegularBlob(
   const prefixChunks: Buffer[] = [];
   let prefixLength = 0;
   let written = 0;
+  let containsNul = false;
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile()) throw new Error("Snapshot target is not a file.");
@@ -304,6 +307,7 @@ async function writeRegularBlob(
       if (written > blob.size) {
         throw new Error("Git returned an invalid batch object response.");
       }
+      if (!containsNul && chunk.includes(0)) containsNul = true;
       if (prefixLength < 8192) {
         const prefix = chunk.subarray(0, 8192 - prefixLength);
         prefixChunks.push(Buffer.from(prefix));
@@ -336,7 +340,7 @@ async function writeRegularBlob(
       "Zedbee refused a temporary snapshot file whose identity changed.",
     );
   }
-  return Buffer.concat(prefixChunks, prefixLength);
+  return { prefix: Buffer.concat(prefixChunks, prefixLength), containsNul };
 }
 
 async function writeSymlinkBlob(
@@ -345,6 +349,7 @@ async function writeSymlinkBlob(
   blob: GitBlobStream,
   signal?: AbortSignal,
 ): Promise<void> {
+  if (blob.size > MAX_SYMLINK_TARGET_BYTES) return invalidSelectedPath();
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of blob.chunks) {
@@ -379,8 +384,9 @@ async function writeSymlinkBlob(
 function classifyBlob(
   entry: SnapshotEntry,
   bytes: Buffer,
+  containsNul: boolean,
 ): UnsupportedIndexEntry | undefined {
-  if (bytes.subarray(0, 8192).includes(0)) {
+  if (containsNul) {
     return { path: entry.path, kind: "binary" };
   }
   if (
@@ -421,14 +427,14 @@ async function materializeEntries(
         await writeSymlinkBlob(destinationRoot, entry, blob, signal);
         return;
       }
-      const prefix = await writeRegularBlob(
+      const { prefix, containsNul } = await writeRegularBlob(
         destinationRoot,
         entry,
         blob,
         signal,
       );
       const unsupportedEntry = classify
-        ? classifyBlob(entry, prefix)
+        ? classifyBlob(entry, prefix, containsNul)
         : undefined;
       if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
     },
