@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, lstat, realpath, stat } from "node:fs/promises";
 import {
@@ -9,7 +10,13 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { execa } from "execa";
+import {
+  consumeGitBatchBlobOutput,
+  type GitBlobVisitor,
+} from "./batch-object-stream.js";
 import { GitCommandError } from "./errors.js";
 import type { ScanResourcePolicy } from "../scan/resource-policy.js";
 
@@ -195,6 +202,31 @@ function isOutputLimitExceeded(error: unknown): boolean {
   );
 }
 
+const DEFAULT_DIAGNOSTIC_LIMIT_BYTES = 100_000_000;
+
+async function* batchObjectInput(
+  objectIds: readonly string[],
+): AsyncIterable<Buffer> {
+  for (const objectId of objectIds) {
+    yield Buffer.from(`${objectId}\n`, "ascii");
+  }
+}
+
+async function drainDiagnosticStream(
+  stream: AsyncIterable<Uint8Array>,
+  limit: number,
+  exceeded: () => void,
+): Promise<void> {
+  let total = 0;
+  for await (const chunk of stream) {
+    total += chunk.byteLength;
+    if (total > limit) {
+      exceeded();
+      throw new Error("Git diagnostic output exceeded its configured limit.");
+    }
+  }
+}
+
 export class GitClient {
   private gitCommand: Promise<ResolvedGitCommand> | undefined;
 
@@ -363,6 +395,154 @@ export class GitClient {
     options: GitRunOptions = {},
   ): Promise<GitBinaryOutput> {
     return this.execute(args, options, true) as Promise<GitBinaryOutput>;
+  }
+
+  async streamBlobs(
+    objectIds: readonly string[],
+    visit: GitBlobVisitor,
+    options: GitRunOptions = {},
+  ): Promise<void> {
+    if (isAborted(options.signal)) {
+      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+    }
+    if (objectIds.length === 0) return;
+
+    const command = await this.resolvedGitCommand();
+    if (isAborted(options.signal)) {
+      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+    }
+    const resourcePolicy = this.clientOptions.resourcePolicy;
+    const diagnosticLimit =
+      options.maxOutputBytes ??
+      resourcePolicy?.gitOutputLimitBytes ??
+      DEFAULT_DIAGNOSTIC_LIMIT_BYTES;
+    const controller = new AbortController();
+    const signal =
+      options.signal === undefined
+        ? controller.signal
+        : AbortSignal.any([options.signal, controller.signal]);
+    let hardTimedOut = false;
+    let diagnosticLimitExceeded = false;
+    let visitorFailed = false;
+    let visitorFailure: unknown;
+    let forceKillTimer: NodeJS.Timeout | undefined;
+    const child = spawn(command.executable, ["cat-file", "--batch"], {
+      cwd: options.cwd ?? this.repositoryRoot,
+      env: commandEnvironment(command.path, options.env),
+      shell: false,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const terminate = () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill();
+      forceKillTimer ??= setTimeout(() => child.kill("SIGKILL"), 2_000);
+    };
+    const abort = () => terminate();
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) terminate();
+    const softTimer =
+      resourcePolicy?.gitSoftTimeoutMs === undefined
+        ? undefined
+        : setTimeout(
+            () => this.clientOptions.onSoftTimeout?.(),
+            resourcePolicy.gitSoftTimeoutMs,
+          );
+    const hardTimer =
+      resourcePolicy?.gitHardTimeoutMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            hardTimedOut = true;
+            controller.abort();
+          }, resourcePolicy.gitHardTimeoutMs);
+    const exit = new Promise<number>((resolveExit, rejectExit) => {
+      child.once("error", rejectExit);
+      child.once("close", (code) => resolveExit(code ?? -1));
+    });
+    const input = pipeline(
+      Readable.from(batchObjectInput(objectIds), { objectMode: false }),
+      child.stdin,
+    );
+    const output = consumeGitBatchBlobOutput(
+      child.stdout,
+      objectIds,
+      async (blob) => {
+        try {
+          await visit(blob);
+        } catch (error) {
+          visitorFailed = true;
+          visitorFailure = error;
+          throw error;
+        }
+      },
+    );
+    const diagnostics = drainDiagnosticStream(
+      child.stderr,
+      diagnosticLimit,
+      () => {
+        diagnosticLimitExceeded = true;
+        terminate();
+      },
+    );
+
+    try {
+      const [, , , exitCode] = await Promise.all([
+        input,
+        output,
+        diagnostics,
+        exit,
+      ]);
+      if (hardTimedOut) {
+        throw new GitCommandError(
+          "GIT_HARD_TIMEOUT",
+          "Git command exceeded its configured hard timeout.",
+        );
+      }
+      if (isAborted(options.signal)) {
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      }
+      if (diagnosticLimitExceeded) {
+        throw new GitCommandError(
+          "GIT_OUTPUT_LIMIT_EXCEEDED",
+          "Git command exceeded its configured output limit.",
+        );
+      }
+      if (exitCode !== 0) {
+        throw new GitCommandError(
+          "GIT_COMMAND_FAILED",
+          `Git command failed with exit code ${exitCode}.`,
+          exitCode,
+        );
+      }
+    } catch (error) {
+      terminate();
+      await Promise.allSettled([input, output, diagnostics, exit]);
+      if (hardTimedOut) {
+        throw new GitCommandError(
+          "GIT_HARD_TIMEOUT",
+          "Git command exceeded its configured hard timeout.",
+        );
+      }
+      if (diagnosticLimitExceeded) {
+        throw new GitCommandError(
+          "GIT_OUTPUT_LIMIT_EXCEEDED",
+          "Git command exceeded its configured output limit.",
+        );
+      }
+      if (isAborted(options.signal)) {
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      }
+      if (visitorFailed) throw visitorFailure;
+      if (error instanceof GitCommandError) throw error;
+      throw new GitCommandError(
+        "GIT_COMMAND_FAILED",
+        "Git command could not be completed.",
+      );
+    } finally {
+      signal.removeEventListener("abort", abort);
+      if (softTimer !== undefined) clearTimeout(softTimer);
+      if (hardTimer !== undefined) clearTimeout(hardTimer);
+      if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
+    }
   }
 
   tryRun(

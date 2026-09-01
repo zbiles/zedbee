@@ -49,6 +49,13 @@ function normalizePath(path: string | undefined): string | undefined {
 }
 
 function addedRanges(file: parseDiff.File): LineRange[] {
+  if (
+    file.chunks.some((chunk) =>
+      chunk.changes.some((change) => change.content.includes("\0")),
+    )
+  ) {
+    return [];
+  }
   return mergeLineRanges(
     file.chunks.flatMap((chunk) =>
       chunk.changes.flatMap((change) =>
@@ -212,7 +219,11 @@ export async function readCommitChangeSet(
       "--no-color",
       "--no-ext-diff",
       "--no-textconv",
-      "--find-renames",
+      "--text",
+      "--diff-algorithm=myers",
+      "--indent-heuristic",
+      "--find-renames=50%",
+      "-l0",
       "--src-prefix=a/",
       "--dst-prefix=b/",
       "--end-of-options",

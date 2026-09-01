@@ -162,7 +162,7 @@ async function createDelayedGitEnvironment(snapshotRoot: string) {
     shim,
     [
       "#!/bin/sh",
-      'if [ "$1" = "cat-file" ] && [ "$2" = "blob" ]; then',
+      'if [ "$1" = "cat-file" ] && [ "$2" = "--batch" ]; then',
       '  if [ -f "$ZEDBEE_FIRST_BLOB_READ" ]; then',
       '    : > "$ZEDBEE_DELAYED_BLOB_READ"',
       "    exec sleep 30",

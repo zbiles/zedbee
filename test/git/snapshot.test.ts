@@ -3,21 +3,36 @@ import {
   chmod,
   lstat,
   mkdtemp,
+  open,
   readFile,
   readdir,
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+} from "node:path";
+import { execa } from "execa";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
+import {
+  consumeGitBatchBlobOutput,
+  type GitBlobVisitor,
+} from "../../src/git/batch-object-stream.js";
 import { GitCommandError } from "../../src/git/errors.js";
+import { DEFAULT_GIT_OUTPUT_LIMIT_BYTES } from "../../src/scan/resource-policy.js";
 import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
@@ -32,6 +47,7 @@ import { createGitRepository } from "../helpers/git-repository.js";
 
 const snapshotRootFailure = vi.hoisted(() => ({
   failCanonicalization: false,
+  failBlobWrite: false,
   failTargetDirectoryCreation: false,
   temporaryParent: "",
 }));
@@ -54,6 +70,26 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         throw new Error("target directory creation failed");
       }
       return actual.mkdir(...args);
+    },
+    async open(...args: Parameters<typeof actual.open>) {
+      const handle = await actual.open(...args);
+      if (
+        !snapshotRootFailure.failBlobWrite ||
+        !String(args[0]).includes("zedbee-snapshot-")
+      ) {
+        return handle;
+      }
+      return new Proxy(handle, {
+        get(target, property) {
+          if (property === "write") {
+            return async () => {
+              throw new Error("snapshot destination write failed");
+            };
+          }
+          const value = Reflect.get(target, property, target) as unknown;
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      });
     },
     async realpath(path: Parameters<typeof actual.realpath>[0]) {
       if (
@@ -507,8 +543,9 @@ describe("buildSnapshotPair", () => {
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async runBytes(
-        _args: readonly string[],
+      async streamBlobs(
+        _objectIds: readonly string[],
+        _visit: GitBlobVisitor,
         options: { signal?: AbortSignal } = {},
       ) {
         markBlobReadStarted?.();
@@ -566,8 +603,9 @@ describe("buildSnapshotPair", () => {
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async runBytes(
-        _args: readonly string[],
+      async streamBlobs(
+        _objectIds: readonly string[],
+        _visit: GitBlobVisitor,
         options: { signal?: AbortSignal } = {},
       ) {
         markBaselineBlobReadStarted?.();
@@ -614,7 +652,7 @@ describe("buildSnapshotPair", () => {
           }
           return { stdout: "", stderr: "", exitCode: 0 };
         },
-        async runBytes() {
+        async streamBlobs() {
           await chmod(snapshotRootFailure.temporaryParent, 0o500);
           throw new Error(rawFailure);
         },
@@ -670,7 +708,7 @@ describe("buildSnapshotPair", () => {
           }
           return { stdout: "", stderr: "", exitCode: 0 };
         },
-        async runBytes() {
+        async streamBlobs() {
           movedSnapshotRoot = `${snapshotRootFailure.temporaryParent}-moved`;
           await rename(snapshotRootFailure.temporaryParent, movedSnapshotRoot);
           await symlink(
@@ -888,6 +926,196 @@ describe("buildSnapshotPair", () => {
 });
 
 describe("buildCommitSnapshotPair", () => {
+  it.each([
+    ["malformed", Buffer.from(`${TEST_BLOB} tree 3\nabc\n`, "ascii")],
+    ["truncated", Buffer.from(`${TEST_BLOB} blob 4\nabc`, "ascii")],
+  ])(
+    "cleans its temporary root after %s batch output",
+    async (_kind, output) => {
+      const git = {
+        async run(args: readonly string[]) {
+          if (args[0] === "ls-tree") {
+            return { stdout: treeRecord(), stderr: "", exitCode: 0 };
+          }
+          return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async streamBlobs(
+          objectIds: readonly string[],
+          visit: Parameters<typeof consumeGitBatchBlobOutput>[2],
+        ) {
+          async function* chunks() {
+            yield output;
+          }
+          await consumeGitBatchBlobOutput(chunks(), objectIds, visit);
+        },
+      } as unknown as GitClient;
+
+      await expect(
+        buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
+      ).rejects.toMatchObject({ code: "GIT_COMMAND_FAILED" });
+      expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+    },
+  );
+
+  it("terminates the batch and cleans its temporary root after a destination write fails", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = true;\n");
+    await repository.commitAll("write failure fixture");
+    const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    snapshotRootFailure.failBlobWrite = true;
+    try {
+      await expect(
+        buildCommitSnapshotPair(
+          repository.root,
+          new GitClient(repository.root),
+          commit,
+          commit,
+        ),
+      ).rejects.toThrow("snapshot destination write failed");
+      expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+    } finally {
+      snapshotRootFailure.failBlobWrite = false;
+    }
+  });
+
+  it("materializes SHA-256 commit blobs through the batch protocol", async () => {
+    const repositoryRoot = await mkdtemp(join(tmpdir(), "zedbee-sha256-"));
+    onTestFinished(() => rm(repositoryRoot, { recursive: true, force: true }));
+    await execa(
+      "git",
+      ["init", "--initial-branch=main", "--object-format=sha256"],
+      { cwd: repositoryRoot },
+    );
+    await execa("git", ["config", "user.name", "Zedbee Test"], {
+      cwd: repositoryRoot,
+    });
+    await execa("git", ["config", "user.email", "zedbee@example.invalid"], {
+      cwd: repositoryRoot,
+    });
+    await writeFile(
+      join(repositoryRoot, "value.bin"),
+      Buffer.from([0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x00]),
+    );
+    await execa("git", ["add", "--", "value.bin"], { cwd: repositoryRoot });
+    await execa("git", ["commit", "--message", "sha256 blob"], {
+      cwd: repositoryRoot,
+    });
+    const commit = (
+      await execa("git", ["rev-parse", "HEAD"], { cwd: repositoryRoot })
+    ).stdout;
+    expect(commit).toMatch(/^[\da-f]{64}$/u);
+
+    const pair = await buildCommitSnapshotPair(
+      repositoryRoot,
+      new GitClient(repositoryRoot),
+      commit,
+      commit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(await readFile(join(pair.targetDir, "value.bin"))).toEqual(
+      Buffer.from([0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x00]),
+    );
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "uses a constant number of Git processes for many committed files",
+    async () => {
+      const repository = await createGitRepository();
+      for (let index = 0; index < 24; index += 1) {
+        await repository.write(
+          `src/file-${index}.ts`,
+          `export const value${index} = ${index};\n`,
+        );
+      }
+      await repository.commitAll("many blobs");
+      const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+      const shimRoot = await mkdtemp(join(tmpdir(), "zedbee-batch-count-"));
+      onTestFinished(() => rm(shimRoot, { recursive: true, force: true }));
+      const realGit = await realpath((await execa("which", ["git"])).stdout);
+      const commandLog = join(shimRoot, "commands");
+      const shim = join(shimRoot, "git");
+      await writeFile(
+        shim,
+        [
+          "#!/bin/sh",
+          `printf '%s %s\\n' "$1" "$2" >> ${JSON.stringify(commandLog)}`,
+          `exec ${JSON.stringify(realGit)} "$@"`,
+          "",
+        ].join("\n"),
+      );
+      await chmod(shim, 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${shimRoot}${delimiter}${originalPath ?? ""}`;
+      let pair: SnapshotPair | undefined;
+      try {
+        pair = await buildCommitSnapshotPair(
+          repository.root,
+          new GitClient(repository.root),
+          commit,
+          commit,
+        );
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+      onTestFinished(pair.cleanup);
+
+      const commands = (await readFile(commandLog, "utf8"))
+        .trimEnd()
+        .split("\n");
+      expect(commands).toEqual([
+        "ls-tree -r",
+        "ls-tree -r",
+        "cat-file --batch",
+        "cat-file --batch",
+      ]);
+      expect(
+        await readFile(join(pair.targetDir, "src/file-23.ts"), "utf8"),
+      ).toBe("export const value23 = 23;\n");
+    },
+  );
+
+  it("materializes an unchanged blob larger than the ordinary Git output cap", async () => {
+    const repository = await createGitRepository();
+    const largePath = join(repository.root, "unchanged-large.bin");
+    const largeSize = DEFAULT_GIT_OUTPUT_LIMIT_BYTES + 1;
+    const handle = await open(largePath, "w");
+    try {
+      await handle.truncate(largeSize);
+    } finally {
+      await handle.close();
+    }
+    await repository.commitAll("large unchanged blob");
+    const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const client = new GitClient(repository.root, {
+      resourcePolicy: {
+        gitSoftTimeoutMs: undefined,
+        gitHardTimeoutMs: undefined,
+        gitOutputLimitBytes: DEFAULT_GIT_OUTPUT_LIMIT_BYTES,
+      },
+    });
+
+    const pair = await buildCommitSnapshotPair(
+      repository.root,
+      client,
+      commit,
+      commit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(
+      (await stat(join(pair.baselineDir, "unchanged-large.bin"))).size,
+    ).toBe(largeSize);
+    expect((await stat(join(pair.targetDir, "unchanged-large.bin"))).size).toBe(
+      largeSize,
+    );
+    expect(pair.unsupportedEntries).toEqual([
+      { path: "unchanged-large.bin", kind: "binary" },
+    ]);
+  }, 60_000);
+
   it("materializes exact committed trees without changing a dirty index or working tree", async () => {
     const repository = await createGitRepository();
     await repository.write("src/value.ts", "export const value = 1;\n");
@@ -993,8 +1221,8 @@ describe("buildCommitSnapshotPair", () => {
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async runBytes(args: readonly string[]) {
-        calls.push([...args]);
+      async streamBlobs() {
+        calls.push(["cat-file", "--batch"]);
         throw new Error("cat-file must not receive an invalid path");
       },
     } as unknown as GitClient;
@@ -1013,7 +1241,7 @@ describe("buildCommitSnapshotPair", () => {
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async runBytes() {
+      async streamBlobs() {
         throw new Error("commit snapshot construction failure");
       },
     } as unknown as GitClient;
@@ -1037,8 +1265,9 @@ describe("buildCommitSnapshotPair", () => {
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async runBytes(
-        _args: readonly string[],
+      async streamBlobs(
+        _objectIds: readonly string[],
+        _visit: GitBlobVisitor,
         options: { signal?: AbortSignal } = {},
       ) {
         beginBlobRead?.();

@@ -76,7 +76,7 @@ remain manual. Review, stage, and rescan after applying; see the
 
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after every outcome. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
 
-`zedbee scan`, `zedbee fix`, and `zedbee checks` also read repository configuration from the Git index. A newly staged `.zedbeerc.jsonc` takes effect immediately; an unstaged or untracked copy cannot weaken the policy applied to staged code. When the index has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
+A bare `zedbee scan`, along with `zedbee fix` and `zedbee checks`, reads repository configuration from the Git index. `zedbee scan --base <ref>` instead reads it from the committed target `HEAD`. In index mode, a newly staged `.zedbeerc.jsonc` takes effect immediately, while an unstaged or untracked copy cannot weaken the policy applied to staged code; when the selected source has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
 
 ### Committed branch scans in CI
 

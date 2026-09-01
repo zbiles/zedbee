@@ -1,4 +1,5 @@
-import { access, chmod, rm } from "node:fs/promises";
+import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
@@ -148,7 +149,7 @@ describe("readCommitChangeSet", () => {
     expect(changeSet.containsAddedLine("rename-new.ts", 2)).toBe(true);
   });
 
-  it("passes the validated commit IDs as separate diff arguments", async () => {
+  it("passes the validated commit IDs to an attribute-insensitive diff", async () => {
     const calls: Array<{
       args: string[];
       options: { readonly env?: Readonly<Record<string, string>> } | undefined;
@@ -173,7 +174,11 @@ describe("readCommitChangeSet", () => {
           "--no-color",
           "--no-ext-diff",
           "--no-textconv",
-          "--find-renames",
+          "--text",
+          "--diff-algorithm=myers",
+          "--indent-heuristic",
+          "--find-renames=50%",
+          "-l0",
           "--src-prefix=a/",
           "--dst-prefix=b/",
           "--end-of-options",
@@ -186,39 +191,131 @@ describe("readCommitChangeSet", () => {
   });
 
   it.runIf(process.platform !== "win32")(
-    "ignores dirty checkout attributes and never executes configured text conversion",
+    "isolates committed changes from checkout, info, and global attributes without running diff commands",
     async () => {
       const repository = await createGitRepository();
-      await repository.write("value.txt", "line one\nline three\n");
-      await repository.commitAll("baseline text");
+      await repository.write("delete.txt", "deleted\n");
+      await repository.write("modify.txt", "line one\nline three\n");
+      await repository.write("rename-old.txt", "first\nthird\n");
+      await repository.write(":(literal)magic.txt", "before\n");
+      await writeFile(
+        join(repository.root, "binary.bin"),
+        Buffer.from([0x62, 0x65, 0x66, 0x6f, 0x72, 0x65, 0x00]),
+      );
+      await repository.commitAll("baseline shapes");
       const baselineCommit = (await repository.git(["rev-parse", "HEAD"]))
         .stdout;
-      await repository.write("value.txt", "line one\nline two\nline three\n");
-      await repository.commitAll("target text");
+
+      await rm(join(repository.root, "delete.txt"));
+      await repository.write("modify.txt", "line one\nline two\nline three\n");
+      await repository.git(["mv", "rename-old.txt", "rename-new.txt"]);
+      await repository.write("rename-new.txt", "first\nsecond\nthird\n");
+      await repository.write("-option-looking.txt", "option\n");
+      await repository.write(":(literal)magic.txt", "after\n");
+      await writeFile(
+        join(repository.root, "binary.bin"),
+        Buffer.from([0x61, 0x66, 0x74, 0x65, 0x72, 0x00]),
+      );
+      await repository.commitAll("target shapes");
       const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
       const client = new GitClient(repository.root);
       const expected = [
+        {
+          path: "-option-looking.txt",
+          status: "added",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+        {
+          path: ":(literal)magic.txt",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+        { path: "binary.bin", status: "modified", addedRanges: [] },
+        { path: "delete.txt", status: "deleted", addedRanges: [] },
+        {
+          path: "modify.txt",
+          status: "modified",
+          addedRanges: [{ start: 2, end: 2 }],
+        },
+        {
+          path: "rename-new.txt",
+          previousPath: "rename-old.txt",
+          status: "renamed",
+          addedRanges: [{ start: 2, end: 2 }],
+        },
+      ];
+      expect([
         ...(
           await readCommitChangeSet(client, baselineCommit, targetCommit)
         ).files.values(),
-      ];
-      const sentinel = join(repository.root, "TEXTCONV_EXECUTED");
+      ]).toEqual(expected);
+
+      const sentinel = join(repository.root, "DIFF_COMMAND_EXECUTED");
       const converter = join(repository.root, "textconv.sh");
       await repository.write(
         "textconv.sh",
         `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\ncat "$1"\n`,
       );
       await chmod(converter, 0o755);
-      await repository.git(["config", "diff.zedbee.textconv", converter]);
-      await repository.write(".gitattributes", "*.txt diff=zedbee\n");
+      for (const driver of ["dirty", "info", "global"]) {
+        await repository.git(["config", `diff.${driver}.textconv`, converter]);
+        await repository.git(["config", `diff.${driver}.command`, converter]);
+      }
+      await repository.git(["config", "diff.external", converter]);
 
-      const actual = await readCommitChangeSet(
-        client,
-        baselineCommit,
-        targetCommit,
+      await repository.write(
+        ".gitattributes",
+        ":(literal)magic.txt -diff\nrename-new.txt diff=dirty\n",
       );
+      expect([
+        ...(
+          await readCommitChangeSet(client, baselineCommit, targetCommit)
+        ).files.values(),
+      ]).toEqual(expected);
 
-      expect([...actual.files.values()]).toEqual(expected);
+      const infoDirectory = join(repository.root, ".git", "info");
+      await mkdir(infoDirectory, { recursive: true });
+      await writeFile(
+        join(infoDirectory, "attributes"),
+        "modify.txt -diff\nrename-new.txt diff=info\n",
+      );
+      expect([
+        ...(
+          await readCommitChangeSet(client, baselineCommit, targetCommit)
+        ).files.values(),
+      ]).toEqual(expected);
+
+      const globalRoot = await mkdtemp(join(tmpdir(), "zedbee-global-attrs-"));
+      const globalAttributes = join(globalRoot, "attributes");
+      const globalConfig = join(globalRoot, "gitconfig");
+      await writeFile(
+        globalAttributes,
+        "-option-looking.txt -diff\ndelete.txt diff=global\n",
+      );
+      await repository.git([
+        "config",
+        "--file",
+        globalConfig,
+        "core.attributesFile",
+        globalAttributes,
+      ]);
+      const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+      process.env.GIT_CONFIG_GLOBAL = globalConfig;
+      try {
+        expect([
+          ...(
+            await readCommitChangeSet(client, baselineCommit, targetCommit)
+          ).files.values(),
+        ]).toEqual(expected);
+      } finally {
+        if (originalGlobalConfig === undefined) {
+          delete process.env.GIT_CONFIG_GLOBAL;
+        } else {
+          process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig;
+        }
+        await rm(globalRoot, { recursive: true, force: true });
+      }
+
       await expect(access(sentinel)).rejects.toThrow();
     },
   );

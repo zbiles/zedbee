@@ -11,7 +11,9 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { compareCodeUnits } from "../core/compare.js";
+import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
+import { GitCommandError } from "./errors.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -274,8 +276,9 @@ async function createParentDirectories(
 async function writeRegularBlob(
   destinationRoot: string,
   entry: SnapshotEntry,
-  bytes: Buffer,
-): Promise<void> {
+  blob: GitBlobStream,
+  signal?: AbortSignal,
+): Promise<Buffer> {
   await createParentDirectories(destinationRoot, entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined) return invalidSelectedPath();
@@ -287,10 +290,37 @@ async function writeRegularBlob(
       constants.O_NOFOLLOW,
     entry.mode === "100755" ? 0o755 : 0o644,
   );
+  const prefixChunks: Buffer[] = [];
+  let prefixLength = 0;
+  let written = 0;
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile()) throw new Error("Snapshot target is not a file.");
-    await handle.writeFile(bytes);
+    for await (const chunk of blob.chunks) {
+      if (signal?.aborted === true) {
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      }
+      written += chunk.length;
+      if (written > blob.size) {
+        throw new Error("Git returned an invalid batch object response.");
+      }
+      if (prefixLength < 8192) {
+        const prefix = chunk.subarray(0, 8192 - prefixLength);
+        prefixChunks.push(Buffer.from(prefix));
+        prefixLength += prefix.length;
+      }
+      let offset = 0;
+      while (offset < chunk.length) {
+        const result = await handle.write(chunk, offset, chunk.length - offset);
+        if (result.bytesWritten <= 0) {
+          throw new Error("Zedbee could not write a snapshot blob.");
+        }
+        offset += result.bytesWritten;
+      }
+    }
+    if (written !== blob.size) {
+      throw new Error("Git returned an invalid batch object response.");
+    }
     await handle.chmod(entry.mode === "100755" ? 0o755 : 0o644);
   } finally {
     await handle.close();
@@ -306,13 +336,31 @@ async function writeRegularBlob(
       "Zedbee refused a temporary snapshot file whose identity changed.",
     );
   }
+  return Buffer.concat(prefixChunks, prefixLength);
 }
 
 async function writeSymlinkBlob(
   destinationRoot: string,
   entry: SnapshotEntry,
-  bytes: Buffer,
+  blob: GitBlobStream,
+  signal?: AbortSignal,
 ): Promise<void> {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of blob.chunks) {
+    if (signal?.aborted === true) {
+      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+    }
+    length += chunk.length;
+    if (length > blob.size) {
+      throw new Error("Git returned an invalid batch object response.");
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  if (length !== blob.size) {
+    throw new Error("Git returned an invalid batch object response.");
+  }
+  const bytes = Buffer.concat(chunks, length);
   await createParentDirectories(destinationRoot, entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined || bytes.includes(0))
@@ -353,23 +401,41 @@ async function materializeEntries(
   classify: boolean,
   signal?: AbortSignal,
 ): Promise<UnsupportedIndexEntry[]> {
-  const unsupported: UnsupportedIndexEntry[] = [];
+  const unsupported: UnsupportedIndexEntry[] = entries.flatMap((entry) =>
+    classify && entry.mode === "160000"
+      ? [{ path: entry.path, kind: "submodule" as const }]
+      : [],
+  );
   const options = signal === undefined ? {} : { signal };
-  for (const entry of entries) {
-    if (entry.mode === "160000") {
-      if (classify) unsupported.push({ path: entry.path, kind: "submodule" });
-      continue;
-    }
-    const bytes = (
-      await git.runBytes(["cat-file", "blob", entry.objectId], options)
-    ).stdout;
-    if (entry.mode === "120000") {
-      await writeSymlinkBlob(destinationRoot, entry, bytes);
-      continue;
-    }
-    await writeRegularBlob(destinationRoot, entry, bytes);
-    const unsupportedEntry = classify ? classifyBlob(entry, bytes) : undefined;
-    if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
+  const blobs = entries.filter((entry) => entry.mode !== "160000");
+  let entryIndex = 0;
+  await git.streamBlobs(
+    blobs.map((entry) => entry.objectId),
+    async (blob) => {
+      const entry = blobs[entryIndex];
+      entryIndex += 1;
+      if (entry === undefined || blob.objectId !== entry.objectId) {
+        throw new Error("Git returned an invalid batch object response.");
+      }
+      if (entry.mode === "120000") {
+        await writeSymlinkBlob(destinationRoot, entry, blob, signal);
+        return;
+      }
+      const prefix = await writeRegularBlob(
+        destinationRoot,
+        entry,
+        blob,
+        signal,
+      );
+      const unsupportedEntry = classify
+        ? classifyBlob(entry, prefix)
+        : undefined;
+      if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
+    },
+    options,
+  );
+  if (entryIndex !== blobs.length) {
+    throw new Error("Git returned an invalid batch object response.");
   }
   return unsupported.sort(
     (left, right) =>
