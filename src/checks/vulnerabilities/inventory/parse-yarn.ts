@@ -1,4 +1,4 @@
-import { parse as parseYarnClassic } from "@yarnpkg/lockfile";
+import * as yarnLockfile from "@yarnpkg/lockfile";
 import { isMap, isScalar, parseDocument, type Node } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
@@ -11,6 +11,11 @@ import {
 import { createSourcePositionIndex } from "./source-position.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 import { validateParsedStructure } from "./validate-structure.js";
+
+const parseYarnClassic =
+  typeof yarnLockfile.parse === "function"
+    ? yarnLockfile.parse
+    : yarnLockfile.default.parse;
 
 function locatorName(descriptor: string): string {
   const npmAlias = descriptor.indexOf("@npm:");

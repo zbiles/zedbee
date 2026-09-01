@@ -102,7 +102,7 @@ const validAgentGuidances = [
 ] as const;
 
 function validator() {
-  const ajv = new Ajv({ allErrors: true });
+  const ajv = new Ajv({ allErrors: true, strictTuples: false });
   return ajv.compile(generateConfigJsonSchema());
 }
 

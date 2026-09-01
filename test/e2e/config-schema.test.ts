@@ -51,7 +51,10 @@ describe("published configuration schema", () => {
         "utf8",
       ),
     );
-    const validate = new Ajv({ allErrors: true }).compile(schema);
+    const validate = new Ajv({
+      allErrors: true,
+      strictTuples: false,
+    }).compile(schema);
     expect(
       validate({
         schemaVersion: 1,

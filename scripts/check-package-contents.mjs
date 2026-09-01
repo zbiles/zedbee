@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { commandInvocation } from "./command-invocation.mjs";
 import { pathToFileURL } from "node:url";
 
 const reviewedOverrides = JSON.parse(
@@ -187,7 +188,6 @@ export function packageFilePaths(packOutput) {
 }
 
 function main() {
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   const temporaryRoot = mkdtempSync(join(tmpdir(), "zedbee-package-check-"));
   const temporaryCache = join(temporaryRoot, "npm-cache");
   const artifactDirectory = join(temporaryRoot, "artifacts");
@@ -195,16 +195,17 @@ function main() {
     mkdirSync(artifactDirectory);
     const root = process.cwd();
     const pack = (directory) => {
+      const invocation = commandInvocation("npm", [
+        "pack",
+        directory,
+        "--json",
+        "--ignore-scripts",
+        "--pack-destination",
+        artifactDirectory,
+      ]);
       const packed = spawnSync(
-        npmCommand,
-        [
-          "pack",
-          directory,
-          "--json",
-          "--ignore-scripts",
-          "--pack-destination",
-          artifactDirectory,
-        ],
+        invocation.executable,
+        invocation.args,
         {
           cwd: root,
           encoding: "utf8",
@@ -212,6 +213,7 @@ function main() {
           env: { ...process.env, npm_config_cache: temporaryCache },
         },
       );
+      if (packed.error !== undefined) throw packed.error;
       if (packed.status !== 0) {
         throw new Error(packed.stderr || `npm pack failed for ${directory}`);
       }

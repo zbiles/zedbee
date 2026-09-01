@@ -12,18 +12,14 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
+import { commandInvocation } from "./command-invocation.mjs";
 
 const TEMPORARY_PREFIX = "zedbee-release-smoke-";
 const MAX_COMMAND_OUTPUT = 16 * 1024 * 1024;
 
-function executable(command) {
-  return process.platform === "win32" && command === "npm"
-    ? "npm.cmd"
-    : command;
-}
-
 function run(command, args, options) {
-  const result = spawnSync(executable(command), args, {
+  const invocation = commandInvocation(command, args);
+  const result = spawnSync(invocation.executable, invocation.args, {
     cwd: options.cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -31,6 +27,7 @@ function run(command, args, options) {
     timeout: options.timeout ?? 180_000,
     maxBuffer: MAX_COMMAND_OUTPUT,
   });
+  if (result.error !== undefined) throw result.error;
   const expectedStatuses = options.expectedStatuses ?? [0];
   if (!expectedStatuses.includes(result.status)) {
     const detail = (result.stderr || result.stdout || "No output").trim();

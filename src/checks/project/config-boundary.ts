@@ -3,6 +3,7 @@ import {
   lstat,
   mkdtemp,
   open,
+  readFile,
   readdir,
   realpath,
   rm,
@@ -239,6 +240,8 @@ export async function writeManagedJsonConfig(
       "Zedbee could not serialize managed JSON config.",
     );
   }
+  const expectedContents = `${encoded}\n`;
+  const expectedByteLength = BigInt(Buffer.byteLength(expectedContents, "utf8"));
 
   const canonicalTempRoot = await realpath(tmpdir());
   const temporaryDirectory = await mkdtemp(
@@ -291,6 +294,14 @@ export async function writeManagedJsonConfig(
         "Zedbee refused to clean a managed config path whose identity changed.",
       );
     }
+    if (
+      configMetadata.size !== expectedByteLength ||
+      (await readFile(configPath, "utf8")) !== expectedContents
+    ) {
+      throw new ManagedConfigError(
+        "Zedbee refused to clean a managed config whose contents changed.",
+      );
+    }
 
     await rm(canonicalDirectory, { recursive: true, force: false });
     cleaned = true;
@@ -306,7 +317,7 @@ export async function writeManagedJsonConfig(
     const handle = await open(configPath, "wx", 0o600);
     try {
       configIdentity = fileIdentity(await handle.stat({ bigint: true }));
-      await handle.writeFile(`${encoded}\n`, "utf8");
+      await handle.writeFile(expectedContents, "utf8");
     } finally {
       await handle.close();
     }

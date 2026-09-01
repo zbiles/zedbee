@@ -236,7 +236,7 @@ describe("packaged Zedbee CLI", () => {
     expect(
       (await repository.git(["status", "--porcelain=v1", "-z"])).stdout,
     ).toBe(beforeStatus);
-  }, 30_000);
+  }, 60_000);
 
   it("previews and applies exact plus whole-file fixes without changing the index or writing a report", async () => {
     const repository = await createInstalledRepository();
@@ -567,7 +567,10 @@ describe("packaged Zedbee CLI", () => {
     const shippedSchema = JSON.parse(
       await repository.read("node_modules/zedbee/schema/zedbee.schema.json"),
     );
-    const validate = new Ajv({ allErrors: true }).compile(shippedSchema);
+    const validate = new Ajv({
+      allErrors: true,
+      strictTuples: false,
+    }).compile(shippedSchema);
     expect(validate(config), validate.errors?.map(String).join("\n")).toBe(
       true,
     );

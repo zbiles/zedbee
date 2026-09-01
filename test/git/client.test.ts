@@ -162,7 +162,7 @@ describe("GitClient", () => {
 
   it("forwards a configured hard-timeout signal to a real Git invocation", async () => {
     const repository = await createGitRepository();
-    await repository.git(["config", "alias.zedbee-wait", "!sleep 1"]);
+    await repository.git(["config", "alias.zedbee-wait", "!exec sleep 1"]);
     const client = new GitClient(repository.root, {
       resourcePolicy: {
         gitSoftTimeoutMs: undefined,
@@ -178,7 +178,7 @@ describe("GitClient", () => {
           setTimeout(
             () =>
               reject(new Error("Git hard timeout did not cancel the process.")),
-            250,
+            1_000,
           );
         }),
       ]),

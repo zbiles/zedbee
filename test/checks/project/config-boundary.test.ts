@@ -101,6 +101,16 @@ describe("writeManagedJsonConfig", () => {
     await expect(readFile(managed.path, "utf8")).resolves.toBe("replacement\n");
   });
 
+  test("refuses cleanup when the config file is overwritten in place", async () => {
+    const managed = await writeManagedJsonConfig("knip", {});
+    const parent = dirname(managed.path);
+    onTestFinished(() => rm(parent, { recursive: true, force: true }));
+    await writeFile(managed.path, "[]\n");
+
+    await expect(managed.cleanup()).rejects.toThrow(/contents changed/i);
+    await expect(readFile(managed.path, "utf8")).resolves.toBe("[]\n");
+  });
+
   test("refuses cleanup when the managed directory is replaced", async () => {
     const managed = await writeManagedJsonConfig("knip", {});
     const parent = dirname(managed.path);

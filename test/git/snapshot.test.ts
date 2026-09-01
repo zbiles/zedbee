@@ -473,7 +473,22 @@ describe("buildSnapshotPair", () => {
         "*.lfs filter=lfs diff=lfs merge=lfs -text\n",
       );
       await writeFile(join(repository.root, "asset.lfs"), pointer);
-      await repository.commitAll("LFS pointer");
+      await repository.git(["add", "--", ".gitattributes"]);
+      const pointerBlob = (
+        await execa("git", ["hash-object", "-w", "--stdin"], {
+          cwd: repository.root,
+          input: pointer,
+        })
+      ).stdout;
+      await repository.git([
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "100644",
+        pointerBlob,
+        "asset.lfs",
+      ]);
+      await repository.git(["commit", "--message", "LFS pointer"]);
       const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
       const sentinel = join(repository.root, "LFS_FILTER_EXECUTED");
       const filter = join(repository.root, "lfs-filter.sh");

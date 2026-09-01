@@ -1,11 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { resolve } from "node:path";
-import { readFile } from "node:fs/promises";
+import { describe, expect, it, onTestFinished } from "vitest";
+import { dirname, join, resolve } from "node:path";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { execa } from "execa";
 import {
   releaseReadiness,
   verificationSteps,
 } from "../../scripts/release-check.mjs";
+import * as releaseCheck from "../../scripts/release-check.mjs";
 import {
   assertAllowedPackageFiles,
   assertPackMetadata,
@@ -18,6 +27,82 @@ import {
 const root = resolve(import.meta.dirname, "../..");
 
 describe("release verification contract", () => {
+  it("runs npm through its JavaScript entry point without a command shell", () => {
+    const commandInvocation = (
+      releaseCheck as unknown as {
+        commandInvocation?: (
+          command: string,
+          args: readonly string[],
+          options: { npmCliPath: string; nodeExecutable: string },
+        ) => { executable: string; args: readonly string[] };
+      }
+    ).commandInvocation;
+
+    expect(commandInvocation).toBeTypeOf("function");
+    if (commandInvocation === undefined) return;
+    expect(
+      commandInvocation("npm", ["run", "typecheck"], {
+        npmCliPath: "C:\\npm\\npm-cli.js",
+        nodeExecutable: "C:\\node\\node.exe",
+      }),
+    ).toEqual({
+      executable: "C:\\node\\node.exe",
+      args: ["C:\\npm\\npm-cli.js", "run", "typecheck"],
+    });
+  });
+
+  it.each(["/tmp/yarn.js", "/tmp/pnpm.cjs", process.execPath])(
+    "ignores a non-npm lifecycle executable: %s",
+    (npmExecPath) => {
+      const resolveNpmCliPath = (
+        releaseCheck as unknown as {
+          resolveNpmCliPath: (options: { npmExecPath: string }) => string;
+        }
+      ).resolveNpmCliPath;
+
+      expect(resolveNpmCliPath({ npmExecPath })).toMatch(
+        /[\\/]npm[\\/]bin[\\/]npm-cli\.js$/u,
+      );
+    },
+  );
+
+  it("accepts npm's versioned Volta installation layout", async () => {
+    const temporaryRoot = await mkdtemp(join(tmpdir(), "zedbee-volta-npm-"));
+    onTestFinished(() => rm(temporaryRoot, { recursive: true, force: true }));
+    const npmRoot = join(
+      temporaryRoot,
+      ".volta",
+      "tools",
+      "image",
+      "npm",
+      "11.6.3",
+    );
+    const npmCliPath = join(npmRoot, "bin", "npm-cli.js");
+    await mkdir(dirname(npmCliPath), { recursive: true });
+    await writeFile(
+      join(npmRoot, "package.json"),
+      '{"name":"npm","version":"11.6.3"}\n',
+    );
+    await writeFile(npmCliPath, "process.exitCode = 0;\n");
+    const resolveNpmCliPath = (
+      releaseCheck as unknown as {
+        resolveNpmCliPath: (options: {
+          nodeExecutable: string;
+          npmExecPath: string;
+          pathValue: string;
+        }) => string;
+      }
+    ).resolveNpmCliPath;
+
+    expect(
+      resolveNpmCliPath({
+        nodeExecutable: join(temporaryRoot, "node"),
+        npmExecPath: npmCliPath,
+        pathValue: "",
+      }),
+    ).toBe(await realpath(npmCliPath));
+  });
+
   it("runs every local release-safety gate without requiring publication metadata", () => {
     expect(verificationSteps("verify").map(({ id }) => id)).toEqual([
       "typecheck",
@@ -117,10 +202,18 @@ describe("release verification contract", () => {
   );
 
   it("packs and inspects the Node-native core package", async () => {
+    const environment = { ...process.env };
+    delete environment.npm_execpath;
     const result = await execa(
       process.execPath,
       [resolve(root, "scripts/check-package-contents.mjs")],
-      { cwd: root, reject: false, stdin: "ignore" },
+      {
+        cwd: root,
+        env: environment,
+        extendEnv: false,
+        reject: false,
+        stdin: "ignore",
+      },
     );
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -315,7 +408,7 @@ describe("release verification contract", () => {
       "utf8",
     );
     const prepare = workflow.indexOf("npm run artifact:prepare");
-    const upload = workflow.indexOf("actions/upload-artifact@v4");
+    const upload = workflow.indexOf("actions/upload-artifact@v6");
 
     expect(prepare).toBeGreaterThan(-1);
     expect(upload).toBeGreaterThan(prepare);

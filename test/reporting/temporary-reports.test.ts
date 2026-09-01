@@ -29,6 +29,7 @@ import {
 const uuidControl = vi.hoisted(() => ({ values: [] as string[] }));
 const filesystemControl = vi.hoisted(() => ({
   lstatFailures: new Map<string, string>(),
+  openFailures: new Map<string, string>(),
 }));
 
 vi.mock("node:crypto", async (importOriginal) => {
@@ -43,6 +44,17 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   const original = await importOriginal<typeof import("node:fs/promises")>();
   return {
     ...original,
+    async open(...args: Parameters<typeof original.open>) {
+      const key = String(args[0]);
+      const code = filesystemControl.openFailures.get(key);
+      if (code !== undefined) {
+        filesystemControl.openFailures.delete(key);
+        throw Object.assign(new Error(`Injected open failure: ${code}`), {
+          code,
+        });
+      }
+      return original.open(...args);
+    },
     async lstat(
       path: Parameters<typeof original.lstat>[0],
       options?: Parameters<typeof original.lstat>[1],
@@ -68,6 +80,7 @@ const execFileAsync = promisify(execFile);
 afterEach(() => {
   uuidControl.values.length = 0;
   filesystemControl.lstatFailures.clear();
+  filesystemControl.openFailures.clear();
 });
 
 async function fixture(): Promise<{
@@ -1127,20 +1140,16 @@ describe("temporary report store", () => {
         maxAgeMs: 0,
       });
       await waitForRegularFile(lockPath);
-      await chmod(directory, 0o300);
-      try {
-        const maintained = await pending;
-        const warning = maintained.warnings.find((item) =>
-          item.message.includes("removed report's directory"),
-        );
-        expect(warning).toBeDefined();
-        expect(warning?.path).toBeUndefined();
-        await expect(lstat(created.reportPath!)).rejects.toMatchObject({
-          code: "ENOENT",
-        });
-      } finally {
-        await chmod(directory, 0o700);
-      }
+      filesystemControl.openFailures.set(directory, "EACCES");
+      const maintained = await pending;
+      const warning = maintained.warnings.find((item) =>
+        item.message.includes("removed report's directory"),
+      );
+      expect(warning).toBeDefined();
+      expect(warning?.path).toBeUndefined();
+      await expect(lstat(created.reportPath!)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 

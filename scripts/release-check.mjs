@@ -2,6 +2,12 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { commandInvocation } from "./command-invocation.mjs";
+
+export {
+  commandInvocation,
+  resolveNpmCliPath,
+} from "./command-invocation.mjs";
 
 const OWNER_ACTION =
   "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.";
@@ -153,24 +159,20 @@ export function releaseReadiness(packageJson, remoteUrls) {
     : Object.freeze({ ready: false, message: OWNER_ACTION });
 }
 
-function executable(command) {
-  return process.platform === "win32" && command === "npm"
-    ? "npm.cmd"
-    : command;
-}
-
 function run(step, cwd, capture = false) {
   const environment =
     step.id === "tests" &&
     process.env.ZEDBEE_PACKAGE_MANAGER_UNDER_TEST === undefined
       ? { ...process.env, ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: "npm" }
       : process.env;
-  const result = spawnSync(executable(step.command), step.args, {
+  const invocation = commandInvocation(step.command, step.args);
+  const result = spawnSync(invocation.executable, invocation.args, {
     cwd,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
     env: environment,
   });
+  if (result.error !== undefined) throw result.error;
   if (result.status !== 0) {
     throw new Error(`Verification failed at ${step.id}.`);
   }
