@@ -1,8 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { loadConfig } from "../../src/config/load-config.js";
+import {
+  loadConfig,
+  loadConfigFromCommit,
+} from "../../src/config/load-config.js";
+import { GitClient } from "../../src/git/client.js";
+import { createGitRepository } from "../helpers/git-repository.js";
 
 async function createRepositoryRoot(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "zedbee-config-test-"));
@@ -624,5 +629,318 @@ describe("loadConfig", () => {
         files: ["packages/web/test/**"],
       },
     });
+  });
+});
+
+describe("loadConfigFromCommit", () => {
+  it("uses the strict committed policy despite weaker indexed and working policies", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"thorough"}\n',
+    );
+    await repository.commitAll("strict target policy");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"recommended"}\n',
+    );
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+    );
+
+    expect(config.profile).toBe("thorough");
+  });
+
+  it("uses defaults when the target commit has no configuration", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("target without configuration");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"thorough"}\n',
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+    );
+
+    expect(config.profile).toBe("recommended");
+  });
+
+  it("loads a configuration newly added in the supplied target commit", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("base");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.commitAll("add configuration");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+    );
+
+    expect(config.profile).toBe("fast");
+  });
+
+  it("loads an explicit repository-local configuration from the target commit", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "config/ci-policy.jsonc",
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.commitAll("explicit policy");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write(
+      "config/ci-policy.jsonc",
+      '{"schemaVersion":1,"profile":"thorough"}\n',
+    );
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+      join(repository.root, "config", "ci-policy.jsonc"),
+    );
+
+    expect(config.profile).toBe("fast");
+  });
+
+  it("rejects an unsupported configuration committed in the target tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write(".zedbeerc.js", "export default {};\n");
+    await repository.commitAll("unsupported policy");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_UNSUPPORTED" });
+  });
+
+  it("accepts a regular executable configuration blob from the target tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+    await repository.git(["update-index", "--chmod=+x", ".zedbeerc.jsonc"]);
+    await repository.git(["commit", "--message", "executable policy"]);
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+    );
+
+    expect(config.profile).toBe("fast");
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a symbolic link configuration in the target tree",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write("actual-policy", '{"schemaVersion":1}\n');
+      await symlink("actual-policy", join(repository.root, ".zedbeerc.jsonc"));
+      await repository.commitAll("symlink policy");
+      const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+      await expect(
+        loadConfigFromCommit(
+          repository.root,
+          new GitClient(repository.root),
+          targetCommit,
+        ),
+      ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    },
+  );
+
+  it("rejects a submodule configuration entry in the target tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("base");
+    const objectId = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.git([
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${objectId},.zedbeerc.jsonc`,
+    ]);
+    await repository.git(["commit", "--message", "submodule policy"]);
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+  });
+
+  it("rejects an oversized configuration blob from the target tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `{"schemaVersion":1,"profile":"fast"}${" ".repeat(1024 * 1024)}`,
+    );
+    await repository.commitAll("oversized policy");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+  });
+
+  it("rejects malformed target-tree output without exposing it", async () => {
+    const malformedOutput = "not a tree record secret-value";
+    const git = {
+      async run() {
+        return { stdout: malformedOutput, stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    const error = await loadConfigFromCommit(
+      "/repository",
+      git,
+      "a".repeat(40),
+    ).catch((reason: unknown) => reason);
+
+    expect(error).toMatchObject({ code: "CONFIG_INVALID" });
+    expect(String(error)).not.toContain(malformedOutput);
+  });
+
+  it("rejects a missing explicit repository-local configuration", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("target without explicit configuration");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+        join(repository.root, "config", "missing.jsonc"),
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+  });
+
+  it("preserves live loading for an explicit external configuration", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const externalRoot = await createRepositoryRoot();
+    const configPath = join(externalRoot, "external.jsonc");
+    await writeFile(configPath, '{"schemaVersion":1,"profile":"fast"}\n');
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+      configPath,
+    );
+
+    expect(config.profile).toBe("fast");
+    expect(config.configPath).toBe(configPath);
+  });
+
+  it("preserves abort errors while reading the target tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.commitAll("target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+        undefined,
+        controller.signal,
+      ),
+    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+  });
+
+  it("uses bounded literal Git tree and blob reads", async () => {
+    const calls: Array<{
+      args: readonly string[];
+      maxOutputBytes: number | undefined;
+    }> = [];
+    const objectId = "b".repeat(40);
+    const git = {
+      async run(
+        args: readonly string[],
+        options: { maxOutputBytes?: number } = {},
+      ) {
+        calls.push({ args, maxOutputBytes: options.maxOutputBytes });
+        if (args[0] === "ls-tree") {
+          return {
+            stdout: `100644 blob ${objectId}\tsub dir/ci policy.jsonc\0`,
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return {
+          stdout: '{"schemaVersion":1,"profile":"fast"}\n',
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    } as unknown as GitClient;
+
+    const config = await loadConfigFromCommit(
+      "/repository",
+      git,
+      "a".repeat(40),
+      "/repository/sub dir/ci policy.jsonc",
+    );
+
+    expect(config.profile).toBe("fast");
+    expect(calls).toEqual([
+      {
+        args: [
+          "ls-tree",
+          "-z",
+          "a".repeat(40),
+          "--",
+          "sub dir/ci policy.jsonc",
+        ],
+        maxOutputBytes: 64 * 1024,
+      },
+      {
+        args: ["cat-file", "blob", objectId],
+        maxOutputBytes: 1024 * 1024,
+      },
+    ]);
   });
 });
