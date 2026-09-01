@@ -17,7 +17,9 @@ import {
 import { compareCodeUnits } from "../core/compare.js";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import type { ChangeSet } from "../git/change-set.js";
+import { isGitObjectId } from "../git/base-ref.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
+import type { ScanMode } from "../scan/source-mode.js";
 
 const ENGINE_IDENTITIES = Object.freeze({
   lint: "eslint@9.39.5+typescript-eslint@8.67.0+zedbee-rules-v2+zedbee-multi-project-v1",
@@ -51,14 +53,43 @@ export interface ObservationCacheKeyInput {
   readonly checkId: string;
   readonly engineIdentity: string;
   readonly policy: Readonly<ResolvedCheckPolicy>;
-  readonly target: CheckTarget;
+  readonly checkTarget: CheckTarget;
   readonly baselineRoot: string;
   readonly targetRoot: string;
+  readonly mode: ScanMode;
+  readonly baseline: "HEAD" | string | null;
+  readonly target: "index" | string;
   readonly relevantConfig?: unknown;
   readonly nodeVersion?: string;
   readonly platform?: string;
   readonly arch?: string;
   readonly zedbeeVersion?: string;
+}
+
+interface CacheSourceIdentity {
+  readonly mode: ScanMode;
+  readonly baseline: "HEAD" | string | null;
+  readonly target: "index" | string;
+}
+
+function validatedCacheSource(
+  source: CacheSourceIdentity,
+): CacheSourceIdentity {
+  if (source.mode === "index") {
+    if (
+      source.target !== "index" ||
+      (source.baseline !== null &&
+        source.baseline !== "HEAD" &&
+        !isGitObjectId(source.baseline))
+    ) {
+      throw new TypeError("Expected a valid index cache source identity");
+    }
+    return Object.freeze({ ...source });
+  }
+  if (!isGitObjectId(source.baseline) || !isGitObjectId(source.target)) {
+    throw new TypeError("Expected a valid committed cache source identity");
+  }
+  return Object.freeze({ ...source });
 }
 
 function targetPolicyPaths(
@@ -172,19 +203,22 @@ export async function createObservationCacheKey(
   return createObservationCacheKeyBuilder(
     input.baselineRoot,
     input.targetRoot,
+    validatedCacheSource(input),
   )(input);
 }
 
 type SnapshotBoundKeyInput = Omit<
   ObservationCacheKeyInput,
-  "baselineRoot" | "targetRoot"
+  "baselineRoot" | "targetRoot" | "mode" | "baseline" | "target"
 >;
 
 /** Internal to one dispatch over immutable snapshots; never attach to adapters. */
 export function createObservationCacheKeyBuilder(
   baselineRoot: string,
   targetRoot: string,
+  source: CacheSourceIdentity,
 ): (input: SnapshotBoundKeyInput) => Promise<string> {
+  const validatedSource = validatedCacheSource(source);
   let identities:
     Promise<readonly [readonly unknown[], readonly unknown[]]> | undefined;
   return async (input) => {
@@ -194,22 +228,26 @@ export function createObservationCacheKeyBuilder(
       snapshotIdentity(baselineRoot),
       snapshotIdentity(targetRoot),
     ]));
-    return observationCacheKey(input, baseline, target);
+    return observationCacheKey(input, validatedSource, baseline, target);
   };
 }
 
 function observationCacheKey(
   input: SnapshotBoundKeyInput,
-  baseline: readonly unknown[],
+  source: CacheSourceIdentity,
+  baselineSnapshot: readonly unknown[],
   target: readonly unknown[],
 ): string {
   const payload = stable({
-    schema: "zedbee-observation-cache-key-v1",
+    schema: "zedbee-observation-cache-key-v2",
+    mode: source.mode,
+    baseline: source.baseline,
+    target: source.target,
     checkId: input.checkId,
     engineIdentity: input.engineIdentity,
     policy: input.policy,
-    target: input.target,
-    baseline,
+    checkTarget: input.checkTarget,
+    baselineSnapshot,
     targetSnapshot: target,
     relevantConfig: input.relevantConfig,
     nodeVersion: input.nodeVersion ?? process.versions.node,

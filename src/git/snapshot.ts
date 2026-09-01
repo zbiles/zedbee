@@ -404,12 +404,8 @@ async function createOwnedSnapshotRoot(): Promise<OwnedSnapshotRoot> {
   const canonicalParent = await createCanonicalSnapshotParent();
   const baselineDir = join(canonicalParent, "baseline");
   const targetDir = join(canonicalParent, "target");
-  await mkdir(baselineDir, { mode: 0o700 });
-  await mkdir(targetDir, { mode: 0o700 });
-  await verifyDirectory(baselineDir);
-  await verifyDirectory(targetDir);
   let cleaned = false;
-  return {
+  const root: OwnedSnapshotRoot = {
     canonicalParent,
     baselineDir,
     targetDir,
@@ -435,6 +431,15 @@ async function createOwnedSnapshotRoot(): Promise<OwnedSnapshotRoot> {
       cleaned = true;
     },
   };
+  try {
+    await mkdir(baselineDir, { mode: 0o700 });
+    await mkdir(targetDir, { mode: 0o700 });
+    await verifyDirectory(baselineDir);
+    await verifyDirectory(targetDir);
+    return root;
+  } catch (error) {
+    return cleanupConstructionFailure(root, error);
+  }
 }
 
 async function cleanupConstructionFailure(

@@ -15,13 +15,25 @@ import type { CheckResult } from "../../src/core/types.js";
 import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import type { ResolvedConfig } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
-import { ConfigError } from "../../src/config/load-config.js";
+import {
+  ConfigError,
+  loadConfigFromCommit,
+} from "../../src/config/load-config.js";
 import { GitClient, type GitOutput } from "../../src/git/client.js";
 import { GitCommandError } from "../../src/git/errors.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
-import type { BaseComparison } from "../../src/git/base-comparison.js";
+import {
+  BaseComparisonError,
+  resolveBaseComparison,
+  type BaseComparison,
+  type BaseComparisonErrorCode,
+} from "../../src/git/base-comparison.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
-import { buildSnapshotPair, SnapshotError } from "../../src/git/snapshot.js";
+import {
+  SnapshotConstructionCleanupError,
+  SnapshotError,
+} from "../../src/git/snapshot.js";
+import { validateSnapshotPath } from "../../src/git/snapshot-path.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
@@ -465,7 +477,10 @@ describe("runScan", () => {
       ...dependencies(calls),
       resolveBaseComparison: async () => {
         calls.push("resolve base");
-        throw new Error("private ref details");
+        throw new BaseComparisonError(
+          "BASE_REF_UNAVAILABLE",
+          "private ref details",
+        );
       },
       loadIndexConfig: async () => {
         throw new Error("index config must not be called");
@@ -505,10 +520,97 @@ describe("runScan", () => {
       target: null,
       requestedBase: "missing-base",
       changedFileCount: null,
-      checks: [{ error: { code: "BASELINE_RESOLUTION_FAILED" } }],
+      checks: [{ error: { code: "BASE_REF_UNAVAILABLE" } }],
     });
     expect(JSON.stringify(report)).not.toContain("private ref details");
   });
+
+  it.each<{
+    code: BaseComparisonErrorCode;
+    remediation: string;
+  }>([
+    {
+      code: "BASE_REF_INVALID",
+      remediation:
+        "Choose a non-empty display-safe base ref that does not begin with '-', then retry.",
+    },
+    {
+      code: "BASE_REF_UNAVAILABLE",
+      remediation:
+        "Fetch the requested base ref or choose one available locally, then retry.",
+    },
+    {
+      code: "TARGET_COMMIT_UNAVAILABLE",
+      remediation: "Check out or create a valid target commit, then retry.",
+    },
+    {
+      code: "MERGE_BASE_UNAVAILABLE",
+      remediation:
+        "Fetch enough local history for both revisions or choose a base with shared history, then retry.",
+    },
+    {
+      code: "MERGE_BASE_AMBIGUOUS",
+      remediation: "Choose a base with one unambiguous merge base, then retry.",
+    },
+    {
+      code: "REVISION_OUTPUT_INVALID",
+      remediation:
+        "Verify the local Git repository and Git executable, then retry.",
+    },
+  ])(
+    "preserves sanitized base resolution code $code",
+    async ({ code, remediation }) => {
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        baseRef: "origin/main",
+        dependencies: dependencies([], {
+          resolveBaseComparison: async () => {
+            throw new BaseComparisonError(code, "private resolver details");
+          },
+        }),
+      });
+
+      expect(report).toMatchObject({
+        outcome: "incomplete",
+        mode: "base",
+        requestedBase: "origin/main",
+        checks: [{ error: { code, remediation } }],
+      });
+      expect(JSON.stringify(report)).not.toContain("private resolver details");
+    },
+  );
+
+  it.each([
+    `topic\u202Ehidden`,
+    `topic\u2028hidden`,
+    `topic\u2029hidden`,
+    "x".repeat(257),
+  ])(
+    "never copies invalid requested-base text into an incomplete report",
+    async (baseRef) => {
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        baseRef,
+        dependencies: dependencies([], {
+          resolveBaseComparison: async () => {
+            throw new BaseComparisonError(
+              "BASE_REF_INVALID",
+              "invalid requested base",
+            );
+          },
+        }),
+      });
+
+      expect(report).toMatchObject({
+        outcome: "incomplete",
+        mode: "base",
+        baseline: null,
+        target: null,
+      });
+      expect(report).not.toHaveProperty("requestedBase");
+      expect(JSON.stringify(report)).not.toContain(baseRef);
+    },
+  );
 
   it("returns explicit resolved identities for an empty base comparison", async () => {
     const baselineCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -630,6 +732,114 @@ describe("runScan", () => {
     expect(report.checks[0]?.error?.code).toBe("GIT_OUTPUT_LIMIT_EXCEEDED");
     expect(report.outcome).toBe("incomplete");
     expect(JSON.stringify(report)).not.toContain("sensitive");
+  });
+
+  it.each([
+    { timeout: undefined, noTimeout: false, expectedHardTimeoutMs: 30_000 },
+    { timeout: "7ms", noTimeout: false, expectedHardTimeoutMs: 7 },
+    { timeout: "7ms", noTimeout: true, expectedHardTimeoutMs: undefined },
+  ])(
+    "constructs the bootstrap Git client with bounded CLI policy %#",
+    async ({ timeout, noTimeout, expectedHardTimeoutMs }) => {
+      let bootstrapPolicy:
+        ConstructorParameters<typeof GitClient>[1] | undefined;
+      await runScan({
+        repositoryRoot: "/repo",
+        baseRef: "main",
+        ...(timeout === undefined ? {} : { timeout }),
+        ...(noTimeout ? { noTimeout: true } : {}),
+        dependencies: dependencies([], {
+          createGitClient: (_root, options) => {
+            bootstrapPolicy = options;
+            return {} as GitClient;
+          },
+          resolveBaseComparison: async () => {
+            throw new Error("stop after bootstrap policy capture");
+          },
+        }),
+      });
+
+      expect(bootstrapPolicy?.resourcePolicy).toMatchObject({
+        gitHardTimeoutMs: expectedHardTimeoutMs,
+        gitOutputLimitBytes: 64 * 1024 * 1024,
+      });
+    },
+  );
+
+  it("applies the CLI timeout while resolving the requested base", async () => {
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "main",
+      timeout: "5ms",
+      dependencies: dependencies([], {
+        createGitClient: (root, options) =>
+          new GitClient(root, {
+            ...options,
+            runCommand: delayedGitCommand(20),
+          }),
+        resolveBaseComparison: async (git) => {
+          await git.run(["rev-parse", "main"]);
+          throw new Error("resolver unexpectedly completed");
+        },
+      }),
+    });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      mode: "base",
+      checks: [{ error: { code: "GIT_HARD_TIMEOUT" } }],
+    });
+  });
+
+  it("preserves a CLI timeout from a hanging committed-config blob read", async () => {
+    const baselineCommit = "1".repeat(40);
+    const targetCommit = "2".repeat(40);
+    const configBlob = "3".repeat(40);
+    const delayed = delayedGitCommand(20);
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "main",
+      timeout: "5ms",
+      dependencies: dependencies([], {
+        createGitClient: (root, options) =>
+          new GitClient(root, {
+            ...options,
+            async runCommand(args, runOptions) {
+              if (args[0] === "cat-file") return delayed(args, runOptions);
+              if (args[0] === "merge-base") {
+                return {
+                  stdout: `${baselineCommit}\n`,
+                  stderr: "",
+                  exitCode: 0,
+                };
+              }
+              if (args[0] === "ls-tree") {
+                return {
+                  stdout: `100644 blob ${configBlob}\t.zedbeerc.jsonc\0`,
+                  stderr: "",
+                  exitCode: 0,
+                };
+              }
+              return {
+                stdout: `${args.at(-1)?.startsWith("main") ? baselineCommit : targetCommit}\n`,
+                stderr: "",
+                exitCode: 0,
+              };
+            },
+          }),
+        resolveBaseComparison,
+        loadCommitConfig: loadConfigFromCommit,
+      }),
+    });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      mode: "base",
+      baseline: baselineCommit,
+      target: targetCommit,
+      requestedBase: "main",
+      checks: [{ error: { code: "GIT_HARD_TIMEOUT" } }],
+    });
   });
 
   it("continues after a configured Git soft timeout", async () => {
@@ -874,13 +1084,54 @@ describe("runScan", () => {
     ] as const;
 
     expect(
-      unsupportedEntryFailures([entries[0]], changedPaths, policyForFile),
+      unsupportedEntryFailures(
+        [entries[0]],
+        changedPaths,
+        policyForFile,
+        "index",
+      ),
     ).toEqual([]);
     expect(
-      unsupportedEntryFailures(entries, changedPaths, policyForFile),
+      unsupportedEntryFailures(entries, changedPaths, policyForFile, "index"),
     ).toMatchObject([
       { code: "UNSUPPORTED_BINARY_INPUT", path: "src/other.ts" },
     ]);
+  });
+
+  it("uses source-specific unsupported-input remediation", () => {
+    const changeSet = addedChangeSet("src/binary.ts");
+    const changedPaths = new Set(changeSet.files.keys());
+    const policyForFile = createFilePolicyResolver(config, changeSet);
+    const entries = [{ path: "src/binary.ts", kind: "binary" }] as const;
+
+    const [indexFailure] = unsupportedEntryFailures(
+      entries,
+      changedPaths,
+      policyForFile,
+      "index",
+    );
+    const [baseFailure] = unsupportedEntryFailures(
+      entries,
+      changedPaths,
+      policyForFile,
+      "base",
+    );
+
+    expect(indexFailure).toMatchObject({
+      message:
+        "Zedbee cannot analyze this staged binary file with the enabled checks.",
+      remediation:
+        "Stage valid text at this path or remove it from the staged change, then rerun the scan.",
+    });
+    expect(baseFailure).toMatchObject({
+      message:
+        "Zedbee cannot analyze this binary file in the committed target with the enabled checks.",
+      remediation:
+        "Commit valid text at this path or remove it from the committed target, then rerun the scan.",
+    });
+    expect(`${baseFailure?.message} ${baseFailure?.remediation}`).not.toMatch(
+      /staged|Git index|stage it/iu,
+    );
   });
 
   it("publishes the managed adapters in deterministic check order", () => {
@@ -1457,44 +1708,21 @@ describe("runScan", () => {
     .each(["validated", "unreportable"] as const)(
     "reports construction and %s construction-cleanup failures together",
     async (pathMode) => {
-      let snapshotRoot: string | undefined;
-      let movedSnapshotRoot: string | undefined;
       const rawFailure = `RAW-CONSTRUCTION-${pathMode} /private/unsafe/path`;
-      const git = {
-        async run(args: readonly string[]) {
-          if (args[0] === "checkout-index") {
-            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-            const targetDir = prefix
-              .slice("--prefix=".length)
-              .replace(/[/\\]+$/u, "");
-            snapshotRoot = dirname(targetDir);
-            if (pathMode === "validated") {
-              await chmod(snapshotRoot, 0o500);
-            } else {
-              movedSnapshotRoot = `${snapshotRoot}-moved`;
-              await rename(snapshotRoot, movedSnapshotRoot);
-              await symlink(movedSnapshotRoot, snapshotRoot, "dir");
-            }
-            throw new Error(rawFailure);
-          }
-          return { stdout: "", stderr: "", exitCode: 0 };
-        },
-        async tryRun() {
-          return { stdout: "", stderr: "", exitCode: 1 };
-        },
-      } as unknown as GitClient;
+      const created = await mkdtemp(
+        join(tmpdir(), "zedbee-snapshot-run-scan-"),
+      );
+      const snapshotRoot = await validateSnapshotPath(await realpath(created));
       onTestFinished(async () => {
-        if (snapshotRoot !== undefined) {
-          await chmod(snapshotRoot, 0o700).catch(() => undefined);
-          await rm(snapshotRoot, { recursive: true, force: true });
-        }
-        if (movedSnapshotRoot !== undefined) {
-          await rm(movedSnapshotRoot, { recursive: true, force: true });
-        }
+        await rm(snapshotRoot, { recursive: true, force: true });
       });
       const deps = dependencies([], {
-        createGitClient: () => git,
-        buildIndexSnapshots: buildSnapshotPair,
+        buildIndexSnapshots: async () => {
+          throw new SnapshotConstructionCleanupError(
+            new SnapshotError("SNAPSHOT_CONSTRUCTION_FAILED", rawFailure),
+            pathMode === "validated" ? snapshotRoot : undefined,
+          );
+        },
       });
 
       const report = await runScan({
@@ -1522,7 +1750,6 @@ describe("runScan", () => {
       expect(serialized).not.toContain("/private/unsafe/path");
       if (pathMode === "unreportable") {
         expect(serialized).not.toContain(snapshotRoot);
-        expect(serialized).not.toContain(movedSnapshotRoot);
       }
     },
   );
@@ -1751,6 +1978,88 @@ describe("runScan", () => {
     expect(JSON.stringify(report)).not.toContain("private-token-123");
   });
 
+  it.each([
+    {
+      phase: "change discovery",
+      code: "CHANGE_DISCOVERY_FAILED",
+      message: "Zedbee could not read the committed changes.",
+    },
+    {
+      phase: "invalid target path",
+      code: "INVALID_INDEX_PATH",
+      message: "Zedbee refused an invalid committed repository path.",
+    },
+    {
+      phase: "snapshot construction",
+      code: "SNAPSHOT_CONSTRUCTION_FAILED",
+      message: "Zedbee could not construct the committed snapshots.",
+    },
+    {
+      phase: "target inspection",
+      code: "TARGET_INSPECTION_FAILED",
+      message: "Zedbee could not inspect the committed target snapshot.",
+    },
+  ])(
+    "uses committed-target language for base-mode $phase failures",
+    async ({ phase, code, message }) => {
+      const baselineCommit = "a".repeat(40);
+      const targetCommit = "b".repeat(40);
+      const commitSnapshots: SnapshotPair = {
+        baselineDir: "/tmp/base-baseline",
+        targetDir: "/tmp/base-target",
+        baselineRef: baselineCommit,
+        targetRef: targetCommit,
+        unsupportedEntries: [],
+        cleanup: async () => undefined,
+      };
+      const deps = dependencies([], {
+        resolveBaseComparison: async () => ({
+          requestedBase: "main",
+          baselineCommit,
+          targetCommit,
+        }),
+        loadCommitConfig: async () => config,
+        readCommitChangeSet: async () => {
+          if (phase === "change discovery") throw new Error("private");
+          return nonEmptyChangeSet;
+        },
+        buildCommitSnapshots: async () => {
+          if (phase === "invalid target path") {
+            throw new SnapshotError("INVALID_INDEX_PATH", "private");
+          }
+          if (phase === "snapshot construction") throw new Error("private");
+          return commitSnapshots;
+        },
+        inspectRepository: async (snapshotRoot) => {
+          if (
+            phase === "target inspection" &&
+            snapshotRoot.endsWith("target")
+          ) {
+            throw new Error("private");
+          }
+          return {
+            snapshotRoot,
+            packageManager: "npm",
+            lockfiles: [],
+            workspaces: [],
+          };
+        },
+      });
+
+      const report = await runScan({
+        repositoryRoot: "/repo",
+        baseRef: "main",
+        dependencies: deps,
+      });
+      const failure = report.checks[0]?.error;
+
+      expect(failure).toMatchObject({ code, message });
+      expect(`${failure?.message} ${failure?.remediation}`).not.toMatch(
+        /staged|Git index|stage it/iu,
+      );
+    },
+  );
+
   it("reports the repository-relative path for a staged Git LFS pointer", async () => {
     const report = await runScan({
       repositoryRoot: "/repo",
@@ -1782,6 +2091,45 @@ describe("runScan", () => {
         },
       },
     ]);
+  });
+
+  it("reports a committed Git LFS pointer without staged-only language", async () => {
+    const baselineCommit = "a".repeat(40);
+    const targetCommit = "b".repeat(40);
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "main",
+      dependencies: dependencies([], {
+        resolveBaseComparison: async () => ({
+          requestedBase: "main",
+          baselineCommit,
+          targetCommit,
+        }),
+        loadCommitConfig: async () => config,
+        readCommitChangeSet: async () => addedChangeSet("assets/large.dat"),
+        buildCommitSnapshots: async () => ({
+          baselineDir: "/tmp/baseline",
+          targetDir: "/tmp/target",
+          baselineRef: baselineCommit,
+          targetRef: targetCommit,
+          unsupportedEntries: [
+            { path: "assets/large.dat", kind: "git-lfs-pointer" },
+          ],
+          cleanup: async () => undefined,
+        }),
+      }),
+    });
+    const failure = report.checks[0]?.error;
+
+    expect(failure).toMatchObject({
+      code: "GIT_LFS_POINTER",
+      message:
+        "Zedbee cannot inspect a Git LFS pointer in the committed target.",
+      path: "assets/large.dat",
+    });
+    expect(`${failure?.message} ${failure?.remediation}`).not.toMatch(
+      /staged|Git index|stage it/iu,
+    );
   });
 
   it("publishes only documented result fields from an untrusted adapter", async () => {

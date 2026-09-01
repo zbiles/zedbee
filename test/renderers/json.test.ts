@@ -233,6 +233,31 @@ describe("renderJson", () => {
     });
   });
 
+  it("defensively removes invalid committed source identity from machine output", () => {
+    const unsafeBase = `topic\u202Ehidden`;
+    const parsed = JSON.parse(
+      renderJson(
+        createReport({
+          mode: "base",
+          baseline: "not-an-object-id",
+          target: "also-not-an-object-id",
+          requestedBase: unsafeBase,
+          outcome: "incomplete",
+          exitCode: 2,
+        }),
+      ),
+    ) as Record<string, unknown>;
+
+    expect(parsed).toMatchObject({
+      mode: "base",
+      baseline: null,
+      target: null,
+    });
+    expect(parsed).not.toHaveProperty("requestedBase");
+    expect(JSON.stringify(parsed)).not.toContain(unsafeBase);
+    expect(JSON.stringify(parsed)).not.toContain("not-an-object-id");
+  });
+
   it("serializes optional diagnostics and omits secret excerpt text", () => {
     const sourceFinding = createFinding({
       sourceExcerpt: {

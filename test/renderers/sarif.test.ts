@@ -131,6 +131,36 @@ describe("renderSarif", () => {
     expect(first.endsWith("\n")).toBe(false);
   });
 
+  it("defensively removes invalid committed source identity from invocation properties", () => {
+    const unsafeBase = `topic\u2028hidden`;
+    const document = JSON.parse(
+      renderSarif(
+        createReport({
+          mode: "base",
+          baseline: "not-an-object-id",
+          target: "also-not-an-object-id",
+          requestedBase: unsafeBase,
+          outcome: "incomplete",
+          exitCode: 2,
+        }),
+      ),
+    ) as {
+      runs: Array<{
+        invocations: Array<{ properties: Record<string, unknown> }>;
+      }>;
+    };
+    const properties = document.runs[0]!.invocations[0]!.properties;
+
+    expect(properties).toMatchObject({
+      mode: "base",
+      baseline: null,
+      target: null,
+    });
+    expect(properties).not.toHaveProperty("requestedBase");
+    expect(JSON.stringify(document)).not.toContain(unsafeBase);
+    expect(JSON.stringify(document)).not.toContain("not-an-object-id");
+  });
+
   it("maps every finding to deterministic rules, levels, locations, and properties", () => {
     const error = createFinding({
       id: "finding-error",

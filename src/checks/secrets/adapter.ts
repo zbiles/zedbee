@@ -88,7 +88,10 @@ export function createSecretsAdapter(
         ({ status }) => status !== "deleted",
       );
       if (changedFiles.length === 0) {
-        return { applies: false as const, reason: "No staged files to scan" };
+        return {
+          applies: false as const,
+          reason: "No changed target files to scan",
+        };
       }
       return {
         applies: true as const,

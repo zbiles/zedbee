@@ -27,7 +27,12 @@ import type { ResolvedConfig } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
 import { readCommitChangeSet, readStagedChangeSet } from "../git/change-set.js";
-import { resolveBaseComparison } from "../git/base-comparison.js";
+import {
+  BaseComparisonError,
+  resolveBaseComparison,
+  type BaseComparisonErrorCode,
+} from "../git/base-comparison.js";
+import { safeRequestedBase } from "../git/base-ref.js";
 import { GitClient } from "../git/client.js";
 import { GitCommandError } from "../git/errors.js";
 import { resolveScanResourcePolicy } from "./resource-policy.js";
@@ -64,7 +69,11 @@ import {
 } from "./reporting-options.js";
 import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
-import type { ScanSourceIdentity } from "./source-mode.js";
+import {
+  sanitizeScanSourceIdentity,
+  type ScanMode,
+  type ScanSourceIdentity,
+} from "./source-mode.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -224,10 +233,86 @@ const PHASE_FAILURES = {
   },
 } as const satisfies Readonly<Record<ActiveScanPhase, ScanFailureInput>>;
 
+const BASE_COMPARISON_FAILURES: Readonly<
+  Record<BaseComparisonErrorCode, ScanFailureInput>
+> = {
+  BASE_REF_INVALID: {
+    code: "BASE_REF_INVALID",
+    message: "Zedbee refused an invalid requested base ref.",
+    remediation:
+      "Choose a non-empty display-safe base ref that does not begin with '-', then retry.",
+  },
+  BASE_REF_UNAVAILABLE: {
+    code: "BASE_REF_UNAVAILABLE",
+    message: "Zedbee could not resolve the requested base ref locally.",
+    remediation:
+      "Fetch the requested base ref or choose one available locally, then retry.",
+  },
+  TARGET_COMMIT_UNAVAILABLE: {
+    code: "TARGET_COMMIT_UNAVAILABLE",
+    message: "Zedbee could not resolve the target commit.",
+    remediation: "Check out or create a valid target commit, then retry.",
+  },
+  MERGE_BASE_UNAVAILABLE: {
+    code: "MERGE_BASE_UNAVAILABLE",
+    message: "Zedbee could not find a merge base for the selected revisions.",
+    remediation:
+      "Fetch enough local history for both revisions or choose a base with shared history, then retry.",
+  },
+  MERGE_BASE_AMBIGUOUS: {
+    code: "MERGE_BASE_AMBIGUOUS",
+    message:
+      "Zedbee found more than one merge base for the selected revisions.",
+    remediation: "Choose a base with one unambiguous merge base, then retry.",
+  },
+  REVISION_OUTPUT_INVALID: {
+    code: "REVISION_OUTPUT_INVALID",
+    message: "Zedbee received invalid revision data from Git.",
+    remediation:
+      "Verify the local Git repository and Git executable, then retry.",
+  },
+};
+
+function sourcePhaseFailure(
+  phase: ActiveScanPhase,
+  mode: ScanMode,
+): ScanFailureInput {
+  if (mode === "index") return PHASE_FAILURES[phase];
+  if (phase === "change-discovery") {
+    return {
+      code: "CHANGE_DISCOVERY_FAILED",
+      message: "Zedbee could not read the committed changes.",
+      remediation:
+        "Verify the selected commits and local Git objects, then retry.",
+    };
+  }
+  if (phase === "snapshot-construction") {
+    return {
+      code: "SNAPSHOT_CONSTRUCTION_FAILED",
+      message: "Zedbee could not construct the committed snapshots.",
+      remediation:
+        "Verify the selected commits, local Git objects, and temporary-directory permissions, then retry.",
+    };
+  }
+  if (phase === "target-inspection") {
+    return {
+      code: "TARGET_INSPECTION_FAILED",
+      message: "Zedbee could not inspect the committed target snapshot.",
+      remediation:
+        "Check the committed target repository metadata and run the scan again.",
+    };
+  }
+  return PHASE_FAILURES[phase];
+}
+
 function phaseFailure(
   error: unknown,
   phase: ActiveScanPhase,
+  mode: ScanMode,
 ): ScanFailureInput {
+  if (error instanceof BaseComparisonError) {
+    return BASE_COMPARISON_FAILURES[error.code];
+  }
   if (error instanceof GitCommandError) {
     if (error.code === "GIT_OUTPUT_LIMIT_EXCEEDED") {
       return {
@@ -263,7 +348,7 @@ function phaseFailure(
         };
   }
   if (phase === "snapshot-construction" && error instanceof SnapshotError) {
-    if (error.code === "UNRESOLVED_INDEX") {
+    if (error.code === "UNRESOLVED_INDEX" && mode === "index") {
       return {
         code: error.code,
         message: "Zedbee cannot scan an index with unresolved entries.",
@@ -271,12 +356,19 @@ function phaseFailure(
       };
     }
     if (error.code === "INVALID_INDEX_PATH") {
-      return {
-        code: error.code,
-        message: "Zedbee refused an invalid staged repository path.",
-        remediation:
-          "Repair or remove the invalid Git index entry and run the scan again.",
-      };
+      return mode === "index"
+        ? {
+            code: error.code,
+            message: "Zedbee refused an invalid staged repository path.",
+            remediation:
+              "Repair or remove the invalid Git index entry and run the scan again.",
+          }
+        : {
+            code: error.code,
+            message: "Zedbee refused an invalid committed repository path.",
+            remediation:
+              "Choose a committed target without the invalid repository path, then retry.",
+          };
     }
     if (error.code === "INVALID_TEMP_PATH") {
       return {
@@ -286,9 +378,9 @@ function phaseFailure(
           "Verify the system temporary directory and run the scan again.",
       };
     }
-    return PHASE_FAILURES[phase];
+    return sourcePhaseFailure(phase, mode);
   }
-  return PHASE_FAILURES[phase];
+  return sourcePhaseFailure(phase, mode);
 }
 
 function dispatchOptions(
@@ -317,6 +409,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   let snapshots: SnapshotPair | undefined;
+  const requestedBase = safeRequestedBase(options.baseRef);
   let source: ScanSourceIdentity =
     options.baseRef === undefined
       ? { mode: "index", baseline: null, target: "index" }
@@ -324,7 +417,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           mode: "base",
           baseline: null,
           target: null,
-          requestedBase: options.baseRef,
+          ...(requestedBase === undefined ? {} : { requestedBase }),
         };
   let changedFileCount: number | null = null;
   const networkDisclosures: NetworkDisclosure[] = [];
@@ -351,7 +444,16 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   });
 
   try {
-    const bootstrapGit = dependencies.createGitClient(options.repositoryRoot);
+    const bootstrapResourcePolicy = resolveScanResourcePolicy(
+      { gitHardTimeout: "30s" },
+      {
+        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+        ...(options.noTimeout ? { noTimeout: true } : {}),
+      },
+    );
+    const bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
+      resourcePolicy: bootstrapResourcePolicy,
+    });
     let config: ResolvedConfig;
     let baseComparison:
       | Awaited<ReturnType<RunScanDependencies["resolveBaseComparison"]>>
@@ -371,12 +473,12 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         options.baseRef,
         options.signal,
       );
-      source = {
+      source = sanitizeScanSourceIdentity({
         mode: "base",
         baseline: baseComparison.baselineCommit,
         target: baseComparison.targetCommit,
         requestedBase: baseComparison.requestedBase,
-      };
+      });
       activePhase = "configuration";
       config = await dependencies.loadCommitConfig(
         options.repositoryRoot,
@@ -480,6 +582,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         snapshots.unsupportedEntries,
         new Set(changeSet.files.keys()),
         policyForFile,
+        source.mode,
       );
       if (unsupportedFailures.length > 0) {
         report = createIncompleteReport(reportContext(), unsupportedFailures);
@@ -549,6 +652,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         phaseFailure(
           constructionCleanupFailure?.constructionError ?? error,
           activePhase,
+          source.mode,
         ),
       );
       if (constructionCleanupFailure !== undefined) {

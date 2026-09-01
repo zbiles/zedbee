@@ -1853,9 +1853,10 @@ describe("dispatchChecks", () => {
         status: "incomplete",
         error: {
           code: "ADAPTER_TARGETS_MISSING",
-          message: "Lint could not determine which staged targets to analyze.",
+          message:
+            "Lint could not determine which selected targets to analyze.",
           remediation:
-            "Check the staged paths and repository configuration, then retry.",
+            "Check the selected paths and repository configuration, then retry.",
         },
       }),
     ]);
@@ -2148,7 +2149,7 @@ describe("dispatchChecks", () => {
         code: "ADAPTER_EXECUTION_FAILED",
         message: "broken could not analyze the repository root.",
         remediation:
-          "Check the analyzer installation and staged input, then retry.",
+          "Check the analyzer installation and selected input, then retry.",
       },
     });
     expect(results[1]?.result).toMatchObject({

@@ -3,6 +3,7 @@ import type { CheckResult, Finding } from "../core/types.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 
 function serializeFinding(finding: Finding): Record<string, unknown> {
   const sourceExcerpt =
@@ -86,17 +87,18 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
 
 export function renderJson(report: ScanReport): string {
   const sanitized = validateReportDisplayStrings(report);
+  const source = sanitizeScanSourceIdentity(report);
   const payload = {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
     repositoryRoot: ".",
-    mode: report.mode,
-    baseline: report.baseline,
-    target: report.target,
-    ...(report.requestedBase === undefined
+    mode: source.mode,
+    baseline: source.baseline,
+    target: source.target,
+    ...(source.requestedBase === undefined
       ? {}
-      : { requestedBase: report.requestedBase }),
+      : { requestedBase: source.requestedBase }),
     changedFileCount: report.changedFileCount,
     startedAt: report.startedAt,
     durationMs: report.durationMs,

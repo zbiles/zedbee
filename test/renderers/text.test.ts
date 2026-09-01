@@ -730,6 +730,38 @@ describe("renderText", () => {
     expect(output).not.toContain("b".repeat(40));
   });
 
+  it("shows only safe requested-base provenance when resolution is incomplete", () => {
+    const safeOutput = renderText(
+      createReport({
+        mode: "base",
+        baseline: null,
+        target: null,
+        requestedBase: "origin/missing",
+        outcome: "incomplete",
+        exitCode: 2,
+      }),
+      { width: 80, color: false },
+    );
+    const unsafeBase = `origin/main\u202Ehidden`;
+    const unsafeOutput = renderText(
+      createReport({
+        mode: "base",
+        baseline: null,
+        target: null,
+        requestedBase: unsafeBase,
+        outcome: "incomplete",
+        exitCode: 2,
+      }),
+      { width: 80, color: false },
+    );
+
+    expect(safeOutput).toContain(
+      "Committed changes · base origin/missing · unresolved",
+    );
+    expect(unsafeOutput).not.toContain(unsafeBase);
+    expect(unsafeOutput).not.toContain("requested base");
+  });
+
   it("renders an empty committed change without staged-only language", () => {
     const report = createReport({
       mode: "base",

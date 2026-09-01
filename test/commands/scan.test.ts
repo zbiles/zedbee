@@ -902,6 +902,28 @@ describe("executeScanCommand", () => {
 });
 
 describe("runCli", () => {
+  it("describes index/base targets and selected-target source excerpts", async () => {
+    const stdout: string[] = [];
+    const write = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((value) => {
+        stdout.push(String(value));
+        return true;
+      });
+    try {
+      await expect(
+        runCli(["node", "zedbee", "scan", "--help"]),
+      ).rejects.toMatchObject({ code: "commander.helpDisplayed" });
+    } finally {
+      write.mockRestore();
+    }
+    const help = stdout.join("");
+
+    expect(help).toContain("scan the selected index or committed target");
+    expect(help).toContain("include exact selected-target source excerpts");
+    expect(help).not.toContain("scan the exact staged Git snapshot");
+  });
+
   it("passes scan --base to the scan command unchanged", async () => {
     let received: unknown;
 

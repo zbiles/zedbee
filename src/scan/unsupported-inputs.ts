@@ -8,6 +8,7 @@ import {
 import { compareCodeUnits } from "../core/compare.js";
 import type { UnsupportedIndexEntry } from "../git/snapshot.js";
 import type { ScanFailureInput } from "./incomplete-report.js";
+import type { ScanMode } from "./source-mode.js";
 
 export interface UnsupportedInputDecision {
   readonly path: string;
@@ -69,20 +70,27 @@ export function planUnsupportedInputs(
 
 function failureForDecision(
   decision: UnsupportedInputDecision,
+  mode: ScanMode,
 ): ScanFailureInput {
+  const committed = mode === "base";
   switch (decision.artifact) {
     case "git-lfs-pointer":
       return {
         code: "GIT_LFS_POINTER",
-        message: "Zedbee cannot inspect a staged Git LFS pointer.",
+        message: committed
+          ? "Zedbee cannot inspect a Git LFS pointer in the committed target."
+          : "Zedbee cannot inspect a staged Git LFS pointer.",
         path: decision.path,
-        remediation:
-          "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
+        remediation: committed
+          ? "Validate the referenced Git LFS object separately or commit analyzable text at this path, then rerun the scan."
+          : "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
       };
     case "submodule":
       return {
         code: "GIT_SUBMODULE_UNAVAILABLE",
-        message: "Zedbee cannot inspect a staged Git submodule pointer.",
+        message: committed
+          ? "Zedbee cannot inspect a Git submodule pointer in the committed target."
+          : "Zedbee cannot inspect a staged Git submodule pointer.",
         path: decision.path,
         remediation:
           "Validate the referenced submodule commit separately or remove the submodule change from this commit, then rerun the scan.",
@@ -90,11 +98,13 @@ function failureForDecision(
     case "binary":
       return {
         code: "UNSUPPORTED_BINARY_INPUT",
-        message:
-          "Zedbee cannot analyze this staged binary file with the enabled checks.",
+        message: committed
+          ? "Zedbee cannot analyze this binary file in the committed target with the enabled checks."
+          : "Zedbee cannot analyze this staged binary file with the enabled checks.",
         path: decision.path,
-        remediation:
-          "Stage valid text at this path or remove it from the staged change, then rerun the scan.",
+        remediation: committed
+          ? "Commit valid text at this path or remove it from the committed target, then rerun the scan."
+          : "Stage valid text at this path or remove it from the staged change, then rerun the scan.",
       };
   }
 }
@@ -103,10 +113,11 @@ export function unsupportedEntryFailures(
   entries: readonly UnsupportedIndexEntry[],
   changedPaths: ReadonlySet<string>,
   policyForFile: FilePolicyResolver,
+  mode: ScanMode,
 ): readonly ScanFailureInput[] {
   return Object.freeze(
     planUnsupportedInputs(entries, changedPaths, policyForFile).map(
-      failureForDecision,
+      (decision) => failureForDecision(decision, mode),
     ),
   );
 }

@@ -7,7 +7,10 @@ import type {
   ScanPresentationPolicy,
   ScanReport,
 } from "./report.js";
-import type { ScanSourceIdentity } from "./source-mode.js";
+import {
+  sanitizeScanSourceIdentity,
+  type ScanSourceIdentity,
+} from "./source-mode.js";
 
 export interface ScanFailureInput {
   readonly code: string;
@@ -48,6 +51,7 @@ export function createIncompleteReport(
   context: ScanReportContext,
   failure: ScanFailureInput | readonly ScanFailureInput[],
 ): ScanReport {
+  const source = sanitizeScanSourceIdentity(context.source);
   const failures = Array.isArray(failure) ? failure : [failure];
   const results = failures.map((item) =>
     incompleteCheck(item, context.durationMs),
@@ -57,12 +61,12 @@ export function createIncompleteReport(
     outcome: "incomplete",
     exitCode: 2,
     repositoryRoot: context.repositoryRoot,
-    mode: context.source.mode,
-    baseline: context.source.baseline,
-    target: context.source.target,
-    ...(context.source.requestedBase === undefined
+    mode: source.mode,
+    baseline: source.baseline,
+    target: source.target,
+    ...(source.requestedBase === undefined
       ? {}
-      : { requestedBase: context.source.requestedBase }),
+      : { requestedBase: source.requestedBase }),
     changedFileCount: context.changedFileCount,
     startedAt: context.startedAt,
     durationMs: context.durationMs,

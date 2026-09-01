@@ -2,6 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { GitClient } from "../git/client.js";
+import { GitCommandError } from "../git/errors.js";
 import { resolveConfig } from "./profiles.js";
 import {
   CHECK_IDS,
@@ -22,6 +23,13 @@ const UNSUPPORTED_CONFIG_FILENAMES = [
 ] as const;
 const INDEX_QUERY_OUTPUT_LIMIT_BYTES = 64 * 1024;
 const CONFIG_CONTENT_LIMIT_BYTES = 1024 * 1024;
+
+function isGitResourceFailure(error: unknown): boolean {
+  return (
+    error instanceof GitCommandError &&
+    (error.code === "GIT_ABORTED" || error.code === "GIT_HARD_TIMEOUT")
+  );
+}
 
 export type ConfigErrorCode = "CONFIG_INVALID" | "CONFIG_UNSUPPORTED";
 
@@ -476,20 +484,14 @@ async function targetTreeEntry(
   let result: Awaited<ReturnType<GitClient["run"]>>;
   try {
     result = await git.run(
-      [
-        "ls-tree",
-        "-z",
-        targetCommit,
-        "--",
-        literalPathspec(repositoryPath),
-      ],
+      ["ls-tree", "-z", targetCommit, "--", literalPathspec(repositoryPath)],
       {
         maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
         ...(signal === undefined ? {} : { signal }),
       },
     );
   } catch (error) {
-    if (signal?.aborted === true) throw error;
+    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
     throw new ConfigError(
       "CONFIG_INVALID",
       `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
@@ -520,7 +522,13 @@ export async function loadConfigFromIndex(
   try {
     entries = await indexedEntries(git, candidatePaths, configPath, signal);
   } catch (error) {
-    if (signal?.aborted === true || error instanceof ConfigError) throw error;
+    if (
+      signal?.aborted === true ||
+      error instanceof ConfigError ||
+      isGitResourceFailure(error)
+    ) {
+      throw error;
+    }
     throw new ConfigError(
       "CONFIG_INVALID",
       `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
@@ -556,7 +564,7 @@ export async function loadConfigFromIndex(
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {
-    if (signal?.aborted === true) throw error;
+    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
     throw new ConfigError(
       "CONFIG_INVALID",
       `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the Git index.`,
@@ -622,7 +630,7 @@ export async function loadConfigFromCommit(
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {
-    if (signal?.aborted === true) throw error;
+    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
     throw new ConfigError(
       "CONFIG_INVALID",
       `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the target Git commit.`,

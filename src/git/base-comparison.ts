@@ -1,6 +1,5 @@
 import type { GitClient } from "./client.js";
-
-const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+import { isGitObjectId, validateRequestedBase } from "./base-ref.js";
 
 export interface BaseComparison {
   readonly requestedBase: string;
@@ -38,19 +37,9 @@ function fail(code: BaseComparisonErrorCode): never {
   throw new BaseComparisonError(code, messages[code]);
 }
 
-function validateRequestedBase(requestedBase: string): void {
-  if (
-    requestedBase.length === 0 ||
-    requestedBase.startsWith("-") ||
-    /\p{Cc}/u.test(requestedBase)
-  ) {
-    fail("BASE_REF_INVALID");
-  }
-}
-
 function revision(stdout: string): string {
   const value = stdout.endsWith("\n") ? stdout.slice(0, -1) : stdout;
-  if (!OBJECT_ID.test(value)) fail("REVISION_OUTPUT_INVALID");
+  if (!isGitObjectId(value)) fail("REVISION_OUTPUT_INVALID");
   return value;
 }
 
@@ -70,7 +59,11 @@ export async function resolveBaseComparison(
   requestedBase: string,
   signal?: AbortSignal,
 ): Promise<BaseComparison> {
-  validateRequestedBase(requestedBase);
+  try {
+    requestedBase = validateRequestedBase(requestedBase);
+  } catch {
+    fail("BASE_REF_INVALID");
+  }
 
   const baseOutput = await runRevisionCommand(
     git,
@@ -98,7 +91,7 @@ export async function resolveBaseComparison(
     .split("\n")
     .filter((line) => line.length > 0);
   if (mergeBases.length === 0) fail("MERGE_BASE_UNAVAILABLE");
-  if (mergeBases.some((line) => !OBJECT_ID.test(line))) {
+  if (mergeBases.some((line) => !isGitObjectId(line))) {
     fail("REVISION_OUTPUT_INVALID");
   }
   if (mergeBases.length > 1) fail("MERGE_BASE_AMBIGUOUS");

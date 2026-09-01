@@ -515,8 +515,7 @@ function publicPlan(
   const hasUnresolvedBlockingFinding =
     decision?.summary.findings.some(
       (finding) =>
-        finding.severity === "error" &&
-        !applicableFindingIds.has(finding.id),
+        finding.severity === "error" && !applicableFindingIds.has(finding.id),
     ) ?? false;
   const files = [...workingFiles.values()]
     .map((preview): FixPlanFile => {
@@ -713,6 +712,7 @@ export async function buildFixPlan(
       snapshots.unsupportedEntries,
       new Set(changeSet.files.keys()),
       policyForFile,
+      "index",
     );
     if (unsupported.length > 0) throw unsupportedInputError();
     signal.throwIfAborted();

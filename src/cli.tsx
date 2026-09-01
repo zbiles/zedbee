@@ -197,7 +197,7 @@ export async function runCli(
 
   program
     .command("scan")
-    .description("scan the exact staged Git snapshot")
+    .description("scan the selected index or committed target")
     .option(
       "--base <ref>",
       "scan committed HEAD changes since the unique merge base with this ref",
@@ -210,13 +210,14 @@ export async function runCli(
     .addOption(
       new Option(
         "--include-source",
-        "include exact staged source excerpts",
+        "include exact selected-target source excerpts",
       ).conflicts("source"),
     )
     .addOption(
-      new Option("--no-source", "omit exact staged source excerpts").conflicts(
-        "includeSource",
-      ),
+      new Option(
+        "--no-source",
+        "omit exact selected-target source excerpts",
+      ).conflicts("includeSource"),
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")

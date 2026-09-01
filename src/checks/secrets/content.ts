@@ -60,16 +60,17 @@ async function readTextSource(
       message: "A changed file could not be read from the required snapshot.",
       path: repositoryPath,
       remediation:
-        "Refresh the Git index, stage the file again, and retry the scan. If it persists, run zedbee doctor.",
+        "Refresh the selected target snapshot and retry the scan. If it persists, run zedbee doctor.",
     });
   }
   if (entry.kind === "symlink" || entry.targetKind !== "file") {
     throw new SecretContentError({
       code: "SECRET_FILE_UNSAFE",
-      message: "Secret analysis only scans staged regular files.",
+      message:
+        "Secret analysis only scans regular files in the selected target.",
       path: repositoryPath,
       remediation:
-        "Stage a regular file at this path or remove it from the staged change, then retry.",
+        "Provide a regular file at this path or remove it from the selected target, then retry.",
     });
   }
   let content: string;
@@ -84,7 +85,7 @@ async function readTextSource(
       message: "A changed file exceeds the Secretlint file-size safety limit.",
       path: repositoryPath,
       remediation:
-        "Reduce the staged file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
+        "Reduce the selected target file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
     });
   }
   if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
@@ -93,7 +94,7 @@ async function readTextSource(
       message: "A changed file exceeds the Secretlint file-size safety limit.",
       path: repositoryPath,
       remediation:
-        "Reduce the staged file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
+        "Reduce the selected target file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
     });
   }
   if (content.includes("\u0000")) return undefined;
@@ -104,7 +105,7 @@ async function readTextSource(
         "A changed file is not valid UTF-8 and cannot be scanned safely.",
       path: repositoryPath,
       remediation:
-        "Convert the staged file to valid UTF-8 text, stage it again, and retry.",
+        "Convert the selected target file to valid UTF-8 text and retry.",
     });
   }
   return Object.freeze({ content, reportPath: repositoryPath, identityPath });

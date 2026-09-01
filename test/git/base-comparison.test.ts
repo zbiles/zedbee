@@ -56,7 +56,12 @@ describe("resolveBaseComparison", () => {
     ["feature\0branch", "NUL"],
     ["feature\nbranch", "display controls"],
     [`feature\u0085branch`, "C1 display controls"],
+    [`feature\u202Ebranch`, "bidi controls"],
+    [`feature\u2066branch`, "bidi isolates"],
+    [`feature\u2028branch`, "line separators"],
+    [`feature\u2029branch`, "paragraph separators"],
     ["--upload-pack=evil", "option-looking refs"],
+    ["a".repeat(257), "overlong input"],
   ])("rejects %s (%s) before invoking Git", async (requestedBase) => {
     const { git, recordedArgs } = gitReturning([]);
     await expectCode(

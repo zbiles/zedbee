@@ -155,19 +155,19 @@ async function createBaseFixture(
 async function createDelayedGitEnvironment(snapshotRoot: string) {
   const shimRoot = await temporaryDirectory("zedbee-git-shim-");
   const realGit = await realpath((await execa("which", ["git"])).stdout);
-  const firstCheckout = join(shimRoot, "first-checkout");
-  const delayedCheckout = join(shimRoot, "delayed-checkout");
+  const firstBlobRead = join(shimRoot, "first-blob-read");
+  const delayedBlobRead = join(shimRoot, "delayed-blob-read");
   const shim = join(shimRoot, "git");
   await writeFile(
     shim,
     [
       "#!/bin/sh",
-      'if [ "$1" = "checkout-index" ]; then',
-      '  if [ -f "$ZEDBEE_FIRST_CHECKOUT" ]; then',
-      '    : > "$ZEDBEE_DELAYED_CHECKOUT"',
+      'if [ "$1" = "cat-file" ] && [ "$2" = "blob" ]; then',
+      '  if [ -f "$ZEDBEE_FIRST_BLOB_READ" ]; then',
+      '    : > "$ZEDBEE_DELAYED_BLOB_READ"',
       "    exec sleep 30",
       "  else",
-      '    : > "$ZEDBEE_FIRST_CHECKOUT"',
+      '    : > "$ZEDBEE_FIRST_BLOB_READ"',
       "  fi",
       "fi",
       'exec "$ZEDBEE_REAL_GIT" "$@"',
@@ -176,15 +176,15 @@ async function createDelayedGitEnvironment(snapshotRoot: string) {
   );
   await chmod(shim, 0o755);
   return {
-    firstCheckout,
-    delayedCheckout,
+    firstBlobRead,
+    delayedBlobRead,
     environment: {
       PATH: `${shimRoot}${delimiter}${process.env.PATH ?? ""}`,
       TMPDIR: snapshotRoot,
       TMP: snapshotRoot,
       TEMP: snapshotRoot,
-      ZEDBEE_FIRST_CHECKOUT: firstCheckout,
-      ZEDBEE_DELAYED_CHECKOUT: delayedCheckout,
+      ZEDBEE_FIRST_BLOB_READ: firstBlobRead,
+      ZEDBEE_DELAYED_BLOB_READ: delayedBlobRead,
       ZEDBEE_REAL_GIT: realGit,
     },
   };
@@ -411,7 +411,7 @@ describe("committed base scans", () => {
     expect(report.checks).toEqual([
       expect.objectContaining({
         checkId: "zedbee",
-        error: expect.objectContaining({ code: "BASELINE_RESOLUTION_FAILED" }),
+        error: expect.objectContaining({ code: "MERGE_BASE_UNAVAILABLE" }),
       }),
     ]);
   }, 30_000);

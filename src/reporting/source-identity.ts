@@ -1,28 +1,15 @@
-import { displayLabel } from "../core/display-text.js";
 import type { ScanReport } from "../scan/report.js";
-
-const OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
+import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 
 export function scanSourceIdentityLine(report: ScanReport): string | undefined {
-  if (
-    report.mode !== "base" ||
-    typeof report.baseline !== "string" ||
-    typeof report.target !== "string" ||
-    !OBJECT_ID.test(report.baseline) ||
-    !OBJECT_ID.test(report.target) ||
-    report.requestedBase === undefined
-  ) {
+  const source = sanitizeScanSourceIdentity(report);
+  if (source.mode !== "base" || source.requestedBase === undefined) {
     return undefined;
   }
-
-  let requestedBase: string;
-  try {
-    requestedBase = displayLabel(report.requestedBase, "requested base");
-  } catch {
-    return undefined;
+  if (source.baseline === null || source.target === null) {
+    return `Committed changes · base ${source.requestedBase} · unresolved`;
   }
-
-  return `Committed changes · base ${requestedBase} · ${report.baseline.slice(0, 12)}..${report.target.slice(0, 12)}`;
+  return `Committed changes · base ${source.requestedBase} · ${source.baseline.slice(0, 12)}..${source.target.slice(0, 12)}`;
 }
 
 export function emptyChangesCopy(report: ScanReport): string {

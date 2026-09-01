@@ -14,6 +14,7 @@ import {
 } from "../../src/cache/store.js";
 import type {
   CheckAdapter,
+  CheckObservationSet,
   CheckRunContext,
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
@@ -381,6 +382,52 @@ describe("observation cache keys", () => {
     expect(new Set(keys).size).toBe(3);
   });
 
+  it("hits only for the same source mode and exact revision comparison", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.write("src/value.ts", "export const value = 1;\n");
+    const values = new Map<string, CheckObservationSet>();
+    const cache: ObservationCache = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+    };
+    let collections = 0;
+    const countingAdapter: CheckAdapter = {
+      ...adapter,
+      collect: async (context) => {
+        collections += 1;
+        return adapter.collect(context);
+      },
+    };
+    const indexContext = contextFor(fixture.root, "^19.0.0");
+    const baseContext = {
+      ...indexContext,
+      snapshots: {
+        ...indexContext.snapshots,
+        baselineRef: "a".repeat(40),
+        targetRef: "b".repeat(40),
+      },
+    };
+    const otherRevisionContext = {
+      ...baseContext,
+      snapshots: {
+        ...baseContext.snapshots,
+        targetRef: "c".repeat(40),
+      },
+    };
+
+    await dispatchChecks([countingAdapter], indexContext, { cache });
+    await dispatchChecks([countingAdapter], indexContext, { cache });
+    expect(collections).toBe(1);
+    await dispatchChecks([countingAdapter], baseContext, { cache });
+    expect(collections).toBe(2);
+    await dispatchChecks([countingAdapter], baseContext, { cache });
+    expect(collections).toBe(2);
+    await dispatchChecks([countingAdapter], otherRevisionContext, { cache });
+    expect(collections).toBe(3);
+  });
+
   it("falls back for every check after unsafe snapshot inventory and recovers on the next dispatch", async () => {
     const [fixture, outside] = await Promise.all([
       createInspectionFixture(),
@@ -434,7 +481,7 @@ describe("observation cache keys", () => {
     expect(new Set(keys).size).toBe(2);
   });
 
-  it("retains v1 key bytes including symlinks and keeps standalone calls fresh", async () => {
+  it("retains v2 key bytes including source identity and symlinks", async () => {
     const [baseline, target] = await Promise.all([
       createInspectionFixture(),
       createInspectionFixture(),
@@ -447,9 +494,16 @@ describe("observation cache keys", () => {
       checkId: "lint",
       engineIdentity: "test-engine-v1",
       policy: { severity: "error" as const, when: "relevant" as const },
-      target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+      checkTarget: {
+        id: ".",
+        kind: "repository" as const,
+        relativeRoot: ".",
+      },
       baselineRoot: baseline.root,
       targetRoot: target.root,
+      mode: "index" as const,
+      baseline: "HEAD" as const,
+      target: "index" as const,
       relevantConfig: {
         rules: { second: ["warn", { allow: ["a", "b"] }], first: "error" },
       },
@@ -460,14 +514,15 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "852450c593c2c0fc157d63dfbab2b43f848588094f677e532875a883d01b8d47",
+      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
       target.root,
+      { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "852450c593c2c0fc157d63dfbab2b43f848588094f677e532875a883d01b8d47",
+      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);

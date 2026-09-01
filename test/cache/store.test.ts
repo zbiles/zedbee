@@ -41,9 +41,12 @@ async function key(options: {
       max: options.max ?? 20,
       blockWorsening: true,
     },
-    target: { id: ".", kind: "repository", relativeRoot: "." },
+    checkTarget: { id: ".", kind: "repository", relativeRoot: "." },
     baselineRoot: baseline.root,
     targetRoot: target.root,
+    mode: "index",
+    baseline: "HEAD",
+    target: "index",
     relevantConfig: options.relevantConfig ?? {
       packageManager: "npm",
       workspace: ".",

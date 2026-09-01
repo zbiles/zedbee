@@ -32,6 +32,7 @@ import { createGitRepository } from "../helpers/git-repository.js";
 
 const snapshotRootFailure = vi.hoisted(() => ({
   failCanonicalization: false,
+  failTargetDirectoryCreation: false,
   temporaryParent: "",
 }));
 
@@ -43,6 +44,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const created = await actual.mkdtemp(...args);
       snapshotRootFailure.temporaryParent = created;
       return created;
+    },
+    async mkdir(...args: Parameters<typeof actual.mkdir>) {
+      if (
+        snapshotRootFailure.failTargetDirectoryCreation &&
+        basename(String(args[0])) === "target" &&
+        String(args[0]).includes("zedbee-snapshot-")
+      ) {
+        throw new Error("target directory creation failed");
+      }
+      return actual.mkdir(...args);
     },
     async realpath(path: Parameters<typeof actual.realpath>[0]) {
       if (
@@ -96,6 +107,30 @@ describe("buildSnapshotPair", () => {
       expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
     } finally {
       snapshotRootFailure.failCanonicalization = false;
+      snapshotRootFailure.temporaryParent = "";
+    }
+  });
+
+  it("cleans an owned temporary root when snapshot directory creation fails", async () => {
+    snapshotRootFailure.failTargetDirectoryCreation = true;
+    const git = {
+      async run() {
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    try {
+      await expect(buildSnapshotPair("/repo", git)).rejects.toThrow(
+        "target directory creation failed",
+      );
+      expect(snapshotRootFailure.temporaryParent).not.toBe("");
+      expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
+    } finally {
+      snapshotRootFailure.failTargetDirectoryCreation = false;
+      await rm(snapshotRootFailure.temporaryParent, {
+        recursive: true,
+        force: true,
+      });
       snapshotRootFailure.temporaryParent = "";
     }
   });

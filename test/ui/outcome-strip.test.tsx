@@ -118,6 +118,34 @@ describe("OutcomeStrip", () => {
     expect(frame).not.toMatch(/staged/iu);
   });
 
+  it("renders safe unresolved provenance and omits an unsafe requested base", () => {
+    const unresolved = createReport({
+      mode: "base",
+      baseline: null,
+      target: null,
+      requestedBase: "origin/missing",
+      outcome: "incomplete",
+      exitCode: 2,
+    });
+    const unsafeBase = `origin/main\u2066hidden`;
+    const unsafe = createReport({
+      ...unresolved,
+      requestedBase: unsafeBase,
+    });
+
+    const unresolvedFrame = render(
+      <OutcomeStrip report={unresolved} width={160} color={false} />,
+    ).lastFrame()!;
+    const unsafeFrame = render(
+      <OutcomeStrip report={unsafe} width={160} color={false} />,
+    ).lastFrame()!;
+
+    expect(unresolvedFrame).toContain(
+      "Committed changes · base origin/missing · unresolved",
+    );
+    expect(unsafeFrame).not.toContain(unsafeBase);
+  });
+
   it.each([40, 60, 72, 78, 80, 96])(
     "retains complete base provenance and yields decorative art at %i columns",
     (width) => {

@@ -399,7 +399,7 @@ async function collectObservations(
         checkId: adapter.id,
         engineIdentity,
         policy: cachePolicy,
-        target: runContext.target,
+        checkTarget: runContext.target,
         relevantConfig: {
           schemaVersion: runContext.config.schemaVersion,
           behavior,
@@ -714,6 +714,17 @@ export async function dispatchChecks(
   const cacheKeyFor = createObservationCacheKeyBuilder(
     adapterContext.snapshots.baselineDir,
     adapterContext.snapshots.targetDir,
+    adapterContext.snapshots.targetRef === "index"
+      ? {
+          mode: "index",
+          baseline: adapterContext.snapshots.baselineRef,
+          target: "index",
+        }
+      : {
+          mode: "base",
+          baseline: adapterContext.snapshots.baselineRef,
+          target: adapterContext.snapshots.targetRef,
+        },
   );
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
@@ -822,9 +833,9 @@ export async function dispatchChecks(
               checkId: adapter.id,
               durationMs: 0,
               code: "ADAPTER_TARGETS_MISSING",
-              message: `${label} could not determine which staged targets to analyze.`,
+              message: `${label} could not determine which selected targets to analyze.`,
               remediation:
-                "Check the staged paths and repository configuration, then retry.",
+                "Check the selected paths and repository configuration, then retry.",
             }),
             null,
           ),
@@ -1027,7 +1038,7 @@ export async function dispatchChecks(
                     code: "ADAPTER_EXECUTION_FAILED",
                     message: `${label} could not analyze ${target.id === "." ? "the repository root" : target.id}.`,
                     remediation:
-                      "Check the analyzer installation and staged input, then retry.",
+                      "Check the analyzer installation and selected input, then retry.",
                   });
           }
           const policyDisplayResult = displayResultForPolicy(
