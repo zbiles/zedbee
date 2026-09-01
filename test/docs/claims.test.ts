@@ -57,11 +57,12 @@ describe("public documentation claims", () => {
     expect(readme).toContain("Node.js 22.13.0 or newer");
   });
 
-  it("documents staged React version calibration", async () => {
+  it("documents selected-snapshot React version calibration", async () => {
     const reactAnalysis = await read("docs/react-analysis.md");
-    expect(reactAnalysis).toContain("staged package.json");
-    expect(reactAnalysis).toContain("supported staged lockfile");
-    expect(reactAnalysis).toContain("never loads project node_modules");
+    expect(reactAnalysis).toContain("selected snapshot's `package.json`");
+    expect(reactAnalysis).toMatch(/supported lockfile in the same\s+snapshot/u);
+    expect(reactAnalysis).toContain("selected snapshot");
+    expect(reactAnalysis).toMatch(/never loads project\s+node_modules/u);
   });
 
   it("publishes runnable source-excerpt and report redirection commands", async () => {

@@ -1,8 +1,8 @@
 # Zedbee
 
-Zedbee is a diff-aware pre-commit scanner for JavaScript and TypeScript projects. It scans the exact Git index, attributes findings to staged changes, and leaves unrelated existing debt out of the current developer's way.
+Zedbee is a diff-aware pre-commit and CI scanner for JavaScript and TypeScript projects. Ordinary scans use the exact Git index; `scan --base <ref>` compares committed `HEAD` with its unique merge base. Findings are attributed to the selected target changes so unrelated existing debt stays out of the current developer's way.
 
-The managed suite covers formatting, lint, TypeScript correctness, cyclomatic complexity, original readability complexity, structural security, duplication, dependency architecture, dead code/package hygiene, React correctness, and React DOM accessibility. Analyzers use the exact Git-index snapshot, compare an isolated baseline where the check requires one, and pass observations through central staged-change attribution.
+The managed suite covers formatting, lint, TypeScript correctness, cyclomatic complexity, original readability complexity, structural security, duplication, dependency architecture, dead code/package hygiene, React correctness, and React DOM accessibility. Analyzers use the exact selected target snapshot, compare an isolated baseline where the check requires one, and pass observations through central changed-target attribution.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 | Command         | Purpose                                                                                                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zedbee init`   | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
-| `zedbee scan`   | Scan the exact staged snapshot and return pass, blocked, or incomplete                                                                                       |
+| `zedbee scan`   | Scan the exact index target, or a committed target with `--base`, and return pass, blocked, or incomplete                                                    |
 | `zedbee fix`    | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
 | `zedbee checks` | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
 | `zedbee doctor` | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, Secretlint, lockfile parsing, licenses, and bounded OSV connectivity without running a scan |
@@ -72,9 +72,9 @@ remain manual. Review, stage, and rescan after applying; see the
 
 `zedbee checks` uses the same responsive behavior. Checks uses the yellow Zedbee frame with one full-width `CHECKS` panel in a wide interactive terminal, showing each check's severity, applicability, engine, targets, execution details, network use, and limitations. `zedbee checks --format text` forces the complete plain view, while `zedbee checks --format json` keeps the existing deterministic, ANSI-free machine output. Narrow terminals, redirected output, CI, and `TERM=dumb` use plain text; `--no-color` keeps an eligible framed layout without semantic colors.
 
-## Exact staged content
+## Exact selected content
 
-Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome. Source excerpts therefore come from the exact indexed content and line, never from a later working-tree edit.
+Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after every outcome. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
 
 `zedbee scan`, `zedbee fix`, and `zedbee checks` also read repository configuration from the Git index. A newly staged `.zedbeerc.jsonc` takes effect immediately; an unstaged or untracked copy cannot weaken the policy applied to staged code. When the index has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
 
@@ -91,9 +91,9 @@ npx zedbee scan --base origin/main --format sarif > zedbee.sarif
 
 Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked files are ignored. The command does not change `HEAD`, refs, the index, or the working tree, and cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
 
-An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
+In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Git LFS pointers and submodule pointers in either the selected index or committed target cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported selected paths is deferred beyond v1.
 
-An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by staged work.
+An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by the selected target changes.
 
 ## Configuration
 
@@ -150,7 +150,7 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. Exactly seven configurable checks expose additional managed settings: `formatting`, `lint`, `cyclomaticComplexity`, `readabilityComplexity`, `duplication`, `reactCorrectness`, and `reactAccessibility`. The complete option tables, defaults, rule boundaries, and override examples are in the [check guide](docs/checks.md).
 
-Overrides are evaluated in array order for each repository-relative file. Every matching patch is applied, and a later matching override takes precedence for the fields it supplies. This is true per-file behavior: two staged files in the same workspace can receive different formatting, rule, complexity, severity, and timing policy. Duplication is the exception because jscpd compares a workspace as a whole; its `threshold`, `minLines`, `minTokens`, and `mode` settings are workspace-wide and are rejected in file overrides.
+Overrides are evaluated in array order for each repository-relative file. Every matching patch is applied, and a later matching override takes precedence for the fields it supplies. This is true per-file behavior: two selected target files in the same workspace can receive different formatting, rule, complexity, severity, and timing policy. Duplication is the exception because jscpd compares a workspace as a whole; its `threshold`, `minLines`, `minTokens`, and `mode` settings are workspace-wide and are rejected in file overrides.
 
 Run `zedbee checks` to inspect effective settings, their profile or repository source, and configured file overrides without running analysis. Use `zedbee checks --format json` for the complete machine-readable view. `zedbee init` deliberately writes only the selected profile/checks and existing guidance; the shipped editor schema, this documentation, and `zedbee checks` are the settings discovery surface.
 
@@ -164,13 +164,13 @@ The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.j
 
 ## Managed analyzer boundary
 
-Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as staged data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating staged code under unrelated compiler settings.
+Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as selected snapshot data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating changed target code under unrelated compiler settings.
 
 Zedbee does not load any native analyzer config files, including native Prettier and ESLint configs. Adoption therefore has a deliberate tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Re-express the supported policy in `.zedbeerc.jsonc`, within Zedbee's bounded managed settings, rather than expecting native configuration parity.
 
-Project checks inspect a workspace as a whole, then compare the isolated `HEAD` and index snapshots so existing debt remains non-blocking. This roughly doubles analyzer work. Knip runs as a managed shell-free subprocess because it has no supported analysis API; all framework plugins are disabled so repository configs cannot execute. That safety choice is less framework-aware than a normal Knip setup, and dynamic imports, framework conventions, wildcard package exports, and TypeScript path aliases may need future managed profiles. jscpd also runs as a subprocess and receives an exact source-file list; exceptionally large workspaces can exceed the operating system argument limit and fail incomplete. Dependency Cruiser runs through its public API.
+Project checks inspect a workspace as a whole, then compare the isolated selected baseline and target snapshots so existing debt remains non-blocking. This roughly doubles analyzer work. Knip runs as a managed shell-free subprocess because it has no supported analysis API; all framework plugins are disabled so repository configs cannot execute. That safety choice is less framework-aware than a normal Knip setup, and dynamic imports, framework conventions, wildcard package exports, and TypeScript path aliases may need future managed profiles. jscpd also runs as a subprocess and receives an exact source-file list; exceptionally large workspaces can exceed the operating system argument limit and fail incomplete. Dependency Cruiser runs through its public API.
 
-React correctness runs for React, React DOM, Ink, Next.js, and Remix. DOM accessibility runs only when inspection finds React DOM, Next.js, or Remix, so Ink terminal components do not receive browser-DOM advice. For each baseline and target workspace, React correctness calibrates version-sensitive rules from the direct staged manifest declaration and, when available, an unambiguous matching record in a supported staged lockfile. It falls back silently to the manifest and then Zedbee's managed React 19.2 baseline; developers do not need to edit lockfiles for Zedbee. The managed plugins never use `detect` mode or load project `node_modules`. See the [React analysis policy](docs/react-analysis.md).
+React correctness runs for React, React DOM, Ink, Next.js, and Remix. DOM accessibility runs only when inspection finds React DOM, Next.js, or Remix, so Ink terminal components do not receive browser-DOM advice. For each baseline and target workspace, React correctness calibrates version-sensitive rules from that snapshot's direct manifest declaration and, when available, an unambiguous matching record in a supported lockfile. It falls back silently to the manifest and then Zedbee's managed React 19.2 baseline; developers do not need to edit lockfiles for Zedbee. The managed plugins never use `detect` mode or load project `node_modules`. See the [React analysis policy](docs/react-analysis.md).
 
 Zedbee Readability Complexity is an original metric, not Sonar Cognitive Complexity, and teams migrating from Sonar must recalibrate thresholds. The built-in structural-security rules are deliberately narrower than Semgrep: they have no dataflow, taint, interfile analysis, reachability, framework packs, or live rule registry. See [the readability scoring contract](docs/readability-complexity.md), [React analysis policy](docs/react-analysis.md), and [structural-security coverage](docs/structural-security-coverage.md).
 
@@ -207,7 +207,7 @@ npx zedbee scan --include-source
 npx zedbee scan --no-source
 ```
 
-Ordinary staged source may be visible in interactive Ink by default to the human or agent that invoked Zedbee. Text, JSON, and SARIF source is opt-in with `--include-source` unless repository policy is `always`. Excerpts come only from the exact Git-index snapshot; secret findings are always redacted regardless of policy or CLI override.
+Ordinary selected target source may be visible in interactive Ink by default to the human or agent that invoked Zedbee. Text, JSON, and SARIF source is opt-in with `--include-source` unless repository policy is `always`. Excerpts come only from the exact selected target—the Git index in index mode or committed `HEAD` in base mode; secret findings are always redacted regardless of policy or CLI override.
 
 Redirect complete stable reports with normal shell redirection:
 
@@ -244,7 +244,7 @@ Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected 
 
 ## Cache and performance
 
-Zedbee may cache content-addressed, normalized observations for deterministic local analyzers. Cache keys include the staged snapshots, policy, workspace/config inputs, engine identity, and runtime platform. Cache failures and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
+Zedbee may cache content-addressed, normalized observations for deterministic local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, engine identity, and runtime platform. Cache failures and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
 
 ## Current coverage
 
@@ -252,7 +252,7 @@ The managed suite currently includes:
 
 1. Prettier formatting, ESLint and typescript-eslint lint, TypeScript diagnostics, both complexity metrics, original ast-grep security checks, React correctness, and React DOM accessibility.
 2. jscpd duplication, Dependency Cruiser architecture validation, and Knip dead-code/package-hygiene analysis across npm, pnpm, Yarn, and Bun workspaces.
-3. Exact staged snapshots, baseline comparison, changed-range and syntax-entity attribution, stable text/JSON output, and the approved live Ink progress display.
+3. Exact index or committed snapshots, baseline comparison, changed-range and syntax-entity attribution, stable text/JSON output, and the approved live Ink progress display.
 4. Direct Secretlint scanning with irreversible redaction, plus the bounded Zedbee OSV API client for disclosed online vulnerability comparison.
 
 Optional Semgrep is not part of the v1 managed suite and is not silently approximated by the current structural rules. Online vulnerability scanning sends package names, exact versions, and the npm ecosystem identifier to `api.osv.dev`; source code and file hashes are not sent. There is no offline database mode. Choose whether an OSV outage blocks or warns with `checks.vulnerabilities.onUnavailable` or guided `zedbee init`.
@@ -264,9 +264,9 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 - Run `npx zedbee doctor` first; JSON mode is useful when sharing sanitized diagnostics.
 - Exit code 2 means a required result is incomplete. Resolve the diagnostic rather than treating it as a pass.
 - For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
-- Typed lint checks unchanged workspace source files too, using each snapshot's contained TypeScript projects. In each snapshot, every TypeScript file selected for typed lint must belong to at least one loaded project. Updating only the staged configuration may leave the `HEAD` baseline uncovered.
+- Typed lint checks unchanged workspace source files too, using each snapshot's contained TypeScript projects. In each snapshot, every TypeScript file selected for typed lint must belong to at least one loaded project. Updating only the selected target configuration may leave the baseline snapshot uncovered.
 - For files intentionally outside every TypeScript project, a file override can set `checks.lint.typeInformation` to `"when-available"`. Zedbee then runs basic TypeScript lint without rules that require type information. The default is `"required"`; Zedbee never reduces coverage silently.
-- Intent-to-add entries are excluded as unstaged. Staged Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete with every affected path reported; path-ignore policy is not yet configurable.
+- Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; path-ignore policy is not yet configurable.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
 - If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
 - pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.
