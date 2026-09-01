@@ -81,21 +81,8 @@ function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
   return { path: to, status: "modified", addedRanges: addedRanges(file) };
 }
 
-export async function readStagedChangeSet(
-  git: GitClient,
-  signal?: AbortSignal,
-): Promise<ChangeSet> {
-  const patch = await git.run([
-    "diff",
-    "--cached",
-    "--unified=0",
-    "--no-color",
-    "--no-ext-diff",
-    "--find-renames",
-    "--src-prefix=a/",
-    "--dst-prefix=b/",
-  ], signal === undefined ? {} : { signal });
-  const changedFiles = parseDiff(patch.stdout)
+function changeSetFromPatch(patch: string): ChangeSet {
+  const changedFiles = parseDiff(patch)
     .map(toChangedFile)
     .filter((file): file is ChangedFile => file !== undefined)
     .sort((left, right) => compareCodeUnits(left.path, right.path));
@@ -118,4 +105,48 @@ export async function readStagedChangeSet(
       );
     },
   };
+}
+
+export async function readStagedChangeSet(
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const patch = await git.run(
+    [
+      "diff",
+      "--cached",
+      "--unified=0",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+    ],
+    signal === undefined ? {} : { signal },
+  );
+  return changeSetFromPatch(patch.stdout);
+}
+
+export async function readCommitChangeSet(
+  git: GitClient,
+  baselineCommit: string,
+  targetCommit: string,
+  signal?: AbortSignal,
+): Promise<ChangeSet> {
+  const patch = await git.run(
+    [
+      "diff",
+      "--unified=0",
+      "--no-color",
+      "--no-ext-diff",
+      "--find-renames",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--end-of-options",
+      baselineCommit,
+      targetCommit,
+    ],
+    signal === undefined ? {} : { signal },
+  );
+  return changeSetFromPatch(patch.stdout);
 }

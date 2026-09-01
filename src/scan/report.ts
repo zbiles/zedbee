@@ -20,7 +20,7 @@ export interface ScanReport {
   outcome: "pass" | "blocked" | "incomplete";
   exitCode: 0 | 1 | 2;
   repositoryRoot: string;
-  baseline: "HEAD" | null;
+  baseline: string | null;
   target: "index";
   /** Number of paths in the staged index, or null when change discovery failed. */
   stagedFileCount: number | null;

@@ -18,7 +18,10 @@ import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
 import { GitCommandError } from "../../src/git/errors.js";
-import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import {
+  buildCommitSnapshotPair,
+  buildSnapshotPair,
+} from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import {
   validateReportableSnapshotPath,
@@ -631,5 +634,190 @@ describe("buildSnapshotPair", () => {
       inspection.workspaces.flatMap(({ sourceFiles }) => sourceFiles),
     ).toEqual(["normal.ts"]);
     expect(snapshots.unsupportedEntries).toEqual([]);
+  });
+});
+
+describe("buildCommitSnapshotPair", () => {
+  it("materializes exact committed trees without changing a dirty index or working tree", async () => {
+    const repository = await createGitRepository();
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await repository.write("src/value.ts", "export const value = 2;\n");
+    await repository.write("target-only.ts", "export const target = true;\n");
+    await repository.commitAll("target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await repository.write("src/value.ts", "export const value = 3;\n");
+    await repository.git(["add", "--", "src/value.ts"]);
+    await repository.write("src/value.ts", "export const value = 4;\n");
+    await repository.write("working-only.ts", "export const working = true;\n");
+    const beforeIndex = await repository.git(["write-tree"]);
+    const beforeHead = await repository.git(["rev-parse", "HEAD"]);
+
+    const pair = await buildCommitSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+      baselineCommit,
+      targetCommit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(pair.baselineRef).toBe(baselineCommit);
+    expect(pair.targetRef).toBe(targetCommit);
+    expect(await readFile(join(pair.baselineDir, "src/value.ts"), "utf8")).toBe(
+      "export const value = 1;\n",
+    );
+    expect(await readFile(join(pair.targetDir, "src/value.ts"), "utf8")).toBe(
+      "export const value = 2;\n",
+    );
+    expect(await pathExists(join(pair.targetDir, "target-only.ts"))).toBe(true);
+    expect(await pathExists(join(pair.targetDir, "working-only.ts"))).toBe(
+      false,
+    );
+    expect(await repository.read("src/value.ts")).toBe(
+      "export const value = 4;\n",
+    );
+
+    await pair.cleanup();
+    expect((await repository.git(["write-tree"])).stdout).toBe(
+      beforeIndex.stdout,
+    );
+    expect((await repository.git(["rev-parse", "HEAD"])).stdout).toBe(
+      beforeHead.stdout,
+    );
+  });
+
+  it("classifies target commit submodules, LFS pointers, and binary files", async () => {
+    const repository = await createGitRepository();
+    await repository.write("base.ts", "export const base = true;\n");
+    await repository.commitAll("baseline");
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await repository.write(
+      "large.dat",
+      "version https://git-lfs.github.com/spec/v1\noid sha256:0123456789abcdef\nsize 42\n",
+    );
+    await writeFile(
+      join(repository.root, "binary.dat"),
+      Buffer.from([0x7a, 0x00, 0x62]),
+    );
+    await repository.git(["add", "--", "large.dat", "binary.dat"]);
+    await repository.git([
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${baselineCommit},vendor/demo`,
+    ]);
+    await repository.git(["commit", "--message", "target unsupported inputs"]);
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    const pair = await buildCommitSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+      baselineCommit,
+      targetCommit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(pair.unsupportedEntries).toEqual([
+      { path: "binary.dat", kind: "binary" },
+      { path: "large.dat", kind: "git-lfs-pointer" },
+      { path: "vendor/demo", kind: "submodule" },
+    ]);
+  });
+
+  it("rejects invalid paths from a commit-owned alternate index before checkout", async () => {
+    const calls: string[][] = [];
+    const git = {
+      async run(args: readonly string[]) {
+        calls.push([...args]);
+        if (args[0] === "ls-files") {
+          return {
+            stdout:
+              "100644 0123456789012345678901234567890123456789 0\t../outside.ts\0",
+            stderr: "",
+            exitCode: 0,
+          };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    await expect(
+      buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
+    ).rejects.toMatchObject({ code: "INVALID_INDEX_PATH" });
+    expect(calls.some(([command]) => command === "checkout-index")).toBe(false);
+  });
+
+  it("cleans its temporary root after commit snapshot construction fails", async () => {
+    let snapshotRoot: string | undefined;
+    const git = {
+      async run(args: readonly string[]) {
+        if (args[0] === "checkout-index") {
+          const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+          snapshotRoot = dirname(
+            prefix.slice("--prefix=".length).replace(/[/\\]+$/u, ""),
+          );
+          throw new Error("commit snapshot construction failure");
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    await expect(
+      buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
+    ).rejects.toThrow("commit snapshot construction failure");
+    expect(snapshotRoot).toBeDefined();
+    expect(await pathExists(snapshotRoot!)).toBe(false);
+  });
+
+  it("aborts commit checkout-index and removes its temporary root", async () => {
+    let snapshotRoot: string | undefined;
+    let signalReceived = false;
+    let beginCheckout: (() => void) | undefined;
+    const checkoutStarted = new Promise<void>((resolve) => {
+      beginCheckout = resolve;
+    });
+    const git = {
+      async run(
+        args: readonly string[],
+        options: { signal?: AbortSignal } = {},
+      ) {
+        if (args[0] !== "checkout-index") {
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }
+        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
+        snapshotRoot = dirname(
+          prefix.slice("--prefix=".length).replace(/[/\\]+$/u, ""),
+        );
+        beginCheckout?.();
+        return new Promise<never>((_resolve, reject) => {
+          const abort = () => {
+            signalReceived = true;
+            reject(
+              new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+            );
+          };
+          options.signal?.addEventListener("abort", abort, { once: true });
+        });
+      },
+    } as unknown as GitClient;
+    const controller = new AbortController();
+    const build = buildCommitSnapshotPair(
+      "/repo",
+      git,
+      "baseline-oid",
+      "target-oid",
+      controller.signal,
+    );
+    await checkoutStarted;
+    controller.abort();
+
+    await expect(build).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    expect(signalReceived).toBe(true);
+    expect(snapshotRoot).toBeDefined();
+    expect(await pathExists(snapshotRoot!)).toBe(false);
   });
 });

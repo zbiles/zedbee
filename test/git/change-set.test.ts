@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import {
   mergeLineRanges,
+  readCommitChangeSet,
   readStagedChangeSet,
 } from "../../src/git/change-set.js";
 import { createGitRepository } from "../helpers/git-repository.js";
@@ -102,6 +103,76 @@ describe("readStagedChangeSet", () => {
 
     expect(changeSet.files.has("intent.ts")).toBe(false);
     expect(changeSet.isEmpty).toBe(true);
+  });
+});
+
+describe("readCommitChangeSet", () => {
+  it("reads only branch changes from an immutable commit pair", async () => {
+    const repository = await createGitRepository();
+    await repository.write("rename-old.ts", "line1\nline3\n");
+    await repository.commitAll("base");
+    await repository.git(["checkout", "-b", "feature"]);
+    await repository.git(["mv", "rename-old.ts", "rename-new.ts"]);
+    await repository.write("rename-new.ts", "line1\nline2\nline3\n");
+    await repository.write("branch-only.ts", "export const branch = true;\n");
+    await repository.commitAll("feature changes");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    await repository.git(["checkout", "main"]);
+    await repository.write("main-only.ts", "export const main = true;\n");
+    await repository.commitAll("main advances after divergence");
+    const baselineCommit = (
+      await repository.git(["merge-base", "main", "feature"])
+    ).stdout;
+
+    const changeSet = await readCommitChangeSet(
+      new GitClient(repository.root),
+      baselineCommit,
+      targetCommit,
+    );
+
+    expect([...changeSet.files.values()]).toEqual([
+      {
+        path: "branch-only.ts",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+      {
+        path: "rename-new.ts",
+        previousPath: "rename-old.ts",
+        status: "renamed",
+        addedRanges: [{ start: 2, end: 2 }],
+      },
+    ]);
+    expect(changeSet.files.has("main-only.ts")).toBe(false);
+    expect(changeSet.containsAddedLine("rename-new.ts", 2)).toBe(true);
+  });
+
+  it("passes the validated commit IDs as separate diff arguments", async () => {
+    const calls: string[][] = [];
+    const git = {
+      async run(args: readonly string[]) {
+        calls.push([...args]);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    await readCommitChangeSet(git, "baseline-oid", "target-oid");
+
+    expect(calls).toEqual([
+      [
+        "diff",
+        "--unified=0",
+        "--no-color",
+        "--no-ext-diff",
+        "--find-renames",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        "--end-of-options",
+        "baseline-oid",
+        "target-oid",
+      ],
+    ]);
   });
 });
 

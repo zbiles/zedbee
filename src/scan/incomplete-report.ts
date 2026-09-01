@@ -17,7 +17,7 @@ export interface ScanFailureInput {
 
 export interface ScanReportContext {
   readonly repositoryRoot: string;
-  readonly baseline: "HEAD" | null;
+  readonly baseline: string | null;
   readonly stagedFileCount: number | null;
   readonly startedAt: string;
   readonly durationMs: number;

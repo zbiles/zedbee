@@ -31,7 +31,8 @@ export interface UnsupportedIndexEntry {
 export interface SnapshotPair {
   baselineDir: string;
   targetDir: string;
-  baselineRef: "HEAD" | null;
+  baselineRef: string | null;
+  targetRef?: "index" | string;
   unsupportedEntries: readonly UnsupportedIndexEntry[];
   cleanup(): Promise<void>;
 }
@@ -231,6 +232,126 @@ async function removeIntentToAddPlaceholders(
   }
 }
 
+async function materializeCommitTree(
+  repositoryRoot: string,
+  git: GitClient,
+  commit: string,
+  alternateIndex: string,
+  destination: string,
+  signal?: AbortSignal,
+): Promise<StagedEntry[]> {
+  const gitOptions = signal === undefined ? {} : { signal };
+  const env = { GIT_INDEX_FILE: alternateIndex };
+  await git.run(["read-tree", commit], { env, ...gitOptions });
+  const entries = parseStagedEntries(
+    (
+      await git.run(["ls-files", "--stage", "-z"], {
+        env,
+        ...gitOptions,
+      })
+    ).stdout,
+  );
+  validateStagedEntryPaths(repositoryRoot, entries);
+  await git.run(
+    ["checkout-index", "--all", "--force", `--prefix=${destination}${sep}`],
+    { env, ...gitOptions },
+  );
+  return entries;
+}
+
+export async function buildCommitSnapshotPair(
+  repositoryRoot: string,
+  git: GitClient,
+  baselineCommit: string,
+  targetCommit: string,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  const temporaryParent = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
+  const canonicalParent = await validateSnapshotPath(
+    await realpath(temporaryParent),
+  );
+  const baselineDir = join(canonicalParent, "baseline");
+  const targetDir = join(canonicalParent, "target");
+  const baselineIndex = join(canonicalParent, "baseline-index");
+  const targetIndex = join(canonicalParent, "target-index");
+  let cleaned = false;
+
+  const cleanup = async (): Promise<void> => {
+    if (cleaned) {
+      return;
+    }
+    try {
+      await lstat(canonicalParent);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        cleaned = true;
+        return;
+      }
+      throw error;
+    }
+
+    const validatedParent = await validateSnapshotPath(canonicalParent);
+    if (validatedParent !== canonicalParent) {
+      throw new SnapshotError(
+        "INVALID_TEMP_PATH",
+        "Zedbee refused to clean a temporary path whose identity changed.",
+      );
+    }
+    await rm(canonicalParent, { recursive: true, force: false });
+    cleaned = true;
+  };
+
+  try {
+    await mkdir(baselineDir);
+    await mkdir(targetDir);
+    await materializeCommitTree(
+      repositoryRoot,
+      git,
+      baselineCommit,
+      baselineIndex,
+      baselineDir,
+      signal,
+    );
+    const targetEntries = await materializeCommitTree(
+      repositoryRoot,
+      git,
+      targetCommit,
+      targetIndex,
+      targetDir,
+      signal,
+    );
+    const unsupportedEntries = await classifyUnsupportedEntries(
+      targetDir,
+      targetEntries,
+    );
+
+    return {
+      baselineDir,
+      targetDir,
+      baselineRef: baselineCommit,
+      targetRef: targetCommit,
+      unsupportedEntries,
+      cleanup,
+    };
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch {
+      let temporaryPath: ValidatedSnapshotPath | undefined;
+      try {
+        temporaryPath = await validateSnapshotPath(canonicalParent);
+      } catch {
+        // Changed or inaccessible identities are intentionally unreportable.
+      }
+      throw new SnapshotConstructionCleanupError(
+        safeConstructionError(error),
+        temporaryPath,
+      );
+    }
+    throw error;
+  }
+}
+
 export async function buildSnapshotPair(
   repositoryRoot: string,
   git: GitClient,
@@ -326,6 +447,7 @@ export async function buildSnapshotPair(
       baselineDir,
       targetDir,
       baselineRef,
+      targetRef: "index",
       unsupportedEntries,
       cleanup,
     };

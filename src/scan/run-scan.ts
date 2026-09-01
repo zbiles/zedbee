@@ -311,7 +311,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   let snapshots: SnapshotPair | undefined;
-  let baseline: "HEAD" | null = null;
+  let baseline: string | null = null;
   let stagedFileCount: number | null = null;
   const networkDisclosures: NetworkDisclosure[] = [];
   let activePhase: ActiveScanPhase = "configuration";
