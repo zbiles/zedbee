@@ -268,6 +268,22 @@ describe("release verification contract", () => {
       { outcome: "pass" },
       { exitCode: 0 },
       { checks: [] },
+      {
+        checks: [
+          {
+            checkId: "lint",
+            findings: [{ location: { file: "branch.ts" } }],
+          },
+        ],
+      },
+      {
+        checks: [
+          {
+            checkId: "formatting",
+            findings: [{ location: { file: "other.ts" } }],
+          },
+        ],
+      },
     ]) {
       expect(() =>
         assertReleaseBaseScanReport(

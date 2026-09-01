@@ -203,8 +203,13 @@ async function expectNoSnapshots(snapshotRoot: string): Promise<void> {
 describe("committed base scans", () => {
   it("blocks a vulnerable committed branch change in a clean checkout", async () => {
     const { repository, baseline, target } = await createBaseFixture();
+    const snapshotRoot = await temporaryDirectory("zedbee-blocked-snapshots-");
 
-    const result = await runBaseScan(repository, "main");
+    const result = await runBaseScan(repository, "main", [], {
+      TMPDIR: snapshotRoot,
+      TMP: snapshotRoot,
+      TEMP: snapshotRoot,
+    });
     const report = JSON.parse(result.stdout) as JsonReport;
 
     expect(result.exitCode, result.stderr).toBe(1);
@@ -229,6 +234,44 @@ describe("committed base scans", () => {
         }),
       ]),
     );
+    await expectNoSnapshots(snapshotRoot);
+  }, 30_000);
+
+  it("cleans both commit snapshots after a committed unsupported input makes the scan incomplete", async () => {
+    const { repository, baseline } = await createBaseFixture();
+    await repository.write("src/binary.js", "export\0binary\n");
+    await repository.commitAll("committed unsupported input");
+    const target = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    const snapshotRoot = await temporaryDirectory(
+      "zedbee-incomplete-snapshots-",
+    );
+
+    const result = await runBaseScan(repository, "main", [], {
+      TMPDIR: snapshotRoot,
+      TMP: snapshotRoot,
+      TEMP: snapshotRoot,
+    });
+    const report = JSON.parse(result.stdout) as JsonReport;
+
+    expect(result.exitCode, result.stderr).toBe(2);
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      mode: "base",
+      baseline,
+      target,
+      changedFileCount: 2,
+    });
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          error: expect.objectContaining({
+            code: "UNSUPPORTED_BINARY_INPUT",
+          }),
+        }),
+      ]),
+    );
+    await expectNoSnapshots(snapshotRoot);
   }, 30_000);
 
   it("reports no index changes for the same clean checkout without --base", async () => {
