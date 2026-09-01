@@ -7,6 +7,28 @@ function maxLineWidth(frame: string): number {
   return Math.max(...frame.split("\n").map((line) => [...line].length));
 }
 
+function collapsedWhitespace(frame: string): string {
+  return frame.replaceAll(/\s+/gu, " ");
+}
+
+function baseReport() {
+  return createReport({
+    mode: "base",
+    baseline: "a".repeat(40),
+    target: "b".repeat(40),
+    requestedBase: "origin/main",
+    changedFileCount: 0,
+    checks: [],
+    summary: {
+      passed: 0,
+      warnings: 0,
+      failed: 0,
+      incomplete: 0,
+      findings: [],
+    },
+  });
+}
+
 describe("OutcomeStrip", () => {
   it("preserves the exact failure copy and horizontal brand ordering", () => {
     const report = createReport({
@@ -82,21 +104,7 @@ describe("OutcomeStrip", () => {
   });
 
   it("renders committed source identity and empty-base copy", () => {
-    const report = createReport({
-      mode: "base",
-      baseline: "a".repeat(40),
-      target: "b".repeat(40),
-      requestedBase: "origin/main",
-      changedFileCount: 0,
-      checks: [],
-      summary: {
-        passed: 0,
-        warnings: 0,
-        failed: 0,
-        incomplete: 0,
-        findings: [],
-      },
-    });
+    const report = baseReport();
 
     const frame = render(
       <OutcomeStrip report={report} width={160} color={false} />,
@@ -106,8 +114,24 @@ describe("OutcomeStrip", () => {
     expect(frame).toContain(
       "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
     );
+    expect(frame).toContain("██");
     expect(frame).not.toMatch(/staged/iu);
   });
+
+  it.each([40, 60, 72, 78, 80, 96])(
+    "retains complete base provenance and yields decorative art at %i columns",
+    (width) => {
+      const frame = render(
+        <OutcomeStrip report={baseReport()} width={width} color={false} />,
+      ).lastFrame()!;
+
+      expect(collapsedWhitespace(frame)).toContain(
+        "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
+      );
+      expect(frame).not.toContain("██");
+      expect(maxLineWidth(frame)).toBeLessThanOrEqual(width);
+    },
+  );
 
   it("does not mistake disabled checks for an empty staged index", () => {
     const report = Object.assign(

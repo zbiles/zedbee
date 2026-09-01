@@ -4,6 +4,7 @@ import {
   emptyChangesCopy,
   scanSourceIdentityLine,
 } from "../reporting/source-identity.js";
+import { terminalCellWidth } from "../renderers/terminal-cells.js";
 import { PixelBee } from "./pixel-bee.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -88,10 +89,14 @@ export function OutcomeStrip({
 }) {
   const narrow = width < 96;
   const [headline, subline, counts] = copyFor(report, narrow);
-  const sourceIdentity =
-    width >= 72 ? scanSourceIdentityLine(report) : undefined;
-  const showMotion = width >= 80;
-  const showBee = width >= 52;
+  const sourceIdentity = scanSourceIdentityLine(report);
+  const prefersMotion = width >= 80;
+  const preferredBeeWidth = prefersMotion ? 53 : width >= 52 ? 20 : 0;
+  const showBee =
+    preferredBeeWidth > 0 &&
+    (sourceIdentity === undefined ||
+      width - 3 - preferredBeeWidth >= terminalCellWidth(sourceIdentity));
+  const showMotion = showBee && prefersMotion;
   const beeWidth = showMotion ? 53 : showBee ? 20 : 0;
   const copyWidth = Math.max(1, width - 3 - beeWidth);
 
