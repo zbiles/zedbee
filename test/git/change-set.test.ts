@@ -177,8 +177,11 @@ describe("readCommitChangeSet", () => {
 
   it.each([
     ["staged", (git: GitClient) => readStagedChangeSet(git)],
-    ["commit", (git: GitClient) =>
-      readCommitChangeSet(git, "baseline-oid", "target-oid")],
+    [
+      "commit",
+      (git: GitClient) =>
+        readCommitChangeSet(git, "baseline-oid", "target-oid"),
+    ],
   ])("fails closed when %s diff output is not a patch", async (_kind, read) => {
     const git = {
       async run() {
@@ -186,7 +189,9 @@ describe("readCommitChangeSet", () => {
       },
     } as unknown as GitClient;
 
-    await expect(read(git)).rejects.toThrow("Git returned invalid diff output.");
+    await expect(read(git)).rejects.toThrow(
+      "Git returned invalid diff output.",
+    );
   });
 
   it("fails closed when a diff hunk is truncated", async () => {
@@ -195,6 +200,23 @@ describe("readCommitChangeSet", () => {
         return {
           stdout:
             "diff --git a/value.ts b/value.ts\nindex 1111111..2222222 100644\n--- a/value.ts\n+++ b/value.ts\n@@ -1 +1 @@\n",
+          stderr: "",
+          exitCode: 0,
+        };
+      },
+    } as unknown as GitClient;
+
+    await expect(readStagedChangeSet(git)).rejects.toThrow(
+      "Git returned invalid diff output.",
+    );
+  });
+
+  it("fails closed when sections share a normalized target path", async () => {
+    const git = {
+      async run() {
+        return {
+          stdout:
+            "diff --git a/value.ts b/value.ts\nindex 1111111..2222222 100644\n--- a/value.ts\n+++ b/value.ts\n@@ -1 +1 @@\n-old\n+first\ndiff --git a/renamed.ts b/value.ts\nindex 3333333..4444444 100644\n--- a/renamed.ts\n+++ b/value.ts\n@@ -1 +4 @@\n-old\n+second\n",
           stderr: "",
           exitCode: 0,
         };

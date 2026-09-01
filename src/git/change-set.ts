@@ -148,6 +148,11 @@ function changeSetFromPatch(patch: string): ChangeSet {
       return changedFile;
     })
     .sort((left, right) => compareCodeUnits(left.path, right.path));
+  if (
+    new Set(changedFiles.map((file) => file.path)).size !== changedFiles.length
+  ) {
+    return invalidPatch();
+  }
 
   return changeSetFromFiles(changedFiles);
 }
