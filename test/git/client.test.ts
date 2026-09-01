@@ -1,9 +1,68 @@
-import { realpath } from "node:fs/promises";
+import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 describe("GitClient", () => {
+  it.runIf(process.platform !== "win32")(
+    "does not execute a project dependency named git",
+    async () => {
+      const repository = await createGitRepository();
+      const binDirectory = join(repository.root, "node_modules", ".bin");
+      const marker = join(repository.root, "FAKE_GIT_EXECUTED");
+      const fakeGit = join(binDirectory, "git");
+      await mkdir(binDirectory, { recursive: true });
+      await writeFile(
+        fakeGit,
+        `#!/bin/sh\nprintf executed > '${marker}'\nprintf 'fake-git\\n'\n`,
+      );
+      await chmod(fakeGit, 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${binDirectory}${delimiter}${originalPath ?? ""}`;
+
+      try {
+        const output = await new GitClient(repository.root).run(["--version"]);
+
+        expect(output.stdout).toMatch(/^git version /u);
+        await expect(realpath(marker)).rejects.toThrow();
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "does not trust another repository directory when invoked from a nested path",
+    async () => {
+      const repository = await createGitRepository();
+      const nestedDirectory = join(repository.root, "packages", "app");
+      const binDirectory = join(repository.root, "tools");
+      const marker = join(repository.root, "NESTED_FAKE_GIT_EXECUTED");
+      const fakeGit = join(binDirectory, "git");
+      await mkdir(nestedDirectory, { recursive: true });
+      await mkdir(binDirectory, { recursive: true });
+      await writeFile(
+        fakeGit,
+        `#!/bin/sh\nprintf executed > '${marker}'\nprintf 'nested-fake-git\\n'\n`,
+      );
+      await chmod(fakeGit, 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${binDirectory}${delimiter}${originalPath ?? ""}`;
+
+      try {
+        const output = await new GitClient(nestedDirectory).run(["--version"]);
+
+        expect(output.stdout).toMatch(/^git version /u);
+        await expect(realpath(marker)).rejects.toThrow();
+      } finally {
+        if (originalPath === undefined) delete process.env.PATH;
+        else process.env.PATH = originalPath;
+      }
+    },
+  );
+
   it("passes filename arguments literally and returns NUL-delimited stdout", async () => {
     const repository = await createGitRepository();
     const filename = "odd ; $(name).ts";

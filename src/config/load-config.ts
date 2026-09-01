@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join, relative, sep } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
+import type { GitClient } from "../git/client.js";
 import { resolveConfig } from "./profiles.js";
 import {
   CHECK_IDS,
@@ -19,6 +20,8 @@ const UNSUPPORTED_CONFIG_FILENAMES = [
   ".zedbeerc.ts",
   ".zedbeerc.json",
 ] as const;
+const INDEX_QUERY_OUTPUT_LIMIT_BYTES = 64 * 1024;
+const CONFIG_CONTENT_LIMIT_BYTES = 1024 * 1024;
 
 export type ConfigErrorCode = "CONFIG_INVALID" | "CONFIG_UNSUPPORTED";
 
@@ -215,6 +218,13 @@ export async function loadConfig(
   }
 
   const source = await readFile(configPath, "utf8");
+  return parseConfigSource(source, configPath);
+}
+
+function parseConfigSource(
+  source: string,
+  configPath: string,
+): ResolvedConfig {
   const parseErrors: ParseError[] = [];
   const value: unknown = parse(source, parseErrors, {
     allowTrailingComma: true,
@@ -239,4 +249,213 @@ export async function loadConfig(
   }
 
   return resolveConfig(parsed.data, configPath);
+}
+
+interface IndexEntry {
+  readonly mode: string;
+  readonly objectId: string;
+  readonly stage: string;
+  readonly path: string;
+}
+
+const INTENT_TO_ADD_FLAG = 0x20000000;
+const INDEX_DEBUG_METADATA =
+  /^  ctime: \d+:\d+\n  mtime: \d+:\d+\n  dev: \d+\tino: \d+\n  uid: \d+\tgid: \d+\n  size: \d+\tflags: ([\da-f]+)(?:\n|$)/u;
+
+function parseIntentToAddPaths(
+  output: string,
+  configPath: string,
+): ReadonlySet<string> {
+  const paths = new Set<string>();
+  let remaining = output;
+  while (remaining !== "") {
+    const pathEnd = remaining.indexOf("\0");
+    if (pathEnd === -1) {
+      throw new ConfigError(
+        "CONFIG_INVALID",
+        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
+        configPath,
+      );
+    }
+    const path = remaining.slice(0, pathEnd);
+    const metadata = remaining.slice(pathEnd + 1);
+    const match = INDEX_DEBUG_METADATA.exec(metadata);
+    if (match === null) {
+      throw new ConfigError(
+        "CONFIG_INVALID",
+        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
+        configPath,
+      );
+    }
+    if ((Number.parseInt(match[1]!, 16) & INTENT_TO_ADD_FLAG) !== 0) {
+      paths.add(path);
+    }
+    remaining = metadata.slice(match[0].length);
+  }
+  return paths;
+}
+
+function repositoryRelativePath(
+  repositoryRoot: string,
+  path: string,
+): string | undefined {
+  const fromRoot = relative(repositoryRoot, path);
+  if (
+    fromRoot === "" ||
+    isAbsolute(fromRoot) ||
+    fromRoot === ".." ||
+    fromRoot.startsWith(`..${sep}`)
+  ) {
+    return undefined;
+  }
+  return fromRoot.split(sep).join("/");
+}
+
+function parseIndexEntries(output: string, configPath: string): IndexEntry[] {
+  return output
+    .split("\0")
+    .filter((record) => record !== "")
+    .map((record) => {
+      const separator = record.indexOf("\t");
+      const header = separator === -1 ? "" : record.slice(0, separator);
+      const path = separator === -1 ? "" : record.slice(separator + 1);
+      const match = /^(\d{6}) ([0-9a-f]+) ([0-3])$/u.exec(header);
+      if (match === null || path === "") {
+        throw new ConfigError(
+          "CONFIG_INVALID",
+          `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
+          configPath,
+        );
+      }
+      return {
+        mode: match[1]!,
+        objectId: match[2]!,
+        stage: match[3]!,
+        path,
+      };
+    });
+}
+
+function literalPathspec(path: string): string {
+  return `:(literal)${path}`;
+}
+
+async function indexedEntries(
+  git: GitClient,
+  paths: readonly string[],
+  configPath: string,
+  signal?: AbortSignal,
+): Promise<ReadonlyMap<string, readonly IndexEntry[]>> {
+  const pathspecs = paths.map(literalPathspec);
+  const [result, debug] = await Promise.all([
+    git.run(["ls-files", "--stage", "-z", "--", ...pathspecs], {
+      maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
+      ...(signal === undefined ? {} : { signal }),
+    }),
+    git.run(["ls-files", "--debug", "-z", "--", ...pathspecs], {
+      maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
+      ...(signal === undefined ? {} : { signal }),
+    }),
+  ]);
+  const intentToAdd = parseIntentToAddPaths(debug.stdout, configPath);
+  const grouped = new Map<string, IndexEntry[]>();
+  for (const entry of parseIndexEntries(result.stdout, configPath)) {
+    if (intentToAdd.has(entry.path)) continue;
+    const entries = grouped.get(entry.path) ?? [];
+    entries.push(entry);
+    grouped.set(entry.path, entries);
+  }
+  return grouped;
+}
+
+function singleRegularEntry(
+  entries: readonly IndexEntry[],
+  configPath: string,
+): IndexEntry {
+  const entry = entries[0];
+  if (
+    entries.length !== 1 ||
+    entry === undefined ||
+    entry.stage !== "0" ||
+    (entry.mode !== "100644" && entry.mode !== "100755")
+  ) {
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Zedbee configuration ${basename(configPath)} must be a regular resolved file in the Git index.`,
+      configPath,
+    );
+  }
+  return entry;
+}
+
+export async function loadConfigFromIndex(
+  repositoryRoot: string,
+  git: GitClient,
+  explicitConfigPath?: string,
+  signal?: AbortSignal,
+): Promise<ResolvedConfig> {
+  const configPath =
+    explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
+  const repositoryPath = repositoryRelativePath(repositoryRoot, configPath);
+  if (repositoryPath === undefined) {
+    return loadConfig(repositoryRoot, explicitConfigPath);
+  }
+
+  const candidatePaths =
+    explicitConfigPath === undefined
+      ? [CONFIG_FILENAME, ...UNSUPPORTED_CONFIG_FILENAMES]
+      : [repositoryPath];
+  let entries: ReadonlyMap<string, readonly IndexEntry[]>;
+  try {
+    entries = await indexedEntries(
+      git,
+      candidatePaths,
+      configPath,
+      signal,
+    );
+  } catch (error) {
+    if (signal?.aborted === true || error instanceof ConfigError) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
+      configPath,
+    );
+  }
+  const selectedEntries = entries.get(repositoryPath) ?? [];
+  if (selectedEntries.length === 0) {
+    if (explicitConfigPath !== undefined) {
+      throw new ConfigError(
+        "CONFIG_INVALID",
+        `Zedbee configuration file ${basename(configPath)} does not exist in the Git index.`,
+        configPath,
+      );
+    }
+    for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
+      if ((entries.get(filename) ?? []).length > 0) {
+        throw new ConfigError(
+          "CONFIG_UNSUPPORTED",
+          `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
+          join(repositoryRoot, filename),
+        );
+      }
+    }
+    return resolveConfig(undefined);
+  }
+
+  const entry = singleRegularEntry(selectedEntries, configPath);
+  let source: Awaited<ReturnType<GitClient["run"]>>;
+  try {
+    source = await git.run(["cat-file", "blob", entry.objectId], {
+      maxOutputBytes: CONFIG_CONTENT_LIMIT_BYTES,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (error) {
+    if (signal?.aborted === true) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the Git index.`,
+      configPath,
+    );
+  }
+  return parseConfigSource(source.stdout, configPath);
 }

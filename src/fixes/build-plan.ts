@@ -7,7 +7,7 @@ import {
   createFilePolicyResolver,
   type FilePolicyResolver,
 } from "../config/file-policy.js";
-import { loadConfig } from "../config/load-config.js";
+import { loadConfigFromIndex } from "../config/load-config.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { ChangeSet } from "../git/change-set.js";
@@ -48,7 +48,9 @@ import {
 export interface BuildFixPlanDependencies {
   loadConfig(
     repositoryRoot: string,
+    git: GitClient,
     configPath?: string,
+    signal?: AbortSignal,
   ): Promise<ResolvedConfig>;
   createGitClient(repositoryRoot: string): GitClient;
   readChangeSet(git: GitClient): Promise<ChangeSet>;
@@ -86,7 +88,7 @@ export class FixPlanCleanupError extends Error {
 }
 
 const DEFAULT_DEPENDENCIES: BuildFixPlanDependencies = {
-  loadConfig,
+  loadConfig: loadConfigFromIndex,
   createGitClient: (repositoryRoot) => new GitClient(repositoryRoot),
   readChangeSet: readStagedChangeSet,
   buildSnapshots: buildSnapshotPair,
@@ -680,11 +682,13 @@ export async function buildFixPlan(
   let snapshots: SnapshotPair | undefined;
   try {
     signal.throwIfAborted();
+    const git = dependencies.createGitClient(options.repositoryRoot);
     const config = await dependencies.loadConfig(
       options.repositoryRoot,
+      git,
       options.configPath,
+      signal,
     );
-    const git = dependencies.createGitClient(options.repositoryRoot);
     const changeSet = await dependencies.readChangeSet(git);
     const policyForFile = createFilePolicyResolver(config, changeSet);
     if (changeSet.isEmpty) {

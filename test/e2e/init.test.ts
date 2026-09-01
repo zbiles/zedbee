@@ -186,6 +186,9 @@ describe("packaged init command", () => {
       /managed-engine|gitleaks|osv-scanner|offline-database/iu,
     );
 
+    expect(
+      (await repository.git(["add", "--", ".zedbeerc.jsonc"])).exitCode,
+    ).toBe(0);
     const canary = `ghp_${"a".repeat(36)}`;
     await repository.write(
       "src/credential.ts",

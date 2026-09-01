@@ -624,6 +624,54 @@ describe("buildFixPlan", () => {
     ).rejects.toThrow("supported managed fix check");
   });
 
+  it("uses the indexed configuration when the working copy disables a fix", async () => {
+    const repository = await createGitRepository(
+      "zedbee-fix-indexed-config-",
+    );
+    const strictConfig = {
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "error",
+        lint: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+      },
+    } as const;
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify(strictConfig)}\n`,
+    );
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value=2\n");
+    await repository.git(["add", "--", ".zedbeerc.jsonc", "src/value.js"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        ...strictConfig,
+        checks: { ...strictConfig.checks, formatting: "off" },
+      })}\n`,
+    );
+
+    const plan = await buildFixPlan({
+      repositoryRoot: repository.root,
+      selectedChecks: ["formatting"],
+    });
+
+    expect(plan.candidates).toEqual([
+      expect.objectContaining({
+        kind: "format-file",
+        checkId: "formatting",
+        file: "src/value.js",
+      }),
+    ]);
+  });
+
   it("collects staged formatter and lint fixes without changing index or working bytes", async () => {
     const repository = await createGitRepository(
       "zedbee-fix-plan-integration-",
@@ -652,7 +700,7 @@ describe("buildFixPlan", () => {
       }),
     );
     await repository.write("src/value.js", staged);
-    await repository.git(["add", "--", "src/value.js"]);
+    await repository.git(["add", "--", ".zedbeerc.jsonc", "src/value.js"]);
     await repository.write("src/value.js", working);
     const beforeIndex = await repository.git(["show", ":src/value.js"]);
     const beforeStatus = await repository.git(["status", "--porcelain"]);
@@ -724,7 +772,13 @@ describe("buildFixPlan", () => {
     );
     await repository.write("src/safe.js", staged);
     await repository.write("src/overlap.js", staged);
-    await repository.git(["add", "--", "src/safe.js", "src/overlap.js"]);
+    await repository.git([
+      "add",
+      "--",
+      ".zedbeerc.jsonc",
+      "src/safe.js",
+      "src/overlap.js",
+    ]);
     await repository.write("src/overlap.js", overlappingWorking);
 
     const prepared = await buildFixPlan({

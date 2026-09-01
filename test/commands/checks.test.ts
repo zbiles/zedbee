@@ -164,6 +164,42 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 describe("executeChecksCommand", () => {
+  it("describes the indexed policy when the working configuration differs", async () => {
+    const repository = await createGitRepository();
+    const indexedConfig = {
+      schemaVersion: 1,
+      profile: "fast",
+      checks: { formatting: "error" },
+    } as const;
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify(indexedConfig)}\n`,
+    );
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value=2\n");
+    await repository.git(["add", "--", "src/value.js"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        ...indexedConfig,
+        checks: { formatting: "off" },
+      })}\n`,
+    );
+    const io = terminal();
+
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(result.checks.find(({ id }) => id === "formatting")?.severity).toBe(
+      "error",
+    );
+  });
+
   it.each([
     {
       name: "matching always override",

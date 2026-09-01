@@ -36,6 +36,127 @@ function lintResult(): CheckResult {
 }
 
 describe("partially staged reporting", () => {
+  it("uses the indexed configuration when the working copy weakens it", async () => {
+    const repository = await createGitRepository();
+    const strictConfig = {
+      schemaVersion: 1,
+      profile: "fast",
+      checks: {
+        formatting: "error",
+        lint: "off",
+        cyclomaticComplexity: "off",
+        readabilityComplexity: "off",
+        structuralSecurity: "off",
+        reactCorrectness: "off",
+        reactAccessibility: "off",
+      },
+    } as const;
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify(strictConfig)}\n`,
+    );
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value=2\n");
+    await repository.git(["add", "--", "src/value.js"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        ...strictConfig,
+        checks: { ...strictConfig.checks, formatting: "off" },
+      })}\n`,
+    );
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report.outcome).toBe("blocked");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "formatting",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              location: expect.objectContaining({ file: "src/value.js" }),
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("uses recommended defaults when the index has no configuration", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.commitAll("baseline without config");
+    await repository.write("src/value.js", "export const value=2\n");
+    await repository.git(["add", "--", "src/value.js"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast","checks":{"formatting":"off"}}\n',
+    );
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report.outcome).toBe("blocked");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "formatting",
+          findings: expect.arrayContaining([
+            expect.objectContaining({
+              location: expect.objectContaining({ file: "src/value.js" }),
+            }),
+          ]),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects an oversized indexed configuration as invalid", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value = 2;\n");
+    await repository.write(".zedbeerc.jsonc", " ".repeat(1024 * 1024 + 1));
+    await repository.git(["add", "--", ".zedbeerc.jsonc", "src/value.js"]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      checks: [{ error: { code: "CONFIG_INVALID" } }],
+    });
+  });
+
+  it("treats an intent-to-add configuration as absent", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value=2\n");
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast","checks":{"formatting":"off"}}\n',
+    );
+    await repository.git(["add", "--intent-to-add", "--", ".zedbeerc.jsonc"]);
+    await repository.git(["add", "--", "src/value.js"]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report.outcome).toBe("blocked");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "formatting",
+          findings: expect.arrayContaining([expect.any(Object)]),
+        }),
+      ]),
+    );
+  });
+
   it("attaches source only from the staged target snapshot", async () => {
     const repository = await createGitRepository();
     await repository.write(

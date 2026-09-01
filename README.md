@@ -76,6 +76,8 @@ remain manual. Review, stage, and rescan after applying; see the
 
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated `HEAD` and index snapshots with Git plumbing and cleans them after every outcome. Source excerpts therefore come from the exact indexed content and line, never from a later working-tree edit.
 
+`zedbee scan`, `zedbee fix`, and `zedbee checks` also read repository configuration from the Git index. A newly staged `.zedbeerc.jsonc` takes effect immediately; an unstaged or untracked copy cannot weaken the policy applied to staged code. When the index has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
+
 An intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. A repository ignore system for intentionally unsupported staged paths is deferred beyond v1.
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by staged work.

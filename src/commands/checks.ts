@@ -10,7 +10,7 @@ import type {
   CheckDescription,
   EffectiveSettingDescription,
 } from "../checks/description.js";
-import { loadConfig } from "../config/load-config.js";
+import { loadConfigFromIndex } from "../config/load-config.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -279,7 +279,12 @@ const DEFAULT_DEPENDENCIES: ChecksCommandDependencies = {
     return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
       .stdout;
   },
-  loadConfig,
+  loadConfig: (repositoryRoot, configPath) =>
+    loadConfigFromIndex(
+      repositoryRoot,
+      new GitClient(repositoryRoot),
+      configPath,
+    ),
   inspectChecks: inspectConfiguredChecks,
 };
 

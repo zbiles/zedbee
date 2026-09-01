@@ -17,7 +17,10 @@ import { secretsAdapter } from "../checks/secrets/adapter.js";
 import { structuralSecurityAdapter } from "../checks/structural-security/adapter.js";
 import { typescriptAdapter } from "../checks/typescript/adapter.js";
 import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
-import { ConfigError, loadConfig } from "../config/load-config.js";
+import {
+  ConfigError,
+  loadConfigFromIndex,
+} from "../config/load-config.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
@@ -67,7 +70,9 @@ import {
 export interface RunScanDependencies {
   loadConfig(
     repositoryRoot: string,
+    git: GitClient,
     configPath?: string,
+    signal?: AbortSignal,
   ): Promise<ResolvedConfig>;
   createGitClient(
     repositoryRoot: string,
@@ -125,7 +130,7 @@ export const DEFAULT_CHECK_ADAPTERS: readonly CheckAdapter[] = Object.freeze([
 ]);
 
 const DEFAULT_DEPENDENCIES: RunScanDependencies = {
-  loadConfig,
+  loadConfig: loadConfigFromIndex,
   createGitClient: (repositoryRoot, options) =>
     new GitClient(repositoryRoot, options),
   readChangeSet: readStagedChangeSet,
@@ -333,9 +338,12 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
 
   try {
     activePhase = "configuration";
+    const bootstrapGit = dependencies.createGitClient(options.repositoryRoot);
     const config = await dependencies.loadConfig(
       options.repositoryRoot,
+      bootstrapGit,
       options.configPath,
+      options.signal,
     );
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),

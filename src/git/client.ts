@@ -1,3 +1,14 @@
+import { constants } from "node:fs";
+import { access, lstat, realpath, stat } from "node:fs/promises";
+import {
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { execa } from "execa";
 import { GitCommandError } from "./errors.js";
 import type { ScanResourcePolicy } from "../scan/resource-policy.js";
@@ -25,6 +36,138 @@ export interface GitClientOptions {
   ) => Promise<GitOutput>;
 }
 
+interface ResolvedGitCommand {
+  readonly executable: string;
+  readonly path: string;
+}
+
+function pathValue(
+  environment: Readonly<Record<string, string | undefined>>,
+): string {
+  const entry = Object.entries(environment).find(
+    ([key]) => key.toLowerCase() === "path",
+  );
+  return entry?.[1] ?? "";
+}
+
+function containsNodeModulesBin(path: string): boolean {
+  const components = path
+    .split(/[\\/]+/u)
+    .filter((component) => component !== "")
+    .map((component) => component.toLowerCase());
+  return components.some(
+    (component, index) =>
+      component === "node_modules" && components[index + 1] === ".bin",
+  );
+}
+
+function isContainedPath(root: string, candidate: string): boolean {
+  const fromRoot = relative(root, candidate);
+  return (
+    fromRoot === "" ||
+    (!isAbsolute(fromRoot) &&
+      fromRoot !== ".." &&
+      !fromRoot.startsWith(`..${sep}`))
+  );
+}
+
+function executableNames(
+  environment: Readonly<Record<string, string | undefined>>,
+): readonly string[] {
+  if (process.platform !== "win32") return ["git"];
+  const configured = Object.entries(environment).find(
+    ([key]) => key.toLowerCase() === "pathext",
+  )?.[1];
+  const extensions = (configured ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .filter((extension) => extension !== "")
+    .map((extension) => extension.toLowerCase());
+  return [...new Set(extensions)].map((extension) => `git${extension}`);
+}
+
+async function canonicalDirectory(path: string): Promise<string | undefined> {
+  if (path === "" || !isAbsolute(path) || containsNodeModulesBin(path)) {
+    return undefined;
+  }
+  try {
+    const canonical = await realpath(path);
+    return containsNodeModulesBin(canonical) ? undefined : canonical;
+  } catch {
+    return undefined;
+  }
+}
+
+async function repositoryTrustRoot(path: string): Promise<string> {
+  const start = await realpath(resolve(path));
+  let current = start;
+  while (true) {
+    try {
+      await lstat(join(current, ".git"));
+      return current;
+    } catch {
+      const parent = dirname(current);
+      if (parent === current) return start;
+      current = parent;
+    }
+  }
+}
+
+async function resolveGitCommand(repositoryRoot: string): Promise<ResolvedGitCommand> {
+  const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
+  const safeDirectories: string[] = [];
+  for (const entry of pathValue(process.env).split(delimiter)) {
+    const directory = await canonicalDirectory(entry);
+    if (
+      directory === undefined ||
+      isContainedPath(canonicalRoot, directory) ||
+      safeDirectories.includes(directory)
+    ) {
+      continue;
+    }
+    safeDirectories.push(directory);
+  }
+
+  for (const directory of safeDirectories) {
+    for (const name of executableNames(process.env)) {
+      const candidate = join(directory, name);
+      try {
+        const canonical = await realpath(candidate);
+        const metadata = await stat(canonical);
+        if (
+          !metadata.isFile() ||
+          containsNodeModulesBin(canonical) ||
+          isContainedPath(canonicalRoot, canonical)
+        ) {
+          continue;
+        }
+        await access(
+          canonical,
+          process.platform === "win32" ? constants.F_OK : constants.X_OK,
+        );
+        return { executable: canonical, path: safeDirectories.join(delimiter) };
+      } catch {
+        // Continue to the next trusted PATH candidate.
+      }
+    }
+  }
+  throw new Error("No trusted Git executable is available.");
+}
+
+function commandEnvironment(
+  safePath: string,
+  overrides: Readonly<Record<string, string>> | undefined,
+): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...(overrides ?? {}),
+  };
+  for (const key of Object.keys(environment)) {
+    if (key.toLowerCase() === "path") delete environment[key];
+  }
+  environment.PATH = safePath;
+  return environment;
+}
+
 function isAborted(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true;
 }
@@ -39,10 +182,17 @@ function isOutputLimitExceeded(error: unknown): boolean {
 }
 
 export class GitClient {
+  private gitCommand: Promise<ResolvedGitCommand> | undefined;
+
   constructor(
     readonly repositoryRoot: string,
     private readonly clientOptions: GitClientOptions = {},
   ) {}
+
+  private resolvedGitCommand(): Promise<ResolvedGitCommand> {
+    this.gitCommand ??= resolveGitCommand(this.repositoryRoot);
+    return this.gitCommand;
+  }
 
   async run(
     args: readonly string[],
@@ -91,14 +241,16 @@ export class GitClient {
         }
         return output;
       }
-      const result = await execa("git", args, {
+      const command = await this.resolvedGitCommand();
+      const result = await execa(command.executable, args, {
         cwd: options.cwd ?? this.repositoryRoot,
         reject: false,
         shell: false,
         stdin: "ignore",
         forceKillAfterDelay: 2_000,
+        extendEnv: false,
+        env: commandEnvironment(command.path, options.env),
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
-        ...(options.env === undefined ? {} : { env: { ...options.env } }),
         cancelSignal: signal,
       });
 

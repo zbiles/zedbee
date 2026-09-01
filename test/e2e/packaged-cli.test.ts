@@ -502,6 +502,7 @@ describe("packaged Zedbee CLI", () => {
       ],
     } as const;
     await repository.write(".zedbeerc.jsonc", `${JSON.stringify(config)}\n`);
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
 
     const shippedSchema = JSON.parse(
       await repository.read("node_modules/zedbee/schema/zedbee.schema.json"),
@@ -832,6 +833,7 @@ describe("packaged Zedbee CLI", () => {
     await repository.write("value.ts", "export const value = 1;\n");
     await repository.git(["add", "--", "value.ts"]);
     await repository.write(".zedbeerc.jsonc", '{"schemaVersion":');
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
 
     const result = await runZedbee(repository.root, "sarif");
     const report = JSON.parse(result.stdout) as {
