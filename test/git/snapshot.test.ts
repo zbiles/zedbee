@@ -36,6 +36,7 @@ import { DEFAULT_GIT_OUTPUT_LIMIT_BYTES } from "../../src/scan/resource-policy.j
 import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
+  countSnapshotFileLines,
   type SnapshotPair,
 } from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
@@ -1304,6 +1305,30 @@ describe("buildCommitSnapshotPair", () => {
       { path: "large.dat", kind: "git-lfs-pointer" },
       { path: "vendor/demo", kind: "submodule" },
     ]);
+  });
+
+  it("classifies a binary baseline and counts target text lines with constant memory", async () => {
+    const repository = await createGitRepository();
+    await writeFile(join(repository.root, "value.dat"), Buffer.alloc(4096, 0));
+    await repository.commitAll("binary baseline");
+    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write("value.dat", "one\ntwo");
+    await repository.commitAll("text target");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    const pair = await buildCommitSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+      baselineCommit,
+      targetCommit,
+    );
+    onTestFinished(pair.cleanup);
+
+    expect(pair.baselineUnsupportedEntries).toEqual([
+      { path: "value.dat", kind: "binary" },
+    ]);
+    expect(pair.unsupportedEntries).toEqual([]);
+    expect(await countSnapshotFileLines(pair.targetDir, "value.dat")).toBe(2);
   });
 
   it("rejects invalid commit-tree paths before reading blobs", async () => {

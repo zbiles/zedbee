@@ -29,6 +29,7 @@ import { summarizeChecks } from "../core/summarize.js";
 import {
   addCommitLineRanges,
   addStagedLineRanges,
+  addWholeFileLineRanges,
   discoverCommitChangeSet,
   discoverStagedChangeSet,
   readCommitChangeSet,
@@ -46,6 +47,7 @@ import { resolveScanResourcePolicy } from "./resource-policy.js";
 import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
+  countSnapshotFileLines,
   SnapshotConstructionCleanupError,
   SnapshotError,
   type SnapshotPair,
@@ -622,6 +624,22 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           const excludedPaths = new Set(
             snapshots.unsupportedEntries.map((entry) => entry.path),
           );
+          const baselineUnsupportedPaths = new Set(
+            (snapshots.baselineUnsupportedEntries ?? []).map(
+              (entry) => entry.path,
+            ),
+          );
+          const wholeFilePaths = [...changeSet.files.values()]
+            .filter((file) => {
+              const baselinePath = file.previousPath ?? file.path;
+              return (
+                file.status !== "deleted" &&
+                !excludedPaths.has(file.path) &&
+                baselineUnsupportedPaths.has(baselinePath)
+              );
+            })
+            .map((file) => file.path);
+          for (const path of wholeFilePaths) excludedPaths.add(path);
           changeSet =
             baseComparison === undefined
               ? await dependencies.addIndexLineRanges!(
@@ -638,6 +656,18 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
                   baseComparison.targetCommit,
                   options.signal,
                 );
+          if (wholeFilePaths.length > 0) {
+            const lineCounts = new Map<string, number>();
+            for (const path of wholeFilePaths) {
+              const count = await countSnapshotFileLines(
+                snapshots.targetDir,
+                path,
+                options.signal,
+              );
+              if (count !== undefined) lineCounts.set(path, count);
+            }
+            changeSet = addWholeFileLineRanges(changeSet, lineCounts);
+          }
         }
         activePhase = "baseline-inspection";
         const baselineInspection = await dependencies.inspectRepository(

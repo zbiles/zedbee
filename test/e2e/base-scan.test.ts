@@ -316,6 +316,81 @@ describe("committed base scans", () => {
     });
   }, 30_000);
 
+  it("does not force a large binary baseline through the bounded text diff", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        resources: { git: { outputLimitBytes: 1024 } },
+        checks: {
+          formatting: "error",
+          lint: "off",
+          types: "off",
+          cyclomaticComplexity: "off",
+          readabilityComplexity: "off",
+          structuralSecurity: "off",
+          secrets: "off",
+          duplication: "off",
+          dependencyArchitecture: "off",
+          deadCode: "off",
+          reactCorrectness: "off",
+          reactAccessibility: "off",
+          vulnerabilities: "off",
+        },
+      })}\n`,
+    );
+    await writeFile(join(repository.root, "value.dat"), Buffer.alloc(4096, 0));
+    await writeFile(
+      join(repository.root, "old.dat"),
+      Buffer.concat([Buffer.alloc(4095, 0x61), Buffer.from([0])]),
+    );
+    await repository.commitAll("binary baseline");
+    await repository.git(["switch", "-c", "feature"]);
+    await repository.write("value.dat", "hello\n");
+    await repository.git(["mv", "old.dat", "renamed.dat"]);
+    await repository.write("renamed.dat", `${"a".repeat(4095)}\n`);
+    await repository.commitAll("text target");
+
+    const report = await runScan({
+      repositoryRoot: repository.root,
+      baseRef: "main",
+    });
+
+    expect(report, JSON.stringify(report)).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      changedFileCount: 2,
+    });
+  }, 30_000);
+
+  it("keeps staged binary-to-text scans compatible with a low Git output cap", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      `${JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        resources: { git: { outputLimitBytes: 1024 } },
+        checks: { formatting: "error" },
+      })}\n`,
+    );
+    await writeFile(join(repository.root, "value.dat"), Buffer.alloc(4096, 0));
+    await repository.commitAll("binary baseline");
+    await repository.write("value.dat", "hello\n");
+    await repository.git(["add", "--", "value.dat"]);
+
+    const report = await runScan({ repositoryRoot: repository.root });
+
+    expect(report, JSON.stringify(report)).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      mode: "index",
+      changedFileCount: 1,
+    });
+  }, 30_000);
+
   it("fails closed for a relevant NUL beyond the first 8192 bytes", async () => {
     const repository = await createGitRepository();
     await repository.write(".zedbeerc.jsonc", strictConfig);

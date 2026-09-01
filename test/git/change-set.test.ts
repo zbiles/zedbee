@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import {
   addCommitLineRanges,
+  addWholeFileLineRanges,
+  type ChangeSet,
   discoverCommitChangeSet,
   mergeLineRanges,
   readCommitChangeSet,
@@ -458,6 +460,56 @@ describe("readCommitChangeSet", () => {
 });
 
 describe("mergeLineRanges", () => {
+  it("marks every target line introduced without changing modified or renamed status", () => {
+    const files = new Map([
+      [
+        "value.dat",
+        {
+          path: "value.dat",
+          status: "modified" as const,
+          addedRanges: [],
+        },
+      ],
+      [
+        "new.dat",
+        {
+          path: "new.dat",
+          previousPath: "old.dat",
+          status: "renamed" as const,
+          addedRanges: [],
+        },
+      ],
+    ]);
+    const metadata: ChangeSet = {
+      files,
+      isEmpty: false,
+      containsAddedLine: () => false,
+    };
+
+    const changeSet = addWholeFileLineRanges(
+      metadata,
+      new Map([
+        ["value.dat", 1],
+        ["new.dat", 2],
+      ]),
+    );
+
+    expect([...changeSet.files.values()]).toEqual([
+      {
+        path: "new.dat",
+        previousPath: "old.dat",
+        status: "renamed",
+        addedRanges: [{ start: 1, end: 2 }],
+      },
+      {
+        path: "value.dat",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    expect(changeSet.containsAddedLine("new.dat", 2)).toBe(true);
+  });
+
   it("merges overlapping and adjacent target ranges", () => {
     expect(
       mergeLineRanges([

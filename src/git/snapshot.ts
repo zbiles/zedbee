@@ -7,6 +7,7 @@ import {
   realpath,
   rm,
   symlink,
+  type FileHandle,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -36,8 +37,57 @@ export interface SnapshotPair {
   targetDir: string;
   baselineRef: string | null;
   targetRef: "index" | string;
+  baselineUnsupportedEntries?: readonly UnsupportedIndexEntry[];
   unsupportedEntries: readonly UnsupportedIndexEntry[];
   cleanup(): Promise<void>;
+}
+
+export async function countSnapshotFileLines(
+  snapshotRoot: string,
+  repositoryPath: string,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  await verifyDirectory(snapshotRoot);
+  const source = containedPath(snapshotRoot, repositoryPath);
+  if (source === undefined) return invalidSelectedPath();
+  const pathMetadata = await lstat(source);
+  if (!pathMetadata.isFile() || pathMetadata.isSymbolicLink()) return undefined;
+  let handle: FileHandle;
+  try {
+    handle = await open(source, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") return undefined;
+    throw error;
+  }
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let bytes = 0;
+  let lines = 0;
+  let lastByte = -1;
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) return undefined;
+    while (true) {
+      if (signal?.aborted === true) {
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      }
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      bytes += bytesRead;
+      lastByte = buffer[bytesRead - 1]!;
+      const chunk = buffer.subarray(0, bytesRead);
+      let newline = chunk.indexOf(0x0a);
+      while (newline !== -1) {
+        lines += 1;
+        newline = chunk.indexOf(0x0a, newline + 1);
+      }
+      if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(lines)) {
+        throw new Error("Snapshot file is too large to count safely.");
+      }
+    }
+  } finally {
+    await handle.close();
+  }
+  return bytes === 0 ? 0 : lines + (lastByte === 0x0a ? 0 : 1);
 }
 
 export class SnapshotConstructionCleanupError extends Error {
@@ -556,11 +606,11 @@ export async function buildCommitSnapshotPair(
       targetCommit,
       signal,
     );
-    await materializeEntries(
+    const baselineUnsupportedEntries = await materializeEntries(
       git,
       baselineEntries,
       root.baselineDir,
-      false,
+      true,
       signal,
     );
     const unsupportedEntries = await materializeEntries(
@@ -575,6 +625,7 @@ export async function buildCommitSnapshotPair(
       targetDir: root.targetDir,
       baselineRef: baselineCommit,
       targetRef: targetCommit,
+      baselineUnsupportedEntries,
       unsupportedEntries,
       cleanup: root.cleanup,
     };
@@ -619,6 +670,7 @@ export async function buildSnapshotPair(
 
     const head = await git.tryRun(["rev-parse", "--verify", "HEAD"], options);
     const baselineRef = head.exitCode === 0 ? "HEAD" : null;
+    let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];
     if (baselineRef === "HEAD") {
       const baselineEntries = await readCommitEntries(
         repositoryRoot,
@@ -626,11 +678,11 @@ export async function buildSnapshotPair(
         "HEAD",
         signal,
       );
-      await materializeEntries(
+      baselineUnsupportedEntries = await materializeEntries(
         git,
         baselineEntries,
         root.baselineDir,
-        false,
+        true,
         signal,
       );
     }
@@ -639,6 +691,7 @@ export async function buildSnapshotPair(
       targetDir: root.targetDir,
       baselineRef,
       targetRef: "index",
+      baselineUnsupportedEntries,
       unsupportedEntries,
       cleanup: root.cleanup,
     };

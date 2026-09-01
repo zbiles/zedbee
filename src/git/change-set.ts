@@ -236,6 +236,32 @@ function applyAddedRanges(metadata: ChangeSet, patch: ChangeSet): ChangeSet {
   );
 }
 
+export function addWholeFileLineRanges(
+  changeSet: ChangeSet,
+  lineCounts: ReadonlyMap<string, number>,
+): ChangeSet {
+  for (const [path, count] of lineCounts) {
+    if (
+      !changeSet.files.has(path) ||
+      !Number.isSafeInteger(count) ||
+      count < 0
+    ) {
+      return invalidPatch();
+    }
+  }
+  return changeSetFromFiles(
+    [...changeSet.files.values()].map((file) => {
+      const count = lineCounts.get(file.path);
+      return count === undefined
+        ? file
+        : {
+            ...file,
+            addedRanges: count === 0 ? [] : [{ start: 1, end: count }],
+          };
+    }),
+  );
+}
+
 const COMMON_DIFF_OPTIONS = [
   "--no-relative",
   "--ignore-submodules=none",
