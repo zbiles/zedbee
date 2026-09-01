@@ -55,6 +55,7 @@ describe("resolveBaseComparison", () => {
     ["", "empty input"],
     ["feature\0branch", "NUL"],
     ["feature\nbranch", "display controls"],
+    [`feature\u0085branch`, "C1 display controls"],
     ["--upload-pack=evil", "option-looking refs"],
   ])("rejects %s (%s) before invoking Git", async (requestedBase) => {
     const { git, recordedArgs } = gitReturning([]);
@@ -116,6 +117,7 @@ describe("resolveBaseComparison", () => {
   it.each([
     ["not-a-sha", "nonhex output"],
     [`${SHA_MERGE_BASE}\nextra`, "extra output lines"],
+    [`${SHA_MERGE_BASE}\r\n`, "carriage return output"],
   ])("rejects malformed merge-base output (%s)", async (stdout) => {
     const { git } = gitReturning([
       output(`${SHA_BASE_TIP}\n`),

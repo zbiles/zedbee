@@ -42,7 +42,7 @@ function validateRequestedBase(requestedBase: string): void {
   if (
     requestedBase.length === 0 ||
     requestedBase.startsWith("-") ||
-    /[\u0000-\u001f\u007f]/u.test(requestedBase)
+    /\p{Cc}/u.test(requestedBase)
   ) {
     fail("BASE_REF_INVALID");
   }
@@ -96,7 +96,6 @@ export async function resolveBaseComparison(
   if (mergeOutput.exitCode !== 0) fail("MERGE_BASE_UNAVAILABLE");
   const mergeBases = mergeOutput.stdout
     .split("\n")
-    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line))
     .filter((line) => line.length > 0);
   if (mergeBases.length === 0) fail("MERGE_BASE_UNAVAILABLE");
   if (mergeBases.some((line) => !OBJECT_ID.test(line))) {

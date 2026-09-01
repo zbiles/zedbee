@@ -65,3 +65,26 @@ npx vitest run test/git/base-comparison.test.ts test/git/client.test.ts && npm r
 ```
 
 Output/result: 2 test files passed and 22 tests passed; TypeScript typecheck completed successfully.
+
+## Fix Round 1
+
+Addressed review findings:
+
+- Merge-base lines are now validated unchanged after splitting on `\n`; no trailing `\r` is removed. A CRLF object-ID line is therefore rejected as malformed output.
+- Base-ref validation now uses the complete Unicode control-character class `\p{Cc}`, including C1 controls U+0080–U+009F.
+
+Regression RED command:
+
+```text
+npx vitest run test/git/base-comparison.test.ts
+```
+
+RED result: 15 tests ran; 2 failed. The C1-control case reached the fake Git runner and failed with `Error: unexpected command`; the CRLF merge-base case incorrectly resolved successfully instead of rejecting. These failures demonstrated both reported bugs.
+
+Fix-round GREEN command:
+
+```text
+npx prettier --write src/git/base-comparison.ts test/git/base-comparison.test.ts && npx vitest run test/git/base-comparison.test.ts test/git/client.test.ts && npm run typecheck
+```
+
+GREEN result: 2 test files passed, 24 tests passed; TypeScript typecheck completed successfully.
