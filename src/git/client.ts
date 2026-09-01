@@ -27,6 +27,12 @@ export interface GitOutput {
   exitCode: number;
 }
 
+export interface GitBinaryOutput {
+  stdout: Buffer;
+  stderr: string;
+  exitCode: number;
+}
+
 export interface GitClientOptions {
   resourcePolicy?: ScanResourcePolicy;
   onSoftTimeout?: () => void;
@@ -112,7 +118,9 @@ async function repositoryTrustRoot(path: string): Promise<string> {
   }
 }
 
-async function resolveGitCommand(repositoryRoot: string): Promise<ResolvedGitCommand> {
+async function resolveGitCommand(
+  repositoryRoot: string,
+): Promise<ResolvedGitCommand> {
   const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
   const safeDirectories: string[] = [];
   for (const entry of pathValue(process.env).split(delimiter)) {
@@ -162,9 +170,15 @@ function commandEnvironment(
     ...(overrides ?? {}),
   };
   for (const key of Object.keys(environment)) {
-    if (key.toLowerCase() === "path") delete environment[key];
+    if (
+      key.toLowerCase() === "path" ||
+      key.toLowerCase() === "git_no_lazy_fetch"
+    ) {
+      delete environment[key];
+    }
   }
   environment.PATH = safePath;
+  environment.GIT_NO_LAZY_FETCH = "1";
   return environment;
 }
 
@@ -194,10 +208,11 @@ export class GitClient {
     return this.gitCommand;
   }
 
-  async run(
+  private async execute(
     args: readonly string[],
-    options: GitRunOptions = {},
-  ): Promise<GitOutput> {
+    options: GitRunOptions,
+    binary: boolean,
+  ): Promise<GitOutput | GitBinaryOutput> {
     if (isAborted(options.signal)) {
       throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
     }
@@ -214,7 +229,10 @@ export class GitClient {
     const softTimer =
       resourcePolicy?.gitSoftTimeoutMs === undefined
         ? undefined
-        : setTimeout(() => this.clientOptions.onSoftTimeout?.(), resourcePolicy.gitSoftTimeoutMs);
+        : setTimeout(
+            () => this.clientOptions.onSoftTimeout?.(),
+            resourcePolicy.gitSoftTimeoutMs,
+          );
     const hardTimer =
       resourcePolicy?.gitHardTimeoutMs === undefined
         ? undefined
@@ -239,10 +257,12 @@ export class GitClient {
             output.exitCode,
           );
         }
-        return output;
+        return binary
+          ? { ...output, stdout: Buffer.from(output.stdout, "utf8") }
+          : output;
       }
       const command = await this.resolvedGitCommand();
-      const result = await execa(command.executable, args, {
+      const commandOptions = {
         cwd: options.cwd ?? this.repositoryRoot,
         reject: false,
         shell: false,
@@ -252,7 +272,14 @@ export class GitClient {
         env: commandEnvironment(command.path, options.env),
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
         cancelSignal: signal,
-      });
+      } as const;
+      const result = binary
+        ? await execa(command.executable, args, {
+            ...commandOptions,
+            encoding: "buffer",
+            stripFinalNewline: false,
+          })
+        : await execa(command.executable, args, commandOptions);
 
       if (isOutputLimitExceeded(result)) {
         throw new GitCommandError(
@@ -270,11 +297,21 @@ export class GitClient {
         throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
       }
 
-      const output: GitOutput = {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode ?? -1,
-      };
+      const stderr =
+        typeof result.stderr === "string"
+          ? result.stderr
+          : Buffer.from(result.stderr).toString("utf8");
+      const output: GitOutput | GitBinaryOutput = binary
+        ? {
+            stdout: Buffer.from(result.stdout as Uint8Array),
+            stderr,
+            exitCode: result.exitCode ?? -1,
+          }
+        : {
+            stdout: result.stdout as string,
+            stderr,
+            exitCode: result.exitCode ?? -1,
+          };
 
       if ((options.reject ?? true) && output.exitCode !== 0) {
         throw new GitCommandError(
@@ -312,6 +349,20 @@ export class GitClient {
       if (softTimer !== undefined) clearTimeout(softTimer);
       if (hardTimer !== undefined) clearTimeout(hardTimer);
     }
+  }
+
+  run(
+    args: readonly string[],
+    options: GitRunOptions = {},
+  ): Promise<GitOutput> {
+    return this.execute(args, options, false) as Promise<GitOutput>;
+  }
+
+  runBytes(
+    args: readonly string[],
+    options: GitRunOptions = {},
+  ): Promise<GitBinaryOutput> {
+    return this.execute(args, options, true) as Promise<GitBinaryOutput>;
   }
 
   tryRun(

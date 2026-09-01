@@ -1,3 +1,4 @@
+import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -5,12 +6,12 @@ import {
   open,
   realpath,
   rm,
-  unlink,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { GitClient } from "./client.js";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { compareCodeUnits } from "../core/compare.js";
+import type { GitClient } from "./client.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -56,7 +57,7 @@ function safeConstructionError(error: unknown): SnapshotError {
   if (error instanceof SnapshotError && error.code === "INVALID_INDEX_PATH") {
     return new SnapshotError(
       error.code,
-      "Zedbee refused an invalid staged repository path.",
+      "Zedbee refused an invalid selected repository path.",
     );
   }
   if (error instanceof SnapshotError && error.code === "INVALID_TEMP_PATH") {
@@ -73,37 +74,82 @@ function safeConstructionError(error: unknown): SnapshotError {
   }
   return new SnapshotError(
     "SNAPSHOT_CONSTRUCTION_FAILED",
-    "Zedbee could not construct the staged snapshots.",
+    "Zedbee could not construct the selected snapshots.",
   );
 }
 
-interface StagedEntry {
-  mode: string;
+type SnapshotEntryMode = "100644" | "100755" | "120000" | "160000";
+
+interface SnapshotEntry {
+  mode: SnapshotEntryMode;
+  objectId: string;
   path: string;
 }
 
-function parseStagedEntries(output: string): StagedEntry[] {
-  if (output === "") {
-    return [];
-  }
-  if (!output.endsWith("\0")) {
-    throw new SnapshotError(
-      "INVALID_INDEX_PATH",
-      "Zedbee refused an invalid staged repository path.",
-    );
-  }
-  return output.slice(0, -1).split("\0").map((record) => {
-    const match = /^([0-7]{6}) ([\da-f]{40}|[\da-f]{64}) ([0-3])\t([\s\S]+)$/iu.exec(
-      record,
-    );
-    if (match === null) {
-      throw new SnapshotError(
-        "INVALID_INDEX_PATH",
-        "Zedbee refused an invalid staged repository path.",
-      );
-    }
-    return { mode: match[1]!, path: match[4]! };
-  });
+const OBJECT_ID = "(?:[\\da-f]{40}|[\\da-f]{64})";
+const STAGED_ENTRY = new RegExp(
+  `^([0-7]{6}) (${OBJECT_ID}) ([0-3])\\t([\\s\\S]+)$`,
+  "u",
+);
+const TREE_ENTRY = new RegExp(
+  `^([0-7]{6}) (blob|commit) (${OBJECT_ID})\\t([\\s\\S]+)$`,
+  "u",
+);
+
+function supportedMode(mode: string): mode is SnapshotEntryMode {
+  return (
+    mode === "100644" ||
+    mode === "100755" ||
+    mode === "120000" ||
+    mode === "160000"
+  );
+}
+
+function invalidSelectedPath(): never {
+  throw new SnapshotError(
+    "INVALID_INDEX_PATH",
+    "Zedbee refused an invalid selected repository path.",
+  );
+}
+
+function parseStagedEntries(output: string): SnapshotEntry[] {
+  if (output === "") return [];
+  if (!output.endsWith("\0")) return invalidSelectedPath();
+
+  return output
+    .slice(0, -1)
+    .split("\0")
+    .map((record) => {
+      const match = STAGED_ENTRY.exec(record);
+      if (match === null || !supportedMode(match[1]!)) {
+        return invalidSelectedPath();
+      }
+      if (match[3] !== "0") {
+        throw new SnapshotError(
+          "UNRESOLVED_INDEX",
+          "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
+        );
+      }
+      return { mode: match[1], objectId: match[2]!, path: match[4]! };
+    });
+}
+
+function parseTreeEntries(output: string): SnapshotEntry[] {
+  if (output === "") return [];
+  if (!output.endsWith("\0")) return invalidSelectedPath();
+
+  return output
+    .slice(0, -1)
+    .split("\0")
+    .map((record) => {
+      const match = TREE_ENTRY.exec(record);
+      if (match === null || !supportedMode(match[1]!)) {
+        return invalidSelectedPath();
+      }
+      const expectedType = match[1] === "160000" ? "commit" : "blob";
+      if (match[2] !== expectedType) return invalidSelectedPath();
+      return { mode: match[1], objectId: match[3]!, path: match[4]! };
+    });
 }
 
 const INTENT_TO_ADD_FLAG = 0x20000000;
@@ -115,17 +161,12 @@ function parseIntentToAddPaths(output: string): Set<string> {
   let remaining = output;
   while (remaining !== "") {
     const pathEnd = remaining.indexOf("\0");
-    if (pathEnd === -1) {
-      throw new Error("Git returned invalid index debug metadata.");
-    }
+    if (pathEnd === -1) throw new Error("Git returned invalid index metadata.");
     const path = remaining.slice(0, pathEnd);
     const metadata = remaining.slice(pathEnd + 1);
     const match = INDEX_DEBUG_METADATA.exec(metadata);
-    if (match === null) {
-      throw new Error("Git returned invalid index debug metadata.");
-    }
-    const flags = Number.parseInt(match[1]!, 16);
-    if ((flags & INTENT_TO_ADD_FLAG) !== 0) {
+    if (match === null) throw new Error("Git returned invalid index metadata.");
+    if ((Number.parseInt(match[1]!, 16) & INTENT_TO_ADD_FLAG) !== 0) {
       paths.add(path);
     }
     remaining = metadata.slice(match[0].length);
@@ -133,65 +174,23 @@ function parseIntentToAddPaths(output: string): Set<string> {
   return paths;
 }
 
-async function readPrefix(path: string): Promise<Buffer> {
-  const handle = await open(path, "r");
-  try {
-    const buffer = Buffer.alloc(8192);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return buffer.subarray(0, bytesRead);
-  } finally {
-    await handle.close();
-  }
-}
-
-async function classifyUnsupportedEntries(
-  targetDir: string,
-  stagedEntries: readonly StagedEntry[],
-): Promise<UnsupportedIndexEntry[]> {
-  const unsupported: UnsupportedIndexEntry[] = [];
-
-  for (const entry of stagedEntries) {
-    if (entry.mode === "160000") {
-      unsupported.push({ path: entry.path, kind: "submodule" });
-      continue;
-    }
-    if (entry.mode === "120000") {
-      continue;
-    }
-
-    const targetPath = join(targetDir, entry.path);
-    const metadata = await lstat(targetPath);
-    if (!metadata.isFile()) {
-      continue;
-    }
-    const prefix = await readPrefix(targetPath);
-    if (prefix.includes(0)) {
-      unsupported.push({ path: entry.path, kind: "binary" });
-    } else if (
-      prefix
-        .toString("utf8")
-        .startsWith("version https://git-lfs.github.com/spec/v1\n")
-    ) {
-      unsupported.push({ path: entry.path, kind: "git-lfs-pointer" });
-    }
-  }
-
-  return unsupported.sort(
-    (left, right) =>
-      compareCodeUnits(left.path, right.path) ||
-      compareCodeUnits(left.kind, right.kind),
-  );
-}
-
-function containedRepositoryPath(
-  repositoryRoot: string,
+function containedPath(
+  root: string,
   repositoryPath: string,
 ): string | undefined {
-  if (isAbsolute(repositoryPath)) {
+  if (
+    repositoryPath === "" ||
+    repositoryPath.includes("\uFFFD") ||
+    isAbsolute(repositoryPath)
+  ) {
     return undefined;
   }
-  const candidate = resolve(repositoryRoot, repositoryPath);
-  const fromRoot = relative(repositoryRoot, candidate);
+  const parts = repositoryPath.split("/");
+  if (parts.some((part) => part === "" || part === "." || part === "..")) {
+    return undefined;
+  }
+  const candidate = resolve(root, repositoryPath);
+  const fromRoot = relative(root, candidate);
   if (
     fromRoot === "" ||
     isAbsolute(fromRoot) ||
@@ -203,42 +202,26 @@ function containedRepositoryPath(
   return candidate;
 }
 
-function validateStagedEntryPaths(
+function validateEntryPaths(
   repositoryRoot: string,
-  stagedEntries: readonly StagedEntry[],
+  entries: readonly SnapshotEntry[],
 ): void {
-  for (const entry of stagedEntries) {
-    if (containedRepositoryPath(repositoryRoot, entry.path) === undefined) {
-      throw new SnapshotError(
-        "INVALID_INDEX_PATH",
-        "Zedbee refused an invalid staged repository path.",
-      );
+  const paths = new Set<string>();
+  for (const entry of entries) {
+    if (
+      containedPath(repositoryRoot, entry.path) === undefined ||
+      paths.has(entry.path)
+    ) {
+      return invalidSelectedPath();
     }
+    paths.add(entry.path);
   }
-}
-
-async function removeIntentToAddPlaceholders(
-  targetDir: string,
-  intentToAddPaths: ReadonlySet<string>,
-): Promise<void> {
-  for (const repositoryPath of intentToAddPaths) {
-    const targetPath = containedRepositoryPath(targetDir, repositoryPath);
-    if (targetPath === undefined) {
-      throw new Error("Zedbee refused an invalid intent-to-add path.");
+  for (const path of paths) {
+    let parent = dirname(path);
+    while (parent !== ".") {
+      if (paths.has(parent)) return invalidSelectedPath();
+      parent = dirname(parent);
     }
-    let metadata;
-    try {
-      metadata = await lstat(targetPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        continue;
-      }
-      throw error;
-    }
-    if (!metadata.isFile()) {
-      throw new Error("Zedbee refused a non-file intent-to-add placeholder.");
-    }
-    await unlink(targetPath);
   }
 }
 
@@ -254,31 +237,225 @@ async function createCanonicalSnapshotParent(): Promise<ValidatedSnapshotPath> {
   }
 }
 
-async function materializeCommitTree(
+async function verifyDirectory(path: string): Promise<void> {
+  const metadata = await lstat(path);
+  if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    throw new SnapshotError(
+      "INVALID_TEMP_PATH",
+      "Zedbee refused an unsafe temporary snapshot directory.",
+    );
+  }
+  if ((await realpath(path)) !== path) {
+    throw new SnapshotError(
+      "INVALID_TEMP_PATH",
+      "Zedbee refused a temporary snapshot directory whose identity changed.",
+    );
+  }
+}
+
+async function createParentDirectories(
+  destinationRoot: string,
+  repositoryPath: string,
+): Promise<string> {
+  await verifyDirectory(destinationRoot);
+  let current = destinationRoot;
+  for (const part of repositoryPath.split("/").slice(0, -1)) {
+    current = join(current, part);
+    try {
+      await mkdir(current, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    await verifyDirectory(current);
+  }
+  return current;
+}
+
+async function writeRegularBlob(
+  destinationRoot: string,
+  entry: SnapshotEntry,
+  bytes: Buffer,
+): Promise<void> {
+  await createParentDirectories(destinationRoot, entry.path);
+  const destination = containedPath(destinationRoot, entry.path);
+  if (destination === undefined) return invalidSelectedPath();
+  const handle = await open(
+    destination,
+    constants.O_WRONLY |
+      constants.O_CREAT |
+      constants.O_EXCL |
+      constants.O_NOFOLLOW,
+    entry.mode === "100755" ? 0o755 : 0o644,
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error("Snapshot target is not a file.");
+    await handle.writeFile(bytes);
+    await handle.chmod(entry.mode === "100755" ? 0o755 : 0o644);
+  } finally {
+    await handle.close();
+  }
+  const metadata = await lstat(destination);
+  if (
+    !metadata.isFile() ||
+    metadata.isSymbolicLink() ||
+    (await realpath(destination)) !== destination
+  ) {
+    throw new SnapshotError(
+      "INVALID_TEMP_PATH",
+      "Zedbee refused a temporary snapshot file whose identity changed.",
+    );
+  }
+}
+
+async function writeSymlinkBlob(
+  destinationRoot: string,
+  entry: SnapshotEntry,
+  bytes: Buffer,
+): Promise<void> {
+  await createParentDirectories(destinationRoot, entry.path);
+  const destination = containedPath(destinationRoot, entry.path);
+  if (destination === undefined || bytes.includes(0))
+    return invalidSelectedPath();
+  const target = bytes.toString("utf8");
+  if (!Buffer.from(target, "utf8").equals(bytes)) return invalidSelectedPath();
+  await symlink(target, destination);
+  if (!(await lstat(destination)).isSymbolicLink()) {
+    throw new SnapshotError(
+      "INVALID_TEMP_PATH",
+      "Zedbee refused an invalid materialized symbolic link.",
+    );
+  }
+}
+
+function classifyBlob(
+  entry: SnapshotEntry,
+  bytes: Buffer,
+): UnsupportedIndexEntry | undefined {
+  if (bytes.subarray(0, 8192).includes(0)) {
+    return { path: entry.path, kind: "binary" };
+  }
+  if (
+    bytes
+      .subarray(0, 8192)
+      .toString("utf8")
+      .startsWith("version https://git-lfs.github.com/spec/v1\n")
+  ) {
+    return { path: entry.path, kind: "git-lfs-pointer" };
+  }
+  return undefined;
+}
+
+async function materializeEntries(
+  git: GitClient,
+  entries: readonly SnapshotEntry[],
+  destinationRoot: string,
+  classify: boolean,
+  signal?: AbortSignal,
+): Promise<UnsupportedIndexEntry[]> {
+  const unsupported: UnsupportedIndexEntry[] = [];
+  const options = signal === undefined ? {} : { signal };
+  for (const entry of entries) {
+    if (entry.mode === "160000") {
+      if (classify) unsupported.push({ path: entry.path, kind: "submodule" });
+      continue;
+    }
+    const bytes = (
+      await git.runBytes(["cat-file", "blob", entry.objectId], options)
+    ).stdout;
+    if (entry.mode === "120000") {
+      await writeSymlinkBlob(destinationRoot, entry, bytes);
+      continue;
+    }
+    await writeRegularBlob(destinationRoot, entry, bytes);
+    const unsupportedEntry = classify ? classifyBlob(entry, bytes) : undefined;
+    if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
+  }
+  return unsupported.sort(
+    (left, right) =>
+      compareCodeUnits(left.path, right.path) ||
+      compareCodeUnits(left.kind, right.kind),
+  );
+}
+
+async function readCommitEntries(
   repositoryRoot: string,
   git: GitClient,
   commit: string,
-  alternateIndex: string,
-  destination: string,
   signal?: AbortSignal,
-): Promise<StagedEntry[]> {
-  const gitOptions = signal === undefined ? {} : { signal };
-  const env = { GIT_INDEX_FILE: alternateIndex };
-  await git.run(["read-tree", commit], { env, ...gitOptions });
-  const entries = parseStagedEntries(
-    (
-      await git.run(["ls-files", "--stage", "-z"], {
-        env,
-        ...gitOptions,
-      })
-    ).stdout,
+): Promise<SnapshotEntry[]> {
+  const output = await git.run(
+    ["ls-tree", "-r", "-z", "--full-tree", commit],
+    signal === undefined ? {} : { signal },
   );
-  validateStagedEntryPaths(repositoryRoot, entries);
-  await git.run(
-    ["checkout-index", "--all", "--force", `--prefix=${destination}${sep}`],
-    { env, ...gitOptions },
-  );
+  const entries = parseTreeEntries(output.stdout);
+  validateEntryPaths(repositoryRoot, entries);
   return entries;
+}
+
+interface OwnedSnapshotRoot {
+  canonicalParent: ValidatedSnapshotPath;
+  baselineDir: string;
+  targetDir: string;
+  cleanup(): Promise<void>;
+}
+
+async function createOwnedSnapshotRoot(): Promise<OwnedSnapshotRoot> {
+  const canonicalParent = await createCanonicalSnapshotParent();
+  const baselineDir = join(canonicalParent, "baseline");
+  const targetDir = join(canonicalParent, "target");
+  await mkdir(baselineDir, { mode: 0o700 });
+  await mkdir(targetDir, { mode: 0o700 });
+  await verifyDirectory(baselineDir);
+  await verifyDirectory(targetDir);
+  let cleaned = false;
+  return {
+    canonicalParent,
+    baselineDir,
+    targetDir,
+    async cleanup() {
+      if (cleaned) return;
+      try {
+        await lstat(canonicalParent);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          cleaned = true;
+          return;
+        }
+        throw error;
+      }
+      const validatedParent = await validateSnapshotPath(canonicalParent);
+      if (validatedParent !== canonicalParent) {
+        throw new SnapshotError(
+          "INVALID_TEMP_PATH",
+          "Zedbee refused to clean a temporary path whose identity changed.",
+        );
+      }
+      await rm(canonicalParent, { recursive: true, force: false });
+      cleaned = true;
+    },
+  };
+}
+
+async function cleanupConstructionFailure(
+  root: OwnedSnapshotRoot,
+  error: unknown,
+): Promise<never> {
+  try {
+    await root.cleanup();
+  } catch {
+    let temporaryPath: ValidatedSnapshotPath | undefined;
+    try {
+      temporaryPath = await validateSnapshotPath(root.canonicalParent);
+    } catch {
+      // Changed or inaccessible identities are intentionally unreportable.
+    }
+    throw new SnapshotConstructionCleanupError(
+      safeConstructionError(error),
+      temporaryPath,
+    );
+  }
+  throw error;
 }
 
 export async function buildCommitSnapshotPair(
@@ -288,86 +465,44 @@ export async function buildCommitSnapshotPair(
   targetCommit: string,
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
-  const canonicalParent = await createCanonicalSnapshotParent();
-  const baselineDir = join(canonicalParent, "baseline");
-  const targetDir = join(canonicalParent, "target");
-  const baselineIndex = join(canonicalParent, "baseline-index");
-  const targetIndex = join(canonicalParent, "target-index");
-  let cleaned = false;
-
-  const cleanup = async (): Promise<void> => {
-    if (cleaned) {
-      return;
-    }
-    try {
-      await lstat(canonicalParent);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        cleaned = true;
-        return;
-      }
-      throw error;
-    }
-
-    const validatedParent = await validateSnapshotPath(canonicalParent);
-    if (validatedParent !== canonicalParent) {
-      throw new SnapshotError(
-        "INVALID_TEMP_PATH",
-        "Zedbee refused to clean a temporary path whose identity changed.",
-      );
-    }
-    await rm(canonicalParent, { recursive: true, force: false });
-    cleaned = true;
-  };
-
+  const root = await createOwnedSnapshotRoot();
   try {
-    await mkdir(baselineDir);
-    await mkdir(targetDir);
-    await materializeCommitTree(
+    const baselineEntries = await readCommitEntries(
       repositoryRoot,
       git,
       baselineCommit,
-      baselineIndex,
-      baselineDir,
       signal,
     );
-    const targetEntries = await materializeCommitTree(
+    const targetEntries = await readCommitEntries(
       repositoryRoot,
       git,
       targetCommit,
-      targetIndex,
-      targetDir,
       signal,
     );
-    const unsupportedEntries = await classifyUnsupportedEntries(
-      targetDir,
-      targetEntries,
+    await materializeEntries(
+      git,
+      baselineEntries,
+      root.baselineDir,
+      false,
+      signal,
     );
-
+    const unsupportedEntries = await materializeEntries(
+      git,
+      targetEntries,
+      root.targetDir,
+      true,
+      signal,
+    );
     return {
-      baselineDir,
-      targetDir,
+      baselineDir: root.baselineDir,
+      targetDir: root.targetDir,
       baselineRef: baselineCommit,
       targetRef: targetCommit,
       unsupportedEntries,
-      cleanup,
+      cleanup: root.cleanup,
     };
   } catch (error) {
-    try {
-      await cleanup();
-    } catch {
-      let temporaryPath: ValidatedSnapshotPath | undefined;
-      try {
-        temporaryPath = await validateSnapshotPath(canonicalParent);
-      } catch {
-        // Changed or inaccessible identities are intentionally unreportable.
-      }
-      throw new SnapshotConstructionCleanupError(
-        safeConstructionError(error),
-        temporaryPath,
-      );
-    }
-    throw error;
+    return cleanupConstructionFailure(root, error);
   }
 }
 
@@ -376,11 +511,8 @@ export async function buildSnapshotPair(
   git: GitClient,
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
-  const gitOptions = signal === undefined ? {} : { signal };
-  const unresolved = await git.run(
-    ["ls-files", "--unmerged", "-z"],
-    gitOptions,
-  );
+  const options = signal === undefined ? {} : { signal };
+  const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
   if (unresolved.stdout !== "") {
     throw new SnapshotError(
       "UNRESOLVED_INDEX",
@@ -388,100 +520,52 @@ export async function buildSnapshotPair(
     );
   }
 
-  const canonicalParent = await createCanonicalSnapshotParent();
-  const baselineDir = join(canonicalParent, "baseline");
-  const targetDir = join(canonicalParent, "target");
-  const alternateIndex = join(canonicalParent, "baseline-index");
-  let cleaned = false;
-
-  const cleanup = async (): Promise<void> => {
-    if (cleaned) {
-      return;
-    }
-    try {
-      await lstat(canonicalParent);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        cleaned = true;
-        return;
-      }
-      throw error;
-    }
-
-    const validatedParent = await validateSnapshotPath(canonicalParent);
-    if (validatedParent !== canonicalParent) {
-      throw new SnapshotError(
-        "INVALID_TEMP_PATH",
-        "Zedbee refused to clean a temporary path whose identity changed.",
-      );
-    }
-    await rm(canonicalParent, { recursive: true, force: false });
-    cleaned = true;
-  };
-
+  const root = await createOwnedSnapshotRoot();
   try {
-    await mkdir(baselineDir);
-    await mkdir(targetDir);
-
     const stagedEntries = parseStagedEntries(
-      (await git.run(["ls-files", "--stage", "-z"], gitOptions)).stdout,
+      (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
     );
-    validateStagedEntryPaths(repositoryRoot, stagedEntries);
+    validateEntryPaths(repositoryRoot, stagedEntries);
     const intentToAddPaths = parseIntentToAddPaths(
-      (await git.run(["ls-files", "--debug", "-z"], gitOptions)).stdout,
+      (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
+    );
+    const selectedEntries = stagedEntries.filter(
+      (entry) => !intentToAddPaths.has(entry.path),
+    );
+    const unsupportedEntries = await materializeEntries(
+      git,
+      selectedEntries,
+      root.targetDir,
+      true,
+      signal,
     );
 
-    await git.run([
-      "checkout-index",
-      "--all",
-      "--force",
-      `--prefix=${targetDir}${sep}`,
-    ], gitOptions);
-
-    await removeIntentToAddPlaceholders(targetDir, intentToAddPaths);
-
-    const unsupportedEntries = await classifyUnsupportedEntries(
-      targetDir,
-      stagedEntries.filter((entry) => !intentToAddPaths.has(entry.path)),
-    );
-
-    const head = await git.tryRun(
-      ["rev-parse", "--verify", "HEAD"],
-      gitOptions,
-    );
+    const head = await git.tryRun(["rev-parse", "--verify", "HEAD"], options);
     const baselineRef = head.exitCode === 0 ? "HEAD" : null;
     if (baselineRef === "HEAD") {
-      const env = { GIT_INDEX_FILE: alternateIndex };
-      await git.run(["read-tree", "HEAD"], { env, ...gitOptions });
-      await git.run(
-        ["checkout-index", "--all", "--force", `--prefix=${baselineDir}${sep}`],
-        { env, ...gitOptions },
+      const baselineEntries = await readCommitEntries(
+        repositoryRoot,
+        git,
+        "HEAD",
+        signal,
+      );
+      await materializeEntries(
+        git,
+        baselineEntries,
+        root.baselineDir,
+        false,
+        signal,
       );
     }
-
     return {
-      baselineDir,
-      targetDir,
+      baselineDir: root.baselineDir,
+      targetDir: root.targetDir,
       baselineRef,
       targetRef: "index",
       unsupportedEntries,
-      cleanup,
+      cleanup: root.cleanup,
     };
   } catch (error) {
-    try {
-      await cleanup();
-    } catch {
-      let temporaryPath: ValidatedSnapshotPath | undefined;
-      try {
-        temporaryPath = await validateSnapshotPath(canonicalParent);
-      } catch {
-        // Changed or inaccessible identities are intentionally unreportable.
-      }
-      throw new SnapshotConstructionCleanupError(
-        safeConstructionError(error),
-        temporaryPath,
-      );
-    }
-    throw error;
+    return cleanupConstructionFailure(root, error);
   }
 }

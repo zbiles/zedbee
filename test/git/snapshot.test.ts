@@ -65,6 +65,20 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+const TEST_BLOB = "0123456789012345678901234567890123456789";
+
+function stagedRecord(path = "value.ts"): string {
+  return `100644 ${TEST_BLOB} 0\t${path}\0`;
+}
+
+function treeRecord(path = "value.ts"): string {
+  return `100644 blob ${TEST_BLOB}\t${path}\0`;
+}
+
+function debugRecord(path = "value.ts"): string {
+  return `${path}\0  ctime: 0:0\n  mtime: 0:0\n  dev: 0\tino: 0\n  uid: 0\tgid: 0\n  size: 0\tflags: 0\n`;
+}
+
 describe("buildSnapshotPair", () => {
   it("cleans an owned temporary root when canonicalization fails", async () => {
     snapshotRootFailure.failCanonicalization = true;
@@ -208,6 +222,135 @@ describe("buildSnapshotPair", () => {
     expect(afterIndex).toEqual(beforeIndex);
   });
 
+  it("writes exact index and commit blob bytes without EOL conversion", async () => {
+    const repository = await createGitRepository();
+    const expectedText = Buffer.from("line one\nline two\n", "utf8");
+    const expectedBinary = Buffer.from([0xc3, 0x28, 0x00, 0xff, 0x0a]);
+    await repository.write(".gitattributes", "*.txt text eol=crlf\n");
+    await writeFile(join(repository.root, "value.txt"), expectedText);
+    await writeFile(join(repository.root, "binary.dat"), expectedBinary);
+    await repository.commitAll("exact blobs");
+    const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+
+    const indexPair = await buildSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+    );
+    onTestFinished(indexPair.cleanup);
+    const commitPair = await buildCommitSnapshotPair(
+      repository.root,
+      new GitClient(repository.root),
+      commit,
+      commit,
+    );
+    onTestFinished(commitPair.cleanup);
+
+    expect(await readFile(join(indexPair.targetDir, "value.txt"))).toEqual(
+      expectedText,
+    );
+    expect(await readFile(join(indexPair.targetDir, "binary.dat"))).toEqual(
+      expectedBinary,
+    );
+    expect(await readFile(join(commitPair.targetDir, "value.txt"))).toEqual(
+      expectedText,
+    );
+    expect(await readFile(join(commitPair.targetDir, "binary.dat"))).toEqual(
+      expectedBinary,
+    );
+  });
+
+  it.runIf(process.platform !== "win32").each(["smudge", "process"] as const)(
+    "does not execute a configured %s filter while materializing selected blobs",
+    async (filterKind) => {
+      const repository = await createGitRepository();
+      const expected = Buffer.from("exact filtered bytes\n", "utf8");
+      await repository.write(".gitattributes", "*.dat filter=zedbee\n");
+      await writeFile(join(repository.root, "filtered.dat"), expected);
+      await repository.commitAll("filtered blob");
+      const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+      const sentinel = join(
+        repository.root,
+        `${filterKind.toUpperCase()}_FILTER_EXECUTED`,
+      );
+      const filter = join(repository.root, `${filterKind}-filter.sh`);
+      await writeFile(
+        filter,
+        filterKind === "smudge"
+          ? `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\ncat\n`
+          : `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\nexit 1\n`,
+      );
+      await chmod(filter, 0o755);
+      await repository.git(["config", `filter.zedbee.${filterKind}`, filter]);
+      await repository.git(["config", "filter.zedbee.required", "true"]);
+
+      const indexPair = await buildSnapshotPair(
+        repository.root,
+        new GitClient(repository.root),
+      );
+      onTestFinished(indexPair.cleanup);
+      const commitPair = await buildCommitSnapshotPair(
+        repository.root,
+        new GitClient(repository.root),
+        commit,
+        commit,
+      );
+      onTestFinished(commitPair.cleanup);
+
+      expect(await readFile(join(indexPair.targetDir, "filtered.dat"))).toEqual(
+        expected,
+      );
+      expect(
+        await readFile(join(commitPair.targetDir, "filtered.dat")),
+      ).toEqual(expected);
+      await expect(access(sentinel)).rejects.toThrow();
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "keeps a configured LFS pointer exact without invoking LFS filters",
+    async () => {
+      const repository = await createGitRepository();
+      const pointer = Buffer.from(
+        "version https://git-lfs.github.com/spec/v1\noid sha256:0123456789abcdef\nsize 42\n",
+        "utf8",
+      );
+      await repository.write(
+        ".gitattributes",
+        "*.lfs filter=lfs diff=lfs merge=lfs -text\n",
+      );
+      await writeFile(join(repository.root, "asset.lfs"), pointer);
+      await repository.commitAll("LFS pointer");
+      const commit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+      const sentinel = join(repository.root, "LFS_FILTER_EXECUTED");
+      const filter = join(repository.root, "lfs-filter.sh");
+      await writeFile(
+        filter,
+        `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\nexit 1\n`,
+      );
+      await chmod(filter, 0o755);
+      await repository.git(["config", "filter.lfs.process", filter]);
+      await repository.git(["config", "filter.lfs.smudge", filter]);
+      await repository.git(["config", "filter.lfs.required", "true"]);
+
+      const pair = await buildCommitSnapshotPair(
+        repository.root,
+        new GitClient(repository.root),
+        commit,
+        commit,
+      );
+      onTestFinished(pair.cleanup);
+
+      expect(await readFile(join(pair.targetDir, "asset.lfs"))).toEqual(
+        pointer,
+      );
+      expect(pair.unsupportedEntries).toContainEqual({
+        path: "asset.lfs",
+        kind: "git-lfs-pointer",
+      });
+      await expect(access(sentinel)).rejects.toThrow();
+    },
+  );
+
   it("uses an empty baseline for an initial commit", async () => {
     const repository = await createGitRepository();
     await repository.write("new.ts", "export const created = true;\n");
@@ -313,31 +456,33 @@ describe("buildSnapshotPair", () => {
     expect(await pathExists(repository.root)).toBe(true);
   });
 
-  it("aborts checkout-index and removes its temporary snapshot root", async () => {
-    let snapshotRoot: string | undefined;
+  it("aborts a target blob read and removes its temporary snapshot root", async () => {
     let signalReceived = false;
-    let markCheckoutStarted: (() => void) | undefined;
-    const checkoutStarted = new Promise<void>((resolve) => {
-      markCheckoutStarted = resolve;
+    let markBlobReadStarted: (() => void) | undefined;
+    const blobReadStarted = new Promise<void>((resolve) => {
+      markBlobReadStarted = resolve;
     });
     const git = {
-      async run(
-        args: readonly string[],
+      async run(args: readonly string[]) {
+        if (args[1] === "--stage") {
+          return { stdout: stagedRecord(), stderr: "", exitCode: 0 };
+        }
+        if (args[1] === "--debug") {
+          return { stdout: debugRecord(), stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      async runBytes(
+        _args: readonly string[],
         options: { signal?: AbortSignal } = {},
       ) {
-        if (args[0] !== "checkout-index") {
-          return { stdout: "", stderr: "", exitCode: 0 };
-        }
-        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-        const targetDir = prefix
-          .slice("--prefix=".length)
-          .replace(/[/\\]+$/u, "");
-        snapshotRoot = dirname(targetDir);
-        markCheckoutStarted?.();
+        markBlobReadStarted?.();
         return new Promise<never>((_resolve, reject) => {
           const abort = () => {
             signalReceived = true;
-            reject(new GitCommandError("GIT_ABORTED", "Git command was aborted."));
+            reject(
+              new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+            );
           };
           if (options.signal?.aborted === true) {
             abort();
@@ -350,19 +495,9 @@ describe("buildSnapshotPair", () => {
         return { stdout: "", stderr: "", exitCode: 1 };
       },
     } as unknown as GitClient;
-    onTestFinished(async () => {
-      if (snapshotRoot !== undefined) {
-        await rm(snapshotRoot, { recursive: true, force: true });
-      }
-    });
     const controller = new AbortController();
-    const buildWithSignal = buildSnapshotPair as unknown as (
-      repositoryRoot: string,
-      client: GitClient,
-      signal: AbortSignal,
-    ) => Promise<unknown>;
-    const build = buildWithSignal("/repo", git, controller.signal);
-    await checkoutStarted;
+    const build = buildSnapshotPair("/repo", git, controller.signal);
+    await blobReadStarted;
     controller.abort();
 
     const failure = await Promise.race([
@@ -372,7 +507,7 @@ describe("buildSnapshotPair", () => {
       ),
       new Promise<Error>((resolve) => {
         setTimeout(
-          () => resolve(new Error("checkout-index did not receive abort signal")),
+          () => resolve(new Error("cat-file did not receive abort signal")),
           100,
         );
       }),
@@ -380,39 +515,33 @@ describe("buildSnapshotPair", () => {
 
     expect(signalReceived).toBe(true);
     expect(failure).toMatchObject({ code: "GIT_ABORTED" });
-    expect(snapshotRoot).toBeDefined();
-    expect(await pathExists(snapshotRoot!)).toBe(false);
+    expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
   });
 
-  it("aborts baseline checkout-index and removes its temporary snapshot root", async () => {
-    let snapshotRoot: string | undefined;
+  it("aborts a baseline blob read and removes its temporary snapshot root", async () => {
     let signalReceived = false;
-    let markBaselineCheckoutStarted: (() => void) | undefined;
-    const baselineCheckoutStarted = new Promise<void>((resolve) => {
-      markBaselineCheckoutStarted = resolve;
+    let markBaselineBlobReadStarted: (() => void) | undefined;
+    const baselineBlobReadStarted = new Promise<void>((resolve) => {
+      markBaselineBlobReadStarted = resolve;
     });
-    let checkoutCount = 0;
     const git = {
-      async run(
-        args: readonly string[],
+      async run(args: readonly string[]) {
+        if (args[0] === "ls-tree") {
+          return { stdout: treeRecord(), stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      async runBytes(
+        _args: readonly string[],
         options: { signal?: AbortSignal } = {},
       ) {
-        if (args[0] !== "checkout-index") {
-          return { stdout: "", stderr: "", exitCode: 0 };
-        }
-        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-        const checkoutDir = prefix
-          .slice("--prefix=".length)
-          .replace(/[/\\]+$/u, "");
-        snapshotRoot = dirname(checkoutDir);
-        if (checkoutCount++ === 0) {
-          return { stdout: "", stderr: "", exitCode: 0 };
-        }
-        markBaselineCheckoutStarted?.();
+        markBaselineBlobReadStarted?.();
         return new Promise<never>((_resolve, reject) => {
           const abort = () => {
             signalReceived = true;
-            reject(new GitCommandError("GIT_ABORTED", "Git command was aborted."));
+            reject(
+              new GitCommandError("GIT_ABORTED", "Git command was aborted."),
+            );
           };
           if (options.signal?.aborted === true) {
             abort();
@@ -425,50 +554,47 @@ describe("buildSnapshotPair", () => {
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     } as unknown as GitClient;
-    onTestFinished(async () => {
-      if (snapshotRoot !== undefined) {
-        await rm(snapshotRoot, { recursive: true, force: true });
-      }
-    });
     const controller = new AbortController();
     const build = buildSnapshotPair("/repo", git, controller.signal);
-    await baselineCheckoutStarted;
+    await baselineBlobReadStarted;
     controller.abort();
 
     await expect(build).rejects.toMatchObject({ code: "GIT_ABORTED" });
     expect(signalReceived).toBe(true);
-    expect(snapshotRoot).toBeDefined();
-    expect(await pathExists(snapshotRoot!)).toBe(false);
+    expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
   });
 
   it.runIf(process.platform !== "win32")(
     "preserves a safe construction failure and validated path when construction cleanup also fails",
     async () => {
-      let snapshotRoot: string | undefined;
       const rawFailure =
         "RAW-CONSTRUCTION-FAILURE /private/unsafe/repository/path";
       const git = {
         async run(args: readonly string[]) {
-          if (args[0] === "checkout-index") {
-            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-            const targetDir = prefix
-              .slice("--prefix=".length)
-              .replace(/[/\\]+$/u, "");
-            snapshotRoot = dirname(targetDir);
-            await chmod(snapshotRoot, 0o500);
-            throw new Error(rawFailure);
+          if (args[1] === "--stage") {
+            return { stdout: stagedRecord(), stderr: "", exitCode: 0 };
+          }
+          if (args[1] === "--debug") {
+            return { stdout: debugRecord(), stderr: "", exitCode: 0 };
           }
           return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async runBytes() {
+          await chmod(snapshotRootFailure.temporaryParent, 0o500);
+          throw new Error(rawFailure);
         },
         async tryRun() {
           return { stdout: "", stderr: "", exitCode: 1 };
         },
       } as unknown as GitClient;
       onTestFinished(async () => {
-        if (snapshotRoot !== undefined) {
-          await chmod(snapshotRoot, 0o700).catch(() => undefined);
-          await rm(snapshotRoot, { recursive: true, force: true });
-        }
+        await chmod(snapshotRootFailure.temporaryParent, 0o700).catch(
+          () => undefined,
+        );
+        await rm(snapshotRootFailure.temporaryParent, {
+          recursive: true,
+          force: true,
+        });
       });
 
       let failure: unknown;
@@ -477,13 +603,16 @@ describe("buildSnapshotPair", () => {
       } catch (error) {
         failure = error;
       }
+      const canonicalSnapshotRoot = await realpath(
+        snapshotRootFailure.temporaryParent,
+      );
 
       expect(failure).toMatchObject({
         name: "SnapshotConstructionCleanupError",
         constructionError: {
           code: "SNAPSHOT_CONSTRUCTION_FAILED",
         },
-        temporaryPath: snapshotRoot,
+        temporaryPath: canonicalSnapshotRoot,
       });
       expect(String(failure)).not.toContain(rawFailure);
       expect(JSON.stringify(failure)).not.toContain(rawFailure);
@@ -493,33 +622,35 @@ describe("buildSnapshotPair", () => {
   it.runIf(process.platform !== "win32")(
     "omits an unreportable path when construction cleanup finds changed identity",
     async () => {
-      let snapshotRoot: string | undefined;
       let movedSnapshotRoot: string | undefined;
       const rawFailure =
         "RAW-CONSTRUCTION-IDENTITY-FAILURE /private/unsafe/path";
       const git = {
         async run(args: readonly string[]) {
-          if (args[0] === "checkout-index") {
-            const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-            const targetDir = prefix
-              .slice("--prefix=".length)
-              .replace(/[/\\]+$/u, "");
-            snapshotRoot = dirname(targetDir);
-            movedSnapshotRoot = `${snapshotRoot}-moved`;
-            await rename(snapshotRoot, movedSnapshotRoot);
-            await symlink(movedSnapshotRoot, snapshotRoot, "dir");
-            throw new Error(rawFailure);
+          if (args[1] === "--stage") {
+            return { stdout: stagedRecord(), stderr: "", exitCode: 0 };
+          }
+          if (args[1] === "--debug") {
+            return { stdout: debugRecord(), stderr: "", exitCode: 0 };
           }
           return { stdout: "", stderr: "", exitCode: 0 };
+        },
+        async runBytes() {
+          movedSnapshotRoot = `${snapshotRootFailure.temporaryParent}-moved`;
+          await rename(snapshotRootFailure.temporaryParent, movedSnapshotRoot);
+          await symlink(
+            movedSnapshotRoot,
+            snapshotRootFailure.temporaryParent,
+            "dir",
+          );
+          throw new Error(rawFailure);
         },
         async tryRun() {
           return { stdout: "", stderr: "", exitCode: 1 };
         },
       } as unknown as GitClient;
       onTestFinished(async () => {
-        if (snapshotRoot !== undefined) {
-          await rm(snapshotRoot, { force: true });
-        }
+        await rm(snapshotRootFailure.temporaryParent, { force: true });
         if (movedSnapshotRoot !== undefined) {
           await rm(movedSnapshotRoot, { recursive: true, force: true });
         }
@@ -543,7 +674,7 @@ describe("buildSnapshotPair", () => {
       ).toBeUndefined();
       const serialized = `${String(failure)}${JSON.stringify(failure)}`;
       expect(serialized).not.toContain(rawFailure);
-      expect(serialized).not.toContain(snapshotRoot);
+      expect(serialized).not.toContain(snapshotRootFailure.temporaryParent);
       expect(serialized).not.toContain(movedSnapshotRoot);
     },
   );
@@ -607,7 +738,8 @@ describe("buildSnapshotPair", () => {
         calls.push([...args]);
         if (args[0] === "ls-files" && args[1] === "--stage") {
           return {
-            stdout: "100644 0123456789012345678901234567890123456789 0\tvalid.ts",
+            stdout:
+              "100644 0123456789012345678901234567890123456789 0\tvalid.ts",
             stderr: "",
             exitCode: 0,
           };
@@ -811,71 +943,70 @@ describe("buildCommitSnapshotPair", () => {
     ]);
   });
 
-  it("rejects invalid paths from a commit-owned alternate index before checkout", async () => {
+  it("rejects invalid commit-tree paths before reading blobs", async () => {
     const calls: string[][] = [];
     const git = {
       async run(args: readonly string[]) {
         calls.push([...args]);
-        if (args[0] === "ls-files") {
+        if (args[0] === "ls-tree") {
           return {
             stdout:
-              "100644 0123456789012345678901234567890123456789 0\t../outside.ts\0",
+              "100644 blob 0123456789012345678901234567890123456789\t../outside.ts\0",
             stderr: "",
             exitCode: 0,
           };
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
+      async runBytes(args: readonly string[]) {
+        calls.push([...args]);
+        throw new Error("cat-file must not receive an invalid path");
+      },
     } as unknown as GitClient;
 
     await expect(
       buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
     ).rejects.toMatchObject({ code: "INVALID_INDEX_PATH" });
-    expect(calls.some(([command]) => command === "checkout-index")).toBe(false);
+    expect(calls.some(([command]) => command === "cat-file")).toBe(false);
   });
 
   it("cleans its temporary root after commit snapshot construction fails", async () => {
-    let snapshotRoot: string | undefined;
     const git = {
       async run(args: readonly string[]) {
-        if (args[0] === "checkout-index") {
-          const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-          snapshotRoot = dirname(
-            prefix.slice("--prefix=".length).replace(/[/\\]+$/u, ""),
-          );
-          throw new Error("commit snapshot construction failure");
+        if (args[0] === "ls-tree") {
+          return { stdout: treeRecord(), stderr: "", exitCode: 0 };
         }
         return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      async runBytes() {
+        throw new Error("commit snapshot construction failure");
       },
     } as unknown as GitClient;
 
     await expect(
       buildCommitSnapshotPair("/repo", git, "baseline-oid", "target-oid"),
     ).rejects.toThrow("commit snapshot construction failure");
-    expect(snapshotRoot).toBeDefined();
-    expect(await pathExists(snapshotRoot!)).toBe(false);
+    expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
   });
 
-  it("aborts commit checkout-index and removes its temporary root", async () => {
-    let snapshotRoot: string | undefined;
+  it("aborts a commit blob read and removes its temporary root", async () => {
     let signalReceived = false;
-    let beginCheckout: (() => void) | undefined;
-    const checkoutStarted = new Promise<void>((resolve) => {
-      beginCheckout = resolve;
+    let beginBlobRead: (() => void) | undefined;
+    const blobReadStarted = new Promise<void>((resolve) => {
+      beginBlobRead = resolve;
     });
     const git = {
-      async run(
-        args: readonly string[],
+      async run(args: readonly string[]) {
+        if (args[0] === "ls-tree") {
+          return { stdout: treeRecord(), stderr: "", exitCode: 0 };
+        }
+        return { stdout: "", stderr: "", exitCode: 0 };
+      },
+      async runBytes(
+        _args: readonly string[],
         options: { signal?: AbortSignal } = {},
       ) {
-        if (args[0] !== "checkout-index") {
-          return { stdout: "", stderr: "", exitCode: 0 };
-        }
-        const prefix = args.find((arg) => arg.startsWith("--prefix="))!;
-        snapshotRoot = dirname(
-          prefix.slice("--prefix=".length).replace(/[/\\]+$/u, ""),
-        );
-        beginCheckout?.();
+        beginBlobRead?.();
         return new Promise<never>((_resolve, reject) => {
           const abort = () => {
             signalReceived = true;
@@ -895,12 +1026,11 @@ describe("buildCommitSnapshotPair", () => {
       "target-oid",
       controller.signal,
     );
-    await checkoutStarted;
+    await blobReadStarted;
     controller.abort();
 
     await expect(build).rejects.toMatchObject({ code: "GIT_ABORTED" });
     expect(signalReceived).toBe(true);
-    expect(snapshotRoot).toBeDefined();
-    expect(await pathExists(snapshotRoot!)).toBe(false);
+    expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
   });
 });

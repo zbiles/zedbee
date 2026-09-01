@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { access, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
@@ -149,10 +149,16 @@ describe("readCommitChangeSet", () => {
   });
 
   it("passes the validated commit IDs as separate diff arguments", async () => {
-    const calls: string[][] = [];
+    const calls: Array<{
+      args: string[];
+      options: { readonly env?: Readonly<Record<string, string>> } | undefined;
+    }> = [];
     const git = {
-      async run(args: readonly string[]) {
-        calls.push([...args]);
+      async run(
+        args: readonly string[],
+        options?: { readonly env?: Readonly<Record<string, string>> },
+      ) {
+        calls.push({ args: [...args], options });
         return { stdout: "", stderr: "", exitCode: 0 };
       },
     } as unknown as GitClient;
@@ -160,20 +166,62 @@ describe("readCommitChangeSet", () => {
     await readCommitChangeSet(git, "baseline-oid", "target-oid");
 
     expect(calls).toEqual([
-      [
-        "diff",
-        "--unified=0",
-        "--no-color",
-        "--no-ext-diff",
-        "--find-renames",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "--end-of-options",
-        "baseline-oid",
-        "target-oid",
-      ],
+      {
+        args: [
+          "diff",
+          "--unified=0",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--find-renames",
+          "--src-prefix=a/",
+          "--dst-prefix=b/",
+          "--end-of-options",
+          "baseline-oid",
+          "target-oid",
+        ],
+        options: { env: { GIT_ATTR_SOURCE: "target-oid" } },
+      },
     ]);
   });
+
+  it.runIf(process.platform !== "win32")(
+    "ignores dirty checkout attributes and never executes configured text conversion",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write("value.txt", "line one\nline three\n");
+      await repository.commitAll("baseline text");
+      const baselineCommit = (await repository.git(["rev-parse", "HEAD"]))
+        .stdout;
+      await repository.write("value.txt", "line one\nline two\nline three\n");
+      await repository.commitAll("target text");
+      const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+      const client = new GitClient(repository.root);
+      const expected = [
+        ...(
+          await readCommitChangeSet(client, baselineCommit, targetCommit)
+        ).files.values(),
+      ];
+      const sentinel = join(repository.root, "TEXTCONV_EXECUTED");
+      const converter = join(repository.root, "textconv.sh");
+      await repository.write(
+        "textconv.sh",
+        `#!/bin/sh\nprintf executed > ${JSON.stringify(sentinel)}\ncat "$1"\n`,
+      );
+      await chmod(converter, 0o755);
+      await repository.git(["config", "diff.zedbee.textconv", converter]);
+      await repository.write(".gitattributes", "*.txt diff=zedbee\n");
+
+      const actual = await readCommitChangeSet(
+        client,
+        baselineCommit,
+        targetCommit,
+      );
+
+      expect([...actual.files.values()]).toEqual(expected);
+      await expect(access(sentinel)).rejects.toThrow();
+    },
+  );
 
   it.each([
     ["staged", (git: GitClient) => readStagedChangeSet(git)],

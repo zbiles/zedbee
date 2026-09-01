@@ -79,6 +79,31 @@ describe("GitClient", () => {
     });
   });
 
+  it.runIf(process.platform !== "win32")(
+    "forces no-lazy-fetch while preserving an alternate index override",
+    async () => {
+      const repository = await createGitRepository();
+      const alternateIndex = join(repository.root, "alternate-index");
+      await repository.git([
+        "config",
+        "alias.zedbee-environment",
+        '!f() { printf \'%s|%s\' "$GIT_NO_LAZY_FETCH" "$GIT_INDEX_FILE"; }; f',
+      ]);
+
+      const output = await new GitClient(repository.root).run(
+        ["zedbee-environment"],
+        {
+          env: {
+            GIT_NO_LAZY_FETCH: "0",
+            GIT_INDEX_FILE: alternateIndex,
+          },
+        },
+      );
+
+      expect(output.stdout).toBe(`1|${alternateIndex}`);
+    },
+  );
+
   it("returns non-zero results through tryRun", async () => {
     const repository = await createGitRepository();
     const client = new GitClient(repository.root);
@@ -151,7 +176,8 @@ describe("GitClient", () => {
         client.run(["zedbee-wait"]),
         new Promise<never>((_resolve, reject) => {
           setTimeout(
-            () => reject(new Error("Git hard timeout did not cancel the process.")),
+            () =>
+              reject(new Error("Git hard timeout did not cancel the process.")),
             250,
           );
         }),
@@ -162,7 +188,9 @@ describe("GitClient", () => {
   it("maps a real Git output buffer breach to a sanitized error", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = true;\n");
-    await repository.commitAll("Git output buffer limit exceeded by this message");
+    await repository.commitAll(
+      "Git output buffer limit exceeded by this message",
+    );
     const client = new GitClient(repository.root);
 
     const error = await client

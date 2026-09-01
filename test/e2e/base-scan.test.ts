@@ -1,4 +1,5 @@
 import {
+  access,
   chmod,
   mkdtemp,
   readdir,
@@ -83,10 +84,7 @@ async function gitIdentity(
   const [tree, head, refs, status] = await Promise.all([
     repository.git(["write-tree"]),
     repository.git(["rev-parse", "HEAD"]),
-    repository.git([
-      "for-each-ref",
-      "--format=%(refname)%00%(objectname)",
-    ]),
+    repository.git(["for-each-ref", "--format=%(refname)%00%(objectname)"]),
     repository.git(["status", "--porcelain=v1", "-z"]),
   ]);
   return {
@@ -278,11 +276,7 @@ describe("committed base scans", () => {
     const { repository } = await createBaseFixture();
 
     const before = await gitIdentity(repository);
-    const result = await runCli(repository.root, [
-      "scan",
-      "--format",
-      "json",
-    ]);
+    const result = await runCli(repository.root, ["scan", "--format", "json"]);
     const report = JSON.parse(result.stdout) as JsonReport;
 
     expect(result.exitCode, result.stderr).toBe(0);
@@ -423,10 +417,78 @@ describe("committed base scans", () => {
   }, 30_000);
 
   it.skipIf(process.platform === "win32")(
+    "returns incomplete without invoking a promisor remote for missing blobs",
+    async () => {
+      const source = await createBaseFixture();
+      await source.repository.git(["config", "uploadpack.allowFilter", "true"]);
+      const cloneParent = await temporaryDirectory("zedbee-partial-e2e-");
+      const cloneRoot = join(cloneParent, "checkout");
+      const clone = await execa(
+        "git",
+        [
+          "clone",
+          "--filter=blob:none",
+          "--no-checkout",
+          "--branch",
+          "feature",
+          `file://${source.repository.root}`,
+          cloneRoot,
+        ],
+        { reject: false },
+      );
+      expect(clone.exitCode, clone.stderr).toBe(0);
+      const missing = await execa(
+        "git",
+        ["rev-list", "--objects", "--missing=print", "HEAD"],
+        {
+          cwd: cloneRoot,
+          env: { GIT_NO_LAZY_FETCH: "1" },
+          reject: false,
+        },
+      );
+      expect(missing.stdout).toMatch(/^\?/mu);
+
+      const sentinel = join(cloneParent, "PROMISOR_REMOTE_INVOKED");
+      const uploadPack = join(cloneParent, "sentinel-upload-pack.sh");
+      await writeFile(
+        uploadPack,
+        `#!/bin/sh\nprintf invoked > ${JSON.stringify(sentinel)}\nexit 97\n`,
+      );
+      await chmod(uploadPack, 0o755);
+      const configure = await execa(
+        "git",
+        ["config", "remote.origin.uploadpack", uploadPack],
+        { cwd: cloneRoot, reject: false },
+      );
+      expect(configure.exitCode, configure.stderr).toBe(0);
+
+      const result = await runCli(cloneRoot, [
+        "scan",
+        "--base",
+        source.baseline,
+        "--format",
+        "json",
+      ]);
+      const report = JSON.parse(result.stdout) as JsonReport;
+
+      expect(result.exitCode, result.stderr).toBe(2);
+      expect(report).toMatchObject({
+        outcome: "incomplete",
+        exitCode: 2,
+        mode: "base",
+      });
+      await expect(access(sentinel)).rejects.toThrow();
+    },
+    30_000,
+  );
+
+  it.skipIf(process.platform === "win32")(
     "cleans both commit snapshots after a Git hard timeout",
     async () => {
       const { repository } = await createBaseFixture();
-      const snapshotRoot = await temporaryDirectory("zedbee-timeout-snapshots-");
+      const snapshotRoot = await temporaryDirectory(
+        "zedbee-timeout-snapshots-",
+      );
       const delayed = await createDelayedGitEnvironment(snapshotRoot);
 
       const result = await runBaseScan(
@@ -449,43 +511,39 @@ describe("committed base scans", () => {
     30_000,
   );
 
-  it(
-    "cleans both commit snapshots after scan cancellation",
-    async () => {
-      const { repository } = await createBaseFixture();
-      const snapshotRoot = await temporaryDirectory("zedbee-cancel-snapshots-");
-      const before = await gitIdentity(repository);
-      const originalTemporaryDirectory = process.env.TMPDIR;
-      process.env.TMPDIR = snapshotRoot;
-      const controller = new AbortController();
-      const cancellation = new DOMException("cancelled E2E scan", "AbortError");
+  it("cleans both commit snapshots after scan cancellation", async () => {
+    const { repository } = await createBaseFixture();
+    const snapshotRoot = await temporaryDirectory("zedbee-cancel-snapshots-");
+    const before = await gitIdentity(repository);
+    const originalTemporaryDirectory = process.env.TMPDIR;
+    process.env.TMPDIR = snapshotRoot;
+    const controller = new AbortController();
+    const cancellation = new DOMException("cancelled E2E scan", "AbortError");
 
-      try {
-        await expect(
-          runScan({
-            repositoryRoot: repository.root,
-            baseRef: "main",
-            cache: false,
-            signal: controller.signal,
-            onEvent(event) {
-              if (event.type === "check-running") {
-                controller.abort(cancellation);
-              }
-            },
-          }),
-        ).rejects.toBe(cancellation);
-      } finally {
-        if (originalTemporaryDirectory === undefined) {
-          delete process.env.TMPDIR;
-        } else {
-          process.env.TMPDIR = originalTemporaryDirectory;
-        }
+    try {
+      await expect(
+        runScan({
+          repositoryRoot: repository.root,
+          baseRef: "main",
+          cache: false,
+          signal: controller.signal,
+          onEvent(event) {
+            if (event.type === "check-running") {
+              controller.abort(cancellation);
+            }
+          },
+        }),
+      ).rejects.toBe(cancellation);
+    } finally {
+      if (originalTemporaryDirectory === undefined) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = originalTemporaryDirectory;
       }
+    }
 
-      expect(await gitIdentity(repository)).toEqual(before);
-      await expectNoSnapshots(snapshotRoot);
-      expect(controller.signal.aborted).toBe(true);
-    },
-    30_000,
-  );
+    expect(await gitIdentity(repository)).toEqual(before);
+    await expectNoSnapshots(snapshotRoot);
+    expect(controller.signal.aborted).toBe(true);
+  }, 30_000);
 });

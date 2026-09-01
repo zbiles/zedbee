@@ -211,6 +211,7 @@ export async function readCommitChangeSet(
       "--unified=0",
       "--no-color",
       "--no-ext-diff",
+      "--no-textconv",
       "--find-renames",
       "--src-prefix=a/",
       "--dst-prefix=b/",
@@ -218,7 +219,10 @@ export async function readCommitChangeSet(
       baselineCommit,
       targetCommit,
     ],
-    signal === undefined ? {} : { signal },
+    {
+      env: { GIT_ATTR_SOURCE: targetCommit },
+      ...(signal === undefined ? {} : { signal }),
+    },
   );
   return changeSetFromPatch(patch.stdout);
 }
