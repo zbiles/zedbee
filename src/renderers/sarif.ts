@@ -247,8 +247,12 @@ function createInvocation(
       schemaVersion: report.schemaVersion,
       outcome: report.outcome,
       exitCode: report.exitCode,
+      mode: report.mode,
       baseline: report.baseline,
       target: report.target,
+      ...(report.requestedBase === undefined
+        ? {}
+        : { requestedBase: report.requestedBase }),
       changedFileCount: report.changedFileCount,
       startedAt: report.startedAt,
       durationMs: report.durationMs,

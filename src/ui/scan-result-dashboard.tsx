@@ -6,6 +6,10 @@ import {
 } from "../reporting/report-callouts.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { buildScanResultSections } from "../reporting/result-sections.js";
+import {
+  emptyChangesCopy,
+  scanSourceIdentityLine,
+} from "../reporting/source-identity.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import { chunkTerminalCells } from "../renderers/terminal-cells.js";
 import type { ScanReport } from "../scan/report.js";
@@ -99,7 +103,7 @@ function outcomeCopy(report: ScanReport): {
     heading: "COMMIT ALLOWED",
     detail:
       report.changedFileCount === 0
-        ? "No staged changes. Commit allowed."
+        ? emptyChangesCopy(report)
         : "All checks passed. Commit allowed.",
     tone: ZEDBEE_THEME.pass,
     symbol: "✓",
@@ -125,6 +129,7 @@ function ResultContent({
   readonly color: boolean;
 }) {
   const outcome = outcomeCopy(report);
+  const sourceIdentity = scanSourceIdentityLine(report);
   return (
     <Box
       flexDirection="column"
@@ -139,6 +144,11 @@ function ResultContent({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
         {outcome.detail}
       </Text>
+      {sourceIdentity === undefined ? null : (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {sourceIdentity}
+        </Text>
+      )}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         {countLine(report)}
       </Text>

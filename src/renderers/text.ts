@@ -5,6 +5,10 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import {
+  emptyChangesCopy,
+  scanSourceIdentityLine,
+} from "../reporting/source-identity.js";
+import {
   managedFixGuidanceLines,
   nextStepsLines,
 } from "../reporting/next-steps.js";
@@ -166,10 +170,12 @@ function automaticCountLine(report: ScanReport): string {
 }
 
 function headline(report: ScanReport): string[] {
+  const sourceIdentity = scanSourceIdentityLine(report);
   if (report.outcome === "blocked") {
     return [
       "THAT STINGS",
       "A check failed. Commit blocked.",
+      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
       countLine(report),
     ];
   }
@@ -177,14 +183,16 @@ function headline(report: ScanReport): string[] {
     return [
       "SCAN INCOMPLETE",
       "A required check could not finish. Commit blocked.",
+      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
       countLine(report),
     ];
   }
   return [
     "BEE-UTIFUL",
     report.changedFileCount === 0
-      ? "No staged changes. Commit allowed."
+      ? emptyChangesCopy(report)
       : "All checks passed. Commit allowed.",
+    ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
     countLine(report),
   ];
 }
@@ -378,6 +386,7 @@ function automaticHeadline(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): string[] {
+  const sourceIdentity = scanSourceIdentityLine(report);
   const previewLine = presentation.abbreviated
     ? [
         `Showing ${presentation.findings.length} of ${presentation.totalFindingCount} findings.`,
@@ -387,6 +396,7 @@ function automaticHeadline(
     return [
       "COMMIT BLOCKED",
       "A check failed. Commit blocked.",
+      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
       automaticCountLine(report),
       ...previewLine,
     ];
@@ -395,6 +405,7 @@ function automaticHeadline(
     return [
       "SCAN INCOMPLETE",
       "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
+      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
       automaticCountLine(report),
       ...previewLine,
     ];
@@ -402,8 +413,9 @@ function automaticHeadline(
   return [
     "COMMIT ALLOWED",
     report.changedFileCount === 0
-      ? "No staged changes. Commit allowed."
+      ? emptyChangesCopy(report)
       : "All checks passed. Commit allowed.",
+    ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
     automaticCountLine(report),
     ...previewLine,
   ];

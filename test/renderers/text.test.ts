@@ -712,6 +712,50 @@ describe("renderText", () => {
     );
   });
 
+  it("renders the validated committed source identity with shortened object IDs", () => {
+    const report = createReport({
+      mode: "base",
+      baseline: "a".repeat(64),
+      target: "b".repeat(40),
+      requestedBase: "origin/main",
+      changedFileCount: 2,
+    });
+
+    const output = renderText(report, { width: 80, color: false });
+
+    expect(output).toContain(
+      "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
+    );
+    expect(output).not.toContain("a".repeat(64));
+    expect(output).not.toContain("b".repeat(40));
+  });
+
+  it("renders an empty committed change without staged-only language", () => {
+    const report = createReport({
+      mode: "base",
+      baseline: "a".repeat(40),
+      target: "b".repeat(40),
+      requestedBase: "origin/main",
+      changedFileCount: 0,
+      checks: [],
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 0,
+        incomplete: 0,
+        findings: [],
+      },
+    });
+
+    const output = renderText(report, { width: 80, color: false });
+
+    expect(output).toContain("No committed changes. Commit allowed.");
+    expect(output).toContain(
+      "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
+    );
+    expect(output).not.toMatch(/staged/iu);
+  });
+
   it("does not report staged files as empty when every check is disabled", () => {
     const report = createReport({
       changedFileCount: 1,

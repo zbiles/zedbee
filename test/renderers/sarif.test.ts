@@ -483,6 +483,7 @@ describe("renderSarif", () => {
       schemaVersion: 1,
       outcome: "incomplete",
       exitCode: 2,
+      mode: "index",
       baseline: null,
       target: "index",
       changedFileCount: null,
@@ -528,6 +529,28 @@ describe("renderSarif", () => {
         },
       },
     ]);
+  });
+
+  it("preserves the full committed source identity in invocation properties", () => {
+    const report = createReport({
+      mode: "base",
+      baseline: "a".repeat(40),
+      target: "b".repeat(40),
+      requestedBase: "origin/main",
+      changedFileCount: 3,
+    });
+
+    const document = JSON.parse(renderSarif(report)) as {
+      runs: Array<{ invocations: Array<Record<string, any>> }>;
+    };
+
+    expect(document.runs[0]!.invocations[0]!.properties).toMatchObject({
+      mode: "base",
+      baseline: "a".repeat(40),
+      target: "b".repeat(40),
+      requestedBase: "origin/main",
+      changedFileCount: 3,
+    });
   });
 
   it("renders a default fail-open incomplete check as a warning with warn disposition", () => {

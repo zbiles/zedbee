@@ -112,6 +112,32 @@ function expectPanelsTouch(
 }
 
 describe("ScanResultDashboard", () => {
+  it("renders committed source identity and empty-base copy", () => {
+    const output = dashboard(
+      createReport({
+        mode: "base",
+        baseline: "a".repeat(40),
+        target: "b".repeat(40),
+        requestedBase: "origin/main",
+        changedFileCount: 0,
+        checks: [],
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 0,
+          incomplete: 0,
+          findings: [],
+        },
+      }),
+    );
+
+    expect(output).toContain("No committed changes. Commit allowed.");
+    expect(output).toContain(
+      "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
+    );
+    expect(output).not.toMatch(/staged/iu);
+  });
+
   it("keeps generated managed-fix guidance out of the permanent post-frame callout", () => {
     const finding = createFinding({
       id: "fixable",

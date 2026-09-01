@@ -81,6 +81,34 @@ describe("OutcomeStrip", () => {
     expect(frame).not.toContain("All checks passed");
   });
 
+  it("renders committed source identity and empty-base copy", () => {
+    const report = createReport({
+      mode: "base",
+      baseline: "a".repeat(40),
+      target: "b".repeat(40),
+      requestedBase: "origin/main",
+      changedFileCount: 0,
+      checks: [],
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 0,
+        incomplete: 0,
+        findings: [],
+      },
+    });
+
+    const frame = render(
+      <OutcomeStrip report={report} width={160} color={false} />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("No committed changes. Commit allowed.");
+    expect(frame).toContain(
+      "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
+    );
+    expect(frame).not.toMatch(/staged/iu);
+  });
+
   it("does not mistake disabled checks for an empty staged index", () => {
     const report = Object.assign(
       createReport({

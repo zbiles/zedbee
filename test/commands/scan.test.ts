@@ -1,6 +1,7 @@
 import { render } from "ink-testing-library";
 import { createElement } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { runCli } from "../../src/cli.js";
 import {
   executeScanCommand,
   normalizeTerminalWidth,
@@ -224,6 +225,31 @@ describe("normalizeTerminalWidth", () => {
 });
 
 describe("executeScanCommand", () => {
+  it("passes the requested base unchanged into the scan", async () => {
+    const terminal = io(false);
+    let receivedBase: string | undefined;
+    const deps = dependencies();
+    deps.scan = async (options) => {
+      receivedBase = options.baseRef;
+      return createReport();
+    };
+
+    const exitCode = await executeScanCommand(
+      {
+        cwd: "/repo",
+        format: "text",
+        color: false,
+        animations: false,
+        baseRef: " origin/main ",
+      },
+      terminal,
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(receivedBase).toBe(" origin/main ");
+  });
+
   it.each([
     ["text", false],
     ["ink", true],
@@ -873,6 +899,43 @@ describe("executeScanCommand", () => {
 
     expect(receivedSignal).toBe(controller.signal);
   });
+});
+
+describe("runCli", () => {
+  it("passes scan --base to the scan command unchanged", async () => {
+    let received: unknown;
+
+    const exitCode = await runCli(
+      ["node", "zedbee", "scan", "--base", " origin/main ", "--format", "text"],
+      {
+        executeScanCommand: async (options) => {
+          received = options;
+          return 0;
+        },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(received).toMatchObject({ baseRef: " origin/main " });
+  });
+
+  it.each(["fix", "checks", "doctor", "init"])(
+    "rejects --base on %s as an unknown option",
+    async (command) => {
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      try {
+        await expect(
+          runCli(["node", "zedbee", command, "--base", "origin/main"], {
+            executeScanCommand: async () => 0,
+          }),
+        ).rejects.toMatchObject({ code: "commander.unknownOption" });
+      } finally {
+        stderr.mockRestore();
+      }
+    },
+  );
 });
 
 describe("signalExitCode", () => {

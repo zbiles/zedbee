@@ -1,5 +1,9 @@
 import { Box, Text } from "ink";
 import type { ScanReport } from "../scan/report.js";
+import {
+  emptyChangesCopy,
+  scanSourceIdentityLine,
+} from "../reporting/source-identity.js";
 import { PixelBee } from "./pixel-bee.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -26,11 +30,7 @@ function copyFor(
     ];
   }
   if (report.changedFileCount === 0) {
-    return [
-      "BEE-UTIFUL",
-      "No staged changes. Commit allowed.",
-      "0 passed · 0 warnings",
-    ];
+    return ["BEE-UTIFUL", emptyChangesCopy(report), "0 passed · 0 warnings"];
   }
   return [
     "BEE-UTIFUL",
@@ -88,6 +88,8 @@ export function OutcomeStrip({
 }) {
   const narrow = width < 96;
   const [headline, subline, counts] = copyFor(report, narrow);
+  const sourceIdentity =
+    width >= 72 ? scanSourceIdentityLine(report) : undefined;
   const showMotion = width >= 80;
   const showBee = width >= 52;
   const beeWidth = showMotion ? 53 : showBee ? 20 : 0;
@@ -101,6 +103,11 @@ export function OutcomeStrip({
           {headline}
         </Text>
         <Text {...colorProp(color, ZEDBEE_THEME.primary)}>{subline}</Text>
+        {sourceIdentity === undefined ? null : (
+          <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {sourceIdentity}
+          </Text>
+        )}
         <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>{counts}</Text>
       </Box>
       {showBee ? <PixelBee mirrored motion={showMotion} color={color} /> : null}

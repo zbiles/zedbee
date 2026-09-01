@@ -30,6 +30,7 @@ export interface ScanCommandOptions {
   format: RequestedOutputFormat;
   color: boolean;
   animations: boolean;
+  baseRef?: string;
   configPath?: string;
   sourceExcerpts?: SourceExcerptOverride;
   timeout?: string;
@@ -225,6 +226,7 @@ export async function executeScanCommand(
     const scanOptions: RunScanOptions = {
       repositoryRoot,
       reportingSurface: format,
+      ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
       ...(options.sourceExcerpts === undefined
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),

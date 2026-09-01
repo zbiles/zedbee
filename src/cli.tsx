@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Argument, Command, Option } from "commander";
+import { Argument, Command, CommanderError, Option } from "commander";
 import { ZEDBEE_VERSION } from "./core/package-version.js";
 import { terminalColorEnabled } from "./renderers/terminal-style.js";
 import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
@@ -23,6 +23,7 @@ import {
 
 interface CommanderScanOptions {
   format: RequestedOutputFormat;
+  base?: string;
   config?: string;
   includeSource?: boolean;
   source: boolean;
@@ -72,13 +73,19 @@ export function scanTimeoutOverrides(
   return typeof timeout === "string" ? { timeout } : {};
 }
 
-export async function main(
+export interface CliDependencies {
+  readonly executeScanCommand?: typeof executeScanCommand;
+}
+
+export async function runCli(
   argv: readonly string[] = process.argv,
+  dependencies: CliDependencies = {},
 ): Promise<number> {
   const program = new Command()
     .name("zedbee")
     .description("Diff-aware pre-commit scanning for JavaScript and TypeScript")
-    .showHelpAfterError();
+    .showHelpAfterError()
+    .exitOverride();
   let exitCode = 0;
   let updateNotice: UpdateNotice | undefined;
   let updateColor = false;
@@ -191,6 +198,10 @@ export async function main(
   program
     .command("scan")
     .description("scan the exact staged Git snapshot")
+    .option(
+      "--base <ref>",
+      "scan committed HEAD changes since the unique merge base with this ref",
+    )
     .addOption(
       new Option("--format <format>", "output format")
         .choices(["auto", "ink", "text", "json", "sarif"])
@@ -215,12 +226,13 @@ export async function main(
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderScanOptions) => {
-      exitCode = await executeScanCommand(
+      exitCode = await (dependencies.executeScanCommand ?? executeScanCommand)(
         {
           cwd: process.cwd(),
           format: options.format,
           color: options.color,
           animations: options.animations,
+          ...(options.base === undefined ? {} : { baseRef: options.base }),
           ...(options.config === undefined
             ? {}
             : { configPath: options.config }),
@@ -373,6 +385,17 @@ export async function main(
     process.off("SIGTERM", onSigterm);
   }
   return interrupted === undefined ? exitCode : signalExitCode(interrupted);
+}
+
+export async function main(
+  argv: readonly string[] = process.argv,
+): Promise<number> {
+  try {
+    return await runCli(argv);
+  } catch (error) {
+    if (error instanceof CommanderError) return error.exitCode;
+    throw error;
+  }
 }
 
 const entry = process.argv[1];
