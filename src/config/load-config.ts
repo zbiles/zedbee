@@ -476,7 +476,13 @@ async function targetTreeEntry(
   let result: Awaited<ReturnType<GitClient["run"]>>;
   try {
     result = await git.run(
-      ["ls-tree", "-z", targetCommit, "--", repositoryPath],
+      [
+        "ls-tree",
+        "-z",
+        targetCommit,
+        "--",
+        literalPathspec(repositoryPath),
+      ],
       {
         maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
         ...(signal === undefined ? {} : { signal }),

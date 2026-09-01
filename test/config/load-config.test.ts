@@ -723,6 +723,35 @@ describe("loadConfigFromCommit", () => {
     expect(config.profile).toBe("fast");
   });
 
+  it("treats an explicit magic-looking path as a literal committed filename", async () => {
+    const repository = await createGitRepository();
+    const configName = ":(glob)ci-policy.jsonc";
+    await repository.write(
+      configName,
+      '{"schemaVersion":1,"profile":"thorough"}\n',
+    );
+    await repository.commitAll("strict magic-name policy");
+    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+    await repository.write(
+      configName,
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.git(["add", "--", configName]);
+    await repository.write(
+      configName,
+      '{"schemaVersion":1,"profile":"recommended"}\n',
+    );
+
+    const config = await loadConfigFromCommit(
+      repository.root,
+      new GitClient(repository.root),
+      targetCommit,
+      join(repository.root, configName),
+    );
+
+    expect(config.profile).toBe("thorough");
+  });
+
   it("rejects an unsupported configuration committed in the target tree", async () => {
     const repository = await createGitRepository();
     await repository.write(".zedbeerc.js", "export default {};\n");
@@ -836,6 +865,39 @@ describe("loadConfigFromCommit", () => {
     expect(String(error)).not.toContain(malformedOutput);
   });
 
+  it.each([
+    {
+      name: "duplicate terminated records",
+      output:
+        "100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\tpolicy.jsonc\\0" +
+        "100644 blob bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\tpolicy.jsonc\\0",
+    },
+    {
+      name: "a wrong returned path",
+      output:
+        "100644 blob aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\tdifferent.jsonc\\0",
+    },
+    {
+      name: "an invalid object ID",
+      output: "100644 blob not-an-object-id\\tpolicy.jsonc\\0",
+    },
+  ])("rejects malformed target-tree output with $name", async ({ output }) => {
+    const git = {
+      async run() {
+        return { stdout: output, stderr: "", exitCode: 0 };
+      },
+    } as unknown as GitClient;
+
+    await expect(
+      loadConfigFromCommit(
+        "/repository",
+        git,
+        "a".repeat(40),
+        "/repository/policy.jsonc",
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+  });
+
   it("rejects a missing explicit repository-local configuration", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = 1;\n");
@@ -933,7 +995,7 @@ describe("loadConfigFromCommit", () => {
           "-z",
           "a".repeat(40),
           "--",
-          "sub dir/ci policy.jsonc",
+          ":(literal)sub dir/ci policy.jsonc",
         ],
         maxOutputBytes: 64 * 1024,
       },
