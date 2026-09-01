@@ -189,9 +189,13 @@ export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
     outcome: report.outcome,
     exitCode: report.exitCode,
     repositoryRoot: report.repositoryRoot,
+    mode: report.mode,
     baseline: report.baseline,
     target: report.target,
-    stagedFileCount: report.stagedFileCount,
+    ...(report.requestedBase === undefined
+      ? {}
+      : { requestedBase: report.requestedBase }),
+    changedFileCount: report.changedFileCount,
     startedAt: report.startedAt,
     durationMs: report.durationMs,
     networkDisclosures: report.networkDisclosures.map((disclosure) => ({

@@ -103,9 +103,10 @@ describe("renderJson", () => {
   "outcome": "blocked",
   "exitCode": 1,
   "repositoryRoot": ".",
+  "mode": "index",
   "baseline": "HEAD",
   "target": "index",
-  "stagedFileCount": 1,
+  "changedFileCount": 1,
   "startedAt": "2026-08-15T00:00:00.000Z",
   "durationMs": 15,
   "networkDisclosures": [],
@@ -154,9 +155,10 @@ describe("renderJson", () => {
       "outcome",
       "exitCode",
       "repositoryRoot",
+      "mode",
       "baseline",
       "target",
-      "stagedFileCount",
+      "changedFileCount",
       "startedAt",
       "durationMs",
       "networkDisclosures",
@@ -168,9 +170,10 @@ describe("renderJson", () => {
       outcome: "blocked",
       exitCode: 1,
       repositoryRoot: ".",
+      mode: "index",
       baseline: "HEAD",
       target: "index",
-      stagedFileCount: 1,
+      changedFileCount: 1,
       startedAt: "2026-08-15T00:00:00.000Z",
       durationMs: 15,
       networkDisclosures: [],
@@ -191,6 +194,43 @@ describe("renderJson", () => {
       findings: [{ attribution: { evidence: ["a-evidence", "z-evidence"] } }],
     });
     expect(first.endsWith("\n")).toBe(true);
+  });
+
+  it("serializes committed source identity with the requested base in deterministic order", () => {
+    const baselineCommit = "1111111111111111111111111111111111111111";
+    const targetCommit = "2222222222222222222222222222222222222222";
+    const parsed = JSON.parse(
+      renderJson(
+        createReport({
+          mode: "base",
+          baseline: baselineCommit,
+          target: targetCommit,
+          requestedBase: "origin/main",
+          changedFileCount: 2,
+        }),
+      ),
+    ) as Record<string, unknown>;
+
+    expect(Object.keys(parsed).slice(0, 11)).toEqual([
+      "schemaVersion",
+      "outcome",
+      "exitCode",
+      "repositoryRoot",
+      "mode",
+      "baseline",
+      "target",
+      "requestedBase",
+      "changedFileCount",
+      "startedAt",
+      "durationMs",
+    ]);
+    expect(parsed).toMatchObject({
+      mode: "base",
+      baseline: baselineCommit,
+      target: targetCommit,
+      requestedBase: "origin/main",
+      changedFileCount: 2,
+    });
   });
 
   it("serializes optional diagnostics and omits secret excerpt text", () => {

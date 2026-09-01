@@ -696,7 +696,7 @@ describe("renderText", () => {
 
   it("renders an empty staged change as a successful no-op", () => {
     const report = createReport({
-      stagedFileCount: 0,
+      changedFileCount: 0,
       checks: [],
       summary: {
         passed: 0,
@@ -714,7 +714,7 @@ describe("renderText", () => {
 
   it("does not report staged files as empty when every check is disabled", () => {
     const report = createReport({
-      stagedFileCount: 1,
+      changedFileCount: 1,
       checks: [],
       summary: {
         passed: 0,

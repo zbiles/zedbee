@@ -1,10 +1,18 @@
 import { describe, expect, it } from "vitest";
 import { executeScanCommand } from "../../src/commands/scan.js";
+import { loadConfigFromCommit } from "../../src/config/load-config.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { resolveConfig } from "../../src/config/profiles.js";
-import { readStagedChangeSet } from "../../src/git/change-set.js";
+import {
+  readCommitChangeSet,
+  readStagedChangeSet,
+} from "../../src/git/change-set.js";
+import { resolveBaseComparison } from "../../src/git/base-comparison.js";
 import { GitClient } from "../../src/git/client.js";
-import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import {
+  buildCommitSnapshotPair,
+  buildSnapshotPair,
+} from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { renderJson } from "../../src/renderers/json.js";
@@ -51,7 +59,10 @@ describe("partially staged reporting", () => {
         reactAccessibility: "off",
       },
     } as const;
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.write(
       ".zedbeerc.jsonc",
@@ -87,7 +98,10 @@ describe("partially staged reporting", () => {
 
   it("uses recommended defaults when the index has no configuration", async () => {
     const repository = await createGitRepository();
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.commitAll("baseline without config");
     await repository.write("src/value.js", "export const value=2\n");
@@ -116,7 +130,10 @@ describe("partially staged reporting", () => {
 
   it("rejects an oversized indexed configuration as invalid", async () => {
     const repository = await createGitRepository();
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.commitAll("baseline");
     await repository.write("src/value.js", "export const value = 2;\n");
@@ -133,7 +150,10 @@ describe("partially staged reporting", () => {
 
   it("treats an intent-to-add configuration as absent", async () => {
     const repository = await createGitRepository();
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.commitAll("baseline");
     await repository.write("src/value.js", "export const value=2\n");
@@ -183,10 +203,14 @@ describe("partially staged reporting", () => {
     const git = new GitClient(repository.root);
     let tick = 0;
     const dependencies: RunScanDependencies = {
-      loadConfig: async () => config,
+      resolveBaseComparison,
+      loadIndexConfig: async () => config,
+      loadCommitConfig: loadConfigFromCommit,
       createGitClient: () => git,
-      readChangeSet: readStagedChangeSet,
-      buildSnapshots: buildSnapshotPair,
+      readIndexChangeSet: readStagedChangeSet,
+      readCommitChangeSet,
+      buildIndexSnapshots: buildSnapshotPair,
+      buildCommitSnapshots: buildCommitSnapshotPair,
       inspectRepository,
       baselineForEmptyChange: async () => "HEAD",
       dispatch: async () => [
@@ -257,10 +281,14 @@ describe("partially staged reporting", () => {
     };
     let tick = 0;
     const dependencies: RunScanDependencies = {
-      loadConfig: async () => config,
+      resolveBaseComparison,
+      loadIndexConfig: async () => config,
+      loadCommitConfig: loadConfigFromCommit,
       createGitClient: () => git,
-      readChangeSet: readStagedChangeSet,
-      buildSnapshots: buildSnapshotPair,
+      readIndexChangeSet: readStagedChangeSet,
+      readCommitChangeSet,
+      buildIndexSnapshots: buildSnapshotPair,
+      buildCommitSnapshots: buildCommitSnapshotPair,
       inspectRepository,
       baselineForEmptyChange: async () => "HEAD",
       dispatch: async () => [

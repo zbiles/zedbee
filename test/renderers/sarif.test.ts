@@ -418,7 +418,7 @@ describe("renderSarif", () => {
       outcome: "incomplete",
       exitCode: 2,
       baseline: null,
-      stagedFileCount: null,
+      changedFileCount: null,
       networkDisclosures: [
         {
           checkId: "vulnerabilities",
@@ -485,7 +485,7 @@ describe("renderSarif", () => {
       exitCode: 2,
       baseline: null,
       target: "index",
-      stagedFileCount: null,
+      changedFileCount: null,
       startedAt: "2026-08-15T00:00:00.000Z",
       durationMs: 15,
       networkDisclosures: [

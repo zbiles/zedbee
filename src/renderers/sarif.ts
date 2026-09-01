@@ -249,7 +249,7 @@ function createInvocation(
       exitCode: report.exitCode,
       baseline: report.baseline,
       target: report.target,
-      stagedFileCount: report.stagedFileCount,
+      changedFileCount: report.changedFileCount,
       startedAt: report.startedAt,
       durationMs: report.durationMs,
       networkDisclosures: disclosures,

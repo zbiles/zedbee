@@ -1,5 +1,6 @@
 import type { CheckResult, RunSummary } from "../core/types.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
+import type { ScanMode } from "./source-mode.js";
 
 export interface NetworkDisclosure {
   readonly checkId: string;
@@ -16,14 +17,16 @@ export interface ScanPresentationPolicy {
 }
 
 export interface ScanReport {
-  schemaVersion: 1;
+  readonly schemaVersion: 1;
   outcome: "pass" | "blocked" | "incomplete";
   exitCode: 0 | 1 | 2;
   repositoryRoot: string;
-  baseline: string | null;
-  target: "index";
-  /** Number of paths in the staged index, or null when change discovery failed. */
-  stagedFileCount: number | null;
+  readonly mode: ScanMode;
+  readonly baseline: "HEAD" | string | null;
+  readonly target: "index" | string | null;
+  readonly requestedBase?: string;
+  /** Number of changed paths, or null when change discovery failed. */
+  readonly changedFileCount: number | null;
   startedAt: string;
   durationMs: number;
   networkDisclosures: readonly NetworkDisclosure[];

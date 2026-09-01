@@ -71,7 +71,7 @@ describe("OutcomeStrip", () => {
           findings: [],
         },
       }),
-      { stagedFileCount: 0 },
+      { changedFileCount: 0 },
     );
     const frame = render(
       <OutcomeStrip report={report} width={120} color={false} />,
@@ -93,7 +93,7 @@ describe("OutcomeStrip", () => {
           findings: [],
         },
       }),
-      { stagedFileCount: 1 },
+      { changedFileCount: 1 },
     );
     const frame = render(
       <OutcomeStrip report={report} width={120} color={false} />,

@@ -25,7 +25,7 @@ function copyFor(
       `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
     ];
   }
-  if (report.stagedFileCount === 0) {
+  if (report.changedFileCount === 0) {
     return [
       "BEE-UTIFUL",
       "No staged changes. Commit allowed.",

@@ -98,7 +98,7 @@ function outcomeCopy(report: ScanReport): {
   return {
     heading: "COMMIT ALLOWED",
     detail:
-      report.stagedFileCount === 0
+      report.changedFileCount === 0
         ? "No staged changes. Commit allowed."
         : "All checks passed. Commit allowed.",
     tone: ZEDBEE_THEME.pass,

@@ -19,17 +19,20 @@ import { typescriptAdapter } from "../checks/typescript/adapter.js";
 import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
 import {
   ConfigError,
+  loadConfigFromCommit,
   loadConfigFromIndex,
 } from "../config/load-config.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
-import { readStagedChangeSet, type ChangeSet } from "../git/change-set.js";
+import { readCommitChangeSet, readStagedChangeSet } from "../git/change-set.js";
+import { resolveBaseComparison } from "../git/base-comparison.js";
 import { GitClient } from "../git/client.js";
 import { GitCommandError } from "../git/errors.js";
 import { resolveScanResourcePolicy } from "./resource-policy.js";
 import {
+  buildCommitSnapshotPair,
   buildSnapshotPair,
   SnapshotConstructionCleanupError,
   SnapshotError,
@@ -61,6 +64,7 @@ import {
 } from "./reporting-options.js";
 import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
+import type { ScanSourceIdentity } from "./source-mode.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -68,22 +72,17 @@ import {
 } from "../cache/store.js";
 
 export interface RunScanDependencies {
-  loadConfig(
-    repositoryRoot: string,
-    git: GitClient,
-    configPath?: string,
-    signal?: AbortSignal,
-  ): Promise<ResolvedConfig>;
+  resolveBaseComparison: typeof resolveBaseComparison;
+  loadIndexConfig: typeof loadConfigFromIndex;
+  loadCommitConfig: typeof loadConfigFromCommit;
   createGitClient(
     repositoryRoot: string,
     options?: ConstructorParameters<typeof GitClient>[1],
   ): GitClient;
-  readChangeSet(git: GitClient, signal?: AbortSignal): Promise<ChangeSet>;
-  buildSnapshots(
-    repositoryRoot: string,
-    git: GitClient,
-    signal?: AbortSignal,
-  ): Promise<SnapshotPair>;
+  readIndexChangeSet: typeof readStagedChangeSet;
+  readCommitChangeSet: typeof readCommitChangeSet;
+  buildIndexSnapshots: typeof buildSnapshotPair;
+  buildCommitSnapshots: typeof buildCommitSnapshotPair;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
   baselineForEmptyChange(
     git: GitClient,
@@ -102,6 +101,7 @@ export interface RunScanDependencies {
 
 export interface RunScanOptions {
   repositoryRoot: string;
+  baseRef?: string;
   configPath?: string;
   reportingSurface?: ReportingSurface;
   sourceExcerpts?: SourceExcerptOverride;
@@ -130,11 +130,15 @@ export const DEFAULT_CHECK_ADAPTERS: readonly CheckAdapter[] = Object.freeze([
 ]);
 
 const DEFAULT_DEPENDENCIES: RunScanDependencies = {
-  loadConfig: loadConfigFromIndex,
+  resolveBaseComparison,
+  loadIndexConfig: loadConfigFromIndex,
+  loadCommitConfig: loadConfigFromCommit,
   createGitClient: (repositoryRoot, options) =>
     new GitClient(repositoryRoot, options),
-  readChangeSet: readStagedChangeSet,
-  buildSnapshots: buildSnapshotPair,
+  readIndexChangeSet: readStagedChangeSet,
+  readCommitChangeSet,
+  buildIndexSnapshots: buildSnapshotPair,
+  buildCommitSnapshots: buildCommitSnapshotPair,
   inspectRepository,
   async baselineForEmptyChange(git, signal) {
     return (
@@ -228,7 +232,8 @@ function phaseFailure(
     if (error.code === "GIT_OUTPUT_LIMIT_EXCEEDED") {
       return {
         code: error.code,
-        message: "Zedbee stopped a Git command after it exceeded the configured output limit.",
+        message:
+          "Zedbee stopped a Git command after it exceeded the configured output limit.",
         remediation:
           "Increase resources.git.outputLimitBytes and run the scan again.",
       };
@@ -236,7 +241,8 @@ function phaseFailure(
     if (error.code === "GIT_HARD_TIMEOUT") {
       return {
         code: error.code,
-        message: "Zedbee stopped a Git command after it exceeded the configured hard timeout.",
+        message:
+          "Zedbee stopped a Git command after it exceeded the configured hard timeout.",
         remediation:
           "Increase resources.git.hardTimeout or run zedbee scan with --no-timeout.",
       };
@@ -311,8 +317,16 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   let snapshots: SnapshotPair | undefined;
-  let baseline: string | null = null;
-  let stagedFileCount: number | null = null;
+  let source: ScanSourceIdentity =
+    options.baseRef === undefined
+      ? { mode: "index", baseline: null, target: "index" }
+      : {
+          mode: "base",
+          baseline: null,
+          target: null,
+          requestedBase: options.baseRef,
+        };
+  let changedFileCount: number | null = null;
   const networkDisclosures: NetworkDisclosure[] = [];
   let activePhase: ActiveScanPhase = "configuration";
   let report: ScanReport | undefined;
@@ -328,8 +342,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
 
   const reportContext = (): ScanReportContext => ({
     repositoryRoot: options.repositoryRoot,
-    baseline,
-    stagedFileCount,
+    source,
+    changedFileCount,
     startedAt,
     durationMs: Math.max(0, dependencies.clock() - started),
     networkDisclosures,
@@ -337,14 +351,41 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   });
 
   try {
-    activePhase = "configuration";
     const bootstrapGit = dependencies.createGitClient(options.repositoryRoot);
-    const config = await dependencies.loadConfig(
-      options.repositoryRoot,
-      bootstrapGit,
-      options.configPath,
-      options.signal,
-    );
+    let config: ResolvedConfig;
+    let baseComparison:
+      | Awaited<ReturnType<RunScanDependencies["resolveBaseComparison"]>>
+      | undefined;
+    if (options.baseRef === undefined) {
+      activePhase = "configuration";
+      config = await dependencies.loadIndexConfig(
+        options.repositoryRoot,
+        bootstrapGit,
+        options.configPath,
+        options.signal,
+      );
+    } else {
+      activePhase = "baseline-resolution";
+      baseComparison = await dependencies.resolveBaseComparison(
+        bootstrapGit,
+        options.baseRef,
+        options.signal,
+      );
+      source = {
+        mode: "base",
+        baseline: baseComparison.baselineCommit,
+        target: baseComparison.targetCommit,
+        requestedBase: baseComparison.requestedBase,
+      };
+      activePhase = "configuration";
+      config = await dependencies.loadCommitConfig(
+        options.repositoryRoot,
+        bootstrapGit,
+        baseComparison.targetCommit,
+        options.configPath,
+        options.signal,
+      );
+    }
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
@@ -374,21 +415,37 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           timestamp: dependencies.clock(),
         }),
     });
-    const changeSet = await dependencies.readChangeSet(git, options.signal);
+    const changeSet =
+      baseComparison === undefined
+        ? await dependencies.readIndexChangeSet(git, options.signal)
+        : await dependencies.readCommitChangeSet(
+            git,
+            baseComparison.baselineCommit,
+            baseComparison.targetCommit,
+            options.signal,
+          );
     const policyForFile = createFilePolicyResolver(config, changeSet);
-    stagedFileCount = changeSet.files.size;
+    changedFileCount = changeSet.files.size;
 
     if (changeSet.isEmpty) {
-      activePhase = "baseline-resolution";
-      baseline = await dependencies.baselineForEmptyChange(git, options.signal);
+      if (baseComparison === undefined) {
+        activePhase = "baseline-resolution";
+        source = {
+          mode: "index",
+          baseline: await dependencies.baselineForEmptyChange(
+            git,
+            options.signal,
+          ),
+          target: "index",
+        };
+      }
       report = {
         schemaVersion: 1,
         outcome: "pass",
         exitCode: 0,
         repositoryRoot: options.repositoryRoot,
-        baseline,
-        target: "index",
-        stagedFileCount,
+        ...source,
+        changedFileCount,
         startedAt,
         durationMs: Math.max(0, dependencies.clock() - started),
         networkDisclosures,
@@ -398,12 +455,27 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       };
     } else {
       activePhase = "snapshot-construction";
-      snapshots = await dependencies.buildSnapshots(
-        options.repositoryRoot,
-        git,
-        options.signal,
-      );
-      baseline = snapshots.baselineRef;
+      snapshots =
+        baseComparison === undefined
+          ? await dependencies.buildIndexSnapshots(
+              options.repositoryRoot,
+              git,
+              options.signal,
+            )
+          : await dependencies.buildCommitSnapshots(
+              options.repositoryRoot,
+              git,
+              baseComparison.baselineCommit,
+              baseComparison.targetCommit,
+              options.signal,
+            );
+      if (baseComparison === undefined) {
+        source = {
+          mode: "index",
+          baseline: snapshots.baselineRef,
+          target: snapshots.targetRef,
+        };
+      }
       const unsupportedFailures = unsupportedEntryFailures(
         snapshots.unsupportedEntries,
         new Set(changeSet.files.keys()),
@@ -454,9 +526,8 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           outcome: decision.outcome,
           exitCode: decision.exitCode,
           repositoryRoot: options.repositoryRoot,
-          baseline,
-          target: "index",
-          stagedFileCount,
+          ...source,
+          changedFileCount,
           startedAt,
           durationMs: Math.max(0, dependencies.clock() - started),
           networkDisclosures,

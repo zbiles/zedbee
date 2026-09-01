@@ -19,6 +19,7 @@ import { ConfigError } from "../../src/config/load-config.js";
 import { GitClient, type GitOutput } from "../../src/git/client.js";
 import { GitCommandError } from "../../src/git/errors.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
+import type { BaseComparison } from "../../src/git/base-comparison.js";
 import type { SnapshotPair } from "../../src/git/snapshot.js";
 import { buildSnapshotPair, SnapshotError } from "../../src/git/snapshot.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
@@ -82,7 +83,9 @@ function addedChangeSet(...paths: readonly string[]): ChangeSet {
   };
 }
 
-function configWithLintEnabledOnlyFor(files: readonly string[]): ResolvedConfig {
+function configWithLintEnabledOnlyFor(
+  files: readonly string[],
+): ResolvedConfig {
   return resolveConfig({
     schemaVersion: 1,
     profile: "fast",
@@ -201,18 +204,30 @@ function dependencies(
   });
   let tick = 0;
   return {
-    loadConfig: async () => {
+    resolveBaseComparison: async () => {
+      throw new Error("base resolution must be explicitly configured");
+    },
+    loadIndexConfig: async () => {
       calls.push("load config");
       return config;
     },
+    loadCommitConfig: async () => {
+      throw new Error("commit config must be explicitly configured");
+    },
     createGitClient: () => ({}) as GitClient,
-    readChangeSet: async () => {
+    readIndexChangeSet: async () => {
       calls.push("read staged changes");
       return nonEmptyChangeSet;
     },
-    buildSnapshots: async () => {
+    readCommitChangeSet: async () => {
+      throw new Error("commit changes must be explicitly configured");
+    },
+    buildIndexSnapshots: async () => {
       calls.push("build snapshots");
       return snapshots;
+    },
+    buildCommitSnapshots: async () => {
+      throw new Error("commit snapshots must be explicitly configured");
     },
     inspectRepository: async (snapshotRoot) => {
       calls.push(`inspect ${snapshotRoot}`);
@@ -261,6 +276,292 @@ function delayedGitCommand(delayMs: number) {
 }
 
 describe("runScan", () => {
+  it("uses only index source operations when no base is requested", async () => {
+    const calls: string[] = [];
+    const indexSnapshots: SnapshotPair = {
+      baselineDir: "/tmp/baseline",
+      targetDir: "/tmp/target",
+      baselineRef: "HEAD",
+      targetRef: "index",
+      unsupportedEntries: [],
+      cleanup: async () => {
+        calls.push("clean snapshots");
+      },
+    };
+    const deps = {
+      ...dependencies(calls),
+      resolveBaseComparison: async () => {
+        throw new Error("base resolution must not be called");
+      },
+      loadIndexConfig: async () => {
+        calls.push("load index config");
+        return config;
+      },
+      loadCommitConfig: async () => {
+        throw new Error("commit config must not be called");
+      },
+      readIndexChangeSet: async () => {
+        calls.push("read index changes");
+        return nonEmptyChangeSet;
+      },
+      readCommitChangeSet: async () => {
+        throw new Error("commit changes must not be called");
+      },
+      buildIndexSnapshots: async () => {
+        calls.push("build index snapshots");
+        return indexSnapshots;
+      },
+      buildCommitSnapshots: async () => {
+        throw new Error("commit snapshots must not be called");
+      },
+    } satisfies RunScanDependencies;
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      dependencies: deps,
+    });
+
+    expect(report).toMatchObject({
+      outcome: "pass",
+      mode: "index",
+      baseline: "HEAD",
+      target: "index",
+      changedFileCount: 1,
+    });
+    expect(calls).toEqual([
+      "load index config",
+      "read index changes",
+      "build index snapshots",
+      "inspect /tmp/baseline",
+      "inspect /tmp/target",
+      "dispatch checks",
+      "evaluate policy",
+      "clean snapshots",
+    ]);
+  });
+
+  it("resolves a base once and passes its commit IDs to every committed source operation", async () => {
+    const baselineCommit = "1111111111111111111111111111111111111111";
+    const targetCommit = "2222222222222222222222222222222222222222";
+    const comparison: BaseComparison = {
+      requestedBase: "origin/main",
+      baselineCommit,
+      targetCommit,
+    };
+    const calls: string[] = [];
+    const bootstrapGit = { kind: "bootstrap" } as unknown as GitClient;
+    const configuredGit = { kind: "configured" } as unknown as GitClient;
+    let gitCreations = 0;
+    const commitSnapshots: SnapshotPair = {
+      baselineDir: "/tmp/baseline",
+      targetDir: "/tmp/target",
+      baselineRef: baselineCommit,
+      targetRef: targetCommit,
+      unsupportedEntries: [],
+      cleanup: async () => {
+        calls.push("clean snapshots");
+      },
+    };
+    const deps = {
+      ...dependencies(calls),
+      createGitClient: () =>
+        gitCreations++ === 0 ? bootstrapGit : configuredGit,
+      resolveBaseComparison: async (
+        git: GitClient,
+        requestedBase: string,
+        signal?: AbortSignal,
+      ) => {
+        expect(git).toBe(bootstrapGit);
+        expect(requestedBase).toBe("origin/main");
+        expect(signal).toBeUndefined();
+        calls.push("resolve base");
+        return comparison;
+      },
+      loadIndexConfig: async () => {
+        throw new Error("index config must not be called");
+      },
+      loadCommitConfig: async (
+        root: string,
+        git: GitClient,
+        commit: string,
+        configPath?: string,
+        signal?: AbortSignal,
+      ) => {
+        expect([root, git, commit, configPath, signal]).toEqual([
+          "/repo",
+          bootstrapGit,
+          targetCommit,
+          undefined,
+          undefined,
+        ]);
+        calls.push("load commit config");
+        return config;
+      },
+      readIndexChangeSet: async () => {
+        throw new Error("index changes must not be called");
+      },
+      readCommitChangeSet: async (
+        git: GitClient,
+        baseline: string,
+        target: string,
+      ) => {
+        expect([git, baseline, target]).toEqual([
+          configuredGit,
+          baselineCommit,
+          targetCommit,
+        ]);
+        calls.push("read commit changes");
+        return nonEmptyChangeSet;
+      },
+      buildIndexSnapshots: async () => {
+        throw new Error("index snapshots must not be called");
+      },
+      buildCommitSnapshots: async (
+        root: string,
+        git: GitClient,
+        baseline: string,
+        target: string,
+      ) => {
+        expect([root, git, baseline, target]).toEqual([
+          "/repo",
+          configuredGit,
+          baselineCommit,
+          targetCommit,
+        ]);
+        calls.push("build commit snapshots");
+        return commitSnapshots;
+      },
+    } satisfies RunScanDependencies;
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "origin/main",
+      dependencies: deps,
+    });
+
+    expect(report).toMatchObject({
+      mode: "base",
+      baseline: baselineCommit,
+      target: targetCommit,
+      requestedBase: "origin/main",
+      changedFileCount: 1,
+    });
+    expect(calls).toEqual([
+      "resolve base",
+      "load commit config",
+      "read commit changes",
+      "build commit snapshots",
+      "inspect /tmp/baseline",
+      "inspect /tmp/target",
+      "dispatch checks",
+      "evaluate policy",
+      "clean snapshots",
+    ]);
+  });
+
+  it("reports base resolution errors before configuration or check execution", async () => {
+    const calls: string[] = [];
+    const deps = {
+      ...dependencies(calls),
+      resolveBaseComparison: async () => {
+        calls.push("resolve base");
+        throw new Error("private ref details");
+      },
+      loadIndexConfig: async () => {
+        throw new Error("index config must not be called");
+      },
+      loadCommitConfig: async () => {
+        calls.push("load commit config");
+        return config;
+      },
+      readIndexChangeSet: async () => {
+        throw new Error("index changes must not be called");
+      },
+      readCommitChangeSet: async () => {
+        calls.push("read commit changes");
+        return nonEmptyChangeSet;
+      },
+      buildIndexSnapshots: async () => {
+        throw new Error("index snapshots must not be called");
+      },
+      buildCommitSnapshots: async () => {
+        calls.push("build commit snapshots");
+        throw new Error("snapshots must not be built");
+      },
+    } satisfies RunScanDependencies;
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "missing-base",
+      dependencies: deps,
+    });
+
+    expect(calls).toEqual(["resolve base"]);
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      mode: "base",
+      baseline: null,
+      target: null,
+      requestedBase: "missing-base",
+      changedFileCount: null,
+      checks: [{ error: { code: "BASELINE_RESOLUTION_FAILED" } }],
+    });
+    expect(JSON.stringify(report)).not.toContain("private ref details");
+  });
+
+  it("returns explicit resolved identities for an empty base comparison", async () => {
+    const baselineCommit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const targetCommit = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const calls: string[] = [];
+    const deps = {
+      ...dependencies(calls),
+      resolveBaseComparison: async () => ({
+        requestedBase: "main",
+        baselineCommit,
+        targetCommit,
+      }),
+      loadIndexConfig: async () => {
+        throw new Error("index config must not be called");
+      },
+      loadCommitConfig: async () => {
+        calls.push("load commit config");
+        return config;
+      },
+      readIndexChangeSet: async () => {
+        throw new Error("index changes must not be called");
+      },
+      readCommitChangeSet: async () => {
+        calls.push("read commit changes");
+        return emptyChangeSet;
+      },
+      buildIndexSnapshots: async () => {
+        throw new Error("index snapshots must not be called");
+      },
+      buildCommitSnapshots: async () => {
+        throw new Error("commit snapshots must not be built");
+      },
+    } satisfies RunScanDependencies;
+
+    const report = await runScan({
+      repositoryRoot: "/repo",
+      baseRef: "main",
+      dependencies: deps,
+    });
+
+    expect(calls).toEqual(["load commit config", "read commit changes"]);
+    expect(report).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      mode: "base",
+      baseline: baselineCommit,
+      target: targetCommit,
+      requestedBase: "main",
+      changedFileCount: 0,
+      checks: [],
+    });
+  });
+
   it("propagates its abort signal to empty-index baseline resolution", async () => {
     const controller = new AbortController();
     let resolveStarted: (() => void) | undefined;
@@ -269,7 +570,7 @@ describe("runScan", () => {
     });
     let receivedSignal: AbortSignal | undefined;
     const deps = dependencies([], {
-      readChangeSet: async () => emptyChangeSet,
+      readIndexChangeSet: async () => emptyChangeSet,
       baselineForEmptyChange: async (_git, signal?: AbortSignal) => {
         receivedSignal = signal;
         resolveStarted?.();
@@ -299,7 +600,12 @@ describe("runScan", () => {
         pending,
         new Promise<never>((_resolve, reject) => {
           setTimeout(
-            () => reject(new Error("baseline resolution did not receive the abort signal")),
+            () =>
+              reject(
+                new Error(
+                  "baseline resolution did not receive the abort signal",
+                ),
+              ),
             100,
           );
         }),
@@ -312,7 +618,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => {
+        readIndexChangeSet: async () => {
           throw new GitCommandError(
             "GIT_OUTPUT_LIMIT_EXCEEDED",
             "sensitive Git output",
@@ -336,17 +642,14 @@ describe("runScan", () => {
       repositoryRoot: "/repo",
       onEvent: (event) => events.push(event),
       dependencies: dependencies([], {
-        loadConfig: async () => softTimeoutConfig,
+        loadIndexConfig: async () => softTimeoutConfig,
         createGitClient: (root, options) =>
           new GitClient(root, {
             ...options,
             runCommand: delayedGitCommand(20),
           }),
-        readChangeSet: async (git, signal) => {
-          await git.run(
-            ["status"],
-            signal === undefined ? {} : { signal },
-          );
+        readIndexChangeSet: async (git, signal) => {
+          await git.run(["status"], signal === undefined ? {} : { signal });
           return nonEmptyChangeSet;
         },
       }),
@@ -366,17 +669,14 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => hardTimeoutConfig,
+        loadIndexConfig: async () => hardTimeoutConfig,
         createGitClient: (root, options) =>
           new GitClient(root, {
             ...options,
             runCommand: delayedGitCommand(20),
           }),
-        readChangeSet: async (git, signal) => {
-          await git.run(
-            ["status"],
-            signal === undefined ? {} : { signal },
-          );
+        readIndexChangeSet: async (git, signal) => {
+          await git.run(["status"], signal === undefined ? {} : { signal });
           return nonEmptyChangeSet;
         },
       }),
@@ -397,17 +697,14 @@ describe("runScan", () => {
       repositoryRoot: "/repo",
       noTimeout: true,
       dependencies: dependencies([], {
-        loadConfig: async () => hardTimeoutConfig,
+        loadIndexConfig: async () => hardTimeoutConfig,
         createGitClient: (root, options) =>
           new GitClient(root, {
             ...options,
             runCommand: delayedGitCommand(20),
           }),
-        readChangeSet: async (git, signal) => {
-          await git.run(
-            ["status"],
-            signal === undefined ? {} : { signal },
-          );
+        readIndexChangeSet: async (git, signal) => {
+          await git.run(["status"], signal === undefined ? {} : { signal });
           return nonEmptyChangeSet;
         },
       }),
@@ -424,7 +721,7 @@ describe("runScan", () => {
     });
     let receivedSignal: AbortSignal | undefined;
     const deps = dependencies([], {
-      readChangeSet: async (_git, signal?: AbortSignal) => {
+      readIndexChangeSet: async (_git, signal?: AbortSignal) => {
         receivedSignal = signal;
         resolveStarted?.();
         return new Promise<ChangeSet>((_resolve, reject) => {
@@ -473,7 +770,11 @@ describe("runScan", () => {
     });
     let receivedSignal: AbortSignal | undefined;
     const deps = dependencies([], {
-      buildSnapshots: async (_repositoryRoot, _git, signal?: AbortSignal) => {
+      buildIndexSnapshots: async (
+        _repositoryRoot,
+        _git,
+        signal?: AbortSignal,
+      ) => {
         receivedSignal = signal;
         resolveStarted?.();
         return new Promise<SnapshotPair>((_resolve, reject) => {
@@ -504,7 +805,9 @@ describe("runScan", () => {
           setTimeout(
             () =>
               reject(
-                new Error("snapshot construction did not receive the abort signal"),
+                new Error(
+                  "snapshot construction did not receive the abort signal",
+                ),
               ),
             100,
           );
@@ -526,7 +829,7 @@ describe("runScan", () => {
       resolveDispatchStarted = resolve;
     });
     const deps = dependencies([], {
-      buildSnapshots: async () => ({
+      buildIndexSnapshots: async () => ({
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
@@ -644,8 +947,8 @@ describe("runScan", () => {
     const lfsReport = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => addedChangeSet("asset.dat"),
-        buildSnapshots: async () => ({
+        readIndexChangeSet: async () => addedChangeSet("asset.dat"),
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -662,8 +965,8 @@ describe("runScan", () => {
     const intentOnlyReport = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => emptyChangeSet,
-        buildSnapshots: async () => {
+        readIndexChangeSet: async () => emptyChangeSet,
+        buildIndexSnapshots: async () => {
           throw new Error("snapshots must not be built");
         },
         dispatch: async () => {
@@ -677,7 +980,7 @@ describe("runScan", () => {
     expect(intentOnlyReport).toMatchObject({
       outcome: "pass",
       exitCode: 0,
-      stagedFileCount: 0,
+      changedFileCount: 0,
     });
     expect(dispatchCalls).toBe(0);
   });
@@ -694,7 +997,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => ({
+        readIndexChangeSet: async () => ({
           files: new Map(
             unsupportedPaths.map((path) => [
               path,
@@ -708,7 +1011,7 @@ describe("runScan", () => {
           isEmpty: false,
           containsAddedLine: () => true,
         }),
-        buildSnapshots: async () => ({
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -749,7 +1052,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        buildSnapshots: async () => ({
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -791,8 +1094,8 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => overrideConfig,
-        readChangeSet: async () => ({
+        loadIndexConfig: async () => overrideConfig,
+        readIndexChangeSet: async () => ({
           files: new Map([
             [
               "binary.js",
@@ -806,7 +1109,7 @@ describe("runScan", () => {
           isEmpty: false,
           containsAddedLine: () => true,
         }),
-        buildSnapshots: async () => ({
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -829,9 +1132,9 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
-        readChangeSet: async () => addedChangeSet("vendor/generated.ts"),
-        buildSnapshots: async () =>
+        loadIndexConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readIndexChangeSet: async () => addedChangeSet("vendor/generated.ts"),
+        buildIndexSnapshots: async () =>
           snapshotsWithUnsupported("vendor/generated.ts", "binary"),
       }),
     });
@@ -847,9 +1150,9 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
-        readChangeSet: async () => addedChangeSet("src/generated.ts"),
-        buildSnapshots: async () =>
+        loadIndexConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readIndexChangeSet: async () => addedChangeSet("src/generated.ts"),
+        buildIndexSnapshots: async () =>
           snapshotsWithUnsupported("src/generated.ts", "binary"),
       }),
     });
@@ -871,9 +1174,9 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
-        readChangeSet: async () => addedChangeSet("assets/photo.png"),
-        buildSnapshots: async () =>
+        loadIndexConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readIndexChangeSet: async () => addedChangeSet("assets/photo.png"),
+        buildIndexSnapshots: async () =>
           snapshotsWithUnsupported("assets/photo.png", "binary"),
         dispatch: async () => {
           dispatchCalls += 1;
@@ -890,8 +1193,8 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
-        readChangeSet: async () => ({
+        loadIndexConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readIndexChangeSet: async () => ({
           files: new Map([
             [
               "src/generated.ts",
@@ -906,7 +1209,7 @@ describe("runScan", () => {
           isEmpty: false,
           containsAddedLine: () => false,
         }),
-        buildSnapshots: async () =>
+        buildIndexSnapshots: async () =>
           snapshotsWithUnsupported("src/generated.ts", "binary"),
       }),
     });
@@ -926,8 +1229,8 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        loadConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
-        readChangeSet: async () => ({
+        loadIndexConfig: async () => configWithLintEnabledOnlyFor(["src/**"]),
+        readIndexChangeSet: async () => ({
           files: new Map([
             [
               "vendor/generated.ts",
@@ -942,7 +1245,7 @@ describe("runScan", () => {
           isEmpty: false,
           containsAddedLine: () => false,
         }),
-        buildSnapshots: async () =>
+        buildIndexSnapshots: async () =>
           snapshotsWithUnsupported("vendor/generated.ts", "binary"),
         dispatch: async () => {
           dispatchCalls += 1;
@@ -960,7 +1263,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => ({
+        readIndexChangeSet: async () => ({
           files: new Map([
             [
               "assets/photo.png",
@@ -974,7 +1277,7 @@ describe("runScan", () => {
           isEmpty: false,
           containsAddedLine: () => false,
         }),
-        buildSnapshots: async () => ({
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -1010,8 +1313,8 @@ describe("runScan", () => {
       checks: { formatting: "error", lint: "error" },
     });
     const deps = dependencies(calls, {
-      loadConfig: async () => cleanupConfig,
-      buildSnapshots: async () => ({
+      loadIndexConfig: async () => cleanupConfig,
+      buildIndexSnapshots: async () => ({
         baselineDir: join(canonicalSnapshotRoot, "baseline"),
         targetDir: join(canonicalSnapshotRoot, "target"),
         baselineRef: "HEAD",
@@ -1095,8 +1398,8 @@ describe("runScan", () => {
         checks: { formatting: "error", lint: "error" },
       });
       const deps = dependencies(calls, {
-        loadConfig: async () => cleanupConfig,
-        buildSnapshots: async () => ({
+        loadIndexConfig: async () => cleanupConfig,
+        buildIndexSnapshots: async () => ({
           baselineDir: join(canonicalSnapshotRoot, "baseline"),
           targetDir: join(canonicalSnapshotRoot, "target"),
           baselineRef: "HEAD",
@@ -1191,7 +1494,7 @@ describe("runScan", () => {
       });
       const deps = dependencies([], {
         createGitClient: () => git,
-        buildSnapshots: buildSnapshotPair,
+        buildIndexSnapshots: buildSnapshotPair,
       });
 
       const report = await runScan({
@@ -1202,7 +1505,7 @@ describe("runScan", () => {
       expect(report).toMatchObject({
         outcome: "incomplete",
         exitCode: 2,
-        stagedFileCount: 1,
+        changedFileCount: 1,
         summary: { incomplete: 2 },
       });
       expect(report.checks.map(({ error }) => error?.code)).toEqual([
@@ -1229,7 +1532,7 @@ describe("runScan", () => {
     const controller = new AbortController();
     const abortReason = new DOMException("scan cancelled", "AbortError");
     const deps = dependencies(calls, {
-      buildSnapshots: async () => ({
+      buildIndexSnapshots: async () => ({
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
@@ -1259,7 +1562,7 @@ describe("runScan", () => {
       "AbortError",
     );
     const deps = dependencies(calls, {
-      buildSnapshots: async () => ({
+      buildIndexSnapshots: async () => ({
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
@@ -1355,7 +1658,7 @@ describe("runScan", () => {
     const deps = dependencies(calls, {
       ...(phase === "configuration"
         ? {
-            loadConfig: async () => {
+            loadIndexConfig: async () => {
               throw new ConfigError(
                 "CONFIG_INVALID",
                 "private-token-123",
@@ -1366,21 +1669,21 @@ describe("runScan", () => {
         : {}),
       ...(phase === "change discovery"
         ? {
-            readChangeSet: async () => {
+            readIndexChangeSet: async () => {
               throw new Error("private-token-123");
             },
           }
         : {}),
       ...(phase === "unresolved merge entries"
         ? {
-            buildSnapshots: async () => {
+            buildIndexSnapshots: async () => {
               throw new SnapshotError("UNRESOLVED_INDEX", "private-token-123");
             },
           }
         : {}),
       ...(phase === "invalid index path"
         ? {
-            buildSnapshots: async () => {
+            buildIndexSnapshots: async () => {
               throw new SnapshotError(
                 "INVALID_INDEX_PATH",
                 "private-token-123 /outside/repository",
@@ -1390,7 +1693,7 @@ describe("runScan", () => {
         : {}),
       ...(phase === "snapshot construction"
         ? {
-            buildSnapshots: async () => {
+            buildIndexSnapshots: async () => {
               throw new Error("private-token-123");
             },
           }
@@ -1452,8 +1755,8 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies([], {
-        readChangeSet: async () => addedChangeSet("assets/large.dat"),
-        buildSnapshots: async () => ({
+        readIndexChangeSet: async () => addedChangeSet("assets/large.dat"),
+        buildIndexSnapshots: async () => ({
           baselineDir: "/tmp/baseline",
           targetDir: "/tmp/target",
           baselineRef: "HEAD",
@@ -1646,8 +1949,8 @@ describe("runScan", () => {
       overrides: [{ files: ["apps/web/**"], checks: { formatting: "error" } }],
     });
     const deps = dependencies(calls, {
-      loadConfig: async () => targetConfig,
-      readChangeSet: async () => addedChangeSet("apps/web/value.ts"),
+      loadIndexConfig: async () => targetConfig,
+      readIndexChangeSet: async () => addedChangeSet("apps/web/value.ts"),
       inspectRepository: async (snapshotRoot) => ({
         snapshotRoot,
         packageManager: "npm",
@@ -1736,8 +2039,8 @@ describe("runScan", () => {
       overrides: [{ files: ["apps/web/**"], checks: { formatting: "error" } }],
     });
     const deps = dependencies(calls, {
-      loadConfig: async () => targetConfig,
-      readChangeSet: async () => addedChangeSet("apps/web/value.ts"),
+      loadIndexConfig: async () => targetConfig,
+      readIndexChangeSet: async () => addedChangeSet("apps/web/value.ts"),
       inspectRepository: async (snapshotRoot) => ({
         snapshotRoot,
         packageManager: "npm",
@@ -1810,7 +2113,7 @@ describe("runScan", () => {
     const report = await runScan({
       repositoryRoot: "/repo",
       dependencies: dependencies(calls, {
-        loadConfig: async () => {
+        loadIndexConfig: async () => {
           calls.push("load config");
           return reportConfig;
         },
@@ -1879,9 +2182,10 @@ describe("runScan", () => {
       "outcome",
       "exitCode",
       "repositoryRoot",
+      "mode",
       "baseline",
       "target",
-      "stagedFileCount",
+      "changedFileCount",
       "startedAt",
       "durationMs",
       "networkDisclosures",
@@ -1971,7 +2275,7 @@ describe("runScan", () => {
         reportingSurface,
         ...(sourceExcerpts === undefined ? {} : { sourceExcerpts }),
         dependencies: dependencies([], {
-          loadConfig: async () => resolved,
+          loadIndexConfig: async () => resolved,
         }),
       });
 
@@ -1994,7 +2298,7 @@ describe("runScan", () => {
       repositoryRoot: "/repo",
       reportingSurface: "sarif",
       dependencies: dependencies([], {
-        loadConfig: async () => resolved,
+        loadIndexConfig: async () => resolved,
         dispatch: async () => {
           throw new Error("sensitive adapter failure");
         },
@@ -2032,11 +2336,11 @@ describe("runScan", () => {
       reporting: { sourceExcerpts: "interactive" },
     });
     const deps = dependencies(calls, {
-      loadConfig: async () => {
+      loadIndexConfig: async () => {
         calls.push("load config");
         return excerptConfig;
       },
-      buildSnapshots: async () => {
+      buildIndexSnapshots: async () => {
         calls.push("build snapshots");
         return {
           baselineDir,
@@ -2115,8 +2419,8 @@ describe("runScan", () => {
     });
     const baseFinding = blocking.findings[0]!;
     const deps = dependencies([], {
-      loadConfig: async () => interactiveConfig,
-      buildSnapshots: async () => ({
+      loadIndexConfig: async () => interactiveConfig,
+      buildIndexSnapshots: async () => ({
         baselineDir,
         targetDir,
         baselineRef: "HEAD",
@@ -2203,12 +2507,12 @@ describe("runScan", () => {
   it("returns a successful no-op without creating snapshots for an empty index", async () => {
     const calls: string[] = [];
     const deps = dependencies(calls, {
-      readChangeSet: async () => {
+      readIndexChangeSet: async () => {
         calls.push("read staged changes");
         return emptyChangeSet;
       },
       baselineForEmptyChange: async () => "HEAD",
-      buildSnapshots: async () => {
+      buildIndexSnapshots: async () => {
         throw new Error("snapshots must not be built");
       },
       dispatch: async () => {
@@ -2226,7 +2530,7 @@ describe("runScan", () => {
       outcome: "pass",
       exitCode: 0,
       baseline: "HEAD",
-      stagedFileCount: 0,
+      changedFileCount: 0,
       checks: [],
       summary: { passed: 0, warnings: 0, failed: 0, incomplete: 0 },
     });
@@ -2329,7 +2633,7 @@ describe("runScan", () => {
     const calls: string[] = [];
     const controller = new AbortController();
     const deps = dependencies(calls, {
-      buildSnapshots: async () => ({
+      buildIndexSnapshots: async () => ({
         baselineDir: "/tmp/baseline",
         targetDir: "/tmp/target",
         baselineRef: "HEAD",
@@ -2360,7 +2664,7 @@ describe("runScan", () => {
   it("returns incomplete when staged change discovery fails before snapshots exist", async () => {
     const calls: string[] = [];
     const deps = dependencies(calls, {
-      readChangeSet: async () => {
+      readIndexChangeSet: async () => {
         calls.push("read staged changes");
         throw new Error("sensitive diff failure");
       },

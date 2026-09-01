@@ -3,15 +3,23 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CheckAdapter } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import { loadConfigFromCommit } from "../../src/config/load-config.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type {
   ResolvedComplexityPolicy,
   ResolvedDuplicationPolicy,
 } from "../../src/config/schema.js";
 import type { Observation } from "../../src/core/types.js";
-import { readStagedChangeSet } from "../../src/git/change-set.js";
+import {
+  readCommitChangeSet,
+  readStagedChangeSet,
+} from "../../src/git/change-set.js";
+import { resolveBaseComparison } from "../../src/git/base-comparison.js";
 import { GitClient } from "../../src/git/client.js";
-import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import {
+  buildCommitSnapshotPair,
+  buildSnapshotPair,
+} from "../../src/git/snapshot.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { runScan, type RunScanDependencies } from "../../src/scan/run-scan.js";
@@ -162,10 +170,14 @@ describe("attribution platform", () => {
     const git = new GitClient(repository.root);
     let tick = 0;
     const dependencies: RunScanDependencies = {
-      loadConfig: async () => config,
+      resolveBaseComparison,
+      loadIndexConfig: async () => config,
+      loadCommitConfig: loadConfigFromCommit,
       createGitClient: () => git,
-      readChangeSet: readStagedChangeSet,
-      buildSnapshots: buildSnapshotPair,
+      readIndexChangeSet: readStagedChangeSet,
+      readCommitChangeSet,
+      buildIndexSnapshots: buildSnapshotPair,
+      buildCommitSnapshots: buildCommitSnapshotPair,
       inspectRepository,
       baselineForEmptyChange: async () => "HEAD",
       dispatch: dispatchChecks,
@@ -303,10 +315,14 @@ describe("attribution platform", () => {
     const git = new GitClient(repository.root);
     let tick = 0;
     const dependencies: RunScanDependencies = {
-      loadConfig: async () => config,
+      resolveBaseComparison,
+      loadIndexConfig: async () => config,
+      loadCommitConfig: loadConfigFromCommit,
       createGitClient: () => git,
-      readChangeSet: readStagedChangeSet,
-      buildSnapshots: buildSnapshotPair,
+      readIndexChangeSet: readStagedChangeSet,
+      readCommitChangeSet,
+      buildIndexSnapshots: buildSnapshotPair,
+      buildCommitSnapshots: buildCommitSnapshotPair,
       inspectRepository,
       baselineForEmptyChange: async () => "HEAD",
       dispatch: dispatchChecks,

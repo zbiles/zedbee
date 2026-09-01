@@ -182,7 +182,7 @@ function headline(report: ScanReport): string[] {
   }
   return [
     "BEE-UTIFUL",
-    report.stagedFileCount === 0
+    report.changedFileCount === 0
       ? "No staged changes. Commit allowed."
       : "All checks passed. Commit allowed.",
     countLine(report),
@@ -401,7 +401,7 @@ function automaticHeadline(
   }
   return [
     "COMMIT ALLOWED",
-    report.stagedFileCount === 0
+    report.changedFileCount === 0
       ? "No staged changes. Commit allowed."
       : "All checks passed. Commit allowed.",
     automaticCountLine(report),
