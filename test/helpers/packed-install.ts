@@ -127,6 +127,25 @@ async function copyCacheEntry(
   ]);
 }
 
+async function copyCacheEntryIfPresent(
+  sourceCache: string,
+  targetCache: string,
+  url: string,
+): Promise<void> {
+  try {
+    await copyCacheEntry(sourceCache, targetCache, url);
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      (error as { readonly code?: unknown }).code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
+}
+
 async function appendSyntheticManifest(
   cacheRoot: string,
   name: string,
@@ -156,7 +175,19 @@ async function appendSyntheticManifest(
   const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
   const key = `${CACHE_KEY_PREFIX}${REGISTRY}${encodedName}`;
   const indexPath = cacheIndexPath(cacheRoot, key);
-  const existing = cachedEntry(await readFile(indexPath, "utf8"), key);
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = cachedEntry(await readFile(indexPath, "utf8"), key);
+  } catch (error) {
+    if (
+      typeof error !== "object" ||
+      error === null ||
+      !("code" in error) ||
+      (error as { readonly code?: unknown }).code !== "ENOENT"
+    ) {
+      throw error;
+    }
+  }
   const integrity = await writeContent(cacheRoot, body);
   const time = Date.now();
   const existingMetadata =
@@ -189,6 +220,7 @@ async function appendSyntheticManifest(
       options: { compress: true },
     },
   });
+  await mkdir(dirname(indexPath), { recursive: true });
   await appendFile(
     indexPath,
     `\n${createHash("sha1").update(value).digest("hex")}\t${value}`,
@@ -276,7 +308,11 @@ async function seedOfflineCache(
   );
   await runBounded([...packages.keys()].sort(), (name) => {
     const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
-    return copyCacheEntry(sourceCache, cacheRoot, `${REGISTRY}${encodedName}`);
+    return copyCacheEntryIfPresent(
+      sourceCache,
+      cacheRoot,
+      `${REGISTRY}${encodedName}`,
+    );
   });
   await runBounded(
     [...packages].sort(([left], [right]) =>
