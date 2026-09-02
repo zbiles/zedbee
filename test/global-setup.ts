@@ -56,7 +56,11 @@ export default async function setup(project: TestProject) {
       packageRoot,
       installRoot,
       join(scratch, "install-cache"),
-      { cancelSignal: deadline, reuseSharedInstall: false },
+      {
+        cancelSignal: deadline,
+        retryTimedOutInstall: true,
+        reuseSharedInstall: false,
+      },
     );
     project.provide(
       "sharedPackedNodeModules",
