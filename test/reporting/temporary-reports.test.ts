@@ -30,6 +30,7 @@ const uuidControl = vi.hoisted(() => ({ values: [] as string[] }));
 const filesystemControl = vi.hoisted(() => ({
   lstatFailures: new Map<string, string>(),
   openFailures: new Map<string, string>(),
+  rejectNumericDirectoryOpen: false,
 }));
 
 vi.mock("node:crypto", async (importOriginal) => {
@@ -46,7 +47,16 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     ...original,
     async open(...args: Parameters<typeof original.open>) {
       const key = String(args[0]);
-      const code = filesystemControl.openFailures.get(key);
+      if (
+        filesystemControl.rejectNumericDirectoryOpen &&
+        typeof args[1] === "number"
+      ) {
+        throw Object.assign(new Error("Injected Windows directory failure"), {
+          code: "EPERM",
+        });
+      }
+      const code =
+        args[1] === "r" ? filesystemControl.openFailures.get(key) : undefined;
       if (code !== undefined) {
         filesystemControl.openFailures.delete(key);
         throw Object.assign(new Error(`Injected open failure: ${code}`), {
@@ -81,6 +91,7 @@ afterEach(() => {
   uuidControl.values.length = 0;
   filesystemControl.lstatFailures.clear();
   filesystemControl.openFailures.clear();
+  filesystemControl.rejectNumericDirectoryOpen = false;
 });
 
 async function fixture(): Promise<{
@@ -152,6 +163,27 @@ async function repositoryDirectory(
 }
 
 describe("temporary report store", () => {
+  it("maintains reports when Windows cannot open directory handles", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    filesystemControl.rejectNumericDirectoryOpen = true;
+    const store = createTemporaryReportStore({
+      temporaryRoot,
+      platform: "win32",
+    } as never);
+
+    const maintained = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json: "windows\n",
+    });
+
+    expect(maintained.reportPath).toBeDefined();
+    expect(maintained.warnings).toEqual([]);
+    await expect(readFile(maintained.reportPath!, "utf8")).resolves.toBe(
+      "windows\n",
+    );
+  });
+
   it("isolates identical repositories in stable safe per-user namespaces", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const rootUser = createTemporaryReportStore({
@@ -1129,19 +1161,12 @@ describe("temporary report store", () => {
       });
       const directory = dirname(created.reportPath!);
       const state = await storedState(created.reportPath!);
-      await writeFile(
-        state.path,
-        `${JSON.stringify(state.value)}${" ".repeat(900_000)}`,
-        "utf8",
-      );
-      const lockPath = join(directory, LOCK_FILE_NAME);
-      const pending = store.maintain({
+      await writeFile(state.path, JSON.stringify(state.value), "utf8");
+      filesystemControl.openFailures.set(directory, "EACCES");
+      const maintained = await store.maintain({
         repositoryRoot,
         maxAgeMs: 0,
       });
-      await waitForRegularFile(lockPath);
-      filesystemControl.openFailures.set(directory, "EACCES");
-      const maintained = await pending;
       const warning = maintained.warnings.find((item) =>
         item.message.includes("removed report's directory"),
       );

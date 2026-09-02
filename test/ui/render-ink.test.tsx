@@ -60,7 +60,7 @@ describe("runInkScan", () => {
       '{"name":"ink-no-animation-fixture","private":true}\n',
     );
     await repository.commitAll("fixture setup");
-    const startedAt = performance.now();
+    const wait = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
       ...args: unknown[]
     ) => {
@@ -79,11 +79,10 @@ describe("runInkScan", () => {
           animations: false,
           width: 120,
         },
+        { wait },
       );
 
-      expect(performance.now() - startedAt).toBeLessThan(
-        INK_MINIMUM_DISPLAY_MS,
-      );
+      expect(wait).not.toHaveBeenCalled();
     } finally {
       stdout.mockRestore();
     }

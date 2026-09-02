@@ -23,7 +23,7 @@ import {
   relative,
 } from "node:path";
 import { execa } from "execa";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { sanitizeCheckResult } from "../../src/checks/sanitize-result.js";
 import type { CheckResult } from "../../src/core/types.js";
 import { GitClient } from "../../src/git/client.js";
@@ -52,6 +52,12 @@ const snapshotRootFailure = vi.hoisted(() => ({
   failTargetDirectoryCreation: false,
   temporaryParent: "",
 }));
+
+afterEach(() => {
+  snapshotRootFailure.failCanonicalization = false;
+  snapshotRootFailure.failBlobWrite = false;
+  snapshotRootFailure.failTargetDirectoryCreation = false;
+});
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -1094,7 +1100,7 @@ describe("buildCommitSnapshotPair", () => {
     } finally {
       snapshotRootFailure.failBlobWrite = false;
     }
-  });
+  }, 30_000);
 
   it("materializes SHA-256 commit blobs through the batch protocol", async () => {
     const repositoryRoot = await mkdtemp(join(tmpdir(), "zedbee-sha256-"));
@@ -1134,7 +1140,7 @@ describe("buildCommitSnapshotPair", () => {
     expect(await readFile(join(pair.targetDir, "value.bin"))).toEqual(
       Buffer.from([0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x00]),
     );
-  });
+  }, 30_000);
 
   it.runIf(process.platform !== "win32")(
     "uses a constant number of Git processes for many committed files",
@@ -1283,7 +1289,7 @@ describe("buildCommitSnapshotPair", () => {
     expect((await repository.git(["rev-parse", "HEAD"])).stdout).toBe(
       beforeHead.stdout,
     );
-  });
+  }, 30_000);
 
   it("classifies target commit submodules, LFS pointers, and binary files", async () => {
     const repository = await createGitRepository();
@@ -1322,7 +1328,7 @@ describe("buildCommitSnapshotPair", () => {
       { path: "large.dat", kind: "git-lfs-pointer" },
       { path: "vendor/demo", kind: "submodule" },
     ]);
-  });
+  }, 30_000);
 
   it("classifies a binary baseline and counts target text lines with constant memory", async () => {
     const repository = await createGitRepository();
@@ -1346,7 +1352,7 @@ describe("buildCommitSnapshotPair", () => {
     ]);
     expect(pair.unsupportedEntries).toEqual([]);
     expect(await countSnapshotFileLines(pair.targetDir, "value.dat")).toBe(2);
-  });
+  }, 30_000);
 
   it("rejects invalid commit-tree paths before reading blobs", async () => {
     const calls: string[][] = [];

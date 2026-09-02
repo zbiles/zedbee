@@ -54,14 +54,14 @@ function validateCanonicalSnapshotPath(
 ): ValidatedSnapshotPath {
   if (
     !isAbsolute(path) ||
-    path !== canonicalPath ||
+    !isAbsolute(canonicalPath) ||
     !directory ||
-    !isContainedBy(canonicalTempRoot, path) ||
-    !basename(path).startsWith(SNAPSHOT_PREFIX)
+    !isContainedBy(canonicalTempRoot, canonicalPath) ||
+    !basename(canonicalPath).startsWith(SNAPSHOT_PREFIX)
   ) {
     return invalidSnapshotPath();
   }
-  return path as ValidatedSnapshotPath;
+  return canonicalPath as ValidatedSnapshotPath;
 }
 
 export async function validateSnapshotPath(

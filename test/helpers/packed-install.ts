@@ -206,14 +206,18 @@ async function seedOfflineCache(
       }),
     );
     const integrity = await writeContent(cacheRoot, body);
-    const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
-    await writeIndexEntry(
-      cacheRoot,
-      `make-fetch-happen:request-cache:${REGISTRY}${encodedName}`,
-      integrity,
-      body.length,
-      "application/json",
-    );
+    const encodedNames = name.startsWith("@")
+      ? [name.replace("/", "%2f"), name.replace("/", "%2F"), name]
+      : [name];
+    for (const encodedName of encodedNames) {
+      await writeIndexEntry(
+        cacheRoot,
+        `make-fetch-happen:request-cache:${REGISTRY}${encodedName}`,
+        integrity,
+        body.length,
+        "application/json",
+      );
+    }
   }
 }
 

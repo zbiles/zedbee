@@ -141,7 +141,7 @@ describe("GitClient", () => {
 
     const output = await client.run(["rev-parse", "--show-toplevel"]);
 
-    expect(output.stdout).toBe(await realpath(repository.root));
+    expect(await realpath(output.stdout)).toBe(await realpath(repository.root));
   });
 
   it("reports cancellation without running the command", async () => {

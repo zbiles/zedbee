@@ -1,4 +1,5 @@
 import { render } from "ink-testing-library";
+import { resolve } from "node:path";
 import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { runCli } from "../../src/cli.js";
@@ -872,7 +873,7 @@ describe("executeScanCommand", () => {
     );
 
     expect(exitCode).toBe(0);
-    expect(receivedPath).toBe("/repo/config/zedbee.jsonc");
+    expect(receivedPath).toBe(resolve("/repo", "config/zedbee.jsonc"));
   });
 
   it("passes the command cancellation signal into the scan", async () => {

@@ -94,13 +94,12 @@ describe("release verification contract", () => {
       }
     ).resolveNpmCliPath;
 
-    expect(
-      resolveNpmCliPath({
+    const resolved = resolveNpmCliPath({
         nodeExecutable: join(temporaryRoot, "node"),
         npmExecPath: npmCliPath,
         pathValue: "",
-      }),
-    ).toBe(await realpath(npmCliPath));
+      });
+    expect(await realpath(resolved)).toBe(await realpath(npmCliPath));
   });
 
   it("runs every local release-safety gate without requiring publication metadata", () => {

@@ -472,7 +472,9 @@ describe("production license inventory", () => {
     const result = await runLicenseCheck(root);
 
     expect(result.exitCode).toBe(2);
-    expect(result.stderr).toContain("node_modules/required/package.json");
+    expect(result.stderr.replaceAll("\\", "/")).toContain(
+      "node_modules/required/package.json",
+    );
   });
 
   it("rejects escaping lockfile paths before reading outside the repository", async () => {

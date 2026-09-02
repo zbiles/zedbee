@@ -149,6 +149,7 @@ function errorCode(error: unknown): string {
 async function ensureManagedDirectory(
   canonicalParent: string,
   name: string,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<string> {
   const path = join(canonicalParent, name);
   await mkdir(path, { mode: 0o700 }).catch((error: unknown) => {
@@ -157,6 +158,22 @@ async function ensureManagedDirectory(
   const expected = await lstat(path);
   if (!expected.isDirectory() || expected.isSymbolicLink()) {
     throw new TypeError("Managed temporary-report boundary is not a directory");
+  }
+  if (platform === "win32") {
+    const canonicalPath = await realpath(path);
+    const current = await lstat(path);
+    if (
+      current.isSymbolicLink() ||
+      !current.isDirectory() ||
+      current.dev !== expected.dev ||
+      current.ino !== expected.ino ||
+      dirname(canonicalPath) !== canonicalParent
+    ) {
+      throw new TypeError(
+        "Managed temporary-report boundary escapes its parent",
+      );
+    }
+    return canonicalPath;
   }
   const handle = await open(
     path,
@@ -806,10 +823,12 @@ export function createTemporaryReportStore(options?: {
   readonly temporaryRoot?: string;
   readonly userIdentity?: TemporaryReportUserIdentity;
   readonly now?: () => number;
+  readonly platform?: NodeJS.Platform;
 }): TemporaryReportStore {
   const configuredTemporaryRoot = options?.temporaryRoot ?? tmpdir();
   const configuredUserIdentity = options?.userIdentity;
   const now = options?.now ?? Date.now;
+  const platform = options?.platform ?? process.platform;
 
   return Object.freeze({
     async maintain(
@@ -834,6 +853,7 @@ export function createTemporaryReportStore(options?: {
         const reportsRoot = await ensureManagedDirectory(
           canonicalTemporaryRoot,
           userNamespace(configuredUserIdentity ?? userInfo()),
+          platform,
         );
         const repositoryHash = createHash("sha256")
           .update(canonicalRepositoryRoot, "utf8")
@@ -842,6 +862,7 @@ export function createTemporaryReportStore(options?: {
         const repositoryDirectory = await ensureManagedDirectory(
           reportsRoot,
           repositoryHash,
+          platform,
         );
         ownedLock = await acquireLock(repositoryDirectory, warnings);
         const previousState = await loadState(

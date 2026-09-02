@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import * as readJson from "../../src/inspection/read-json.js";
 import {
   canonicalizeSnapshotRoot,
   readContainedFile,
@@ -97,5 +98,34 @@ describe("readContainedFile", () => {
     await expect(
       readContainedLines(registry, "value.txt", [1], { maxCodePoints: -1 }),
     ).rejects.toThrow(/non-negative safe code-point limit/u);
+  });
+
+  it("hashes only the requested source range with normalized line endings", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.write(
+      "value.txt",
+      "first\r\nsecond\rthird\nfour\u2028fifth\n",
+    );
+    const registry = await captureSnapshotRegistry(
+      await canonicalizeSnapshotRoot(fixture.root),
+    );
+    const digestContainedLineRange = (
+      readJson as unknown as {
+        digestContainedLineRange?: (
+          registry: Awaited<ReturnType<typeof captureSnapshotRegistry>>,
+          path: string,
+          startLine: number,
+          endLine: number,
+        ) => Promise<string>;
+      }
+    ).digestContainedLineRange;
+
+    expect(digestContainedLineRange).toBeTypeOf("function");
+    if (digestContainedLineRange === undefined) return;
+    await expect(
+      digestContainedLineRange(registry, "value.txt", 2, 3),
+    ).resolves.toBe(
+      "c33ef30176f15a207411b1858b12aa706088c6e7b49f1eee977066365bdb67f6",
+    );
   });
 });

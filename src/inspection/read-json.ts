@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { createHash } from "node:crypto";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -351,6 +352,68 @@ export async function readContainedLines(
         }
       }
       return result;
+    },
+  );
+}
+
+export async function digestContainedLineRange(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  startLine: number,
+  endLine: number,
+): Promise<string> {
+  if (
+    !Number.isSafeInteger(startLine) ||
+    !Number.isSafeInteger(endLine) ||
+    startLine < 1 ||
+    endLine < startLine
+  ) {
+    throw new TypeError("Expected a valid positive line range");
+  }
+  return withValidatedContainedFile(
+    registry,
+    repositoryPath,
+    {},
+    async (handle) => {
+      const hash = createHash("sha256");
+      const decoder = new StringDecoder("utf8");
+      let line = 1;
+      let skipLineFeed = false;
+      let finished = false;
+
+      const consume = (text: string): void => {
+        for (const codePoint of text) {
+          if (skipLineFeed) {
+            skipLineFeed = false;
+            if (codePoint === "\n") continue;
+          }
+          if (
+            codePoint === "\r" ||
+            codePoint === "\n" ||
+            codePoint === "\u2028" ||
+            codePoint === "\u2029"
+          ) {
+            if (line >= startLine && line <= endLine) hash.update("\n", "utf8");
+            if (codePoint === "\r") skipLineFeed = true;
+            if (line >= endLine) {
+              finished = true;
+              return;
+            }
+            line += 1;
+          } else if (line >= startLine && line <= endLine) {
+            hash.update(codePoint, "utf8");
+          }
+        }
+      };
+
+      while (!finished) {
+        const buffer = Buffer.allocUnsafe(64 * 1024);
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        consume(decoder.write(buffer.subarray(0, bytesRead)));
+      }
+      if (!finished) consume(decoder.end());
+      return hash.digest("hex");
     },
   );
 }

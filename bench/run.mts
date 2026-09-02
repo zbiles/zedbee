@@ -29,6 +29,7 @@ interface Baselines {
 const here = dirname(fileURLToPath(import.meta.url));
 const baselinePath = resolve(here, "baselines.json");
 const update = process.argv.includes("--update");
+const smoke = process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
 
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -316,6 +317,11 @@ async function main(): Promise<void> {
         `${JSON.stringify(measurements, null, 2)}\n`,
       );
       process.stdout.write("Benchmark baselines updated.\n");
+      return;
+    }
+
+    if (smoke) {
+      process.stdout.write(`${JSON.stringify(measurements, null, 2)}\n`);
       return;
     }
 

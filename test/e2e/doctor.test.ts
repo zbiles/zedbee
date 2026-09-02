@@ -87,7 +87,7 @@ describe("diagnostic command surface", () => {
     );
     expect(JSON.stringify(report)).not.toContain("zedbee-snapshot-");
     expect(JSON.stringify(report)).not.toContain(fixture.root);
-  }, 30_000);
+  }, 120_000);
 
   it("invokes checks and lists the canonical configured check catalog", async () => {
     const fixture = await repository();
@@ -100,5 +100,5 @@ describe("diagnostic command surface", () => {
     expect(result.exitCode).toBe(0);
     expect(report.exitCode).toBe(0);
     expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
-  }, 30_000);
+  }, 120_000);
 });

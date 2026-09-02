@@ -87,7 +87,7 @@ function reportedPath(
   return matches.length === 1 ? matches[0]! : direct;
 }
 
-function fragment(
+export function normalizeCloneFragment(
   input: JscpdFileFragment,
   snapshotRoot: string,
   workspaceRoot: string,
@@ -137,18 +137,22 @@ export function normalizeClone(
   snapshotRoot: string,
   workspaceRoot: string,
   sourceFiles: readonly string[] = [],
+  fallbackTokenHash?: string,
 ): NormalizedClone {
   const value = object(raw, "jscpd clone");
   const tokens = positiveInteger(value.tokens, "jscpd clone tokens");
-  const tokenHash = normalizedTokenHash(value.fragment as string);
+  const tokenHash =
+    value.fragment === "" && /^[a-f0-9]{64}$/u.test(fallbackTokenHash ?? "")
+      ? fallbackTokenHash!
+      : normalizedTokenHash(value.fragment as string);
   const fragments = [
-    fragment(
+    normalizeCloneFragment(
       value.firstFile as unknown as JscpdFileFragment,
       snapshotRoot,
       workspaceRoot,
       sourceFiles,
     ),
-    fragment(
+    normalizeCloneFragment(
       value.secondFile as unknown as JscpdFileFragment,
       snapshotRoot,
       workspaceRoot,
@@ -170,6 +174,7 @@ export function parseJscpdReport(
   snapshotRoot: string,
   workspaceRoot: string,
   sourceFiles: readonly string[] = [],
+  fallbackTokenHashes: ReadonlyMap<number, string> = new Map(),
 ): NormalizedDuplicationReport {
   const report = object(raw, "jscpd report") as unknown as JscpdReport;
   if (!Array.isArray(report.duplicates)) {
@@ -178,8 +183,14 @@ export function parseJscpdReport(
   const statistics = object(report.statistics, "jscpd statistics");
   const total = object(statistics.total, "jscpd total statistics");
   const clones = report.duplicates
-    .map((clone) =>
-      normalizeClone(clone, snapshotRoot, workspaceRoot, sourceFiles),
+    .map((clone, index) =>
+      normalizeClone(
+        clone,
+        snapshotRoot,
+        workspaceRoot,
+        sourceFiles,
+        fallbackTokenHashes.get(index),
+      ),
     )
     .sort((left, right) => compareCodeUnits(left.identity, right.identity));
   if (new Set(clones.map(({ identity }) => identity)).size !== clones.length) {
@@ -189,6 +200,38 @@ export function parseJscpdReport(
     percentage: finitePercentage(total.percentage),
     clones: Object.freeze(clones),
   });
+}
+
+export function missingCloneFragmentLocations(
+  raw: unknown,
+  snapshotRoot: string,
+  workspaceRoot: string,
+  sourceFiles: readonly string[],
+): readonly Readonly<{
+  index: number;
+  location: NormalizedCloneFragment;
+}>[] {
+  const report = object(raw, "jscpd report");
+  if (!Array.isArray(report.duplicates)) {
+    throw new TypeError("Expected jscpd duplicates");
+  }
+  return Object.freeze(
+    report.duplicates.flatMap((clone, index) => {
+      const value = object(clone, "jscpd clone");
+      if (value.fragment !== "") return [];
+      return [
+        Object.freeze({
+          index,
+          location: normalizeCloneFragment(
+            value.firstFile as unknown as JscpdFileFragment,
+            snapshotRoot,
+            workspaceRoot,
+            sourceFiles,
+          ),
+        }),
+      ];
+    }),
+  );
 }
 
 export function cloneObservations(

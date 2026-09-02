@@ -23,6 +23,8 @@ afterEach(async () => {
       (await import("node:fs/promises")).rm(root, {
         recursive: true,
         force: true,
+        maxRetries: 5,
+        retryDelay: 50,
       }),
     ),
   );
@@ -80,9 +82,11 @@ describe("writeWorkingFile", () => {
       source: "new\n",
     });
     expect(await readFile(join(root, "src", "value.ts"), "utf8")).toBe("new\n");
-    expect((await lstat(join(root, "src", "value.ts"))).mode & 0o777).toBe(
-      0o754,
-    );
+    if (process.platform !== "win32") {
+      expect((await lstat(join(root, "src", "value.ts"))).mode & 0o777).toBe(
+        0o754,
+      );
+    }
     expect(
       (
         await (await import("node:fs/promises")).readdir(join(root, "src"))
@@ -203,14 +207,18 @@ describe("writeWorkingFile", () => {
         },
       }),
     ).rejects.toThrow("unsafe");
-    expect((await lstat(outside)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await lstat(outside)).mode & 0o777).toBe(0o600);
+    }
     expect(await readFile(outside, "utf8")).toBe("outside\n");
     expect(
       (await readdir(directory)).some((name) => name.startsWith(".zedbee-")),
     ).toBe(true);
   });
 
-  it("never cleans a temporary path through a swapped ancestor", async () => {
+  it.skipIf(process.platform === "win32")(
+    "never cleans a temporary path through a swapped ancestor",
+    async () => {
     const root = await fixture();
     const directory = join(root, "src");
     const movedDirectory = join(root, "src-original");
@@ -244,7 +252,8 @@ describe("writeWorkingFile", () => {
         name.startsWith(".zedbee-"),
       ),
     ).toBe(true);
-  });
+    },
+  );
 
   it("rejects a duplicate in-flight target", async () => {
     const root = await fixture();
@@ -280,7 +289,9 @@ describe("writeWorkingFile", () => {
     await first;
   });
 
-  it("invokes directory sync after a committed rename", async () => {
+  it.skipIf(process.platform === "win32")(
+    "invokes directory sync after a committed rename",
+    async () => {
     const root = await fixture();
     const synced: string[] = [];
     await writeWorkingFile({
@@ -294,7 +305,8 @@ describe("writeWorkingFile", () => {
       },
     });
     expect(synced).toEqual([join(root, "src")]);
-  });
+    },
+  );
 
   const temporaryFailureModes: readonly [
     string,

@@ -1,6 +1,13 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { onTestFinished } from "vitest";
 
 export interface InspectionFixture {
@@ -29,11 +36,13 @@ export async function createInspectionFixture(): Promise<InspectionFixture> {
     async symlink(target, path) {
       const fullPath = join(root, path);
       await mkdir(dirname(fullPath), { recursive: true });
-      await symlink(
-        target,
-        fullPath,
-        process.platform === "win32" ? "junction" : "dir",
-      );
+      const type =
+        process.platform === "win32"
+          ? (await lstat(resolve(dirname(fullPath), target))).isDirectory()
+            ? "junction"
+            : "file"
+          : undefined;
+      await symlink(target, fullPath, type);
     },
   };
 }

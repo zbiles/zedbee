@@ -153,7 +153,9 @@ describe("readCommitChangeSet", () => {
     expect(changeSet.containsAddedLine("rename-new.ts", 2)).toBe(true);
   });
 
-  it("adds text ranges after bounded commit metadata without changing rename status", async () => {
+  it.skipIf(process.platform === "win32")(
+    "adds text ranges after bounded commit metadata without changing rename status",
+    async () => {
     const repository = await createGitRepository();
     await repository.write("old.ts", "line1\nline3\n");
     await repository.write(":(literal)magic.ts", "before\n");
@@ -194,7 +196,8 @@ describe("readCommitChangeSet", () => {
     expect(changeSet.files.get(":(literal)magic.ts")?.addedRanges).toEqual([
       { start: 1, end: 1 },
     ]);
-  });
+    },
+  );
 
   it("passes the validated commit IDs to an attribute-insensitive diff", async () => {
     const calls: Array<{

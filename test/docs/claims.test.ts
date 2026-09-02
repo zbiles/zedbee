@@ -412,7 +412,7 @@ describe("public documentation claims", () => {
   it("publishes a structurally consistent managed-fix JSON example", async () => {
     const guide = await read("docs/managed-fixes.md");
     const fenced = guide.match(
-      /## Preview and JSON[\s\S]*?```json\n([\s\S]*?)\n```/u,
+      /## Preview and JSON[\s\S]*?```json\r?\n([\s\S]*?)\r?\n```/u,
     );
     expect(fenced).not.toBeNull();
     const example = JSON.parse(fenced![1]!) as {

@@ -148,4 +148,50 @@ describe("clone normalization", () => {
     expect(target.identity).not.toBe(baseline.identity);
     expect(target.tokens).toBeGreaterThan(baseline.tokens);
   });
+
+  it("uses a trusted source-range hash when jscpd omits clone text", () => {
+    const sourceRangeHash = "a".repeat(64);
+    const normalizeWithFallback = normalizeClone as unknown as (
+      clone: JscpdClone,
+      snapshotRoot: string,
+      workspaceRoot: string,
+      sourceFiles: readonly string[],
+      fallbackTokenHash: string,
+    ) => ReturnType<typeof normalizeClone>;
+
+    const normalized = normalizeWithFallback(
+      rawClone({ fragment: "" }),
+      "/snapshot",
+      ".",
+      ["src/a.ts", "src/b.ts"],
+      sourceRangeHash,
+    );
+
+    expect(normalized.tokenHash).toBe(sourceRangeHash);
+    expect(normalized.identity).toMatch(/^clone:[a-f0-9]{64}$/u);
+  });
+
+  it("applies source-range hashes by clone index when parsing a report", () => {
+    const sourceRangeHash = "b".repeat(64);
+    const parseWithFallback = parseJscpdReport as unknown as (
+      input: unknown,
+      snapshotRoot: string,
+      workspaceRoot: string,
+      sourceFiles: readonly string[],
+      fallbackTokenHashes: ReadonlyMap<number, string>,
+    ) => ReturnType<typeof parseJscpdReport>;
+
+    const report = parseWithFallback(
+      {
+        duplicates: [rawClone({ fragment: "" })],
+        statistics: { total: { percentage: 12, percentageTokens: 15 } },
+      },
+      "/snapshot",
+      ".",
+      ["src/a.ts", "src/b.ts"],
+      new Map([[0, sourceRangeHash]]),
+    );
+
+    expect(report.clones[0]?.tokenHash).toBe(sourceRangeHash);
+  });
 });

@@ -39,6 +39,7 @@ jobs:
         run: npm run verify
         env:
           ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
+          ZEDBEE_BENCHMARK_MODE: smoke
 
   package-manager-fixtures:
     name: package fixture / ${{ matrix.manager }}

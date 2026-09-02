@@ -27,7 +27,14 @@ import { createGitRepository } from "../helpers/git-repository.js";
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(
-    roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
+    roots.splice(0).map((root) =>
+      rm(root, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 50,
+      }),
+    ),
   );
 });
 
@@ -224,7 +231,9 @@ describe("detectHookIntegration", () => {
     expect(detected.hook).toBe("raw");
     expect(detected.change?.absolutePath).toBe(await realpath(commonHook));
     expect(await readFile(commonHook, "utf8")).toContain("zedbee scan");
-    expect((await lstat(commonHook)).mode & 0o777).toBe(0o751);
+    if (process.platform !== "win32") {
+      expect((await lstat(commonHook)).mode & 0o777).toBe(0o751);
+    }
   });
 });
 
@@ -271,7 +280,9 @@ describe("applyInitProposal", () => {
       rolledBack: false,
     });
     expect(await readFile(hookPath, "utf8")).toContain("zedbee scan");
-    expect((await lstat(hookPath)).mode & 0o777).toBe(0o751);
+    if (process.platform !== "win32") {
+      expect((await lstat(hookPath)).mode & 0o777).toBe(0o751);
+    }
   });
 
   it("rolls back prior writes if a later atomic write fails", async () => {

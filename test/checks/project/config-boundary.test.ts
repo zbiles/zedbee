@@ -47,8 +47,10 @@ describe("writeManagedJsonConfig", () => {
     expect(await readFile(managed.path, "utf8")).toBe(
       '{\n  "entry": [\n    "src/index.ts"\n  ],\n  "project": [\n    "src/**/*.{ts,tsx}"\n  ]\n}\n',
     );
-    expect((await lstat(parent)).mode & 0o777).toBe(0o700);
-    expect((await lstat(managed.path)).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await lstat(parent)).mode & 0o777).toBe(0o700);
+      expect((await lstat(managed.path)).mode & 0o777).toBe(0o600);
+    }
   });
 
   test.each(["", ".", "../escape", "nested/config", "/tmp/escape"])(
@@ -97,7 +99,9 @@ describe("writeManagedJsonConfig", () => {
     await rm(managed.path);
     await writeFile(managed.path, "replacement\n");
 
-    await expect(managed.cleanup()).rejects.toThrow(/identity changed/i);
+    await expect(managed.cleanup()).rejects.toThrow(
+      /(?:identity|contents) changed/i,
+    );
     await expect(readFile(managed.path, "utf8")).resolves.toBe("replacement\n");
   });
 
@@ -266,7 +270,8 @@ describe("project analyzer configuration isolation", () => {
   test("dependency-cruiser API does not discover project configuration", async () => {
     const fixture = await writeExecutableConfigSentinels();
 
-    const result = await cruise([join(fixture.root, "src/index.js")], {
+    const result = await cruise(["src/index.js"], {
+      baseDir: fixture.root,
       outputType: "json",
       validate: false,
     });

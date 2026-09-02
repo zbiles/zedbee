@@ -5,7 +5,10 @@ import type {
   CheckRunContext,
   CheckTarget,
 } from "../../../src/checks/adapter.js";
-import { duplicationAdapter } from "../../../src/checks/duplication/adapter.js";
+import {
+  createFallbackTokenHashes,
+  duplicationAdapter,
+} from "../../../src/checks/duplication/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
@@ -272,6 +275,43 @@ async function nestedWorkspaceContext(): Promise<CheckRunContext> {
 }
 
 describe("duplication policy", () => {
+  it("bounds and deduplicates empty-fragment source hashing", async () => {
+    let active = 0;
+    let peak = 0;
+    let calls = 0;
+    const fragments = [
+      ...Array.from({ length: 20 }, (_, index) => ({
+        index,
+        location: {
+          file: "src/value.ts",
+          startLine: index + 1,
+          endLine: index + 1,
+        },
+      })),
+      {
+        index: 20,
+        location: { file: "src/value.ts", startLine: 1, endLine: 1 },
+      },
+    ];
+
+    const hashes = await createFallbackTokenHashes(
+      {} as never,
+      fragments,
+      async (_registry, _file, startLine) => {
+        calls += 1;
+        active += 1;
+        peak = Math.max(peak, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return String(startLine).padStart(64, "0");
+      },
+    );
+
+    expect(calls).toBe(20);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(hashes.get(0)).toBe(hashes.get(20));
+  });
+
   it("provides the documented percentage threshold without treating clone tokens as a percent", () => {
     const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
 

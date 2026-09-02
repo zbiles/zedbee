@@ -120,7 +120,9 @@ describe("packaged init command", () => {
     expect(hook).toContain("printf 'existing hook\\n'");
     expect(hook).toContain("npm test");
     expect(hook.match(/zedbee scan/gu) ?? []).toHaveLength(1);
-    expect((await stat(hookPath)).mode & 0o777).toBe(0o751);
+    if (process.platform !== "win32") {
+      expect((await stat(hookPath)).mode & 0o777).toBe(0o751);
+    }
   }, 60_000);
 
   it("initializes, diagnoses, and scans with the packaged Node-native security stack", async () => {

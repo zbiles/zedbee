@@ -753,7 +753,9 @@ describe("loadConfigFromCommit", () => {
     expect(config.profile).toBe("fast");
   });
 
-  it("treats an explicit magic-looking path as a literal committed filename", async () => {
+  it.skipIf(process.platform === "win32")(
+    "treats an explicit magic-looking path as a literal committed filename",
+    async () => {
     const repository = await createGitRepository();
     const configName = ":(glob)ci-policy.jsonc";
     await repository.write(
@@ -780,7 +782,8 @@ describe("loadConfigFromCommit", () => {
     );
 
     expect(config.profile).toBe("thorough");
-  });
+    },
+  );
 
   it("rejects an unsupported configuration committed in the target tree", async () => {
     const repository = await createGitRepository();

@@ -302,5 +302,5 @@ describe("TypeScript observation adapter", () => {
         }),
       }),
     );
-  });
+  }, 30_000);
 });

@@ -491,7 +491,9 @@ describe("applyFixPlan", () => {
     ]);
   });
 
-  it("reports a committed durability failure without asking callers to retry", async () => {
+  it.skipIf(process.platform === "win32")(
+    "reports a committed durability failure without asking callers to retry",
+    async () => {
     const fixture = await createInspectionFixture();
     const source = "const value = 1;;\n";
     await fixture.write("src/value.ts", source);
@@ -540,7 +542,8 @@ describe("applyFixPlan", () => {
         }),
       ],
     });
-  });
+    },
+  );
 
   it("continues after an actual write failure while preserving another file's progress", async () => {
     const fixture = await createInspectionFixture();

@@ -4,6 +4,9 @@ import { execa } from "execa";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
+import { digestContainedLineRange } from "../../inspection/read-json.js";
+import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -18,9 +21,67 @@ import {
   createManagedOutputDirectory,
   writeManagedJsonConfig,
 } from "../project/config-boundary.js";
-import { cloneObservations, parseJscpdReport } from "./normalize-clone.js";
+import {
+  cloneObservations,
+  missingCloneFragmentLocations,
+  parseJscpdReport,
+} from "./normalize-clone.js";
 import { jscpdOptions } from "./settings.js";
 import type { ResolvedDuplicationPolicy } from "../../config/schema.js";
+
+const FALLBACK_DIGEST_CONCURRENCY = 4;
+
+type MissingFragment = ReturnType<
+  typeof missingCloneFragmentLocations
+>[number];
+
+export async function createFallbackTokenHashes(
+  registry: SnapshotRegistry,
+  missingFragments: readonly MissingFragment[],
+  digest: typeof digestContainedLineRange = digestContainedLineRange,
+): Promise<ReadonlyMap<number, string>> {
+  const uniqueRanges = new Map<
+    string,
+    { readonly location: MissingFragment["location"]; readonly indexes: number[] }
+  >();
+  for (const { index, location } of missingFragments) {
+    const key = JSON.stringify([
+      location.file,
+      location.startLine,
+      location.endLine,
+    ]);
+    const existing = uniqueRanges.get(key);
+    if (existing === undefined) {
+      uniqueRanges.set(key, { location, indexes: [index] });
+    } else {
+      existing.indexes.push(index);
+    }
+  }
+
+  const ranges = [...uniqueRanges.values()];
+  const hashes = new Map<number, string>();
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    while (cursor < ranges.length) {
+      const range = ranges[cursor++];
+      if (range === undefined) return;
+      const hash = await digest(
+        registry,
+        range.location.file,
+        range.location.startLine,
+        range.location.endLine,
+      );
+      for (const index of range.indexes) hashes.set(index, hash);
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(FALLBACK_DIGEST_CONCURRENCY, ranges.length) },
+      worker,
+    ),
+  );
+  return hashes;
+}
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const JSCPD_REPORT = "jscpd-report.json";
@@ -110,13 +171,34 @@ async function collectSide(
       if (result.exitCode !== 0 && result.exitCode !== 1) {
         throw new Error("Duplication analysis failed.");
       }
-      const report = parseJscpdReport(
-        await output.readJson(JSCPD_REPORT),
+      const rawReport = await output.readJson(JSCPD_REPORT);
+      const missingFragments = missingCloneFragmentLocations(
+        rawReport,
         canonicalRoot,
         workspace.relativeRoot,
         sourceFiles,
       );
       const allowed = new Set(sourceFiles);
+      if (
+        missingFragments.some(({ location }) => !allowed.has(location.file))
+      ) {
+        throw new Error("Duplication analysis failed.");
+      }
+      let fallbackTokenHashes: ReadonlyMap<number, string> = new Map();
+      if (missingFragments.length > 0) {
+        const registry = await captureSnapshotRegistry(canonicalRoot);
+        fallbackTokenHashes = await createFallbackTokenHashes(
+          registry,
+          missingFragments,
+        );
+      }
+      const report = parseJscpdReport(
+        rawReport,
+        canonicalRoot,
+        workspace.relativeRoot,
+        sourceFiles,
+        fallbackTokenHashes,
+      );
       if (
         report.clones.some((clone) =>
           clone.fragments.some(({ file }) => !allowed.has(file)),

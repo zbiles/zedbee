@@ -26,6 +26,7 @@ export interface InkScanDependencies {
   readonly preparePresentation?: typeof prepareTerminalPresentation;
   readonly store?: TemporaryReportStore;
   readonly interactive?: boolean;
+  readonly wait?: (milliseconds: number) => Promise<void>;
 }
 
 export const INK_ANIMATION_FRAME_MS = 80;
@@ -126,7 +127,7 @@ export async function runInkScan(
     if (viewOptions.animations) {
       const remaining =
         INK_MINIMUM_DISPLAY_MS - Math.max(0, performance.now() - started);
-      if (remaining > 0) await wait(remaining);
+      if (remaining > 0) await (dependencies.wait ?? wait)(remaining);
     }
     if (ticker !== undefined) clearInterval(ticker);
     if (viewOptions.requestedFormat === "auto") {

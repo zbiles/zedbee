@@ -43,7 +43,12 @@ export async function createGitRepository(
       return;
     }
     cleaned = true;
-    await rm(root, { recursive: true, force: true });
+    await rm(root, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 50,
+    });
   };
 
   const repository: TestGitRepository = {

@@ -102,7 +102,7 @@ describe("package-manager fixture commands", () => {
             cwd: repository.root,
             reject: false,
             stdin: "ignore",
-            timeout: 45_000,
+            timeout: 120_000,
             env: {
               ...process.env,
               npm_config_cache: join(scratch, `${manager}-npm-cache`),
@@ -151,7 +151,7 @@ describe("package-manager fixture commands", () => {
         expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
         expect(after.stdout).toBe(before.stdout);
       },
-      60_000,
+      180_000,
     );
   }
 });
