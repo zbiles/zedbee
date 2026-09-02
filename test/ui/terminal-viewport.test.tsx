@@ -1,7 +1,7 @@
 import { createRef } from "react";
 import { Box, measureElement, Text, type DOMElement } from "ink";
-import { render } from "ink-testing-library";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render } from "ink-testing-library";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   TerminalViewport,
   type TerminalViewportMetrics,
@@ -20,6 +20,8 @@ const tenLines = [
   "09-abcdefghijklmnopq",
   "10-abcdefghijklmnopq",
 ] as const;
+
+afterEach(cleanup);
 
 function Fixture({ count = tenLines.length }: { readonly count?: number }) {
   return (
