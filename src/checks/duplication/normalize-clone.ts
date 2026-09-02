@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { isAbsolute, posix, relative, sep } from "node:path";
+import { realpathSync, statSync } from "node:fs";
+import { basename, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -81,6 +81,25 @@ function reportedPath(
             .join("/"),
         );
       } catch {
+        try {
+          const reportedMetadata = statSync(name);
+          const reportedBasename = basename(name).toLowerCase();
+          for (const sourceFile of sourceFiles) {
+            if (posix.basename(sourceFile).toLowerCase() !== reportedBasename) {
+              continue;
+            }
+            const sourceMetadata = statSync(resolve(snapshotRoot, sourceFile));
+            if (
+              reportedMetadata.ino !== 0 &&
+              reportedMetadata.dev === sourceMetadata.dev &&
+              reportedMetadata.ino === sourceMetadata.ino
+            ) {
+              return sourceFile;
+            }
+          }
+        } catch {
+          // Invalid or missing paths still fail with the original boundary error.
+        }
         throw directError;
       }
     }

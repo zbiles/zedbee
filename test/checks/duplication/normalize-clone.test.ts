@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -149,6 +149,42 @@ describe("clone normalization", () => {
         },
       }),
       aliasRoot,
+      ".",
+      ["src/a.ts", "src/b.ts"],
+    );
+
+    expect(clone.fragments.map(({ file }) => file)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+  });
+
+  it("maps an absolute clone path by file identity when path aliases remain textual", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "zedbee-clone-identity-"));
+    onTestFinished(() => rm(parent, { recursive: true, force: true }));
+    const snapshotRoot = join(parent, "snapshot");
+    const aliasRoot = join(parent, "alias");
+    await mkdir(join(snapshotRoot, "src"), { recursive: true });
+    await mkdir(join(aliasRoot, "src"), { recursive: true });
+    await writeFile(join(snapshotRoot, "src", "a.ts"), "export const a = 1;\n");
+    await writeFile(join(snapshotRoot, "src", "b.ts"), "export const b = 2;\n");
+    await link(
+      join(snapshotRoot, "src", "a.ts"),
+      join(aliasRoot, "src", "a.ts"),
+    );
+
+    const clone = normalizeClone(
+      rawClone({
+        firstFile: {
+          ...rawClone().firstFile,
+          name: join(aliasRoot, "src", "a.ts"),
+        },
+        secondFile: {
+          ...rawClone().secondFile,
+          name: join(snapshotRoot, "src", "b.ts"),
+        },
+      }),
+      snapshotRoot,
       ".",
       ["src/a.ts", "src/b.ts"],
     );

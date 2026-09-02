@@ -12,6 +12,10 @@ import { execa } from "execa";
 
 const REGISTRY = "https://registry.npmjs.org/";
 const CACHE_KEY_PREFIX = "make-fetch-happen:request-cache:";
+const PACKUMENT_ACCEPT_TYPES = [
+  "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+  "application/json",
+] as const;
 const cacheSeeds = new Map<string, Promise<void>>();
 
 interface LockedPackage {
@@ -21,6 +25,8 @@ interface LockedPackage {
 }
 
 async function npmCache(): Promise<string> {
+  const override = process.env.ZEDBEE_NPM_SOURCE_CACHE_UNDER_TEST;
+  if (override !== undefined && override.length > 0) return override;
   const result = await execa("npm", ["config", "get", "cache"], {
     reject: false,
     stdin: "ignore",
@@ -199,32 +205,41 @@ async function appendSyntheticManifest(
     existingMetadata.resHeaders !== null
       ? (existingMetadata.resHeaders as Record<string, unknown>)
       : {};
-  const { "content-encoding": _encoding, ...headers } = existingHeaders;
-  const value = JSON.stringify({
-    ...existing,
-    key,
-    integrity,
-    time,
-    size: body.length,
-    metadata: {
-      ...existingMetadata,
-      time,
-      url: `${REGISTRY}${encodedName}`,
-      reqHeaders: { accept: "application/json" },
-      resHeaders: {
-        ...headers,
-        "cache-control": "public, max-age=31557600",
-        "content-type": "application/json",
-        vary: "accept-encoding, accept",
-      },
-      options: { compress: true },
-    },
-  });
+  const {
+    "content-encoding": _encoding,
+    vary: _vary,
+    ...headers
+  } = existingHeaders;
   await mkdir(dirname(indexPath), { recursive: true });
-  await appendFile(
-    indexPath,
-    `\n${createHash("sha1").update(value).digest("hex")}\t${value}`,
-  );
+  for (const accept of PACKUMENT_ACCEPT_TYPES) {
+    const value = JSON.stringify({
+      ...existing,
+      key,
+      integrity,
+      time,
+      size: body.length,
+      metadata: {
+        ...existingMetadata,
+        time,
+        url: `${REGISTRY}${encodedName}`,
+        // make-fetch-happen matches cached responses by the complete Accept
+        // list even when the response has no Vary header. npm requests both
+        // compact and full packuments, so cache the synthetic full manifest
+        // under both request variants.
+        reqHeaders: { accept },
+        resHeaders: {
+          ...headers,
+          "cache-control": "public, max-age=31557600",
+          "content-type": "application/json",
+        },
+        options: { compress: true },
+      },
+    });
+    await appendFile(
+      indexPath,
+      `\n${createHash("sha1").update(value).digest("hex")}\t${value}`,
+    );
+  }
 }
 
 async function runBounded<T>(
