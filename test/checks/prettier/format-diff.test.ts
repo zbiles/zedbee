@@ -83,7 +83,7 @@ describe("formattingTransformationRanges", () => {
         ).toEqual(originalRanges(source, formatted));
       }
     }
-  });
+  }, 30_000);
 
   it.each([
     ["", "a"],

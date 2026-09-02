@@ -1,13 +1,7 @@
 import { createHash } from "node:crypto";
-import {
-  appendFile,
-  copyFile,
-  lstat,
-  mkdir,
-  readFile,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { copyFile, lstat, mkdir, readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { execa } from "execa";
 
 const REGISTRY = "https://registry.npmjs.org/";
@@ -17,6 +11,18 @@ const PACKUMENT_ACCEPT_TYPES = [
   "application/json",
 ] as const;
 const cacheSeeds = new Map<string, Promise<void>>();
+let cacheWriterPromise: Promise<NpmCacheWriter> | undefined;
+
+interface NpmCacheWriter {
+  put(
+    cachePath: string,
+    key: string,
+    body: Buffer,
+    options: {
+      readonly metadata: Record<string, unknown>;
+    },
+  ): Promise<unknown>;
+}
 
 interface LockedPackage {
   readonly integrity: string;
@@ -94,21 +100,45 @@ function cachedEntry(
   throw new Error(`Could not read populated npm cache entry: ${key}`);
 }
 
-async function writeContent(cacheRoot: string, body: Buffer): Promise<string> {
-  const integrity = `sha512-${createHash("sha512").update(body).digest("base64")}`;
-  const path = cacheContentPath(cacheRoot, integrity);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, body, { flag: "wx" }).catch((error: unknown) => {
+async function npmCacheWriter(): Promise<NpmCacheWriter> {
+  cacheWriterPromise ??= (async () => {
+    let npmCliPath = process.env.npm_execpath;
     if (
-      typeof error !== "object" ||
-      error === null ||
-      !("code" in error) ||
-      (error as { readonly code?: unknown }).code !== "EEXIST"
+      npmCliPath === undefined ||
+      !isAbsolute(npmCliPath) ||
+      basename(npmCliPath).toLowerCase() !== "npm-cli.js"
     ) {
-      throw error;
+      const resolved = await execa(
+        "npm",
+        [
+          "exec",
+          "--offline",
+          "--yes=false",
+          "--",
+          "node",
+          "--print",
+          "process.env.npm_execpath",
+        ],
+        { reject: false, stdin: "ignore" },
+      );
+      npmCliPath = resolved.stdout.trim();
+      if (
+        resolved.exitCode !== 0 ||
+        !isAbsolute(npmCliPath) ||
+        basename(npmCliPath).toLowerCase() !== "npm-cli.js"
+      ) {
+        throw new Error("Could not locate npm's bundled cache writer");
+      }
     }
-  });
-  return integrity;
+    if (npmCliPath.length === 0) {
+      throw new Error("Could not locate npm's bundled cache writer");
+    }
+    const require = createRequire(import.meta.url);
+    return require(
+      join(dirname(npmCliPath), "..", "node_modules", "cacache"),
+    ) as NpmCacheWriter;
+  })();
+  return cacheWriterPromise;
 }
 
 async function copyCacheEntry(
@@ -194,7 +224,6 @@ async function appendSyntheticManifest(
       throw error;
     }
   }
-  const integrity = await writeContent(cacheRoot, body);
   const time = Date.now();
   const existingMetadata =
     typeof existing.metadata === "object" && existing.metadata !== null
@@ -210,14 +239,9 @@ async function appendSyntheticManifest(
     vary: _vary,
     ...headers
   } = existingHeaders;
-  await mkdir(dirname(indexPath), { recursive: true });
+  const writer = await npmCacheWriter();
   for (const accept of PACKUMENT_ACCEPT_TYPES) {
-    const value = JSON.stringify({
-      ...existing,
-      key,
-      integrity,
-      time,
-      size: body.length,
+    await writer.put(join(cacheRoot, "_cacache"), key, body, {
       metadata: {
         ...existingMetadata,
         time,
@@ -235,10 +259,6 @@ async function appendSyntheticManifest(
         options: { compress: true },
       },
     });
-    await appendFile(
-      indexPath,
-      `\n${createHash("sha1").update(value).digest("hex")}\t${value}`,
-    );
   }
 }
 

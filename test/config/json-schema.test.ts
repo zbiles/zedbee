@@ -101,10 +101,12 @@ const validAgentGuidances = [
   },
 ] as const;
 
-function validator() {
+function createValidator() {
   const ajv = new Ajv({ allErrors: true, strictTuples: false });
   return ajv.compile(generateConfigJsonSchema());
 }
+
+const validateConfig = createValidator();
 
 function rulePropertiesFor(checkId: string): Record<string, unknown> {
   const schema = generateConfigJsonSchema() as {
@@ -136,22 +138,22 @@ describe("Zedbee configuration JSON Schema", () => {
   });
 
   it.each(validExamples)("accepts a configuration accepted by Zod", (input) => {
-    const validate = validator();
-
     expect(configFileSchema.safeParse(input).success).toBe(true);
-    expect(validate(input), validate.errors?.map(String).join("\n")).toBe(true);
+    expect(
+      validateConfig(input),
+      validateConfig.errors?.map(String).join("\n"),
+    ).toBe(true);
   });
 
   it.each(validSourceExcerptPolicies)(
     "accepts the %s source excerpt policy in both validators",
     (sourceExcerpts) => {
       const input = { schemaVersion: 1, reporting: { sourceExcerpts } };
-      const validate = validator();
-
       expect(configFileSchema.safeParse(input).success).toBe(true);
-      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
-        true,
-      );
+      expect(
+        validateConfig(input),
+        validateConfig.errors?.map(String).join("\n"),
+      ).toBe(true);
     },
   );
 
@@ -159,12 +161,11 @@ describe("Zedbee configuration JSON Schema", () => {
     "accepts the %s terminal finding limit in both validators",
     (terminalFindingLimit) => {
       const input = { schemaVersion: 1, reporting: { terminalFindingLimit } };
-      const validate = validator();
-
       expect(configFileSchema.safeParse(input).success).toBe(true);
-      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
-        true,
-      );
+      expect(
+        validateConfig(input),
+        validateConfig.errors?.map(String).join("\n"),
+      ).toBe(true);
     },
   );
 
@@ -175,12 +176,11 @@ describe("Zedbee configuration JSON Schema", () => {
         schemaVersion: 1,
         reporting: { temporaryReportMaxAge },
       };
-      const validate = validator();
-
       expect(configFileSchema.safeParse(input).success).toBe(true);
-      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
-        true,
-      );
+      expect(
+        validateConfig(input),
+        validateConfig.errors?.map(String).join("\n"),
+      ).toBe(true);
     },
   );
 
@@ -188,12 +188,11 @@ describe("Zedbee configuration JSON Schema", () => {
     "accepts safe agent guidance in both validators",
     (agentGuidance) => {
       const input = { schemaVersion: 1, reporting: { agentGuidance } };
-      const validate = validator();
-
       expect(configFileSchema.safeParse(input).success).toBe(true);
-      expect(validate(input), validate.errors?.map(String).join("\n")).toBe(
-        true,
-      );
+      expect(
+        validateConfig(input),
+        validateConfig.errors?.map(String).join("\n"),
+      ).toBe(true);
     },
   );
 
@@ -470,10 +469,8 @@ describe("Zedbee configuration JSON Schema", () => {
       },
     },
   ])("rejects $name in both validators", ({ input }) => {
-    const validate = validator();
-
     expect(configFileSchema.safeParse(input).success).toBe(false);
-    expect(validate(input)).toBe(false);
+    expect(validateConfig(input)).toBe(false);
   });
 
   it("exposes editor help and resolved defaults without changing Zod parsing", () => {
@@ -630,10 +627,8 @@ describe("Zedbee configuration JSON Schema", () => {
   ])(
     "keeps runtime and generated schema acceptance aligned for $name",
     ({ input, valid }) => {
-      const validate = validator();
-
       expect(configFileSchema.safeParse(input).success).toBe(valid);
-      expect(validate(input)).toBe(valid);
+      expect(validateConfig(input)).toBe(valid);
     },
   );
 

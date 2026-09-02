@@ -433,6 +433,12 @@ export class GitClient {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const terminate = () => {
+      // Do not wait for process shutdown to close the pipes. A failed blob
+      // visitor can stop reading stdout while Git is still writing, and under
+      // load that can otherwise leave one of the stream promises pending.
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
       if (child.exitCode !== null || child.signalCode !== null) return;
       child.kill();
       forceKillTimer ??= setTimeout(() => child.kill("SIGKILL"), 2_000);
