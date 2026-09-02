@@ -66,7 +66,7 @@ async function installedRepository(
       private: true,
     }),
   );
-  await repository.write(".gitignore", "node_modules/\nCONFIG_EXECUTED\n");
+  await repository.write(".gitignore", "node_modules\nCONFIG_EXECUTED\n");
   await installPackedFixture(
     tarballPath,
     packageRoot,

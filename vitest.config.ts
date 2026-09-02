@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    globalSetup: ["test/global-setup.ts"],
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     // Git and package-manager integration work is slower on hosted Windows.
     // Bound concurrency and allow a small timing margin without weakening the

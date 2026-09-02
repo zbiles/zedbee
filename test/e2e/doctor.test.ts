@@ -42,7 +42,7 @@ async function repository() {
     "package.json",
     '{"name":"doctor-fixture","private":true}\n',
   );
-  await fixture.write(".gitignore", "node_modules/\n");
+  await fixture.write(".gitignore", "node_modules\n");
   await fixture.write("src/index.ts", "export const ready = true;\n");
   await fixture.commitAll("fixture");
   await installPackedFixture(

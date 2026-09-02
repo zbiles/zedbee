@@ -46,7 +46,7 @@ describe("packaged init command", () => {
       "package.json",
       `${JSON.stringify({ name: "init-fixture", version: "1.0.0", private: true })}\n`,
     );
-    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write(".gitignore", "node_modules\n");
     await installPackedFixture(
       tarballPath,
       packageRoot,
@@ -131,7 +131,7 @@ describe("packaged init command", () => {
       "package.json",
       `${JSON.stringify({ name: "native-security-fixture", version: "1.0.0", private: true })}\n`,
     );
-    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write(".gitignore", "node_modules\n");
     await repository.write("src/index.ts", "export const ready = true;\n");
     await repository.commitAll("fixture");
     await installPackedFixture(
@@ -140,7 +140,10 @@ describe("packaged init command", () => {
       repository.root,
       join(packDirectory, "native-security-install-cache"),
     );
-    await repository.commitAll("installed package");
+    const installedStatus = await repository.git(["status", "--porcelain"]);
+    if (installedStatus.stdout.length > 0) {
+      await repository.commitAll("installed package");
+    }
 
     const cli = join(repository.root, "node_modules/zedbee/dist/cli.js");
     const invoke = (args: readonly string[]) =>

@@ -1,11 +1,18 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { getCurrentTest } from "@vitest/runner";
 import { execa } from "execa";
+import { inject } from "vitest";
 
 const CACHE_KEY_PREFIX = "make-fetch-happen:request-cache:";
 
@@ -22,6 +29,7 @@ interface LocalRegistry {
 
 interface PackedInstallOptions {
   readonly cancelSignal?: AbortSignal;
+  readonly reuseSharedInstall?: boolean;
 }
 
 async function npmCache(): Promise<string> {
@@ -321,6 +329,17 @@ export async function installPackedFixture(
   cacheRoot: string,
   options: PackedInstallOptions = {},
 ): Promise<void> {
+  if (options.reuseSharedInstall !== false) {
+    const sharedNodeModules = inject("sharedPackedNodeModules");
+    if (sharedNodeModules !== null) {
+      await symlink(
+        sharedNodeModules,
+        join(repositoryRoot, "node_modules"),
+        process.platform === "win32" ? "junction" : "dir",
+      );
+      return;
+    }
+  }
   await mkdir(cacheRoot, { recursive: true });
   const userConfig = join(cacheRoot, "isolated-user.npmrc");
   const globalConfig = join(cacheRoot, "isolated-global.npmrc");

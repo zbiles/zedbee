@@ -81,7 +81,7 @@ describe("package-manager fixture commands", () => {
             },
           }),
         );
-        await repository.write(".gitignore", "node_modules/\nlifecycle-ran\n");
+        await repository.write(".gitignore", "node_modules\nlifecycle-ran\n");
         await repository.write("src/index.ts", "export const ready = true;\n");
         await repository.commitAll("fixture");
 
@@ -130,7 +130,10 @@ describe("package-manager fixture commands", () => {
           ),
         ).toContain("@secretlint/core@13.0.4");
 
-        await repository.commitAll("installed package");
+        const installedStatus = await repository.git(["status", "--porcelain"]);
+        if (installedStatus.stdout.length > 0) {
+          await repository.commitAll("installed package");
+        }
         const before = await repository.git(["status", "--porcelain=v1", "-z"]);
         const result = await execa(
           process.execPath,

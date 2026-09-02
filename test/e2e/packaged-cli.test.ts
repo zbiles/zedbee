@@ -84,7 +84,7 @@ beforeAll(async () => {
     join(packDirectory, "install-cache"),
     { cancelSignal: hookSignal },
   );
-  installedNodeModules = join(installRoot, "node_modules");
+  installedNodeModules = await realpath(join(installRoot, "node_modules"));
 }, 180_000);
 
 afterAll(async () => {

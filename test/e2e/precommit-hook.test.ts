@@ -97,7 +97,7 @@ describe("raw pre-commit hook", () => {
         private: true,
       }),
     );
-    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write(".gitignore", "node_modules\n");
     await installPackedFixture(
       tarballPath,
       packageRoot,
