@@ -1,33 +1,22 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, mkdir, readFile } from "node:fs/promises";
-import { createRequire } from "node:module";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { createReadStream } from "node:fs";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { execa } from "execa";
 
-const REGISTRY = "https://registry.npmjs.org/";
 const CACHE_KEY_PREFIX = "make-fetch-happen:request-cache:";
-const PACKUMENT_ACCEPT_TYPES = [
-  "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
-  "application/json",
-] as const;
-const cacheSeeds = new Map<string, Promise<void>>();
-let cacheWriterPromise: Promise<NpmCacheWriter> | undefined;
-
-interface NpmCacheWriter {
-  put(
-    cachePath: string,
-    key: string,
-    body: Buffer,
-    options: {
-      readonly metadata: Record<string, unknown>;
-    },
-  ): Promise<unknown>;
-}
 
 interface LockedPackage {
   readonly integrity: string;
-  readonly resolved: string;
   readonly manifest: Record<string, unknown>;
+  readonly tarballPath: string;
+}
+
+interface LocalRegistry {
+  readonly url: string;
+  close(): Promise<void>;
 }
 
 async function npmCache(): Promise<string> {
@@ -76,10 +65,7 @@ function cacheIndexPath(cacheRoot: string, key: string): string {
   );
 }
 
-function cachedEntry(
-  index: string,
-  key: string,
-): Record<string, unknown> & { readonly integrity: string } {
+function cachedIntegrity(index: string, key: string): string {
   for (const line of index.trim().split("\n").reverse()) {
     const separator = line.indexOf("\t");
     if (separator === -1) continue;
@@ -89,9 +75,7 @@ function cachedEntry(
         readonly integrity?: unknown;
       };
       if (entry.key === key && typeof entry.integrity === "string") {
-        return entry as Record<string, unknown> & {
-          readonly integrity: string;
-        };
+        return entry.integrity;
       }
     } catch {
       // cacache ignores incomplete index lines left by interrupted writers.
@@ -100,166 +84,13 @@ function cachedEntry(
   throw new Error(`Could not read populated npm cache entry: ${key}`);
 }
 
-async function npmCacheWriter(): Promise<NpmCacheWriter> {
-  cacheWriterPromise ??= (async () => {
-    let npmCliPath = process.env.npm_execpath;
-    if (
-      npmCliPath === undefined ||
-      !isAbsolute(npmCliPath) ||
-      basename(npmCliPath).toLowerCase() !== "npm-cli.js"
-    ) {
-      const resolved = await execa(
-        "npm",
-        [
-          "exec",
-          "--offline",
-          "--yes=false",
-          "--",
-          "node",
-          "--print",
-          "process.env.npm_execpath",
-        ],
-        { reject: false, stdin: "ignore" },
-      );
-      npmCliPath = resolved.stdout.trim();
-      if (
-        resolved.exitCode !== 0 ||
-        !isAbsolute(npmCliPath) ||
-        basename(npmCliPath).toLowerCase() !== "npm-cli.js"
-      ) {
-        throw new Error("Could not locate npm's bundled cache writer");
-      }
-    }
-    if (npmCliPath.length === 0) {
-      throw new Error("Could not locate npm's bundled cache writer");
-    }
-    const require = createRequire(import.meta.url);
-    return require(
-      join(dirname(npmCliPath), "..", "node_modules", "cacache"),
-    ) as NpmCacheWriter;
-  })();
-  return cacheWriterPromise;
-}
-
-async function copyCacheEntry(
-  sourceCache: string,
-  targetCache: string,
-  url: string,
-): Promise<void> {
-  const key = `${CACHE_KEY_PREFIX}${url}`;
-  const sourceIndex = cacheIndexPath(sourceCache, key);
-  const targetIndex = cacheIndexPath(targetCache, key);
-  const index = await readFile(sourceIndex, "utf8");
-  const integrity = cachedEntry(index, key).integrity;
-  const sourceContent = cacheContentPath(sourceCache, integrity);
-  const targetContent = cacheContentPath(targetCache, integrity);
-  await Promise.all([
-    mkdir(dirname(targetIndex), { recursive: true }),
-    mkdir(dirname(targetContent), { recursive: true }),
-  ]);
-  await Promise.all([
-    copyFile(sourceIndex, targetIndex),
-    copyFile(sourceContent, targetContent),
-  ]);
-}
-
-async function copyCacheEntryIfPresent(
-  sourceCache: string,
-  targetCache: string,
-  url: string,
-): Promise<void> {
-  try {
-    await copyCacheEntry(sourceCache, targetCache, url);
-  } catch (error) {
-    if (
-      typeof error !== "object" ||
-      error === null ||
-      !("code" in error) ||
-      (error as { readonly code?: unknown }).code !== "ENOENT"
-    ) {
-      throw error;
-    }
-  }
-}
-
-async function appendSyntheticManifest(
+async function cachedTarballPath(
   cacheRoot: string,
-  name: string,
-  versions: ReadonlyMap<string, LockedPackage>,
-): Promise<void> {
-  const ordered = [...versions].sort(([left], [right]) =>
-    left < right ? -1 : left > right ? 1 : 0,
-  );
-  const body = Buffer.from(
-    JSON.stringify({
-      name,
-      "dist-tags": { latest: ordered.at(-1)?.[0] },
-      versions: Object.fromEntries(
-        ordered.map(([version, locked]) => [
-          version,
-          {
-            ...locked.manifest,
-            dist: {
-              integrity: locked.integrity,
-              tarball: locked.resolved,
-            },
-          },
-        ]),
-      ),
-    }),
-  );
-  const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
-  const key = `${CACHE_KEY_PREFIX}${REGISTRY}${encodedName}`;
-  const indexPath = cacheIndexPath(cacheRoot, key);
-  let existing: Record<string, unknown> = {};
-  try {
-    existing = cachedEntry(await readFile(indexPath, "utf8"), key);
-  } catch (error) {
-    if (
-      typeof error !== "object" ||
-      error === null ||
-      !("code" in error) ||
-      (error as { readonly code?: unknown }).code !== "ENOENT"
-    ) {
-      throw error;
-    }
-  }
-  const time = Date.now();
-  const existingMetadata =
-    typeof existing.metadata === "object" && existing.metadata !== null
-      ? (existing.metadata as Record<string, unknown>)
-      : {};
-  const existingHeaders =
-    typeof existingMetadata.resHeaders === "object" &&
-    existingMetadata.resHeaders !== null
-      ? (existingMetadata.resHeaders as Record<string, unknown>)
-      : {};
-  const {
-    "content-encoding": _encoding,
-    vary: _vary,
-    ...headers
-  } = existingHeaders;
-  const writer = await npmCacheWriter();
-  for (const accept of PACKUMENT_ACCEPT_TYPES) {
-    await writer.put(join(cacheRoot, "_cacache"), key, body, {
-      metadata: {
-        ...existingMetadata,
-        time,
-        url: `${REGISTRY}${encodedName}`,
-        // make-fetch-happen matches cached responses by the complete Accept
-        // list even when the response has no Vary header. npm requests both
-        // compact and full packuments, so cache the synthetic full manifest
-        // under both request variants.
-        reqHeaders: { accept },
-        resHeaders: {
-          ...headers,
-          "cache-control": "public, max-age=31557600",
-          "content-type": "application/json",
-        },
-        options: { compress: true },
-      },
-    });
-  }
+  url: string,
+): Promise<string> {
+  const key = `${CACHE_KEY_PREFIX}${url}`;
+  const index = await readFile(cacheIndexPath(cacheRoot, key), "utf8");
+  return cacheContentPath(cacheRoot, cachedIntegrity(index, key));
 }
 
 async function runBounded<T>(
@@ -268,7 +99,7 @@ async function runBounded<T>(
 ): Promise<void> {
   let cursor = 0;
   await Promise.all(
-    Array.from({ length: Math.min(16, values.length) }, async () => {
+    Array.from({ length: Math.min(8, values.length) }, async () => {
       while (cursor < values.length) {
         const index = cursor;
         cursor += 1;
@@ -278,12 +109,10 @@ async function runBounded<T>(
   );
 }
 
-async function seedOfflineCache(
-  cacheRoot: string,
+async function lockedProductionPackages(
   packageRoot: string,
-): Promise<void> {
+): Promise<Map<string, Map<string, LockedPackage>>> {
   const sourceCache = await npmCache();
-  await mkdir(join(cacheRoot, "_cacache", "tmp"), { recursive: true });
   const lock = JSON.parse(
     await readFile(join(packageRoot, "package-lock.json"), "utf8"),
   ) as {
@@ -299,7 +128,6 @@ async function seedOfflineCache(
     >;
   };
   const packages = new Map<string, Map<string, LockedPackage>>();
-  const tarballUrls = new Set<string>();
 
   await runBounded(
     Object.entries(lock.packages ?? {}),
@@ -327,45 +155,157 @@ async function seedOfflineCache(
       ) {
         throw new Error("Invalid installed package metadata");
       }
+      const tarballPath = await cachedTarballPath(
+        sourceCache,
+        metadata.resolved,
+      );
       const versions = packages.get(manifest.name) ?? new Map();
       versions.set(manifest.version, {
         integrity: metadata.integrity,
-        resolved: metadata.resolved,
         manifest,
+        tarballPath,
       });
       packages.set(manifest.name, versions);
-      tarballUrls.add(metadata.resolved);
     },
   );
-
-  await runBounded([...tarballUrls].sort(), (url) =>
-    copyCacheEntry(sourceCache, cacheRoot, url),
-  );
-  await runBounded([...packages.keys()].sort(), (name) => {
-    const encodedName = name.startsWith("@") ? name.replace("/", "%2f") : name;
-    return copyCacheEntryIfPresent(
-      sourceCache,
-      cacheRoot,
-      `${REGISTRY}${encodedName}`,
-    );
-  });
-  await runBounded(
-    [...packages].sort(([left], [right]) =>
-      left < right ? -1 : left > right ? 1 : 0,
-    ),
-    ([name, versions]) => appendSyntheticManifest(cacheRoot, name, versions),
-  );
+  return packages;
 }
 
-async function ensureOfflineCache(
+function tarballId(name: string, version: string): string {
+  return createHash("sha256")
+    .update(name)
+    .update("\0")
+    .update(version)
+    .digest("hex");
+}
+
+function closeServer(server: Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error) => (error === undefined ? resolve() : reject(error)));
+  });
+}
+
+function isolatedNpmEnvironment(
   cacheRoot: string,
-  packageRoot: string,
-): Promise<void> {
-  const existing = cacheSeeds.get(cacheRoot);
-  if (existing !== undefined) return existing;
-  const pending = seedOfflineCache(cacheRoot, packageRoot);
-  cacheSeeds.set(cacheRoot, pending);
-  return pending;
+  registryUrl: string,
+  userConfigPath: string,
+  globalConfigPath: string,
+): NodeJS.ProcessEnv {
+  const environment = { ...process.env };
+  for (const key of Object.keys(environment)) {
+    const normalized = key.toLowerCase();
+    if (
+      normalized === "http_proxy" ||
+      normalized === "https_proxy" ||
+      normalized === "all_proxy" ||
+      (normalized.startsWith("npm_config_") &&
+        (normalized.includes("registry") || normalized.includes("proxy")))
+    ) {
+      delete environment[key];
+    }
+  }
+  return {
+    ...environment,
+    NO_PROXY: "127.0.0.1,localhost",
+    no_proxy: "127.0.0.1,localhost",
+    npm_config_cache: cacheRoot,
+    npm_config_globalconfig: globalConfigPath,
+    npm_config_noproxy: "127.0.0.1,localhost",
+    npm_config_offline: "false",
+    npm_config_registry: registryUrl,
+    npm_config_userconfig: userConfigPath,
+  };
+}
+
+async function startLocalRegistry(packageRoot: string): Promise<LocalRegistry> {
+  const packages = await lockedProductionPackages(packageRoot);
+  const tarballs = new Map<string, string>();
+  for (const [name, versions] of packages) {
+    for (const [version, locked] of versions) {
+      tarballs.set(tarballId(name, version), locked.tarballPath);
+    }
+  }
+
+  let registryUrl = "";
+  const server = createServer((request, response) => {
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      response.writeHead(405).end();
+      return;
+    }
+    let pathname: string;
+    try {
+      pathname = new URL(request.url ?? "/", registryUrl).pathname;
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
+    if (pathname.startsWith("/tarballs/") && pathname.endsWith(".tgz")) {
+      const id = pathname.slice("/tarballs/".length, -".tgz".length);
+      const path = tarballs.get(id);
+      if (path === undefined) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { "content-type": "application/octet-stream" });
+      if (request.method === "HEAD") {
+        response.end();
+        return;
+      }
+      const stream = createReadStream(path);
+      stream.on("error", () => response.destroy());
+      stream.pipe(response);
+      return;
+    }
+
+    let name: string;
+    try {
+      name = decodeURIComponent(pathname.slice(1));
+    } catch {
+      response.writeHead(400).end();
+      return;
+    }
+    const versions = packages.get(name);
+    if (versions === undefined) {
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "package not found" }));
+      return;
+    }
+    const ordered = [...versions].sort(([left], [right]) =>
+      left < right ? -1 : left > right ? 1 : 0,
+    );
+    const body = JSON.stringify({
+      name,
+      "dist-tags": { latest: ordered.at(-1)?.[0] },
+      versions: Object.fromEntries(
+        ordered.map(([version, locked]) => [
+          version,
+          {
+            ...locked.manifest,
+            dist: {
+              integrity: locked.integrity,
+              tarball: `${registryUrl}tarballs/${tarballId(name, version)}.tgz`,
+            },
+          },
+        ]),
+      ),
+    });
+    response.writeHead(200, {
+      "cache-control": "no-store",
+      "content-type": "application/json",
+    });
+    response.end(request.method === "HEAD" ? undefined : body);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    await closeServer(server);
+    throw new Error("Could not start the local package registry");
+  }
+  registryUrl = `http://127.0.0.1:${(address as AddressInfo).port}/`;
+  return { url: registryUrl, close: () => closeServer(server) };
 }
 
 export async function installPackedFixture(
@@ -374,25 +314,32 @@ export async function installPackedFixture(
   repositoryRoot: string,
   cacheRoot: string,
 ): Promise<void> {
-  await ensureOfflineCache(cacheRoot, packageRoot);
-  const installed = await execa(
-    "npm",
-    [
-      "install",
-      "--offline",
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      tarballPath,
-    ],
-    {
-      cwd: repositoryRoot,
-      env: { npm_config_cache: cacheRoot, npm_config_registry: REGISTRY },
-      reject: false,
-      stdin: "ignore",
-    },
-  );
-  if (installed.exitCode !== 0) {
-    throw new Error(`Could not install packed Zedbee: ${installed.stderr}`);
+  await mkdir(cacheRoot, { recursive: true });
+  const userConfig = join(cacheRoot, "isolated-user.npmrc");
+  const globalConfig = join(cacheRoot, "isolated-global.npmrc");
+  await Promise.all([writeFile(userConfig, ""), writeFile(globalConfig, "")]);
+  const registry = await startLocalRegistry(packageRoot);
+  try {
+    const installed = await execa(
+      "npm",
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
+      {
+        cwd: repositoryRoot,
+        env: isolatedNpmEnvironment(
+          cacheRoot,
+          registry.url,
+          userConfig,
+          globalConfig,
+        ),
+        extendEnv: false,
+        reject: false,
+        stdin: "ignore",
+      },
+    );
+    if (installed.exitCode !== 0) {
+      throw new Error(`Could not install packed Zedbee: ${installed.stderr}`);
+    }
+  } finally {
+    await registry.close();
   }
 }
