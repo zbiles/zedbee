@@ -49,6 +49,22 @@ function viewport(height: number, offset: number) {
   );
 }
 
+async function expectSettledFrame(
+  view: ReturnType<typeof render>,
+  assertion: (frame: string) => void,
+): Promise<void> {
+  try {
+    await vi.waitFor(() => {
+      const frame = view.lastFrame();
+      expect(frame).toBeDefined();
+      assertion(frame!);
+    });
+  } finally {
+    view.unmount();
+    view.cleanup();
+  }
+}
+
 describe("TerminalViewport", () => {
   it("uses the whole requested height without indicator rows when content fits", async () => {
     const view = viewport(12, 0);
@@ -100,33 +116,31 @@ describe("TerminalViewport", () => {
   );
 
   it("clips the complete child frame between stable overflow indicator rows", async () => {
-    const top = viewport(6, 0);
-    const middle = viewport(6, 3);
-    const bottom = viewport(6, 6);
-
-    await vi.waitFor(() => {
-      const topLines = top.lastFrame()!.split("\n");
-      const middleLines = middle.lastFrame()!.split("\n");
-      const bottomLines = bottom.lastFrame()!.split("\n");
-
+    await expectSettledFrame(viewport(6, 0), (frame) => {
+      const topLines = frame.split("\n");
       expect(topLines).toHaveLength(6);
-      expect(middleLines).toHaveLength(6);
-      expect(bottomLines).toHaveLength(6);
-
-      expect(top.lastFrame()).not.toContain("MORE ABOVE");
-      expect(top.lastFrame()).toContain("↓ MORE BELOW");
+      expect(frame).not.toContain("MORE ABOVE");
+      expect(frame).toContain("↓ MORE BELOW");
       expect(topLines[0]).toBe("");
       expect(topLines.slice(1, 5)).toEqual(tenLines.slice(0, 4));
       expect(topLines[5]).toContain("↓ MORE BELOW");
+    });
 
-      expect(middle.lastFrame()).toContain("↑ MORE ABOVE");
-      expect(middle.lastFrame()).toContain("↓ MORE BELOW");
+    await expectSettledFrame(viewport(6, 3), (frame) => {
+      const middleLines = frame.split("\n");
+      expect(middleLines).toHaveLength(6);
+      expect(frame).toContain("↑ MORE ABOVE");
+      expect(frame).toContain("↓ MORE BELOW");
       expect(middleLines[0]).toContain("↑ MORE ABOVE");
       expect(middleLines.slice(1, 5)).toEqual(tenLines.slice(3, 7));
       expect(middleLines[5]).toContain("↓ MORE BELOW");
+    });
 
-      expect(bottom.lastFrame()).toContain("↑ MORE ABOVE");
-      expect(bottom.lastFrame()).not.toContain("MORE BELOW");
+    await expectSettledFrame(viewport(6, 6), (frame) => {
+      const bottomLines = frame.split("\n");
+      expect(bottomLines).toHaveLength(6);
+      expect(frame).toContain("↑ MORE ABOVE");
+      expect(frame).not.toContain("MORE BELOW");
       expect(bottomLines[0]).toContain("↑ MORE ABOVE");
       expect(bottomLines.slice(1, 5)).toEqual(tenLines.slice(6, 10));
       expect(bottomLines[5]).toBe("");
@@ -150,26 +164,27 @@ describe("TerminalViewport", () => {
           </Box>
         </TerminalViewport>,
       );
-    const top = narrowViewport(0);
-    const middle = narrowViewport(3);
-    const bottom = narrowViewport(7);
-
-    await vi.waitFor(() => {
-      const topLines = top.lastFrame()!.split("\n");
-      const middleLines = middle.lastFrame()!.split("\n");
-      const bottomLines = bottom.lastFrame()!.split("\n");
-
+    await expectSettledFrame(narrowViewport(0), (frame) => {
+      const topLines = frame.split("\n");
       expect(topLines).toHaveLength(5);
-      expect(middleLines).toHaveLength(5);
-      expect(bottomLines).toHaveLength(5);
       expect(topLines[4]?.trim()).toBe("↓");
+      expect(frame).not.toContain("MORE");
+    });
+
+    await expectSettledFrame(narrowViewport(3), (frame) => {
+      const middleLines = frame.split("\n");
+      expect(middleLines).toHaveLength(5);
       expect(middleLines[0]?.trim()).toBe("↑");
       expect(middleLines[4]?.trim()).toBe("↓");
+      expect(frame).not.toContain("MORE");
+    });
+
+    await expectSettledFrame(narrowViewport(7), (frame) => {
+      const bottomLines = frame.split("\n");
+      expect(bottomLines).toHaveLength(5);
       expect(bottomLines[0]?.trim()).toBe("↑");
       expect(bottomLines[4]).toBe("");
-      expect(top.lastFrame()).not.toContain("MORE");
-      expect(middle.lastFrame()).not.toContain("MORE");
-      expect(bottom.lastFrame()).not.toContain("MORE");
+      expect(frame).not.toContain("MORE");
     });
   });
 
