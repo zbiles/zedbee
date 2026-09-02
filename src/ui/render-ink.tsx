@@ -23,6 +23,7 @@ export interface InkSessionOptions {
 }
 
 export interface InkScanDependencies {
+  readonly runScan?: typeof runScan;
   readonly preparePresentation?: typeof prepareTerminalPresentation;
   readonly store?: TemporaryReportStore;
   readonly interactive?: boolean;
@@ -108,7 +109,7 @@ export async function runInkScan(
   };
 
   try {
-    const report = await runScan({
+    const report = await (dependencies.runScan ?? runScan)({
       ...scanOptions,
       onEvent(event) {
         events.push(event);

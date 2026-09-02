@@ -6,7 +6,7 @@ import {
   runInkScan,
 } from "../../src/ui/render-ink.js";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { createFinding } from "../helpers/scan-report.js";
+import { createFinding, createReport } from "../helpers/scan-report.js";
 
 describe("runInkScan", () => {
   it("retains the 400 ms minimum live-dashboard duration", () => {
@@ -14,12 +14,6 @@ describe("runInkScan", () => {
   });
 
   it("keeps the animated live interface visible before the compact report", async () => {
-    const repository = await createGitRepository("zedbee-ink-timing-");
-    await repository.write(
-      "package.json",
-      '{"name":"ink-timing-fixture","private":true}\n',
-    );
-    await repository.commitAll("fixture setup");
     const startedAt = performance.now();
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
       ...args: unknown[]
@@ -32,13 +26,14 @@ describe("runInkScan", () => {
 
     try {
       const report = await runInkScan(
-        { repositoryRoot: repository.root },
+        { repositoryRoot: "/repo" },
         {
           requestedFormat: "ink",
           color: false,
           animations: true,
           width: 120,
         },
+        { runScan: vi.fn(async () => createReport({ checks: [] })) },
       );
 
       expect(report.checks).toHaveLength(0);
