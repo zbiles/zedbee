@@ -54,6 +54,10 @@ async function expectSettledFrame(
   assertion: (frame: string) => void,
 ): Promise<void> {
   try {
+    // Ink measures boxes in an effect. Let that first effect turn run before
+    // starting Vitest's short waitFor deadline, which can expire while a
+    // heavily loaded Windows worker is still showing the initial frame.
+    await new Promise<void>((resolve) => setImmediate(resolve));
     await vi.waitFor(() => {
       const frame = view.lastFrame();
       expect(frame).toBeDefined();
