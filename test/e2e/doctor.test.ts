@@ -6,7 +6,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DOCTOR_DIAGNOSTIC_IDS } from "../../src/doctor/diagnostics.js";
 import { CHECK_IDS } from "../../src/config/schema.js";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { installPackedFixture } from "../helpers/packed-install.js";
+import {
+  installPackedFixture,
+  sharedPackedTarball,
+} from "../helpers/packed-install.js";
 
 const packageRoot = join(import.meta.dirname, "../..");
 let packDirectory: string;
@@ -23,6 +26,11 @@ async function runNpm(args: readonly string[], cwd: string) {
 
 beforeAll(async () => {
   packDirectory = await mkdtemp(join(tmpdir(), "zedbee-doctor-pack-"));
+  const shared = sharedPackedTarball();
+  if (shared !== null) {
+    tarballPath = shared.path;
+    return;
+  }
   const packed = await runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
     packageRoot,

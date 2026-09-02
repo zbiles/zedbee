@@ -17,7 +17,10 @@ import { Ajv } from "ajv";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { installPackedFixture } from "../helpers/packed-install.js";
+import {
+  installPackedFixture,
+  sharedPackedTarball,
+} from "../helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 let packDirectory: string;
@@ -59,18 +62,30 @@ beforeAll(async () => {
     mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
   ]);
   temporaryReportRoot = await realpath(temporaryReportRoot);
-  const packed = await runNpm(
-    ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
-    packageRoot,
-    hookSignal,
-  );
-  expect(packed.exitCode).toBe(0);
-  const metadata = JSON.parse(packed.stdout) as Array<{
-    filename: string;
-    files: Array<{ path: string }>;
-  }>;
-  tarballPath = join(packDirectory, metadata[0]!.filename);
-  tarballFiles = metadata[0]!.files.map(({ path }) => path).sort();
+  const shared = sharedPackedTarball();
+  if (shared === null) {
+    const packed = await runNpm(
+      [
+        "pack",
+        "--json",
+        "--ignore-scripts",
+        "--pack-destination",
+        packDirectory,
+      ],
+      packageRoot,
+      hookSignal,
+    );
+    expect(packed.exitCode).toBe(0);
+    const metadata = JSON.parse(packed.stdout) as Array<{
+      filename: string;
+      files: Array<{ path: string }>;
+    }>;
+    tarballPath = join(packDirectory, metadata[0]!.filename);
+    tarballFiles = metadata[0]!.files.map(({ path }) => path).sort();
+  } else {
+    tarballPath = shared.path;
+    tarballFiles = shared.files;
+  }
   const installRoot = join(packDirectory, "installed-fixture");
   await mkdir(installRoot);
   await writeFile(

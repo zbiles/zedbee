@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { installPackedFixture } from "../helpers/packed-install.js";
+import {
+  installPackedFixture,
+  sharedPackedTarball,
+} from "../helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("../..", import.meta.url));
 let packDirectory: string;
@@ -13,6 +16,11 @@ let tarballPath: string;
 
 beforeAll(async () => {
   packDirectory = await mkdtemp(join(tmpdir(), "zedbee-hook-pack-"));
+  const shared = sharedPackedTarball();
+  if (shared !== null) {
+    tarballPath = shared.path;
+    return;
+  }
   const packed = await execa(
     "npm",
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],

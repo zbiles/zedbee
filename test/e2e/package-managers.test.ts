@@ -10,7 +10,10 @@ import {
 } from "../../scripts/release-check.mjs";
 import { CHECK_IDS } from "../../src/config/schema.js";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { installPackedFixture } from "../helpers/packed-install.js";
+import {
+  installPackedFixture,
+  sharedPackedTarball,
+} from "../helpers/packed-install.js";
 
 const root = join(import.meta.dirname, "../..");
 const managers = ["npm", "pnpm", "yarn", "bun"] as const;
@@ -33,6 +36,11 @@ let tarball: string;
 
 beforeAll(async () => {
   scratch = await mkdtemp(join(tmpdir(), "zedbee-managers-"));
+  const shared = sharedPackedTarball();
+  if (shared !== null) {
+    tarball = shared.path;
+    return;
+  }
   const packed = await execa(
     "npm",
     ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch],

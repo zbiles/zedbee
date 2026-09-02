@@ -11,6 +11,8 @@ const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 declare module "vitest" {
   export interface ProvidedContext {
     sharedPackedNodeModules: string | null;
+    sharedPackedTarball: string | null;
+    sharedPackedTarballFiles: readonly string[] | null;
   }
 }
 
@@ -20,6 +22,8 @@ export default async function setup(project: TestProject) {
     process.env.ZEDBEE_SHARED_PACKED_INSTALL_UNDER_TEST === "1";
   if (!useSharedInstall) {
     project.provide("sharedPackedNodeModules", null);
+    project.provide("sharedPackedTarball", null);
+    project.provide("sharedPackedTarballFiles", null);
     return;
   }
 
@@ -44,7 +48,9 @@ export default async function setup(project: TestProject) {
     }
     const metadata = JSON.parse(packed.stdout) as Array<{
       readonly filename: string;
+      readonly files: ReadonlyArray<{ readonly path: string }>;
     }>;
+    const tarballPath = join(scratch, metadata[0]!.filename);
     const installRoot = join(scratch, "installed");
     await mkdir(installRoot);
     await writeFile(
@@ -52,7 +58,7 @@ export default async function setup(project: TestProject) {
       '{"name":"zedbee-shared-windows-install","private":true}\n',
     );
     await installPackedFixture(
-      join(scratch, metadata[0]!.filename),
+      tarballPath,
       packageRoot,
       installRoot,
       join(scratch, "install-cache"),
@@ -65,6 +71,11 @@ export default async function setup(project: TestProject) {
     project.provide(
       "sharedPackedNodeModules",
       join(installRoot, "node_modules"),
+    );
+    project.provide("sharedPackedTarball", tarballPath);
+    project.provide(
+      "sharedPackedTarballFiles",
+      metadata[0]!.files.map(({ path }) => path).sort(),
     );
   } catch (error) {
     await rm(scratch, { recursive: true, force: true });

@@ -33,6 +33,18 @@ interface PackedInstallOptions {
   readonly reuseSharedInstall?: boolean;
 }
 
+export interface SharedPackedTarball {
+  readonly path: string;
+  readonly files: readonly string[];
+}
+
+export function sharedPackedTarball(): SharedPackedTarball | null {
+  const path = inject("sharedPackedTarball");
+  const files = inject("sharedPackedTarballFiles");
+  if (path === null || files === null) return null;
+  return { path, files };
+}
+
 async function npmCache(): Promise<string> {
   const override = process.env.ZEDBEE_NPM_SOURCE_CACHE_UNDER_TEST;
   if (override !== undefined && override.length > 0) return override;
