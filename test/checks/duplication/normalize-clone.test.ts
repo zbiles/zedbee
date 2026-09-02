@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
 import {
   cloneIdentity,
   cloneObservations,
@@ -113,6 +116,48 @@ describe("clone normalization", () => {
       ).toThrow("Expected a normalized repository-relative path");
     },
   );
+
+  it("accepts an absolute clone path when the snapshot root uses a filesystem alias", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "zedbee-clone-alias-"));
+    onTestFinished(() => rm(parent, { recursive: true, force: true }));
+    const canonicalRoot = join(parent, "canonical");
+    const aliasRoot = join(parent, "alias");
+    await mkdir(join(canonicalRoot, "src"), { recursive: true });
+    await writeFile(
+      join(canonicalRoot, "src", "a.ts"),
+      "export const a = 1;\n",
+    );
+    await writeFile(
+      join(canonicalRoot, "src", "b.ts"),
+      "export const b = 2;\n",
+    );
+    await symlink(
+      canonicalRoot,
+      aliasRoot,
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const clone = normalizeClone(
+      rawClone({
+        firstFile: {
+          ...rawClone().firstFile,
+          name: join(canonicalRoot, "src", "a.ts"),
+        },
+        secondFile: {
+          ...rawClone().secondFile,
+          name: join(canonicalRoot, "src", "b.ts"),
+        },
+      }),
+      aliasRoot,
+      ".",
+      ["src/a.ts", "src/b.ts"],
+    );
+
+    expect(clone.fragments.map(({ file }) => file)).toEqual([
+      "src/a.ts",
+      "src/b.ts",
+    ]);
+  });
 
   it.each([
     null,

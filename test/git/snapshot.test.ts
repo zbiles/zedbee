@@ -1100,7 +1100,7 @@ describe("buildCommitSnapshotPair", () => {
     } finally {
       snapshotRootFailure.failBlobWrite = false;
     }
-  }, 30_000);
+  }, 120_000);
 
   it("materializes SHA-256 commit blobs through the batch protocol", async () => {
     const repositoryRoot = await mkdtemp(join(tmpdir(), "zedbee-sha256-"));

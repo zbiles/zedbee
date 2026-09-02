@@ -1,10 +1,11 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import {
   lstat as lstatAsync,
   realpath as realpathAsync,
+  stat as statAsync,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute } from "node:path";
 
 export const SNAPSHOT_PREFIX = "zedbee-snapshot-";
 
@@ -29,13 +30,21 @@ export class SnapshotError extends Error {
   }
 }
 
-function isContainedBy(parent: string, child: string): boolean {
-  const pathFromParent = relative(parent, child);
+function samePath(left: string, right: string): boolean {
+  return process.platform === "win32"
+    ? left.toLowerCase() === right.toLowerCase()
+    : left === right;
+}
+
+function sameDirectory(
+  leftPath: string,
+  rightPath: string,
+  left: { readonly dev: number; readonly ino: number },
+  right: { readonly dev: number; readonly ino: number },
+): boolean {
   return (
-    pathFromParent !== "" &&
-    !isAbsolute(pathFromParent) &&
-    pathFromParent !== ".." &&
-    !pathFromParent.startsWith(`..${sep}`)
+    samePath(leftPath, rightPath) ||
+    (left.ino !== 0 && left.dev === right.dev && left.ino === right.ino)
   );
 }
 
@@ -49,14 +58,14 @@ function invalidSnapshotPath(): never {
 function validateCanonicalSnapshotPath(
   path: string,
   canonicalPath: string,
-  canonicalTempRoot: string,
+  parentIsTempRoot: boolean,
   directory: boolean,
 ): ValidatedSnapshotPath {
   if (
     !isAbsolute(path) ||
     !isAbsolute(canonicalPath) ||
     !directory ||
-    !isContainedBy(canonicalTempRoot, canonicalPath) ||
+    !parentIsTempRoot ||
     !basename(canonicalPath).startsWith(SNAPSHOT_PREFIX)
   ) {
     return invalidSnapshotPath();
@@ -70,15 +79,24 @@ export async function validateSnapshotPath(
   if (!isAbsolute(path)) {
     return invalidSnapshotPath();
   }
-  const [canonicalTempRoot, canonicalPath, metadata] = await Promise.all([
-    realpathAsync(tmpdir()),
-    realpathAsync(path),
-    lstatAsync(path),
-  ]);
+  const [canonicalTempRoot, canonicalPath, metadata, tempMetadata] =
+    await Promise.all([
+      realpathAsync(tmpdir()),
+      realpathAsync(path),
+      lstatAsync(path),
+      statAsync(tmpdir()),
+    ]);
+  const canonicalParent = dirname(canonicalPath);
+  const parentMetadata = await statAsync(canonicalParent);
   return validateCanonicalSnapshotPath(
     path,
     canonicalPath,
-    canonicalTempRoot,
+    sameDirectory(
+      canonicalTempRoot,
+      canonicalParent,
+      tempMetadata,
+      parentMetadata,
+    ),
     metadata.isDirectory(),
   );
 }
@@ -89,10 +107,18 @@ export function validateReportableSnapshotPath(
   if (!isAbsolute(path)) {
     return invalidSnapshotPath();
   }
+  const canonicalPath = realpathSync(path);
+  const canonicalTempRoot = realpathSync(tmpdir());
+  const canonicalParent = dirname(canonicalPath);
   return validateCanonicalSnapshotPath(
     path,
-    realpathSync(path),
-    realpathSync(tmpdir()),
+    canonicalPath,
+    sameDirectory(
+      canonicalTempRoot,
+      canonicalParent,
+      statSync(tmpdir()),
+      statSync(canonicalParent),
+    ),
     lstatSync(path).isDirectory(),
   );
 }

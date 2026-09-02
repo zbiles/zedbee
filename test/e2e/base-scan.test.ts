@@ -82,12 +82,13 @@ interface JsonReport {
 async function gitIdentity(
   repository: GitRepositoryView,
 ): Promise<GitIdentity> {
-  const [tree, head, refs, status] = await Promise.all([
-    repository.git(["write-tree"]),
-    repository.git(["rev-parse", "HEAD"]),
-    repository.git(["for-each-ref", "--format=%(refname)%00%(objectname)"]),
-    repository.git(["status", "--porcelain=v1", "-z"]),
+  const tree = await repository.git(["write-tree"]);
+  const head = await repository.git(["rev-parse", "HEAD"]);
+  const refs = await repository.git([
+    "for-each-ref",
+    "--format=%(refname)%00%(objectname)",
   ]);
+  const status = await repository.git(["status", "--porcelain=v1", "-z"]);
   return {
     tree: tree.stdout,
     head: head.stdout,

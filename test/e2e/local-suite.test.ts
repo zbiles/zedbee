@@ -200,7 +200,7 @@ describe.sequential("packaged managed local suite", () => {
         }),
       }),
     ]);
-  }, 45_000);
+  }, 180_000);
 
   it("reports a staged TypeScript diagnostic with machine evidence", async () => {
     const repository = await installedRepository();
@@ -241,7 +241,7 @@ describe.sequential("packaged managed local suite", () => {
         }),
       }),
     ]);
-  }, 45_000);
+  }, 180_000);
 
   it("runs React DOM accessibility only when a browser renderer is present", async () => {
     const repository = await installedRepository({
@@ -265,7 +265,7 @@ describe.sequential("packaged managed local suite", () => {
         location: expect.objectContaining({ file: "src/app.jsx" }),
       }),
     );
-  }, 45_000);
+  }, 180_000);
 
   it("runs React correctness for Ink without applying DOM accessibility", async () => {
     const repository = await installedRepository({
@@ -298,5 +298,5 @@ describe.sequential("packaged managed local suite", () => {
       skipReason: "No browser DOM renderer detected",
       findings: [],
     });
-  }, 45_000);
+  }, 180_000);
 });

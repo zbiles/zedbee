@@ -10,6 +10,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...original,
     lstatSync: () => ({ isDirectory: () => true }),
+    statSync: () => ({ dev: 1, ino: 1 }),
     realpathSync: (path: string) =>
       path.includes("zedbee-snapshot-")
         ? pathControl.canonicalPath

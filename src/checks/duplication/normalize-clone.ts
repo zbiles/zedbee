@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { isAbsolute, posix, relative, sep } from "node:path";
 import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
@@ -69,9 +70,20 @@ function reportedPath(
   }
   const portable = name.replaceAll("\\", "/");
   if (isAbsolute(name)) {
-    return normalizeRepositoryRelativePath(
-      relative(snapshotRoot, name).split(sep).join("/"),
-    );
+    const direct = relative(snapshotRoot, name).split(sep).join("/");
+    try {
+      return normalizeRepositoryRelativePath(direct);
+    } catch (directError) {
+      try {
+        return normalizeRepositoryRelativePath(
+          relative(realpathSync(snapshotRoot), realpathSync(name))
+            .split(sep)
+            .join("/"),
+        );
+      } catch {
+        throw directError;
+      }
+    }
   }
   const workspaceRelative = normalizeRepositoryRelativePath(portable);
   const direct = normalizeRepositoryRelativePath(

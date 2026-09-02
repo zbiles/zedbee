@@ -19,7 +19,9 @@ export interface InspectionFixture {
 
 export async function createInspectionFixture(): Promise<InspectionFixture> {
   const root = await mkdtemp(join(tmpdir(), "zedbee-inspection-test-"));
-  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  onTestFinished(() =>
+    rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+  );
 
   const write = async (path: string, contents: string): Promise<void> => {
     const fullPath = join(root, path);

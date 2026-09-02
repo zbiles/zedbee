@@ -171,6 +171,14 @@ function dependencyEntries(packageMetadata) {
   );
 }
 
+function hasPlatformConstraint(packageMetadata) {
+  return (
+    packageMetadata.os !== undefined ||
+    packageMetadata.cpu !== undefined ||
+    packageMetadata.libc !== undefined
+  );
+}
+
 function followPackageLinks(packages, initialPackagePath) {
   let packagePath = initialPackagePath;
   const visited = new Set();
@@ -222,6 +230,7 @@ export function findProductionDependencies(lockfile) {
     dependency,
     dependencyPath: [rootLabel],
     optional: dependency.optional,
+    conditional: false,
   }));
   const visited = new Set();
   const reachable = [];
@@ -252,10 +261,14 @@ export function findProductionDependencies(lockfile) {
     );
     const dependencyPath = [...current.dependencyPath, label];
     const optional = current.optional || packageMetadata.optional === true;
+    const conditional =
+      current.conditional || hasPlatformConstraint(packageMetadata);
     reachable.push({
       packagePath: resolvedPackage.packagePath,
+      name: packageMetadata.name ?? current.dependency.name,
       dependencyPath,
       optional,
+      conditional,
     });
 
     for (const dependency of dependencyEntries(packageMetadata)) {
@@ -264,6 +277,7 @@ export function findProductionDependencies(lockfile) {
         dependency,
         dependencyPath,
         optional: optional || dependency.optional,
+        conditional,
       });
     }
   }
@@ -355,25 +369,28 @@ export async function buildProductionInventory(root) {
   const inventoryPackages = [];
 
   for (const dependency of reachable) {
-    let packageMetadata;
+    let packageMetadata = lockfile.packages[dependency.packagePath];
     let packageDirectory;
-    try {
-      const resolvedPackage = await resolvePackageDirectory(
-        canonicalRoot,
-        dependency.packagePath,
-      );
-      packageDirectory = resolvedPackage.packageDirectory;
-      packageMetadata = JSON.parse(
-        await readFile(resolvedPackage.packageJsonPath, "utf8"),
-      );
-    } catch (error) {
-      if (dependency.optional && error?.code === "ENOENT") continue;
-      throw error;
+    if (!dependency.conditional) {
+      try {
+        const resolvedPackage = await resolvePackageDirectory(
+          canonicalRoot,
+          dependency.packagePath,
+        );
+        packageDirectory = resolvedPackage.packageDirectory;
+        packageMetadata = JSON.parse(
+          await readFile(resolvedPackage.packageJsonPath, "utf8"),
+        );
+      } catch (error) {
+        if (!dependency.optional || error?.code !== "ENOENT") throw error;
+      }
     }
 
-    const legalFiles = await findLegalFiles(canonicalRoot, packageDirectory);
+    const legalFiles = packageDirectory
+      ? await findLegalFiles(canonicalRoot, packageDirectory)
+      : [];
     inventoryPackages.push({
-      name: packageMetadata.name ?? null,
+      name: packageMetadata.name ?? dependency.name,
       version: packageMetadata.version ?? null,
       license: packageMetadata.license ?? null,
       repository: packageMetadata.repository ?? null,

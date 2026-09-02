@@ -364,6 +364,67 @@ describe("production license inventory", () => {
     });
   });
 
+  it("includes optional platform packages that are not installed on the current OS", async () => {
+    const root = await createFixtureRoot();
+    await writeLockfile(root, {
+      name: "fixture-root",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "fixture-root",
+          version: "1.0.0",
+          optionalDependencies: {
+            "native-linux": "1.0.0",
+            "native-windows": "1.0.0",
+          },
+        },
+        "node_modules/native-linux": {
+          version: "1.0.0",
+          license: "MIT",
+          optional: true,
+          os: ["linux"],
+        },
+        "node_modules/native-windows": {
+          version: "1.0.0",
+          license: "MIT",
+          optional: true,
+          os: ["win32"],
+          repository: "example/native-windows",
+        },
+      },
+    });
+    await writePackage(root, "node_modules/native-linux", {
+      name: "native-linux",
+      version: "1.0.0",
+      license: "MIT",
+      repository: "installed metadata must not affect the inventory",
+    });
+
+    const inventory = await buildProductionInventory(root);
+
+    expect(inventory.packages).toEqual([
+      {
+        name: "native-linux",
+        version: "1.0.0",
+        license: "MIT",
+        repository: null,
+        licenseFile: null,
+        legalFiles: [],
+        dependencyPath: ["fixture-root@1.0.0", "native-linux@1.0.0"],
+      },
+      {
+        name: "native-windows",
+        version: "1.0.0",
+        license: "MIT",
+        repository: "example/native-windows",
+        licenseFile: null,
+        legalFiles: [],
+        dependencyPath: ["fixture-root@1.0.0", "native-windows@1.0.0"],
+      },
+    ]);
+  });
+
   it("fails the command with a denied transitive dependency's complete path", async () => {
     const root = await createFixtureRoot();
     const lockfile: Lockfile = {

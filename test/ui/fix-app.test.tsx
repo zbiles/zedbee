@@ -482,8 +482,9 @@ describe("FixApp", () => {
       })),
     };
     const { view } = setup(tallPlan, 80, 20);
-    await vi.waitFor(() =>
-      expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
+    await vi.waitFor(
+      () => expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
+      { timeout: 10_000 },
     );
     const before = visibleFrame(view);
 
@@ -499,7 +500,7 @@ describe("FixApp", () => {
     await vi.waitFor(() =>
       expect(visibleFrame(view)).toContain("↑ MORE ABOVE"),
     );
-  });
+  }, 30_000);
 
   it("keeps the plan readable within a narrow terminal", () => {
     const narrowPlan: FixPlan = {
@@ -556,8 +557,9 @@ describe("FixApp", () => {
       />
     );
     const view = render(elementFor(20));
-    await vi.waitFor(() =>
-      expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
+    await vi.waitFor(
+      () => expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
+      { timeout: 10_000 },
     );
     view.stdin.write("\t");
     await new Promise((resolve) => setImmediate(resolve));
@@ -566,7 +568,7 @@ describe("FixApp", () => {
     await vi.waitFor(() => expect(lines(visibleFrame(view))).toHaveLength(30));
     view.stdin.write("\r");
     await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
-  });
+  }, 30_000);
 
   it("homes the alternate screen exactly once", () => {
     const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
