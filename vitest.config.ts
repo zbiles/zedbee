@@ -4,10 +4,11 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
-    // Packed-install tests extract hundreds of files. Running several of them
-    // at once overwhelms GitHub's Windows disk and causes unrelated tests to
-    // miss their time limits. Serial files keep the same coverage without the
-    // artificial resource contention.
-    ...(process.platform === "win32" ? { maxWorkers: 1 } : {}),
+    // Git and package-manager integration work is slower on hosted Windows.
+    // Bound concurrency and allow a small timing margin without weakening the
+    // tighter defaults used by every other platform.
+    ...(process.platform === "win32"
+      ? { maxWorkers: 2, testTimeout: 15_000 }
+      : {}),
   },
 });

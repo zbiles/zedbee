@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
+import { getCurrentTest } from "@vitest/runner";
 import { execa } from "execa";
 
 const CACHE_KEY_PREFIX = "make-fetch-happen:request-cache:";
@@ -17,6 +18,10 @@ interface LockedPackage {
 interface LocalRegistry {
   readonly url: string;
   close(): Promise<void>;
+}
+
+interface PackedInstallOptions {
+  readonly cancelSignal?: AbortSignal;
 }
 
 async function npmCache(): Promise<string> {
@@ -182,6 +187,7 @@ function tarballId(name: string, version: string): string {
 function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error) => (error === undefined ? resolve() : reject(error)));
+    server.closeAllConnections();
   });
 }
 
@@ -313,6 +319,7 @@ export async function installPackedFixture(
   packageRoot: string,
   repositoryRoot: string,
   cacheRoot: string,
+  options: PackedInstallOptions = {},
 ): Promise<void> {
   await mkdir(cacheRoot, { recursive: true });
   const userConfig = join(cacheRoot, "isolated-user.npmrc");
@@ -320,6 +327,8 @@ export async function installPackedFixture(
   await Promise.all([writeFile(userConfig, ""), writeFile(globalConfig, "")]);
   const registry = await startLocalRegistry(packageRoot);
   try {
+    const cancelSignal =
+      options.cancelSignal ?? getCurrentTest()?.context.signal;
     const installed = await execa(
       "npm",
       ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
@@ -332,8 +341,11 @@ export async function installPackedFixture(
           globalConfig,
         ),
         extendEnv: false,
+        killDescendants: true,
         reject: false,
         stdin: "ignore",
+        timeout: 150_000,
+        ...(cancelSignal === undefined ? {} : { cancelSignal }),
       },
     );
     if (installed.exitCode !== 0) {

@@ -1,14 +1,18 @@
 import {
   lstat,
+  mkdir,
   mkdtemp,
   readFile,
   readdir,
   realpath,
   rm,
+  symlink,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getCurrentTest } from "@vitest/runner";
 import { Ajv } from "ajv";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,17 +24,36 @@ let packDirectory: string;
 let temporaryReportRoot: string;
 let tarballPath: string;
 let tarballFiles: readonly string[];
+let installedNodeModules: string;
 
-async function runNpm(args: readonly string[], cwd: string) {
+function cancellationOptions(
+  signal = getCurrentTest()?.context.signal,
+): Readonly<{
+  cancelSignal?: AbortSignal;
+  killDescendants: true;
+}> {
+  return signal === undefined
+    ? { killDescendants: true }
+    : { cancelSignal: signal, killDescendants: true };
+}
+
+async function runNpm(
+  args: readonly string[],
+  cwd: string,
+  cancelSignal?: AbortSignal,
+) {
   return execa("npm", args, {
     cwd,
     env: { npm_config_cache: join(packDirectory, "npm-cache") },
     reject: false,
     stdin: "ignore",
+    timeout: 120_000,
+    ...cancellationOptions(cancelSignal),
   });
 }
 
 beforeAll(async () => {
+  const hookSignal = AbortSignal.timeout(165_000);
   [packDirectory, temporaryReportRoot] = await Promise.all([
     mkdtemp(join(tmpdir(), "zedbee-pack-")),
     mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
@@ -39,6 +62,7 @@ beforeAll(async () => {
   const packed = await runNpm(
     ["pack", "--json", "--ignore-scripts", "--pack-destination", packDirectory],
     packageRoot,
+    hookSignal,
   );
   expect(packed.exitCode).toBe(0);
   const metadata = JSON.parse(packed.stdout) as Array<{
@@ -47,7 +71,21 @@ beforeAll(async () => {
   }>;
   tarballPath = join(packDirectory, metadata[0]!.filename);
   tarballFiles = metadata[0]!.files.map(({ path }) => path).sort();
-}, 30_000);
+  const installRoot = join(packDirectory, "installed-fixture");
+  await mkdir(installRoot);
+  await writeFile(
+    join(installRoot, "package.json"),
+    '{"name":"zedbee-shared-e2e-install","private":true}\n',
+  );
+  await installPackedFixture(
+    tarballPath,
+    packageRoot,
+    installRoot,
+    join(packDirectory, "install-cache"),
+    { cancelSignal: hookSignal },
+  );
+  installedNodeModules = join(installRoot, "node_modules");
+}, 180_000);
 
 afterAll(async () => {
   await Promise.all([
@@ -69,12 +107,12 @@ async function createInstalledRepository() {
       private: true,
     }),
   );
-  await repository.write(".gitignore", "node_modules/\n");
-  await installPackedFixture(
-    tarballPath,
-    packageRoot,
-    repository.root,
-    join(packDirectory, "install-cache"),
+  // Match both a real install directory and this suite's shared directory link.
+  await repository.write(".gitignore", "node_modules\n");
+  await symlink(
+    installedNodeModules,
+    join(repository.root, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
   );
   await repository.write(
     "tsconfig.json",
@@ -111,6 +149,7 @@ async function runZedbee(
       },
       reject: false,
       stdin: "ignore",
+      ...cancellationOptions(),
     },
   );
 }
@@ -134,6 +173,7 @@ async function runPackagedCli(
       },
       reject: false,
       stdin: "ignore",
+      ...cancellationOptions(),
     },
   );
 }
@@ -453,6 +493,7 @@ describe("packaged Zedbee CLI", () => {
       cwd: repository.root,
       reject: false,
       stdin: "ignore",
+      ...cancellationOptions(),
     });
 
     expect(result.exitCode, result.stderr).toBe(0);
