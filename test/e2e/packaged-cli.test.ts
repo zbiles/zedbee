@@ -1,4 +1,5 @@
 import {
+  cp,
   lstat,
   mkdir,
   mkdtemp,
@@ -15,8 +16,8 @@ import { fileURLToPath } from "node:url";
 import { getCurrentTest } from "@vitest/runner";
 import { Ajv } from "ajv";
 import { execa } from "execa";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createGitRepository } from "../helpers/git-repository.js";
+import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
+import { copyGitRepository } from "../helpers/git-repository.js";
 import {
   installPackedFixture,
   sharedPackedTarball,
@@ -28,6 +29,7 @@ let temporaryReportRoot: string;
 let tarballPath: string;
 let tarballFiles: readonly string[];
 let installedNodeModules: string;
+let installedRepositoryTemplate: string;
 
 function cancellationOptions(
   signal = getCurrentTest()?.context.signal,
@@ -100,6 +102,38 @@ beforeAll(async () => {
     { cancelSignal: hookSignal },
   );
   installedNodeModules = await realpath(join(installRoot, "node_modules"));
+
+  installedRepositoryTemplate = join(packDirectory, "repository-template");
+  await cp(inject("sharedGitTemplate"), installedRepositoryTemplate, {
+    recursive: true,
+  });
+  await Promise.all([
+    writeFile(
+      join(installedRepositoryTemplate, "package.json"),
+      JSON.stringify({
+        name: "zedbee-e2e-fixture",
+        version: "1.0.0",
+        private: true,
+      }),
+    ),
+    writeFile(join(installedRepositoryTemplate, ".gitignore"), "node_modules\n"),
+    writeFile(
+      join(installedRepositoryTemplate, "tsconfig.json"),
+      '{"compilerOptions":{"strict":true},"include":["**/*.ts"]}\n',
+    ),
+    writeFile(
+      join(installedRepositoryTemplate, ".zedbeerc.jsonc"),
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    ),
+  ]);
+  await execa("git", ["add", "--all"], {
+    cwd: installedRepositoryTemplate,
+    stdin: "ignore",
+  });
+  await execa("git", ["commit", "--message", "fixture setup"], {
+    cwd: installedRepositoryTemplate,
+    stdin: "ignore",
+  });
 }, 180_000);
 
 afterAll(async () => {
@@ -113,31 +147,12 @@ afterAll(async () => {
 });
 
 async function createInstalledRepository() {
-  const repository = await createGitRepository();
-  await repository.write(
-    "package.json",
-    JSON.stringify({
-      name: "zedbee-e2e-fixture",
-      version: "1.0.0",
-      private: true,
-    }),
-  );
-  // Match both a real install directory and this suite's shared directory link.
-  await repository.write(".gitignore", "node_modules\n");
+  const repository = await copyGitRepository(installedRepositoryTemplate);
   await symlink(
     installedNodeModules,
     join(repository.root, "node_modules"),
     process.platform === "win32" ? "junction" : "dir",
   );
-  await repository.write(
-    "tsconfig.json",
-    '{"compilerOptions":{"strict":true},"include":["**/*.ts"]}\n',
-  );
-  await repository.write(
-    ".zedbeerc.jsonc",
-    '{"schemaVersion":1,"profile":"fast"}\n',
-  );
-  await repository.commitAll("fixture setup");
   return repository;
 }
 

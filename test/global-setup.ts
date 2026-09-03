@@ -10,6 +10,7 @@ const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
 declare module "vitest" {
   export interface ProvidedContext {
+    sharedGitTemplate: string;
     sharedPackedNodeModules: string | null;
     sharedPackedTarball: string | null;
     sharedPackedTarballFiles: readonly string[] | null;
@@ -20,16 +21,32 @@ export default async function setup(project: TestProject) {
   const useSharedInstall =
     process.platform === "win32" ||
     process.env.ZEDBEE_SHARED_PACKED_INSTALL_UNDER_TEST === "1";
-  if (!useSharedInstall) {
-    project.provide("sharedPackedNodeModules", null);
-    project.provide("sharedPackedTarball", null);
-    project.provide("sharedPackedTarballFiles", null);
-    return;
-  }
-
-  const scratch = await mkdtemp(join(tmpdir(), "zedbee-shared-install-"));
+  const scratch = await mkdtemp(join(tmpdir(), "zedbee-test-setup-"));
   const deadline = AbortSignal.timeout(240_000);
   try {
+    const gitTemplate = join(scratch, "git-template");
+    await mkdir(gitTemplate);
+    await execa("git", ["init", "--initial-branch=main"], {
+      cwd: gitTemplate,
+      stdin: "ignore",
+    });
+    await execa("git", ["config", "user.name", "Zedbee Test"], {
+      cwd: gitTemplate,
+      stdin: "ignore",
+    });
+    await execa("git", ["config", "user.email", "zedbee@example.invalid"], {
+      cwd: gitTemplate,
+      stdin: "ignore",
+    });
+    project.provide("sharedGitTemplate", gitTemplate);
+
+    if (!useSharedInstall) {
+      project.provide("sharedPackedNodeModules", null);
+      project.provide("sharedPackedTarball", null);
+      project.provide("sharedPackedTarballFiles", null);
+      return () => rm(scratch, { recursive: true, force: true });
+    }
+
     const packed = await execa(
       "npm",
       ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch],

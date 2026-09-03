@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { execa } from "execa";
-import { onTestFinished } from "vitest";
+import { inject, onTestFinished } from "vitest";
 
 export interface TestGitOutput {
   stdout: string;
@@ -19,10 +19,7 @@ export interface TestGitRepository {
   cleanup(): Promise<void>;
 }
 
-export async function createGitRepository(
-  prefix = "zedbee-test-repo-",
-): Promise<TestGitRepository> {
-  const root = await mkdtemp(join(tmpdir(), prefix));
+function repositoryAt(root: string): TestGitRepository {
   let cleaned = false;
 
   const git = async (args: readonly string[]): Promise<TestGitOutput> => {
@@ -51,7 +48,7 @@ export async function createGitRepository(
     });
   };
 
-  const repository: TestGitRepository = {
+  return {
     root,
     async write(path, contents) {
       const fullPath = join(root, path);
@@ -73,11 +70,33 @@ export async function createGitRepository(
     },
     cleanup,
   };
+}
 
-  await git(["init", "--initial-branch=main"]);
-  await git(["config", "user.name", "Zedbee Test"]);
-  await git(["config", "user.email", "zedbee@example.invalid"]);
-  onTestFinished(cleanup);
-
+async function temporaryRepository(
+  source: string,
+  prefix: string,
+): Promise<TestGitRepository> {
+  const root = await mkdtemp(join(tmpdir(), prefix));
+  try {
+    await cp(source, root, { recursive: true });
+  } catch (error) {
+    await rm(root, { recursive: true, force: true });
+    throw error;
+  }
+  const repository = repositoryAt(root);
+  onTestFinished(repository.cleanup);
   return repository;
+}
+
+export function createGitRepository(
+  prefix = "zedbee-test-repo-",
+): Promise<TestGitRepository> {
+  return temporaryRepository(inject("sharedGitTemplate"), prefix);
+}
+
+export function copyGitRepository(
+  source: string,
+  prefix = "zedbee-test-repo-",
+): Promise<TestGitRepository> {
+  return temporaryRepository(source, prefix);
 }

@@ -102,17 +102,36 @@ describe("release verification contract", () => {
     expect(await realpath(resolved)).toBe(await realpath(npmCliPath));
   });
 
-  it("runs every local release-safety gate without requiring publication metadata", () => {
-    expect(verificationSteps("verify").map(({ id }) => id)).toEqual([
-      "typecheck",
-      "tests",
-      "build",
-      "schema",
-      "licenses",
-      "benchmark",
-      "package",
-      "documentation",
-      "diff",
+  it("builds once before running every release-safety gate", () => {
+    expect(verificationSteps("verify")).toEqual([
+      { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
+      { id: "build", command: "npm", args: ["run", "build"] },
+      {
+        id: "tests",
+        command: "node",
+        args: ["node_modules/vitest/vitest.mjs", "run"],
+      },
+      {
+        id: "schema",
+        command: "node",
+        args: ["dist/config/json-schema.js", "--check"],
+      },
+      { id: "licenses", command: "npm", args: ["run", "licenses:check"] },
+      {
+        id: "benchmark",
+        command: "node",
+        args: ["--experimental-strip-types", "bench/run.mts"],
+      },
+      {
+        id: "package",
+        command: "node",
+        args: ["scripts/check-package-contents.mjs"],
+      },
+      {
+        id: "diff",
+        command: "git",
+        args: ["--no-pager", "diff", "--check"],
+      },
     ]);
   });
 

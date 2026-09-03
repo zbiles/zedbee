@@ -18,16 +18,27 @@ const RELEASE_VERSION =
 
 const LOCAL_STEPS = Object.freeze([
   { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
-  { id: "tests", command: "npm", args: ["test"] },
   { id: "build", command: "npm", args: ["run", "build"] },
-  { id: "schema", command: "npm", args: ["run", "schema:check"] },
-  { id: "licenses", command: "npm", args: ["run", "licenses:check"] },
-  { id: "benchmark", command: "npm", args: ["run", "benchmark"] },
-  { id: "package", command: "npm", args: ["run", "package:check"] },
   {
-    id: "documentation",
-    command: "npm",
-    args: ["test", "--", "test/docs"],
+    id: "tests",
+    command: "node",
+    args: ["node_modules/vitest/vitest.mjs", "run"],
+  },
+  {
+    id: "schema",
+    command: "node",
+    args: ["dist/config/json-schema.js", "--check"],
+  },
+  { id: "licenses", command: "npm", args: ["run", "licenses:check"] },
+  {
+    id: "benchmark",
+    command: "node",
+    args: ["--experimental-strip-types", "bench/run.mts"],
+  },
+  {
+    id: "package",
+    command: "node",
+    args: ["scripts/check-package-contents.mjs"],
   },
   {
     id: "diff",
