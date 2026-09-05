@@ -8,6 +8,12 @@ PolyForm Small Business is source-available, not an OSI-approved open-source lic
 
 Do not describe Zedbee as MIT-licensed, Apache-licensed, or unrestricted open source. `package.json` uses the exact identifier `PolyForm-Small-Business-1.0.0` and the packed core includes the full PolyForm terms.
 
+## Requesting a commercial license
+
+To discuss use outside the PolyForm Small Business permissions, email [licensing@zedbee.dev](mailto:licensing@zedbee.dev). In the initial message, include your name, organization, a short description of the intended use, whether Zedbee will be used internally or distributed, and an approximate organization size. Do not send proprietary source code, credentials, or other sensitive material.
+
+The project owner will confirm whether separate terms are needed and explain the next steps. Sending an inquiry does not change the license that currently applies.
+
 ## Analyzer libraries and npm dependencies
 
 Third-party npm packages keep their own licenses. In particular:
@@ -29,4 +35,4 @@ Before a commercial release, the owner should have counsel confirm at least:
 4. whether online OSV metadata disclosure needs additional privacy terms;
 5. the canonical publisher identity, repository, support, security contact, and commercial-license channel.
 
-The release gate checks artifact contents, dependency inventory, third-party notices, repository metadata, and SBOM inputs. It intentionally blocks public publication while canonical repository/contact metadata or remote cross-platform evidence is absent.
+The automated release gate checks artifact contents, dependency inventory, third-party notices, repository metadata, the SBOM, and remote cross-platform evidence. Before publishing, the owner must separately confirm the publisher identity, support and security contacts, and commercial-license channel.
