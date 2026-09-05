@@ -7,18 +7,22 @@ import type { TestProject } from "vitest/node";
 import { installPackedFixture } from "./helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+const SHARED_INSTALL_ATTEMPT_TIMEOUT_MS = 300_000;
 
 export interface InstallAttempt {
   readonly attempt: number;
   readonly attemptRoot: string;
   readonly installRoot: string;
   readonly cacheRoot: string;
+  readonly cancelSignal: AbortSignal;
 }
 
 export async function prepareVerifiedInstall(
   scratch: string,
   install: (attempt: InstallAttempt) => Promise<void>,
   verify: (attempt: InstallAttempt) => Promise<void>,
+  createAttemptSignal: () => AbortSignal = () =>
+    AbortSignal.timeout(SHARED_INSTALL_ATTEMPT_TIMEOUT_MS),
 ): Promise<string> {
   const failures: unknown[] = [];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -28,6 +32,7 @@ export async function prepareVerifiedInstall(
       attemptRoot,
       installRoot: join(attemptRoot, "installed"),
       cacheRoot: join(attemptRoot, "npm-cache"),
+      cancelSignal: createAttemptSignal(),
     };
     try {
       await install(details);
@@ -47,7 +52,6 @@ export async function prepareVerifiedInstall(
 async function verifySharedPackedInstall(
   installRoot: string,
   repositoryRoot: string,
-  cancelSignal: AbortSignal,
 ): Promise<void> {
   const result = await execa(
     process.execPath,
@@ -59,7 +63,6 @@ async function verifySharedPackedInstall(
     ],
     {
       cwd: repositoryRoot,
-      cancelSignal,
       env: { ...process.env, NO_COLOR: "1" },
       killDescendants: true,
       reject: false,
@@ -109,7 +112,6 @@ export default async function setup(project: TestProject) {
     process.platform === "win32" ||
     process.env.ZEDBEE_SHARED_PACKED_INSTALL_UNDER_TEST === "1";
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-test-setup-"));
-  const deadline = AbortSignal.timeout(240_000);
   try {
     const gitTemplate = join(scratch, "git-template");
     await mkdir(gitTemplate);
@@ -139,7 +141,6 @@ export default async function setup(project: TestProject) {
       ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch],
       {
         cwd: packageRoot,
-        cancelSignal: deadline,
         env: { npm_config_cache: join(scratch, "pack-cache") },
         killDescendants: true,
         reject: false,
@@ -171,13 +172,12 @@ export default async function setup(project: TestProject) {
           attempt.installRoot,
           attempt.cacheRoot,
           {
-            cancelSignal: deadline,
+            cancelSignal: attempt.cancelSignal,
             reuseSharedInstall: false,
           },
         );
       },
-      (attempt) =>
-        verifySharedPackedInstall(attempt.installRoot, gitTemplate, deadline),
+      (attempt) => verifySharedPackedInstall(attempt.installRoot, gitTemplate),
     );
     project.provide(
       "sharedPackedNodeModules",

@@ -1,12 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import {
-  lstat,
-  mkdir,
-  readFile,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -361,17 +355,13 @@ export async function installPackedFixture(
   try {
     const cancelSignal =
       options.cancelSignal ?? getCurrentTest()?.context.signal;
+    const timeoutOptions =
+      cancelSignal === undefined ? { timeout: 150_000 } : {};
     const maximumAttempts = options.retryTimedOutInstall === true ? 2 : 1;
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       const installed = await execa(
         "npm",
-        [
-          "install",
-          "--ignore-scripts",
-          "--no-audit",
-          "--no-fund",
-          tarballPath,
-        ],
+        ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
         {
           cwd: repositoryRoot,
           env: isolatedNpmEnvironment(
@@ -384,7 +374,7 @@ export async function installPackedFixture(
           killDescendants: true,
           reject: false,
           stdin: "ignore",
-          timeout: 150_000,
+          ...timeoutOptions,
           ...(cancelSignal === undefined ? {} : { cancelSignal }),
         },
       );
