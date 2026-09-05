@@ -11,7 +11,7 @@ import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 
 const roots: string[] = [];
 afterEach(async () => {
-  await Promise.all(
+  await Promise.allSettled(
     roots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });

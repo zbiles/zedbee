@@ -1,3 +1,12 @@
+/**
+ * Experimental programmatic API for Zedbee.
+ *
+ * The command-line interface is the supported v1 interface. These exports may
+ * change between releases without the normal compatibility guarantees.
+ *
+ * @packageDocumentation
+ * @experimental
+ */
 export { compareFindings, summarizeChecks } from "./core/summarize.js";
 export { CHECK_IDS, PROFILE_IDS } from "./config/schema.js";
 export type { CheckId, ProfileId } from "./config/schema.js";

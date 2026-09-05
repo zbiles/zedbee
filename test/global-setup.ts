@@ -8,6 +8,93 @@ import { installPackedFixture } from "./helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 
+export interface InstallAttempt {
+  readonly attempt: number;
+  readonly attemptRoot: string;
+  readonly installRoot: string;
+  readonly cacheRoot: string;
+}
+
+export async function prepareVerifiedInstall(
+  scratch: string,
+  install: (attempt: InstallAttempt) => Promise<void>,
+  verify: (attempt: InstallAttempt) => Promise<void>,
+): Promise<string> {
+  const failures: unknown[] = [];
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const attemptRoot = join(scratch, `shared-install-attempt-${attempt}`);
+    const details = {
+      attempt,
+      attemptRoot,
+      installRoot: join(attemptRoot, "installed"),
+      cacheRoot: join(attemptRoot, "npm-cache"),
+    };
+    try {
+      await install(details);
+      await verify(details);
+      return details.installRoot;
+    } catch (error) {
+      failures.push(error);
+      await rm(attemptRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+  throw new AggregateError(
+    failures,
+    "Could not create a complete shared packed-package installation after 2 attempts.",
+  );
+}
+
+async function verifySharedPackedInstall(
+  installRoot: string,
+  repositoryRoot: string,
+  cancelSignal: AbortSignal,
+): Promise<void> {
+  const result = await execa(
+    process.execPath,
+    [
+      join(installRoot, "node_modules", "zedbee", "dist", "cli.js"),
+      "checks",
+      "--format",
+      "json",
+    ],
+    {
+      cwd: repositoryRoot,
+      cancelSignal,
+      env: { ...process.env, NO_COLOR: "1" },
+      killDescendants: true,
+      reject: false,
+      stdin: "ignore",
+      timeout: 30_000,
+    },
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Shared packed-package verification failed: ${result.stderr.trim() || result.stdout.trim() || "no output"}`,
+    );
+  }
+  let report: unknown;
+  try {
+    report = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(
+      "Shared packed-package verification returned invalid JSON.",
+      {
+        cause: error,
+      },
+    );
+  }
+  if (
+    typeof report !== "object" ||
+    report === null ||
+    !("checks" in report) ||
+    !Array.isArray(report.checks)
+  ) {
+    throw new Error(
+      "Shared packed-package verification returned no check catalog.",
+    );
+  }
+}
+
 declare module "vitest" {
   export interface ProvidedContext {
     sharedGitTemplate: string;
@@ -61,29 +148,36 @@ export default async function setup(project: TestProject) {
       },
     );
     if (packed.exitCode !== 0) {
-      throw new Error(`Could not pack the shared Windows fixture: ${packed.stderr}`);
+      throw new Error(
+        `Could not pack the shared Windows fixture: ${packed.stderr}`,
+      );
     }
     const metadata = JSON.parse(packed.stdout) as Array<{
       readonly filename: string;
       readonly files: ReadonlyArray<{ readonly path: string }>;
     }>;
     const tarballPath = join(scratch, metadata[0]!.filename);
-    const installRoot = join(scratch, "installed");
-    await mkdir(installRoot);
-    await writeFile(
-      join(installRoot, "package.json"),
-      '{"name":"zedbee-shared-windows-install","private":true}\n',
-    );
-    await installPackedFixture(
-      tarballPath,
-      packageRoot,
-      installRoot,
-      join(scratch, "install-cache"),
-      {
-        cancelSignal: deadline,
-        retryTimedOutInstall: true,
-        reuseSharedInstall: false,
+    const installRoot = await prepareVerifiedInstall(
+      scratch,
+      async (attempt) => {
+        await mkdir(attempt.installRoot, { recursive: true });
+        await writeFile(
+          join(attempt.installRoot, "package.json"),
+          '{"name":"zedbee-shared-windows-install","private":true}\n',
+        );
+        await installPackedFixture(
+          tarballPath,
+          packageRoot,
+          attempt.installRoot,
+          attempt.cacheRoot,
+          {
+            cancelSignal: deadline,
+            reuseSharedInstall: false,
+          },
+        );
       },
+      (attempt) =>
+        verifySharedPackedInstall(attempt.installRoot, gitTemplate, deadline),
     );
     project.provide(
       "sharedPackedNodeModules",

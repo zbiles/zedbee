@@ -4,12 +4,14 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { execa } from "execa";
+import { parse as parseYaml } from "yaml";
 import {
   releaseReadiness,
   verificationSteps,
@@ -95,10 +97,10 @@ describe("release verification contract", () => {
     ).resolveNpmCliPath;
 
     const resolved = resolveNpmCliPath({
-        nodeExecutable: join(temporaryRoot, "node"),
-        npmExecPath: npmCliPath,
-        pathValue: "",
-      });
+      nodeExecutable: join(temporaryRoot, "node"),
+      npmExecPath: npmCliPath,
+      pathValue: "",
+    });
     expect(await realpath(resolved)).toBe(await realpath(npmCliPath));
   });
 
@@ -426,11 +428,52 @@ describe("release verification contract", () => {
       "utf8",
     );
     const prepare = workflow.indexOf("npm run artifact:prepare");
-    const upload = workflow.indexOf("actions/upload-artifact@v6");
+    const upload = workflow.search(
+      /uses:\s+actions\/upload-artifact@[0-9a-f]{40}\s+# v\d+\.\d+\.\d+/u,
+    );
 
     expect(prepare).toBeGreaterThan(-1);
     expect(upload).toBeGreaterThan(prepare);
     expect(workflow).toContain("release-artifacts/*.tgz");
     expect(workflow).not.toMatch(/npm\s+publish/u);
+  });
+
+  it("pins every external workflow action to a reviewed commit", async () => {
+    const workflowsDirectory = resolve(root, ".github/workflows");
+    const workflowNames = (await readdir(workflowsDirectory)).filter((name) =>
+      /\.ya?ml$/u.test(name),
+    );
+    const references: string[] = [];
+
+    const collectUses = (value: unknown): void => {
+      if (Array.isArray(value)) {
+        for (const item of value) collectUses(item);
+        return;
+      }
+      if (value === null || typeof value !== "object") return;
+      for (const [key, nested] of Object.entries(value)) {
+        if (key === "uses") {
+          expect(nested).toBeTypeOf("string");
+          if (typeof nested === "string") references.push(nested);
+        } else {
+          collectUses(nested);
+        }
+      }
+    };
+
+    for (const workflowName of workflowNames) {
+      const workflow = await readFile(
+        resolve(workflowsDirectory, workflowName),
+        "utf8",
+      );
+      collectUses(parseYaml(workflow));
+    }
+
+    expect(references.length).toBeGreaterThan(0);
+    for (const action of references.filter(
+      (reference) => !reference.startsWith("./"),
+    )) {
+      expect(action).toMatch(/^[^@\s]+@[0-9a-f]{40}$/u);
+    }
   });
 });

@@ -72,6 +72,10 @@ remain manual. Review, stage, and rescan after applying; see the
 
 `zedbee checks` uses the same responsive behavior. Checks uses the yellow Zedbee frame with one full-width `CHECKS` panel in a wide interactive terminal, showing each check's severity, applicability, engine, targets, execution details, network use, and limitations. `zedbee checks --format text` forces the complete plain view, while `zedbee checks --format json` keeps the existing deterministic, ANSI-free machine output. Narrow terminals, redirected output, CI, and `TERM=dumb` use plain text; `--no-color` keeps an eligible framed layout without semantic colors.
 
+## Experimental programmatic API
+
+Zedbee's supported v1 interface is its command-line interface. The package also exports TypeScript and JavaScript functions for programmatic use, but that API is experimental: its names, types, and behavior may change between releases without the normal compatibility guarantees. Do not build a production integration around it yet. Feedback about intended API uses is welcome; see the package exports and generated declarations for the current surface.
+
 ## Exact selected content
 
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after every outcome. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
@@ -286,4 +290,4 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 
 Zedbee is distributed under the [PolyForm Small Business License 1.0.0](https://polyformproject.org/licenses/small-business/1.0.0). The npm SPDX identifier is `PolyForm-Small-Business-1.0.0`. See [LICENSE](LICENSE) for the complete terms.
 
-PolyForm applies to Zedbee's own code, including its OSV API client. npm dependencies retain their separate licenses; Secretlint is distributed under MIT terms. Uses outside PolyForm's permissions require separate terms from the licensor. See [commercial use and third-party licensing](docs/commercial-licensing.md). This documentation is not legal advice; commercial distribution should receive qualified legal review.
+PolyForm applies to Zedbee's own code, including its OSV API client. npm dependencies retain their separate licenses; Secretlint is distributed under MIT terms. Uses outside PolyForm's permissions require separate terms from the licensor. To discuss a commercial license, email [licensing@zedbee.dev](mailto:licensing@zedbee.dev). See [commercial use and third-party licensing](docs/commercial-licensing.md). This documentation is not legal advice; commercial distribution should receive qualified legal review.

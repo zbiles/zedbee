@@ -2,11 +2,17 @@
 
 ## Supported versions
 
-Zedbee is not yet publicly released. Security fixes are made on the active v1 development line. The owner must publish a version-support table and private disclosure address before the first public release. That owner review is not a separate automated package-metadata gate; public release is currently blocked by the automated canonical repository, homepage, bugs URL, Git-remote, platform-artifact, cross-platform CI, and provenance checks.
+Zedbee is not yet publicly released. The following policy takes effect with the first public beta:
+
+| Version line | Security fixes |
+| ------------ | -------------- |
+| `0.1.x`      | Supported      |
+
+Published `0.1.x` prereleases are included. Unpublished development snapshots have no guaranteed support; reproduce a report against the latest published `0.1.x` release when possible.
 
 ## Reporting a vulnerability
 
-Do not include credentials, proprietary source code, or other live secrets in a public issue. Until a private disclosure channel is published, contact the project owner directly through an already established private channel and include only the smallest synthetic reproduction needed to explain the issue.
+Email security reports to [security@zedbee.dev](mailto:security@zedbee.dev). Do not include credentials, proprietary source code, or other live secrets in a public issue or initial email. Include only the smallest synthetic reproduction needed to explain the issue. The project owner may arrange a safer private transfer method if more information is required.
 
 A useful report identifies the affected Zedbee version or commit, platform, security boundary, expected behavior, observed behavior, and a synthetic proof of concept. Reports about a third-party analyzer should also name its package and pinned version.
 
