@@ -1,3 +1,4 @@
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { PassThrough } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
 import { render as renderInk } from "ink";
@@ -252,7 +253,9 @@ describe("FixApp", () => {
     expect(frame).not.toContain("APPLY FIXES");
     expect(frame).not.toContain("CANCEL");
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(false),
+    );
   });
 
   it("offers only Close when completed analysis has no fixes", async () => {
@@ -283,7 +286,9 @@ describe("FixApp", () => {
     expect(frame).toContain("CLOSE");
     expect(frame).not.toContain("APPLY FIXES");
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(false),
+    );
   });
 
   it("renders grammatical file and finding summary labels", () => {
@@ -314,7 +319,9 @@ describe("FixApp", () => {
       const { onDecision, view } = setup();
 
       view.stdin.write(input);
-      await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(true));
+      await waitForAssertion(() =>
+        expect(onDecision).toHaveBeenCalledWith(true),
+      );
     },
   );
 
@@ -330,13 +337,15 @@ describe("FixApp", () => {
       await new Promise((resolve) => setImmediate(resolve));
       view.stdin.write(input);
 
-      await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+      await waitForAssertion(() =>
+        expect(onDecision).toHaveBeenCalledWith(false),
+      );
     },
   );
 
   it("cleans up mouse reporting when Apply exits", async () => {
     const apply = setup();
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(apply.view.frames.join("")).toContain(
         "\u001b[?1000h\u001b[?1006h",
       ),
@@ -344,13 +353,15 @@ describe("FixApp", () => {
 
     apply.view.stdin.write("\r");
 
-    await vi.waitFor(() => expect(apply.onDecision).toHaveBeenCalledWith(true));
+    await waitForAssertion(() =>
+      expect(apply.onDecision).toHaveBeenCalledWith(true),
+    );
     expect(apply.view.frames.join("")).toContain("\u001b[?1006l\u001b[?1000l");
   });
 
   it("cleans up mouse reporting when the focused Cancel control exits", async () => {
     const cancel = setup();
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(cancel.view.frames.join("")).toContain(
         "\u001b[?1000h\u001b[?1006h",
       ),
@@ -359,7 +370,7 @@ describe("FixApp", () => {
     await new Promise((resolve) => setImmediate(resolve));
     cancel.view.stdin.write("\r");
 
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(cancel.onDecision).toHaveBeenCalledWith(false),
     );
     expect(cancel.view.frames.join("")).toContain("\u001b[?1006l\u001b[?1000l");
@@ -460,13 +471,13 @@ describe("FixApp", () => {
 
   it("cancels with Escape while releasing terminal mouse reporting", async () => {
     const escape = setup();
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(escape.view.frames.join("")).toContain(
         "\u001b[?1000h\u001b[?1006h",
       ),
     );
     escape.view.stdin.write("\u001b");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(escape.onDecision).toHaveBeenCalledWith(false),
     );
     expect(escape.view.frames.join("")).toContain("\u001b[?1006l\u001b[?1000l");
@@ -482,25 +493,24 @@ describe("FixApp", () => {
       })),
     };
     const { view } = setup(tallPlan, 80, 20);
-    await vi.waitFor(
-      () => expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
-      { timeout: 10_000 },
+    await waitForAssertion(() =>
+      expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
     );
     const before = visibleFrame(view);
 
     view.stdin.write("\u001b[B");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleFrame(view)).toContain("↑ MORE ABOVE"),
     );
     expect(visibleFrame(view)).not.toBe(before);
 
     view.stdin.write("\u001b[<65;20;8M");
-    await vi.waitFor(() => expect(visibleFrame(view)).not.toBe(before));
+    await waitForAssertion(() => expect(visibleFrame(view)).not.toBe(before));
     view.stdin.write("\u001b[5~");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleFrame(view)).toContain("↑ MORE ABOVE"),
     );
-  }, 30_000);
+  });
 
   it("keeps the plan readable within a narrow terminal", () => {
     const narrowPlan: FixPlan = {
@@ -557,18 +567,21 @@ describe("FixApp", () => {
       />
     );
     const view = render(elementFor(20));
-    await vi.waitFor(
-      () => expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
-      { timeout: 10_000 },
+    await waitForAssertion(() =>
+      expect(visibleFrame(view)).toContain("↓ MORE BELOW"),
     );
     view.stdin.write("\t");
     await new Promise((resolve) => setImmediate(resolve));
 
     view.rerender(elementFor(30));
-    await vi.waitFor(() => expect(lines(visibleFrame(view))).toHaveLength(30));
+    await waitForAssertion(() =>
+      expect(lines(visibleFrame(view))).toHaveLength(30),
+    );
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
-  }, 30_000);
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(false),
+    );
+  });
 
   it("homes the alternate screen exactly once", () => {
     const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
@@ -624,7 +637,7 @@ describe("FixApp", () => {
     );
 
     try {
-      await vi.waitFor(() =>
+      await waitForAssertion(() =>
         expect(output.join("")).toContain("\u001b[?1000h\u001b[?1006h"),
       );
       app.unmount();
@@ -712,7 +725,7 @@ describe("FixApp", () => {
         animations: false,
         signal: controller.signal,
       });
-      await vi.waitFor(() => expect(renderMock).toHaveBeenCalledOnce());
+      await waitForAssertion(() => expect(renderMock).toHaveBeenCalledOnce());
       controller.abort();
 
       await expect(pending).rejects.toThrow();

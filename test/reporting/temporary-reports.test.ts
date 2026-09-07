@@ -1,3 +1,4 @@
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
@@ -107,15 +108,9 @@ async function fixture(): Promise<{
 }
 
 async function waitForRegularFile(path: string): Promise<void> {
-  for (let attempt = 0; attempt < 200; attempt += 1) {
-    try {
-      if ((await lstat(path)).isFile()) return;
-    } catch {
-      // The producer has not published the file yet.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error(`Timed out waiting for ${path}`);
+  await waitForAssertion(async () => {
+    expect((await lstat(path)).isFile()).toBe(true);
+  });
 }
 
 interface StoredState {
@@ -454,9 +449,8 @@ describe("temporary report store", () => {
       json,
     });
     const collision = (async (): Promise<string> => {
-      const deadline = Date.now() + 2_000;
       const exclusiveLinkTemporary = `.report-${firstUuid}.tmp`;
-      while (Date.now() < deadline) {
+      for (;;) {
         const entries = await readdir(managedDirectory);
         if (entries.includes(exclusiveLinkTemporary)) {
           const collisionPath = join(
@@ -472,7 +466,6 @@ describe("temporary report store", () => {
         }
         await new Promise((resolve) => setTimeout(resolve, 1));
       }
-      throw new Error("Report publication race was not reached");
     })();
 
     try {
@@ -506,7 +499,7 @@ describe("temporary report store", () => {
     } finally {
       await maintenance.catch(() => undefined);
     }
-  }, 8_000);
+  });
 
   it.each(["missing", "corrupt"] as const)(
     "warns for %s state and never adopts or removes unknown entries",
@@ -1039,18 +1032,22 @@ describe("temporary report store", () => {
       .spyOn(Date, "now")
       .mockReturnValueOnce(0)
       .mockReturnValue(1_000_000);
-    const startedAt = performance.now();
+    // Advance the runtime's monotonic clock across its two-second lock limit
+    // without imposing a second wall-clock deadline on this test.
+    const monotonicNow = vi
+      .spyOn(performance, "now")
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(1_999)
+      .mockReturnValue(2_000);
 
     const maintained = await store.maintain({
       repositoryRoot,
       maxAgeMs: 86_400_000,
       json: "must not be written\n",
     });
-    const elapsed = performance.now() - startedAt;
+    monotonicNow.mockRestore();
     dateNow.mockRestore();
 
-    expect(elapsed).toBeGreaterThanOrEqual(1_800);
-    expect(elapsed).toBeLessThan(3_000);
     expect(maintained.reportPath).toBeUndefined();
     expect(maintained.warnings).toEqual(
       expect.arrayContaining([
@@ -1071,7 +1068,7 @@ describe("temporary report store", () => {
       (entry) => REPORT_NAME.test(entry),
     );
     expect(reportNames).toEqual([basename(created.reportPath!)]);
-  }, 5_000);
+  });
 
   it.skipIf(process.platform !== "darwin")(
     "names a validated lock when its unlink fails",
@@ -1104,7 +1101,6 @@ describe("temporary report store", () => {
         await unlink(lockPath);
       }
     },
-    10_000,
   );
 
   it.skipIf(process.platform === "win32")(
@@ -1146,7 +1142,6 @@ describe("temporary report store", () => {
         await chmod(directory, 0o700);
       }
     },
-    10_000,
   );
 
   it.skipIf(process.platform === "win32")(

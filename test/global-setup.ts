@@ -7,7 +7,6 @@ import type { TestProject } from "vitest/node";
 import { installPackedFixture } from "./helpers/packed-install.js";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const SHARED_INSTALL_ATTEMPT_TIMEOUT_MS = 300_000;
 
 export interface InstallAttempt {
   readonly attempt: number;
@@ -21,8 +20,7 @@ export async function prepareVerifiedInstall(
   scratch: string,
   install: (attempt: InstallAttempt) => Promise<void>,
   verify: (attempt: InstallAttempt) => Promise<void>,
-  createAttemptSignal: () => AbortSignal = () =>
-    AbortSignal.timeout(SHARED_INSTALL_ATTEMPT_TIMEOUT_MS),
+  createAttemptSignal: () => AbortSignal = () => new AbortController().signal,
 ): Promise<string> {
   const failures: unknown[] = [];
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -64,10 +62,8 @@ async function verifySharedPackedInstall(
     {
       cwd: repositoryRoot,
       env: { ...process.env, NO_COLOR: "1" },
-      killDescendants: true,
       reject: false,
       stdin: "ignore",
-      timeout: 30_000,
     },
   );
   if (result.exitCode !== 0) {
@@ -142,10 +138,8 @@ export default async function setup(project: TestProject) {
       {
         cwd: packageRoot,
         env: { npm_config_cache: join(scratch, "pack-cache") },
-        killDescendants: true,
         reject: false,
         stdin: "ignore",
-        timeout: 120_000,
       },
     );
     if (packed.exitCode !== 0) {

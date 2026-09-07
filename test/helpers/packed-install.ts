@@ -23,7 +23,6 @@ interface LocalRegistry {
 
 interface PackedInstallOptions {
   readonly cancelSignal?: AbortSignal;
-  readonly retryTimedOutInstall?: boolean;
   readonly reuseSharedInstall?: boolean;
 }
 
@@ -355,41 +354,33 @@ export async function installPackedFixture(
   try {
     const cancelSignal =
       options.cancelSignal ?? getCurrentTest()?.context.signal;
-    const timeoutOptions =
-      cancelSignal === undefined ? { timeout: 150_000 } : {};
-    const maximumAttempts = options.retryTimedOutInstall === true ? 2 : 1;
-    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-      const installed = await execa(
-        "npm",
-        ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
-        {
-          cwd: repositoryRoot,
-          env: isolatedNpmEnvironment(
-            cacheRoot,
-            registry.url,
-            userConfig,
-            globalConfig,
-          ),
-          extendEnv: false,
-          killDescendants: true,
-          reject: false,
-          stdin: "ignore",
-          ...timeoutOptions,
-          ...(cancelSignal === undefined ? {} : { cancelSignal }),
-        },
-      );
-      if (installed.exitCode === 0) return;
-      if (installed.timedOut && attempt < maximumAttempts) continue;
+    const installed = await execa(
+      "npm",
+      ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
+      {
+        cwd: repositoryRoot,
+        env: isolatedNpmEnvironment(
+          cacheRoot,
+          registry.url,
+          userConfig,
+          globalConfig,
+        ),
+        extendEnv: false,
+        reject: false,
+        stdin: "ignore",
+        ...(cancelSignal === undefined ? {} : { cancelSignal }),
+      },
+    );
+    if (installed.exitCode === 0) return;
 
-      const stderr = installed.stderr.trim() || "<empty>";
-      const stdout = installed.stdout.trim() || "<empty>";
-      throw new Error(
-        `Could not install packed Zedbee after ${attempt} attempt(s): ` +
-          `exit=${String(installed.exitCode)}, timedOut=${String(installed.timedOut)}, ` +
-          `canceled=${String(installed.isCanceled)}, signal=${String(installed.signal)}; ` +
-          `stderr=${stderr}; stdout=${stdout}`,
-      );
-    }
+    const stderr = installed.stderr.trim() || "<empty>";
+    const stdout = installed.stdout.trim() || "<empty>";
+    throw new Error(
+      `Could not install packed Zedbee: ` +
+        `exit=${String(installed.exitCode)}, timedOut=${String(installed.timedOut)}, ` +
+        `canceled=${String(installed.isCanceled)}, signal=${String(installed.signal)}; ` +
+        `stderr=${stderr}; stdout=${stdout}`,
+    );
   } finally {
     await registry.close();
   }

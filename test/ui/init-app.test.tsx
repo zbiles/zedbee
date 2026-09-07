@@ -1,3 +1,4 @@
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { PassThrough } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
 import { render } from "ink-testing-library";
@@ -101,7 +102,9 @@ async function expectSequenceCount(
   sequence: string,
   count: number,
 ): Promise<void> {
-  await vi.waitFor(() => expect(sequenceCount(frames, sequence)).toBe(count));
+  await waitForAssertion(() =>
+    expect(sequenceCount(frames, sequence)).toBe(count),
+  );
 }
 
 function ThrowAfterMouseActivation(): never {
@@ -185,7 +188,9 @@ describe("InitApp", () => {
     await expectSequenceCount(view.frames, ENABLE_MOUSE, 1);
 
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("APPLY CHANGES"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("APPLY CHANGES"),
+    );
     view.stdin.write("y");
 
     await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
@@ -273,7 +278,9 @@ describe("InitApp", () => {
     );
 
     try {
-      await vi.waitFor(() => expect(output.join("")).toContain(ENABLE_MOUSE));
+      await waitForAssertion(() =>
+        expect(output.join("")).toContain(ENABLE_MOUSE),
+      );
       app.unmount();
       await app.waitUntilExit();
 
@@ -329,7 +336,9 @@ describe("InitApp", () => {
       />,
     );
 
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
     const frame = view.lastFrame()!;
     const lines = renderedLines(frame);
 
@@ -356,17 +365,19 @@ describe("InitApp", () => {
         onDecision={() => undefined}
       />,
     );
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     view.stdin.write("\u001b[<65;20;8M");
     view.stdin.write("\u001b[<65;20;8M");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleContentLines(view.lastFrame()!)[0]).toContain("█▀▀▀▀"),
     );
     const manuallyScrolledTop = visibleContentLines(view.lastFrame()!)[0];
 
     view.stdin.write("\u001b[B");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("➜ [✽] formatting"),
     );
     expect(visibleContentLines(view.lastFrame()!)[0]).toBe(manuallyScrolledTop);
@@ -377,7 +388,7 @@ describe("InitApp", () => {
     expect(visibleContentLines(view.lastFrame()!)[0]).toBe(manuallyScrolledTop);
 
     view.stdin.write("\u001b[B");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleContentLines(view.lastFrame()!).at(-1)).toContain(
         "➜ [ ] cyclomaticComplexity",
       ),
@@ -388,7 +399,9 @@ describe("InitApp", () => {
 
     const clippedRevealTop = visibleContentLines(view.lastFrame()!)[0];
     view.stdin.write("\u001b[A");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("➜ [✽] types"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("➜ [✽] types"),
+    );
     expect(visibleContentLines(view.lastFrame()!)[0]).toBe(clippedRevealTop);
   });
 
@@ -404,12 +417,14 @@ describe("InitApp", () => {
         onDecision={() => undefined}
       />,
     );
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     for (let index = 0; index < CHECK_IDS.length; index += 1) {
       view.stdin.write("\u001b[B");
     }
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("➜ [ ] vulnerabilities"),
     );
     const lowerTop = visibleContentLines(view.lastFrame()!)[0];
@@ -417,13 +432,13 @@ describe("InitApp", () => {
     for (let index = 0; index < CHECK_IDS.length - 1; index += 1) {
       view.stdin.write("\u001b[A");
     }
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("➜ [✽] formatting"),
     );
     expect(visibleContentLines(view.lastFrame()!)[0]).toBe(lowerTop);
 
     view.stdin.write("\u001b[A");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleContentLines(view.lastFrame()!)[0]).toContain("➜ Profile:"),
     );
   });
@@ -440,15 +455,19 @@ describe("InitApp", () => {
         onDecision={() => undefined}
       />,
     );
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
       view.stdin.write("\u001b[B");
     }
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
 
     view.stdin.write("\u001b[B");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(visibleContentLines(view.lastFrame()!)[0]).toContain("➜ Profile:"),
     );
   });
@@ -466,14 +485,18 @@ describe("InitApp", () => {
         onDecision={() => undefined}
       />,
     );
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     view.stdin.write("\u001b[6~");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     const setupScrolled = view.lastFrame()!;
 
     view.stdin.write("\r");
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("REVIEW CHANGES");
       expect(view.lastFrame()).not.toContain("↑ MORE ABOVE");
     });
@@ -481,18 +504,22 @@ describe("InitApp", () => {
     expect(reviewTop).toContain("▀▀▀▀█ █▀▀▀▀");
 
     view.stdin.write("\u001b[B");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     expectScrolledDownBy(reviewTop, view.lastFrame()!, 1);
 
     view.stdin.write("\u001b[A");
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(reviewTop));
 
     view.stdin.write("\u001b[6~");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     expectScrolledDownBy(reviewTop, view.lastFrame()!, 16);
 
     view.stdin.write("\u001b[5~");
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(reviewTop));
 
     view.stdin.write("\u001b[B");
     view.stdin.write("\u001b[B");
@@ -502,10 +529,10 @@ describe("InitApp", () => {
     expectScrolledDownBy(reviewTop, reviewScrolled, 3);
 
     view.stdin.write("\u001b");
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(setupScrolled));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(setupScrolled));
 
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewScrolled));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(reviewScrolled));
   });
 
   it("replays setup focus reveal after the terminal resizes during Review", async () => {
@@ -527,16 +554,18 @@ describe("InitApp", () => {
     }
     await settleInput();
     view.stdin.write("\r");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("APPLY CHANGES"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("APPLY CHANGES"),
+    );
 
     view.rerender(elementFor(20));
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(renderedLines(view.lastFrame()!)).toHaveLength(20);
       expect(view.lastFrame()).toContain("↓ MORE BELOW");
     });
     view.stdin.write("b");
 
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("VULNERABILITY SERVICE OUTAGES");
       expect(view.lastFrame()).toContain("REVIEW CHANGES");
       expect(view.lastFrame()).not.toContain("APPLY CHANGES");
@@ -557,25 +586,27 @@ describe("InitApp", () => {
         onDecision={() => undefined}
       />,
     );
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     for (let index = 0; index < 4; index += 1) {
       view.stdin.write("\u001b[6~");
     }
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
       expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
     });
     const setupBottom = view.lastFrame()!;
 
     view.stdin.write("\r");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("REVIEW CHANGES"),
     );
     await settleInput();
     view.stdin.write("b");
 
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(setupBottom));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(setupBottom));
   });
 
   it("restores a Review offset beyond the shorter setup scroll range", async () => {
@@ -593,23 +624,23 @@ describe("InitApp", () => {
     );
 
     view.stdin.write("\r");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("REVIEW CHANGES"),
     );
     for (let index = 0; index < 8; index += 1) {
       view.stdin.write("\u001b[6~");
     }
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
       expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
     });
     const reviewBottom = view.lastFrame()!;
 
     view.stdin.write("b");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("SETUP"));
+    await waitForAssertion(() => expect(view.lastFrame()).toContain("SETUP"));
     view.stdin.write("\r");
 
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewBottom));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(reviewBottom));
   });
 
   it.each([
@@ -632,13 +663,15 @@ describe("InitApp", () => {
     );
 
     view.stdin.write("\r");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("REVIEW CHANGES"),
     );
     view.stdin.write("\u001b[6~");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     view.stdin.write(input);
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(onDecision).toHaveBeenCalledWith(reviewProposal),
     );
   });
@@ -659,22 +692,26 @@ describe("InitApp", () => {
     );
 
     view.stdin.write("\r");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("REVIEW CHANGES"),
     );
     view.stdin.write("\u001b[6~");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     view.stdin.write("\u001b");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("SETUP"));
+    await waitForAssertion(() => expect(view.lastFrame()).toContain("SETUP"));
     expect(onDecision).not.toHaveBeenCalled();
 
     view.stdin.write("\r");
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
       expect(view.lastFrame()).toContain("APPLY CHANGES");
     });
     view.stdin.write("n");
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(false),
+    );
   });
 
   it("keeps setup Escape cancellation available after manual scrolling", async () => {
@@ -691,11 +728,17 @@ describe("InitApp", () => {
       />,
     );
 
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
     view.stdin.write("\u001b[6~");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     view.stdin.write("\u001b");
-    await vi.waitFor(() => expect(onDecision).toHaveBeenCalledWith(false));
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(false),
+    );
   });
 
   it("scrolls three rows per wheel report and ignores clicks", async () => {
@@ -712,13 +755,15 @@ describe("InitApp", () => {
       />,
     );
     view.stdin.write("\r");
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("REVIEW CHANGES"),
     );
     const reviewTop = view.lastFrame()!;
 
     view.stdin.write("\u001b[<65;20;8M");
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     const wheelDown = view.lastFrame()!;
     expectScrolledDownBy(reviewTop, wheelDown, 3);
 
@@ -727,7 +772,7 @@ describe("InitApp", () => {
     expect(view.lastFrame()).toBe(wheelDown);
 
     view.stdin.write("\u001b[<64;20;8M");
-    await vi.waitFor(() => expect(view.lastFrame()).toBe(reviewTop));
+    await waitForAssertion(() => expect(view.lastFrame()).toBe(reviewTop));
   });
 
   it("clamps on a taller resize and uses the resized live width", async () => {
@@ -743,22 +788,26 @@ describe("InitApp", () => {
       />
     );
     const view = render(elementFor(109, 20));
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↓ MORE BELOW"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↓ MORE BELOW"),
+    );
 
     for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
       view.stdin.write("\u001b[B");
     }
-    await vi.waitFor(() => expect(view.lastFrame()).toContain("↑ MORE ABOVE"));
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
+    );
     for (let index = 0; index < 4; index += 1) {
       view.stdin.write("\u001b[6~");
     }
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
       expect(view.lastFrame()).not.toContain("↓ MORE BELOW");
     });
 
     view.rerender(elementFor(109, 35));
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(renderedLines(view.lastFrame()!)).toHaveLength(35),
     );
     const resizedAtBottom = view.lastFrame()!;
@@ -766,24 +815,24 @@ describe("InitApp", () => {
     expect(resizedAtBottom).not.toContain("↓ MORE BELOW");
 
     const reference = render(elementFor(109, 35));
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(reference.lastFrame()).toContain("↓ MORE BELOW"),
     );
     for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
       reference.stdin.write("\u001b[B");
     }
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(reference.lastFrame()).toContain("↑ MORE ABOVE"),
     );
     reference.stdin.write("\u001b[6~");
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(reference.lastFrame()).toContain("↑ MORE ABOVE");
       expect(reference.lastFrame()).not.toContain("↓ MORE BELOW");
     });
     expect(resizedAtBottom).toBe(reference.lastFrame());
 
     view.rerender(elementFor(80, DEFAULT_TEST_ROWS));
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(renderedLines(view.lastFrame()!)).toHaveLength(DEFAULT_TEST_ROWS),
     );
     const narrowFrame = view.lastFrame()!;

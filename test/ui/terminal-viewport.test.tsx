@@ -1,3 +1,4 @@
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { createRef } from "react";
 import { Box, measureElement, Text, type DOMElement } from "ink";
 import { cleanup, render } from "ink-testing-library";
@@ -55,10 +56,9 @@ async function expectSettledFrame(
 ): Promise<void> {
   try {
     // Ink measures boxes in an effect. Let that first effect turn run before
-    // starting Vitest's short waitFor deadline, which can expire while a
-    // heavily loaded Windows worker is still showing the initial frame.
+    // checking the frame.
     await new Promise<void>((resolve) => setImmediate(resolve));
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       const frame = view.lastFrame();
       expect(frame).toBeDefined();
       assertion(frame!);
@@ -73,7 +73,7 @@ describe("TerminalViewport", () => {
   it("uses the whole requested height without indicator rows when content fits", async () => {
     const view = viewport(12, 0);
 
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       const frame = view.lastFrame()!;
       const lines = frame.split("\n");
       expect(lines).toHaveLength(12);
@@ -106,7 +106,7 @@ describe("TerminalViewport", () => {
         </TerminalViewport>,
       );
 
-      await vi.waitFor(() => {
+      await waitForAssertion(() => {
         const frame = view.lastFrame()!;
         expect(frame.split("\n")).toEqual(expectedLines);
         expect(frame).not.toContain("MORE ABOVE");
@@ -195,7 +195,7 @@ describe("TerminalViewport", () => {
   it("keeps the full content width instead of reserving a scrollbar column", async () => {
     const view = viewport(6, 0);
 
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       const lines = view.lastFrame()!.split("\n");
       expect(lines[1]).toBe("01-abcdefghijklmnopq");
       expect(lines[2]).toBe("02-abcdefghijklmnopq");
@@ -225,7 +225,7 @@ describe("TerminalViewport", () => {
         </TerminalViewport>,
       );
 
-      await vi.waitFor(() => {
+      await waitForAssertion(() => {
         const lines = view.lastFrame()!.split("\n");
         expect(lines).toHaveLength(height);
         expect(lines[firstContentRow]).toBe("abcdefghij");
@@ -254,10 +254,12 @@ describe("TerminalViewport", () => {
     expect(onOffsetChange).not.toHaveBeenCalled();
 
     view.rerender(viewFor(10, 12));
-    await vi.waitFor(() => expect(onOffsetChange).toHaveBeenLastCalledWith(4));
+    await waitForAssertion(() =>
+      expect(onOffsetChange).toHaveBeenLastCalledWith(4),
+    );
 
     view.rerender(viewFor(12, 12));
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(onOffsetChange).toHaveBeenLastCalledWith(0);
       expect(view.lastFrame()).not.toContain("MORE ABOVE");
       expect(view.lastFrame()).not.toContain("MORE BELOW");
@@ -269,7 +271,9 @@ describe("TerminalViewport", () => {
     expect(onOffsetChange).not.toHaveBeenCalled();
 
     view.rerender(viewFor(5, 6));
-    await vi.waitFor(() => expect(onOffsetChange).toHaveBeenLastCalledWith(3));
+    await waitForAssertion(() =>
+      expect(onOffsetChange).toHaveBeenLastCalledWith(3),
+    );
   });
 
   it("deduplicates a clamp request across rerenders until the offset catches up", async () => {
@@ -287,7 +291,7 @@ describe("TerminalViewport", () => {
     );
     const view = render(viewFor(6, 99));
 
-    await vi.waitFor(() => expect(requests).toEqual([6]));
+    await waitForAssertion(() => expect(requests).toEqual([6]));
 
     view.rerender(viewFor(6, 99));
     view.rerender(viewFor(6, 99));
@@ -296,14 +300,14 @@ describe("TerminalViewport", () => {
     expect(requests).toEqual([6]);
 
     view.rerender(viewFor(5, 99));
-    await vi.waitFor(() => expect(requests).toEqual([6, 7]));
+    await waitForAssertion(() => expect(requests).toEqual([6, 7]));
 
     view.rerender(viewFor(5, 7));
     await new Promise((resolve) => setImmediate(resolve));
     expect(requests).toEqual([6, 7]);
 
     view.rerender(viewFor(5, 99));
-    await vi.waitFor(() => expect(requests).toEqual([6, 7, 7]));
+    await waitForAssertion(() => expect(requests).toEqual([6, 7, 7]));
   });
 
   it("reports changed metrics and exposes the measured content element", async () => {
@@ -324,7 +328,7 @@ describe("TerminalViewport", () => {
     );
     const view = render(viewFor(6));
 
-    await vi.waitFor(() => {
+    await waitForAssertion(() => {
       expect(contentRef.current).not.toBeNull();
       expect(measureElement(contentRef.current!)).toMatchObject({
         width,
@@ -342,7 +346,7 @@ describe("TerminalViewport", () => {
     expect(onMetricsChange).toHaveBeenCalledTimes(callsAfterMeasurement);
 
     view.rerender(viewFor(12));
-    await vi.waitFor(() =>
+    await waitForAssertion(() =>
       expect(onMetricsChange).toHaveBeenLastCalledWith({
         contentHeight: 10,
         visibleHeight: 12,

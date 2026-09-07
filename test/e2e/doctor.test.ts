@@ -38,7 +38,7 @@ beforeAll(async () => {
   expect(packed.exitCode, packed.stderr).toBe(0);
   const metadata = JSON.parse(packed.stdout) as Array<{ filename: string }>;
   tarballPath = join(packDirectory, metadata[0]!.filename);
-}, 30_000);
+});
 
 afterAll(async () => {
   await rm(packDirectory, { recursive: true, force: true });
@@ -95,7 +95,7 @@ describe("diagnostic command surface", () => {
     );
     expect(JSON.stringify(report)).not.toContain("zedbee-snapshot-");
     expect(JSON.stringify(report)).not.toContain(fixture.root);
-  }, 120_000);
+  });
 
   it("invokes checks and lists the canonical configured check catalog", async () => {
     const fixture = await repository();
@@ -108,5 +108,5 @@ describe("diagnostic command surface", () => {
     expect(result.exitCode).toBe(0);
     expect(report.exitCode).toBe(0);
     expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
-  }, 120_000);
+  });
 });

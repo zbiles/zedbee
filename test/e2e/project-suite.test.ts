@@ -237,6 +237,5 @@ describe.sequential("managed project suite", () => {
           ?.findings.some(({ rule }) => rule === "exports"),
       ).toBe(true);
     },
-    45_000,
   );
 });

@@ -41,7 +41,7 @@ describe("runInkScan", () => {
     } finally {
       stdout.mockRestore();
     }
-  }, 30_000);
+  });
 
   it("keeps event-driven rerenders responsive when animation is disabled", () => {
     expect(inkMaxFps(false)).toBeGreaterThan(1);

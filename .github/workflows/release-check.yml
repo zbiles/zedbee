@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   cross-platform:
+    timeout-minutes: 60
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -32,6 +33,7 @@ jobs:
           ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
 
   publication-gate:
+    timeout-minutes: 60
     name: Publication metadata and provenance gate
     needs: cross-platform
     runs-on: ubuntu-latest

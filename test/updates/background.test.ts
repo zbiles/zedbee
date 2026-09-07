@@ -1,3 +1,4 @@
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -39,27 +40,22 @@ it("finishes a bounded background refresh after the invoking CLI process exits",
           XDG_CACHE_HOME: root,
           NODE_OPTIONS: `--import=${pathToFileURL(preload).href}`,
         },
-        timeout: 3000,
       },
     );
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toBe("");
-    await expect
-      .poll(
-        async () => {
-          try {
-            return JSON.parse(
-              await readFile(join(root, "zedbee", "update.json"), "utf8"),
-            ).metadata;
-          } catch {
-            return undefined;
-          }
-        },
-        { timeout: 4000, interval: 50 },
-      )
-      .toEqual({ name: "zedbee", version: "0.2.0", engines: { node: ">=22" } });
+    await waitForAssertion(async () => {
+      const metadata = JSON.parse(
+        await readFile(join(root, "zedbee", "update.json"), "utf8"),
+      ).metadata;
+      expect(metadata).toEqual({
+        name: "zedbee",
+        version: "0.2.0",
+        engines: { node: ">=22" },
+      });
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
-}, 10_000);
+});

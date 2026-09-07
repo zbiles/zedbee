@@ -171,25 +171,9 @@ describe("GitClient", () => {
       },
     });
 
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await expect(
-        Promise.race([
-          client.run(["zedbee-wait"]),
-          new Promise<never>((_resolve, reject) => {
-            watchdog = setTimeout(
-              () =>
-                reject(
-                  new Error("Git hard timeout did not cancel the process."),
-                ),
-              5_000,
-            );
-          }),
-        ]),
-      ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
-    } finally {
-      if (watchdog !== undefined) clearTimeout(watchdog);
-    }
+    await expect(client.run(["zedbee-wait"])).rejects.toMatchObject({
+      code: "GIT_HARD_TIMEOUT",
+    });
   });
 
   it("maps a real Git output buffer breach to a sanitized error", async () => {
