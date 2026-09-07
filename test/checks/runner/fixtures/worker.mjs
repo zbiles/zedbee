@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { writeFileSync, existsSync } from "node:fs";
+const replyAndExit = (reply) => process.send(reply, () => process.exit(0));
 
 process.on("message", (request) => {
   if (request?.type === "cancel") return;
@@ -36,13 +37,13 @@ process.on("message", (request) => {
                 },
               ],
             };
-    process.send({ version: 1, ok: true, result });
+    replyAndExit({ version: 1, ok: true, result });
     return;
   }
   const input = JSON.parse(request.input.source);
   if (input.mode === "missing") process.exit(0);
   if (input.mode === "invalid") {
-    process.send({
+    replyAndExit({
       version: 1,
       ok: true,
       result: { secret: "fixture-secret-marker" },
@@ -60,6 +61,12 @@ process.on("message", (request) => {
     process.on("SIGTERM", () => {});
     process.send({ version: 1, ok: true, result: "not a successful job" }, () =>
       process.exit(input.mode === "reply-then-exit-one" ? 1 : 7),
+    );
+    return;
+  }
+  if (input.mode === "reply-then-signal") {
+    process.send({ version: 1, ok: true, result: "not a successful job" }, () =>
+      process.kill(process.pid, "SIGTERM"),
     );
     return;
   }
@@ -84,7 +91,7 @@ process.on("message", (request) => {
     const poll = setInterval(() => {
       if (!existsSync(input.release)) return;
       clearInterval(poll);
-      process.send({ version: 1, ok: true, result: String(process.pid) });
+      replyAndExit({ version: 1, ok: true, result: String(process.pid) });
     }, 10);
     return;
   }
@@ -113,7 +120,7 @@ process.on("message", (request) => {
     });
     return;
   }
-  process.send({
+  replyAndExit({
     version: 1,
     ok: true,
     result: JSON.stringify({ workerPid: process.pid }),

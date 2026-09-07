@@ -2,10 +2,50 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
+import { DEFAULT_FORMATTING_SETTINGS } from "../../../src/checks/prettier/settings.js";
 
 const entry = fileURLToPath(
   new URL("../../../src/checks/runner/bootstrap.ts", import.meta.url),
 );
+it("the real worker exits cleanly after flushing its reply without owner termination", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "--import",
+      import.meta.resolve("tsx"),
+      fileURLToPath(
+        new URL("../../../src/checks/runner/worker.ts", import.meta.url),
+      ),
+    ],
+    {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      serialization: "advanced",
+    },
+  );
+  const exited = once(child, "exit");
+  try {
+    const reply = once(child, "message");
+    child.send({
+      version: 1,
+      checkId: "formatting",
+      operation: "format-working-source",
+      input: {
+        file: "a.js",
+        source: "const x=1",
+        settings: DEFAULT_FORMATTING_SETTINGS,
+      },
+    });
+    expect((await reply)[0]).toMatchObject({
+      ok: true,
+      result: "const x = 1;\n",
+    });
+    await expect.poll(() => child.exitCode, { timeout: 10000 }).toBe(0);
+    expect(await exited).toEqual([0, null]);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await exited;
+  }
+});
 it("waits for ownership before importing the worker and exits on owner loss", async () => {
   const child = spawn(
     process.execPath,

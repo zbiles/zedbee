@@ -9,6 +9,7 @@ import {
 } from "./exit-status.js";
 import { fileURLToPath } from "node:url";
 import type { WindowsJob } from "./windows-job.js";
+import { processGroupAlive, signalProcessGroup } from "./process-group.js";
 
 // This process must remain engine-free and responsive even when its worker is
 // synchronously blocked. The parent owns it until its complete process tree stops.
@@ -24,23 +25,16 @@ let workerClosed = false;
 let windowsJob: WindowsJob | undefined;
 let workerExit: ProcessExitStatus | undefined;
 let windowsTerminationRequested = false;
+let posixTerminationRequested = false;
+let releaseWorker: (() => void) | undefined;
 
 function groupAlive(): boolean {
-  if (pid === undefined) return false;
-  try {
-    process.kill(-pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ESRCH";
-  }
+  return pid !== undefined && processGroupAlive(pid);
 }
 function signalGroup(signal: NodeJS.Signals): void {
   if (pid === undefined) return;
-  try {
-    process.kill(-pid, signal);
-  } catch {
-    /* A reaped group is already stopped. */
-  }
+  if (!workerClosed) posixTerminationRequested = true;
+  signalProcessGroup(pid, signal);
 }
 function complete(): void {
   if (finished) return;
@@ -50,7 +44,9 @@ function complete(): void {
     workerExitedAbnormally(workerExit, {
       platform: process.platform,
       requested:
-        process.platform === "win32" ? windowsTerminationRequested : stopping,
+        process.platform === "win32"
+          ? windowsTerminationRequested
+          : posixTerminationRequested,
     })
   ) {
     reply = {
@@ -70,7 +66,14 @@ function complete(): void {
   }
   if (process.connected)
     process.send?.(
-      reply ?? { version: 1, ok: false, category: "invalid-response" },
+      {
+        type: "result",
+        response: reply ?? {
+          version: 1,
+          ok: false,
+          category: "invalid-response",
+        },
+      } as Serializable,
       () => process.disconnect?.(),
     );
 }
@@ -135,6 +138,11 @@ process.on("message", async (message: unknown) => {
     execArgv?: string[];
     request?: unknown;
   };
+  if (input.type === "ownership-ack") {
+    if (!stopping) releaseWorker?.();
+    releaseWorker = undefined;
+    return;
+  }
   if (input.type === "cancel") {
     reply = { version: 1, ok: false, category: "cancellation" };
     stop(true);
@@ -189,19 +197,23 @@ process.on("message", async (message: unknown) => {
         if (pid === undefined) throw new Error("Missing worker PID");
         windowsJob?.assign(pid);
         owned = true;
-        worker!.send(
-          {
-            type: "owned-start",
-            workerEntry: input.workerEntry,
-            request: input.request,
-          } as Serializable,
-          (error) => {
-            if (error && reply === undefined) {
-              reply = { version: 1, ok: false, category: "startup" };
-              stop(false);
-            }
-          },
-        );
+        releaseWorker = () =>
+          worker!.send(
+            {
+              type: "owned-start",
+              workerEntry: input.workerEntry,
+              request: input.request,
+            } as Serializable,
+            (error) => {
+              if (error && reply === undefined) {
+                reply = { version: 1, ok: false, category: "startup" };
+                stop(false);
+              }
+            },
+          );
+        // Do not release engine code until the caller has retained this group
+        // identity. The envelope cannot be forged by a worker response.
+        process.send?.({ type: "worker-owned", pid });
       } catch {
         reply = { version: 1, ok: false, category: "startup" };
         // Assignment failed before any engine code could execute.
@@ -211,7 +223,9 @@ process.on("message", async (message: unknown) => {
       return;
     }
     if (reply === undefined) reply = response;
-    stop(false);
+    // The worker exits itself after flushing its reply. Observe that exit
+    // before terminating remaining descendants; never overwrite a crash with
+    // our own forced-termination status simply because a reply arrived first.
   });
   worker.on("close", (exitCode, signal) => {
     workerClosed = true;

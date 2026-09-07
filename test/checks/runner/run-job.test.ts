@@ -37,20 +37,24 @@ const alive = (pid: number) => {
 };
 
 describe("managed analyzer runner", () => {
-  it.skipIf(process.platform !== "win32")(
-    "supervisor loss closes the only Job Object handle and kills the blocked tree",
-    async () => {
-      const root = await mkdtemp(join(tmpdir(), "zedbee-supervisor-loss-"));
-      scratch.push(root);
-      const path = join(root, "pids.json");
-      const result = runAnalyzerJob(fixture("blocked-detached", { path }), {
+  it("supervisor loss stops the blocked tree before the runner settles", async () => {
+    const root = await mkdtemp(join(tmpdir(), "zedbee-supervisor-loss-"));
+    scratch.push(root);
+    const path = join(root, "pids.json");
+    const result = runAnalyzerJob(
+      fixture(process.platform === "win32" ? "blocked-detached" : "blocked", {
+        path,
+      }),
+      {
         workerEntry,
-      }).catch((error) => error);
-      await expect.poll(() => existsSync(path), { timeout: 10000 }).toBe(true);
-      const pids = JSON.parse(await readFile(path, "utf8"));
-      try {
-        expect(alive(pids.workerPid)).toBe(true);
-        expect(alive(pids.childPid)).toBe(true);
+      },
+    ).catch((error) => error);
+    await expect.poll(() => existsSync(path), { timeout: 10000 }).toBe(true);
+    const pids = JSON.parse(await readFile(path, "utf8"));
+    try {
+      expect(alive(pids.workerPid)).toBe(true);
+      expect(alive(pids.childPid)).toBe(true);
+      if (process.platform === "win32") {
         const { default: koffi } = await import("koffi");
         const kernel = koffi.load("kernel32.dll");
         const open = kernel.func(
@@ -67,16 +71,16 @@ describe("managed analyzer runner", () => {
         } finally {
           close(handle);
         }
-        expect((await result).diagnostic.category).toBe("abnormal-exit");
-        expect(alive(pids.workerPid)).toBe(false);
-        expect(alive(pids.childPid)).toBe(false);
-      } finally {
-        for (const pid of [pids.workerPid, pids.childPid]) {
-          if (alive(pid)) process.kill(pid, "SIGKILL");
-        }
+      } else process.kill(pids.supervisorPid, "SIGKILL");
+      expect((await result).diagnostic.category).toBe("abnormal-exit");
+      expect(alive(pids.workerPid)).toBe(false);
+      expect(alive(pids.childPid)).toBe(false);
+    } finally {
+      for (const pid of [pids.workerPid, pids.childPid]) {
+        if (alive(pid)) process.kill(pid, "SIGKILL");
       }
-    },
-  );
+    }
+  });
   it("uses a fresh real worker instead of the caller", async () => {
     const result = await runAnalyzerJob(fixture("pid"), { workerEntry });
     expect(JSON.parse(result).workerPid).not.toBe(process.pid);
@@ -128,6 +132,16 @@ describe("managed analyzer runner", () => {
     expect(alive(pids.workerPid)).toBe(false);
     expect(alive(pids.childPid)).toBe(false);
   });
+  it.skipIf(process.platform === "win32")(
+    "does not accept a reply followed by an unrequested worker signal",
+    async () => {
+      await expect(
+        runAnalyzerJob(fixture("reply-then-signal"), { workerEntry }),
+      ).rejects.toMatchObject({
+        diagnostic: { category: "abnormal-exit", signal: "SIGTERM" },
+      });
+    },
+  );
   it("rejects unknown checks and invalid operations before startup", async () => {
     await expect(
       runAnalyzerJob({

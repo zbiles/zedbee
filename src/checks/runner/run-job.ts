@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import pLimit from "p-limit";
 import type { WindowsJob } from "./windows-job.js";
+import { stopProcessGroup } from "./process-group.js";
 import { executionClassFor } from "../applicability.js";
 import {
   AnalyzerJobError,
@@ -104,6 +105,7 @@ async function executeAnalyzerJob<R extends AnalyzerRequest>(
     });
     let reply: unknown;
     let startupError = false;
+    let workerGroup: number | undefined;
     const cancel = () => {
       if (supervisor.connected) supervisor.send({ type: "cancel" }, () => {});
     };
@@ -112,9 +114,31 @@ async function executeAnalyzerJob<R extends AnalyzerRequest>(
       startupError = true;
     });
     supervisor.on("message", (message) => {
-      reply = message;
+      const event = message as {
+        type?: string;
+        pid?: number;
+        response?: unknown;
+      };
+      if (
+        event.type === "worker-owned" &&
+        Number.isSafeInteger(event.pid) &&
+        event.pid! > 0 &&
+        workerGroup === undefined
+      ) {
+        workerGroup = event.pid;
+        supervisor.send({ type: "ownership-ack" }, () => {});
+      } else if (event.type === "result") reply = event.response;
     });
     supervisor.on("close", async (exitCode, signal) => {
+      if (process.platform !== "win32" && workerGroup !== undefined) {
+        try {
+          await stopProcessGroup(workerGroup);
+        } catch {
+          options.signal?.removeEventListener("abort", cancel);
+          reject(failure("cleanup"));
+          return;
+        }
+      }
       if (windowsJob && stopWindowsJob) {
         try {
           await stopWindowsJob(windowsJob);

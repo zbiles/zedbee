@@ -3,6 +3,7 @@ import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { AnalyzerJobError, type AnalyzerDiagnostic } from "../diagnostics.js";
+import { sendWorkerReply } from "./send-worker-reply.js";
 
 markAnalyzerWorker();
 const controller = new AbortController();
@@ -57,7 +58,7 @@ process.on("message", async (message: unknown) => {
       else throw new TypeError("Unsupported analyzer operation");
     }
     controller.signal.throwIfAborted();
-    process.send?.({ version: 1, ok: true, result });
+    sendWorkerReply({ version: 1, ok: true, result });
   } catch (error) {
     let diagnostic: AnalyzerDiagnostic | undefined;
     let cause = error;
@@ -89,7 +90,7 @@ process.on("message", async (message: unknown) => {
               : { disposition: error.disposition }),
           }
         : undefined;
-    process.send?.({
+    sendWorkerReply({
       version: 1,
       ok: false,
       category: controller.signal.aborted
