@@ -4,6 +4,8 @@ Zedbee is a diff-aware pre-commit and CI scanner for JavaScript and TypeScript p
 
 The managed suite covers formatting, lint, TypeScript correctness, cyclomatic complexity, original readability complexity, structural security, duplication, dependency architecture, dead code/package hygiene, React correctness, and React DOM accessibility. Analyzers use the exact selected target snapshot, compare an isolated baseline where the check requires one, and pass observations through central changed-target attribution.
 
+Scan and fix analyzer jobs use fresh supervised child processes with bounded concurrency. This releases job-owned engine state after completion and adds per-job startup work; it is not an OS sandbox. See the [execution and configuration boundary](docs/support.md#managed-configuration-compatibility) and [safe diagnostic options](docs/reporting.md#safe-analyzer-diagnostics).
+
 ## Requirements
 
 - Node.js 22.13.0 or newer

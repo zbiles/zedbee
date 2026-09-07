@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getCurrentTest } from "@vitest/runner";
 import { Ajv } from "ajv";
 import { execa } from "execa";
@@ -175,6 +175,8 @@ async function runZedbee(
     {
       cwd: repositoryRoot,
       env: {
+        NODE_OPTIONS: undefined,
+        NODE_PATH: undefined,
         TMPDIR: temporaryReportRoot,
         TMP: temporaryReportRoot,
         TEMP: temporaryReportRoot,
@@ -199,6 +201,8 @@ async function runPackagedCli(
     {
       cwd: repositoryRoot,
       env: {
+        NODE_OPTIONS: undefined,
+        NODE_PATH: undefined,
         TMPDIR: temporaryReportRoot,
         TMP: temporaryReportRoot,
         TEMP: temporaryReportRoot,
@@ -240,6 +244,79 @@ async function temporaryJsonReports(
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("ships runnable analyzer entries and every engine adapter outside the source repository", async () => {
+    for (const entry of ["worker", "supervisor", "bootstrap", "windows-job"]) {
+      expect(tarballFiles).toContain(`dist/checks/runner/${entry}.js`);
+    }
+    const installedRoot = await realpath(join(installedNodeModules, "zedbee"));
+    expect(relative(packageRoot, installedRoot)).toMatch(/^\.\./u);
+    await expect(lstat(join(installedRoot, "src"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      lstat(join(installedNodeModules, "tsx")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    // The path comes from the installed package, never a source-tree import.
+    const registry = pathToFileURL(
+      join(installedRoot, "dist/checks/runner/registry.js"),
+    );
+    const result = await execa(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+      const { loadAnalyzerAdapter } = await import(${JSON.stringify(registry.href)});
+      const ids = ["formatting", "lint", "types", "cyclomaticComplexity", "readabilityComplexity", "structuralSecurity", "secrets", "duplication", "dependencyArchitecture", "deadCode", "reactCorrectness", "reactAccessibility", "vulnerabilities"];
+      console.log(JSON.stringify(await Promise.all(ids.map(async id => (await loadAnalyzerAdapter(id)).id))));
+    `,
+      ],
+      {
+        cwd: packDirectory,
+        env: { NODE_OPTIONS: undefined, NODE_PATH: undefined },
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual([
+      "formatting",
+      "lint",
+      "types",
+      "cyclomaticComplexity",
+      "readabilityComplexity",
+      "structuralSecurity",
+      "secrets",
+      "duplication",
+      "dependencyArchitecture",
+      "deadCode",
+      "reactCorrectness",
+      "reactAccessibility",
+      "vulnerabilities",
+    ]);
+    expect(result.stderr).toBe("");
+  });
+
+  it("provides installed help and safe scan diagnostics without a runtime TypeScript loader", async () => {
+    const repository = await createInstalledRepository();
+    const help = await runPackagedCli(repository.root, ["scan", "--help"]);
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toContain("--diagnostics");
+    const sourceMarker = "privateInstalledWorkerSourceMarker";
+    await repository.write(
+      "value.ts",
+      `export const ${sourceMarker}={answer:42}\n`,
+    );
+    await repository.git(["add", "--", "value.ts"]);
+    const result = await runZedbee(repository.root, "json", ["--diagnostics"]);
+    expect(result.exitCode, result.stderr).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      outcome: "blocked",
+      exitCode: 1,
+    });
+    expect(result.stderr).toContain("ZEDBEE DIAGNOSTICS");
+    expect(result.stderr).not.toContain(sourceMarker);
+    expect(result.stderr).not.toContain(repository.root);
+    expect(result.stderr).not.toContain(packageRoot);
+  });
+
   it("ships the public managed-fix guide without private planning artifacts", () => {
     expect(tarballFiles).toContain("docs/managed-fixes.md");
     expect(tarballFiles).not.toEqual(

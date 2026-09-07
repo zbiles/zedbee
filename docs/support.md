@@ -44,6 +44,26 @@ each selected snapshot instead, so it does not execute project React code.
 
 ## Managed configuration compatibility
 
+Scan and fix analyzer jobs run in fresh child processes with bounded concurrency.
+Zedbee supervises their descendants and waits for cleanup before releasing the
+job. Cancellation stops active analysis; a worker crash or invalid response makes
+the affected check incomplete. This process isolation is not an operating-system
+sandbox. The processes retain the user's permissions, and the managed
+configuration and input-resolution boundaries below remain necessary.
+
+The CLI still performs orchestration, configuration validation, snapshot
+inspection, attribution, reporting, and safe file writes. `doctor` also uses a
+built-in Secretlint readiness probe. Process isolation describes scan/fix analyzer
+execution, not every use of analyzer-related metadata in the CLI.
+
+Fresh jobs do not retain analyzer instances, parsed source, or TypeScript programs
+between jobs. This releases their process memory after completion and adds
+startup work to each job; it is not a guarantee of faster scans. Normalized
+observation caching is limited to audited snapshot-only inputs. TypeScript,
+lint, and dead-code results bypass that cache because local dependency resolution
+can affect them. Source, raw engine output, secrets, Secretlint observations,
+OSV results, and online response bodies are never cached.
+
 Zedbee does not load a project's native analyzer config. Prettier, ESLint, React, Hooks, and JSX accessibility behavior comes from Zedbee's managed settings and bundled rules; custom plugins and executable project configuration are outside the supported boundary. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and can change when Zedbee upgrades its managed engines. `zedbee checks` displays effective settings and a primary managed engine summary, not every supporting package version.
 
 This boundary is an adoption tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Configure supported differences in `.zedbeerc.jsonc` and use the shipped schema for editor validation. `zedbee checks` shows the effective settings, profile or repository source, and ordered overrides without running analysis.

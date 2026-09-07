@@ -1,5 +1,20 @@
 # Reporting and enterprise export
 
+## Safe analyzer diagnostics
+
+`zedbee scan --diagnostics` and `zedbee fix --diagnostics` add runtime and stage
+timings to stderr without changing the selected report format, findings, or exit
+status. Analyzer failures include the check, operation, failure category, managed
+engine identity, and available snapshot or exit metadata. Categories distinguish
+startup, execution, cancellation, abnormal exit, invalid response, and cleanup
+failures. Ordinary output remains unchanged when the flag is absent.
+
+These diagnostics exclude source text, raw analyzer stdout/stderr, exception
+stacks, and absolute repository or temporary paths. Expected incomplete-input
+messages can still identify affected repository-relative files in the report.
+Use diagnostics to investigate an incomplete result; they do not make that result
+a pass. Check the report's source-excerpt settings before sharing the report itself.
+
 ## Managed fix plans
 
 A managed fix JSON preview remains schema version 1, is source-free, and

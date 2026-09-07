@@ -1,5 +1,11 @@
 # Checks
 
+Scan and fix analyzer execution uses fresh supervised child processes. The CLI
+owns applicability, attribution, policy, and reports. See the
+[execution boundary](support.md#managed-configuration-compatibility) for isolation
+limits and cache exclusions, and [diagnostics](reporting.md#safe-analyzer-diagnostics)
+for investigating incomplete analyzer jobs.
+
 Zedbee owns the analyzer versions and inert configuration used by every v1 check. `relevant` checks run when staged state can affect them; `always` checks run whenever their required project inputs exist. Analysis scope may be broader than the changed lines, while attribution still blocks only new or worsened staged responsibility.
 
 | Check ID                 | Coverage                                                    | Scope and attribution                                                                                                          | Important limitation                                                                                             |
