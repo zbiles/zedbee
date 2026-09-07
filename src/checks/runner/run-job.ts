@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import pLimit from "p-limit";
+import type { WindowsJob } from "./windows-job.js";
 import { executionClassFor } from "../applicability.js";
 import {
   AnalyzerJobError,
@@ -78,6 +79,23 @@ async function executeAnalyzerJob<R extends AnalyzerRequest>(
     fileURLToPath(new URL(`./worker.${extension}`, import.meta.url));
   if (!existsSync(workerEntry)) throw failure("startup");
   const execArgv = source ? ["--import", import.meta.resolve("tsx")] : [];
+  // An outer owner survives supervisor failure. If this caller itself dies,
+  // Windows closes the noninheritable handle and kills the complete nested tree.
+  let windowsJob: WindowsJob | undefined;
+  let stopWindowsJob: ((job: WindowsJob) => Promise<void>) | undefined;
+  if (process.platform === "win32") {
+    try {
+      const native = await import("./windows-job.js");
+      windowsJob = native.createWindowsJob();
+      stopWindowsJob = native.stopWindowsJob;
+    } catch {
+      throw failure("startup");
+    }
+    if (options.signal?.aborted) {
+      windowsJob.close();
+      throw failure("cancellation");
+    }
+  }
   return new Promise((resolve, reject) => {
     const supervisor = spawn(process.execPath, [...execArgv, supervisorEntry], {
       stdio: ["ignore", "ignore", "ignore", "ipc"],
@@ -96,7 +114,21 @@ async function executeAnalyzerJob<R extends AnalyzerRequest>(
     supervisor.on("message", (message) => {
       reply = message;
     });
-    supervisor.on("close", (exitCode, signal) => {
+    supervisor.on("close", async (exitCode, signal) => {
+      if (windowsJob && stopWindowsJob) {
+        try {
+          await stopWindowsJob(windowsJob);
+        } catch {
+          try {
+            windowsJob.close();
+          } catch {
+            /* Preserve safe cleanup failure. */
+          }
+          options.signal?.removeEventListener("abort", cancel);
+          reject(failure("cleanup"));
+          return;
+        }
+      }
       options.signal?.removeEventListener("abort", cancel);
       if (options.signal?.aborted) {
         reject(failure("cancellation"));
@@ -172,12 +204,23 @@ async function executeAnalyzerJob<R extends AnalyzerRequest>(
         );
       }
     });
-    supervisor.send(
-      { type: "start", workerEntry, execArgv, request },
-      (error) => {
-        if (error) startupError = true;
-      },
-    );
+    supervisor.on("spawn", () => {
+      try {
+        if (supervisor.pid === undefined)
+          throw new Error("Missing supervisor PID");
+        windowsJob?.assign(supervisor.pid);
+        // The engine-free supervisor cannot create workers before assignment.
+        supervisor.send(
+          { type: "start", workerEntry, execArgv, request },
+          (error) => {
+            if (error) startupError = true;
+          },
+        );
+      } catch {
+        startupError = true;
+        supervisor.kill("SIGKILL");
+      }
+    });
     if (options.signal?.aborted) cancel();
   });
 }

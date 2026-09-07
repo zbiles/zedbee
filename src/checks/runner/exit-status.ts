@@ -3,23 +3,22 @@ export interface ProcessExitStatus {
   readonly signal: NodeJS.Signals | null;
 }
 
-/** The Windows worker and taskkill must both close before this is evaluated.
- * Successful taskkill is cleanup evidence, not Job Object ownership evidence. */
+// Deliberately outside ordinary analyzer exit statuses. TerminateJobObject sets
+// this exact status; it does not replace a process's already-recorded crash code.
+export const WINDOWS_JOB_TERMINATION_EXIT_CODE = 0x5a454442;
+
 export function workerExitedAbnormally(
   exit: ProcessExitStatus,
   termination: {
     readonly platform: NodeJS.Platform;
     readonly requested: boolean;
-    readonly windowsKiller?: ProcessExitStatus;
   },
 ): boolean {
   const intentionalWindowsTermination =
     termination.platform === "win32" &&
     termination.requested &&
-    exit.code === 1 &&
-    exit.signal === null &&
-    termination.windowsKiller?.code === 0 &&
-    termination.windowsKiller.signal === null;
+    exit.code === WINDOWS_JOB_TERMINATION_EXIT_CODE &&
+    exit.signal === null;
   return (
     (exit.code !== null && exit.code !== 0 && !intentionalWindowsTermination) ||
     (exit.signal !== null &&

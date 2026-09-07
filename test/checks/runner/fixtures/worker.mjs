@@ -71,7 +71,11 @@ process.on("message", (request) => {
     );
     writeFileSync(
       input.path,
-      JSON.stringify({ workerPid: process.pid, childPid: child.pid }),
+      JSON.stringify({
+        workerPid: process.pid,
+        childPid: child.pid,
+        supervisorPid: process.ppid,
+      }),
     );
     process.exit(7);
   }
@@ -84,17 +88,30 @@ process.on("message", (request) => {
     }, 10);
     return;
   }
-  if (input.mode === "blocked") {
+  if (input.mode === "blocked" || input.mode === "blocked-detached") {
     const child = spawn(
       process.execPath,
-      ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
-      { stdio: "ignore" },
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000); process.send('ready')",
+      ],
+      {
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+        detached: input.mode === "blocked-detached",
+      },
     );
-    writeFileSync(
-      input.path,
-      JSON.stringify({ workerPid: process.pid, childPid: child.pid }),
-    );
-    while (true) {}
+    child.once("message", () => {
+      writeFileSync(
+        input.path,
+        JSON.stringify({
+          workerPid: process.pid,
+          childPid: child.pid,
+          supervisorPid: process.ppid,
+        }),
+      );
+      while (true) {}
+    });
+    return;
   }
   process.send({
     version: 1,

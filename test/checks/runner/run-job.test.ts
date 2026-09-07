@@ -37,6 +37,46 @@ const alive = (pid: number) => {
 };
 
 describe("managed analyzer runner", () => {
+  it.skipIf(process.platform !== "win32")(
+    "supervisor loss closes the only Job Object handle and kills the blocked tree",
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), "zedbee-supervisor-loss-"));
+      scratch.push(root);
+      const path = join(root, "pids.json");
+      const result = runAnalyzerJob(fixture("blocked-detached", { path }), {
+        workerEntry,
+      }).catch((error) => error);
+      await expect.poll(() => existsSync(path), { timeout: 10000 }).toBe(true);
+      const pids = JSON.parse(await readFile(path, "utf8"));
+      try {
+        expect(alive(pids.workerPid)).toBe(true);
+        expect(alive(pids.childPid)).toBe(true);
+        const { default: koffi } = await import("koffi");
+        const kernel = koffi.load("kernel32.dll");
+        const open = kernel.func(
+          "void * __stdcall OpenProcess(uint32_t access, int inherit, uint32_t pid)",
+        );
+        const terminate = kernel.func(
+          "int __stdcall TerminateProcess(void *process, uint32_t exitCode)",
+        );
+        const close = kernel.func("int __stdcall CloseHandle(void *handle)");
+        const handle = open(1, 0, pids.supervisorPid);
+        expect(handle).toBeTruthy();
+        try {
+          expect(terminate(handle, 7)).toBe(1);
+        } finally {
+          close(handle);
+        }
+        expect((await result).diagnostic.category).toBe("abnormal-exit");
+        expect(alive(pids.workerPid)).toBe(false);
+        expect(alive(pids.childPid)).toBe(false);
+      } finally {
+        for (const pid of [pids.workerPid, pids.childPid]) {
+          if (alive(pid)) process.kill(pid, "SIGKILL");
+        }
+      }
+    },
+  );
   it("uses a fresh real worker instead of the caller", async () => {
     const result = await runAnalyzerJob(fixture("pid"), { workerEntry });
     expect(JSON.parse(result).workerPid).not.toBe(process.pid);

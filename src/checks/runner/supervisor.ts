@@ -7,6 +7,8 @@ import {
   workerExitedAbnormally,
   type ProcessExitStatus,
 } from "./exit-status.js";
+import { fileURLToPath } from "node:url";
+import type { WindowsJob } from "./windows-job.js";
 
 // This process must remain engine-free and responsive even when its worker is
 // synchronously blocked. The parent owns it until its complete process tree stops.
@@ -19,8 +21,7 @@ let reply: unknown;
 let timer: NodeJS.Timeout | undefined;
 let poll: NodeJS.Timeout | undefined;
 let workerClosed = false;
-let windowsKillerClosed = false;
-let windowsKillerExit: ProcessExitStatus | undefined;
+let windowsJob: WindowsJob | undefined;
 let workerExit: ProcessExitStatus | undefined;
 let windowsTerminationRequested = false;
 
@@ -44,17 +45,12 @@ function signalGroup(signal: NodeJS.Signals): void {
 function complete(): void {
   if (finished) return;
   finished = true;
-  // On Windows, include taskkill's outcome when interpreting observed exit1.
-  // Do not decide before both exit outcomes are available.
   if (
     workerExit !== undefined &&
     workerExitedAbnormally(workerExit, {
       platform: process.platform,
       requested:
         process.platform === "win32" ? windowsTerminationRequested : stopping,
-      ...(windowsKillerExit === undefined
-        ? {}
-        : { windowsKiller: windowsKillerExit }),
     })
   ) {
     reply = {
@@ -67,6 +63,11 @@ function complete(): void {
   }
   if (timer) clearTimeout(timer);
   if (poll) clearInterval(poll);
+  try {
+    windowsJob?.close();
+  } catch {
+    reply = { version: 1, ok: false, category: "cleanup" };
+  }
   if (process.connected)
     process.send?.(
       reply ?? { version: 1, ok: false, category: "invalid-response" },
@@ -74,26 +75,24 @@ function complete(): void {
     );
 }
 function forceWindows(): void {
-  if (pid === undefined) {
-    complete();
-    return;
-  }
-  windowsTerminationRequested =
-    !workerClosed && worker?.exitCode === null && worker.signalCode === null;
-  // Keep the worker alive until taskkill enumerates /T, including native jscpd.
-  const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  killer.on("error", () => {
+  try {
+    windowsJob?.terminate();
+    windowsTerminationRequested = true;
+    checkWindowsStopped();
+  } catch {
     reply = { version: 1, ok: false, category: "cleanup" };
-    worker?.kill("SIGKILL");
-  });
-  killer.on("close", (code, signal) => {
-    windowsKillerExit = { code, signal };
-    windowsKillerClosed = true;
-    if (workerClosed) complete();
-  });
+    // The parent owns an outer Job Object and confirms its empty state even
+    // when this supervisor fails; closing our last handle also kills the tree.
+    complete();
+  }
+}
+function checkWindowsStopped(): void {
+  try {
+    if (workerClosed && (windowsJob?.activeProcesses() ?? 0) === 0) complete();
+  } catch {
+    reply = { version: 1, ok: false, category: "cleanup" };
+    complete();
+  }
 }
 function stop(cancelled: boolean): void {
   if (stopping) return;
@@ -104,6 +103,7 @@ function stop(cancelled: boolean): void {
   }
   if (cancelled && worker.connected) worker.send({ type: "cancel" }, () => {});
   if (process.platform === "win32") {
+    poll = setInterval(checkWindowsStopped, 20);
     if (cancelled) timer = setTimeout(forceWindows, GRACE_MS);
     else forceWindows();
     return;
@@ -125,7 +125,10 @@ process.on("SIGTERM", cancel);
 process.on("SIGINT", cancel);
 process.on("SIGHUP", cancel);
 if (process.platform === "win32") process.on("SIGBREAK", cancel);
-process.on("message", (message: unknown) => {
+// Caller may have died while Node or its source loader was starting.
+if (!process.connected) process.exit(0);
+let starting = false;
+process.on("message", async (message: unknown) => {
   const input = message as {
     type?: string;
     workerEntry?: string;
@@ -139,13 +142,32 @@ process.on("message", (message: unknown) => {
   }
   if (
     worker ||
+    starting ||
     stopping ||
     input.type !== "start" ||
     typeof input.workerEntry !== "string" ||
     !Array.isArray(input.execArgv)
   )
     return;
-  worker = spawn(process.execPath, [...input.execArgv, input.workerEntry], {
+  starting = true;
+  if (process.platform === "win32") {
+    try {
+      const { createWindowsJob } = await import("./windows-job.js");
+      if (stopping) return;
+      windowsJob = createWindowsJob();
+    } catch {
+      reply = { version: 1, ok: false, category: "startup" };
+      complete();
+      return;
+    }
+  }
+  const bootstrap = fileURLToPath(
+    new URL(
+      `./bootstrap.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
+      import.meta.url,
+    ),
+  );
+  worker = spawn(process.execPath, [...input.execArgv, bootstrap], {
     stdio: ["ignore", "ignore", "ignore", "ipc"],
     detached: process.platform !== "win32",
     windowsHide: true,
@@ -156,7 +178,38 @@ process.on("message", (message: unknown) => {
     reply = { version: 1, ok: false, category: "startup" };
     stop(false);
   });
+  let owned = false;
   worker.on("message", (response) => {
+    if (
+      !owned &&
+      (response as { type?: string })?.type === "ready-for-ownership"
+    ) {
+      if (stopping) return;
+      try {
+        if (pid === undefined) throw new Error("Missing worker PID");
+        windowsJob?.assign(pid);
+        owned = true;
+        worker!.send(
+          {
+            type: "owned-start",
+            workerEntry: input.workerEntry,
+            request: input.request,
+          } as Serializable,
+          (error) => {
+            if (error && reply === undefined) {
+              reply = { version: 1, ok: false, category: "startup" };
+              stop(false);
+            }
+          },
+        );
+      } catch {
+        reply = { version: 1, ok: false, category: "startup" };
+        // Assignment failed before any engine code could execute.
+        worker!.kill("SIGKILL");
+        stop(false);
+      }
+      return;
+    }
     if (reply === undefined) reply = response;
     stop(false);
   });
@@ -172,13 +225,7 @@ process.on("message", (message: unknown) => {
         ...(signal === null ? {} : { signal }),
       };
     if (!stopping) stop(false);
-    if (process.platform === "win32" ? windowsKillerClosed : !groupAlive())
-      complete();
-  });
-  worker.send(input.request as Serializable, (error) => {
-    if (error && reply === undefined) {
-      reply = { version: 1, ok: false, category: "startup" };
-      stop(false);
-    }
+    if (process.platform === "win32") checkWindowsStopped();
+    else if (!groupAlive()) complete();
   });
 });
