@@ -73,6 +73,110 @@ async function runInkScan(
 }
 
 describe("runInkScan", () => {
+  it.each(["auto", "ink"] as const)(
+    "does not deliver the final %s report when cancelled during minimum display",
+    async (format) => {
+      const controller = new AbortController();
+      const output: string[] = [];
+      const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+        ...args: unknown[]
+      ) => {
+        output.push(String(args[0] ?? ""));
+        const callback = args.find((value) => typeof value === "function");
+        if (typeof callback === "function")
+          queueMicrotask(() => (callback as (error: null) => void)(null));
+        return true;
+      }) as typeof process.stdout.write);
+      const finding = createFinding({ message: "fixture final finding" });
+      const report = createReport({
+        outcome: "blocked",
+        exitCode: 1,
+        summary: {
+          passed: 0,
+          failed: 1,
+          warnings: 0,
+          incomplete: 0,
+          findings: [finding],
+        },
+      });
+      let scans = 0;
+      let preparations = 0;
+      let waits = 0;
+      let closes = 0;
+      try {
+        const exit = await executeScanCommand(
+          {
+            cwd: "/repo",
+            format,
+            color: false,
+            animations: true,
+            signal: controller.signal,
+            diagnostics: true,
+          },
+          {
+            stdinIsTTY: true,
+            stdoutIsTTY: true,
+            width: 120,
+            env: {},
+            writeStdout: (value) => {
+              output.push(value);
+            },
+            writeStderr: (value) => {
+              output.push(value);
+            },
+          },
+          {
+            resolveRepositoryRoot: async () => "/repo",
+            scan: async () => {
+              scans++;
+              return report;
+            },
+            preparePresentation: async () => {
+              preparations++;
+              return {
+                automatic: format === "auto",
+                reportStatus: "not-requested",
+                findings: [finding],
+                totalFindingCount: 1,
+                abbreviated: false,
+                warnings: [],
+              };
+            },
+            openInk: async (options, onError) => {
+              const session = await openInkSession(options, onError, {
+                interactive: false,
+                wait: async (milliseconds) => {
+                  waits++;
+                  expect(milliseconds).toBeGreaterThan(0);
+                  controller.abort(new Error("fixture-secret-marker"));
+                },
+              });
+              return {
+                ...session,
+                async close() {
+                  closes++;
+                  await session.close();
+                },
+              };
+            },
+          },
+        );
+        expect(exit).toBe(2);
+        expect(scans).toBe(1);
+        expect(preparations).toBe(1);
+        expect(waits).toBe(1);
+        expect(closes).toBe(1);
+        expect(output.join("")).not.toContain("fixture final finding");
+        expect(output.join("")).not.toContain("SCAN RESULT");
+        expect(output.join("")).not.toContain("fixture-secret-marker");
+        expect(
+          JSON.parse(output.join("").split("ZEDBEE DIAGNOSTICS\n")[1]!),
+        ).toMatchObject({ cancelled: true, renderingFailed: false });
+      } finally {
+        stdout.mockRestore();
+      }
+    },
+  );
   it("retains the 400 ms minimum live-dashboard duration", () => {
     expect(INK_MINIMUM_DISPLAY_MS).toBe(400);
   });

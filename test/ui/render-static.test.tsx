@@ -28,6 +28,35 @@ function destination(
 }
 
 describe("renderStaticInk", () => {
+  it.each(["flush", "exit"] as const)(
+    "does not deliver buffered output when cancelled during %s",
+    async (stage) => {
+      const controller = new AbortController();
+      const stdout = destination();
+      const unmount = vi.fn();
+      const waitUntilExit = vi.fn(async () => {
+        if (stage === "exit") controller.abort();
+      });
+      renderMock.mockImplementationOnce(
+        (_node: ReactNode, options: { stdout: NodeJS.WriteStream }) => {
+          options.stdout.write("complete dashboard");
+          return {
+            waitUntilRenderFlush: async () => {
+              if (stage === "flush") controller.abort();
+            },
+            unmount,
+            waitUntilExit,
+          };
+        },
+      );
+      await expect(
+        renderStaticInk(null, { width: 80, stdout, signal: controller.signal }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+      expect(stdout.writes).toEqual([]);
+      expect(unmount).toHaveBeenCalledOnce();
+      expect(waitUntilExit).toHaveBeenCalledOnce();
+    },
+  );
   it("buffers a fixed-width non-TTY render and writes every chunk once", async () => {
     const stdout = destination();
     const unmount = vi.fn();

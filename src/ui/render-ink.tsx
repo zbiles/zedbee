@@ -119,15 +119,18 @@ export async function openInkSession(
       rerender();
     },
     async finish(report, presentation) {
+      viewOptions.signal?.throwIfAborted();
       if (viewOptions.animations) {
         const remaining =
           INK_MINIMUM_DISPLAY_MS - Math.max(0, performance.now() - started);
         if (remaining > 0) await (dependencies.wait ?? wait)(remaining);
       }
+      viewOptions.signal?.throwIfAborted();
       if (ticker !== undefined) clearInterval(ticker);
       if (failed) return;
       if (viewOptions.requestedFormat === "auto") {
         await close();
+        viewOptions.signal?.throwIfAborted();
         await renderStaticInk(
           <ScanResultDashboard
             report={report}
@@ -135,7 +138,12 @@ export async function openInkSession(
             width={viewOptions.width}
             color={viewOptions.color}
           />,
-          { width: viewOptions.width },
+          {
+            width: viewOptions.width,
+            ...(viewOptions.signal === undefined
+              ? {}
+              : { signal: viewOptions.signal }),
+          },
         );
       } else {
         rerender(report, presentation);

@@ -62,6 +62,7 @@ export interface InkRenderOptions {
   color: boolean;
   animations: boolean;
   width: number;
+  signal?: AbortSignal;
 }
 
 export interface ScanCommandDependencies {
@@ -273,6 +274,7 @@ export async function executeScanCommand(
       color,
       animations: options.animations,
       width: io.width,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
 
     if (format === "ink") {
@@ -303,6 +305,7 @@ export async function executeScanCommand(
         selectedFormat: format,
       }),
     );
+    options.signal?.throwIfAborted();
 
     if (format === "json") {
       const json = renderJson(report);
@@ -324,7 +327,8 @@ export async function executeScanCommand(
       if (!renderingFailed) {
         try {
           await session?.finish(report, presentation);
-        } catch {
+        } catch (error) {
+          if (options.signal?.aborted === true) throw error;
           renderingFailed = true;
         }
       }

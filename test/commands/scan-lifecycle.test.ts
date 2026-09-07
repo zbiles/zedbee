@@ -6,6 +6,74 @@ import {
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 describe("controller-owned scan rendering", () => {
+  it.each(["json", "sarif", "text", "ink"] as const)(
+    "does not deliver %s when cancellation arrives during report preparation",
+    async (format) => {
+      const controller = new AbortController();
+      const report = createReport();
+      let scans = 0;
+      let preparations = 0;
+      let finishes = 0;
+      let closes = 0;
+      const stdout: string[] = [];
+      const deps: ScanCommandDependencies = {
+        resolveRepositoryRoot: async () => "/repo",
+        scan: async () => {
+          scans++;
+          return report;
+        },
+        preparePresentation: async () => {
+          preparations++;
+          await Promise.resolve();
+          controller.abort(new Error("fixture-secret-marker"));
+          return {
+            automatic: false,
+            reportStatus: "not-requested",
+            findings: [],
+            totalFindingCount: 0,
+            abbreviated: false,
+            warnings: [],
+          };
+        },
+        openInk: async () => ({
+          update() {},
+          async finish() {
+            finishes++;
+            stdout.push("final report");
+          },
+          async close() {
+            closes++;
+          },
+        }),
+      };
+      const exit = await executeScanCommand(
+        {
+          cwd: "/repo",
+          format,
+          color: false,
+          animations: false,
+          signal: controller.signal,
+        },
+        {
+          stdinIsTTY: true,
+          stdoutIsTTY: true,
+          width: 120,
+          env: {},
+          writeStdout: (value) => {
+            stdout.push(value);
+          },
+          writeStderr() {},
+        },
+        deps,
+      );
+      expect(exit).toBe(2);
+      expect(scans).toBe(1);
+      expect(preparations).toBe(1);
+      expect(finishes).toBe(0);
+      expect(closes).toBe(format === "ink" ? 1 : 0);
+      expect(stdout).toEqual([]);
+    },
+  );
   it.each(["open", "update", "finish", "close"] as const)(
     "falls back to complete text after %s fails without repeating analysis or persistence",
     async (failure) => {

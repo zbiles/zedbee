@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 export interface StaticInkOptions {
   readonly width: number;
   readonly stdout?: NodeJS.WriteStream;
+  readonly signal?: AbortSignal;
 }
 
 function writeOnce(stdout: NodeJS.WriteStream, output: string): Promise<void> {
@@ -20,6 +21,7 @@ export async function renderStaticInk(
   node: ReactNode,
   options: StaticInkOptions,
 ): Promise<void> {
+  options.signal?.throwIfAborted();
   const stdout = options.stdout ?? process.stdout;
   const chunks: Buffer[] = [];
   const sink = new PassThrough() as PassThrough & {
@@ -47,5 +49,6 @@ export async function renderStaticInk(
     await app.waitUntilExit();
   }
 
+  options.signal?.throwIfAborted();
   await writeOnce(stdout, Buffer.concat(chunks).toString("utf8"));
 }
