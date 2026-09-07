@@ -116,7 +116,10 @@ beforeAll(async () => {
         private: true,
       }),
     ),
-    writeFile(join(installedRepositoryTemplate, ".gitignore"), "node_modules\n"),
+    writeFile(
+      join(installedRepositoryTemplate, ".gitignore"),
+      "node_modules\n",
+    ),
     writeFile(
       join(installedRepositoryTemplate, "tsconfig.json"),
       '{"compilerOptions":{"strict":true},"include":["**/*.ts"]}\n',
@@ -811,7 +814,9 @@ describe("packaged Zedbee CLI", () => {
     });
   }, 30_000);
 
-  it("runs doctor from the installed package", async () => {
+  // Each CLI process gets its own test budget: Windows startup costs accumulate
+  // when JSON, redirected text, and help are run under one shared deadline.
+  it("runs doctor as JSON from the installed package", async () => {
     const repository = await createInstalledRepository();
 
     const result = await runPackagedCli(repository.root, [
@@ -819,16 +824,25 @@ describe("packaged Zedbee CLI", () => {
       "--format",
       "json",
     ]);
-    const redirected = await runPackagedCli(repository.root, ["doctor"]);
-    const help = await runPackagedCli(repository.root, ["doctor", "--help"]);
-
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 0 });
-    expect(redirected.exitCode).toBe(0);
+  }, 30_000);
+
+  it("renders redirected doctor output as plain text from the installed package", async () => {
+    const repository = await createInstalledRepository();
+    const redirected = await runPackagedCli(repository.root, ["doctor"]);
+
+    expect(redirected.exitCode, redirected.stderr).toBe(0);
     expect(redirected.stdout).toContain("PASS git:");
     expect(redirected.stdout).not.toContain("DOCTOR");
     expect(redirected.stdout).not.toMatch(/\u001b\[/u);
-    expect(help.exitCode).toBe(0);
+  }, 30_000);
+
+  it("shows doctor help from the installed package", async () => {
+    const repository = await createInstalledRepository();
+    const help = await runPackagedCli(repository.root, ["doctor", "--help"]);
+
+    expect(help.exitCode, help.stderr).toBe(0);
     expect(help.stdout).toContain("auto");
     expect(help.stdout).toContain("--no-color");
   }, 30_000);

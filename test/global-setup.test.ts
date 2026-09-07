@@ -9,6 +9,7 @@ interface InstallAttempt {
   readonly attemptRoot: string;
   readonly installRoot: string;
   readonly cacheRoot: string;
+  readonly cancelSignal: AbortSignal;
 }
 
 interface PrepareVerifiedInstall {
@@ -16,6 +17,7 @@ interface PrepareVerifiedInstall {
     scratch: string,
     install: (attempt: InstallAttempt) => Promise<void>,
     verify: (attempt: InstallAttempt) => Promise<void>,
+    createAttemptSignal?: () => AbortSignal,
   ): Promise<string>;
 }
 
@@ -55,4 +57,38 @@ it("discards an incomplete shared install before retrying in a clean directory",
   expect(firstAttemptWasRemoved).toBe(true);
   expect(result).toBe(join(scratch, "shared-install-attempt-2", "installed"));
   await expect(access(join(result, "installed.txt"))).resolves.toBeUndefined();
+});
+
+it("gives a clean retry a fresh cancellation budget", async () => {
+  const scratch = await mkdtemp(join(tmpdir(), "zedbee-shared-budget-test-"));
+  onTestFinished(() => rm(scratch, { recursive: true, force: true }));
+  const prepare = (
+    globalSetup as unknown as {
+      prepareVerifiedInstall?: PrepareVerifiedInstall;
+    }
+  ).prepareVerifiedInstall;
+  expect(prepare).toBeTypeOf("function");
+
+  const first = new AbortController();
+  const second = new AbortController();
+  const signals = [first.signal, second.signal];
+  const received: AbortSignal[] = [];
+
+  const result = await prepare!(
+    scratch,
+    async (attempt) => {
+      received.push(attempt.cancelSignal);
+      if (attempt.attempt === 1) {
+        first.abort();
+        throw new Error("first attempt used its cancellation budget");
+      }
+      expect(attempt.cancelSignal.aborted).toBe(false);
+      await mkdir(attempt.installRoot, { recursive: true });
+    },
+    async () => {},
+    () => signals.shift()!,
+  );
+
+  expect(received).toEqual([first.signal, second.signal]);
+  expect(result).toBe(join(scratch, "shared-install-attempt-2", "installed"));
 });
