@@ -1,22 +1,9 @@
 import { dirname } from "node:path";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
-import {
-  cyclomaticComplexityAdapter,
-  readabilityComplexityAdapter,
-} from "../checks/complexity/adapter.js";
-import { deadCodeAdapter } from "../checks/dead-code/adapter.js";
-import { dependencyArchitectureAdapter } from "../checks/dependency-architecture/adapter.js";
+import { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
+export { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
 import { dispatchChecks, type DispatchOptions } from "../checks/dispatcher.js";
-import { duplicationAdapter } from "../checks/duplication/adapter.js";
-import { lintAdapter } from "../checks/eslint/lint-adapter.js";
 import type { ScanEvent } from "../checks/events.js";
-import { prettierAdapter } from "../checks/prettier/adapter.js";
-import { reactAccessibilityAdapter } from "../checks/react/accessibility-adapter.js";
-import { reactCorrectnessAdapter } from "../checks/react/correctness-adapter.js";
-import { secretsAdapter } from "../checks/secrets/adapter.js";
-import { structuralSecurityAdapter } from "../checks/structural-security/adapter.js";
-import { typescriptAdapter } from "../checks/typescript/adapter.js";
-import { vulnerabilitiesAdapter } from "../checks/vulnerabilities/adapter.js";
 import {
   ConfigError,
   loadConfigFromCommit,
@@ -136,22 +123,6 @@ export interface RunScanOptions {
   dependencies?: RunScanDependencies;
   cache?: ObservationCache | false;
 }
-
-export const DEFAULT_CHECK_ADAPTERS: readonly CheckAdapter[] = Object.freeze([
-  prettierAdapter,
-  lintAdapter,
-  typescriptAdapter,
-  cyclomaticComplexityAdapter,
-  readabilityComplexityAdapter,
-  structuralSecurityAdapter,
-  secretsAdapter,
-  duplicationAdapter,
-  dependencyArchitectureAdapter,
-  deadCodeAdapter,
-  reactCorrectnessAdapter,
-  reactAccessibilityAdapter,
-  vulnerabilitiesAdapter,
-]);
 
 const DEFAULT_DEPENDENCIES: RunScanDependencies = {
   resolveBaseComparison,

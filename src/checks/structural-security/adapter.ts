@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import {
@@ -19,14 +20,6 @@ import { CheckIncompleteError } from "../incomplete-error.js";
 import { collectStructuralSecurityObservations } from "./rules.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -79,47 +72,24 @@ async function collectSide(
 export const structuralSecurityAdapter: ObservationCheckAdapter = {
   id: "structuralSecurity",
   output: "observations",
-  async inspect(context) {
-    const changed = new Set(
-      [...context.changeSet.files.values()]
-        .filter(({ status }) => status !== "deleted")
-        .map(({ path }) => path),
-    );
-    const workspaces = context.targetInspection.workspaces.filter((workspace) =>
-      workspace.sourceFiles.some(
-        (file) =>
-          SOURCE.test(file) &&
-          (context.config.checks.structuralSecurity.when === "always" ||
-            changed.has(file)),
-      ),
-    );
-    return workspaces.length === 0
-      ? { applies: false, reason: "No supported staged source files" }
-      : {
-          applies: true,
-          executionClass: "lightweight",
-          requiresBaseline: true,
-          targets: workspaces.map(targetFor),
-        };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("structuralSecurity", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
-      const [baselineObservations, targetObservations] = await Promise.all([
-        collectSide(
-          context.snapshots.baselineDir,
-          context.baselineInspection,
-          context.target,
-          context.signal,
-          "baseline",
-        ),
-        collectSide(
-          context.snapshots.targetDir,
-          context.targetInspection,
-          context.target,
-          context.signal,
-          "staged",
-        ),
-      ]);
+      const baselineObservations = await collectSide(
+        context.snapshots.baselineDir,
+        context.baselineInspection,
+        context.target,
+        context.signal,
+        "baseline",
+      );
+      const targetObservations = await collectSide(
+        context.snapshots.targetDir,
+        context.targetInspection,
+        context.target,
+        context.signal,
+        "staged",
+      );
       return {
         checkId: "structuralSecurity",
         target: context.target,

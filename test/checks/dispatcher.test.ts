@@ -1,4 +1,5 @@
-import { describe, expect, expectTypeOf, it } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
+import * as engineIdentity from "../../src/checks/engine-identity.js";
 import type { CheckResult, Finding } from "../../src/core/types.js";
 import type { Observation } from "../../src/core/types.js";
 import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
@@ -19,6 +20,10 @@ import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
+import {
+  AnalyzerJobError,
+  analyzerDiagnostic,
+} from "../../src/checks/diagnostics.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
 import { prettierAdapter } from "../../src/checks/prettier/adapter.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
@@ -2063,7 +2068,7 @@ describe("dispatchChecks", () => {
       async () => {
         active += 1;
         maximum = Math.max(maximum, active);
-        if (active === 4) release.resolve();
+        if (active === 2) release.resolve();
         await release.promise;
         active -= 1;
         return completed("lint");
@@ -2076,10 +2081,85 @@ describe("dispatchChecks", () => {
       createContext(createConfig({ lint: "error" })),
     );
 
-    expect(maximum).toBe(4);
+    expect(maximum).toBe(2);
   });
 
-  it("limits lightweight checks to four concurrent runs", async () => {
+  it("avoids uncached default identity reads and reuses identities only within each dispatch", async () => {
+    const identity = vi
+      .spyOn(engineIdentity, "observationCacheEngineIdentity")
+      .mockReturnValue(undefined);
+    const targets = [".", "apps/web"].map((relativeRoot) => ({
+      id: relativeRoot,
+      kind: "workspace" as const,
+      relativeRoot,
+    }));
+    const adapter = createAdapter(
+      "structuralSecurity",
+      "lightweight",
+      undefined,
+      targets,
+    );
+    const context = createContext(
+      createConfig({ structuralSecurity: "error" }),
+    );
+    const cache = {
+      async get() {
+        return undefined;
+      },
+      async set() {},
+    };
+    try {
+      await dispatchChecks([adapter], context);
+      expect(identity).not.toHaveBeenCalled();
+      await dispatchChecks([adapter], context, { cache });
+      expect(identity).toHaveBeenCalledTimes(1);
+      await dispatchChecks([adapter], context, { cache });
+      expect(identity).toHaveBeenCalledTimes(2);
+      const custom = vi.fn(() => undefined);
+      await dispatchChecks([adapter], context, { cacheEngineIdentity: custom });
+      expect(custom).toHaveBeenCalledTimes(2);
+    } finally {
+      identity.mockRestore();
+    }
+  });
+
+  it("retains safe analyzer failure diagnostics in incomplete results", async () => {
+    const diagnostic = analyzerDiagnostic(
+      "lint",
+      "collect",
+      "abnormal-exit",
+      7,
+    );
+    const adapter = createAdapter("lint", "project-analysis", async () => {
+      throw new AnalyzerJobError(diagnostic);
+    });
+    const result = await dispatchChecks(
+      [adapter],
+      createContext(createConfig({ lint: "error" })),
+    );
+    expect(result[0]?.result).toMatchObject({
+      status: "incomplete",
+      error: { diagnostic },
+    });
+  });
+
+  it("never invokes queued adapters after cancellation", async () => {
+    const controller = new AbortController();
+    const context = {
+      ...createContext(createConfig({ lint: "error" })),
+      signal: controller.signal,
+    };
+    controller.abort();
+    let called = false;
+    const adapter = createAdapter("lint", "project-analysis", async () => {
+      called = true;
+      return completed("lint");
+    });
+    await dispatchChecks([adapter], context);
+    expect(called).toBe(false);
+  });
+
+  it("limits lightweight checks to two concurrent runs", async () => {
     let active = 0;
     let maximum = 0;
     const release = deferred();
@@ -2087,7 +2167,7 @@ describe("dispatchChecks", () => {
       createAdapter(`light-${index}`, "lightweight", async () => {
         active += 1;
         maximum = Math.max(maximum, active);
-        if (active === 4) {
+        if (active === 2) {
           release.resolve();
         }
         await release.promise;
@@ -2105,7 +2185,7 @@ describe("dispatchChecks", () => {
       ),
     );
 
-    expect(maximum).toBe(4);
+    expect(maximum).toBe(2);
   });
 
   it.each(["project-analysis", "network"] as const)(

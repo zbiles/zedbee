@@ -126,6 +126,7 @@ export interface PreparedFixPlan {
 export type FixIssueKind = "conflict" | "stale" | "write" | "format";
 
 export interface FixIssue {
+  readonly diagnostic?: import("../checks/diagnostics.js").AnalyzerDiagnostic;
   readonly kind: FixIssueKind;
   readonly file: string;
   readonly checkIds: readonly FixableCheckId[];

@@ -6,6 +6,8 @@ import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
+import { freezeRuleSettings } from "./freeze-rule-settings.js";
+export { freezeRuleSettings } from "./freeze-rule-settings.js";
 
 const require = createRequire(import.meta.url);
 const eslintRoot = dirname(require.resolve("eslint/package.json"));
@@ -474,37 +476,6 @@ function validateRuleOptions(
       ruleId,
     );
   }
-}
-
-function freezeDeep<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => freezeDeep(item))) as T;
-  }
-  if (typeof value === "object" && value !== null) {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      return Object.freeze(value);
-    }
-    return Object.freeze(
-      Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, freezeDeep(item)]),
-      ),
-    ) as T;
-  }
-  return value;
-}
-
-export function freezeRuleSettings(
-  rules: Readonly<Record<string, EslintRuleConfiguration>>,
-): Readonly<Record<string, EslintRuleConfiguration>> {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(rules).map(([ruleId, configuration]) => [
-        ruleId,
-        freezeDeep(configuration),
-      ]),
-    ),
-  ) as Readonly<Record<string, EslintRuleConfiguration>>;
 }
 
 export function managedRuleInventory(checkId: RuleCheckId): RuleInventory {

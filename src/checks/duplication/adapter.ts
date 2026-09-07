@@ -1,6 +1,9 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { execa } from "execa";
+import { isAnalyzerWorker } from "../runner/context.js";
+import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
@@ -31,9 +34,7 @@ import type { ResolvedDuplicationPolicy } from "../../config/schema.js";
 
 const FALLBACK_DIGEST_CONCURRENCY = 4;
 
-type MissingFragment = ReturnType<
-  typeof missingCloneFragmentLocations
->[number];
+type MissingFragment = ReturnType<typeof missingCloneFragmentLocations>[number];
 
 export async function createFallbackTokenHashes(
   registry: SnapshotRegistry,
@@ -42,7 +43,10 @@ export async function createFallbackTokenHashes(
 ): Promise<ReadonlyMap<number, string>> {
   const uniqueRanges = new Map<
     string,
-    { readonly location: MissingFragment["location"]; readonly indexes: number[] }
+    {
+      readonly location: MissingFragment["location"];
+      readonly indexes: number[];
+    }
   >();
   for (const { index, location } of missingFragments) {
     const key = JSON.stringify([
@@ -85,14 +89,6 @@ export async function createFallbackTokenHashes(
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const JSCPD_REPORT = "jscpd-report.json";
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -165,11 +161,22 @@ async function collectSide(
           reject: false,
           stdin: "ignore",
           forceKillAfterDelay: 2_000,
+          killDescendants: !isAnalyzerWorker(),
           cancelSignal: signal,
         },
       );
       if (result.exitCode !== 0 && result.exitCode !== 1) {
-        throw new Error("Duplication analysis failed.");
+        throw new Error("Duplication analysis failed.", {
+          cause: new AnalyzerJobError(
+            analyzerDiagnostic(
+              "duplication",
+              "collect",
+              "abnormal-exit",
+              result.exitCode,
+              result.signal,
+            ),
+          ),
+        });
       }
       const rawReport = await output.readJson(JSCPD_REPORT);
       const missingFragments = missingCloneFragmentLocations(
@@ -218,29 +225,8 @@ async function collectSide(
 export const duplicationAdapter: ObservationCheckAdapter = {
   id: "duplication",
   output: "observations",
-  async inspect(context) {
-    const changed = new Set(
-      [...context.changeSet.files.values()]
-        .filter(({ status }) => status !== "deleted")
-        .map(({ path }) => path),
-    );
-    const workspaces = context.targetInspection.workspaces.filter((workspace) =>
-      workspace.sourceFiles.some(
-        (path) =>
-          SOURCE.test(path) &&
-          (context.config.checks.duplication.when === "always" ||
-            changed.has(path)),
-      ),
-    );
-    return workspaces.length === 0
-      ? { applies: false, reason: "No supported staged source files" }
-      : {
-          applies: true,
-          executionClass: "project-analysis",
-          requiresBaseline: true,
-          targets: workspaces.map(targetFor),
-        };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("duplication", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
       const policy = context.policy as ResolvedDuplicationPolicy;

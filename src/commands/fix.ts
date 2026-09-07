@@ -61,7 +61,10 @@ export interface FixCommandDependencies {
   buildFixPlan(
     options: Parameters<typeof buildFixPlan>[0],
   ): Promise<PreparedFixPlan>;
-  applyFixPlan(plan: PreparedFixPlan): Promise<FixResult>;
+  applyFixPlan(
+    plan: PreparedFixPlan,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<FixResult>;
   /** Injected by the interactive UI task; the command remains safe until then. */
   confirm(plan: FixPlan, options: FixPromptOptions): Promise<boolean>;
   renderResultDashboard?(
@@ -568,7 +571,10 @@ export async function executeFixCommand(
     }
 
     options.signal?.throwIfAborted();
-    const result = await dependencies.applyFixPlan(prepared);
+    const result = await dependencies.applyFixPlan(
+      prepared,
+      options.signal === undefined ? {} : { signal: options.signal },
+    );
     if (format === "json") {
       outputPlan(true, result);
     } else if (

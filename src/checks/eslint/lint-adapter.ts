@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type * as ts from "typescript";
 import type { ESLint } from "eslint";
@@ -21,6 +22,7 @@ import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { loadSnapshotProgramProjects } from "../typescript/config.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
+import { isAnalyzerWorker } from "../runner/context.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -61,21 +63,6 @@ function lintBatches(
       ? []
       : [{ files: Object.freeze(basicFiles), basic: true }]),
   ]);
-}
-
-function sourceChanged(
-  workspace: WorkspaceInspection,
-  paths: ReadonlySet<string>,
-): boolean {
-  return workspace.sourceFiles.some((path) => paths.has(path));
-}
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
 }
 
 function workspaceFor(
@@ -289,28 +276,8 @@ export function createLintAdapter(
     id: "lint",
     output: "observations",
 
-    async inspect(context) {
-      const changedPaths = new Set(
-        [...context.changeSet.files.values()]
-          .filter((file) => file.status !== "deleted")
-          .map((file) => file.path),
-      );
-      const workspaces = context.targetInspection.workspaces.filter(
-        (workspace) =>
-          workspace.sourceFiles.length > 0 &&
-          (context.config.checks.lint.when === "always" ||
-            sourceChanged(workspace, changedPaths)),
-      );
-      if (workspaces.length === 0) {
-        return { applies: false, reason: "No supported staged source files" };
-      }
-      return {
-        applies: true,
-        executionClass: "project-analysis",
-        requiresBaseline: true,
-        targets: workspaces.map(targetFor),
-      };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck("lint", context),
 
     async planFixes(context, findings) {
       const prepared = await prepareSide(
@@ -371,27 +338,30 @@ export function createLintAdapter(
     async collect(context): Promise<CheckObservationSet> {
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
-          collectSide(
-            context.snapshots.baselineDir,
-            context.repositoryRoot,
-            context.baselineInspection,
-            context.target,
-            "baseline",
-            context.policyForFile,
-            engineFactory,
-            context.signal,
-          ),
-          collectSide(
-            context.snapshots.targetDir,
-            context.repositoryRoot,
-            context.targetInspection,
-            context.target,
-            "target",
-            context.policyForFile,
-            engineFactory,
-            context.signal,
-          ),
+          () =>
+            collectSide(
+              context.snapshots.baselineDir,
+              context.repositoryRoot,
+              context.baselineInspection,
+              context.target,
+              "baseline",
+              context.policyForFile,
+              engineFactory,
+              context.signal,
+            ),
+          () =>
+            collectSide(
+              context.snapshots.targetDir,
+              context.repositoryRoot,
+              context.targetInspection,
+              context.target,
+              "target",
+              context.policyForFile,
+              engineFactory,
+              context.signal,
+            ),
           context.signal,
+          isAnalyzerWorker(),
         );
       return {
         checkId: "lint",

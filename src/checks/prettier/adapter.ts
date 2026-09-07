@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import * as prettier from "prettier";
@@ -99,27 +100,8 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
     return planPrettierFixes(context, findings);
   },
 
-  async inspect(context) {
-    if (context.config.checks.formatting.when === "always") {
-      return {
-        applies: true,
-        executionClass: "lightweight",
-        requiresBaseline: false,
-        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-      };
-    }
-    const applies = [...context.changeSet.files.values()].some(
-      (file) => file.status !== "deleted" && isSupportedPrettierPath(file.path),
-    );
-    return applies
-      ? {
-          applies: true,
-          executionClass: "lightweight",
-          requiresBaseline: false,
-          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-        }
-      : { applies: false, reason: "No supported staged files" };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("formatting", context),
 
   async runLegacy(context) {
     let files =

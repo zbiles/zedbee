@@ -60,6 +60,8 @@ export type CheckApplicability =
     };
 
 export interface CheckRunContext extends InspectionContext {
+  /** Root policy used to rebuild pure per-file resolution across IPC. */
+  readonly filePolicyConfig?: ResolvedConfig;
   /** Read-only paths only; adapters never receive snapshot cleanup authority. */
   readonly snapshots: Readonly<Omit<SnapshotPair, "cleanup">>;
   readonly target: CheckTarget;

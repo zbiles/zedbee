@@ -1,8 +1,11 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
+import { isAnalyzerWorker } from "../runner/context.js";
+import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -30,14 +33,6 @@ const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
 const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -250,6 +245,7 @@ async function collectSide(
         reject: false,
         stdin: "ignore",
         forceKillAfterDelay: 2_000,
+        killDescendants: !isAnalyzerWorker(),
         cancelSignal: signal,
         maxBuffer: MAX_OUTPUT_BYTES,
         env: { NO_COLOR: "1", FORCE_COLOR: "0" },
@@ -258,7 +254,17 @@ async function collectSide(
     signal.throwIfAborted();
     await validateSnapshotInputs(canonicalRoot, workspace);
     if (result.exitCode !== 0 && result.exitCode !== 1) {
-      throw new Error("Knip analysis failed");
+      throw new Error("Knip analysis failed", {
+        cause: new AnalyzerJobError(
+          analyzerDiagnostic(
+            "deadCode",
+            "collect",
+            "abnormal-exit",
+            result.exitCode,
+            result.signal,
+          ),
+        ),
+      });
     }
     let report: unknown;
     try {
@@ -292,43 +298,8 @@ function hasProjectDelta(context: CheckRunContext): boolean {
 export const deadCodeAdapter: ObservationCheckAdapter = {
   id: "deadCode",
   output: "observations",
-  async inspect(context) {
-    const changed = new Set(context.changeSet.files.keys());
-    const candidates = new Map<string, WorkspaceInspection>();
-    for (const workspace of [
-      ...context.baselineInspection.workspaces,
-      ...context.targetInspection.workspaces,
-    ]) {
-      candidates.set(workspace.relativeRoot, workspace);
-    }
-    const workspaces = [...candidates.values()]
-      .filter((workspace) => {
-        if (context.config.checks.deadCode.when === "always") {
-          return workspace.sourceFiles.some((path) => SOURCE.test(path));
-        }
-        return [
-          ...context.baselineInspection.workspaces,
-          ...context.targetInspection.workspaces,
-        ]
-          .filter(({ relativeRoot }) => relativeRoot === workspace.relativeRoot)
-          .some(
-            (side) =>
-              changed.has(side.manifestPath) ||
-              side.sourceFiles.some((path) => changed.has(path)),
-          );
-      })
-      .sort((left, right) =>
-        compareCodeUnits(left.relativeRoot, right.relativeRoot),
-      );
-    return workspaces.length === 0
-      ? { applies: false, reason: "No supported staged project files" }
-      : {
-          applies: true,
-          executionClass: "project-analysis",
-          requiresBaseline: true,
-          targets: workspaces.map(targetFor),
-        };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("deadCode", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
       const baselineObservations = await collectSide(

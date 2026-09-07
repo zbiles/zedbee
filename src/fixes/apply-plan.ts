@@ -6,6 +6,11 @@ import { compareCodeUnits } from "../core/compare.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import { formatWorkingSource } from "./prettier-provider.js";
 import {
+  AnalyzerJobError,
+  sanitizeAnalyzerDiagnostic,
+  type AnalyzerDiagnostic,
+} from "../checks/diagnostics.js";
+import {
   CommittedWriteError,
   writeWorkingFile,
   type WorkingFileIdentity,
@@ -21,6 +26,7 @@ import type {
 } from "./types.js";
 
 export interface ApplyFixPlanDependencies {
+  readonly signal?: AbortSignal;
   readWorkingFile?(repositoryRoot: string, file: string): Promise<string>;
   lstatWorkingFile?(
     repositoryRoot: string,
@@ -57,9 +63,13 @@ function issue(
   checkIds: readonly FixableCheckId[],
   message: string,
   remediation: string,
+  diagnostic?: AnalyzerDiagnostic,
 ): FixIssue {
   return Object.freeze({
     kind,
+    ...(diagnostic === undefined
+      ? {}
+      : { diagnostic: sanitizeAnalyzerDiagnostic(diagnostic) }),
     file,
     checkIds: Object.freeze([...new Set(checkIds)].sort(compareCodeUnits)),
     message,
@@ -146,6 +156,7 @@ export async function applyFixPlan(
   plan: PreparedFixPlan,
   dependencies: ApplyFixPlanDependencies = {},
 ): Promise<FixResult> {
+  dependencies.signal?.throwIfAborted();
   const changedFiles: string[] = [];
   const unchangedFiles: string[] = [];
   const issues: FixIssue[] = [];
@@ -175,6 +186,7 @@ export async function applyFixPlan(
   const format = dependencies.formatWorkingSource ?? formatWorkingSource;
 
   for (const group of groupCandidates(plan.candidates)) {
+    dependencies.signal?.throwIfAborted();
     const preview = plan.workingFiles.get(group.file);
     const ids = checkIds(group.candidates);
     if (preview === undefined) {
@@ -196,6 +208,7 @@ export async function applyFixPlan(
       working = await read(plan.repositoryRoot, group.file);
       identity = await stat(plan.repositoryRoot, group.file);
     } catch {
+      dependencies.signal?.throwIfAborted();
       unchangedFiles.push(group.file);
       issues.push(
         issue(
@@ -262,12 +275,23 @@ export async function applyFixPlan(
     );
     if (formatCandidate?.kind === "format-file") {
       try {
-        next = await format({
-          file: group.file,
-          source: next,
-          settings: formatCandidate.settings,
-        });
-      } catch {
+        next = await format(
+          {
+            file: group.file,
+            source: next,
+            settings: formatCandidate.settings,
+          },
+          dependencies.signal === undefined
+            ? {}
+            : { signal: dependencies.signal },
+        );
+      } catch (error) {
+        dependencies.signal?.throwIfAborted();
+        if (
+          error instanceof AnalyzerJobError &&
+          error.diagnostic.category === "cancellation"
+        )
+          throw error;
         unchangedFiles.push(group.file);
         issues.push(
           issue(
@@ -276,11 +300,13 @@ export async function applyFixPlan(
             ids,
             "Zedbee could not format the complete working file.",
             "Fix the formatting error and build a fresh fix plan.",
+            error instanceof AnalyzerJobError ? error.diagnostic : undefined,
           ),
         );
         continue;
       }
     }
+    dependencies.signal?.throwIfAborted();
     if (next === working) {
       unchangedFiles.push(group.file);
       continue;
@@ -325,6 +351,7 @@ export async function applyFixPlan(
     }
   }
 
+  dependencies.signal?.throwIfAborted();
   return deepFreeze({
     exitCode: issues.length === 0 ? (0 as const) : (1 as const),
     appliedFixes,

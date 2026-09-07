@@ -1,6 +1,7 @@
 import type { CheckResult, IncompleteDisposition } from "../core/types.js";
 
 export interface IncompleteResultInput {
+  readonly diagnostic?: import("./diagnostics.js").AnalyzerDiagnostic;
   readonly checkId: string;
   readonly durationMs: number;
   readonly code: string;
@@ -25,6 +26,9 @@ export function incompleteResult(input: IncompleteResultInput): CheckResult {
       ? {}
       : { incompleteDisposition: input.disposition }),
     error: {
+      ...(input.diagnostic === undefined
+        ? {}
+        : { diagnostic: input.diagnostic }),
       code: input.code,
       message: input.message,
       ...(input.path === undefined ? {} : { path: input.path }),

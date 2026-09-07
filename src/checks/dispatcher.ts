@@ -26,6 +26,7 @@ import { sanitizeCheckResult } from "./sanitize-result.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
 import { incompleteResult } from "./incomplete-result.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import { AnalyzerJobError } from "./diagnostics.js";
 import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type {
@@ -390,7 +391,10 @@ async function collectObservations(
   options: DispatchOptions,
   cacheKeyFor: ReturnType<typeof createObservationCacheKeyBuilder>,
 ): Promise<CheckObservationSet> {
-  if (!isCacheableObservationCheck(adapter.id)) {
+  if (
+    !isCacheableObservationCheck(adapter.id) ||
+    (options.cache === undefined && options.cacheEngineIdentity === undefined)
+  ) {
     return Reflect.apply(adapter.collect, undefined, [runContext]);
   }
   const engineIdentity = (
@@ -466,6 +470,7 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
     targetInspection: snapshotInspection(context.targetInspection),
     signal: context.signal,
     policyForFile: context.policyForFile,
+    filePolicyConfig: snapshotConfig(context.config),
   });
 }
 
@@ -713,10 +718,25 @@ export async function dispatchChecks(
     }
   };
   const limits = {
-    lightweight: pLimit(4),
+    lightweight: pLimit(2),
     "project-analysis": pLimit(1),
     network: pLimit(1),
   } as const;
+  const overallLimit = pLimit(2);
+  // Default installed metadata is reused only within this dispatch. Preserve
+  // injected resolvers' per-collection behavior and avoid all reads without cache.
+  const identities = new Map<string, string | undefined>();
+  const executionOptions: DispatchOptions =
+    options.cache === undefined || options.cacheEngineIdentity !== undefined
+      ? options
+      : {
+          ...options,
+          cacheEngineIdentity(checkId) {
+            if (!identities.has(checkId))
+              identities.set(checkId, observationCacheEngineIdentity(checkId));
+            return identities.get(checkId);
+          },
+        };
   const adapterContext: TrustedDispatchContext = adapterBaseContext(context);
   const cacheKeyFor = createObservationCacheKeyBuilder(
     adapterContext.snapshots.baselineDir,
@@ -917,7 +937,9 @@ export async function dispatchChecks(
         target: target.id,
         timestamp: clock(),
       });
-      const limit = limiterFor(applicability.executionClass, limits);
+      const classLimit = limiterFor(applicability.executionClass, limits);
+      const limit = (run: () => Promise<CheckExecutionResult>) =>
+        classLimit(() => overallLimit(run));
       scheduled.push(
         limit(async () => {
           const started = clock();
@@ -932,6 +954,7 @@ export async function dispatchChecks(
           const durationMs = (): number => Math.max(0, clock() - started);
           const label = checkLabel(adapter.id);
           try {
+            adapterContext.signal.throwIfAborted();
             runContext = scopedContext(
               adapterContext,
               adapter.id,
@@ -965,7 +988,7 @@ export async function dispatchChecks(
                       adapterContext.changeSet,
                     )
                   : undefined,
-                options,
+                executionOptions,
                 cacheKeyFor,
               );
               try {
@@ -1024,6 +1047,9 @@ export async function dispatchChecks(
                     code: error.code,
                     message: error.message,
                     remediation: error.remediation,
+                    ...(error.diagnostic === undefined
+                      ? {}
+                      : { diagnostic: error.diagnostic }),
                     ...(error.path === undefined ? {} : { path: error.path }),
                     ...(error.paths === undefined
                       ? {}
@@ -1043,6 +1069,9 @@ export async function dispatchChecks(
                     target: target.id,
                     durationMs: durationMs(),
                     code: "ADAPTER_EXECUTION_FAILED",
+                    ...(error instanceof AnalyzerJobError
+                      ? { diagnostic: error.diagnostic }
+                      : {}),
                     message: `${label} could not analyze ${target.id === "." ? "the repository root" : target.id}.`,
                     remediation:
                       "Check the analyzer installation and selected input, then retry.",
@@ -1076,12 +1105,18 @@ export async function dispatchChecks(
                   ),
                 },
               );
-            } catch {
+            } catch (error) {
               result = incompleteResult({
                 checkId: adapter.id,
                 target: target.id,
                 durationMs: durationMs(),
                 code: "FIX_PROVIDER_FAILED",
+                ...(error instanceof AnalyzerJobError ||
+                error instanceof CheckIncompleteError
+                  ? error.diagnostic === undefined
+                    ? {}
+                    : { diagnostic: error.diagnostic }
+                  : {}),
                 message: `${label} could not prepare managed fixes.`,
                 remediation:
                   "Update Zedbee or inspect the managed rule compatibility before retrying.",

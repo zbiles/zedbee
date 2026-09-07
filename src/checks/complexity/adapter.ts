@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
@@ -29,14 +30,6 @@ import {
 } from "./metric-message.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -234,52 +227,28 @@ function createComplexityAdapter(
   return {
     id,
     output: "observations",
-    async inspect(context) {
-      const changed = new Set(
-        [...context.changeSet.files.values()]
-          .filter(({ status }) => status !== "deleted")
-          .map(({ path }) => path),
-      );
-      const workspaces = context.targetInspection.workspaces.filter(
-        (workspace) =>
-          workspace.sourceFiles.some(
-            (path) =>
-              SOURCE.test(path) &&
-              (context.config.checks[id].when === "always" ||
-                changed.has(path)),
-          ),
-      );
-      return workspaces.length === 0
-        ? { applies: false, reason: "No supported staged source files" }
-        : {
-            applies: true,
-            executionClass: "lightweight",
-            requiresBaseline: true,
-            targets: workspaces.map(targetFor),
-          };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck(id, context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const [baselineObservations, targetObservations] = await Promise.all([
-          collectSide(
-            context.snapshots.baselineDir,
-            context.baselineInspection,
-            context.target,
-            id,
-            metricName,
-            context.policyForFile,
-            "baseline",
-          ),
-          collectSide(
-            context.snapshots.targetDir,
-            context.targetInspection,
-            context.target,
-            id,
-            metricName,
-            context.policyForFile,
-            "target",
-          ),
-        ]);
+        const baselineObservations = await collectSide(
+          context.snapshots.baselineDir,
+          context.baselineInspection,
+          context.target,
+          id,
+          metricName,
+          context.policyForFile,
+          "baseline",
+        );
+        const targetObservations = await collectSide(
+          context.snapshots.targetDir,
+          context.targetInspection,
+          context.target,
+          id,
+          metricName,
+          context.policyForFile,
+          "target",
+        );
         return {
           checkId: id,
           target: context.target,
