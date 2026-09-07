@@ -24,7 +24,6 @@ function run(command, args, options) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: options.env ?? process.env,
-    timeout: options.timeout ?? 180_000,
     maxBuffer: MAX_COMMAND_OUTPUT,
   });
   if (result.error !== undefined) throw result.error;

@@ -227,7 +227,7 @@ describe("deadCodeAdapter", () => {
       "// staged comment\nexport const used = 1; export const existing = 2;\n",
     );
     expect(await stagedFindings(runContext)).toEqual([]);
-  }, 30_000);
+  });
 
   it("fails closed when a relative import escapes the snapshot", async () => {
     const runContext = await context(

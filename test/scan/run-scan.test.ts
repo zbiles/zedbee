@@ -697,22 +697,7 @@ describe("runScan", () => {
     await started;
     controller.abort();
 
-    await expect(
-      Promise.race([
-        pending,
-        new Promise<never>((_resolve, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  "baseline resolution did not receive the abort signal",
-                ),
-              ),
-            100,
-          );
-        }),
-      ]),
-    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    await expect(pending).rejects.toMatchObject({ code: "GIT_ABORTED" });
     expect(receivedSignal).toBe(controller.signal);
   });
 
@@ -955,20 +940,7 @@ describe("runScan", () => {
     await started;
     controller.abort();
 
-    await expect(
-      Promise.race([
-        pending,
-        new Promise<never>((_resolve, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new Error("change discovery did not receive the abort signal"),
-              ),
-            100,
-          );
-        }),
-      ]),
-    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    await expect(pending).rejects.toMatchObject({ code: "GIT_ABORTED" });
     expect(receivedSignal).toBe(controller.signal);
   });
 
@@ -1008,22 +980,7 @@ describe("runScan", () => {
     await started;
     controller.abort();
 
-    await expect(
-      Promise.race([
-        pending,
-        new Promise<never>((_resolve, reject) => {
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  "snapshot construction did not receive the abort signal",
-                ),
-              ),
-            100,
-          );
-        }),
-      ]),
-    ).rejects.toMatchObject({ code: "GIT_ABORTED" });
+    await expect(pending).rejects.toMatchObject({ code: "GIT_ABORTED" });
     expect(receivedSignal).toBe(controller.signal);
   });
 

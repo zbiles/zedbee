@@ -59,7 +59,7 @@ it("discards an incomplete shared install before retrying in a clean directory",
   await expect(access(join(result, "installed.txt"))).resolves.toBeUndefined();
 });
 
-it("gives a clean retry a fresh cancellation budget", async () => {
+it("gives a clean retry a fresh cancellation signal", async () => {
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-shared-budget-test-"));
   onTestFinished(() => rm(scratch, { recursive: true, force: true }));
   const prepare = (
@@ -80,7 +80,7 @@ it("gives a clean retry a fresh cancellation budget", async () => {
       received.push(attempt.cancelSignal);
       if (attempt.attempt === 1) {
         first.abort();
-        throw new Error("first attempt used its cancellation budget");
+        throw new Error("first attempt was canceled");
       }
       expect(attempt.cancelSignal.aborted).toBe(false);
       await mkdir(attempt.installRoot, { recursive: true });

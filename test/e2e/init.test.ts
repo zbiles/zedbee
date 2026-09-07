@@ -41,7 +41,7 @@ beforeAll(async () => {
   expect(packed.exitCode, packed.stderr).toBe(0);
   const metadata = JSON.parse(packed.stdout) as Array<{ filename: string }>;
   tarballPath = join(packDirectory, metadata[0]!.filename);
-}, 30_000);
+});
 
 afterAll(async () => {
   await rm(packDirectory, { recursive: true, force: true });
@@ -131,7 +131,7 @@ describe("packaged init command", () => {
     if (process.platform !== "win32") {
       expect((await stat(hookPath)).mode & 0o777).toBe(0o751);
     }
-  }, 60_000);
+  });
 
   it("initializes, diagnoses, and scans with the packaged Node-native security stack", async () => {
     const repository = await createGitRepository("zedbee-native-security-");
@@ -236,5 +236,5 @@ describe("packaged init command", () => {
       ),
     ).toBe(true);
     expect(scanned.stdout).not.toContain(canary);
-  }, 60_000);
+  });
 });

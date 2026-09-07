@@ -34,7 +34,7 @@ beforeAll(async () => {
   expect(packed.exitCode).toBe(0);
   const metadata = JSON.parse(packed.stdout) as Array<{ filename: string }>;
   tarballPath = join(packDirectory, metadata[0]!.filename);
-}, 30_000);
+});
 
 afterAll(async () => {
   await rm(packDirectory, { recursive: true, force: true });
@@ -93,7 +93,7 @@ describe("raw pre-commit hook", () => {
       outcome: "pass",
       exitCode: 0,
     });
-  }, 30_000);
+  });
 
   it("allows formatted commits, blocks formatting regressions, and preserves existing hook work", async () => {
     const repository = await createGitRepository();
@@ -154,5 +154,5 @@ describe("raw pre-commit hook", () => {
     expect(await readFile(hookPath, "utf8")).toContain(
       "printf 'existing hook\\n' >/dev/null",
     );
-  }, 60_000);
+  });
 });

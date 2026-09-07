@@ -235,7 +235,7 @@ describe("committed base scans", () => {
       ]),
     );
     await expectNoSnapshots(snapshotRoot);
-  }, 30_000);
+  });
 
   it("cleans both commit snapshots after a committed unsupported input makes the scan incomplete", async () => {
     const { repository, baseline } = await createBaseFixture();
@@ -272,7 +272,7 @@ describe("committed base scans", () => {
       ]),
     );
     await expectNoSnapshots(snapshotRoot);
-  }, 30_000);
+  });
 
   it("does not send an irrelevant changed binary through the bounded text diff", async () => {
     const repository = await createGitRepository();
@@ -316,7 +316,7 @@ describe("committed base scans", () => {
       exitCode: 0,
       changedFileCount: 2,
     });
-  }, 30_000);
+  });
 
   it("does not force a large binary baseline through the bounded text diff", async () => {
     const repository = await createGitRepository();
@@ -365,7 +365,7 @@ describe("committed base scans", () => {
       exitCode: 0,
       changedFileCount: 2,
     });
-  }, 30_000);
+  });
 
   it("keeps staged binary-to-text scans compatible with a low Git output cap", async () => {
     const repository = await createGitRepository();
@@ -391,7 +391,7 @@ describe("committed base scans", () => {
       mode: "index",
       changedFileCount: 1,
     });
-  }, 30_000);
+  });
 
   it.runIf(process.platform !== "win32")(
     "handles committed regular-file and symlink type changes without duplicate patch paths",
@@ -420,7 +420,6 @@ describe("committed base scans", () => {
         changedFileCount: 2,
       });
     },
-    30_000,
   );
 
   it.runIf(process.platform !== "win32")(
@@ -447,7 +446,6 @@ describe("committed base scans", () => {
         changedFileCount: 2,
       });
     },
-    30_000,
   );
 
   it("fails closed for a relevant NUL beyond the first 8192 bytes", async () => {
@@ -479,7 +477,7 @@ describe("committed base scans", () => {
         }),
       ],
     });
-  }, 30_000);
+  });
 
   it("reports no index changes for the same clean checkout without --base", async () => {
     const { repository } = await createBaseFixture();
@@ -498,7 +496,7 @@ describe("committed base scans", () => {
       changedFileCount: 0,
     });
     expect(await gitIdentity(repository)).toEqual(before);
-  }, 30_000);
+  });
 
   it("uses the merge base after the base branch advances", async () => {
     const { repository, baseline, target } = await createBaseFixture();
@@ -519,7 +517,7 @@ describe("committed base scans", () => {
       changedFileCount: 1,
     });
     expect(report.baseline).not.toBe(advancedMain);
-  }, 30_000);
+  });
 
   it("ignores weaker staged, unstaged, and untracked checkout configuration", async () => {
     const { repository } = await createBaseFixture();
@@ -540,7 +538,7 @@ describe("committed base scans", () => {
       mode: "base",
       changedFileCount: 1,
     });
-  }, 30_000);
+  });
 
   it("uses configuration committed in the target commit", async () => {
     const { repository, baseline } = await createBaseFixture(weakConfig);
@@ -559,7 +557,7 @@ describe("committed base scans", () => {
       target,
       changedFileCount: 2,
     });
-  }, 30_000);
+  });
 
   it("returns incomplete without fetching a missing shallow merge base", async () => {
     const source = await createBaseFixture();
@@ -623,7 +621,7 @@ describe("committed base scans", () => {
         error: expect.objectContaining({ code: "MERGE_BASE_UNAVAILABLE" }),
       }),
     ]);
-  }, 30_000);
+  });
 
   it.skipIf(process.platform === "win32")(
     "returns incomplete without invoking a promisor remote for missing blobs",
@@ -688,7 +686,6 @@ describe("committed base scans", () => {
       });
       await expect(access(sentinel)).rejects.toThrow();
     },
-    30_000,
   );
 
   it.skipIf(process.platform === "win32")(
@@ -717,7 +714,6 @@ describe("committed base scans", () => {
       ]);
       await expectNoSnapshots(snapshotRoot);
     },
-    30_000,
   );
 
   it("cleans both commit snapshots after scan cancellation", async () => {
@@ -754,5 +750,5 @@ describe("committed base scans", () => {
     expect(await gitIdentity(repository)).toEqual(before);
     await expectNoSnapshots(snapshotRoot);
     expect(controller.signal.aborted).toBe(true);
-  }, 30_000);
+  });
 });

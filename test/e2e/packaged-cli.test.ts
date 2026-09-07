@@ -35,11 +35,11 @@ function cancellationOptions(
   signal = getCurrentTest()?.context.signal,
 ): Readonly<{
   cancelSignal?: AbortSignal;
-  killDescendants: true;
+  killDescendants: false;
 }> {
   return signal === undefined
-    ? { killDescendants: true }
-    : { cancelSignal: signal, killDescendants: true };
+    ? { killDescendants: false }
+    : { cancelSignal: signal, killDescendants: false };
 }
 
 async function runNpm(
@@ -52,13 +52,12 @@ async function runNpm(
     env: { npm_config_cache: join(packDirectory, "npm-cache") },
     reject: false,
     stdin: "ignore",
-    timeout: 120_000,
     ...cancellationOptions(cancelSignal),
   });
 }
 
 beforeAll(async () => {
-  const hookSignal = AbortSignal.timeout(165_000);
+  const hookSignal = new AbortController().signal;
   [packDirectory, temporaryReportRoot] = await Promise.all([
     mkdtemp(join(tmpdir(), "zedbee-pack-")),
     mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
@@ -137,7 +136,7 @@ beforeAll(async () => {
     cwd: installedRepositoryTemplate,
     stdin: "ignore",
   });
-}, 180_000);
+});
 
 afterAll(async () => {
   await Promise.all([
@@ -309,7 +308,7 @@ describe("packaged Zedbee CLI", () => {
     expect(
       (await repository.git(["status", "--porcelain=v1", "-z"])).stdout,
     ).toBe(beforeStatus);
-  }, 60_000);
+  });
 
   it("previews and applies exact plus whole-file fixes without changing the index or writing a report", async () => {
     const repository = await createInstalledRepository();
@@ -420,7 +419,7 @@ describe("packaged Zedbee CLI", () => {
     ]) {
       expect(applied.stdout).not.toContain(privateField);
     }
-  }, 30_000);
+  });
 
   it("preserves partial progress when an unstaged exact edit overlaps", async () => {
     const repository = await createInstalledRepository();
@@ -495,7 +494,7 @@ describe("packaged Zedbee CLI", () => {
     );
     expect((await repository.git(["write-tree"])).stdout).toBe(beforeTree);
     expect(await temporaryJsonReports()).toEqual(reportsBefore);
-  }, 30_000);
+  });
 
   it("rejects an unsupported managed-fix selector from the installed package", async () => {
     const repository = await createInstalledRepository();
@@ -511,7 +510,7 @@ describe("packaged Zedbee CLI", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stdout).toBe("");
     expect(result.stderr).toMatch(/allowed choices|invalid argument/i);
-  }, 30_000);
+  });
 
   it("runs through the executable npm bin launcher", async () => {
     const repository = await createInstalledRepository();
@@ -531,7 +530,7 @@ describe("packaged Zedbee CLI", () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toContain("Usage: zedbee");
-  }, 30_000);
+  });
 
   it("bounds automatic piped findings and persists the complete JSON report", async () => {
     const repository = await createInstalledRepository();
@@ -563,7 +562,7 @@ describe("packaged Zedbee CLI", () => {
     };
     expect(report.checks.flatMap((check) => check.findings)).toHaveLength(26);
     expect(result.stderr).toBe("");
-  }, 30_000);
+  });
 
   it("persists a successful zero-finding automatic report with blank guidance", async () => {
     const repository = await createInstalledRepository();
@@ -589,7 +588,7 @@ describe("packaged Zedbee CLI", () => {
     };
     expect(report.checks.flatMap((check) => check.findings)).toEqual([]);
     expect(result.stderr).toBe("");
-  }, 30_000);
+  });
 
   it("exposes the installed CLI help and command set", async () => {
     const repository = await createInstalledRepository();
@@ -601,7 +600,7 @@ describe("packaged Zedbee CLI", () => {
     for (const command of ["init", "scan", "checks", "doctor"]) {
       expect(result.stdout).toContain(command);
     }
-  }, 30_000);
+  });
 
   it("ships customization schema and effective check metadata", async () => {
     const repository = await createInstalledRepository();
@@ -748,17 +747,16 @@ describe("packaged Zedbee CLI", () => {
         },
       },
     });
-  }, 30_000);
+  });
 
-  // Keep independent CLI invocations in separate tests so slow startup does
-  // not consume one shared timeout across help and both output formats.
+  // Keep independent CLI invocations separate so failures identify the command.
   it("lists SARIF in the packaged scan help", async () => {
     const repository = await createInstalledRepository();
     const help = await runPackagedCli(repository.root, ["scan", "--help"]);
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("sarif");
-  }, 30_000);
+  });
 
   it.each(["sarif", "text"] as const)(
     "accepts explicit %s output from the packaged scan without writing a report",
@@ -780,7 +778,6 @@ describe("packaged Zedbee CLI", () => {
       expect(result.stderr).toBe("");
       expect(reportsAfter).toEqual(reportsBefore);
     },
-    30_000,
   );
 
   it("exports every blocked fixture finding as a complete SARIF report", async () => {
@@ -823,10 +820,9 @@ describe("packaged Zedbee CLI", () => {
       toolExecutionNotifications: [],
       properties: { outcome: "blocked", exitCode: 1 },
     });
-  }, 30_000);
+  });
 
-  // Each CLI process gets its own test budget: Windows startup costs accumulate
-  // when JSON, redirected text, and help are run under one shared deadline.
+  // Separate cases identify failures in JSON, redirected text, and help.
   it("runs doctor as JSON from the installed package", async () => {
     const repository = await createInstalledRepository();
 
@@ -837,7 +833,7 @@ describe("packaged Zedbee CLI", () => {
     ]);
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 0 });
-  }, 30_000);
+  });
 
   it("renders redirected doctor output as plain text from the installed package", async () => {
     const repository = await createInstalledRepository();
@@ -847,7 +843,7 @@ describe("packaged Zedbee CLI", () => {
     expect(redirected.stdout).toContain("PASS git:");
     expect(redirected.stdout).not.toContain("DOCTOR");
     expect(redirected.stdout).not.toMatch(/\u001b\[/u);
-  }, 30_000);
+  });
 
   it("shows doctor help from the installed package", async () => {
     const repository = await createInstalledRepository();
@@ -856,7 +852,7 @@ describe("packaged Zedbee CLI", () => {
     expect(help.exitCode, help.stderr).toBe(0);
     expect(help.stdout).toContain("auto");
     expect(help.stdout).toContain("--no-color");
-  }, 30_000);
+  });
 
   it("initializes a raw hook non-interactively from the installed package", async () => {
     const repository = await createInstalledRepository();
@@ -888,7 +884,7 @@ describe("packaged Zedbee CLI", () => {
     expect(await repository.read(".git/hooks/pre-commit")).toContain(
       "npx --no-install zedbee scan",
     );
-  }, 30_000);
+  });
 
   it("rejects conflicting source excerpt overrides before scanning", async () => {
     const repository = await createInstalledRepository();
@@ -901,7 +897,7 @@ describe("packaged Zedbee CLI", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/cannot be used with option/i);
     expect(result.stdout).toBe("");
-  }, 30_000);
+  });
 
   it("passes formatted staged code and leaves Git state unchanged", async () => {
     const repository = await createInstalledRepository();
@@ -923,7 +919,7 @@ describe("packaged Zedbee CLI", () => {
     });
     expect(after.stdout).toBe(before.stdout);
     expect(reportsAfter).toEqual(reportsBefore);
-  }, 30_000);
+  });
 
   it("blocks an attributed staged formatting regression", async () => {
     const repository = await createInstalledRepository();
@@ -948,7 +944,7 @@ describe("packaged Zedbee CLI", () => {
       file: "value.ts",
       startLine: 1,
     });
-  }, 30_000);
+  });
 
   it("scans the staged regression even after the working tree is formatted", async () => {
     const repository = await createInstalledRepository();
@@ -966,7 +962,7 @@ describe("packaged Zedbee CLI", () => {
       outcome: "blocked",
       exitCode: 1,
     });
-  }, 30_000);
+  });
 
   it("does not block pre-existing formatting outside staged lines", async () => {
     const repository = await createInstalledRepository();
@@ -985,7 +981,7 @@ describe("packaged Zedbee CLI", () => {
       outcome: "pass",
       exitCode: 0,
     });
-  }, 30_000);
+  });
 
   it("reports incomplete packaged scans in SARIF notifications", async () => {
     const repository = await createInstalledRepository();
@@ -1030,5 +1026,5 @@ describe("packaged Zedbee CLI", () => {
       report.runs[0].invocations[0].toolExecutionNotifications[0]?.descriptor
         .id,
     ).toBe("CONFIG_INVALID");
-  }, 30_000);
+  });
 });

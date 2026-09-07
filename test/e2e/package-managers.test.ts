@@ -54,7 +54,7 @@ beforeAll(async () => {
   expect(packed.exitCode, packed.stderr).toBe(0);
   const metadata = JSON.parse(packed.stdout) as Array<{ filename: string }>;
   tarball = join(scratch, metadata[0]!.filename);
-}, 30_000);
+});
 
 afterAll(async () => {
   await rm(scratch, { recursive: true, force: true });
@@ -110,7 +110,6 @@ describe("package-manager fixture commands", () => {
             cwd: repository.root,
             reject: false,
             stdin: "ignore",
-            timeout: 120_000,
             env: {
               ...process.env,
               npm_config_cache: join(scratch, `${manager}-npm-cache`),
@@ -178,7 +177,6 @@ describe("package-manager fixture commands", () => {
         expect(report.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
         expect(after.stdout).toBe(before.stdout);
       },
-      180_000,
     );
   }
 });

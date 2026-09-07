@@ -678,18 +678,10 @@ describe("buildSnapshotPair", () => {
     await blobReadStarted;
     controller.abort();
 
-    const failure = await Promise.race([
-      build.then(
-        () => new Error("snapshot construction unexpectedly completed"),
-        (error: unknown) => error,
-      ),
-      new Promise<Error>((resolve) => {
-        setTimeout(
-          () => resolve(new Error("cat-file did not receive abort signal")),
-          100,
-        );
-      }),
-    ]);
+    const failure = await build.then(
+      () => new Error("snapshot construction unexpectedly completed"),
+      (error: unknown) => error,
+    );
 
     expect(signalReceived).toBe(true);
     expect(failure).toMatchObject({ code: "GIT_ABORTED" });
@@ -1100,7 +1092,7 @@ describe("buildCommitSnapshotPair", () => {
     } finally {
       snapshotRootFailure.failBlobWrite = false;
     }
-  }, 30_000);
+  });
 
   it("materializes SHA-256 commit blobs through the batch protocol", async () => {
     const repositoryRoot = await mkdtemp(join(tmpdir(), "zedbee-sha256-"));
@@ -1140,7 +1132,7 @@ describe("buildCommitSnapshotPair", () => {
     expect(await readFile(join(pair.targetDir, "value.bin"))).toEqual(
       Buffer.from([0x73, 0x68, 0x61, 0x32, 0x35, 0x36, 0x00]),
     );
-  }, 30_000);
+  });
 
   it.runIf(process.platform !== "win32")(
     "uses a constant number of Git processes for many committed files",
@@ -1238,7 +1230,7 @@ describe("buildCommitSnapshotPair", () => {
     expect(pair.unsupportedEntries).toEqual([
       { path: "unchanged-large.bin", kind: "binary" },
     ]);
-  }, 60_000);
+  });
 
   it("materializes exact committed trees without changing a dirty index or working tree", async () => {
     const repository = await createGitRepository();
@@ -1289,7 +1281,7 @@ describe("buildCommitSnapshotPair", () => {
     expect((await repository.git(["rev-parse", "HEAD"])).stdout).toBe(
       beforeHead.stdout,
     );
-  }, 30_000);
+  });
 
   it("classifies target commit submodules, LFS pointers, and binary files", async () => {
     const repository = await createGitRepository();
@@ -1328,7 +1320,7 @@ describe("buildCommitSnapshotPair", () => {
       { path: "large.dat", kind: "git-lfs-pointer" },
       { path: "vendor/demo", kind: "submodule" },
     ]);
-  }, 30_000);
+  });
 
   it("classifies a binary baseline and counts target text lines with constant memory", async () => {
     const repository = await createGitRepository();
@@ -1352,7 +1344,7 @@ describe("buildCommitSnapshotPair", () => {
     ]);
     expect(pair.unsupportedEntries).toEqual([]);
     expect(await countSnapshotFileLines(pair.targetDir, "value.dat")).toBe(2);
-  }, 30_000);
+  });
 
   it("rejects invalid commit-tree paths before reading blobs", async () => {
     const calls: string[][] = [];

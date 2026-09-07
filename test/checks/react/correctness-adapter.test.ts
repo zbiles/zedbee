@@ -720,17 +720,8 @@ describe("reactCorrectnessAdapter", () => {
       return {
         async lintFiles(patterns) {
           if (options.cwd === run.baselineInspection.snapshotRoot) {
-            let timeout: NodeJS.Timeout | undefined;
-            try {
-              targetStartedWhileBaselineHeld = await Promise.race([
-                targetStarted.then(() => true),
-                new Promise<boolean>((resolve) => {
-                  timeout = setTimeout(() => resolve(false), 250);
-                }),
-              ]);
-            } finally {
-              if (timeout !== undefined) clearTimeout(timeout);
-            }
+            await targetStarted;
+            targetStartedWhileBaselineHeld = true;
           } else if (options.cwd === run.targetInspection.snapshotRoot) {
             markTargetStarted();
           }

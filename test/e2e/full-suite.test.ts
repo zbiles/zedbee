@@ -238,7 +238,7 @@ describe("release verification contract", () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stdout).toBe("Core package contents passed.");
-  }, 30_000);
+  });
 
   it.each([
     "docs/superpowers/plans/private.md",
