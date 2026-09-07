@@ -1,9 +1,8 @@
 name: CI
 
 on:
-  pull_request:
-    branches:
-      - main
+  # Run local verification before pushing. Hosted checks are opt-in; automatic
+  # release-tag verification lives in release-check.yml.
   workflow_dispatch:
 
 concurrency:

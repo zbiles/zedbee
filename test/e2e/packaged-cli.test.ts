@@ -750,27 +750,38 @@ describe("packaged Zedbee CLI", () => {
     });
   }, 30_000);
 
-  it("lists and accepts SARIF as a packaged scan output format", async () => {
+  // Keep independent CLI invocations in separate tests so slow startup does
+  // not consume one shared timeout across help and both output formats.
+  it("lists SARIF in the packaged scan help", async () => {
     const repository = await createInstalledRepository();
-    await repository.write("value.ts", "export const value = 1;\n");
-    await repository.git(["add", "--", "value.ts"]);
-
     const help = await runPackagedCli(repository.root, ["scan", "--help"]);
-    const reportsBefore = await temporaryJsonReports();
-    const result = await runZedbee(repository.root, "sarif");
-    const text = await runZedbee(repository.root, "text");
-    const reportsAfter = await temporaryJsonReports();
 
     expect(help.exitCode).toBe(0);
     expect(help.stdout).toContain("sarif");
-    expect(result.exitCode).toBe(0);
-    expect(JSON.parse(result.stdout).version).toBe("2.1.0");
-    expect(result.stderr).toBe("");
-    expect(text.exitCode).toBe(0);
-    expect(text.stdout).toContain("BEE-UTIFUL");
-    expect(text.stderr).toBe("");
-    expect(reportsAfter).toEqual(reportsBefore);
   }, 30_000);
+
+  it.each(["sarif", "text"] as const)(
+    "accepts explicit %s output from the packaged scan without writing a report",
+    async (format) => {
+      const repository = await createInstalledRepository();
+      await repository.write("value.ts", "export const value = 1;\n");
+      await repository.git(["add", "--", "value.ts"]);
+
+      const reportsBefore = await temporaryJsonReports();
+      const result = await runZedbee(repository.root, format);
+      const reportsAfter = await temporaryJsonReports();
+
+      expect(result.exitCode).toBe(0);
+      if (format === "sarif") {
+        expect(JSON.parse(result.stdout).version).toBe("2.1.0");
+      } else {
+        expect(result.stdout).toContain("BEE-UTIFUL");
+      }
+      expect(result.stderr).toBe("");
+      expect(reportsAfter).toEqual(reportsBefore);
+    },
+    30_000,
+  );
 
   it("exports every blocked fixture finding as a complete SARIF report", async () => {
     const repository = await createInstalledRepository();
