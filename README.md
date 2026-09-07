@@ -257,7 +257,7 @@ Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected 
 
 ## Cache and performance
 
-Zedbee may cache content-addressed, normalized observations for deterministic local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, engine identity, and runtime platform. Cache failures and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
+Zedbee may cache content-addressed, normalized observations only for local analyzers whose complete inputs have been audited as snapshot-only. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript, lint, and dead-code observations bypass this cache because installed dependency declarations, resolution state, or missing dependency lookups can affect their answers without changing the snapshots; unknown checks also default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
 
 ## Current coverage
 

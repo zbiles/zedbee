@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { CheckObservationSet, CheckTarget } from "../checks/adapter.js";
 import { normalizeObservation } from "../attribution/fingerprint.js";
-import { isCacheableObservationCheck } from "./key.js";
+import { isCacheableObservationCheck } from "../checks/metadata.js";
 import { sanitizeCheckTarget } from "../checks/sanitize-target.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Observation } from "../core/types.js";

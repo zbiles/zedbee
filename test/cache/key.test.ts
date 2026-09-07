@@ -88,14 +88,14 @@ function contextFor(
     baselineInspection: inspection,
     targetInspection: inspection,
     target: { id: ".", kind: "repository", relativeRoot: "." },
-    policy: config.checks.lint,
+    policy: config.checks.cyclomaticComplexity,
     policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
 
 const adapter = {
-  id: "lint",
+  id: "cyclomaticComplexity",
   output: "observations",
   inspect: async () => ({
     applies: true as const,
@@ -104,7 +104,7 @@ const adapter = {
     targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
   }),
   collect: async (context) => ({
-    checkId: "lint",
+    checkId: "cyclomaticComplexity",
     target: context.target,
     baselineObservations: [],
     targetObservations: [],
@@ -248,8 +248,8 @@ describe("observation cache keys", () => {
     const config = resolveConfig({
       schemaVersion: 1,
       checks: {
-        lint: { severity: "error" },
         cyclomaticComplexity: { severity: "error" },
+        readabilityComplexity: { severity: "error" },
       },
     });
     const context = contextFor(
@@ -274,19 +274,21 @@ describe("observation cache keys", () => {
       },
       targetInspection: { ...context.targetInspection, workspaces },
     };
-    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
-      ...adapterFor(id),
-      inspect: async () => ({
-        applies: true as const,
-        executionClass: "lightweight" as const,
-        requiresBaseline: false,
-        targets: roots.map((root) => ({
-          id: root,
-          kind: "workspace" as const,
-          relativeRoot: root,
-        })),
+    const checks = ["cyclomaticComplexity", "readabilityComplexity"].map(
+      (id) => ({
+        ...adapterFor(id),
+        inspect: async () => ({
+          applies: true as const,
+          executionClass: "lightweight" as const,
+          requiresBaseline: false,
+          targets: roots.map((root) => ({
+            id: root,
+            kind: "workspace" as const,
+            relativeRoot: root,
+          })),
+        }),
       }),
-    }));
+    );
     const keys: string[] = [];
     const streamReads = vi.mocked(fs.createReadStream);
     const inventories = vi.mocked(fsPromises.readdir);
@@ -438,24 +440,26 @@ describe("observation cache keys", () => {
     await fixture.symlink(join(outside.root, "private.txt"), "escape.txt");
     const keys: string[] = [];
     const collected: string[] = [];
-    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
-      ...adapter,
-      id,
-      collect: async (context: CheckRunContext) => {
-        collected.push(id);
-        return {
-          checkId: id,
-          target: context.target,
-          baselineObservations: [],
-          targetObservations: [],
-        };
-      },
-    }));
+    const checks = ["cyclomaticComplexity", "readabilityComplexity"].map(
+      (id) => ({
+        ...adapter,
+        id,
+        collect: async (context: CheckRunContext) => {
+          collected.push(id);
+          return {
+            checkId: id,
+            target: context.target,
+            baselineObservations: [],
+            targetObservations: [],
+          };
+        },
+      }),
+    );
     const config = resolveConfig({
       schemaVersion: 1,
       checks: {
-        lint: { severity: "error" },
         cyclomaticComplexity: { severity: "error" },
+        readabilityComplexity: { severity: "error" },
       },
     });
     const inputs = contextFor(fixture.root, "^19.0.0", config);
@@ -473,7 +477,10 @@ describe("observation cache keys", () => {
       "completed",
       "completed",
     ]);
-    expect(collected.sort()).toEqual(["cyclomaticComplexity", "lint"]);
+    expect(collected.sort()).toEqual([
+      "cyclomaticComplexity",
+      "readabilityComplexity",
+    ]);
     expect(keys).toHaveLength(0);
     expect(streamReads).not.toHaveBeenCalled();
     await fsPromises.rm(join(fixture.root, "escape.txt"));
@@ -491,9 +498,14 @@ describe("observation cache keys", () => {
     await baseline.symlink("value.txt", "alias.txt");
     await target.symlink("value.txt", "alias.txt");
     const input = {
-      checkId: "lint",
+      checkId: "cyclomaticComplexity",
       engineIdentity: "test-engine-v1",
-      policy: { severity: "error" as const, when: "relevant" as const },
+      policy: {
+        severity: "error" as const,
+        when: "relevant" as const,
+        max: 20,
+        blockWorsening: true,
+      },
       checkTarget: {
         id: ".",
         kind: "repository" as const,
@@ -504,9 +516,7 @@ describe("observation cache keys", () => {
       mode: "index" as const,
       baseline: "HEAD" as const,
       target: "index" as const,
-      relevantConfig: {
-        rules: { second: ["warn", { allow: ["a", "b"] }], first: "error" },
-      },
+      relevantConfig: { max: 20, blockWorsening: true },
       nodeVersion: "24.0.0",
       platform: "linux",
       arch: "x64",
@@ -514,7 +524,7 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
+      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
@@ -522,7 +532,7 @@ describe("observation cache keys", () => {
       { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
+      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);
@@ -534,10 +544,9 @@ describe("observation cache keys", () => {
     );
   });
 
-  it("versions multi-project typed lint in the engine identity", () => {
-    expect(observationCacheEngineIdentity("lint")).toContain(
-      "zedbee-multi-project-v1",
-    );
+  it("does not assign an engine identity to installed-dependency checks", () => {
+    expect(observationCacheEngineIdentity("lint")).toBeUndefined();
+    expect(observationCacheEngineIdentity("types")).toBeUndefined();
   });
 
   it("separates otherwise identical inspections by staged React declaration", async () => {
@@ -552,12 +561,20 @@ describe("observation cache keys", () => {
       set: async () => undefined,
     };
 
-    await dispatchChecks([adapter], contextFor(fixture.root, "^18.2.0"), {
-      cache,
-    });
-    await dispatchChecks([adapter], contextFor(fixture.root, "^19.0.0"), {
-      cache,
-    });
+    await dispatchChecks(
+      [adapterFor("reactCorrectness")],
+      contextFor(fixture.root, "^18.2.0"),
+      {
+        cache,
+      },
+    );
+    await dispatchChecks(
+      [adapterFor("reactCorrectness")],
+      contextFor(fixture.root, "^19.0.0"),
+      {
+        cache,
+      },
+    );
 
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
@@ -593,24 +610,6 @@ describe("observation cache keys", () => {
       return keys;
     };
 
-    const lintBase = resolveConfig({
-      schemaVersion: 1,
-      checks: {
-        lint: { severity: "error", rules: { "no-console": "warn" } },
-      },
-    });
-    const lintOverride = resolveConfig({
-      schemaVersion: 1,
-      checks: {
-        lint: { severity: "error", rules: { "no-console": "warn" } },
-      },
-      overrides: [
-        {
-          files: ["src/ignored.TS"],
-          checks: { lint: { rules: { "no-console": "error" } } },
-        },
-      ],
-    });
     const reactBase = resolveConfig({
       schemaVersion: 1,
       checks: {
@@ -652,7 +651,6 @@ describe("observation cache keys", () => {
       ],
     });
 
-    const lintKeys = await keyPair("lint", lintBase, lintOverride);
     const reactKeys = await keyPair(
       "reactCorrectness",
       reactBase,
@@ -664,8 +662,6 @@ describe("observation cache keys", () => {
       complexityOverride,
     );
 
-    expect(lintKeys).toHaveLength(2);
-    expect(lintKeys[0]).toBe(lintKeys[1]);
     expect(reactKeys).toHaveLength(2);
     expect(reactKeys[0]).not.toBe(reactKeys[1]);
     expect(complexityKeys).toHaveLength(2);

@@ -39,8 +39,9 @@ import { displayLabel, displayProse } from "../core/display-text.js";
 import {
   createObservationCacheKeyBuilder,
   effectiveBehaviorFingerprint,
-  observationCacheEngineIdentity,
 } from "../cache/key.js";
+import { observationCacheEngineIdentity } from "./engine-identity.js";
+import { isCacheableObservationCheck } from "./metadata.js";
 import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
@@ -389,6 +390,9 @@ async function collectObservations(
   options: DispatchOptions,
   cacheKeyFor: ReturnType<typeof createObservationCacheKeyBuilder>,
 ): Promise<CheckObservationSet> {
+  if (!isCacheableObservationCheck(adapter.id)) {
+    return Reflect.apply(adapter.collect, undefined, [runContext]);
+  }
   const engineIdentity = (
     options.cacheEngineIdentity ?? observationCacheEngineIdentity
   )(adapter.id);

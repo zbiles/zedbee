@@ -64,7 +64,7 @@ and is not included in scan findings, temporary reports, or structured exports.
 
 ## Scan cache
 
-When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata. It must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt or incompatible entries are treated as misses.
+When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata from analyzers whose complete inputs are confined to the captured snapshots. TypeScript, lint, and dead-code observations are deliberately not cached because installed dependency declarations, resolution state, and missing dependency lookups are not part of the snapshot fingerprint. New or unknown checks remain uncached until their inputs are audited. Installed engine identities come from the package metadata shipped with the active installation; missing identity metadata disables caching for that check. The cache must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt, ineligible, or incompatible entries are treated as misses.
 
 ## Report source visibility
 
