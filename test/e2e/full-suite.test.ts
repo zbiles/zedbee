@@ -422,6 +422,23 @@ describe("release verification contract", () => {
     }
   });
 
+  it.each([
+    { name: "ci.yml", triggers: { workflow_dispatch: null } },
+    {
+      name: "release-check.yml",
+      triggers: { workflow_dispatch: null, push: { tags: ["v*"] } },
+    },
+  ])(
+    "keeps $name off pull requests and branch pushes",
+    async ({ name, triggers }) => {
+      const workflow = parseYaml(
+        await readFile(resolve(root, ".github/workflows", name), "utf8"),
+      ) as { on: unknown };
+
+      expect(workflow.on).toEqual(triggers);
+    },
+  );
+
   it("uploads the smoke-tested tarball without publishing it", async () => {
     const workflow = await readFile(
       resolve(root, ".github/workflows/release-check.yml"),
