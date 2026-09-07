@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -13,8 +14,22 @@ describe("third-party notices", () => {
     };
 
     const notices = await generateThirdPartyNotices(root);
+    const manifest = JSON.parse(
+      await readFile(resolve(root, "package.json"), "utf8"),
+    ) as { dependencies: Record<string, string> };
+    const secretlintHeadings = notices
+      .split("\n")
+      .filter((line) => line.startsWith("## @secretlint/"));
 
-    expect(notices).toContain("@secretlint/core@13.0.4");
+    for (const name of [
+      "@secretlint/core",
+      "@secretlint/secretlint-rule-preset-recommend",
+      "@secretlint/types",
+    ]) {
+      expect(secretlintHeadings).toContain(
+        `## ${name}@${manifest.dependencies[name]}`,
+      );
+    }
     expect(notices).toContain("License: MIT");
     expect(notices).not.toContain("managed executable");
     expect(notices).not.toContain("@zedbee/gitleaks-");

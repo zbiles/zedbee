@@ -131,12 +131,28 @@ describe("package-manager fixture commands", () => {
             "utf8",
           ),
         ).toContain("PolyForm Small Business License");
-        expect(
+        const installedManifest = JSON.parse(
           await readFile(
-            join(repository.root, "node_modules/zedbee/THIRD_PARTY_NOTICES.md"),
+            join(repository.root, "node_modules/zedbee/package.json"),
             "utf8",
           ),
-        ).toContain("@secretlint/core@13.0.4");
+        ) as { dependencies: Record<string, string> };
+        const installedNotices = await readFile(
+          join(repository.root, "node_modules/zedbee/THIRD_PARTY_NOTICES.md"),
+          "utf8",
+        );
+        const secretlintHeadings = installedNotices
+          .split("\n")
+          .filter((line) => line.startsWith("## @secretlint/"));
+        for (const name of [
+          "@secretlint/core",
+          "@secretlint/secretlint-rule-preset-recommend",
+          "@secretlint/types",
+        ]) {
+          expect(secretlintHeadings).toContain(
+            `## ${name}@${installedManifest.dependencies[name]}`,
+          );
+        }
 
         const installedStatus = await repository.git(["status", "--porcelain"]);
         if (installedStatus.stdout.length > 0) {

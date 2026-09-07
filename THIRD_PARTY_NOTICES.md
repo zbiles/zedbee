@@ -4577,7 +4577,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @secretlint/core@13.0.4
+## @secretlint/core@13.0.5
 
 License: MIT
 
@@ -4604,7 +4604,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @secretlint/profiler@13.0.4
+## @secretlint/profiler@13.0.5
 
 License: MIT
 
@@ -4631,7 +4631,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @secretlint/secretlint-rule-preset-recommend@13.0.4
+## @secretlint/secretlint-rule-preset-recommend@13.0.5
 
 License: MIT
 
@@ -4658,7 +4658,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @secretlint/types@13.0.4
+## @secretlint/types@13.0.5
 
 License: MIT
 
