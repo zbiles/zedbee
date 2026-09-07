@@ -53,10 +53,13 @@ process.on("message", (request) => {
     process.stderr.write("fixture-secret-marker");
     process.exit(7);
   }
-  if (input.mode === "reply-then-crash") {
+  if (
+    input.mode === "reply-then-crash" ||
+    input.mode === "reply-then-exit-one"
+  ) {
     process.on("SIGTERM", () => {});
     process.send({ version: 1, ok: true, result: "not a successful job" }, () =>
-      process.exit(7),
+      process.exit(input.mode === "reply-then-exit-one" ? 1 : 7),
     );
     return;
   }

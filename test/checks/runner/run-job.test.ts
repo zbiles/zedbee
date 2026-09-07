@@ -62,13 +62,19 @@ describe("managed analyzer runner", () => {
     });
     expect(JSON.stringify(failure)).not.toContain("fixture-secret-marker");
   });
-  it("does not accept a reply followed by an abnormal worker exit", async () => {
-    await expect(
-      runAnalyzerJob(fixture("reply-then-crash"), { workerEntry }),
-    ).rejects.toMatchObject({
-      diagnostic: { category: "abnormal-exit", exitCode: 7 },
-    });
-  });
+  it.each([
+    ["reply-then-crash", 7],
+    ["reply-then-exit-one", 1],
+  ] as const)(
+    "does not accept %s followed by worker exit %s",
+    async (mode, exitCode) => {
+      await expect(
+        runAnalyzerJob(fixture(mode), { workerEntry }),
+      ).rejects.toMatchObject({
+        diagnostic: { category: "abnormal-exit", exitCode },
+      });
+    },
+  );
   it("waits for surviving descendants after an abnormal worker exit", async () => {
     const root = await mkdtemp(join(tmpdir(), "zedbee-crash-tree-"));
     scratch.push(root);

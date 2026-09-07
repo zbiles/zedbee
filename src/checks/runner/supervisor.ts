@@ -3,6 +3,10 @@ import {
   type ChildProcess,
   type Serializable,
 } from "node:child_process";
+import {
+  workerExitedAbnormally,
+  type ProcessExitStatus,
+} from "./exit-status.js";
 
 // This process must remain engine-free and responsive even when its worker is
 // synchronously blocked. The parent owns it until its complete process tree stops.
@@ -16,6 +20,9 @@ let timer: NodeJS.Timeout | undefined;
 let poll: NodeJS.Timeout | undefined;
 let workerClosed = false;
 let windowsKillerClosed = false;
+let windowsKillerExit: ProcessExitStatus | undefined;
+let workerExit: ProcessExitStatus | undefined;
+let windowsTerminationRequested = false;
 
 function groupAlive(): boolean {
   if (pid === undefined) return false;
@@ -37,6 +44,27 @@ function signalGroup(signal: NodeJS.Signals): void {
 function complete(): void {
   if (finished) return;
   finished = true;
+  // On Windows, include taskkill's outcome when interpreting observed exit1.
+  // Do not decide before both exit outcomes are available.
+  if (
+    workerExit !== undefined &&
+    workerExitedAbnormally(workerExit, {
+      platform: process.platform,
+      requested:
+        process.platform === "win32" ? windowsTerminationRequested : stopping,
+      ...(windowsKillerExit === undefined
+        ? {}
+        : { windowsKiller: windowsKillerExit }),
+    })
+  ) {
+    reply = {
+      version: 1,
+      ok: false,
+      category: "abnormal-exit",
+      ...(workerExit.code === null ? {} : { exitCode: workerExit.code }),
+      ...(workerExit.signal === null ? {} : { signal: workerExit.signal }),
+    };
+  }
   if (timer) clearTimeout(timer);
   if (poll) clearInterval(poll);
   if (process.connected)
@@ -50,6 +78,8 @@ function forceWindows(): void {
     complete();
     return;
   }
+  windowsTerminationRequested =
+    !workerClosed && worker?.exitCode === null && worker.signalCode === null;
   // Keep the worker alive until taskkill enumerates /T, including native jscpd.
   const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], {
     stdio: "ignore",
@@ -59,7 +89,8 @@ function forceWindows(): void {
     reply = { version: 1, ok: false, category: "cleanup" };
     worker?.kill("SIGKILL");
   });
-  killer.on("close", () => {
+  killer.on("close", (code, signal) => {
+    windowsKillerExit = { code, signal };
     windowsKillerClosed = true;
     if (workerClosed) complete();
   });
@@ -131,11 +162,8 @@ process.on("message", (message: unknown) => {
   });
   worker.on("close", (exitCode, signal) => {
     workerClosed = true;
-    const abnormal =
-      (exitCode !== null && exitCode !== 0) ||
-      (signal !== null &&
-        (!stopping || (signal !== "SIGTERM" && signal !== "SIGKILL")));
-    if (reply === undefined || abnormal)
+    workerExit = { code: exitCode, signal };
+    if (reply === undefined)
       reply = {
         version: 1,
         ok: false,
