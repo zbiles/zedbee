@@ -189,6 +189,64 @@ function planDependencies(
 }
 
 describe("buildFixPlan", () => {
+  it("passes cancellation into discovery and snapshot construction", async () => {
+    const files = await fixture();
+    const calls: string[] = [];
+    const controller = new AbortController();
+    let discoverySignal: AbortSignal | undefined;
+    let snapshotSignal: AbortSignal | undefined;
+    const dependencies = planDependencies(files, calls);
+    await buildFixPlan({
+      repositoryRoot: files.root,
+      signal: controller.signal,
+      dependencies: {
+        ...dependencies,
+        readChangeSet: async (_git, signal?: AbortSignal) => {
+          discoverySignal = signal;
+          return changeSet;
+        },
+        buildSnapshots: async (root, git, signal?: AbortSignal) => {
+          snapshotSignal = signal;
+          return dependencies.buildSnapshots(root, git);
+        },
+      },
+    });
+    expect(discoverySignal).toBe(controller.signal);
+    expect(snapshotSignal).toBe(controller.signal);
+    expect(calls).toEqual(["cleanup"]);
+  });
+
+  it("retains the primary failure when snapshot cleanup also fails", async () => {
+    const files = await fixture();
+    const calls: string[] = [];
+    const primary = new Error("private worker failure");
+    const dependencies = planDependencies(files, calls);
+    const error = await buildFixPlan({
+      repositoryRoot: files.root,
+      dependencies: {
+        ...dependencies,
+        dispatch: async () => {
+          throw primary;
+        },
+        buildSnapshots: async (root, git) => ({
+          ...(await dependencies.buildSnapshots(root, git)),
+          cleanup: async () => {
+            calls.push("cleanup");
+            throw new Error("private cleanup failure");
+          },
+        }),
+      },
+    }).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(FixPlanCleanupError);
+    expect(error).toHaveProperty("cause", primary);
+    expect(error).toHaveProperty(
+      "primaryFailure.code",
+      "CHECK_DISPATCH_FAILED",
+    );
+    expect((error as Error).message).not.toContain("private");
+    expect(calls).toEqual(["cleanup"]);
+  });
+
   it("keeps the plan clear when every blocking finding has an applicable fix", async () => {
     const files = await fixture();
     const calls: string[] = [];

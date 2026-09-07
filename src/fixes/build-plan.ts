@@ -1,12 +1,8 @@
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
-import { dirname } from "node:path";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { dispatchChecks } from "../checks/dispatcher.js";
-import {
-  createFilePolicyResolver,
-  type FilePolicyResolver,
-} from "../config/file-policy.js";
+import type { FilePolicyResolver } from "../config/file-policy.js";
 import { loadConfigFromIndex } from "../config/load-config.js";
 import type { ResolvedConfig } from "../config/schema.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -14,7 +10,6 @@ import type { ChangeSet } from "../git/change-set.js";
 import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
 import { buildSnapshotPair, type SnapshotPair } from "../git/snapshot.js";
-import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
@@ -24,8 +19,16 @@ import {
 } from "../inspection/read-json.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
 import { parseTemporaryReportMaxAge } from "../reporting/report-age.js";
-import { unsupportedEntryFailures } from "../scan/unsupported-inputs.js";
-import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
+import { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
+import {
+  withAnalysisSession,
+  DEFAULT_ANALYSIS_SESSION_DEPENDENCIES,
+  type AnalysisSessionDependencies,
+} from "../scan/analysis-session.js";
+import {
+  AnalysisSessionCleanupError,
+  phaseFailure,
+} from "../scan/analysis-failure.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
@@ -52,9 +55,18 @@ export interface BuildFixPlanDependencies {
     configPath?: string,
     signal?: AbortSignal,
   ): Promise<ResolvedConfig>;
-  createGitClient(repositoryRoot: string): GitClient;
-  readChangeSet(git: GitClient): Promise<ChangeSet>;
-  buildSnapshots(repositoryRoot: string, git: GitClient): Promise<SnapshotPair>;
+  createGitClient(
+    repositoryRoot: string,
+    options?: ConstructorParameters<typeof GitClient>[1],
+  ): GitClient;
+  readChangeSet(git: GitClient, signal?: AbortSignal): Promise<ChangeSet>;
+  discoverChangeSet?: AnalysisSessionDependencies["discoverIndexChangeSet"];
+  addLineRanges?: AnalysisSessionDependencies["addIndexLineRanges"];
+  buildSnapshots(
+    repositoryRoot: string,
+    git: GitClient,
+    signal?: AbortSignal,
+  ): Promise<SnapshotPair>;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
   dispatch: typeof dispatchChecks;
   evaluate(
@@ -77,20 +89,23 @@ export interface BuildFixPlanOptions {
   readonly dependencies?: BuildFixPlanDependencies;
 }
 
-export class FixPlanCleanupError extends Error {
-  readonly temporaryPath?: string;
-
-  constructor(temporaryPath?: string) {
-    super("Zedbee could not remove its temporary snapshot.");
+export class FixPlanCleanupError extends AnalysisSessionCleanupError {
+  constructor(
+    ...args: ConstructorParameters<typeof AnalysisSessionCleanupError>
+  ) {
+    super(...args);
     this.name = "FixPlanCleanupError";
-    if (temporaryPath !== undefined) this.temporaryPath = temporaryPath;
   }
 }
 
 const DEFAULT_DEPENDENCIES: BuildFixPlanDependencies = {
   loadConfig: loadConfigFromIndex,
-  createGitClient: (repositoryRoot) => new GitClient(repositoryRoot),
+  createGitClient: (repositoryRoot, options) =>
+    new GitClient(repositoryRoot, options),
   readChangeSet: readStagedChangeSet,
+  discoverChangeSet:
+    DEFAULT_ANALYSIS_SESSION_DEPENDENCIES.discoverIndexChangeSet,
+  addLineRanges: DEFAULT_ANALYSIS_SESSION_DEPENDENCIES.addIndexLineRanges,
   buildSnapshots: buildSnapshotPair,
   inspectRepository,
   dispatch: dispatchChecks,
@@ -657,16 +672,32 @@ function unsupportedInputError(): Error {
   );
 }
 
-function cleanupError(snapshots: SnapshotPair): FixPlanCleanupError {
-  let temporaryPath: string | undefined;
-  try {
-    temporaryPath = validateReportableSnapshotPath(
-      dirname(snapshots.targetDir),
-    );
-  } catch {
-    temporaryPath = undefined;
-  }
-  return new FixPlanCleanupError(temporaryPath);
+/** Map the existing experimental injection surface once at the session boundary. */
+function sessionDependencies(
+  dependencies: BuildFixPlanDependencies,
+  selected: ReadonlySet<FixableCheckId>,
+): AnalysisSessionDependencies {
+  const {
+    discoverIndexChangeSet: _discover,
+    addIndexLineRanges: _ranges,
+    ...shared
+  } = DEFAULT_ANALYSIS_SESSION_DEPENDENCIES;
+  return {
+    ...shared,
+    createGitClient: dependencies.createGitClient,
+    loadIndexConfig: dependencies.loadConfig,
+    readIndexChangeSet: dependencies.readChangeSet,
+    ...(dependencies.discoverChangeSet === undefined
+      ? {}
+      : { discoverIndexChangeSet: dependencies.discoverChangeSet }),
+    ...(dependencies.addLineRanges === undefined
+      ? {}
+      : { addIndexLineRanges: dependencies.addLineRanges }),
+    buildIndexSnapshots: dependencies.buildSnapshots,
+    inspectRepository: dependencies.inspectRepository,
+    dispatch: dependencies.dispatch,
+    adapters: selectedAdapters(dependencies.adapters, selected),
+  };
 }
 
 export async function buildFixPlan(
@@ -675,105 +706,83 @@ export async function buildFixPlan(
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
   const selected = selectedChecks(options.selectedChecks);
   const selectedSet = new Set(selected);
-  const controller =
-    options.signal === undefined ? new AbortController() : undefined;
-  const signal = options.signal ?? controller!.signal;
-  let snapshots: SnapshotPair | undefined;
-  try {
-    signal.throwIfAborted();
-    const git = dependencies.createGitClient(options.repositoryRoot);
-    const config = await dependencies.loadConfig(
-      options.repositoryRoot,
-      git,
-      options.configPath,
-      signal,
-    );
-    const changeSet = await dependencies.readChangeSet(git);
-    const policyForFile = createFilePolicyResolver(config, changeSet);
-    if (changeSet.isEmpty) {
+  const outcome = await withAnalysisSession(
+    {
+      repositoryRoot: options.repositoryRoot,
+      ...(options.configPath === undefined
+        ? {}
+        : { configPath: options.configPath }),
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      dependencies: sessionDependencies(dependencies, selectedSet),
+      resolveEmptyBaseline: false,
+      dispatchOptions: () => ({ collectFixes: true }),
+    },
+    async (session): Promise<PreparedFixPlan> => {
+      const { config, git, signal } = session;
+      if (session.kind === "unsupported") throw unsupportedInputError();
+      if (session.kind === "empty") {
+        return deepFreeze({
+          publicPlan: publicPlan(
+            selected,
+            [],
+            readonlyMap([]),
+            planChecks(selected, [], []),
+          ),
+          repositoryRoot: options.repositoryRoot,
+          candidates: Object.freeze([]),
+          workingFiles: readonlyMap([]),
+          temporaryReportMaxAgeMs: parseTemporaryReportMaxAge(
+            config.reporting.temporaryReportMaxAge,
+          ),
+        });
+      }
+      const { executions } = session;
+      const decision = dependencies.evaluate(executions, config);
+      signal.throwIfAborted();
+      const candidates = collectCandidates(executions, selectedSet);
+      const workingFiles = await workingFilePreviews(
+        options.repositoryRoot,
+        candidates,
+        git,
+        signal,
+        dependencies,
+      );
+      const planned = planCandidates(candidates, workingFiles);
+      const checks = planChecks(selected, executions, planned.items);
       return deepFreeze({
         publicPlan: publicPlan(
           selected,
-          [],
-          readonlyMap([]),
-          planChecks(selected, [], []),
+          planned.items,
+          workingFiles,
+          checks,
+          decision,
         ),
         repositoryRoot: options.repositoryRoot,
-        candidates: Object.freeze([]),
-        workingFiles: readonlyMap([]),
+        candidates: planned.candidates,
+        workingFiles,
         temporaryReportMaxAgeMs: parseTemporaryReportMaxAge(
           config.reporting.temporaryReportMaxAge,
         ),
       });
-    }
-    signal.throwIfAborted();
-    snapshots = await dependencies.buildSnapshots(options.repositoryRoot, git);
-    const unsupported = unsupportedEntryFailures(
-      snapshots.unsupportedEntries,
-      new Set(changeSet.files.keys()),
-      policyForFile,
-      "index",
+    },
+  );
+  if (outcome.cleanupFailure !== undefined) {
+    throw new FixPlanCleanupError(
+      outcome.cleanupFailure.temporaryPath,
+      outcome.completed
+        ? undefined
+        : {
+            cause: outcome.error,
+            primaryFailure: phaseFailure(
+              outcome.error,
+              outcome.state.phase,
+              outcome.state.source.mode,
+            ),
+          },
     );
-    if (unsupported.length > 0) throw unsupportedInputError();
-    signal.throwIfAborted();
-    const baselineInspection = await dependencies.inspectRepository(
-      snapshots.baselineDir,
-    );
-    signal.throwIfAborted();
-    const targetInspection = await dependencies.inspectRepository(
-      snapshots.targetDir,
-    );
-    signal.throwIfAborted();
-    const executions = await dependencies.dispatch(
-      selectedAdapters(dependencies.adapters, selectedSet),
-      {
-        repositoryRoot: options.repositoryRoot,
-        changeSet,
-        config,
-        snapshots,
-        baselineInspection,
-        targetInspection,
-        signal,
-        policyForFile,
-      },
-      { collectFixes: true },
-    );
-    const decision = dependencies.evaluate(executions, config);
-    signal.throwIfAborted();
-    const candidates = collectCandidates(executions, selectedSet);
-    const workingFiles = await workingFilePreviews(
-      options.repositoryRoot,
-      candidates,
-      git,
-      signal,
-      dependencies,
-    );
-    const planned = planCandidates(candidates, workingFiles);
-    const checks = planChecks(selected, executions, planned.items);
-    return deepFreeze({
-      publicPlan: publicPlan(
-        selected,
-        planned.items,
-        workingFiles,
-        checks,
-        decision,
-      ),
-      repositoryRoot: options.repositoryRoot,
-      candidates: planned.candidates,
-      workingFiles,
-      temporaryReportMaxAgeMs: parseTemporaryReportMaxAge(
-        config.reporting.temporaryReportMaxAge,
-      ),
-    });
-  } finally {
-    if (snapshots !== undefined) {
-      try {
-        await snapshots.cleanup();
-      } catch {
-        throw cleanupError(snapshots);
-      }
-    }
   }
+  if (!outcome.completed) throw outcome.error;
+  return outcome.value;
 }
 
 /** Serializes only the public, source-free plan projection. */
