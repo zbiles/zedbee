@@ -115,7 +115,7 @@
     "ajv": "8.18.0",
     "ink-testing-library": "4.0.0",
     "spdx-expression-parse": "5.0.0",
-    "tsx": "4.23.12",
+    "tsx": "4.23.13",
     "vitest": "4.1.10"
   }
 }
