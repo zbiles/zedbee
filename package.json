@@ -79,7 +79,7 @@
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
     "@eslint/js": "9.39.5",
-    "@secretlint/core": "13.0.4",
+    "@secretlint/core": "13.0.5",
     "@secretlint/secretlint-rule-preset-recommend": "13.0.4",
     "@secretlint/types": "13.0.4",
     "@yarnpkg/lockfile": "1.1.0",
