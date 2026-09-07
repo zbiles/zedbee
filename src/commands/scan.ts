@@ -22,6 +22,8 @@ import {
   writeCommandDiagnostics,
   SNAPSHOT_CLEANUP_WARNING,
   type DiagnosticEntry,
+  timeCommandStage,
+  type DiagnosticTimings,
 } from "./diagnostics.js";
 import type {
   ReportingSurface,
@@ -204,6 +206,7 @@ export async function executeScanCommand(
   dependencies: ScanCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 1 | 2> {
   const started = performance.now();
+  const stages: DiagnosticTimings = {};
   let diagnosticEntries: readonly DiagnosticEntry[] = [];
   let cleanupFailed = false;
   let session: InkSession | undefined;
@@ -219,8 +222,8 @@ export async function executeScanCommand(
   };
   try {
     options.signal?.throwIfAborted();
-    const repositoryRoot = await dependencies.resolveRepositoryRoot(
-      options.cwd,
+    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
+      dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -282,18 +285,24 @@ export async function executeScanCommand(
       }
     }
 
-    const report = await dependencies.scan(scanOptions);
+    const report = await timeCommandStage(stages, "analysis", () =>
+      dependencies.scan(scanOptions),
+    );
     diagnosticEntries = report.checks.map((check) => ({
       durationMs: check.durationMs,
+      checkId: check.checkId,
+      status: check.status,
       ...(check.error?.diagnostic === undefined
         ? {}
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    const presentation = await dependencies.preparePresentation(report, {
-      requestedFormat: options.format,
-      selectedFormat: format,
-    });
+    const presentation = await timeCommandStage(stages, "report", () =>
+      dependencies.preparePresentation(report, {
+        requestedFormat: options.format,
+        selectedFormat: format,
+      }),
+    );
 
     if (format === "json") {
       const json = renderJson(report);
@@ -351,6 +360,7 @@ export async function executeScanCommand(
       writeCommandDiagnostics(io, {
         command: "scan",
         durationMs: performance.now() - started,
+        stages,
         entries: diagnosticEntries,
         cancelled: options.signal?.aborted === true,
         cleanupFailed,

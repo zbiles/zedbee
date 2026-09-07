@@ -7,6 +7,8 @@ import {
   writeCommandDiagnostics,
   SNAPSHOT_CLEANUP_WARNING,
   type DiagnosticEntry,
+  timeCommandStage,
+  type DiagnosticTimings,
 } from "./diagnostics.js";
 import { presentFixResult } from "../fixes/result-presentation.js";
 import {
@@ -486,12 +488,13 @@ export async function executeFixCommand(
   dependencies: FixCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 1 | 2> {
   const started = performance.now();
+  const stages: DiagnosticTimings = {};
   const diagnosticEntries: DiagnosticEntry[] = [];
   let cleanupFailed = false;
   try {
     options.signal?.throwIfAborted();
-    const repositoryRoot = await dependencies.resolveRepositoryRoot(
-      options.cwd,
+    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
+      dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -503,21 +506,21 @@ export async function executeFixCommand(
       );
       return 2;
     }
-    const prepared = await dependencies.buildFixPlan({
-      repositoryRoot,
-      selectedChecks:
-        options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
-      ...(configPath === undefined ? {} : { configPath }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const prepared = await timeCommandStage(stages, "analysis", () =>
+      dependencies.buildFixPlan({
+        repositoryRoot,
+        selectedChecks:
+          options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
+        ...(configPath === undefined ? {} : { configPath }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
+    );
     const format = formatFor(options);
     diagnosticEntries.push(
       ...(prepared.publicPlan.checks ?? []).flatMap((check) => check.issues),
     );
-    const maintenance = await maintainPlan(
-      prepared,
-      dependencies.store,
-      format === "text",
+    const maintenance = await timeCommandStage(stages, "report", () =>
+      maintainPlan(prepared, dependencies.store, format === "text"),
     );
     const outputPlan = (applied: boolean, result?: FixResult): void => {
       if (format === "json") {
@@ -591,9 +594,11 @@ export async function executeFixCommand(
     }
 
     options.signal?.throwIfAborted();
-    const result = await dependencies.applyFixPlan(
-      prepared,
-      options.signal === undefined ? {} : { signal: options.signal },
+    const result = await timeCommandStage(stages, "apply", () =>
+      dependencies.applyFixPlan(
+        prepared,
+        options.signal === undefined ? {} : { signal: options.signal },
+      ),
     );
     diagnosticEntries.push(...result.issues);
     if (format === "json") {
@@ -648,6 +653,7 @@ export async function executeFixCommand(
       writeCommandDiagnostics(io, {
         command: "fix",
         durationMs: performance.now() - started,
+        stages,
         entries: diagnosticEntries,
         cancelled: options.signal?.aborted === true,
         cleanupFailed,

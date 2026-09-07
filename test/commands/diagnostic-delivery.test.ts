@@ -129,6 +129,91 @@ function fixDependencies(): FixCommandDependencies {
 }
 
 describe("safe diagnostic delivery", () => {
+  it("does not copy unknown check identifiers or targets into timing diagnostics", async () => {
+    const io = terminal();
+    await executeScanCommand(
+      {
+        cwd: "/repo",
+        format: "json",
+        color: false,
+        animations: false,
+        diagnostics: true,
+      },
+      io,
+      {
+        ...scanDependencies(),
+        scan: async () =>
+          createReport({
+            checks: [
+              {
+                checkId: "fixture-secret-marker",
+                target: "private-target",
+                status: "completed",
+                findings: [],
+                durationMs: 4,
+              },
+            ],
+          }),
+      },
+    );
+    const metadata = JSON.parse(io.stderr.join("").split("\n")[1]!);
+    expect(metadata.checks).toEqual([]);
+    expect(io.stderr.join("")).not.toContain("fixture-secret-marker");
+    expect(io.stderr.join("")).not.toContain("private-target");
+  });
+  it.each(["scan", "fix"] as const)(
+    "exposes useful stage timings on a successful %s without failure diagnostics",
+    async (command) => {
+      const io = terminal();
+      const options = {
+        cwd: "/repo",
+        format: "json" as const,
+        color: false,
+        animations: false,
+        diagnostics: true,
+      };
+      const plan = prepared();
+      const exit =
+        command === "scan"
+          ? await executeScanCommand(options, io, {
+              ...scanDependencies(),
+              scan: async () => createReport(),
+            })
+          : await executeFixCommand({ ...options, yes: false }, io, {
+              ...fixDependencies(),
+              buildFixPlan: async () => ({
+                ...plan,
+                publicPlan: {
+                  ...plan.publicPlan,
+                  exitCode: 0,
+                  checks: [
+                    {
+                      checkId: "lint",
+                      status: "completed",
+                      fixes: 0,
+                      issues: [],
+                    },
+                  ],
+                },
+              }),
+            });
+      expect(exit).toBe(0);
+      const metadata = JSON.parse(io.stderr.join("").split("\n")[1]!);
+      expect(metadata.stages).toEqual({
+        repository: expect.any(Number),
+        analysis: expect.any(Number),
+        report: expect.any(Number),
+      });
+      for (const duration of Object.values(metadata.stages))
+        expect(duration).toBeGreaterThanOrEqual(0);
+      expect(metadata.analyzers).toEqual([]);
+      if (command === "scan")
+        expect(metadata.checks).toEqual([
+          { checkId: "formatting", status: "completed", durationMs: 4 },
+        ]);
+      expect(io.stderr.join("")).not.toContain("fixture-secret-marker");
+    },
+  );
   it.each(["json", "sarif"] as const)(
     "carries only allowed analyzer fields in scan %s",
     (format) => {
@@ -327,6 +412,9 @@ describe("safe diagnostic delivery", () => {
       workingDiagnostic,
     );
     expect(io.stderr.join("")).toContain('"operation":"format-working-source"');
+    expect(
+      JSON.parse(io.stderr.join("").split("\n")[1]!).stages.apply,
+    ).toBeGreaterThanOrEqual(0);
     expect(io.stdout.join("") + io.stderr.join("")).not.toContain(
       "fixture-secret-marker",
     );
