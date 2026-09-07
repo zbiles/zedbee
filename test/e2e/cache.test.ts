@@ -47,23 +47,23 @@ describe("observation cache integration", () => {
 
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: true,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [
             {
-              check: "lint",
+              check: "reactCorrectness",
               rule: "fixture-rule",
               identity: "fixture:src/value.ts:1",
               severity: "error" as const,
@@ -127,18 +127,18 @@ describe("observation cache integration", () => {
     await repository.git(["add", "--", "src/value.ts"]);
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: false,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [],
@@ -194,18 +194,18 @@ describe("observation cache integration", () => {
     await repository.git(["add", "--", "src/value.ts"]);
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: false,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [],
@@ -215,7 +215,7 @@ describe("observation cache integration", () => {
     let currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
     });
     const git = new GitClient(repository.root);
     const dependencies: RunScanDependencies = {
@@ -256,11 +256,13 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
       ],
     });
@@ -268,15 +270,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
         {
           files: ["."],
-          checks: { lint: { rules: { "no-console": "off" } } },
+          checks: { reactCorrectness: { rules: { "react/no-danger": "off" } } },
         },
       ],
     });
@@ -284,15 +288,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["."],
-          checks: { lint: { rules: { "no-console": "off" } } },
+          checks: { reactCorrectness: { rules: { "react/no-danger": "off" } } },
         },
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
       ],
     });
@@ -300,12 +306,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["src/**"],
           checks: {
-            lint: { rules: { "no-console": "error", eqeqeq: "warn" } },
+            reactCorrectness: {
+              rules: {
+                "react/no-danger": "error",
+                "react/no-unknown-property": "warn",
+              },
+            },
           },
         },
       ],
@@ -315,12 +326,17 @@ describe("observation cache integration", () => {
       {
         schemaVersion: 1,
         profile: "recommended",
-        checks: { lint: { rules: { "no-console": "warn" } } },
+        checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
         overrides: [
           {
             files: ["src/**"],
             checks: {
-              lint: { rules: { eqeqeq: "warn", "no-console": "error" } },
+              reactCorrectness: {
+                rules: {
+                  "react/no-unknown-property": "warn",
+                  "react/no-danger": "error",
+                },
+              },
             },
           },
         ],
