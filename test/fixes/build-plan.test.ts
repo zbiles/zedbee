@@ -391,6 +391,12 @@ describe("buildFixPlan", () => {
         findings: [],
         error: {
           code: "TYPED_LINT_ANALYSIS_FAILED",
+          diagnostic: {
+            checkId: "lint",
+            operation: "planFixes",
+            category: "execution",
+            engine: { name: "eslint" },
+          },
           message: "Typed lint analysis could not inspect this file.",
           path: "src/value.ts",
           remediation:
@@ -489,6 +495,12 @@ describe("buildFixPlan", () => {
         issues: [
           {
             code: "TYPED_LINT_ANALYSIS_FAILED",
+            diagnostic: {
+              checkId: "lint",
+              operation: "planFixes",
+              category: "execution",
+              engine: { name: "eslint" },
+            },
             message: "Typed lint analysis could not inspect this file.",
             path: "src/value.ts",
             remediation:
@@ -685,9 +697,7 @@ describe("buildFixPlan", () => {
   });
 
   it("uses the indexed configuration when the working copy disables a fix", async () => {
-    const repository = await createGitRepository(
-      "zedbee-fix-indexed-config-",
-    );
+    const repository = await createGitRepository("zedbee-fix-indexed-config-");
     const strictConfig = {
       schemaVersion: 1,
       profile: "fast",
@@ -701,7 +711,10 @@ describe("buildFixPlan", () => {
         reactAccessibility: "off",
       },
     } as const;
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.write(
       ".zedbeerc.jsonc",

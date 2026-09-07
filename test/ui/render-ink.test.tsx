@@ -3,10 +3,74 @@ import { describe, expect, it, vi } from "vitest";
 import {
   INK_MINIMUM_DISPLAY_MS,
   inkMaxFps,
-  runInkScan,
+  openInkSession,
 } from "../../src/ui/render-ink.js";
-import { createGitRepository } from "../helpers/git-repository.js";
+import { executeScanCommand } from "../../src/commands/scan.js";
+import type { RunScanOptions } from "../../src/scan/run-scan.js";
+import type { ScanReport } from "../../src/scan/report.js";
+import type { prepareTerminalPresentation } from "../../src/reporting/presentation.js";
+import type { TemporaryReportStore } from "../../src/reporting/temporary-reports.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
+
+// Exercise the real command/renderer boundary, with analysis and storage fixtures.
+async function runInkScan(
+  scanOptions: RunScanOptions,
+  viewOptions: Parameters<typeof openInkSession>[0],
+  dependencies: {
+    runScan?: (options: RunScanOptions) => Promise<ScanReport>;
+    preparePresentation?: typeof prepareTerminalPresentation;
+    store?: TemporaryReportStore;
+    interactive?: boolean;
+    wait?: (milliseconds: number) => Promise<void>;
+  } = {},
+): Promise<ScanReport> {
+  let report: ScanReport | undefined;
+  const exit = await executeScanCommand(
+    {
+      cwd: scanOptions.repositoryRoot,
+      format: viewOptions.requestedFormat,
+      color: viewOptions.color,
+      animations: viewOptions.animations,
+    },
+    {
+      stdinIsTTY: true,
+      stdoutIsTTY: true,
+      width: viewOptions.width,
+      env: {},
+      writeStdout: (value) => {
+        process.stdout.write(value);
+      },
+      writeStderr: (value) => {
+        process.stderr.write(value);
+      },
+    },
+    {
+      resolveRepositoryRoot: async () => scanOptions.repositoryRoot,
+      scan: async (options) => {
+        report = await (dependencies.runScan?.(options) ?? createReport());
+        return report;
+      },
+      preparePresentation: async (result, options) =>
+        dependencies.preparePresentation?.(result, {
+          ...options,
+          store: dependencies.store ?? {
+            maintain: async () => ({ warnings: [] }),
+          },
+        }) ?? {
+          automatic: false,
+          reportStatus: "not-requested",
+          findings: result.summary.findings,
+          totalFindingCount: result.summary.findings.length,
+          abbreviated: false,
+          warnings: [],
+        },
+      openInk: (options, onError) =>
+        openInkSession(options, onError, dependencies),
+    },
+  );
+  expect(exit).toBe(report?.exitCode);
+  return report!;
+}
 
 describe("runInkScan", () => {
   it("retains the 400 ms minimum live-dashboard duration", () => {
@@ -49,12 +113,6 @@ describe("runInkScan", () => {
   });
 
   it("does not impose the animated minimum display time without animation", async () => {
-    const repository = await createGitRepository("zedbee-ink-no-animation-");
-    await repository.write(
-      "package.json",
-      '{"name":"ink-no-animation-fixture","private":true}\n',
-    );
-    await repository.commitAll("fixture setup");
     const wait = vi.fn(async () => undefined);
     const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
       ...args: unknown[]
@@ -67,7 +125,7 @@ describe("runInkScan", () => {
 
     try {
       await runInkScan(
-        { repositoryRoot: repository.root },
+        { repositoryRoot: "/repo" },
         {
           requestedFormat: "ink",
           color: false,
@@ -84,12 +142,6 @@ describe("runInkScan", () => {
   });
 
   it("keeps explicit Ink final output and requested-format identity truthful", async () => {
-    const repository = await createGitRepository("zedbee-ink-presentation-");
-    await repository.write(
-      "package.json",
-      '{"name":"ink-presentation-fixture","private":true}\n',
-    );
-    await repository.commitAll("fixture setup");
     const output: string[] = [];
     const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
     const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
@@ -138,7 +190,7 @@ describe("runInkScan", () => {
 
     try {
       await runInkScan(
-        { repositoryRoot: repository.root },
+        { repositoryRoot: "/repo" },
         {
           requestedFormat: "ink",
           color: false,
@@ -166,12 +218,6 @@ describe("runInkScan", () => {
   });
 
   it("restores terminal history before appending the automatic result", async () => {
-    const repository = await createGitRepository("zedbee-auto-ink-result-");
-    await repository.write(
-      "package.json",
-      '{"name":"auto-ink-result-fixture","private":true}\n',
-    );
-    await repository.commitAll("fixture setup");
     const output: string[] = [];
     const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
     const rows = Object.getOwnPropertyDescriptor(process.stdout, "rows");
@@ -215,7 +261,7 @@ describe("runInkScan", () => {
 
     try {
       await runInkScan(
-        { repositoryRoot: repository.root },
+        { repositoryRoot: "/repo" },
         {
           requestedFormat: "auto",
           color: false,

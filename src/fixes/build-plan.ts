@@ -30,6 +30,7 @@ import {
   phaseFailure,
 } from "../scan/analysis-failure.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
+import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import {
@@ -626,6 +627,11 @@ function planChecks(
           : [
               {
                 code: error.code,
+                ...(error.diagnostic === undefined
+                  ? {}
+                  : {
+                      diagnostic: sanitizeAnalyzerDiagnostic(error.diagnostic),
+                    }),
                 message: error.message,
                 ...(error.path === undefined ? {} : { path: error.path }),
                 ...(error.remediation === undefined
@@ -802,6 +808,11 @@ export function renderFixPlanJson(plan: FixPlan): string {
               fixes: check.fixes,
               issues: check.issues.map((issue) => ({
                 code: issue.code,
+                ...(issue.diagnostic === undefined
+                  ? {}
+                  : {
+                      diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic),
+                    }),
                 message: issue.message,
                 ...(issue.path === undefined ? {} : { path: issue.path }),
                 ...(issue.remediation === undefined

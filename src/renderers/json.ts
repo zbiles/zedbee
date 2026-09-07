@@ -53,6 +53,9 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
       ? undefined
       : {
           code: check.error.code,
+          ...(check.error.diagnostic === undefined
+            ? {}
+            : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
           ...(check.error.path === undefined ? {} : { path: check.error.path }),
           ...(check.error.paths === undefined

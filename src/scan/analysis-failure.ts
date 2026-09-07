@@ -46,6 +46,18 @@ export function retainCleanupFailure(
   return cleanup;
 }
 
+/** Inspect only the explicit cleanup attachment, never exception causes or messages. */
+export function hasAnalysisCleanupFailure(error: unknown): boolean {
+  if (error instanceof AnalysisSessionCleanupError) return true;
+  if (!(error instanceof Error)) return false;
+  const descriptor = Object.getOwnPropertyDescriptor(error, "cleanupFailure");
+  return (
+    descriptor !== undefined &&
+    "value" in descriptor &&
+    descriptor.value instanceof AnalysisSessionCleanupError
+  );
+}
+
 export type ActiveScanPhase =
   | "configuration"
   | "change-discovery"

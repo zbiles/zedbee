@@ -22,6 +22,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  diagnostics?: boolean;
   format: RequestedOutputFormat;
   base?: string;
   config?: string;
@@ -56,6 +57,7 @@ interface CommanderInitOptions {
 }
 
 interface CommanderFixOptions {
+  diagnostics?: boolean;
   format: "auto" | "text" | "json";
   config?: string;
   yes: boolean;
@@ -75,6 +77,7 @@ export function scanTimeoutOverrides(
 
 export interface CliDependencies {
   readonly executeScanCommand?: typeof executeScanCommand;
+  readonly executeFixCommand?: typeof executeFixCommand;
 }
 
 export async function runCli(
@@ -221,6 +224,10 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
+    .option(
+      "--diagnostics",
+      "write safe analyzer and runtime diagnostics to stderr",
+    )
     .addOption(
       new Option("--no-timeout", "disable configured Git hard timeouts"),
     )
@@ -243,6 +250,7 @@ export async function runCli(
               ? { sourceExcerpts: "exclude" as const }
               : {}),
           ...scanTimeoutOverrides(argv, options.timeout),
+          ...(options.diagnostics === true ? { diagnostics: true } : {}),
           signal: controller.signal,
         },
         {
@@ -271,6 +279,10 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--yes", "apply the exact plan without confirmation", false)
+    .option(
+      "--diagnostics",
+      "write safe analyzer and runtime diagnostics to stderr",
+    )
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(
@@ -278,11 +290,12 @@ export async function runCli(
         check: FixableCheckId | undefined,
         options: CommanderFixOptions,
       ) => {
-        exitCode = await executeFixCommand(
+        exitCode = await (dependencies.executeFixCommand ?? executeFixCommand)(
           {
             cwd: process.cwd(),
             ...(check === undefined ? {} : { check }),
             yes: options.yes,
+            ...(options.diagnostics === true ? { diagnostics: true } : {}),
             format: options.format,
             color: options.color,
             animations: options.animations,

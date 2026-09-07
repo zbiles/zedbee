@@ -74,6 +74,7 @@ export interface FixPlanFile {
 }
 
 export interface FixPlanCheckIssue {
+  readonly diagnostic?: import("../checks/diagnostics.js").AnalyzerDiagnostic;
   readonly code: string;
   readonly message: string;
   readonly path?: string;

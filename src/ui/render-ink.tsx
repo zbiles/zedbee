@@ -1,31 +1,13 @@
 import { render } from "ink";
-import type { ScanEvent } from "../checks/events.js";
-import {
-  prepareTerminalPresentation,
-  type PreparePresentationOptions,
-  type TerminalPresentation,
-} from "../reporting/presentation.js";
-import {
-  createTemporaryReportStore,
-  type TemporaryReportStore,
-} from "../reporting/temporary-reports.js";
-import { runScan, type RunScanOptions } from "../scan/run-scan.js";
+import type { InkRenderOptions, InkSession } from "../commands/scan.js";
+import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ScanReport } from "../scan/report.js";
+import { createScanProgress, updateScanProgress } from "./live-dashboard.js";
 import { renderStaticInk } from "./render-static.js";
 import { ScanApp } from "./scan-app.js";
 import { ScanResultDashboard } from "./scan-result-dashboard.js";
 
-export interface InkSessionOptions {
-  requestedFormat: "auto" | "ink";
-  color: boolean;
-  animations: boolean;
-  width: number;
-}
-
-export interface InkScanDependencies {
-  readonly runScan?: typeof runScan;
-  readonly preparePresentation?: typeof prepareTerminalPresentation;
-  readonly store?: TemporaryReportStore;
+export interface InkSessionDependencies {
   readonly interactive?: boolean;
   readonly wait?: (milliseconds: number) => Promise<void>;
 }
@@ -43,20 +25,30 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-export async function runInkScan(
-  scanOptions: RunScanOptions,
-  viewOptions: InkSessionOptions,
-  dependencies: InkScanDependencies = {},
-): Promise<ScanReport> {
-  const events: ScanEvent[] = [];
+/** Observes events and the final report; analysis and persistence belong to the controller. */
+export async function openInkSession(
+  viewOptions: InkRenderOptions,
+  onError: () => void,
+  dependencies: InkSessionDependencies = {},
+): Promise<InkSession> {
+  const progress = createScanProgress();
   const started = performance.now();
+  let failed = false;
+  const notifyError = (): void => {
+    failed = true;
+    try {
+      onError();
+    } catch {
+      /* Error observers are presentation only. */
+    }
+  };
   let homeTemporaryScreen =
     viewOptions.requestedFormat === "auto" &&
     process.stdout.isTTY === true &&
     dependencies.interactive !== false;
   const app = render(
     <ScanApp
-      events={events}
+      progress={progress}
       startedAt={started}
       elapsedMs={0}
       width={viewOptions.width}
@@ -71,21 +63,27 @@ export async function runInkScan(
       onRender() {
         if (!homeTemporaryScreen) return;
         homeTemporaryScreen = false;
-        process.stdout.write(CURSOR_HOME);
+        try {
+          process.stdout.write(CURSOR_HOME);
+        } catch {
+          notifyError();
+        }
       },
       ...(dependencies.interactive === undefined
         ? {}
         : { interactive: dependencies.interactive }),
     },
   );
-
+  // Observe asynchronous Ink failures immediately, without exposing their causes.
+  const exited = app.waitUntilExit();
+  void exited.catch(notifyError);
   const rerender = (
     report?: ScanReport,
     presentation?: TerminalPresentation,
   ): void => {
     app.rerender(
       <ScanApp
-        events={[...events]}
+        progress={progress}
         startedAt={started}
         elapsedMs={Math.max(0, performance.now() - started)}
         width={viewOptions.width}
@@ -96,59 +94,54 @@ export async function runInkScan(
       />,
     );
   };
-
   const ticker = viewOptions.animations
-    ? setInterval(rerender, INK_ANIMATION_FRAME_MS)
+    ? setInterval(() => {
+        if (failed) return;
+        try {
+          rerender();
+        } catch {
+          notifyError();
+        }
+      }, INK_ANIMATION_FRAME_MS)
     : undefined;
   let liveMounted = true;
-  const unmountLive = async (): Promise<void> => {
+  const close = async (): Promise<void> => {
+    if (ticker !== undefined) clearInterval(ticker);
     if (!liveMounted) return;
     liveMounted = false;
     app.unmount();
-    await app.waitUntilExit();
+    await exited;
   };
-
-  try {
-    const report = await (dependencies.runScan ?? runScan)({
-      ...scanOptions,
-      onEvent(event) {
-        events.push(event);
-        scanOptions.onEvent?.(event);
-        rerender();
-      },
-    });
-    const presentationOptions: PreparePresentationOptions = {
-      requestedFormat: viewOptions.requestedFormat,
-      selectedFormat: "ink",
-      store: dependencies.store ?? createTemporaryReportStore(),
-    };
-    const presentation = await (
-      dependencies.preparePresentation ?? prepareTerminalPresentation
-    )(report, presentationOptions);
-    if (viewOptions.animations) {
-      const remaining =
-        INK_MINIMUM_DISPLAY_MS - Math.max(0, performance.now() - started);
-      if (remaining > 0) await (dependencies.wait ?? wait)(remaining);
-    }
-    if (ticker !== undefined) clearInterval(ticker);
-    if (viewOptions.requestedFormat === "auto") {
-      await unmountLive();
-      await renderStaticInk(
-        <ScanResultDashboard
-          report={report}
-          presentation={presentation}
-          width={viewOptions.width}
-          color={viewOptions.color}
-        />,
-        { width: viewOptions.width },
-      );
-      return report;
-    }
-    rerender(report, presentation);
-    await app.waitUntilRenderFlush();
-    return report;
-  } finally {
-    if (ticker !== undefined) clearInterval(ticker);
-    await unmountLive();
-  }
+  return {
+    update(event) {
+      if (!liveMounted || failed) return;
+      updateScanProgress(progress, event);
+      rerender();
+    },
+    async finish(report, presentation) {
+      if (viewOptions.animations) {
+        const remaining =
+          INK_MINIMUM_DISPLAY_MS - Math.max(0, performance.now() - started);
+        if (remaining > 0) await (dependencies.wait ?? wait)(remaining);
+      }
+      if (ticker !== undefined) clearInterval(ticker);
+      if (failed) return;
+      if (viewOptions.requestedFormat === "auto") {
+        await close();
+        await renderStaticInk(
+          <ScanResultDashboard
+            report={report}
+            presentation={presentation}
+            width={viewOptions.width}
+            color={viewOptions.color}
+          />,
+          { width: viewOptions.width },
+        );
+      } else {
+        rerender(report, presentation);
+        await app.waitUntilRenderFlush();
+      }
+    },
+    close,
+  };
 }
