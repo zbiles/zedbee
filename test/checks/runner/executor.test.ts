@@ -5,7 +5,7 @@ import { withAnalyzerExecutionSession } from "../../../src/checks/runner/session
 import { runAnalyzerJob } from "../../../src/checks/runner/run-job.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../../src/checks/prettier/settings.js";
 import { mkdtemp, writeFile, rm, realpath, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import {
   captureAnalysisSources,
@@ -452,6 +452,15 @@ describe("reusable analyzer executor", () => {
         { snapshotRoot: root, paths: ["a.js", "missing.js"] },
       ]))!;
       const wire = exportAnalysisSourceCapture(capture)!;
+      const relativeCanonical = structuredClone(wire);
+      const rootEntry = relativeCanonical.roots[0]!.entries[0]!;
+      (rootEntry as any).canonicalPath = relative(
+        process.cwd(),
+        rootEntry.canonicalPath,
+      );
+      expect(() => importAnalysisSourceCapture(relativeCanonical)).toThrow(
+        "Invalid source capture transport",
+      );
       const importedWire = structuredClone(wire);
       const imported = importAnalysisSourceCapture(importedWire);
       const originalInode =

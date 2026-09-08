@@ -307,6 +307,8 @@ function validateSourceTransport(
       ["directory", "file"].includes(item.targetKind as string) &&
       identity(item.lexicalIdentity) &&
       identity(item.targetIdentity) &&
+      isAbsolute(item.absolutePath) &&
+      isAbsolute(item.canonicalPath) &&
       contained(root, item.absolutePath) &&
       contained(root, item.canonicalPath) &&
       resolve(root, item.repositoryPath) === item.absolutePath
