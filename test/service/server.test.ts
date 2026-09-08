@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as sources from "../../src/inspection/source-capture.js";
-import { connect } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { startServiceServer, IdleLifetime } from "../../src/service/server.js";
 import { ServiceState } from "../../src/service/state.js";
 import {
@@ -12,6 +12,7 @@ import {
 } from "../../src/service/client.js";
 import { serviceEndpoint } from "../../src/service/transport.js";
 import { encodeFrame } from "../../src/service/protocol.js";
+import { ByteBudget, FrameDecoder } from "../../src/service/protocol.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -48,6 +49,90 @@ const request = {
   },
 } as const;
 describe("service executor isolation", () => {
+  it("bounds global sessions across clients and returns structured capacity without starting workers", async () => {
+    const { state, record, server } = await fixture();
+    const clients = await Promise.all(
+      Array.from({ length: 9 }, () => connectService(state, record)),
+    );
+    const executors = clients.map(executorForConnection);
+    for (const executor of executors) cleanups.push(() => executor.close());
+    for (const executor of executors.slice(0, 8))
+      for (let count = 0; count < 4; count++) await executor.openSession();
+    expect(server.status()).toMatchObject({ activeSessions: 32 });
+    await expect(executors[8]!.openSession()).rejects.toMatchObject({
+      code: "ANALYZER_CAPACITY",
+      scope: "session",
+    });
+    await executors[0]!.close();
+    await (await executors[8]!.openSession()).close();
+  });
+  it("never sends source to a hijacked endpoint whose server proof is wrong", async () => {
+    const parent = await realpath(await mkdtemp(join(tmpdir(), "zh-")));
+    cleanups.push(() => rm(parent, { recursive: true, force: true }));
+    const state = new ServiceState(join(parent, "s"));
+    await state.prepare();
+    const record = {
+      version: 1,
+      identity: "a".repeat(64),
+      instance: "b".repeat(64),
+      secret: "c".repeat(64),
+    } as const;
+    const seen: unknown[] = [],
+      sockets = new Set<Socket>();
+    const fake = createServer((socket) => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.once("close", () => sockets.delete(socket));
+      const decoder = new FrameDecoder(
+        new ByteBudget(65536),
+        65536,
+        (value, release) => {
+          seen.push(value);
+          release();
+          const type = (value as any).type;
+          socket.write(
+            encodeFrame(
+              type === "hello"
+                ? {
+                    type: "challenge",
+                    nonce: "d".repeat(64),
+                    proof: "e".repeat(64),
+                  }
+                : { type: "authenticated" },
+            ),
+          );
+        },
+      );
+      socket.on("data", (chunk) => {
+        try {
+          decoder.push(chunk as Buffer);
+        } catch {
+          socket.destroy();
+        }
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      fake.once("error", reject);
+      fake.listen(serviceEndpoint(state, record.instance), resolve);
+    });
+    cleanups.push(async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve) => fake.close(() => resolve()));
+    });
+    await expect(
+      connectService(state, record).then(async (client) => {
+        try {
+          const executor = executorForConnection(client);
+          return await (await executor.openSession()).run(request);
+        } finally {
+          await client.close();
+        }
+      }),
+    ).rejects.toThrow();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({ type: "hello" });
+    expect(JSON.stringify(seen)).not.toContain("const a=1");
+  });
   it("expires only after five minutes with zero active sessions; status does not reset it", () => {
     let now = 0;
     const idle = new IdleLifetime(() => now);

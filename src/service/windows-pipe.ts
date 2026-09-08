@@ -33,6 +33,10 @@ const sidString = security.func("__stdcall", "ConvertSidToStringSidW", "int", [
   "void *",
   ptr,
 ]);
+const parseSid = security.func("__stdcall", "ConvertStringSidToSidW", "int", [
+  "str16",
+  ptr,
+]);
 const convert = security.func(
   "__stdcall",
   "ConvertStringSecurityDescriptorToSecurityDescriptorW",
@@ -127,13 +131,13 @@ function withIdentity<T>(run: (sid: unknown, text: string) => T): T {
 }
 function withDescriptor<T>(
   run: (descriptor: unknown, acl: unknown) => T,
-  job = false,
+  mode: "state" | "job" | "pipe" = "state",
 ): T {
   return withIdentity((_sid, text) => {
     const descriptor = [null];
     if (
       !convert(
-        `O:${text}D:P(A;${job ? "" : "OICI"};${job ? "GA" : "FA"};;;${text})`,
+        `O:${text}D:P${mode === "pipe" ? "(D;;FA;;;S-1-5-2)" : ""}(A;${mode === "state" ? "OICI" : ""};${mode === "job" ? "GA" : "FA"};;;${text})`,
         1,
         descriptor,
         null,
@@ -156,7 +160,7 @@ function withDescriptor<T>(
     }
   });
 }
-function verify(handle: unknown, kind: number): void {
+function verify(handle: unknown, kind: number, pipe = false): void {
   withIdentity((sid) => {
     const descriptor = [null],
       owner = [null],
@@ -177,25 +181,43 @@ function verify(handle: unknown, kind: number): void {
       )
         throw new ServiceUnavailableError();
       const header = Buffer.from(koffi.decode(acl[0], "uint8", 8) as number[]);
-      if (header.readUInt16LE(4) !== 1) throw new ServiceUnavailableError();
-      const ace = [null];
-      if (!getAce(acl[0], 0, ace)) fail();
-      const entry = Buffer.from(koffi.decode(ace[0], "uint8", 8) as number[]);
-      const size = entry.readUInt16LE(2),
-        mask = entry.readUInt32LE(4);
-      if (
-        entry[0] !== 0 ||
-        (entry[1]! & ~3) !== 0 ||
-        size < 16 ||
-        size > 1024 ||
-        (mask !== 0x001f01ff && mask !== 0x10000000 && mask !== 0x001f001f && mask !== 0x001f003f)
-      )
-        throw new ServiceUnavailableError();
-      const aceBytes = Buffer.from(
-        koffi.decode(ace[0], "uint8", size) as number[],
-      );
-      if (!equalSid(aceBytes.subarray(8), sid))
-        throw new ServiceUnavailableError();
+      const count = pipe ? 2 : 1;
+      if (header.readUInt16LE(4) !== count) throw new ServiceUnavailableError();
+      for (let index = 0; index < count; index++) {
+        const denyNetwork = pipe && index === 0;
+        const ace = [null];
+        if (!getAce(acl[0], index, ace)) fail();
+        const entry = Buffer.from(koffi.decode(ace[0], "uint8", 8) as number[]);
+        const size = entry.readUInt16LE(2),
+          mask = entry.readUInt32LE(4);
+        if (
+          entry[0] !== (denyNetwork ? 1 : 0) ||
+          (pipe ? entry[1] !== 0 : (entry[1]! & ~3) !== 0) ||
+          size < 16 ||
+          size > 1024 ||
+          (pipe
+            ? mask !== 0x001f01ff
+            : mask !== 0x001f01ff &&
+              mask !== 0x10000000 &&
+              mask !== 0x001f001f &&
+              mask !== 0x001f003f)
+        )
+          throw new ServiceUnavailableError();
+        const aceBytes = Buffer.from(
+          koffi.decode(ace[0], "uint8", size) as number[],
+        );
+        if (denyNetwork) {
+          const network = [null];
+          if (!parseSid("S-1-5-2", network)) fail();
+          try {
+            if (!equalSid(aceBytes.subarray(8), network[0]))
+              throw new ServiceUnavailableError();
+          } finally {
+            free(network[0]);
+          }
+        } else if (!equalSid(aceBytes.subarray(8), sid))
+          throw new ServiceUnavailableError();
+      }
     } finally {
       free(descriptor[0]);
     }
@@ -328,8 +350,8 @@ export function restrictWindowsPipe(endpoint: string): void {
     withDescriptor((_descriptor, acl) => {
       if (setSecurity(handle, 6, 4 | 0x80000000, null, null, acl, null) !== 0)
         throw new ServiceUnavailableError();
-    });
-    verify(handle, 6);
+    }, "pipe");
+    verify(handle, 6, true);
   } finally {
     checkedClose(handle);
   }
@@ -379,7 +401,7 @@ export function createOwnedWindowsJobHandle(name: string): unknown {
       checkedClose(handle);
       throw error;
     }
-  }, true);
+  }, "job");
 }
 export function openWindowsJobWitness(name: string): {
   close(): void;
