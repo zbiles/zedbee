@@ -152,4 +152,35 @@ describe("structuralSecurityAdapter", () => {
         "Verify that this file uses valid JavaScript or TypeScript syntax, then retry. If the project accepts this syntax, report a Zedbee parser compatibility issue.",
     });
   });
+
+  it("analyzes valid import-type syntax while retaining structural rule coverage", async () => {
+    const { fixtures, run } = await structuralSecurityContext();
+    const source = [
+      "declare const importOriginal: <T>() => T;",
+      'const actual = await importOriginal<typeof import("node:fs")>();',
+      "export const insecure = (input: string) => eval(input);",
+      "void actual;",
+      "",
+    ].join("\n");
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.write("src/security.ts", source);
+    }
+    const context = {
+      ...run,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+    };
+
+    const collected = await structuralSecurityAdapter.collect(context);
+
+    expect(collected.targetObservations).toContainEqual(
+      expect.objectContaining({
+        rule: "direct-eval",
+        location: expect.objectContaining({
+          file: "src/security.ts",
+          startLine: 3,
+        }),
+      }),
+    );
+  });
 });

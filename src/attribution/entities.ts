@@ -55,6 +55,21 @@ function declarationName(
   return undefined;
 }
 
+function memberName(name: ts.PropertyName): string | undefined {
+  const declared = declarationName(name);
+  if (declared !== undefined) return declared;
+  if (!ts.isComputedPropertyName(name)) return undefined;
+  const expression = name.expression;
+  if (
+    !ts.isPropertyAccessExpression(expression) ||
+    !ts.isIdentifier(expression.expression) ||
+    expression.expression.text !== "Symbol"
+  ) {
+    return undefined;
+  }
+  return canonicalName(`Symbol.${expression.name.text}`);
+}
+
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
   return (
     ts.canHaveModifiers(node) &&
@@ -79,7 +94,7 @@ function memberDeclaration(
   syntaxPath: readonly number[],
 ): EntityDeclaration | undefined {
   if (node.body === undefined) return undefined;
-  const name = declarationName(node.name);
+  const name = memberName(node.name);
   return name === undefined
     ? undefined
     : {
@@ -119,18 +134,19 @@ function constructorDeclaration(
   };
 }
 
-function propertyFunctionDeclaration(
-  node: ts.PropertyDeclaration,
+function propertyCodeUnitDeclaration(
+  node: ts.PropertyDeclaration | ts.PropertyAssignment,
   syntaxPath: readonly number[],
 ): EntityDeclaration | undefined {
   if (
     node.initializer === undefined ||
-    (!ts.isArrowFunction(node.initializer) &&
+    (ts.isPropertyAssignment(node) &&
+      !ts.isArrowFunction(node.initializer) &&
       !ts.isFunctionExpression(node.initializer))
   ) {
     return undefined;
   }
-  const name = declarationName(node.name);
+  const name = memberName(node.name);
   return name === undefined
     ? undefined
     : {
@@ -138,12 +154,22 @@ function propertyFunctionDeclaration(
         name,
         node,
         identityQualifiers: [
-          { kind: "field-scope", name: `field@${syntaxPath.join(".")}` },
-          {
-            kind: "member-scope",
-            name: hasStaticModifier(node) ? "static" : "instance",
-          },
-          { kind: "member-role", name: "field" },
+          ...(ts.isPropertyAssignment(node)
+            ? [
+                {
+                  kind: "object-scope",
+                  name: `object@${syntaxPath.slice(0, -1).join(".")}`,
+                },
+                { kind: "member-role", name: "property" },
+              ]
+            : [
+                { kind: "field-scope", name: `field@${syntaxPath.join(".")}` },
+                {
+                  kind: "member-scope",
+                  name: hasStaticModifier(node) ? "static" : "instance",
+                },
+                { kind: "member-role", name: "field" },
+              ]),
         ],
       };
 }
@@ -153,6 +179,7 @@ function isClaimedFunctionExpression(node: ts.Node): boolean {
   return (
     (ts.isVariableDeclaration(parent) && parent.initializer === node) ||
     (ts.isPropertyDeclaration(parent) && parent.initializer === node) ||
+    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
     (ts.isExportAssignment(parent) && parent.expression === node)
   );
 }
@@ -196,7 +223,9 @@ function entityDeclaration(
     return memberDeclaration(node, "set", syntaxPath);
   if (ts.isConstructorDeclaration(node)) return constructorDeclaration(node);
   if (ts.isPropertyDeclaration(node))
-    return propertyFunctionDeclaration(node, syntaxPath);
+    return propertyCodeUnitDeclaration(node, syntaxPath);
+  if (ts.isPropertyAssignment(node))
+    return propertyCodeUnitDeclaration(node, syntaxPath);
   if (
     ts.isVariableDeclaration(node) &&
     node.initializer !== undefined &&
