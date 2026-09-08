@@ -84,44 +84,75 @@ it("manages a default reused CLI service without starting it during read-only st
       ).join("\n"),
     );
     await repository.git(["add", "--", "large.js"]);
-    const cancelled = execa(
-      process.execPath,
-      [cli, "scan", "--format", "json"],
-      {
-        cwd: repository.root,
-        env: {
-          TMPDIR: scratch,
-          TMP: scratch,
-          TEMP: scratch,
-          NODE_OPTIONS: "",
-          ZEDBEE_NO_UPDATE_CHECK: "1",
+    // Windows SIGTERM is forced termination. Also exercise lost-client recovery
+    // on POSIX with SIGKILL, separately from the graceful SIGTERM contract.
+    const signals: NodeJS.Signals[] =
+      process.platform === "win32" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"];
+    for (const signal of signals) {
+      const cancelled = execa(
+        process.execPath,
+        [cli, "scan", "--format", "json"],
+        {
+          cwd: repository.root,
+          env: {
+            TMPDIR: scratch,
+            TMP: scratch,
+            TEMP: scratch,
+            NODE_OPTIONS: "",
+            ZEDBEE_NO_UPDATE_CHECK: "1",
+          },
+          reject: false,
+          stdin: "ignore",
+          killDescendants: false,
         },
-        reject: false,
-        stdin: "ignore",
-        killDescendants: false,
-      },
-    );
-    let completed = false;
-    void cancelled.then(() => {
-      completed = true;
-    });
-    let observedActive = false;
-    while (!completed) {
-      const state = JSON.parse(
-        (await run(["service", "status", "--format", "json"])).stdout,
       );
-      if (state.activeSessions > 0) {
-        observedActive = true;
-        cancelled.kill("SIGTERM");
-        break;
+      let completed = false;
+      void cancelled.then(() => {
+        completed = true;
+      });
+      let observedActive = false;
+      while (!completed) {
+        const state = JSON.parse(
+          (await run(["service", "status", "--format", "json"])).stdout,
+        );
+        if (state.activeSessions > 0) {
+          observedActive = true;
+          expect(cancelled.kill(signal)).toBe(true);
+          break;
+        }
+      }
+      const interrupted = await cancelled;
+      expect(observedActive).toBe(true);
+      const graceful = process.platform !== "win32" && signal === "SIGTERM";
+      if (graceful) {
+        expect(interrupted.exitCode, interrupted.stderr).toBe(143);
+      } else {
+        // Execa preserves Node's native result; Windows does not run the CLI's
+        // JavaScript handler and need not report the POSIX normal exit code 143.
+        const native = cancelled.nodeChildProcess;
+        expect(interrupted.failed).toBe(true);
+        expect(interrupted.exitCode).toBe(native.exitCode ?? undefined);
+        expect(interrupted.signal).toBe(native.signalCode ?? undefined);
+        expect(
+          native.signalCode !== null ||
+            (native.exitCode !== null && native.exitCode !== 0),
+        ).toBe(true);
+      }
+      // A killed client is not proof of service cleanup. Observe the same live
+      // service until its sessions drain. The whole-run supervisor bounds this
+      // recovery wait, just like the active-session wait above; no per-test timer.
+      for (;;) {
+        const status = await run(["service", "status", "--format", "json"]);
+        expect(status.exitCode, status.stderr).toBe(0);
+        const state = JSON.parse(status.stdout);
+        expect(state).toMatchObject({ state: "running", pid: before.pid });
+        expect(state.activeSessions).toBeGreaterThanOrEqual(0);
+        if (graceful || state.activeSessions === 0) {
+          expect(state.activeSessions).toBe(0);
+          break;
+        }
       }
     }
-    const interrupted = await cancelled;
-    expect(observedActive).toBe(true);
-    expect(interrupted.exitCode, interrupted.stderr).toBe(143);
-    expect(
-      JSON.parse((await run(["service", "status", "--format", "json"])).stdout),
-    ).toMatchObject({ pid: before.pid, activeSessions: 0 });
     const stopped = await run(["service", "stop", "--format", "json"]);
     expect(stopped.exitCode, stopped.stderr).toBe(0);
     expect(JSON.parse(stopped.stdout)).toEqual({ state: "stopped" });
