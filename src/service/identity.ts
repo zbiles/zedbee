@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, readdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
@@ -18,6 +18,7 @@ export interface ServiceIdentity {
 async function hashFile(
   path: string,
   collect = false,
+  observed?: Map<string, BigIntStats>,
 ): Promise<{ hash: string; text?: string; bytes: number }> {
   const before = await lstat(path, { bigint: true });
   if (
@@ -56,6 +57,7 @@ async function hashFile(
       )
         throw new ServiceUnavailableError();
     if (BigInt(bytes) !== before.size) throw new ServiceUnavailableError();
+    observed?.set(path, before);
     return {
       hash: hash.digest("hex"),
       bytes,
@@ -133,6 +135,12 @@ export async function installedContentIdentity(
     records: string[] = [];
   const files: Array<{ path: string; label: string }> = [];
   const manifests = new Map<string, string>();
+  const observed = new Map<string, BigIntStats>();
+  const edges: Array<{
+    root: string;
+    name: string;
+    resolved: string | undefined;
+  }> = [];
   let directoryCount = 0,
     totalBytes = 0;
   async function walk(directory: string, packageRoot: string): Promise<void> {
@@ -161,6 +169,7 @@ export async function installedContentIdentity(
       before.ctimeNs !== after.ctimeNs
     )
       throw new ServiceUnavailableError();
+    observed.set(directory, before);
   }
   for (let index = 0; index < packages.length; index++) {
     const packageRoot = packages[index]!;
@@ -180,6 +189,7 @@ export async function installedContentIdentity(
     for (const [name, optional] of dependencyNames(manifest)) {
       const resolved = await resolveDependency(packageRoot, name);
       if (!resolved && !optional) throw new ServiceUnavailableError();
+      edges.push({ root: packageRoot, name, resolved });
       records.push(JSON.stringify([packageRoot, name, resolved ?? null]));
       if (resolved) packages.push(resolved);
     }
@@ -196,7 +206,7 @@ export async function installedContentIdentity(
     Array.from({ length: 8 }, async () => {
       while (cursor < files.length) {
         const file = files[cursor++]!;
-        const content = await hashFile(file.path);
+        const content = await hashFile(file.path, false, observed);
         totalBytes += content.bytes;
         if (totalBytes > 2 * 1024 * 1024 * 1024)
           throw new ServiceUnavailableError();
@@ -209,11 +219,41 @@ export async function installedContentIdentity(
       }
     }),
   );
+  // A live installation is not an immutable snapshot. Reject changes observed
+  // after an earlier directory walk/hash, including newly present optional or
+  // shadowing packages. Never persist these stat observations across acquires.
+  cursor = 0;
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      while (cursor < edges.length) {
+        const edge = edges[cursor++]!;
+        if ((await resolveDependency(edge.root, edge.name)) !== edge.resolved)
+          throw new ServiceUnavailableError();
+      }
+    }),
+  );
+  const observations = [...observed];
+  cursor = 0;
+  await Promise.all(
+    Array.from({ length: 8 }, async () => {
+      while (cursor < observations.length) {
+        const [path, before] = observations[cursor++]!;
+        const after = await lstat(path, { bigint: true });
+        if (
+          before.dev !== after.dev ||
+          before.ino !== after.ino ||
+          before.mode !== after.mode ||
+          before.size !== after.size ||
+          before.mtimeNs !== after.mtimeNs ||
+          before.ctimeNs !== after.ctimeNs
+        )
+          throw new ServiceUnavailableError();
+      }
+    }),
+  );
   return digest(JSON.stringify(records.sort()));
 }
-export async function serviceIdentity(
-  directory?: string,
-): Promise<ServiceIdentity> {
+export async function serviceLocation(directory?: string) {
   const source = import.meta.url.endsWith(".ts"),
     tree = source ? "src" : "dist";
   const root = await realpath(
@@ -227,14 +267,28 @@ export async function serviceIdentity(
     process.arch,
   ];
   const key = digest(JSON.stringify(["zedbee-service-v1", root, runtime]));
-  const content = digest(
-    JSON.stringify([key, await installedContentIdentity(root, tree)]),
-  );
   return {
     key,
-    content,
+    root,
+    tree,
     entry: join(root, tree, "service", `entry.${source ? "ts" : "js"}`),
     directory:
       directory ?? join(await realpath(tmpdir()), `zedbee-${key.slice(0, 24)}`),
+  };
+}
+export async function serviceIdentity(
+  directory?: string,
+): Promise<ServiceIdentity> {
+  const location = await serviceLocation(directory);
+  return {
+    key: location.key,
+    entry: location.entry,
+    directory: location.directory,
+    content: digest(
+      JSON.stringify([
+        location.key,
+        await installedContentIdentity(location.root, location.tree),
+      ]),
+    ),
   };
 }

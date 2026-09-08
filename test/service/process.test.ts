@@ -105,29 +105,50 @@ it("independent command processes reuse a real worker and stop releases that ent
   expect(await stopService(config)).toEqual({ state: "stopped" });
   for (const pid of before) expect(() => process.kill(pid, 0)).toThrow();
 });
-it("service death leaves close pending until all independently witnessed workers are gone and permits stale-state recovery", async () => {
-  const config = await options();
-  const executor = await acquireServiceExecutor(config);
-  const session = await executor.openSession();
-  expect(await session.run(request)).toBe("const a = 1;\n");
-  const status = await serviceStatus(config);
-  expect(status.state).toBe("running");
-  if (status.state !== "running") throw new Error("Missing service");
-  const owned = await descendants(status.pid);
-  expect(owned).toHaveLength(2);
-  process.kill(status.pid, "SIGKILL");
-  await session.close().catch(() => {});
-  await executor.close().catch(() => {});
-  for (const pid of owned) expect(() => process.kill(pid, 0)).toThrow();
-  const next = await acquireServiceExecutor(config);
-  try {
-    const fresh = await next.openSession();
-    expect(await fresh.run(request)).toBe("const a = 1;\n");
-    await fresh.close();
-  } finally {
-    await next.close();
-  }
-});
+it.each([false, true])(
+  "service death (also kill supervisor: %s) leaves close pending until all independently witnessed workers are gone and permits stale-state recovery",
+  async (killSupervisor) => {
+    const config = await options();
+    const executor = await acquireServiceExecutor(config);
+    const session = await executor.openSession();
+    expect(await session.run(request)).toBe("const a = 1;\n");
+    const status = await serviceStatus(config);
+    expect(status.state).toBe("running");
+    if (status.state !== "running") throw new Error("Missing service");
+    const owned = await descendants(status.pid);
+    expect(owned).toHaveLength(2);
+    const supervisor = killSupervisor
+      ? (
+          await Promise.all(
+            owned.map(async (pid) => ({
+              pid,
+              children: await descendants(pid),
+            })),
+          )
+        ).find((row) => row.children.length > 0)?.pid
+      : undefined;
+    if (killSupervisor) expect(supervisor).toBeDefined();
+    process.kill(status.pid, "SIGKILL");
+    if (supervisor) {
+      try {
+        process.kill(supervisor, "SIGKILL");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    await session.close().catch(() => {});
+    await executor.close().catch(() => {});
+    for (const pid of owned) expect(() => process.kill(pid, 0)).toThrow();
+    const next = await acquireServiceExecutor(config);
+    try {
+      const fresh = await next.openSession();
+      expect(await fresh.run(request)).toBe("const a = 1;\n");
+      await fresh.close();
+    } finally {
+      await next.close();
+    }
+  },
+);
 it("concurrent startup shares one owned service and concurrency mismatch rejects before work", async () => {
   const config = await options();
   const [a, b] = await Promise.all([

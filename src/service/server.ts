@@ -290,8 +290,8 @@ export async function startServiceServer(
           [...sessions.entries()].map(([id]) => closeSession(id)),
         );
         await Promise.allSettled([...inFlight]);
-        if (results.some((result) => result.status === "rejected"))
-          throw new ServiceUnavailableError();
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
       })();
       cleaning.add(cleanup);
       void cleanup
@@ -332,7 +332,23 @@ export async function startServiceServer(
           idle.close();
           if (!socket.destroyed && !stopping)
             await exchange("io-release", { sessionId: id });
+          else await removeAbandonedLease(id);
         }
+      }
+    }
+    async function removeAbandonedLease(id: string): Promise<void> {
+      try {
+        await state.removeLease(id);
+      } catch (error) {
+        // A surviving Windows client pins the exact lease without delete
+        // sharing. It removes that lease after independently acquiring it.
+        if (
+          process.platform !== "win32" ||
+          !["EPERM", "EACCES"].includes(
+            (error as NodeJS.ErrnoException).code ?? "",
+          )
+        )
+          throw error;
       }
     }
     async function operate(value: Record<string, unknown>): Promise<unknown> {
@@ -373,8 +389,9 @@ export async function startServiceServer(
           if (!retained) {
             await lease?.close();
             idle.close();
-            if (!socket.destroyed && !stopping)
+            if (lease && !socket.destroyed && !stopping)
               await exchange("io-release", { sessionId });
+            else if (lease) await removeAbandonedLease(sessionId);
           }
         }
       }

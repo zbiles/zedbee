@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+import * as filesystem from "node:fs/promises";
 import {
   mkdir,
   mkdtemp,
@@ -10,10 +11,59 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installedContentIdentity } from "../../src/service/identity.js";
+vi.mock("node:fs/promises", async (original) => ({
+  ...(await original<typeof import("node:fs/promises")>()),
+}));
 const roots: string[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
+});
+it("rejects additions to an already traversed code directory during acquisition", async () => {
+  const { root, dependency } = await fixture();
+  const original = filesystem.readdir;
+  let mutated = false;
+  vi.spyOn(filesystem, "readdir").mockImplementation((async (
+    path: any,
+    options: any,
+  ) => {
+    if (path === dependency && !mutated) {
+      mutated = true;
+      await writeFile(join(root, "dist", "late.js"), "late code");
+    }
+    return original(path, options);
+  }) as typeof filesystem.readdir);
+  await expect(installedContentIdentity(root, "dist")).rejects.toThrow();
+  expect(mutated).toBe(true);
+});
+it("rejects optional dependency installation after its resolution was captured", async () => {
+  const { root, dependency } = await fixture();
+  await writeFile(
+    join(dependency, "package.json"),
+    JSON.stringify({ name: "engine", optionalDependencies: { late: "1" } }),
+  );
+  await mkdir(join(dependency, "node_modules"));
+  const original = filesystem.readdir;
+  let mutated = false;
+  vi.spyOn(filesystem, "readdir").mockImplementation((async (
+    path: any,
+    options: any,
+  ) => {
+    if (path === dependency && !mutated) {
+      mutated = true;
+      await mkdir(join(dependency, "node_modules", "late"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(dependency, "node_modules", "late", "package.json"),
+        JSON.stringify({ name: "late" }),
+      );
+    }
+    return original(path, options);
+  }) as typeof filesystem.readdir);
+  await expect(installedContentIdentity(root, "dist")).rejects.toThrow();
+  expect(mutated).toBe(true);
 });
 async function fixture() {
   const root = await realpath(

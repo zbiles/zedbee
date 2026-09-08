@@ -210,13 +210,17 @@ export class ServiceState {
   async removeLease(id: string): Promise<void> {
     if (!HEX.test(id)) throw new ServiceUnavailableError();
     const path = join(this.directory, `io-${id}.lock`);
-    const file = await this.checkedFile(path);
     try {
-      if ((await file.stat()).size !== 0) throw new ServiceUnavailableError();
-    } finally {
-      await file.close();
+      const file = await this.checkedFile(path);
+      try {
+        if ((await file.stat()).size !== 0) throw new ServiceUnavailableError();
+      } finally {
+        await file.close();
+      }
+      await unlink(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    await unlink(path);
   }
   async publish(value: ServiceRecord): Promise<void> {
     if (!validRecord(value)) throw new ServiceUnavailableError();
@@ -235,7 +239,9 @@ export class ServiceState {
     );
     try {
       if (process.platform === "win32")
-        (await import("./windows-pipe.js")).restrictWindowsPath(temporary);
+        (await import("./windows-pipe.js")).restrictCreatedWindowsPath(
+          temporary,
+        );
       await file.writeFile(JSON.stringify(value));
       await file.sync();
     } finally {

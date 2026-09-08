@@ -32,7 +32,11 @@ import {
 import { ServiceConnection, serviceEndpoint } from "./transport.js";
 import { ServiceState, type ServiceRecord, type StateLease } from "./state.js";
 import { stopProcessGroup } from "../checks/runner/process-group.js";
-import { serviceIdentity, type ServiceIdentity } from "./identity.js";
+import {
+  serviceIdentity,
+  serviceLocation,
+  type ServiceIdentity,
+} from "./identity.js";
 import type { ServiceStatus } from "./server.js";
 
 function decodeError(value: unknown): Error {
@@ -61,6 +65,7 @@ interface Pending {
 export class ServiceClient {
   private next = 0;
   private pending = new Map<number, Pending>();
+  private readonly retained = new ByteBudget(GLOBAL_BYTES);
   private closed = false;
   private cleanup: Promise<void> | undefined;
   private readonly events = new Set<Promise<void>>();
@@ -245,6 +250,18 @@ export class ServiceClient {
           ? jobFailure(request, "cancellation")
           : new ServiceUnavailableError(),
       );
+    let releaseRetention: () => void;
+    try {
+      // Cleanup/control exchanges must remain possible while payload admission
+      // is full. Pending accepted source/request objects share one byte budget.
+      releaseRetention = this.retained.reserve(
+        op === "run" || op === "open"
+          ? analyzerRequestRetentionBytes(fields)
+          : 0,
+      );
+    } catch (error) {
+      return Promise.reject(error);
+    }
     const id = ++this.next;
     return new Promise((resolve, reject) => {
       const abort = () => {
@@ -257,12 +274,22 @@ export class ServiceClient {
         reject,
         request,
         acknowledgement: op === "ack",
-        cleanup: () => signal?.removeEventListener("abort", abort),
+        cleanup: () => {
+          releaseRetention();
+          signal?.removeEventListener("abort", abort);
+        },
       });
       signal?.addEventListener("abort", abort, { once: true });
-      void this.peer
-        .send({ id, op, ...fields })
-        .catch(() => this.peer.destroy());
+      void this.peer.send({ id, op, ...fields }).catch((error) => {
+        // Encoding/admission failed synchronously before socket.write: no
+        // accepted job exists and the authenticated connection remains usable.
+        if (error instanceof AnalyzerCapacityError) {
+          const pending = this.pending.get(id);
+          this.pending.delete(id);
+          pending?.cleanup();
+          pending?.reject(error);
+        } else this.peer.destroy();
+      });
     });
   }
   async close(): Promise<void> {
@@ -389,14 +416,15 @@ export function executorForConnection(client: ServiceClient): AnalyzerExecutor {
           if (!exactFields(options, ["signal"]))
             throw new ServiceUnavailableError();
           analyzerRequestRetentionBytes(request);
-          validateAnalyzerRequest(request);
+          const captured = structuredClone(request);
+          validateAnalyzerRequest(captured);
           return validateAnalyzerResult(
-            request,
+            captured,
             await client.request(
               "run",
-              { sessionId, request },
+              { sessionId, request: captured },
               signal,
-              request,
+              captured,
             ),
           );
         },
@@ -566,8 +594,8 @@ async function manage(
   let client: ServiceClient | undefined;
   try {
     validateOptions(options);
-    const identity = await serviceIdentity(options.directory),
-      state = new ServiceState(identity.directory);
+    const location = await serviceLocation(options.directory),
+      state = new ServiceState(location.directory);
     const record = await state.read();
     if (!record) return { state: "stopped" };
     client = await connectService(state, record);

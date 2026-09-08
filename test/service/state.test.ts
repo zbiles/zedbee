@@ -27,6 +27,21 @@ afterEach(async () => {
     await rm(path, { recursive: true, force: true });
 });
 describe("private service state ownership", () => {
+  it("permits both authenticated lease owners to finish removal without unlinking startup ownership", async () => {
+    const state = new ServiceState(join(await root(), "state"));
+    await state.prepare();
+    const lock = await state.lock();
+    const id = "d".repeat(64);
+    const lease = await state.lease(id);
+    expect(lease.acquire()).toBe(true);
+    await lease.close();
+    await state.removeLease(id);
+    await expect(state.removeLease(id)).resolves.toBeUndefined();
+    await expect(
+      lstat(join(state.directory, "owner.lock")),
+    ).resolves.toBeDefined();
+    await lock!();
+  });
   it("does not create discovery state on read and keeps secret metadata owner-only", async () => {
     const directory = join(await root(), "state");
     const state = new ServiceState(directory);

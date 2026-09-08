@@ -284,9 +284,9 @@ export class SupervisedWorkerSlot {
           release.resolve();
           this.onAvailable();
         })
-        .catch(() =>
-          this.stop(new Error("Analyzer ownership release failed.")),
-        );
+        // Lost ownership ACK forbids reuse, but retirement with proven OS
+        // cleanup is not itself a source-cleanup failure for another session.
+        .catch(() => this.stop());
       return;
     }
     const job = slot.job;
@@ -354,15 +354,13 @@ export class SupervisedWorkerSlot {
       slot.cleanupFailure = slot.failure;
       if (slot.session) slot.session.releaseFailure = slot.failure;
     }
+    let ownershipLost = false;
     try {
       await slot.releaseOwnership();
     } catch {
       // Actual tree cleanup above is still required even if the client vanished.
       slot.witnessOwner = undefined;
-      if (slot.session)
-        slot.session.releaseFailure ??= new Error(
-          "Analyzer ownership release failed.",
-        );
+      ownershipLost = true;
     }
     const job = slot.job;
     if (job) {
@@ -385,14 +383,16 @@ export class SupervisedWorkerSlot {
       slot.job = undefined;
     }
     const release = slot.releasing;
-    if (release && slot.failure && slot.session)
-      slot.session.releaseFailure = slot.failure;
+    const releaseFailure =
+      slot.cleanupFailure ?? (!ownershipLost ? slot.failure : undefined);
+    if (release && releaseFailure && slot.session)
+      slot.session.releaseFailure = releaseFailure;
     slot.releasing = undefined;
     slot.session = undefined;
     this.onClosed();
     slot.finish();
     if (release) {
-      if (slot.failure) release.reject(slot.failure);
+      if (releaseFailure) release.reject(releaseFailure);
       else release.resolve();
     }
     this.onAvailable();

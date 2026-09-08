@@ -49,6 +49,38 @@ const request = {
   },
 } as const;
 describe("service executor isolation", () => {
+  it("rejects a locally oversized encoded request before acceptance and keeps the connection usable", async () => {
+    const { state, record } = await fixture();
+    const executor = executorForConnection(await connectService(state, record));
+    cleanups.push(() => executor.close());
+    const session = await executor.openSession();
+    await expect(
+      session.run({
+        ...request,
+        input: { ...request.input, source: "\0".repeat(3 * 1024 * 1024) },
+      }),
+    ).rejects.toMatchObject({ code: "ANALYZER_CAPACITY", scope: "request" });
+    expect(await session.run(request)).toBe("const a = 1;\n");
+    await session.close();
+  });
+  it("retires a disconnected client's witnessed tree without stopping another client's worker", async () => {
+    const { state, record, server } = await fixture();
+    const firstClient = await connectService(state, record);
+    const secondClient = await connectService(state, record);
+    const first = executorForConnection(firstClient),
+      second = executorForConnection(secondClient);
+    cleanups.push(() => second.close());
+    const a = await first.openSession(),
+      b = await second.openSession();
+    expect(await a.run(request)).toBe("const a = 1;\n");
+    expect(await b.run(request)).toBe("const a = 1;\n");
+    await firstClient.close();
+    await expect
+      .poll(() => server.status())
+      .toMatchObject({ state: "running", activeSessions: 1 });
+    expect(await b.run(request)).toBe("const a = 1;\n");
+    await b.close();
+  });
   it("bounds global sessions across clients and returns structured capacity without starting workers", async () => {
     const { state, record, server } = await fixture();
     const clients = await Promise.all(

@@ -130,10 +130,10 @@ function withIdentity<T>(run: (sid: unknown, text: string) => T): T {
   }
 }
 function withDescriptor<T>(
-  run: (descriptor: unknown, acl: unknown) => T,
+  run: (descriptor: unknown, acl: unknown, owner: unknown) => T,
   mode: "state" | "job" | "pipe" = "state",
 ): T {
-  return withIdentity((_sid, text) => {
+  return withIdentity((sid, text) => {
     const descriptor = [null];
     if (
       !convert(
@@ -154,7 +154,7 @@ function withDescriptor<T>(
         !acl[0]
       )
         fail();
-      return run(descriptor[0], acl[0]);
+      return run(descriptor[0], acl[0], sid);
     } finally {
       free(descriptor[0]);
     }
@@ -265,11 +265,14 @@ export function createWindowsDirectory(path: string): void {
   });
   verifyWindowsPath(path, true);
 }
-export function restrictWindowsPath(path: string): void {
-  const handle = pathHandle(path, 0x20000 | 0x40000 | 0x80);
+/** Only the caller's just-created exclusive unpublished metadata file. */
+export function restrictCreatedWindowsPath(path: string): void {
+  const handle = pathHandle(path, 0x20000 | 0x40000 | 0x80000 | 0x80);
   try {
-    withDescriptor((_descriptor, acl) => {
-      if (setSecurity(handle, 1, 4 | 0x80000000, null, null, acl, null) !== 0)
+    withDescriptor((_descriptor, acl, owner) => {
+      if (
+        setSecurity(handle, 1, 1 | 4 | 0x80000000, owner, null, acl, null) !== 0
+      )
         throw new ServiceUnavailableError();
     });
     verify(handle, 1);
@@ -344,11 +347,21 @@ export function openWindowsStateLease(
 export function restrictWindowsPipe(endpoint: string): void {
   if (!/^\\\\\.\\pipe\\zedbee-[a-f0-9]{64}$/u.test(endpoint))
     throw new ServiceUnavailableError();
-  const handle = open(endpoint, 0x20000 | 0x40000, 0, null, 3, 0, null);
+  const handle = open(
+    endpoint,
+    0x20000 | 0x40000 | 0x80000,
+    0,
+    null,
+    3,
+    0,
+    null,
+  );
   if (!validHandle(handle)) fail();
   try {
-    withDescriptor((_descriptor, acl) => {
-      if (setSecurity(handle, 6, 4 | 0x80000000, null, null, acl, null) !== 0)
+    withDescriptor((_descriptor, acl, owner) => {
+      if (
+        setSecurity(handle, 6, 1 | 4 | 0x80000000, owner, null, acl, null) !== 0
+      )
         throw new ServiceUnavailableError();
     }, "pipe");
     verify(handle, 6, true);

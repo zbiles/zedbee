@@ -54,7 +54,6 @@ export class ServiceConnection {
         });
       });
     } catch (error) {
-      this.socket.destroy();
       return Promise.reject(error);
     }
   }
