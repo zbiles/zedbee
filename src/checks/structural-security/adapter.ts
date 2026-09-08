@@ -62,7 +62,7 @@ function parserCompatibleTypeScriptSource(file: string, source: string): string 
     const original = source.slice(start, end);
     const placeholder = `any${original
       .slice(3)
-      .replace(/[^\r\n]/gu, " ")}`;
+      .replace(/[^\r\n\u2028\u2029]/g, " ")}`;
     compatible = `${compatible.slice(0, start)}${placeholder}${compatible.slice(end)}`;
   }
   return compatible;

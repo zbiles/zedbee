@@ -202,6 +202,28 @@ describe("collectComplexityObservations", () => {
     );
   });
 
+  it("retains real metrics for unresolved computed-property arrows", async () => {
+    const observations = await collectComplexityObservations(
+      "value.ts",
+      'const key = "run"; export const value = { [key]: () => ready ? 1 : 0 };',
+    );
+
+    expect(
+      observations
+        .filter(({ rule }) => rule === "cyclomatic-complexity")
+        .map(({ entity, identity, metric }) => ({
+          name: entity?.name,
+          identity,
+          value: metric?.value,
+        })),
+    ).toContainEqual({
+      name: "anonymous@1.1.0.1.0.1",
+      identity:
+        "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
+      value: 2,
+    });
+  });
+
   it("attributes class-field initializer metrics to canonical field entities", async () => {
     const observations = await collectComplexityObservations(
       "src/stream.ts",

@@ -176,10 +176,14 @@ function propertyCodeUnitDeclaration(
 
 function isClaimedFunctionExpression(node: ts.Node): boolean {
   const parent = node.parent;
+  if (
+    (ts.isPropertyDeclaration(parent) || ts.isPropertyAssignment(parent)) &&
+    parent.initializer === node
+  ) {
+    return memberName(parent.name) !== undefined;
+  }
   return (
     (ts.isVariableDeclaration(parent) && parent.initializer === node) ||
-    (ts.isPropertyDeclaration(parent) && parent.initializer === node) ||
-    (ts.isPropertyAssignment(parent) && parent.initializer === node) ||
     (ts.isExportAssignment(parent) && parent.expression === node)
   );
 }

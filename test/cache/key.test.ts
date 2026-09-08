@@ -18,6 +18,7 @@ import type {
   CheckRunContext,
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import { createObservationCacheEngineIdentityResolver } from "../../src/checks/engine-identity.js";
 import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
@@ -148,6 +149,69 @@ function behavior(
 }
 
 describe("observation cache keys", () => {
+  it.each([
+    {
+      checkId: "cyclomaticComplexity",
+      legacyIdentity:
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v1",
+    },
+    {
+      checkId: "readabilityComplexity",
+      legacyIdentity:
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v1",
+    },
+  ] as const)(
+    "misses a completed $checkId entry from the obsolete engine revision",
+    async ({ checkId, legacyIdentity }) => {
+      const fixture = await createInspectionFixture();
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+      const values = new Map<string, CheckObservationSet>();
+      const cache: ObservationCache = {
+        get: async (key) => values.get(key),
+        set: async (key, value) => {
+          values.set(key, value);
+        },
+      };
+      const context = contextFor(fixture.root, "^19.0.0");
+      let collections = 0;
+      const countingAdapter: CheckAdapter = {
+        ...adapter,
+        id: checkId,
+        collect: async (run) => {
+          collections += 1;
+          return {
+            checkId,
+            target: run.target,
+            baselineObservations: [],
+            targetObservations: [],
+          };
+        },
+      };
+
+      await dispatchChecks([countingAdapter], context, {
+        cache,
+        cacheEngineIdentity: () => legacyIdentity,
+      });
+      const versions = new Map([
+        ["eslint", "101.2.3"],
+        ["typescript-eslint", "102.3.4"],
+        ["typescript", "103.4.5"],
+      ]);
+      const currentIdentity = createObservationCacheEngineIdentityResolver(
+        (name) => versions.get(name),
+      )(checkId);
+      if (currentIdentity === undefined) {
+        throw new Error("Expected a current complexity engine identity");
+      }
+      await dispatchChecks([countingAdapter], context, {
+        cache,
+        cacheEngineIdentity: () => currentIdentity,
+      });
+
+      expect(collections).toBe(2);
+    },
+  );
+
   it("does not reuse cached duplication paths from basename normalization", async () => {
     const [fixture, cacheFixture] = await Promise.all([
       createInspectionFixture(),

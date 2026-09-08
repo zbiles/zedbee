@@ -16,15 +16,15 @@ interface EngineIdentityMetadata {
 const ENGINE_IDENTITY_METADATA = Object.freeze({
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v1",
+    revision: "complexity-v2",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v1",
+    revision: "zedbee-readability-v2",
   }),
   structuralSecurity: Object.freeze({
-    packages: Object.freeze(["@ast-grep/napi"]),
-    revision: "zedbee-structural-rules-v1",
+    packages: Object.freeze(["@ast-grep/napi", "typescript"]),
+    revision: "zedbee-structural-rules-v2",
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),

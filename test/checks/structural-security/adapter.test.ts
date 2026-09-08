@@ -183,4 +183,34 @@ describe("structuralSecurityAdapter", () => {
       }),
     );
   });
+
+  it("preserves exact coordinates across astral Unicode and nested import types", async () => {
+    const { fixtures, run } = await structuralSecurityContext();
+    const source =
+      'declare const f: <T>() => T; const x = await f<typeof import("./😀").Factory<typeof import("./nested").Value>>(); eval(input);';
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.write("src/security.ts", source);
+    }
+    const context = {
+      ...run,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+    };
+
+    const collected = await structuralSecurityAdapter.collect(context);
+
+    expect(collected.targetObservations).toContainEqual(
+      expect.objectContaining({
+        rule: "direct-eval",
+        identity: "direct-eval:src/security.ts:1:115:1:126",
+        location: {
+          file: "src/security.ts",
+          startLine: 1,
+          startColumn: 115,
+          endLine: 1,
+          endColumn: 126,
+        },
+      }),
+    );
+  });
 });

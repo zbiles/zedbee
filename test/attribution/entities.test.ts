@@ -59,6 +59,24 @@ describe("collectChangedEntities", () => {
     ).toBe(true);
   });
 
+  it("keeps an anonymous function entity for unresolved computed properties", () => {
+    const entities = collectChangedEntities(
+      'const key = "run"; export const value = { [key]: () => ready ? 1 : 0 };',
+      "value.ts",
+      [{ start: 1, end: 1 }],
+    );
+
+    expect(entities).toContainEqual({
+      kind: "function",
+      name: "anonymous@1.1.0.1.0.1",
+      file: "value.ts",
+      startLine: 1,
+      endLine: 1,
+      identity:
+        "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
+    });
+  });
+
   it("distinguishes duplicate same-named class-field functions", () => {
     const fields = collectChangedEntities(
       "class Worker { task = () => ready ? 1 : 0; task = () => fallback ? 1 : 0; }",
