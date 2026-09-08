@@ -135,7 +135,8 @@ interface ManagedRuleResources {
 }
 
 // Only package-owned rule metadata is retained. No repository inputs or results
-// enter this cache, and each analyzer job still has a fresh process.
+// enter this cache. Session release clears input-bearing parser state separately;
+// trusted package rule modules can remain loaded in a reusable worker.
 const resourcesByCheckId = new Map<RuleCheckId, ManagedRuleResources>();
 
 function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {

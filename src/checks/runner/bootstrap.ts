@@ -24,7 +24,11 @@ process.on("message", async (message: unknown) => {
     await import(pathToFileURL(input.workerEntry).href);
     process.emit("message", input.request, undefined);
   } catch {
-    sendWorkerReply({ version: 1, ok: false, category: "startup" });
+    await sendWorkerReply({
+      version: 1,
+      ok: false,
+      category: "startup",
+    }).finally(() => process.exit(1));
   }
 });
 process.send?.({ type: "ready-for-ownership" });

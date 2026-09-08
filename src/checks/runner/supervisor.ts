@@ -9,7 +9,11 @@ import {
 } from "./exit-status.js";
 import { fileURLToPath } from "node:url";
 import type { WindowsJob } from "./windows-job.js";
-import { processGroupAlive, signalProcessGroup } from "./process-group.js";
+import {
+  processGroupAlive,
+  processGroupHasDescendants,
+  signalProcessGroup,
+} from "./process-group.js";
 
 // This process must remain engine-free and responsive even when its worker is
 // synchronously blocked. The parent owns it until its complete process tree stops.
@@ -138,6 +142,17 @@ process.on("message", async (message: unknown) => {
     execArgv?: string[];
     request?: unknown;
   };
+  if (input.type === "job" || input.type === "release") {
+    if (!worker || !worker.connected || stopping) {
+      reply = { version: 1, ok: false, category: "invalid-response" };
+      stop(false);
+    } else worker.send(message as Serializable, () => {});
+    return;
+  }
+  if (input.type === "stop") {
+    stop(false);
+    return;
+  }
   if (input.type === "ownership-ack") {
     if (!stopping) releaseWorker?.();
     releaseWorker = undefined;
@@ -187,7 +202,7 @@ process.on("message", async (message: unknown) => {
     stop(false);
   });
   let owned = false;
-  worker.on("message", (response) => {
+  worker.on("message", async (response) => {
     if (
       !owned &&
       (response as { type?: string })?.type === "ready-for-ownership"
@@ -197,12 +212,14 @@ process.on("message", async (message: unknown) => {
         if (pid === undefined) throw new Error("Missing worker PID");
         windowsJob?.assign(pid);
         owned = true;
-        releaseWorker = () =>
+        releaseWorker = () => {
+          const request = input.request;
+          input.request = undefined;
           worker!.send(
             {
               type: "owned-start",
               workerEntry: input.workerEntry,
-              request: input.request,
+              request,
             } as Serializable,
             (error) => {
               if (error && reply === undefined) {
@@ -211,6 +228,7 @@ process.on("message", async (message: unknown) => {
               }
             },
           );
+        };
         // Do not release engine code until the caller has retained this group
         // identity. The envelope cannot be forged by a worker response.
         process.send?.({ type: "worker-owned", pid });
@@ -222,10 +240,26 @@ process.on("message", async (message: unknown) => {
       }
       return;
     }
-    if (reply === undefined) reply = response;
-    // The worker exits itself after flushing its reply. Observe that exit
-    // before terminating remaining descendants; never overwrite a crash with
-    // our own forced-termination status simply because a reply arrived first.
+    if ((response as { type?: unknown })?.type === "released") {
+      // A reset acknowledgement cannot release snapshots while an inherited
+      // native CLI descendant is still alive. Retire the complete owned tree.
+      let retire = true;
+      try {
+        retire =
+          process.platform === "win32"
+            ? (windowsJob?.activeProcesses() ?? 2) > 1
+            : await processGroupHasDescendants(pid!);
+      } catch {
+        /* Missing inventory evidence permits retirement, never reuse. */
+      }
+      if (retire) response = { ...(response as object), retire: true };
+    }
+    // Results are provisional; the executor validates matching result/ready
+    // messages. Only cleanup completion below can settle a retired tree.
+    process.send?.({
+      type: "worker-message",
+      message: response,
+    } as Serializable);
   });
   worker.on("close", (exitCode, signal) => {
     workerClosed = true;

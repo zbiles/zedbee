@@ -1,3 +1,31 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+/** POSIX has no group-member count syscall; use the fixed OS process inventory. */
+export async function processGroupHasDescendants(
+  pid: number,
+): Promise<boolean> {
+  const { stdout } = await promisify(execFile)(
+    "/bin/ps",
+    ["-axo", "pid=,pgid="],
+    {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      timeout: 2_000,
+      killSignal: "SIGKILL",
+    },
+  );
+  return stdout
+    .trim()
+    .split("\n")
+    .some((line) => {
+      if (!/^\s*\d+\s+\d+\s*$/u.test(line))
+        throw new Error("Invalid process inventory");
+      const [member, group] = line.trim().split(/\s+/u).map(Number);
+      return group === pid && member !== pid;
+    });
+}
+
 export function processGroupAlive(pid: number): boolean {
   try {
     process.kill(-pid, 0);

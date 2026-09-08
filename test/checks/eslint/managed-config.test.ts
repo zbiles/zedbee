@@ -17,6 +17,7 @@ import {
 } from "../../../src/checks/eslint/managed-config.js";
 import type { FilePolicyResolver } from "../../../src/config/file-policy.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
+import { withAnalyzerRetentionState } from "../../../src/checks/runner/session.js";
 
 const require = createRequire(import.meta.url);
 const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin;
@@ -29,6 +30,32 @@ const modes: readonly ManagedEslintMode[] = [
 ];
 
 describe("managedConfig", () => {
+  test("marks compiler-backed hooks state for retirement while ordinary hooks remain reusable", async () => {
+    const defaults = { retire: false };
+    await withAnalyzerRetentionState(defaults, async () => {
+      managedConfig({
+        mode: "react-correctness",
+        reactVersion: "19.2.0",
+        managedIgnores: [],
+      });
+    });
+    expect(defaults.retire).toBe(true);
+    const ordinary = { retire: false };
+    const disabledCompiler = Object.fromEntries(
+      Object.keys(reactHooksPlugin.rules)
+        .filter((name) => !["rules-of-hooks", "exhaustive-deps"].includes(name))
+        .map((name) => [`react-hooks/${name}`, "off" as const]),
+    );
+    await withAnalyzerRetentionState(ordinary, async () => {
+      managedConfig({
+        mode: "react-correctness",
+        reactVersion: "19.2.0",
+        managedIgnores: [],
+        ruleOverrides: disabledCompiler,
+      });
+    });
+    expect(ordinary.retire).toBe(false);
+  });
   test("calibrates React correctness settings to the supplied version", () => {
     expect(managedReactCorrectnessConfig("18.3.1").settings).toEqual({
       react: { version: "18.3.1" },

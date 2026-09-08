@@ -7,7 +7,7 @@ import { DEFAULT_FORMATTING_SETTINGS } from "../../../src/checks/prettier/settin
 const entry = fileURLToPath(
   new URL("../../../src/checks/runner/bootstrap.ts", import.meta.url),
 );
-it("the real worker exits cleanly after flushing its reply without owner termination", async () => {
+it("the real worker acknowledges a flushed result and explicit session release", async () => {
   const child = spawn(
     process.execPath,
     [
@@ -25,22 +25,43 @@ it("the real worker exits cleanly after flushing its reply without owner termina
   const exited = once(child, "exit");
   try {
     const reply = once(child, "message");
+    const messages: any[] = [];
+    child.on("message", (value) => messages.push(value));
     child.send({
       version: 1,
-      checkId: "formatting",
-      operation: "format-working-source",
-      input: {
-        file: "a.js",
-        source: "const x=1",
-        settings: DEFAULT_FORMATTING_SETTINGS,
+      type: "job",
+      sessionId: "session",
+      jobId: "job",
+      request: {
+        version: 1,
+        checkId: "formatting",
+        operation: "format-working-source",
+        input: {
+          file: "a.js",
+          source: "const x=1",
+          settings: DEFAULT_FORMATTING_SETTINGS,
+        },
       },
     });
     expect((await reply)[0]).toMatchObject({
-      ok: true,
-      result: "const x = 1;\n",
+      type: "result",
+      sessionId: "session",
+      jobId: "job",
+      response: { ok: true, result: "const x = 1;\n" },
     });
-    await expect.poll(() => child.exitCode, { timeout: 10000 }).toBe(0);
-    expect(await exited).toEqual([0, null]);
+    await expect
+      .poll(() => messages.some((value) => value.type === "ready"))
+      .toBe(true);
+    expect(child.exitCode).toBeNull();
+    const released = once(child, "message");
+    child.send({ version: 1, type: "release", sessionId: "session" });
+    expect((await released)[0]).toEqual({
+      version: 1,
+      type: "released",
+      sessionId: "session",
+      retire: false,
+    });
+    expect(child.exitCode).toBeNull();
   } finally {
     if (child.exitCode === null) child.kill("SIGKILL");
     await exited;
@@ -90,10 +111,16 @@ it("loads the selected worker only after release and delivers the first request"
       workerEntry: fileURLToPath(
         new URL("./fixtures/worker.mjs", import.meta.url),
       ),
-      request: { input: { source: '{"mode":"pid"}' } },
+      request: {
+        version: 1,
+        type: "job",
+        sessionId: "session",
+        jobId: "job",
+        request: { input: { source: '{"mode":"pid"}' } },
+      },
     });
     const [result] = await reply;
-    expect(JSON.parse(result.result).workerPid).toBe(child.pid);
+    expect(JSON.parse(result.response.result).workerPid).toBe(child.pid);
   } finally {
     child.kill("SIGKILL");
     await closed;

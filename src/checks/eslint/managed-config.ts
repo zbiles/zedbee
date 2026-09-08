@@ -10,6 +10,7 @@ import type {
 import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
 import type { CheckId } from "../../config/schema.js";
 import { compareCodeUnits } from "../../core/compare.js";
+import { markUnresettableAnalyzerState } from "../runner/session.js";
 import { readabilityComplexityRule } from "../complexity/readability-rule.js";
 import {
   managedReactAccessibilityConfig,
@@ -272,6 +273,27 @@ export function managedConfig(
         rules: rules as Linter.RulesRecord,
       });
     }
+  }
+  if (options.mode === "react-correctness") {
+    const effective = Object.assign(
+      {},
+      ...config.map((entry) => entry.rules ?? {}),
+    ) as Linter.RulesRecord;
+    if (
+      Object.entries(effective).some(([name, setting]) => {
+        if (
+          !name.startsWith("react-hooks/") ||
+          [
+            "react-hooks/rules-of-hooks",
+            "react-hooks/exhaustive-deps",
+          ].includes(name)
+        )
+          return false;
+        const severity = Array.isArray(setting) ? setting[0] : setting;
+        return severity !== "off" && severity !== 0;
+      })
+    )
+      markUnresettableAnalyzerState();
   }
   return config;
 }

@@ -1,7 +1,12 @@
 import type { Serializable } from "node:child_process";
 
-/** A reply is provisional until the owner observes this worker's own exit. */
-export function sendWorkerReply(reply: Serializable): void {
-  if (!process.connected || !process.send) process.exit(1);
-  process.send(reply, (error) => process.exit(error ? 1 : 0));
+/** Flush a provisional reply; readiness is a separate matching acknowledgement. */
+export function sendWorkerReply(reply: Serializable): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (!process.connected || !process.send) {
+      reject(new Error("Owner disconnected"));
+      return;
+    }
+    process.send(reply, (error) => (error ? reject(error) : resolve()));
+  });
 }
