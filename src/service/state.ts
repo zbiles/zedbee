@@ -23,6 +23,13 @@ export interface StateLease {
   acquire(): boolean;
   close(): Promise<void>;
 }
+/** Only a verified Windows I/O lease's unlink may be deferred to its client. */
+export class LeaseRemovalDeferredError extends ServiceUnavailableError {
+  constructor() {
+    super();
+    this.name = "LeaseRemovalDeferredError";
+  }
+}
 function validRecord(value: unknown): value is ServiceRecord {
   return (
     exactFields(value, ["version", "identity", "instance", "secret"]) &&
@@ -227,7 +234,19 @@ export class ServiceState {
         } finally {
           await file.close();
         }
-        await unlink(path);
+        try {
+          await unlink(path);
+        } catch (error) {
+          const native = error as NodeJS.ErrnoException;
+          if (
+            process.platform === "win32" &&
+            ["EPERM", "EACCES", "EBUSY"].includes(native.code ?? "") &&
+            native.syscall === "unlink" &&
+            native.path === path
+          )
+            throw new LeaseRemovalDeferredError();
+          throw error;
+        }
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }

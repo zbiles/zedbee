@@ -4,7 +4,7 @@ import {
   createLocalAnalyzerExecutor,
   type AnalyzerExecutionSession,
 } from "../checks/runner/executor.js";
-import type { StateLease } from "./state.js";
+import { LeaseRemovalDeferredError, type StateLease } from "./state.js";
 import {
   AnalyzerCapacityError,
   analyzerRequestRetentionBytes,
@@ -367,13 +367,7 @@ export async function startServiceServer(
       } catch (error) {
         // A surviving Windows client pins the exact lease without delete
         // sharing. It removes that lease after independently acquiring it.
-        if (
-          process.platform !== "win32" ||
-          !["EPERM", "EACCES"].includes(
-            (error as NodeJS.ErrnoException).code ?? "",
-          )
-        )
-          throw error;
+        if (!(error instanceof LeaseRemovalDeferredError)) throw error;
       }
     }
     async function operate(value: Record<string, unknown>): Promise<unknown> {
