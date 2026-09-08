@@ -154,4 +154,4 @@ it("runs every real analyzer through reused supervised sessions", async () => {
   } finally {
     await executor.close();
   }
-}, 60_000);
+});

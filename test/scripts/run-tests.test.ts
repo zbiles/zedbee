@@ -1,17 +1,76 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { execa } from "execa";
+import ts from "typescript";
 import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { superviseRun } from "../../scripts/run-with-deadline.mjs";
 import vitestConfig from "../../vitest.config.js";
+
+const testRoot = resolve(import.meta.dirname, "..");
+const timeoutApis = new Set([
+  "afterAll",
+  "afterEach",
+  "beforeAll",
+  "beforeEach",
+  "describe",
+  "it",
+  "test",
+]);
+
+function vitestApi(expression: ts.Expression): string | undefined {
+  if (ts.isIdentifier(expression))
+    return timeoutApis.has(expression.text) ? expression.text : undefined;
+  if (ts.isCallExpression(expression)) return vitestApi(expression.expression);
+  if (ts.isPropertyAccessExpression(expression))
+    return vitestApi(expression.expression);
+  return undefined;
+}
 
 describe("test-run deadline", () => {
   it("leaves test and hook deadlines to the run supervisor", () => {
     expect(vitestConfig).toMatchObject({
       test: { testTimeout: 0, hookTimeout: 0 },
     });
+  });
+
+  it("contains no literal test or hook timeout overrides", async () => {
+    const files = (await readdir(testRoot, { recursive: true })).filter(
+      (path) => path.endsWith(".test.ts") || path.endsWith(".test.tsx"),
+    );
+    const overrides: string[] = [];
+    for (const path of files) {
+      const source = ts.createSourceFile(
+        path,
+        await readFile(join(testRoot, path), "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+      );
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && vitestApi(node.expression)) {
+          const timeout = node.arguments.slice(1).find((argument) =>
+            ts.isNumericLiteral(argument) ||
+            (ts.isObjectLiteralExpression(argument) &&
+              argument.properties.some(
+                (property) =>
+                  ts.isPropertyAssignment(property) &&
+                  property.name.getText(source) === "timeout" &&
+                  ts.isNumericLiteral(property.initializer),
+              )),
+          );
+          if (timeout) {
+            const { line } = source.getLineAndCharacterOfPosition(
+              timeout.getStart(source),
+            );
+            overrides.push(`${path}:${line + 1}`);
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(source);
+    }
+    expect(overrides).toEqual([]);
   });
 
   it("terminates descendants even when they ignore graceful shutdown", async () => {
