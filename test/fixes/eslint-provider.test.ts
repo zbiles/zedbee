@@ -13,6 +13,10 @@ import {
   createAnalysisReuseSession,
   withAnalysisReuseSession,
 } from "../../src/checks/analysis-reuse.js";
+import {
+  captureAnalysisSources,
+  withAnalysisSourceCapture,
+} from "../../src/inspection/source-capture.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -34,7 +38,7 @@ function changeSet(files: readonly ChangedFile[]): ChangeSet {
 }
 
 describe("planManagedEslintFixes", () => {
-  it.each([false, true])(
+  it.each([false, true, "sources"])(
     "plans only reported official lint fixes and never ESLint suggestions (session=%s)",
     async (reuse) => {
       const run = async () => {
@@ -96,60 +100,76 @@ describe("planManagedEslintFixes", () => {
           policyForFile: testFilePolicyResolver(config, changes),
           signal: new AbortController().signal,
         };
-        const collected = await createLintAdapter().collect(context);
-        const reported = await observationCheckResult(
-          "lint",
-          collected,
-          context,
-          true,
-        );
-        const officialFix = reported.findings.find(
-          (finding) => finding.rule === "no-extra-semi",
-        );
-        const suggestionOnly = reported.findings.find(
-          (finding) => finding.rule === "no-unused-vars",
-        );
-        expect(officialFix).toBeDefined();
-        expect(suggestionOnly).toBeDefined();
-
-        const candidates = await planManagedEslintFixes(
-          {
+        const check = async () => {
+          const collected = await createLintAdapter().collect(context);
+          const reported = await observationCheckResult(
+            "lint",
+            collected,
             context,
-            checkId: "lint",
-            files: ["src/value.js", "test/preexisting.js"],
-            createEngine: () =>
-              createManagedEslint({
-                cwd: context.targetInspection.snapshotRoot,
-                mode: "lint",
-                managedIgnores: [],
-                ruleOverrides: {
-                  "no-extra-semi": "error",
-                  "no-unused-vars": "error",
-                },
-              }),
-          },
-          [officialFix!, suggestionOnly!],
-        );
+            true,
+          );
+          const officialFix = reported.findings.find(
+            (finding) => finding.rule === "no-extra-semi",
+          );
+          const suggestionOnly = reported.findings.find(
+            (finding) => finding.rule === "no-unused-vars",
+          );
+          expect(officialFix).toBeDefined();
+          expect(suggestionOnly).toBeDefined();
 
-        expect(candidates).toEqual([
-          expect.objectContaining({
-            kind: "exact-file",
-            checkId: "lint",
-            file: "src/value.js",
-            baseSource: fixableSource,
-            edits: [
-              expect.objectContaining({
-                findingId: officialFix!.id,
-              }),
-            ],
-          }),
-        ]);
-        expect(JSON.stringify(candidates)).not.toContain("suggestions");
-        expect(JSON.stringify(candidates)).not.toContain("preexisting");
-        expect(Object.isFrozen(candidates)).toBe(true);
-        expect(Object.isFrozen(candidates[0])).toBe(true);
+          const candidates = await planManagedEslintFixes(
+            {
+              context,
+              checkId: "lint",
+              files: ["src/value.js", "test/preexisting.js"],
+              createEngine: () =>
+                createManagedEslint({
+                  cwd: context.targetInspection.snapshotRoot,
+                  mode: "lint",
+                  managedIgnores: [],
+                  ruleOverrides: {
+                    "no-extra-semi": "error",
+                    "no-unused-vars": "error",
+                  },
+                }),
+            },
+            [officialFix!, suggestionOnly!],
+          );
+
+          expect(candidates).toEqual([
+            expect.objectContaining({
+              kind: "exact-file",
+              checkId: "lint",
+              file: "src/value.js",
+              baseSource: fixableSource,
+              edits: [
+                expect.objectContaining({
+                  findingId: officialFix!.id,
+                }),
+              ],
+            }),
+          ]);
+          expect(JSON.stringify(candidates)).not.toContain("suggestions");
+          expect(JSON.stringify(candidates)).not.toContain("preexisting");
+          expect(Object.isFrozen(candidates)).toBe(true);
+          expect(Object.isFrozen(candidates[0])).toBe(true);
+        };
+        if (reuse !== "sources") return check();
+        const capture = (await captureAnalysisSources(
+          [baseline, staged].map((fixture) => ({
+            snapshotRoot: fixture.root,
+            paths: ["src/value.js", "test/preexisting.js"],
+          })),
+        ))!;
+        // Findings and official edits must refer to the acquired version.
+        await staged.write("src/value.js", cleanSource);
+        try {
+          await withAnalysisSourceCapture(capture, check);
+        } finally {
+          await capture.close();
+        }
       };
-      if (!reuse) return run();
+      if (reuse !== true) return run();
       const owner = createAnalysisReuseSession();
       try {
         await withAnalysisReuseSession(owner, run);

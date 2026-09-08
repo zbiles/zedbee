@@ -8,8 +8,13 @@ import {
 } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
+  IGNORED_DIRECTORY_NAMES,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
+import {
+  capturedSourceInput,
+  capturedSourcePaths,
+} from "../../inspection/source-capture.js";
 import type { WorkspaceInspection } from "../../inspection/types.js";
 import type { SnapshotProgramInput } from "./compiler-host.js";
 
@@ -251,10 +256,29 @@ async function prepareSnapshotProgramFiles(
   for (const entry of registry.entries()) {
     if (entry.targetKind !== "file" || !LOADABLE.test(entry.repositoryPath))
       continue;
+    const captured = capturedSourceInput(canonicalRoot, entry.repositoryPath);
+    if (captured !== undefined && captured.text === undefined) continue;
     files.set(
       entry.absolutePath,
       await readContainedFile(registry, entry.repositoryPath),
     );
+  }
+  // Keep the complete live inventory for unselected/config inputs. Selected
+  // source files remain part of their explicit view even if removed on disk.
+  for (const path of capturedSourcePaths(canonicalRoot)) {
+    if (
+      !SOURCE.test(path) ||
+      path
+        .split("/")
+        .some((part) =>
+          (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
+        )
+    )
+      continue;
+    const captured = capturedSourceInput(canonicalRoot, path)!;
+    const absolutePath = resolve(canonicalRoot, path);
+    if (captured.text === undefined) files.delete(absolutePath);
+    else files.set(absolutePath, captured.text);
   }
   return { canonicalRoot, registry, files };
 }

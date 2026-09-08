@@ -7,8 +7,13 @@ import {
 } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
+  IGNORED_DIRECTORY_NAMES,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
+import {
+  capturedSourceRegistry,
+  hasAnalysisSourceCapture,
+} from "../../inspection/source-capture.js";
 
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 
@@ -52,7 +57,13 @@ async function readTextSource(
   identityPath: string,
   required: boolean,
 ): Promise<SecretTextSource | undefined> {
-  const entry = registry.resolve(repositoryPath);
+  // A selected input is not permission to widen this consumer's inventory.
+  const excluded = repositoryPath
+    .split("/")
+    .some((part) =>
+      (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
+    );
+  const entry = excluded ? undefined : registry.resolve(repositoryPath);
   if (entry === undefined) {
     if (!required) return undefined;
     throw new SecretContentError({
@@ -114,14 +125,35 @@ async function readTextSource(
 export async function collectSecretSourcePairs(
   context: CheckRunContext,
 ): Promise<readonly SecretSourcePair[]> {
-  const [baselineRegistry, targetRegistry] = await Promise.all([
-    captureSnapshotRegistry(context.baselineInspection.snapshotRoot),
-    captureSnapshotRegistry(context.targetInspection.snapshotRoot),
-  ]);
   const changed = [...context.changeSet.files.values()]
     .filter(({ status }) => status !== "deleted")
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const pairs: SecretSourcePair[] = [];
+  const liveRegistries = new Map<string, Promise<SnapshotRegistry>>();
+  if (!hasAnalysisSourceCapture()) {
+    const roots = [
+      context.baselineInspection.snapshotRoot,
+      context.targetInspection.snapshotRoot,
+    ];
+    const registries = await Promise.all(
+      roots.map((root) => captureSnapshotRegistry(root)),
+    );
+    roots.forEach((root, index) =>
+      liveRegistries.set(root, Promise.resolve(registries[index]!)),
+    );
+  }
+  const readSelected = async (root: string, path: string, identity: string) => {
+    let registry = capturedSourceRegistry(root, [path]);
+    if (registry === undefined) {
+      let pending = liveRegistries.get(root);
+      if (pending === undefined) {
+        pending = captureSnapshotRegistry(root);
+        liveRegistries.set(root, pending);
+      }
+      registry = await pending;
+    }
+    return readTextSource(registry, path, identity, true);
+  };
   for (const file of changed) {
     const targetPath = normalizeRepositoryRelativePath(file.path);
     const baselinePath =
@@ -131,8 +163,16 @@ export async function collectSecretSourcePairs(
     const [baseline, target] = await Promise.all([
       baselinePath === undefined
         ? undefined
-        : readTextSource(baselineRegistry, baselinePath, targetPath, true),
-      readTextSource(targetRegistry, targetPath, targetPath, true),
+        : readSelected(
+            context.baselineInspection.snapshotRoot,
+            baselinePath,
+            targetPath,
+          ),
+      readSelected(
+        context.targetInspection.snapshotRoot,
+        targetPath,
+        targetPath,
+      ),
     ]);
     if (baseline === undefined && target === undefined) continue;
     pairs.push(

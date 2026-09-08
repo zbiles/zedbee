@@ -16,17 +16,35 @@ export function countSyntaxParses(): () => number {
   return () => count;
 }
 
-/** Observe real checked-descriptor reads, without replacing served bytes. */
+/** Count real path reads / descriptor read sequences, without replacing bytes. */
 export function countContainedSourceReads(suffix: string): () => number {
   let count = 0;
+  const readFile = fs.readFile;
+  vi.spyOn(fs, "readFile").mockImplementation((...args) => {
+    if (String(args[0]).replaceAll("\\", "/").endsWith(suffix)) count += 1;
+    return Reflect.apply(readFile, fs, args);
+  });
   const open = fs.open;
   vi.spyOn(fs, "open").mockImplementation(async (...args) => {
     const handle = await open(...args);
     if (String(args[0]).replaceAll("\\", "/").endsWith(suffix)) {
+      let counted = false;
+      const record = () => {
+        if (!counted) {
+          count += 1;
+          counted = true;
+        }
+      };
       const read = handle.readFile;
       vi.spyOn(handle, "readFile").mockImplementation((...readArgs) => {
-        count += 1;
+        record();
         return Reflect.apply(read, handle, readArgs);
+      });
+      const readChunk = handle.read;
+      vi.spyOn(handle, "read").mockImplementation(async (...readArgs) => {
+        record();
+        const result = await Reflect.apply(readChunk, handle, readArgs);
+        return result;
       });
     }
     return handle;

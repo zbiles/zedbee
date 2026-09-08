@@ -8,6 +8,11 @@ import {
   readContainedFile,
 } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  capturedSourceInput,
+  capturedSourceRegistry,
+  hasAnalysisSourceCapture,
+} from "../../inspection/source-capture.js";
 
 export interface ManagedEslintOptions extends ManagedConfigOptions {
   readonly cwd: string;
@@ -45,6 +50,13 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
   }
 
+  const captured = capturedSourceInput(cwd, path);
+  if (captured !== undefined) {
+    if (captured.entry !== undefined && captured.entry.targetKind !== "file") {
+      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    }
+    return;
+  }
   try {
     const [canonicalRoot, canonicalTarget] = await Promise.all([
       realpath(cwd),
@@ -91,30 +103,35 @@ class ManagedEslint extends ESLint {
     const paths = typeof patterns === "string" ? [patterns] : patterns;
     for (const path of paths) await assertInspectorPath(this.#cwd, path);
     const store = analysisStore<Promise<ESLint.LintResult[]>>(rawComplexity);
-    if (store === undefined) return super.lintFiles(patterns);
+    if (store === undefined && !hasAnalysisSourceCapture())
+      return super.lintFiles(patterns);
     const root = await canonicalizeSnapshotRoot(this.#cwd);
-    const registry = await captureSnapshotRegistry(root, paths);
+    const livePaths = paths.filter(
+      (path) => capturedSourceInput(root, path) === undefined,
+    );
+    const liveRegistry = await captureSnapshotRegistry(root, livePaths);
     const results: ESLint.LintResult[] = [];
     for (const path of [...new Set(paths)]) {
+      const registry = capturedSourceRegistry(root, [path]) ?? liveRegistry;
       if (registry.resolve(path) === undefined) continue;
-      // Read through the existing trusted boundary on every use. A session is
-      // not filesystem immutability and timestamps are not a source identity.
+      // Parser ownership alone remains live; only an explicit input view
+      // supplies previously acquired bytes through the trusted boundary.
       const source = await readContainedFile(registry, path);
       const filePath = resolve(this.#cwd, path);
       const key =
         this.#mode === "complexity" && this.#identity !== undefined
           ? analysisKey([this.#identity, filePath, source])
           : undefined;
-      let pending = key === undefined ? undefined : store.get(key);
+      let pending = key === undefined ? undefined : store?.get(key);
       if (pending === undefined) {
         pending = super.lintText(source, { filePath });
         if (key !== undefined)
-          store.set(key, pending, source.length * 32 + 4096);
+          store?.set(key, pending, source.length * 32 + 4096);
       }
       try {
         results.push(...structuredClone(await pending));
       } catch (error) {
-        if (key !== undefined) store.delete(key);
+        if (key !== undefined) store?.delete(key);
         throw error;
       }
     }

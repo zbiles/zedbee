@@ -605,6 +605,66 @@ describe("owned analysis reuse", () => {
     }
   });
 
+  it("isolates actual repositories with the same import and package names but different declarations", async () => {
+    const one = await createInspectionFixture();
+    const two = await createInspectionFixture();
+    for (const [fixture, type] of [
+      [one, "string"],
+      [two, "number"],
+    ] as const) {
+      await fixture.writeJson("node_modules/x/package.json", {
+        name: "x",
+        types: "index.d.ts",
+      });
+      await fixture.write(
+        "node_modules/x/index.d.ts",
+        `export const value: ${type};`,
+      );
+    }
+    const makeInput = (repositoryRoot: string) => ({
+      repositoryRoot,
+      files: {
+        "a.ts": "import { value } from 'x'; const result: number = value;",
+      },
+      rootNames: ["a.ts"],
+      options: { noLib: true, types: [] },
+    });
+    const a = makeInput(one.root);
+    const b = makeInput(two.root);
+    const owner = createAnalysisReuseSession();
+    try {
+      await withAnalysisReuseSession(owner, async () => {
+        const ca = captureAnalysisDependencies(a);
+        const cb = captureAnalysisDependencies(b);
+        expect(ca).not.toBe(cb);
+        const pa = createSnapshotProgram({ ...a, dependencies: ca }).program;
+        const pb = createSnapshotProgram({ ...b, dependencies: cb }).program;
+        expect(pa).not.toBe(pb);
+        expect(pa.getSemanticDiagnostics().map(({ code }) => code)).toEqual([
+          2322,
+        ]);
+        expect(pb.getSemanticDiagnostics()).toEqual([]);
+        expect(validateDependencyInputs(ca.manifest(), a)).toBe(true);
+        expect(validateDependencyInputs(cb.manifest(), b)).toBe(true);
+        expect(ca.manifest()).not.toEqual(cb.manifest());
+        expect(
+          createSnapshotProgram({
+            ...a,
+            dependencies: captureAnalysisDependencies(a),
+          }).program,
+        ).toBe(pa);
+        expect(
+          createSnapshotProgram({
+            ...b,
+            dependencies: captureAnalysisDependencies(b),
+          }).program,
+        ).toBe(pb);
+      });
+    } finally {
+      await owner.close();
+    }
+  });
+
   it("rotates dependency captures on same-size restored-mtime changes and records lazy program reads", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("node_modules/x/package.json", {

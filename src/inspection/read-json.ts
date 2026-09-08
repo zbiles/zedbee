@@ -5,6 +5,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
+import { capturedSourceInput } from "./source-capture.js";
 
 export function normalizeRepositoryPath(path: string): string {
   return path.split(sep).join("/");
@@ -238,6 +239,13 @@ export async function readContainedFile(
   ) {
     throw new TypeError("Expected a non-negative safe file-size limit");
   }
+  const captured = capturedSourceInput(registry.snapshotRoot, repositoryPath);
+  if (captured !== undefined) {
+    if (captured.text === undefined) throw unreadablePath(repositoryPath);
+    if (maxBytes !== undefined && captured.byteLength > maxBytes)
+      throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    return captured.text;
+  }
   return withValidatedContainedFile(
     registry,
     repositoryPath,
@@ -263,6 +271,40 @@ export async function readContainedFile(
         chunks.push(buffer.subarray(0, bytesRead));
       }
       return Buffer.concat(chunks, total).toString("utf8");
+    },
+  );
+}
+
+/** Fresh bounded acquisition for explicit immutable source views. */
+export async function readContainedBytes(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  options: ContainedFileReadOptions & { readonly maxBytes: number },
+): Promise<Buffer> {
+  const { maxBytes } = options;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    throw new TypeError("Expected a non-negative safe file-size limit");
+  return withValidatedContainedFile(
+    registry,
+    repositoryPath,
+    options,
+    async (handle, size) => {
+      if (size > BigInt(maxBytes))
+        throw new ContainedFileSizeError(repositoryPath, maxBytes);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (true) {
+        const buffer = Buffer.allocUnsafe(
+          Math.min(64 * 1024, maxBytes - total + 1),
+        );
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        total += bytesRead;
+        if (total > maxBytes)
+          throw new ContainedFileSizeError(repositoryPath, maxBytes);
+        chunks.push(buffer.subarray(0, bytesRead));
+      }
+      return Buffer.concat(chunks, total);
     },
   );
 }

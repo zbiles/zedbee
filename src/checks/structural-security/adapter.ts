@@ -7,6 +7,11 @@ import {
   readContainedFile,
 } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  capturedSourceInput,
+  capturedSourceRegistry,
+  hasAnalysisSourceCapture,
+} from "../../inspection/source-capture.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -23,7 +28,10 @@ import { collectStructuralSecurityObservations } from "./rules.js";
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
-function parserCompatibleTypeScriptSource(file: string, source: string): string {
+function parserCompatibleTypeScriptSource(
+  file: string,
+  source: string,
+): string {
   if (!TYPESCRIPT_SOURCE.test(file)) throw new Error("parse failed");
   const transpiled = ts.transpileModule(source, {
     fileName: file,
@@ -98,16 +106,26 @@ async function collectSide(
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Structural security analysis failed.");
-  const registry = await captureSnapshotRegistry(canonicalRoot);
   const workspace = workspaceFor(inspection, target);
   if (workspace === undefined) return Object.freeze([]);
   const files = workspace.sourceFiles
     .filter((file) => SOURCE.test(file))
     .sort(compareCodeUnits);
+  const liveRegistry = await captureSnapshotRegistry(
+    canonicalRoot,
+    hasAnalysisSourceCapture()
+      ? files.filter(
+          (file) => capturedSourceInput(canonicalRoot, file) === undefined,
+        )
+      : undefined,
+  );
   const observations: Observation[] = [];
   for (const file of files) {
     if (signal.aborted) throw new Error("Structural security analysis failed.");
-    const source = await readContainedFile(registry, file);
+    const source = await readContainedFile(
+      capturedSourceRegistry(canonicalRoot, [file]) ?? liveRegistry,
+      file,
+    );
     try {
       observations.push(...collectFile(file, source));
     } catch {
