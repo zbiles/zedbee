@@ -49,6 +49,25 @@ const request = {
   },
 } as const;
 describe("service executor isolation", () => {
+  it("returns operation admission capacity without disconnecting other accepted requests", async () => {
+    const { state, record } = await fixture();
+    const client = await connectService(state, record);
+    cleanups.push(() => client.close());
+    const outcomes = await Promise.all(
+      Array.from({ length: 32 }, () =>
+        client.request("status").catch((error) => error),
+      ),
+    );
+    for (const result of outcomes) {
+      if (result instanceof Error)
+        expect(result).toMatchObject({
+          code: "ANALYZER_CAPACITY",
+          scope: "job",
+        });
+      else expect(result).toMatchObject({ state: "running" });
+    }
+    expect(await client.request("status")).toMatchObject({ state: "running" });
+  });
   it("rejects a locally oversized encoded request before acceptance and keeps the connection usable", async () => {
     const { state, record } = await fixture();
     const executor = executorForConnection(await connectService(state, record));

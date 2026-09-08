@@ -210,6 +210,7 @@ export async function startServiceServer(
           return;
         }
         let releaseDecoded: (() => void) | undefined;
+        let admittedId: number | undefined;
         try {
           if (
             exactFields(value, ["id", "op", "eventId"]) &&
@@ -230,11 +231,6 @@ export async function startServiceServer(
             release();
             return;
           }
-          if (pending >= 16 || operations >= 128)
-            throw new AnalyzerCapacityError("job");
-          releaseDecoded = decoded.reserve(
-            analyzerRequestRetentionBytes(value),
-          );
           if (
             !exactFields(value, [
               "id",
@@ -251,6 +247,12 @@ export async function startServiceServer(
             throw new ServiceUnavailableError();
           const id = value.id as number;
           lastId = id;
+          admittedId = id;
+          if (pending >= 16 || operations >= 128)
+            throw new AnalyzerCapacityError("job");
+          releaseDecoded = decoded.reserve(
+            analyzerRequestRetentionBytes(value),
+          );
           pending++;
           operations++;
           const operation = operate(value);
@@ -271,10 +273,20 @@ export async function startServiceServer(
               releaseDecoded?.();
               release();
             });
-        } catch {
+        } catch (error) {
           releaseDecoded?.();
-          release();
-          peer.destroy();
+          if (
+            error instanceof AnalyzerCapacityError &&
+            admittedId !== undefined
+          ) {
+            void peer
+              .send({ id: admittedId, ok: false, error: wireError(error) })
+              .catch(() => peer.destroy())
+              .finally(release);
+          } else {
+            release();
+            peer.destroy();
+          }
         }
       },
     );
@@ -295,7 +307,11 @@ export async function startServiceServer(
       })();
       cleaning.add(cleanup);
       void cleanup
-        .catch(() => close())
+        .catch(() => {
+          // Preserve the rejected close promise for management, but a failed
+          // background cleanup must not become an unhandled process rejection.
+          void close().catch(() => {});
+        })
         .finally(() => {
           cleaning.delete(cleanup);
           clients.delete(peer);

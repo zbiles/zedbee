@@ -105,6 +105,65 @@ it("independent command processes reuse a real worker and stop releases that ent
   expect(await stopService(config)).toEqual({ state: "stopped" });
   for (const pid of before) expect(() => process.kill(pid, 0)).toThrow();
 });
+it("a killed caller retires its tree while an independent live client's session remains usable", async () => {
+  const config = await options();
+  const live = await acquireServiceExecutor(config);
+  try {
+    const session = await live.openSession();
+    expect(await session.run(request)).toBe("const a = 1;\n");
+    const module = new URL("../../dist/service/client.js", import.meta.url)
+      .href;
+    const code = `import {acquireServiceExecutor} from ${JSON.stringify(module)}; const executor=await acquireServiceExecutor({directory:process.argv[1]}); const session=await executor.openSession(); await session.run(${JSON.stringify(request)}); process.stdout.write("ready\\n",()=>process.kill(process.pid,"SIGKILL"));`;
+    await expect(
+      promisify(execFile)(
+        process.execPath,
+        ["--input-type=module", "-e", code, config.directory],
+        { maxBuffer: 1024 * 1024 },
+      ),
+      // Windows TerminateProcess and POSIX signals encode the exit differently;
+      // the marker proves analysis finished before the deliberate abrupt exit.
+    ).rejects.toMatchObject({ stdout: "ready\n", stderr: "" });
+    await expect
+      .poll(() => serviceStatus(config))
+      .toMatchObject({ state: "running", activeSessions: 1 });
+    expect(await session.run(request)).toBe("const a = 1;\n");
+    const status = await serviceStatus(config);
+    if (status.state !== "running") throw new Error("Missing service");
+    expect(await descendants(status.pid)).toHaveLength(2);
+    await session.close();
+  } finally {
+    await live.close();
+  }
+});
+it("service death with submitted analysis returns incomplete only after its real worker tree is gone", async () => {
+  const config = await options();
+  const executor = await acquireServiceExecutor(config);
+  const session = await executor.openSession();
+  // Warm a witnessed worker, then occupy it with real package-selected analysis.
+  expect(await session.run(request)).toBe("const a = 1;\n");
+  const status = await serviceStatus(config);
+  if (status.state !== "running") throw new Error("Missing service");
+  const owned = await descendants(status.pid);
+  expect(owned).toHaveLength(2);
+  let settled = false;
+  const job = session
+    .run({
+      ...request,
+      input: { ...request.input, source: "a();\n".repeat(200000) },
+    })
+    .finally(() => {
+      settled = true;
+    });
+  const failure = expect(job).rejects.toMatchObject({
+    diagnostic: { category: "abnormal-exit" },
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  process.kill(status.pid, "SIGKILL");
+  await failure;
+  for (const pid of owned) expect(() => process.kill(pid, 0)).toThrow();
+  await executor.close().catch(() => {});
+});
 it.each([false, true])(
   "service death (also kill supervisor: %s) leaves close pending until all independently witnessed workers are gone and permits stale-state recovery",
   async (killSupervisor) => {
