@@ -2,6 +2,11 @@ import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
 import picomatch from "picomatch";
+import { analysisKey, analysisStore } from "../analysis-reuse.js";
+import {
+  captureAnalysisDependencies,
+  compilerPrograms,
+} from "./reuse-inputs.js";
 
 export interface SnapshotProgramInput {
   readonly repositoryRoot: string;
@@ -81,6 +86,45 @@ function validateProjectSpecifier(sourcePath: string, specifier: string): void {
 }
 
 export function createSnapshotProgram(
+  input: SnapshotProgramInput,
+): SnapshotProgram {
+  const dependencies =
+    input.dependencies ??
+    captureAnalysisDependencies({ repositoryRoot: input.repositoryRoot });
+  const store = analysisStore<{
+    result: SnapshotProgram;
+    dependencies: CapturedDependencies;
+  }>(compilerPrograms);
+  const key =
+    store === undefined
+      ? undefined
+      : analysisKey({ ...input, dependencies: undefined });
+  if (key !== undefined) {
+    const previous = store!.get(key);
+    const manifest = dependencies.manifest();
+    if (
+      previous?.dependencies === dependencies &&
+      manifest !== undefined &&
+      dependencies.validate(manifest)
+    )
+      return previous.result;
+  }
+  const result = createFreshSnapshotProgram({ ...input, dependencies });
+  if (key !== undefined && dependencies.manifest() !== undefined) {
+    const estimatedBytes = result.programs.reduce(
+      (bytes, program) =>
+        bytes +
+        program
+          .getSourceFiles()
+          .reduce((size, source) => size + source.text.length * 32 + 4096, 0),
+      0,
+    );
+    store!.set(key, { result, dependencies }, estimatedBytes);
+  }
+  return result;
+}
+
+function createFreshSnapshotProgram(
   input: SnapshotProgramInput,
 ): SnapshotProgram {
   const repositoryRoot = resolve(input.repositoryRoot);

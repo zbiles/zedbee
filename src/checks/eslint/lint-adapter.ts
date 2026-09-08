@@ -21,6 +21,7 @@ import { createManagedEslint } from "./load-engine.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
+import { captureAnalysisDependencies } from "../typescript/reuse-inputs.js";
 import { loadSnapshotProgramProjects } from "../typescript/config.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { isAnalyzerWorker } from "../runner/context.js";
@@ -344,7 +345,7 @@ export function createLintAdapter(
     },
 
     async collect(context): Promise<CheckObservationSet> {
-      const dependencies = new CapturedDependencies(context);
+      const dependencies = captureAnalysisDependencies(context);
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
           () =>

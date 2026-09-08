@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import type { ESLint, Linter } from "eslint";
 import type * as ts from "typescript";
 import tseslint from "typescript-eslint";
+import { reuseJavascriptParser, reuseTypescriptParser } from "./parse-store.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -173,6 +174,7 @@ export function managedConfig(
       languageOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
+        parser: reuseJavascriptParser,
         parserOptions: { ecmaFeatures: { jsx: true } },
       },
     },
@@ -181,7 +183,7 @@ export function managedConfig(
       languageOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
-        parser: tseslint.parser,
+        parser: reuseTypescriptParser,
         parserOptions: { ecmaFeatures: { jsx: true } },
       },
     },
@@ -200,6 +202,7 @@ export function managedConfig(
           files: TYPESCRIPT_FILES,
           languageOptions: {
             ...presetConfig.languageOptions,
+            parser: reuseTypescriptParser,
             parserOptions: {
               ...(typeof parserOptions === "object" && parserOptions !== null
                 ? parserOptions
@@ -221,6 +224,10 @@ export function managedConfig(
         config.push({
           ...presetConfig,
           files: TYPESCRIPT_FILES,
+          languageOptions: {
+            ...presetConfig.languageOptions,
+            parser: reuseTypescriptParser,
+          },
           ...(presetConfig.rules === undefined
             ? {}
             : { rules: { ...presetConfig.rules } }),

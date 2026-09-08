@@ -18,6 +18,7 @@ import { createSnapshotProgram } from "./compiler-host.js";
 import { loadSnapshotProgramInput } from "./config.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
+import { captureAnalysisDependencies } from "./reuse-inputs.js";
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
@@ -79,7 +80,7 @@ export const typescriptAdapter: ObservationCheckAdapter = {
 
   async collect(context): Promise<CheckObservationSet> {
     try {
-      const dependencies = new CapturedDependencies(context);
+      const dependencies = captureAnalysisDependencies(context);
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
           () =>

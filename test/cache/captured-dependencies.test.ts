@@ -88,20 +88,38 @@ describe("captured dependency view", () => {
     ).toBe(false);
   });
 
-  it("preserves UTF-16 compiler decoding", async () => {
-    const live = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "");
-    const path = join(live.root, "node_modules/x/index.d.ts");
-    await writeFile(
-      path,
-      Buffer.concat([
-        Buffer.from([255, 254]),
-        Buffer.from("export const x: number;", "utf16le"),
-      ]),
-    );
-    const view = new CapturedDependencies({ repositoryRoot: live.root });
-    expect(view.readFile(path)).toBe("export const x: number;");
-  });
+  it.each(["utf16le", "utf16be", "utf8-bom"])(
+    "preserves %s compiler decoding and validates served bytes",
+    async (encoding) => {
+      const live = await createInspectionFixture();
+      await live.write("node_modules/x/index.d.ts", "");
+      const path = join(live.root, "node_modules/x/index.d.ts");
+      await writeFile(
+        path,
+        encoding === "utf8-bom"
+          ? Buffer.from("\uFEFFexport const x: number;", "utf8")
+          : Buffer.concat([
+              Buffer.from(encoding === "utf16le" ? [255, 254] : [254, 255]),
+              encoding === "utf16le"
+                ? Buffer.from("export const x: number;", "utf16le")
+                : Buffer.from("export const x: number;", "utf16le").swap16(),
+            ]),
+      );
+      const view = new CapturedDependencies({ repositoryRoot: live.root });
+      expect(view.readFile(path)).toBe("export const x: number;");
+      expect(
+        validateDependencyInputs(view.manifest(), {
+          repositoryRoot: live.root,
+        }),
+      ).toBe(true);
+      await writeFile(path, "export const x: string;");
+      expect(
+        validateDependencyInputs(view.manifest(), {
+          repositoryRoot: live.root,
+        }),
+      ).toBe(false);
+    },
+  );
 
   it("bypasses retention for oversized dependencies without hiding them from the engine", async () => {
     const live = await createInspectionFixture();

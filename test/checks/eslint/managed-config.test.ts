@@ -4,6 +4,10 @@ import type { ESLint } from "eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+import {
+  reuseJavascriptParser,
+  reuseTypescriptParser,
+} from "../../../src/checks/eslint/parse-store.js";
 import { describe, expect, test } from "vitest";
 import {
   groupFilesByRules,
@@ -42,7 +46,10 @@ describe("managedConfig", () => {
       jsxA11yPlugin,
       readabilityComplexityPlugin,
     ]);
-    const allowedParsers = new Set<unknown>([tseslint.parser]);
+    const allowedParsers = new Set<unknown>([
+      reuseJavascriptParser,
+      reuseTypescriptParser,
+    ]);
 
     for (const mode of modes) {
       const config = managedConfig({

@@ -24,6 +24,7 @@ import type { ResolvedComplexityPolicy } from "../../config/schema.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "../eslint/load-engine.js";
 import { managedConfig } from "../eslint/managed-config.js";
+import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   parseComplexityMetric,
   type ComplexityMetricName,
@@ -48,7 +49,47 @@ function lineStarts(source: string): readonly number[] {
   return starts;
 }
 
+const metricObservations = Symbol("canonical complexity metrics");
+const metricMessages = Symbol("in-memory complexity traversal");
+
 function observationsFromMessages(
+  file: string,
+  source: string,
+  messages: readonly LinterTypes.LintMessage[],
+  limit?: number,
+): readonly Observation[] {
+  const store = analysisStore<readonly Observation[]>(metricObservations);
+  const key =
+    store === undefined ? undefined : analysisKey([file, source, messages]);
+  let observations = key === undefined ? undefined : store!.get(key);
+  if (observations === undefined) {
+    observations = rawObservationsFromMessages(file, source, messages);
+    if (key !== undefined)
+      store!.set(
+        key,
+        observations,
+        source.length * 4 + observations.length * 1024,
+      );
+  }
+  return Object.freeze(
+    observations.map((observation) => ({
+      ...observation,
+      ...(observation.entity === undefined
+        ? {}
+        : { entity: { ...observation.entity } }),
+      ...(observation.metric === undefined
+        ? {}
+        : {
+            metric: {
+              ...observation.metric,
+              ...(limit === undefined ? {} : { limit }),
+            },
+          }),
+    })),
+  );
+}
+
+function rawObservationsFromMessages(
   file: string,
   source: string,
   messages: readonly LinterTypes.LintMessage[],
@@ -151,12 +192,23 @@ export async function collectComplexityObservations(
   source: string,
   limit?: number,
 ): Promise<readonly Observation[]> {
-  const linter = new Linter({ configType: "flat" });
-  const messages = linter.verify(
-    source,
-    [...managedConfig({ mode: "complexity", managedIgnores: [] })],
-    { filename: file },
-  );
+  const store =
+    analysisStore<readonly LinterTypes.LintMessage[]>(metricMessages);
+  const key =
+    store === undefined
+      ? undefined
+      : analysisKey([process.cwd(), file, source]);
+  let messages = key === undefined ? undefined : store!.get(key);
+  if (messages === undefined) {
+    const linter = new Linter({ configType: "flat" });
+    messages = linter.verify(
+      source,
+      [...managedConfig({ mode: "complexity", managedIgnores: [] })],
+      { filename: file },
+    );
+    if (key !== undefined)
+      store!.set(key, messages, source.length * 4 + messages.length * 1024);
+  }
   return observationsFromMessages(file, source, messages, limit);
 }
 
