@@ -1,8 +1,29 @@
 import { describe, expect, it } from "vitest";
-import { scanTimeoutOverrides } from "../src/cli.js";
+import { runCli, scanTimeoutOverrides } from "../src/cli.js";
 import { resolveScanResourcePolicy } from "../src/scan/resource-policy.js";
 
 describe("scanTimeoutOverrides", () => {
+  it.each(["scan", "fix"] as const)(
+    "accepts --no-service for %s without changing output options",
+    async (command) => {
+      let service: boolean | undefined;
+      const result = await runCli(
+        ["node", "zedbee", command, "--no-service", "--format", "json"],
+        {
+          executeScanCommand: async (options) => {
+            service = options.service;
+            return 0;
+          },
+          executeFixCommand: async (options) => {
+            service = options.service;
+            return 0;
+          },
+        },
+      );
+      expect(result).toBe(0);
+      expect(service).toBe(false);
+    },
+  );
   it.each([
     ["--timeout", "30s", "--no-timeout"],
     ["--no-timeout", "--timeout", "30s"],
@@ -16,17 +37,18 @@ describe("scanTimeoutOverrides", () => {
 
       expect(overrides).toEqual({ noTimeout: true });
       expect(
-        resolveScanResourcePolicy(
-          { gitHardTimeout: "60s" },
-          overrides,
-        ).gitHardTimeoutMs,
+        resolveScanResourcePolicy({ gitHardTimeout: "60s" }, overrides)
+          .gitHardTimeoutMs,
       ).toBeUndefined();
     },
   );
 
   it("keeps --timeout as the hard-timeout override when no-timeout is absent", () => {
     expect(
-      scanTimeoutOverrides(["node", "zedbee", "scan", "--timeout", "30s"], "30s"),
+      scanTimeoutOverrides(
+        ["node", "zedbee", "scan", "--timeout", "30s"],
+        "30s",
+      ),
     ).toEqual({ timeout: "30s" });
   });
 });

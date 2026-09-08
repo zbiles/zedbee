@@ -14,7 +14,6 @@ import type {
   CheckRunContext,
   CheckTarget,
   CheckApplicability,
-  ExecutionClass,
   InspectionContext,
   ObservationCheckAdapter,
   LegacyCheckResultAdapter,
@@ -526,13 +525,6 @@ function compareResults(
   );
 }
 
-function limiterFor(
-  executionClass: ExecutionClass,
-  limits: Readonly<Record<ExecutionClass, ReturnType<typeof pLimit>>>,
-): ReturnType<typeof pLimit> {
-  return limits[executionClass];
-}
-
 type AdapterSnapshot =
   | Readonly<{
       id: string;
@@ -722,12 +714,9 @@ export async function dispatchChecks(
       // Observers are display-only and must not change scan execution.
     }
   };
-  const limits = {
-    lightweight: pLimit(2),
-    "project-analysis": pLimit(1),
-    network: pLimit(1),
-  } as const;
-  const overallLimit = pLimit(2);
+  // Bounded producers retain only four active adapter inputs. Worker/class
+  // scheduling belongs to the shared executor, including its four-worker mode.
+  const limit = pLimit(4);
   // Default installed metadata is reused only within this dispatch. Preserve
   // injected resolvers' per-collection behavior and avoid all reads without cache.
   const identities = new Map<string, string | undefined>();
@@ -942,9 +931,6 @@ export async function dispatchChecks(
         target: target.id,
         timestamp: clock(),
       });
-      const classLimit = limiterFor(applicability.executionClass, limits);
-      const limit = (run: () => Promise<CheckExecutionResult>) =>
-        classLimit(() => overallLimit(run));
       scheduled.push(
         limit(async () => {
           const started = clock();

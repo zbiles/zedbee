@@ -1,6 +1,8 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
 import { applyFixPlan } from "../fixes/apply-plan.js";
+import { createCommandExecutor } from "./executor.js";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
 import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
 import {
@@ -37,6 +39,8 @@ const COMPACT_DETAIL_LIMIT = 25;
 const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
 
 export interface FixCommandOptions {
+  readonly service?: boolean;
+  readonly executor?: AnalyzerExecutor;
   readonly cwd: string;
   readonly check?: FixableCheckId;
   readonly yes: boolean;
@@ -73,7 +77,10 @@ export interface FixCommandDependencies {
   ): Promise<PreparedFixPlan>;
   applyFixPlan(
     plan: PreparedFixPlan,
-    options?: { readonly signal?: AbortSignal },
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly executor?: AnalyzerExecutor;
+    },
   ): Promise<FixResult>;
   /** Injected by the interactive UI task; the command remains safe until then. */
   confirm(plan: FixPlan, options: FixPromptOptions): Promise<boolean>;
@@ -491,6 +498,9 @@ export async function executeFixCommand(
   const stages: DiagnosticTimings = {};
   const diagnosticEntries: DiagnosticEntry[] = [];
   let cleanupFailed = false;
+  const executor = options.executor ?? createCommandExecutor(options.service);
+  const closeExecutor = () =>
+    options.executor === undefined ? executor.close() : Promise.resolve();
   try {
     options.signal?.throwIfAborted();
     const repositoryRoot = await timeCommandStage(stages, "repository", () =>
@@ -508,6 +518,7 @@ export async function executeFixCommand(
     }
     const prepared = await timeCommandStage(stages, "analysis", () =>
       dependencies.buildFixPlan({
+        executor,
         repositoryRoot,
         selectedChecks:
           options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
@@ -539,6 +550,7 @@ export async function executeFixCommand(
     };
 
     if (prepared.publicPlan.exitCode === 2) {
+      await closeExecutor();
       outputPlan(false);
       io.writeStderr(renderWarnings(maintenance.warnings));
       return 2;
@@ -558,6 +570,7 @@ export async function executeFixCommand(
           : { reportPath: maintenance.reportPath }),
       });
       if (!confirmed) {
+        await closeExecutor();
         outputPlan(false);
         io.writeStdout(
           applicableFixesAvailable
@@ -570,6 +583,7 @@ export async function executeFixCommand(
     }
 
     if (!confirmed) {
+      await closeExecutor();
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(
@@ -583,6 +597,7 @@ export async function executeFixCommand(
     }
 
     if (!applicableFixesAvailable) {
+      await closeExecutor();
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(
@@ -595,12 +610,13 @@ export async function executeFixCommand(
 
     options.signal?.throwIfAborted();
     const result = await timeCommandStage(stages, "apply", () =>
-      dependencies.applyFixPlan(
-        prepared,
-        options.signal === undefined ? {} : { signal: options.signal },
-      ),
+      dependencies.applyFixPlan(prepared, {
+        executor,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
     );
     diagnosticEntries.push(...result.issues);
+    await closeExecutor();
     if (format === "json") {
       outputPlan(true, result);
     } else if (
@@ -649,6 +665,12 @@ export async function executeFixCommand(
     }
     return 2;
   } finally {
+    try {
+      await closeExecutor();
+    } catch {
+      if (!cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+      cleanupFailed = true;
+    }
     if (options.diagnostics)
       writeCommandDiagnostics(io, {
         command: "fix",
@@ -658,5 +680,6 @@ export async function executeFixCommand(
         cancelled: options.signal?.aborted === true,
         cleanupFailed,
       });
+    if (cleanupFailed) return 2;
   }
 }

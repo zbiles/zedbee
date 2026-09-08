@@ -1,4 +1,5 @@
 import type { CheckExecutionResult } from "../checks/adapter.js";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 export { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
 import type { DispatchOptions } from "../checks/dispatcher.js";
 import type { ScanEvent } from "../checks/events.js";
@@ -53,6 +54,8 @@ export interface RunScanDependencies extends AnalysisSessionDependencies {
 }
 
 export interface RunScanOptions {
+  /** Experimental: each scan owns a fresh session, never the supplied executor. */
+  executor?: AnalyzerExecutor;
   repositoryRoot: string;
   baseRef?: string;
   configPath?: string;

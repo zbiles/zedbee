@@ -14,6 +14,11 @@ import {
   type AnalysisSessionDependencies,
 } from "../../src/scan/analysis-session.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+import {
+  createLocalAnalyzerExecutor,
+  type AnalyzerExecutor,
+} from "../../src/checks/runner/executor.js";
+import { activeAnalyzerExecutionSession } from "../../src/checks/runner/session.js";
 
 const configuration = {
   schemaVersion: 1,
@@ -91,6 +96,94 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it.each([false, true])(
+    "retains snapshots only when execution close is unproved (%s)",
+    async (failClose) => {
+      const repository = await repositoryFixture();
+      const local = createLocalAnalyzerExecutor();
+      let pair:
+        Awaited<ReturnType<typeof defaults.buildIndexSnapshots>> | undefined;
+      let release: (() => Promise<void>) | undefined;
+      const executor: AnalyzerExecutor = {
+        async openSession(options) {
+          const session = await local.openSession(options);
+          release = () => session.close();
+          return {
+            run: session.run.bind(session),
+            async close() {
+              if (failClose) throw new Error("private native cleanup failure");
+              await session.close();
+            },
+          };
+        },
+        close: () => local.close(),
+      };
+      try {
+        const outcome = await withAnalysisSession(
+          {
+            repositoryRoot: repository.root,
+            executor,
+            dependencies: {
+              ...defaults,
+              buildIndexSnapshots: async (...args) =>
+                (pair = await defaults.buildIndexSnapshots(...args)),
+              dispatch: async () => [],
+            },
+          },
+          async () => 42,
+        );
+        expect(outcome.cleanupFailure !== undefined).toBe(failClose);
+        expect(JSON.stringify(outcome.cleanupFailure ?? {})).not.toContain(
+          "private native",
+        );
+        if (failClose)
+          await expect(access(pair!.targetDir)).resolves.toBeUndefined();
+        else await expect(access(pair!.targetDir)).rejects.toThrow();
+        // The scan closes only its session: this caller-owned executor is reusable.
+        const next = await local.openSession();
+        await next.close();
+      } finally {
+        await release?.();
+        await local.close();
+        await pair?.cleanup();
+      }
+    },
+  );
+
+  it("scopes each API scan and fix preview to a fresh caller-owned execution session", async () => {
+    const repository = await repositoryFixture();
+    const executor = createLocalAnalyzerExecutor();
+    const sessions = new Set<unknown>();
+    const dispatch: typeof dispatchChecks = async () => {
+      expect(activeAnalyzerExecutionSession()).toBeDefined();
+      sessions.add(activeAnalyzerExecutionSession());
+      return [];
+    };
+    try {
+      await runScan({
+        repositoryRoot: repository.root,
+        executor,
+        cache: false,
+        dependencies: {
+          ...defaults,
+          dispatch,
+          evaluate: evaluatePolicy,
+          now: () => new Date(),
+        },
+      });
+      await buildFixPlan({
+        repositoryRoot: repository.root,
+        executor,
+        dependencies: fixDependencies({ ...defaults, dispatch }),
+      });
+      expect(sessions.size).toBe(2);
+      expect(activeAnalyzerExecutionSession()).toBeUndefined();
+      const next = await executor.openSession();
+      await next.close();
+    } finally {
+      await executor.close();
+    }
+  });
   it.each(consumers)(
     "%s trusts index configuration and passes the same signal through safe preparation",
     async (consumer) => {

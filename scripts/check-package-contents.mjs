@@ -67,6 +67,10 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "dist/cli.js",
   "dist/index.js",
   "dist/index.d.ts",
+  "dist/service/entry.js",
+  "dist/service/client.js",
+  "dist/commands/service.js",
+  "dist/checks/runner/executor.js",
 ]);
 
 function normalizedPackagePath(path) {
@@ -203,16 +207,12 @@ function main() {
         "--pack-destination",
         artifactDirectory,
       ]);
-      const packed = spawnSync(
-        invocation.executable,
-        invocation.args,
-        {
-          cwd: root,
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "pipe"],
-          env: { ...process.env, npm_config_cache: temporaryCache },
-        },
-      );
+      const packed = spawnSync(invocation.executable, invocation.args, {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+        env: { ...process.env, npm_config_cache: temporaryCache },
+      });
       if (packed.error !== undefined) throw packed.error;
       if (packed.status !== 0) {
         throw new Error(packed.stderr || `npm pack failed for ${directory}`);

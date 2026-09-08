@@ -108,15 +108,21 @@ function runCli(
   args: readonly string[],
   environment: Readonly<Record<string, string>> = {},
 ) {
-  return execa(process.execPath, [cliPath, ...args], {
-    cwd: repositoryRoot,
-    env: {
-      ZEDBEE_NO_UPDATE_CHECK: "1",
-      ...environment,
+  // This harness owns/deletes long snapshot-only temporary roots. Persistent
+  // service lifecycle is covered by the service and installed-package suites.
+  return execa(
+    process.execPath,
+    [cliPath, ...args, ...(args[0] === "scan" ? ["--no-service"] : [])],
+    {
+      cwd: repositoryRoot,
+      env: {
+        ZEDBEE_NO_UPDATE_CHECK: "1",
+        ...environment,
+      },
+      reject: false,
+      stdin: "ignore",
     },
-    reject: false,
-    stdin: "ignore",
-  });
+  );
 }
 
 async function runBaseScan(

@@ -4,7 +4,7 @@ Zedbee is a diff-aware pre-commit and CI scanner for JavaScript and TypeScript p
 
 The managed suite covers formatting, lint, TypeScript correctness, cyclomatic complexity, original readability complexity, structural security, duplication, dependency architecture, dead code/package hygiene, React correctness, and React DOM accessibility. Analyzers use the exact selected target snapshot, compare an isolated baseline where the check requires one, and pass observations through central changed-target attribution.
 
-Scan and fix analyzer jobs use fresh supervised child processes with bounded concurrency. This releases job-owned engine state after completion and adds per-job startup work; it is not an OS sandbox. See the [execution and configuration boundary](docs/support.md#managed-configuration-compatibility) and [safe diagnostic options](docs/reporting.md#safe-analyzer-diagnostics).
+Scan and fix commands share a private local analyzer service with bounded, supervised workers. Each scan opens a fresh source session and releases source and project state before removing its snapshots. Reuse-capable engine modules can stay loaded; compiler-backed React checks retire their worker at session release. This is not an OS sandbox. See the [execution and configuration boundary](docs/support.md#managed-configuration-compatibility) and [safe diagnostic options](docs/reporting.md#safe-analyzer-diagnostics).
 
 ## Requirements
 
@@ -50,13 +50,17 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 ## Commands
 
-| Command         | Purpose                                                                                                                                                      |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zedbee init`   | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
-| `zedbee scan`   | Scan the exact index target, or a committed target with `--base`, and return pass, blocked, or incomplete                                                    |
-| `zedbee fix`    | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
-| `zedbee checks` | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
-| `zedbee doctor` | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, Secretlint, lockfile parsing, licenses, and bounded OSV connectivity without running a scan |
+| Command                 | Purpose                                                                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
+| `zedbee scan`           | Scan the exact index target, or a committed target with `--base`, and return pass, blocked, or incomplete                                                    |
+| `zedbee fix`            | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
+| `zedbee checks`         | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
+| `zedbee doctor`         | Diagnose Git, Node, configuration, snapshots, workspaces, hooks, Secretlint, lockfile parsing, licenses, and bounded OSV connectivity without running a scan |
+| `zedbee service status` | Inspect the current installation/runtime's local service without starting one                                                                                |
+| `zedbee service stop`   | Drain active sessions and wait for service and worker cleanup                                                                                                |
+
+`scan --no-service` and `fix --no-service` use a local executor that closes with the command. Ordinary commands acquire the service only when analysis is needed; empty-index scans and help do not start it. The service stops after five minutes with no active sessions. `service status` and `service stop` support `--format json` for machine-readable state. A service failure makes analysis incomplete; it is never silently retried through another executor.
 
 `init` supports `--profile fast|recommended|thorough`, `--hook auto|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--yes`, and text/JSON output. Interactive setup exposes the same check toggles and OSV outage choice without requiring documentation lookup. `scan`, `checks`, and `doctor` accept `--config <path>`.
 
@@ -78,9 +82,26 @@ remain manual. Review, stage, and rescan after applying; see the
 
 Zedbee's supported v1 interface is its command-line interface. The package also exports TypeScript and JavaScript functions for programmatic use, but that API is experimental: its names, types, and behavior may change between releases without the normal compatibility guarantees. Do not build a production integration around it yet. Feedback about intended API uses is welcome; see the package exports and generated declarations for the current surface.
 
+`runScan({ repositoryRoot })` owns and closes a local executor. It does not start the CLI service. An explicit executor can be reused across calls; each call still captures a fresh source epoch, closes its own session, and preserves configuration, attribution and cache validation. The caller must close the executor, including after cancellation or errors:
+
+```js
+import { createLocalAnalyzerExecutor, runScan } from "zedbee";
+
+const executor = createLocalAnalyzerExecutor({ concurrency: 2 }); // 1, 2 or 4
+try {
+  const first = await runScan({ repositoryRoot, executor, cache: false });
+  const second = await runScan({ repositoryRoot, executor, cache: false });
+  // Inspect each report's outcome/exitCode; incomplete is never a clean scan.
+} finally {
+  await executor.close();
+}
+```
+
+`cache: false` disables observation reuse, independently of engine reuse. An executor has bounded session/job admission; `AnalyzerCapacityError` reports overload. It does not grant permission to replay accepted analysis. Ordinary scans submit bounded work across large workspace sets. Concurrent embedding callers must bound their own scans and handle admission failures. Never delete temporary snapshots after an unproved cleanup failure; follow the reported cleanup guidance.
+
 ## Exact selected content
 
-Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after every outcome. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
+Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after proving execution has stopped. Unproved cleanup retains the snapshots and makes the scan incomplete. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
 
 A bare `zedbee scan`, along with `zedbee fix` and `zedbee checks`, reads repository configuration from the Git index. `zedbee scan --base <ref>` instead reads it from the committed target `HEAD`. In index mode, a newly staged `.zedbeerc.jsonc` takes effect immediately, while an unstaged or untracked copy cannot weaken the policy applied to staged code; when the selected source has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
 
@@ -249,7 +270,7 @@ For coding tools and CI, prefer `zedbee scan --format json` or `zedbee scan --fo
 |  `1` | Scan completed and repository policy blocked the commit | Partial completion: safe files may be applied while skipped fixes and their reasons are reported       |
 |  `2` | Zedbee or an enabled check could not complete           | The current staged code could not produce a trustworthy complete fix plan, so the plan was not applied |
 
-Interrupted scans clean temporary snapshots before returning the platform's conventional interruption status.
+Interrupted scans wait for execution cleanup before removing temporary snapshots and returning the platform's conventional interruption status. Unproved cleanup retains snapshots and reports the cleanup failure.
 
 ## Hooks
 
@@ -260,6 +281,10 @@ Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected 
 ## Cache and performance
 
 Zedbee may cache content-addressed, normalized observations only for local analyzers whose complete inputs have been audited as snapshot-only. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript, lint, and dead-code observations bypass this cache because installed dependency declarations, resolution state, or missing dependency lookups can affect their answers without changing the snapshots; unknown checks also default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never cached. Cached and uncached reports are required to remain semantically identical.
+
+Repository benchmark tooling distinguishes complete commands from phase references. After building, run `node --experimental-strip-types bench/run.mts --lifecycle --repository <prepared-git-fixture> --workers 2` to measure fresh local CLI commands, cross-command service reuse with distinct observation caches, repeated observations, explicit API executor reuse, and per-check diagnostics. Supported worker settings are 1, 2 and 4; the fresh local CLI scenario reports its default of 2 separately. Fixtures must already have their intended staged changes, policy and dependencies; the harness does not modify them or disable checks. It retains failed-run temporary data for inspection.
+
+Complete CLI samples include process startup, session release and natural process exit; service startup/stop are reported separately. `--in-process-reference` measures direct engine phases and cannot overwrite historical phase targets. These phase references retain the historical Secretlint/OSV substitutions, and their `snapshot` phase measures cache-key hashing rather than Git materialization. Existing `coldMs`/`warmMs` phase fields are historical names, not proof of fresh/warm process state. No scenario infers engine retention from a service PID or reports whole-tree memory without separate measurement.
 
 ## Current coverage
 

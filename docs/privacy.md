@@ -8,7 +8,15 @@ Explicit base mode (`scan --base <ref>`) instead materializes the unique merge-b
 
 Snapshot paths are validated under a Zedbee-owned temporary directory, staged links may not escape it, and cleanup runs before the command returns. Cleanup failure is itself an incomplete scan and may disclose one validated Zedbee temporary directory so the invoking human or agent can inspect and remove exactly what remains. If Zedbee cannot safely validate the directory's identity, it reports no path and instead directs the operator to inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Correct permissions, locks, or filesystem problems before retrying: a persistent cause can make later cleanups fail and leave additional snapshots.
 
-Local analyzers receive only protected snapshot paths and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, remediation, or executable project analyzer configuration.
+Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, remediation, or executable project analyzer configuration.
+
+## Local analyzer service
+
+CLI scans and fixes normally share a private service for the current installation and Node runtime. It starts lazily, uses owner-restricted local sockets or Windows named pipes, and authenticates peers before accepting bounded source-bearing requests. Installed production contents are freshly checked when acquiring the service. No repository configuration can select a service endpoint, executable, worker module or ownership capability. This is local IPC, not a network upload or an operating-system sandbox; processes retain the invoking user's permissions.
+
+Each analysis session freshly acquires its selected source bytes and clears source/project state on release. Engine modules with supported cleanup can remain loaded; compiler-backed React checks require worker retirement to release the upstream private source cache. Source, parsed programs and working-file formatting inputs are not a persistent service cache. Service discovery records contain protocol/content identity, a random instance and an authentication secret under owner-only permissions; they contain no source. Source-free coordination files can remain after shutdown, including an inert zero-byte completion file if a management client dies.
+
+`scan --no-service` and `fix --no-service` close a local executor with the command. `service status` creates no state; `service stop` drains sessions and waits for native cleanup. The service also stops after five idle minutes. Snapshot deletion waits for execution cleanup, including an independent native cleanup proof after lost IPC. If cleanup cannot be proved, snapshots remain and the scan is incomplete. Correct the reported cause before retrying or removing them.
 
 ## Working-file fixes
 
@@ -16,8 +24,7 @@ Managed fix analysis uses the same isolated staged snapshots, then previews the
 current working files that have supported candidates. Public managed fix plans
 and results are source-free and contain no source text, replacements, hashes,
 absolute repository paths, or replayable patches. Source-bearing candidate data
-exists only in the invoking process long enough to validate and apply an
-approved plan.
+exists in the invoking process and bounded analyzer-session messages long enough to produce, validate and apply an approved plan. Formatting workers receive the complete current working source; that source is cleared with their session.
 
 `zedbee fix` writes only validated working files. It does not stage or commit.
 Exact lint and React edits are rejected when they overlap unstaged work;

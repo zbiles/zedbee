@@ -15,6 +15,8 @@ import {
 } from "../reporting/temporary-reports.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
+import { createCommandExecutor } from "./executor.js";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import type { ScanReport } from "../scan/report.js";
 import type { ScanEvent } from "../checks/events.js";
 import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
@@ -35,6 +37,8 @@ export type { RequestedOutputFormat } from "../scan/reporting-options.js";
 export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
+  service?: boolean;
+  executor?: AnalyzerExecutor;
   cwd: string;
   format: RequestedOutputFormat;
   color: boolean;
@@ -212,6 +216,9 @@ export async function executeScanCommand(
   let cleanupFailed = false;
   let session: InkSession | undefined;
   let renderingFailed = false;
+  const executor = options.executor ?? createCommandExecutor(options.service);
+  const closeExecutor = () =>
+    options.executor === undefined ? executor.close() : Promise.resolve();
   const close = async (): Promise<void> => {
     const active = session;
     session = undefined;
@@ -245,6 +252,7 @@ export async function executeScanCommand(
       io.env,
     );
     const scanOptions: RunScanOptions = {
+      executor,
       repositoryRoot,
       reportingSurface: format,
       ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
@@ -290,6 +298,7 @@ export async function executeScanCommand(
     const report = await timeCommandStage(stages, "analysis", () =>
       dependencies.scan(scanOptions),
     );
+    await closeExecutor();
     diagnosticEntries = report.checks.map((check) => ({
       durationMs: check.durationMs,
       checkId: check.checkId,
@@ -360,6 +369,12 @@ export async function executeScanCommand(
     return 2;
   } finally {
     await close();
+    try {
+      await closeExecutor();
+    } catch {
+      if (!cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+      cleanupFailed = true;
+    }
     if (options.diagnostics)
       writeCommandDiagnostics(io, {
         command: "scan",
@@ -370,5 +385,6 @@ export async function executeScanCommand(
         cleanupFailed,
         renderingFailed,
       });
+    if (cleanupFailed) return 2;
   }
 }

@@ -8,6 +8,7 @@ import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
 import type { UpdateNotice } from "./updates/metadata.js";
 import { executeChecksCommand } from "./commands/checks.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
+import { executeServiceCommand } from "./commands/service.js";
 import { executeFixCommand } from "./commands/fix.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
@@ -22,6 +23,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  service: boolean;
   diagnostics?: boolean;
   format: RequestedOutputFormat;
   base?: string;
@@ -57,6 +59,7 @@ interface CommanderInitOptions {
 }
 
 interface CommanderFixOptions {
+  service: boolean;
   diagnostics?: boolean;
   format: "auto" | "text" | "json";
   config?: string;
@@ -127,6 +130,30 @@ export async function runCli(
   const onSigterm = (): void => interrupt("SIGTERM");
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
+
+  const service = program
+    .command("service")
+    .description("inspect or stop the local analyzer service");
+  for (const operation of ["status", "stop"] as const) {
+    service
+      .command(operation)
+      .description(
+        operation === "status"
+          ? "show service state without starting it"
+          : "stop the service after active sessions release",
+      )
+      .addOption(
+        new Option("--format <format>", "output format")
+          .choices(["text", "json"])
+          .default("text"),
+      )
+      .action(async (options: { format: "text" | "json" }) => {
+        exitCode = await executeServiceCommand(operation, options.format, {
+          writeStdout: (value) => process.stdout.write(value),
+          writeStderr: (value) => process.stderr.write(value),
+        });
+      });
+  }
 
   program
     .command("init")
@@ -224,6 +251,7 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
+    .option("--no-service", "use a command-owned local analyzer executor")
     .option(
       "--diagnostics",
       "write safe analyzer and runtime diagnostics to stderr",
@@ -238,6 +266,7 @@ export async function runCli(
         {
           cwd: process.cwd(),
           format: options.format,
+          service: options.service,
           color: options.color,
           animations: options.animations,
           ...(options.base === undefined ? {} : { baseRef: options.base }),
@@ -279,6 +308,7 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--yes", "apply the exact plan without confirmation", false)
+    .option("--no-service", "use a command-owned local analyzer executor")
     .option(
       "--diagnostics",
       "write safe analyzer and runtime diagnostics to stderr",
@@ -293,6 +323,7 @@ export async function runCli(
         exitCode = await (dependencies.executeFixCommand ?? executeFixCommand)(
           {
             cwd: process.cwd(),
+            service: options.service,
             ...(check === undefined ? {} : { check }),
             yes: options.yes,
             ...(options.diagnostics === true ? { diagnostics: true } : {}),

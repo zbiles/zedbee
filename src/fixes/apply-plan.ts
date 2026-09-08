@@ -1,4 +1,13 @@
 import { createHash } from "node:crypto";
+import {
+  createLocalAnalyzerExecutor,
+  type AnalyzerExecutor,
+} from "../checks/runner/executor.js";
+import { withAnalyzerExecutionSession } from "../checks/runner/session.js";
+import {
+  AnalysisSessionCleanupError,
+  retainCleanupFailure,
+} from "../scan/analysis-failure.js";
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
@@ -26,6 +35,7 @@ import type {
 } from "./types.js";
 
 export interface ApplyFixPlanDependencies {
+  readonly executor?: AnalyzerExecutor;
   readonly signal?: AbortSignal;
   readWorkingFile?(repositoryRoot: string, file: string): Promise<string>;
   lstatWorkingFile?(
@@ -155,6 +165,45 @@ async function currentIdentity(
 export async function applyFixPlan(
   plan: PreparedFixPlan,
   dependencies: ApplyFixPlanDependencies = {},
+): Promise<FixResult> {
+  dependencies.signal?.throwIfAborted();
+  const executor = dependencies.executor ?? createLocalAnalyzerExecutor();
+  let session: Awaited<ReturnType<AnalyzerExecutor["openSession"]>> | undefined;
+  let primary: unknown;
+  try {
+    session = await executor.openSession();
+    return await withAnalyzerExecutionSession(session, () =>
+      applyWithinSession(plan, dependencies),
+    );
+  } catch (error) {
+    primary = error;
+    throw error;
+  } finally {
+    let cleanupFailed = false;
+    try {
+      await session?.close();
+    } catch {
+      cleanupFailed = true;
+    }
+    if (dependencies.executor === undefined) {
+      try {
+        await executor.close();
+      } catch {
+        cleanupFailed = true;
+      }
+    }
+    if (cleanupFailed) {
+      const cleanup = new AnalysisSessionCleanupError();
+      throw primary === undefined
+        ? cleanup
+        : retainCleanupFailure(primary, cleanup);
+    }
+  }
+}
+
+async function applyWithinSession(
+  plan: PreparedFixPlan,
+  dependencies: ApplyFixPlanDependencies,
 ): Promise<FixResult> {
   dependencies.signal?.throwIfAborted();
   const changedFiles: string[] = [];

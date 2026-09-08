@@ -102,6 +102,7 @@ async function runZedbee(repositoryRoot: string) {
     [
       join(repositoryRoot, "node_modules", "zedbee", "dist", "cli.js"),
       "scan",
+      "--no-service",
       "--format",
       "json",
     ],

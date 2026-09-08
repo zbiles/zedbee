@@ -13,6 +13,11 @@ import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.
 import type { PreparedFixPlan } from "../../src/fixes/types.js";
 import { writeWorkingFile } from "../../src/fixes/write-working-file.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
+import {
+  createLocalAnalyzerExecutor,
+  type AnalyzerExecutor,
+} from "../../src/checks/runner/executor.js";
+import { AnalysisSessionCleanupError } from "../../src/scan/analysis-failure.js";
 
 function digest(source: string): string {
   return createHash("sha256").update(source, "utf8").digest("hex");
@@ -54,6 +59,45 @@ function prepared(
 }
 
 describe("applyFixPlan", () => {
+  it("fails closed when a caller-owned formatting session cannot prove cleanup", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const x=1";
+    await fixture.write("a.js", source);
+    const local = createLocalAnalyzerExecutor();
+    const executor: AnalyzerExecutor = {
+      async openSession(options) {
+        const session = await local.openSession(options);
+        return {
+          run: session.run.bind(session),
+          async close() {
+            throw new Error("private close failure");
+          },
+        };
+      },
+      close: () => local.close(),
+    };
+    try {
+      await expect(
+        applyFixPlan(
+          prepared(fixture.root, "a.js", source, source, [
+            {
+              kind: "format-file",
+              checkId: "formatting",
+              file: "a.js",
+              findingIds: ["format"],
+              severities: ["error"],
+              settings: DEFAULT_FORMATTING_SETTINGS,
+            },
+          ]),
+          { executor },
+        ),
+      ).rejects.toBeInstanceOf(AnalysisSessionCleanupError);
+      const next = await local.openSession();
+      await next.close();
+    } finally {
+      await local.close();
+    }
+  });
   it("retains safe formatting job diagnostics in a fix issue", async () => {
     const fixture = await createInspectionFixture();
     const source = "const x=1";

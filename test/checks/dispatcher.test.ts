@@ -2053,7 +2053,7 @@ describe("dispatchChecks", () => {
     );
   });
 
-  it("enforces execution-class concurrency globally across expanded targets", async () => {
+  it("bounds adapter production to four across expanded targets", async () => {
     let active = 0;
     let maximum = 0;
     const release = deferred();
@@ -2081,7 +2081,7 @@ describe("dispatchChecks", () => {
       createContext(createConfig({ lint: "error" })),
     );
 
-    expect(maximum).toBe(2);
+    expect(maximum).toBe(4);
   });
 
   it("avoids uncached default identity reads and reuses identities only within each dispatch", async () => {
@@ -2159,7 +2159,7 @@ describe("dispatchChecks", () => {
     expect(called).toBe(false);
   });
 
-  it("limits lightweight checks to two concurrent runs", async () => {
+  it("feeds four workers without unbounded lightweight submission", async () => {
     let active = 0;
     let maximum = 0;
     const release = deferred();
@@ -2167,7 +2167,7 @@ describe("dispatchChecks", () => {
       createAdapter(`light-${index}`, "lightweight", async () => {
         active += 1;
         maximum = Math.max(maximum, active);
-        if (active === 2) {
+        if (active === 4) {
           release.resolve();
         }
         await release.promise;
@@ -2185,14 +2185,15 @@ describe("dispatchChecks", () => {
       ),
     );
 
-    expect(maximum).toBe(2);
+    expect(maximum).toBe(4);
   });
 
   it.each(["project-analysis", "network"] as const)(
-    "limits %s checks to one concurrent run across expanded targets",
+    "leaves %s worker scheduling to the executor within four bounded producers",
     async (executionClass) => {
       let active = 0;
       let maximum = 0;
+      const release = deferred();
       const adapters = [0, 1].map((index) =>
         createAdapter(
           `${executionClass}-${index}`,
@@ -2200,7 +2201,8 @@ describe("dispatchChecks", () => {
           async () => {
             active += 1;
             maximum = Math.max(maximum, active);
-            await Promise.resolve();
+            if (active === 4) release.resolve();
+            await release.promise;
             active -= 1;
             return completed(`${executionClass}-${index}`);
           },
@@ -2222,7 +2224,7 @@ describe("dispatchChecks", () => {
         ),
       );
 
-      expect(maximum).toBe(1);
+      expect(maximum).toBe(4);
     },
   );
 

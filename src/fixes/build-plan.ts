@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { lstat } from "node:fs/promises";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { dispatchChecks } from "../checks/dispatcher.js";
@@ -83,6 +84,7 @@ export interface BuildFixPlanDependencies {
 }
 
 export interface BuildFixPlanOptions {
+  readonly executor?: AnalyzerExecutor;
   readonly repositoryRoot: string;
   readonly configPath?: string;
   readonly selectedChecks?: readonly FixableCheckId[];
@@ -715,6 +717,7 @@ export async function buildFixPlan(
   const outcome = await withAnalysisSession(
     {
       repositoryRoot: options.repositoryRoot,
+      ...(options.executor === undefined ? {} : { executor: options.executor }),
       ...(options.configPath === undefined
         ? {}
         : { configPath: options.configPath }),

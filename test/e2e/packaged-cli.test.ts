@@ -60,7 +60,7 @@ beforeAll(async () => {
   const hookSignal = new AbortController().signal;
   [packDirectory, temporaryReportRoot] = await Promise.all([
     mkdtemp(join(tmpdir(), "zedbee-pack-")),
-    mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
+    mkdtemp(join(tmpdir(), "zr-")),
   ]);
   temporaryReportRoot = await realpath(temporaryReportRoot);
   const shared = sharedPackedTarball();
@@ -139,6 +139,30 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (installedNodeModules !== undefined) {
+    const stopped = await execa(
+      process.execPath,
+      [
+        join(installedNodeModules, "zedbee", "dist", "cli.js"),
+        "service",
+        "stop",
+        "--format",
+        "json",
+      ],
+      {
+        env: {
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+          NODE_OPTIONS: "",
+          NODE_PATH: "",
+        },
+        reject: false,
+        stdin: "ignore",
+      },
+    );
+    expect(stopped.exitCode, stopped.stderr).toBe(0);
+  }
   await Promise.all([
     rm(packDirectory, { recursive: true, force: true }),
     rm(temporaryReportRoot, { recursive: true, force: true }),
@@ -299,6 +323,7 @@ describe("packaged Zedbee CLI", () => {
     const help = await runPackagedCli(repository.root, ["scan", "--help"]);
     expect(help.exitCode, help.stderr).toBe(0);
     expect(help.stdout).toContain("--diagnostics");
+    expect(help.stdout).toContain("--no-service");
     const sourceMarker = "privateInstalledWorkerSourceMarker";
     await repository.write(
       "value.ts",
@@ -674,9 +699,55 @@ describe("packaged Zedbee CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: zedbee");
-    for (const command of ["init", "scan", "checks", "doctor"]) {
+    for (const command of [
+      "init",
+      "scan",
+      "fix",
+      "checks",
+      "doctor",
+      "service",
+    ]) {
       expect(result.stdout).toContain(command);
     }
+  });
+
+  it("runs the experimental reusable API outside the source tree and exits after close", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.git(["add", "--", "value.ts"]);
+    const result = await execa(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { createLocalAnalyzerExecutor, runScan } from "zedbee";
+      const executor = createLocalAnalyzerExecutor({ concurrency: 1 });
+      try {
+        const report = await runScan({ repositoryRoot: process.cwd(), executor, cache: false });
+        console.log(JSON.stringify({ outcome: report.outcome, incomplete: report.summary.incomplete }));
+      } finally { await executor.close(); }
+    `,
+      ],
+      {
+        cwd: repository.root,
+        env: {
+          NODE_OPTIONS: "",
+          NODE_PATH: "",
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+        },
+        reject: false,
+        stdin: "ignore",
+        ...cancellationOptions(),
+      },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      outcome: "pass",
+      incomplete: 0,
+    });
   });
 
   it("ships customization schema and effective check metadata", async () => {

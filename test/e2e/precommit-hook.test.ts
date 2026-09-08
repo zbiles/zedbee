@@ -72,7 +72,7 @@ describe("raw pre-commit hook", () => {
       hookPath,
       [
         "#!/bin/sh",
-        `${JSON.stringify(process.execPath)} ${JSON.stringify(cliPath)} scan --format json > ${JSON.stringify(reportPath)}`,
+        `${JSON.stringify(process.execPath)} ${JSON.stringify(cliPath)} scan --no-service --format json > ${JSON.stringify(reportPath)}`,
         "",
       ].join("\n"),
     );
@@ -126,7 +126,7 @@ describe("raw pre-commit hook", () => {
     const hook = [
       "#!/bin/sh",
       "printf 'existing hook\\n' >/dev/null",
-      "./node_modules/.bin/zedbee scan --format text",
+      "./node_modules/.bin/zedbee scan --no-service --format text",
       "",
     ].join("\n");
     await writeFile(hookPath, hook);

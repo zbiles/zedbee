@@ -12,6 +12,9 @@ import { createFilePolicyResolver } from "../dist/config/file-policy.js";
 import { resolveConfig } from "../dist/config/profiles.js";
 import { inspectRepository } from "../dist/inspection/inspect-repository.js";
 import { renderJson } from "../dist/renderers/json.js";
+import { loadAnalyzerAdapter } from "../dist/checks/runner/registry.js";
+import type { CheckId } from "../dist/config/schema.js";
+import type * as Lifecycle from "./lifecycle.mjs";
 
 type FixtureName = "small" | "monorepo";
 type Phase = () => Promise<void> | void;
@@ -30,6 +33,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const baselinePath = resolve(here, "baselines.json");
 const update = process.argv.includes("--update");
 const smoke = process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
+const inProcessReference = process.argv.includes("--in-process-reference");
 
 function median(values: readonly number[]): number {
   const sorted = [...values].sort((left, right) => left - right);
@@ -116,7 +120,14 @@ const benchmarkVulnerabilities = createVulnerabilitiesAdapter({
   },
 });
 
-const benchmarkAdapters = DEFAULT_CHECK_ADAPTERS.map((adapter) =>
+const referenceAdapters = inProcessReference
+  ? await Promise.all(
+      DEFAULT_CHECK_ADAPTERS.map((adapter) =>
+        loadAnalyzerAdapter(adapter.id as CheckId),
+      ),
+    )
+  : DEFAULT_CHECK_ADAPTERS;
+const benchmarkAdapters = referenceAdapters.map((adapter) =>
   adapter.id === "secrets"
     ? benchmarkSecrets
     : adapter.id === "vulnerabilities"
@@ -295,6 +306,34 @@ function rounded(value: number): number {
 }
 
 async function main(): Promise<void> {
+  if (process.argv.includes("--lifecycle")) {
+    if (update || inProcessReference)
+      throw new Error(
+        "Lifecycle scenarios never overwrite historical phase targets.",
+      );
+    const repository = process.argv[process.argv.indexOf("--repository") + 1];
+    if (!process.argv.includes("--repository") || !repository)
+      throw new Error(
+        "--lifecycle requires --repository <prepared Git fixture>.",
+      );
+    const workers = Number(
+      process.argv[process.argv.indexOf("--workers") + 1] ?? 2,
+    );
+    const concurrency = process.argv.includes("--workers") ? workers : 2;
+    if (concurrency !== 1 && concurrency !== 2 && concurrency !== 4)
+      throw new Error("--workers must be 1, 2, or 4.");
+    const { runLifecycleBenchmark } = (await import(
+      new URL("./lifecycle.mts", import.meta.url).href
+    )) as typeof Lifecycle;
+    process.stdout.write(
+      `${JSON.stringify(await runLifecycleBenchmark(resolve(repository), concurrency, smoke ? 1 : 5), null, 2)}\n`,
+    );
+    return;
+  }
+  if (inProcessReference && update)
+    throw new Error(
+      "Corrected in-process references never overwrite historical phase targets.",
+    );
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-bench-"));
   try {
     const measurements: Baselines = { schemaVersion: 1, fixtures: {} };
@@ -320,8 +359,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    if (smoke) {
-      process.stdout.write(`${JSON.stringify(measurements, null, 2)}\n`);
+    if (smoke || inProcessReference) {
+      process.stdout.write(
+        `${JSON.stringify({ ...measurements, kind: inProcessReference ? "corrected-in-process-phase-reference" : "historical-phase-comparison", limitations: "Phase samples exclude complete CLI startup and cleanup. coldMs/warmMs are historical field names, not fresh/warm process guarantees. Historical Secretlint and OSV substitutions remain; the snapshot phase measures cache-key hashing, not Git materialization." }, null, 2)}\n`,
+      );
       return;
     }
 

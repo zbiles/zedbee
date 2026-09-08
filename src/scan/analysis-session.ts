@@ -1,4 +1,10 @@
 import { dirname } from "node:path";
+import {
+  createLocalAnalyzerExecutor,
+  type AnalyzerExecutor,
+  type AnalyzerExecutionSession,
+} from "../checks/runner/executor.js";
+import { withAnalyzerExecutionSession } from "../checks/runner/session.js";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
 import { dispatchChecks, type DispatchOptions } from "../checks/dispatcher.js";
@@ -160,6 +166,7 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  executor?: AnalyzerExecutor;
   repositoryRoot: string;
   baseRef?: string;
   configPath?: string;
@@ -220,6 +227,9 @@ export async function withAnalysisSession<T>(
     appliedPathExclusions: [],
   };
   let snapshots: SnapshotPair | undefined;
+  let executor: AnalyzerExecutor | undefined;
+  let execution: AnalyzerExecutionSession | undefined;
+  let executionCleanupProved = true;
   let cleanupFailure: AnalysisCleanupFailure | undefined;
   let completion:
     { completed: true; value: T } | { completed: false; error: unknown };
@@ -442,19 +452,37 @@ export async function withAnalysisSession<T>(
         );
         signal.throwIfAborted();
         state.phase = "dispatch";
-        const executions = await dependencies.dispatch(
-          dependencies.adapters,
-          {
-            repositoryRoot: options.repositoryRoot,
-            changeSet,
-            config,
-            snapshots,
-            baselineInspection,
-            targetInspection,
-            signal,
-            policyForFile,
-          },
-          options.dispatchOptions?.(),
+        executor = options.executor ?? createLocalAnalyzerExecutor();
+        executionCleanupProved = false;
+        execution = await executor.openSession({
+          sourceSelections: [baselineInspection, targetInspection].map(
+            (inspection) => ({
+              snapshotRoot: inspection.snapshotRoot,
+              paths: [
+                ...new Set(
+                  inspection.workspaces.flatMap(
+                    (workspace) => workspace.sourceFiles,
+                  ),
+                ),
+              ],
+            }),
+          ),
+        });
+        const executions = await withAnalyzerExecutionSession(execution, () =>
+          dependencies.dispatch(
+            dependencies.adapters,
+            {
+              repositoryRoot: options.repositoryRoot,
+              changeSet,
+              config,
+              snapshots: snapshots!,
+              baselineInspection,
+              targetInspection,
+              signal,
+              policyForFile,
+            },
+            options.dispatchOptions?.(),
+          ),
         );
         signal.throwIfAborted();
         session = {
@@ -469,7 +497,14 @@ export async function withAnalysisSession<T>(
       }
     }
     if (session.kind === "analyzed") state.phase = "policy-evaluation";
-    completion = { completed: true, value: await consume(session, state) };
+    completion = {
+      completed: true,
+      value: await (execution === undefined
+        ? consume(session, state)
+        : withAnalyzerExecutionSession(execution, () =>
+            consume(session, state),
+          )),
+    };
   } catch (error) {
     if (error instanceof SnapshotConstructionCleanupError) {
       cleanupFailure = safeCleanupFailure(error.temporaryPath);
@@ -479,6 +514,24 @@ export async function withAnalysisSession<T>(
     }
   }
   try {
+    if (execution !== undefined) {
+      await execution.close();
+      executionCleanupProved = true;
+    }
+  } catch {
+    executionCleanupProved = false;
+  }
+  if (executor !== undefined && options.executor === undefined) {
+    try {
+      await executor.close();
+      // Local executor close also proves cleanup after a failed open.
+      if (execution === undefined) executionCleanupProved = true;
+    } catch {
+      executionCleanupProved = false;
+    }
+  }
+  try {
+    if (!executionCleanupProved) throw new Error("Unproved execution cleanup");
     await snapshots?.cleanup();
   } catch {
     cleanupFailure = safeCleanupFailure(
