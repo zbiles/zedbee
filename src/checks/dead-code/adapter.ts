@@ -1,7 +1,5 @@
 import { inspectManagedCheck } from "../applicability.js";
-import { lstat } from "node:fs/promises";
-import { isBuiltin } from "node:module";
-import { dirname, join, posix } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { isAnalyzerWorker } from "../runner/context.js";
@@ -27,11 +25,13 @@ import type {
 import { writeManagedJsonConfig } from "../project/config-boundary.js";
 import { createManagedKnipConfig } from "./managed-config.js";
 import { parseKnipReport } from "./parse-report.js";
+import {
+  createKnipImportValidator,
+  type KnipComment,
+} from "./import-boundary.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
-const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
-const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
 
 function workspaceFor(
@@ -48,7 +48,10 @@ function cliPath(): string {
   return join(dirname(modulePath), "..", "bin", "knip.js");
 }
 
-function staticModuleSpecifier(node: ts.Node): string | undefined {
+function staticModuleSpecifier(
+  node: ts.Node,
+  hasNodeModuleImport: boolean,
+): string | undefined {
   if (
     (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
     node.moduleSpecifier !== undefined &&
@@ -73,89 +76,45 @@ function staticModuleSpecifier(node: ts.Node): string | undefined {
   }
   if (
     ts.isCallExpression(node) &&
-    node.arguments.length === 1 &&
+    node.arguments.length >= 1 &&
     ts.isStringLiteralLike(node.arguments[0]!) &&
     (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
       (ts.isIdentifier(node.expression) &&
-        node.expression.text === "require") ||
+        node.expression.text === "require" &&
+        node.arguments.length === 1) ||
       (ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
+        ((ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "require") ||
+          (ts.isMetaProperty(node.expression.expression) &&
+            node.expression.expression.keywordToken ===
+              ts.SyntaxKind.ImportKeyword)) &&
         node.expression.name.text === "resolve"))
   ) {
     return node.arguments[0]!.text;
   }
-  return undefined;
-}
-
-function packageName(specifier: string): string | undefined {
   if (
-    specifier.startsWith(".") ||
-    specifier.startsWith("#") ||
-    isBuiltin(specifier)
+    hasNodeModuleImport &&
+    ts.isCallExpression(node) &&
+    node.arguments[0] &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    ((ts.isIdentifier(node.expression) &&
+      node.expression.text === "register") ||
+      (ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "module" &&
+        node.expression.name.text === "register"))
   ) {
-    return undefined;
-  }
-  const parts = specifier.split("/");
-  return specifier.startsWith("@")
-    ? parts.length >= 2
-      ? `${parts[0]}/${parts[1]}`
-      : undefined
-    : parts[0];
-}
-
-function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (
-    specifier.includes("\\") ||
-    posix.isAbsolute(specifier) ||
-    WINDOWS_PATH.test(specifier) ||
-    (URL.test(specifier) &&
-      !specifier.startsWith("node:") &&
-      !specifier.startsWith("bun:"))
-  ) {
-    throw new TypeError("Dead-code import escaped the snapshot");
-  }
-  if (!specifier.startsWith(".")) return;
-  const resolved = posix.normalize(
-    posix.join(posix.dirname(sourcePath), specifier),
-  );
-  if (resolved === ".." || resolved.startsWith("../")) {
-    throw new TypeError("Dead-code import escaped the snapshot");
-  }
-}
-
-async function assertMissing(path: string): Promise<void> {
-  try {
-    await lstat(path);
-  } catch (error) {
+    const base = node.arguments[1];
     if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      ((error as { readonly code?: unknown }).code === "ENOENT" ||
-        (error as { readonly code?: unknown }).code === "ENOTDIR")
-    ) {
-      return;
-    }
-    throw error;
+      !node.arguments[0].text.startsWith(".") ||
+      (base &&
+        ts.isPropertyAccessExpression(base) &&
+        ts.isMetaProperty(base.expression) &&
+        base.name.text === "url")
+    )
+      return node.arguments[0].text;
   }
-  throw new TypeError("Dead-code dependency resolution escaped the snapshot");
-}
-
-async function validateAncestorResolution(
-  snapshotRoot: string,
-  sourcePath: string,
-  specifier: string,
-): Promise<void> {
-  const name = packageName(specifier);
-  if (name === undefined) return;
-  let directory = dirname(join(snapshotRoot, sourcePath));
-  while (true) {
-    await assertMissing(join(directory, "node_modules", ...name.split("/")));
-    const parent = dirname(directory);
-    if (parent === directory) return;
-    directory = parent;
-  }
+  return undefined;
 }
 
 async function validateSnapshotInputs(
@@ -163,6 +122,8 @@ async function validateSnapshotInputs(
   workspace: WorkspaceInspection,
 ): Promise<void> {
   const registry = await captureSnapshotRegistry(snapshotRoot);
+  const { validateImport, collectCommentImports } =
+    await createKnipImportValidator(registry);
   if (registry.resolve(INERT_TSCONFIG) !== undefined) {
     throw new TypeError("Reserved managed Knip path is present");
   }
@@ -175,28 +136,41 @@ async function validateSnapshotInputs(
       false,
       sourcePath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
+    const hasNodeModuleImport = file.statements.some(
+      (statement) =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteralLike(statement.moduleSpecifier) &&
+        ["node:module", "module"].includes(statement.moduleSpecifier.text),
+    );
     const specifiers: string[] = [];
+    const comments = new Map<number, KnipComment>();
     const visit = (node: ts.Node): void => {
-      const specifier = staticModuleSpecifier(node);
+      for (const comment of [
+        ...(ts.getLeadingCommentRanges(source, node.pos) ?? []),
+        ...(ts.getTrailingCommentRanges(source, node.end) ?? []),
+      ]) {
+        const block = comment.kind === ts.SyntaxKind.MultiLineCommentTrivia;
+        comments.set(comment.pos, {
+          type: block ? "Block" : "Line",
+          start: comment.pos,
+          end: comment.end,
+          value: source.slice(comment.pos + 2, comment.end - (block ? 2 : 0)),
+        });
+      }
+      const specifier = staticModuleSpecifier(node, hasNodeModuleImport);
       if (specifier !== undefined) {
-        validateSpecifier(sourcePath, specifier);
         specifiers.push(specifier);
       }
       ts.forEachChild(node, visit);
     };
     visit(file);
-    const jsDocImports = source.matchAll(
-      /\/\*[\s\S]*?import\(\s*['"]([^'"]+)['"]\s*\)[\s\S]*?\*\//gu,
+    collectCommentImports(
+      [...comments.values()],
+      file.statements[0]?.getStart(file) ?? source.length,
+      (specifier) => specifiers.push(specifier),
     );
-    for (const match of jsDocImports) {
-      const specifier = match[1];
-      if (specifier !== undefined) {
-        validateSpecifier(sourcePath, specifier);
-        specifiers.push(specifier);
-      }
-    }
     for (const specifier of specifiers) {
-      await validateAncestorResolution(snapshotRoot, sourcePath, specifier);
+      await validateImport(sourcePath, specifier);
     }
   }
 }

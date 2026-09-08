@@ -56,9 +56,10 @@ built-in Secretlint readiness probe. Process isolation describes scan/fix analyz
 execution, not every use of analyzer-related metadata in the CLI.
 
 Each scan acquires fresh checked source bytes for its selected baseline and target paths; a pathname or timestamp is never proof of immutable input. Capacity bypass falls back to ordinary checked reads, while trust/read failures remain failures. Session release clears source-bearing state and project contexts. Reuse-capable engine modules may remain loaded. The default React compiler-backed hooks plugin has a private source-text cache without a supported clear operation, so a worker that uses it retires at session release. Knip and jscpd still launch their managed child tools; retained service/worker identity alone does not prove those engines are warm. These lifecycle rules are not a guarantee of faster scans. Normalized
-observation caching is limited to audited snapshot-only inputs. TypeScript,
-lint, and dead-code results bypass that cache because local dependency resolution
-can affect them. Source, raw engine output, secrets, Secretlint observations,
+observation caching requires audited inputs. TypeScript and lint capture and
+recheck their dependency inputs before reusing results; incomplete capture bypasses
+caching. Dead-code results remain uncached because Knip's complete dependency
+inputs are not yet captured. Source, raw engine output, secrets, Secretlint observations,
 OSV results, and online response bodies are never cached.
 
 `zedbee service status` is read-only and never creates service state. `zedbee service stop` waits for active sessions, native worker cleanup, endpoint removal and startup-lock release. Both accept `--format json`; unavailable management returns exit code 2. The service idles out after five minutes without active sessions. No login service is installed. A stopped instance may leave source-free coordination files in its private temporary directory. Source-free zero-byte completion files can also remain if a management client dies during completion; they are inert, not live locks.

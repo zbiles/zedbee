@@ -54,7 +54,8 @@ describe("public package metadata", () => {
     expect(readme).toContain(
       "Node.js versions matching `^22.17.0 || >=24.2.0`",
     );
-    expect(support).toContain(
+    // Markdown tables escape pipes; compare the documented range as displayed.
+    expect(support.replaceAll("\\|", "|")).toContain(
       "Node.js versions matching `^22.17.0 || >=24.2.0`",
     );
     expect(readme).toContain("PolyForm Small Business License 1.0.0");
