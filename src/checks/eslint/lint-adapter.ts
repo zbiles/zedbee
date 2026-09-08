@@ -20,6 +20,7 @@ import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "./load-engine.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
+import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { loadSnapshotProgramProjects } from "../typescript/config.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { isAnalyzerWorker } from "../runner/context.js";
@@ -93,6 +94,7 @@ async function prepareSide(
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
+  dependencies?: CapturedDependencies,
 ): Promise<PreparedLintSide | undefined> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -135,7 +137,11 @@ async function prepareSide(
       workspace,
     );
     const programs = projects.flatMap(
-      ({ input }) => createSnapshotProgram(input).programs,
+      ({ input }) =>
+        createSnapshotProgram({
+          ...input,
+          ...(dependencies === undefined ? {} : { dependencies }),
+        }).programs,
     );
     const covered = new Set(
       programs.flatMap((program) =>
@@ -193,6 +199,7 @@ async function collectSide(
   policyForFile: FilePolicyResolver,
   engineFactory: LintEslintEngineFactory,
   signal: AbortSignal,
+  dependencies: CapturedDependencies,
 ): Promise<readonly Observation[]> {
   const prepared = await prepareSide(
     snapshotRoot,
@@ -202,6 +209,7 @@ async function collectSide(
     side,
     policyForFile,
     signal,
+    dependencies,
   );
   if (prepared === undefined) return Object.freeze([]);
   const observations: Observation[] = [];
@@ -336,6 +344,7 @@ export function createLintAdapter(
     },
 
     async collect(context): Promise<CheckObservationSet> {
+      const dependencies = new CapturedDependencies(context);
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
           () =>
@@ -348,6 +357,7 @@ export function createLintAdapter(
               context.policyForFile,
               engineFactory,
               context.signal,
+              dependencies,
             ),
           () =>
             collectSide(
@@ -359,15 +369,18 @@ export function createLintAdapter(
               context.policyForFile,
               engineFactory,
               context.signal,
+              dependencies,
             ),
           context.signal,
           isAnalyzerWorker(),
         );
+      const dependencyInputs = dependencies.manifest();
       return {
         checkId: "lint",
         target: context.target,
         baselineObservations,
         targetObservations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     },
   };

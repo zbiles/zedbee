@@ -1,4 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -26,6 +34,8 @@ import {
   type RunScanOptions,
 } from "../../src/scan/run-scan.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+import { DEFAULT_ANALYSIS_SESSION_DEPENDENCIES } from "../../src/scan/analysis-session.js";
+import { DEFAULT_CHECK_ADAPTERS } from "../../src/checks/descriptors.js";
 
 function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
   return {
@@ -37,6 +47,98 @@ function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
 }
 
 describe("observation cache integration", () => {
+  it("rebinds real lint/types captures across owned scan snapshots and rejects corrupt manifests", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      '{"name":"captured-cache","type":"module","dependencies":{"installed":"1.0.0"}}\n',
+    );
+    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write(
+      "tsconfig.json",
+      '{"compilerOptions":{"strict":true},"include":["src/**/*.ts"]}\n',
+    );
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write(
+      "src/value.ts",
+      'import { supplied } from "installed";\nexport const value: number = supplied;\n',
+    );
+    await repository.git(["add", "src/value.ts"]);
+    await repository.write(
+      "node_modules/installed/package.json",
+      '{"name":"installed","type":"module","types":"index.d.ts"}\n',
+    );
+    await repository.write(
+      "node_modules/installed/index.d.ts",
+      "export const supplied: number;\n",
+    );
+    const root = await mkdtemp(join(tmpdir(), "zedbee-real-capture-cache-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const cache = new ObservationCacheStore({ root });
+    const dependencies: RunScanDependencies = {
+      ...DEFAULT_ANALYSIS_SESSION_DEPENDENCIES,
+      adapters: DEFAULT_CHECK_ADAPTERS.filter(
+        (adapter) => adapter.id === "lint" || adapter.id === "types",
+      ),
+      evaluate: evaluatePolicy,
+      now: () => new Date("2026-09-07T00:00:00Z"),
+    };
+    const scan = (enabled = true) =>
+      runScan({
+        repositoryRoot: repository.root,
+        dependencies,
+        cache: enabled ? cache : false,
+      });
+    const first = await scan();
+    expect(first.summary.incomplete).toBe(0);
+    expect(first.outcome).toBe("pass");
+    const names = (await readdir(root)).filter((name) =>
+      name.endsWith(".json"),
+    );
+    expect(names).toHaveLength(2);
+    const inodes = await Promise.all(
+      names.map(async (name) => (await stat(join(root, name))).ino),
+    );
+    expect(stableReport(await scan())).toEqual(stableReport(first));
+    expect(
+      await Promise.all(
+        names.map(async (name) => (await stat(join(root, name))).ino),
+      ),
+    ).toEqual(inodes);
+    for (const name of names) {
+      const path = join(root, name);
+      const envelope = JSON.parse(await readFile(path, "utf8"));
+      envelope.payload.dependencyInputs.probes = [
+        { kind: "missing", path: "repository:../private-secret" },
+      ];
+      envelope.integrity = createHash("sha256")
+        .update(JSON.stringify(envelope.payload))
+        .digest("hex");
+      await writeFile(path, JSON.stringify(envelope));
+    }
+    expect(stableReport(await scan())).toEqual(stableReport(await scan(false)));
+    await repository.write(
+      "node_modules/installed/package.json",
+      "{malformed\n",
+    );
+    expect(stableReport(await scan())).toEqual(stableReport(await scan(false)));
+    await repository.write(
+      "node_modules/installed/package.json",
+      '{"name":"installed","type":"module","types":"index.d.ts"}\n',
+    );
+    for (const type of ["any", "string", "number"]) {
+      await repository.write(
+        "node_modules/installed/index.d.ts",
+        `export const supplied: ${type};\n`,
+      );
+      const cached = await scan();
+      expect(cached.summary.incomplete).toBe(0);
+      expect(stableReport(cached)).toEqual(stableReport(await scan(false)));
+      expect(cached.outcome).toBe(type === "number" ? "pass" : "blocked");
+    }
+  });
+
   it("reuses staged observation sets while ignoring later unstaged edits", async () => {
     const repository = await createGitRepository();
     await repository.write("package.json", '{"name":"cache-fixture"}\n');

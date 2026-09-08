@@ -39,13 +39,16 @@ export const CHECK_METADATA = Object.freeze({
   vulnerabilities: metadata("vulnerabilities", "disabled"),
 }) satisfies Readonly<Record<CheckId, ManagedCheckMetadata>>;
 
-export type CacheableObservationCheckId = {
-  [
-    K in CheckId
-  ]: (typeof CHECK_METADATA)[K]["observationInputs"] extends "snapshot-only"
-    ? K
-    : never;
-}[CheckId];
+export type CacheableObservationCheckId =
+  | {
+      [
+        K in CheckId
+      ]: (typeof CHECK_METADATA)[K]["observationInputs"] extends "snapshot-only"
+        ? K
+        : never;
+    }[CheckId]
+  | "lint"
+  | "types";
 
 export function managedCheckMetadata(
   checkId: string,
@@ -57,5 +60,9 @@ export function managedCheckMetadata(
 export function isCacheableObservationCheck(
   checkId: string,
 ): checkId is CacheableObservationCheckId {
-  return managedCheckMetadata(checkId)?.observationInputs === "snapshot-only";
+  return (
+    checkId === "lint" ||
+    checkId === "types" ||
+    managedCheckMetadata(checkId)?.observationInputs === "snapshot-only"
+  );
 }

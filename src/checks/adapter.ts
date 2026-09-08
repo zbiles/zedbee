@@ -5,6 +5,7 @@ import type { SnapshotPair } from "../git/snapshot.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
 import type { CheckFixCandidate } from "../fixes/types.js";
+import type { DependencyInputManifest } from "../cache/dependency-inputs.js";
 
 export type ExecutionClass = "lightweight" | "project-analysis" | "network";
 
@@ -25,6 +26,8 @@ export interface CheckObservationSet<TObservation = Observation> {
   readonly targetObservations: readonly TObservation[];
   /** A changed project input can own target-only findings away from edited lines. */
   readonly projectDelta?: boolean;
+  /** Private collect/cache transport only; excluded from public check results. */
+  readonly dependencyInputs?: DependencyInputManifest;
 }
 
 export interface InspectionContext {

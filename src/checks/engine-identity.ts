@@ -14,6 +14,14 @@ interface EngineIdentityMetadata {
 }
 
 const ENGINE_IDENTITY_METADATA = Object.freeze({
+  lint: Object.freeze({
+    packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
+    revision: "captured-inputs-v1",
+  }),
+  types: Object.freeze({
+    packages: Object.freeze(["typescript"]),
+    revision: "captured-inputs-v1",
+  }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
     revision: "complexity-v2",

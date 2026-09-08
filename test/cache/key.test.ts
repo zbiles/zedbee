@@ -608,9 +608,12 @@ describe("observation cache keys", () => {
     );
   });
 
-  it("does not assign an engine identity to installed-dependency checks", () => {
-    expect(observationCacheEngineIdentity("lint")).toBeUndefined();
-    expect(observationCacheEngineIdentity("types")).toBeUndefined();
+  it("identifies captured lint and types engines while leaving dead code ineligible", () => {
+    expect(observationCacheEngineIdentity("lint")).toContain(
+      "typescript-eslint@",
+    );
+    expect(observationCacheEngineIdentity("types")).toContain("typescript@");
+    expect(observationCacheEngineIdentity("deadCode")).toBeUndefined();
   });
 
   it("separates otherwise identical inspections by staged React declaration", async () => {

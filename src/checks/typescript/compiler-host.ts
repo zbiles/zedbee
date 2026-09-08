@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
 import picomatch from "picomatch";
@@ -10,6 +10,7 @@ export interface SnapshotProgramInput {
   readonly rootNames: readonly string[];
   readonly options: ts.CompilerOptions;
   readonly projectReferences?: readonly ts.ProjectReference[];
+  readonly dependencies?: CapturedDependencies;
 }
 
 export interface SnapshotProgram {
@@ -51,20 +52,6 @@ function repositoryPath(
   return result.length === 0 ? "." : result;
 }
 
-function packageFileAllowed(packageRoot: string, candidate: string): boolean {
-  if (!existsSync(candidate)) return false;
-  try {
-    const canonicalRoot = realpathSync(packageRoot);
-    const canonicalCandidate = realpathSync(candidate);
-    return (
-      contained(canonicalRoot, canonicalCandidate) &&
-      statSync(canonicalCandidate).isFile()
-    );
-  } catch {
-    return false;
-  }
-}
-
 function isBareSpecifier(specifier: string): boolean {
   if (specifier.startsWith("node:")) return true;
   return (
@@ -99,6 +86,8 @@ export function createSnapshotProgram(
   const repositoryRoot = resolve(input.repositoryRoot);
   const snapshotRoot = resolve(input.snapshotRoot ?? repositoryRoot);
   const packageRoot = resolve(repositoryRoot, "node_modules");
+  const dependencies =
+    input.dependencies ?? new CapturedDependencies({ repositoryRoot });
   const files = new Map(
     Object.entries(input.files).map(([path, source]) => [
       resolve(snapshotRoot, ...normalized(path).split("/")),
@@ -141,17 +130,17 @@ export function createSnapshotProgram(
   delete options.tsBuildInfoFile;
   const typescriptLibraryRoot = dirname(ts.getDefaultLibFilePath(options));
   const dependencyFileAllowed = (candidate: string): boolean =>
-    packageFileAllowed(packageRoot, candidate) ||
-    packageFileAllowed(typescriptLibraryRoot, candidate);
+    dependencies.fileExists(candidate);
   if (options.types === undefined && options.typeRoots === undefined) {
     const typeRoot = resolve(packageRoot, "@types");
     options.typeRoots = [typeRoot];
-    options.types = existsSync(typeRoot)
-      ? readdirSync(typeRoot, { withFileTypes: true })
-          .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-          .map((entry) => entry.name)
-          .sort()
-      : [];
+    options.types = dependencies
+      .directoryEntries(typeRoot)
+      .filter(
+        (entry) => entry.type === "directory" && !entry.name.startsWith("."),
+      )
+      .map((entry) => entry.name)
+      .sort();
   }
 
   const defaultHost = ts.createCompilerHost(options, true);
@@ -165,7 +154,7 @@ export function createSnapshotProgram(
       const local = files.get(absolute);
       if (local !== undefined) return local;
       return dependencyFileAllowed(absolute)
-        ? defaultHost.readFile(absolute)
+        ? dependencies.readFile(absolute)
         : undefined;
     },
     directoryExists: (path) => {
@@ -175,15 +164,16 @@ export function createSnapshotProgram(
       return (
         (contained(packageRoot, absolute) ||
           contained(typescriptLibraryRoot, absolute)) &&
-        defaultHost.directoryExists?.(absolute) === true
+        dependencies.directoryExists(absolute)
       );
     },
     getDirectories: (path) =>
       contained(packageRoot, resolve(path)) ||
       contained(typescriptLibraryRoot, resolve(path))
-        ? (defaultHost.getDirectories?.(resolve(path)) ?? [])
+        ? dependencies.getDirectories(resolve(path))
         : [],
-    realpath: (path) => resolve(path),
+    realpath: (path) =>
+      files.has(resolve(path)) ? resolve(path) : dependencies.realpath(path),
   };
 
   const host: ts.CompilerHost = {
@@ -200,7 +190,7 @@ export function createSnapshotProgram(
       }
       if (dependencyFileAllowed(absolute)) {
         packageReads.add(absolute);
-        return defaultHost.readFile(absolute);
+        return dependencies.readFile(absolute);
       }
       return undefined;
     },
@@ -271,7 +261,7 @@ export function createSnapshotProgram(
         ).resolvedModule;
         if (
           resolved === undefined ||
-          !packageFileAllowed(packageRoot, resolve(resolved.resolvedFileName))
+          !dependencies.packageFileExists(resolve(resolved.resolvedFileName))
         ) {
           return undefined;
         }

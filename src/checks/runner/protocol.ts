@@ -2,6 +2,7 @@ import type { CheckId } from "../../config/schema.js";
 import type { CheckResult, Finding, Observation } from "../../core/types.js";
 import type { CheckFixCandidate } from "../../fixes/types.js";
 import type { CheckObservationSet } from "../adapter.js";
+import { sanitizeDependencyInputManifest } from "../../cache/dependency-inputs.js";
 import { managedCheckMetadata } from "../metadata.js";
 import {
   normalizeObservation,
@@ -166,6 +167,13 @@ export function validateAnalyzerResult<R extends AnalyzerRequest>(
       target,
       baselineObservations: input.baselineObservations.map(normalize),
       targetObservations: input.targetObservations.map(normalize),
+      ...(input.dependencyInputs === undefined
+        ? {}
+        : {
+            dependencyInputs: sanitizeDependencyInputManifest(
+              input.dependencyInputs,
+            ),
+          }),
       ...(input.projectDelta === undefined
         ? {}
         : { projectDelta: input.projectDelta }),

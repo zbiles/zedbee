@@ -17,7 +17,7 @@ import { createInspectionFixture } from "../inspection/fixture.js";
 import { testFilePolicyResolver } from "../helpers/file-policy.js";
 
 describe("managed check cache metadata", () => {
-  it("records complete snapshot and incomplete installed-dependency inputs", () => {
+  it("records snapshot and captured installed-dependency inputs", () => {
     expect(
       Object.fromEntries(
         Object.entries(CHECK_METADATA).map(([checkId, metadata]) => [
@@ -40,8 +40,8 @@ describe("managed check cache metadata", () => {
       reactAccessibility: "snapshot-only",
       vulnerabilities: "disabled",
     });
-    expect(isCacheableObservationCheck("types")).toBe(false);
-    expect(isCacheableObservationCheck("lint")).toBe(false);
+    expect(isCacheableObservationCheck("types")).toBe(true);
+    expect(isCacheableObservationCheck("lint")).toBe(true);
     expect(isCacheableObservationCheck("deadCode")).toBe(false);
     expect(isCacheableObservationCheck("not-a-managed-check")).toBe(false);
     expect(isCacheableObservationCheck("cyclomaticComplexity")).toBe(true);
@@ -94,9 +94,7 @@ describe("managed check cache metadata", () => {
       createObservationCacheEngineIdentityResolver((name) =>
         versions.get(name),
       )("duplication"),
-    ).toBe(
-      "jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2",
-    );
+    ).toBe("jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2");
   });
 
   it("resolves installed identities for every snapshot-only check", () => {
@@ -124,13 +122,11 @@ describe("managed check cache metadata", () => {
     );
 
     expect(identity("cyclomaticComplexity")).toBeUndefined();
-    expect(identity("types")).toBeUndefined();
+    expect(identity("lint")).toBeUndefined();
     expect(identity("unknown-check")).toBeUndefined();
   });
 
   it.each([
-    { checkId: "lint", expectedCollections: 2 },
-    { checkId: "types", expectedCollections: 2 },
     { checkId: "deadCode", expectedCollections: 2 },
     { checkId: "unknown-check", expectedCollections: 0 },
   ])(

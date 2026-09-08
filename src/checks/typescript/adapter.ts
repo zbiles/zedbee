@@ -17,6 +17,7 @@ import type {
 import { createSnapshotProgram } from "./compiler-host.js";
 import { loadSnapshotProgramInput } from "./config.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
+import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
@@ -34,6 +35,7 @@ async function collectSide(
   repositoryRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
+  dependencies: CapturedDependencies,
 ): Promise<readonly Observation[]> {
   const workspace = workspaceFor(inspection, target);
   if (
@@ -47,7 +49,7 @@ async function collectSide(
     repositoryRoot,
     workspace,
   );
-  const { programs } = createSnapshotProgram(input);
+  const { programs } = createSnapshotProgram({ ...input, dependencies });
   const observations = programs
     .flatMap((program) => ts.getPreEmitDiagnostics(program))
     .map((diagnostic) =>
@@ -77,6 +79,7 @@ export const typescriptAdapter: ObservationCheckAdapter = {
 
   async collect(context): Promise<CheckObservationSet> {
     try {
+      const dependencies = new CapturedDependencies(context);
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
           () =>
@@ -85,6 +88,7 @@ export const typescriptAdapter: ObservationCheckAdapter = {
               context.repositoryRoot,
               context.baselineInspection,
               context.target,
+              dependencies,
             ),
           () =>
             collectSide(
@@ -92,14 +96,17 @@ export const typescriptAdapter: ObservationCheckAdapter = {
               context.repositoryRoot,
               context.targetInspection,
               context.target,
+              dependencies,
             ),
           context.signal,
         );
+      const dependencyInputs = dependencies.manifest();
       return {
         checkId: "types",
         target: context.target,
         baselineObservations,
         targetObservations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     } catch {
       throw new Error("TypeScript analysis failed.");

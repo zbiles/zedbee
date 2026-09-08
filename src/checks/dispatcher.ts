@@ -47,6 +47,7 @@ import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
 } from "../cache/store.js";
+import { validateDependencyInputs } from "../cache/captured-dependencies.js";
 import {
   resolveInspectionPolicy,
   resolveScheduledTargetPolicy,
@@ -428,7 +429,9 @@ async function collectObservations(
       if (
         cached !== undefined &&
         cached.checkId === adapter.id &&
-        sameTarget(cached.target, runContext.target)
+        sameTarget(cached.target, runContext.target) &&
+        ((adapter.id !== "lint" && adapter.id !== "types") ||
+          validateDependencyInputs(cached.dependencyInputs, runContext))
       ) {
         return sanitizeCacheableObservationSet(cached);
       }
@@ -443,7 +446,9 @@ async function collectObservations(
   if (
     cacheKey !== undefined &&
     options.cache !== undefined &&
-    !runContext.signal.aborted
+    !runContext.signal.aborted &&
+    ((adapter.id !== "lint" && adapter.id !== "types") ||
+      validateDependencyInputs(collected.dependencyInputs, runContext))
   ) {
     await options.cache.set(cacheKey, collected).catch(() => undefined);
   }
