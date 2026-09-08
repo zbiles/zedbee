@@ -17,7 +17,10 @@ import {
   defaultWorkerEntry,
   type WorkerJob,
   type WorkerOutcome,
+  type AnalyzerTreeWitness,
+  type WorkerOwnershipHooks,
 } from "./worker-slot.js";
+export type { AnalyzerTreeWitness } from "./worker-slot.js";
 import type { AnalyzerJobOptions } from "./run-job.js";
 import {
   captureAnalysisSources,
@@ -42,6 +45,17 @@ export interface AnalyzerExecutor {
     options?: AnalyzerExecutionSessionOptions,
   ): Promise<AnalyzerExecutionSession>;
   close(): Promise<void>;
+}
+/** Internal owner handoff only; never a worker/config/service request field. */
+export interface AnalyzerOwnershipHooks {
+  acquire(
+    session: AnalyzerExecutionSession,
+    witness: AnalyzerTreeWitness,
+  ): Promise<void>;
+  release(
+    session: AnalyzerExecutionSession,
+    witness: AnalyzerTreeWitness,
+  ): Promise<void>;
 }
 type Outcome = WorkerOutcome;
 interface Job extends WorkerJob {
@@ -73,7 +87,15 @@ class Session implements AnalyzerExecutionSession {
   capture?: AnalysisSourceCapture | undefined;
   transport?: AnalysisSourceCaptureTransport | undefined;
   releaseFailure?: Error;
-  constructor(readonly owner: LocalExecutor) {}
+  readonly ownership: WorkerOwnershipHooks | undefined;
+  constructor(readonly owner: LocalExecutor) {
+    this.ownership = owner.ownership
+      ? {
+          acquire: (witness) => owner.ownership!.acquire(this, witness),
+          release: (witness) => owner.ownership!.release(this, witness),
+        }
+      : undefined;
+  }
   async run<R extends AnalyzerRequest>(
     request: R,
     options: AnalyzerJobOptions = {},
@@ -102,7 +124,10 @@ class LocalExecutor implements AnalyzerExecutor {
   acceptedJobs = 0;
   acceptedBytes = 0;
   closing?: Promise<void>;
-  constructor(readonly concurrency: 1 | 2 | 4) {}
+  constructor(
+    readonly concurrency: 1 | 2 | 4,
+    readonly ownership?: AnalyzerOwnershipHooks,
+  ) {}
   async openSession(
     options: AnalyzerExecutionSessionOptions = {},
   ): Promise<AnalyzerExecutionSession> {
@@ -376,12 +401,18 @@ class LocalExecutor implements AnalyzerExecutor {
   }
 }
 export function createLocalAnalyzerExecutor(
-  options: { concurrency?: 1 | 2 | 4 } = {},
+  options: { concurrency?: 1 | 2 | 4; ownership?: AnalyzerOwnershipHooks } = {},
 ): AnalyzerExecutor {
   if (
-    !exactFields(options, ["concurrency"]) ||
+    !exactFields(options, ["concurrency", "ownership"]) ||
     ![1, 2, 4].includes(options.concurrency ?? 2)
   )
     throw new TypeError("Invalid analyzer executor options.");
-  return new LocalExecutor(options.concurrency ?? 2);
+  if (
+    options.ownership !== undefined &&
+    (typeof options.ownership.acquire !== "function" ||
+      typeof options.ownership.release !== "function")
+  )
+    throw new TypeError("Invalid analyzer ownership hooks.");
+  return new LocalExecutor(options.concurrency ?? 2, options.ownership);
 }

@@ -4,6 +4,7 @@ import {
   type Serializable,
 } from "node:child_process";
 import { existsSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   decodeWorkerResponse,
@@ -17,10 +18,18 @@ import type { WindowsJob } from "./windows-job.js";
 import type { AnalyzerJobOptions } from "./run-job.js";
 import type { AnalyzerRequest } from "./protocol.js";
 export type WorkerOutcome = { result: unknown } | { error: Error };
+export type AnalyzerTreeWitness =
+  | { readonly id: string; readonly kind: "posix"; readonly pgid: number }
+  | { readonly id: string; readonly kind: "windows"; readonly jobName: string };
+export interface WorkerOwnershipHooks {
+  acquire(witness: AnalyzerTreeWitness): Promise<void>;
+  release(witness: AnalyzerTreeWitness): Promise<void>;
+}
 export interface WorkerSession {
   readonly id: string;
   readonly closed: boolean;
   releaseFailure?: Error;
+  readonly ownership?: WorkerOwnershipHooks | undefined;
 }
 export interface WorkerJob extends JobIdentity {
   readonly request: AnalyzerRequest;
@@ -43,6 +52,11 @@ export class SupervisedWorkerSlot {
   private child?: ChildProcess;
   private windowsJob?: WindowsJob;
   private workerGroup?: number;
+  private readonly witnessId = randomBytes(32).toString("hex");
+  private jobName?: string;
+  private witness?: AnalyzerTreeWitness;
+  private witnessOwner?: WorkerSession | undefined;
+  private acknowledgingRelease = false;
   job?: WorkerJob | undefined;
   session?: WorkerSession | undefined;
   affinity?: string;
@@ -72,6 +86,16 @@ export class SupervisedWorkerSlot {
   async dispatch(envelope: unknown): Promise<void> {
     if (!this.child) await this.start(envelope);
     else {
+      try {
+        await this.acquireOwnership();
+      } catch {
+        this.stop(
+          this.job
+            ? jobFailure(this.job.request, "cleanup")
+            : new Error("Analyzer ownership failed."),
+        );
+        return;
+      }
       this.child.ref();
       this.child.channel?.ref();
       this.child.send(envelope as Serializable, (error) => {
@@ -84,13 +108,38 @@ export class SupervisedWorkerSlot {
       });
     }
   }
+  private async acquireOwnership(): Promise<void> {
+    const session = this.session;
+    if (!session?.ownership || this.witnessOwner === session) return;
+    if (this.workerGroup === undefined)
+      throw new Error("Missing owned worker.");
+    this.witness ??= this.jobName
+      ? { id: this.witnessId, kind: "windows", jobName: this.jobName }
+      : { id: this.witnessId, kind: "posix", pgid: this.workerGroup };
+    // Record before awaiting: a lost ACK still requires retirement/release.
+    this.witnessOwner = session;
+    await session.ownership.acquire(this.witness);
+    if (this.stopping || session.closed)
+      throw new Error("Analyzer ownership ended.");
+  }
+  private async releaseOwnership(): Promise<void> {
+    const owner = this.witnessOwner;
+    if (owner?.ownership && this.witness)
+      await owner.ownership.release(this.witness);
+    this.witnessOwner = undefined;
+  }
   private async start(envelope: unknown): Promise<void> {
     const slot = this;
     const job = slot.job!;
     try {
       if (!existsSync(slot.entry)) throw new Error("Missing worker");
-      if (process.platform === "win32")
-        slot.windowsJob = (await import("./windows-job.js")).createWindowsJob();
+      if (process.platform === "win32") {
+        if (slot.session?.ownership)
+          slot.jobName = `Local\\zedbee-${slot.witnessId}`;
+        slot.windowsJob = (await import("./windows-job.js")).createWindowsJob(
+          slot.jobName,
+        );
+      }
       if (slot.stopping || job.options.signal?.aborted || job.session.closed)
         throw new Error("Cancelled");
     } catch {
@@ -184,7 +233,13 @@ export class SupervisedWorkerSlot {
       slot.workerGroup === undefined
     ) {
       slot.workerGroup = value.pid as number;
-      slot.child!.send({ type: "ownership-ack" }, () => {});
+      void slot
+        .acquireOwnership()
+        .then(() => {
+          if (!slot.stopping)
+            slot.child!.send({ type: "ownership-ack" }, () => {});
+        })
+        .catch(() => invalid());
       return;
     }
     if (exactFields(value, ["type", "response"]) && value.type === "result") {
@@ -201,6 +256,7 @@ export class SupervisedWorkerSlot {
     const event = value.message;
     if (slot.releasing) {
       if (
+        slot.acknowledgingRelease ||
         !exactFields(event, ["version", "type", "sessionId", "retire"]) ||
         event.version !== 1 ||
         event.type !== "released" ||
@@ -214,13 +270,23 @@ export class SupervisedWorkerSlot {
         this.stop();
         return;
       }
-      slot.session = undefined;
-      const release = slot.releasing;
-      slot.releasing = undefined;
-      slot.child!.unref();
-      slot.child!.channel?.unref();
-      release.resolve();
-      this.onAvailable();
+      slot.acknowledgingRelease = true;
+      void slot
+        .releaseOwnership()
+        .then(() => {
+          if (slot.stopping) return;
+          slot.session = undefined;
+          const release = slot.releasing!;
+          slot.releasing = undefined;
+          slot.acknowledgingRelease = false;
+          slot.child!.unref();
+          slot.child!.channel?.unref();
+          release.resolve();
+          this.onAvailable();
+        })
+        .catch(() =>
+          this.stop(new Error("Analyzer ownership release failed.")),
+        );
       return;
     }
     const job = slot.job;
@@ -287,6 +353,16 @@ export class SupervisedWorkerSlot {
         : new Error("Analyzer cleanup failed.");
       slot.cleanupFailure = slot.failure;
       if (slot.session) slot.session.releaseFailure = slot.failure;
+    }
+    try {
+      await slot.releaseOwnership();
+    } catch {
+      // Actual tree cleanup above is still required even if the client vanished.
+      slot.witnessOwner = undefined;
+      if (slot.session)
+        slot.session.releaseFailure ??= new Error(
+          "Analyzer ownership release failed.",
+        );
     }
     const job = slot.job;
     if (job) {

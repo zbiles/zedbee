@@ -1,5 +1,6 @@
 import koffi from "koffi";
 import { WINDOWS_JOB_TERMINATION_EXIT_CODE } from "./exit-status.js";
+import { createOwnedWindowsJobHandle } from "../../service/windows-pipe.js";
 
 // This module is dynamically loaded only on Windows. Handles are unnamed and
 // noninheritable: neither a worker nor its native CLI descendants can keep the
@@ -64,8 +65,10 @@ export interface WindowsJob {
   close(): void;
 }
 
-export function createWindowsJob(): WindowsJob {
-  const handle = create(null, null);
+export function createWindowsJob(capabilityName?: string): WindowsJob {
+  const handle = capabilityName
+    ? createOwnedWindowsJobHandle(capabilityName)
+    : create(null, null);
   if (!handle) throw new Error("Windows job creation failed");
   let closed = false;
   const close = () => {
