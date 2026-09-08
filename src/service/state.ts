@@ -146,12 +146,15 @@ export class ServiceState {
     }
   }
   async lease(id?: string, create = true): Promise<StateLease> {
-    await this.checkDirectory();
     if (id !== undefined && !HEX.test(id)) throw new ServiceUnavailableError();
-    const path = join(
-      this.directory,
+    return this.leaseFile(
       id === undefined ? "owner.lock" : `io-${id}.lock`,
+      create,
     );
+  }
+  private async leaseFile(name: string, create: boolean): Promise<StateLease> {
+    await this.checkDirectory();
+    const path = join(this.directory, name);
     if (process.platform === "win32") {
       const lease = (await import("./windows-pipe.js")).openWindowsStateLease(
         path,
@@ -209,16 +212,27 @@ export class ServiceState {
   async removeLease(id: string): Promise<void> {
     if (!HEX.test(id)) throw new ServiceUnavailableError();
     const path = join(this.directory, `io-${id}.lock`);
+    // All removers release their original I/O lease before taking this lock.
+    // Serialize verification handles with deletion across processes; this
+    // permanent coordination file, like owner.lock, must never be unlinked.
+    const removal = await this.leaseFile("removal.lock", true);
     try {
-      const file = await this.checkedFile(path);
+      while (!removal.acquire())
+        await new Promise((resolve) => setTimeout(resolve, 20));
       try {
-        if ((await file.stat()).size !== 0) throw new ServiceUnavailableError();
-      } finally {
-        await file.close();
+        const file = await this.checkedFile(path);
+        try {
+          if ((await file.stat()).size !== 0)
+            throw new ServiceUnavailableError();
+        } finally {
+          await file.close();
+        }
+        await unlink(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      await unlink(path);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } finally {
+      await removal.close();
     }
   }
   async publish(value: ServiceRecord): Promise<void> {

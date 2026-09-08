@@ -597,7 +597,22 @@ async function manage(
     const location = await serviceLocation(options.directory),
       state = new ServiceState(location.directory);
     const record = await state.read();
-    if (!record) return { state: "stopped" };
+    if (!record) {
+      if (op === "stop") {
+        // Discovery can disappear before shutdown releases startup ownership.
+        // Inspect only an existing lock: management must never create state.
+        let lease: StateLease | undefined;
+        try {
+          lease = await state.lease(undefined, false);
+          if (!lease.acquire()) return { state: "unavailable" };
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        } finally {
+          await lease?.close();
+        }
+      }
+      return { state: "stopped" };
+    }
     client = await connectService(state, record);
     const result = await client.request(op);
     if (op === "stop") {

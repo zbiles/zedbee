@@ -66,6 +66,151 @@ describe("private service state ownership", () => {
     ).resolves.toBeDefined();
     await lock!();
   });
+  it("serializes competing removal through the exact lease's completed unlink", async () => {
+    const state = new ServiceState(join(await root(), "state"));
+    const other = new ServiceState(state.directory);
+    await state.prepare();
+    const owner = await state.lock();
+    const id = "e".repeat(64);
+    const lease = await state.lease(id);
+    await lease.close();
+    let resume!: () => void, entered!: () => void, contended!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const inspected = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const contention = new Promise<void>((resolve) => {
+      contended = resolve;
+    });
+    // Hold a real checked handle in the first remover. The second must wait
+    // for kernel ownership, not race this handle with its own deletion.
+    const original = (state as any).checkedFile.bind(state);
+    const checked = vi
+      .spyOn(state as any, "checkedFile")
+      .mockImplementation(async (...args) => {
+        const file = await original(...args);
+        if (args[0] === join(state.directory, `io-${id}.lock`)) {
+          entered();
+          await gate;
+        }
+        return file;
+      });
+    let restoreNative: () => void;
+    if (process.platform === "win32") {
+      const native = await import("../../src/service/windows-pipe.js");
+      const originalLease = native.openWindowsStateLease;
+      const spy = vi
+        .spyOn(native, "openWindowsStateLease")
+        .mockImplementation((...args) => {
+          const value = originalLease(...args);
+          return {
+            ...value,
+            acquire() {
+              const acquired = value.acquire();
+              if (!acquired) contended();
+              return acquired;
+            },
+          };
+        });
+      restoreNative = () => spy.mockRestore();
+    } else {
+      const originalLoad = koffi.load;
+      const spy = vi
+        .spyOn(koffi, "load")
+        .mockImplementation((path, options) => {
+          const library =
+            options === undefined
+              ? originalLoad(path)
+              : originalLoad(path, options);
+          return {
+            ...library,
+            func: (...args: any[]) => {
+              const fn = (library.func as any)(...args);
+              return (...values: any[]) => {
+                const result = fn(...values);
+                if (result !== 0) contended();
+                return result;
+              };
+            },
+          } as typeof library;
+        });
+      restoreNative = () => spy.mockRestore();
+    }
+    const first = state.removeLease(id);
+    let second: Promise<void> | undefined;
+    try {
+      await inspected;
+      let settled = false;
+      second = other.removeLease(id).finally(() => {
+        settled = true;
+      });
+      await Promise.race([contention, second.catch(() => {})]);
+      expect(settled).toBe(false);
+      await expect(
+        lstat(join(state.directory, `io-${id}.lock`)),
+      ).resolves.toBeDefined();
+      resume();
+      await Promise.all([first, second]);
+      await expect(
+        lstat(join(state.directory, `io-${id}.lock`)),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        lstat(join(state.directory, "owner.lock")),
+      ).resolves.toBeDefined();
+      await expect(
+        lstat(join(state.directory, "removal.lock")),
+      ).resolves.toBeDefined();
+    } finally {
+      resume();
+      await Promise.allSettled([first, ...(second ? [second] : [])]);
+      checked.mockRestore();
+      restoreNative();
+      await owner!();
+    }
+  });
+  it("rejects a corrupt removal lock without deleting the target lease", async () => {
+    const state = new ServiceState(join(await root(), "state"));
+    await state.prepare();
+    const id = "c".repeat(64);
+    await state.removeLease(id);
+    const lease = await state.lease(id);
+    await lease.close();
+    await writeFile(join(state.directory, "removal.lock"), "corrupt");
+    await expect(state.removeLease(id)).rejects.toThrow();
+    await expect(
+      lstat(join(state.directory, `io-${id}.lock`)),
+    ).resolves.toBeDefined();
+  });
+  it("preserves a real verification failure and releases removal ownership", async () => {
+    const state = new ServiceState(join(await root(), "state"));
+    await state.prepare();
+    const id = "b".repeat(64);
+    const path = join(state.directory, `io-${id}.lock`);
+    const lease = await state.lease(id);
+    await lease.close();
+    const original = (state as any).checkedFile.bind(state);
+    const checked = vi
+      .spyOn(state as any, "checkedFile")
+      .mockImplementation(async (...args) => {
+        if (args[0] === path)
+          throw Object.assign(new Error("Permission denied"), {
+            code: "EACCES",
+          });
+        return original(...args);
+      });
+    try {
+      await expect(state.removeLease(id)).rejects.toMatchObject({
+        code: "EACCES",
+      });
+      await expect(lstat(path)).resolves.toBeDefined();
+    } finally {
+      checked.mockRestore();
+    }
+    await state.removeLease(id);
+    await expect(lstat(path)).rejects.toMatchObject({ code: "ENOENT" });
+  });
   it("does not create discovery state on read and keeps secret metadata owner-only", async () => {
     const directory = join(await root(), "state");
     const state = new ServiceState(directory);

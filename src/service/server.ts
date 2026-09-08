@@ -124,6 +124,7 @@ export async function startServiceServer(
   const clients = new Set<ServiceConnection>(),
     cleaning = new Set<Promise<void>>();
   let stopping = false,
+    cleanupFailed = false,
     closing: Promise<void> | undefined,
     operations = 0;
   const status = (): ServiceStatus => ({
@@ -143,7 +144,8 @@ export async function startServiceServer(
       string,
       { resolve(): void; reject(error: Error): void }
     >();
-    const inFlight = new Set<Promise<unknown>>();
+    const inFlight = new Map<number, Promise<unknown>>();
+    let stopRequestId: number | undefined;
     const jobs = new Map<number, AbortController>();
     let phase = 0,
       clientNonce = "",
@@ -256,7 +258,7 @@ export async function startServiceServer(
           pending++;
           operations++;
           const operation = operate(value);
-          inFlight.add(operation);
+          inFlight.set(id, operation);
           void operation
             .then(
               (result) =>
@@ -267,7 +269,7 @@ export async function startServiceServer(
             )
             .catch(() => peer.destroy())
             .finally(() => {
-              inFlight.delete(operation);
+              inFlight.delete(id);
               pending--;
               operations--;
               releaseDecoded?.();
@@ -301,13 +303,20 @@ export async function startServiceServer(
         const results = await Promise.allSettled(
           [...sessions.entries()].map(([id]) => closeSession(id)),
         );
-        await Promise.allSettled([...inFlight]);
+        // The stop operation itself awaits server shutdown. Everything else,
+        // including competing stop handoffs, must finish its own cleanup.
+        await Promise.allSettled(
+          [...inFlight]
+            .filter(([id]) => id !== stopRequestId)
+            .map(([, operation]) => operation),
+        );
         const failure = results.find((result) => result.status === "rejected");
         if (failure?.status === "rejected") throw failure.reason;
       })();
       cleaning.add(cleanup);
       void cleanup
         .catch(() => {
+          cleanupFailed = true;
           // Preserve the rejected close promise for management, but a failed
           // background cleanup must not become an unhandled process rejection.
           void close().catch(() => {});
@@ -372,8 +381,26 @@ export async function startServiceServer(
       if (value.op === "status" && exactFields(value, ["id", "op"]))
         return status();
       if (value.op === "stop" && exactFields(value, ["id", "op"])) {
-        await close(peer, value.id as number);
-        return { state: "stopped" };
+        // A management socket must close before the listener can finish. Hand
+        // off a source-free cleanup witness before the provisional stop reply;
+        // public stop awaits client.close(), which independently waits on it.
+        const id = randomBytes(32).toString("hex");
+        const lease = await state.lease(id);
+        let retained = false;
+        try {
+          if (!lease.acquire()) throw new ServiceUnavailableError();
+          await exchange("io-acquire", { sessionId: id });
+          if (socket.destroyed || stopping) throw new ServiceUnavailableError();
+          retained = true;
+          stopRequestId = value.id as number;
+          await close(peer, value.id as number, lease);
+          return { state: "stopped" };
+        } finally {
+          if (!retained) {
+            await lease.close();
+            await removeAbandonedLease(id);
+          }
+        }
       }
       if (value.op === "open" && exactFields(value, ["id", "op", "options"])) {
         if (sessions.size + opening >= 4 || idle.active >= 32)
@@ -454,7 +481,11 @@ export async function startServiceServer(
   const timer = setInterval(() => {
     if (idle.expired) void close().catch(() => {});
   }, 1000);
-  function close(preserve?: ServiceConnection, stopId?: number): Promise<void> {
+  function close(
+    preserve?: ServiceConnection,
+    stopId?: number,
+    completion?: StateLease,
+  ): Promise<void> {
     if (!closing) {
       stopping = true;
       clearInterval(timer);
@@ -476,7 +507,17 @@ export async function startServiceServer(
           preserve.socket.once("finish", () => preserve.destroy());
         }
         await listenerClosed;
+        // Socket close handlers start asynchronously after destroy(). Now all
+        // have run: drain their state I/O before releasing either final witness.
+        await Promise.all([...cleaning]);
+        if (cleanupFailed) throw new ServiceUnavailableError();
         await releaseOwnership();
+        // Never release this witness in finally: failed endpoint/startup
+        // cleanup must retain it until OS process death supplies the proof.
+        // This is the final server-owned state operation. The authenticated
+        // client alone removes this unique completion file; client death may
+        // leave an inert zero-byte file, never a live ownership claim.
+        await completion?.close();
       })();
     }
     return closing;

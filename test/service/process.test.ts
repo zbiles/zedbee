@@ -1,7 +1,7 @@
 import { afterEach, expect, it } from "vitest";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdtemp, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import {
   stopService,
 } from "../../dist/service/client.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
+import { removeServiceFixture } from "./fixture-cleanup.js";
 const roots: string[] = [];
 const clients: Array<() => Promise<void>> = [];
 async function acquire(config: Parameters<typeof acquireServiceExecutor>[0]) {
@@ -23,8 +24,10 @@ afterEach(async () => {
   // Service-loss close may reject after proving cleanup; all closers still run.
   await Promise.allSettled(clients.splice(0).map((close) => close()));
   for (const root of roots.splice(0)) {
-    await stopService({ directory: join(root, "s") });
-    await rm(root, { recursive: true, force: true });
+    await removeServiceFixture(
+      root,
+      await stopService({ directory: join(root, "s") }),
+    );
   }
 });
 async function options() {

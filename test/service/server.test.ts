@@ -85,6 +85,7 @@ describe("service executor isolation", () => {
   it("retires a disconnected client's witnessed tree without stopping another client's worker", async () => {
     const { state, record, server } = await fixture();
     const firstClient = await connectService(state, record);
+    cleanups.push(() => firstClient.close());
     const secondClient = await connectService(state, record);
     const first = executorForConnection(firstClient),
       second = executorForConnection(secondClient);
