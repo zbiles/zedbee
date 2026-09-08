@@ -12,7 +12,16 @@ import {
 } from "../../dist/service/client.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 const roots: string[] = [];
+const clients: Array<() => Promise<void>> = [];
+async function acquire(config: Parameters<typeof acquireServiceExecutor>[0]) {
+  const executor = await acquireServiceExecutor(config);
+  clients.push(() => executor.close());
+  return executor;
+}
 afterEach(async () => {
+  // Always close client-owned lease/Job handles, including failed assertions.
+  // Service-loss close may reject after proving cleanup; all closers still run.
+  await Promise.allSettled(clients.splice(0).map((close) => close()));
   for (const root of roots.splice(0)) {
     await stopService({ directory: join(root, "s") });
     await rm(root, { recursive: true, force: true });
@@ -33,9 +42,14 @@ const request = {
     settings: DEFAULT_FORMATTING_SETTINGS,
   },
 } as const;
-async function descendants(parent: number): Promise<number[]> {
+async function observeTree(parent: number) {
   const run = promisify(execFile);
-  const rows: Array<[number, number]> = [];
+  const rows: Array<{
+    pid: number;
+    parent: number;
+    command: string;
+    executable?: string;
+  }> = [];
   if (process.platform === "win32") {
     const result = await run(
       "powershell.exe",
@@ -43,33 +57,66 @@ async function descendants(parent: number): Promise<number[]> {
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+        "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine | ConvertTo-Json -Compress",
       ],
       { maxBuffer: 4 * 1024 * 1024 },
     );
     for (const row of JSON.parse(result.stdout))
-      rows.push([row.ProcessId, row.ParentProcessId]);
+      rows.push({
+        pid: row.ProcessId,
+        parent: row.ParentProcessId,
+        command: row.CommandLine ?? "",
+        executable: row.ExecutablePath ?? "",
+      });
   } else {
-    const result = await run("/bin/ps", ["-axo", "pid=,ppid="], {
+    const result = await run("/bin/ps", ["-axo", "pid=,ppid=,args="], {
       maxBuffer: 4 * 1024 * 1024,
     });
     for (const line of result.stdout.trim().split("\n")) {
-      const [pid, ppid] = line.trim().split(/\s+/).map(Number);
-      rows.push([pid!, ppid!]);
+      const match = /^\s*(\d+)\s+(\d+)\s+(.*)$/u.exec(line);
+      if (match)
+        rows.push({
+          pid: Number(match[1]),
+          parent: Number(match[2]),
+          command: match[3]!,
+        });
     }
   }
   const owned = new Set([parent]);
   let added = true;
   while (added) {
     added = false;
-    for (const [pid, ppid] of rows)
+    for (const { pid, parent: ppid } of rows)
       if (owned.has(ppid) && !owned.has(pid)) {
         owned.add(pid);
         added = true;
       }
   }
   owned.delete(parent);
-  return [...owned].sort((a, b) => a - b);
+  return rows.filter((row) => owned.has(row.pid)).sort((a, b) => a.pid - b.pid);
+}
+async function descendants(parent: number): Promise<number[]> {
+  return (await observeTree(parent)).map((row) => row.pid);
+}
+async function engineProcesses(parent: number) {
+  const rows = await observeTree(parent);
+  const engines = rows.flatMap((row) => {
+    const role =
+      /[\\/]checks[\\/]runner[\\/](supervisor|bootstrap)\.js(?:["\s]|$)/u.exec(
+        row.command,
+      )?.[1];
+    if (!role) return [];
+    if (process.platform === "win32")
+      expect(row.executable?.replaceAll("\\", "/").toLowerCase()).toBe(
+        process.execPath.replaceAll("\\", "/").toLowerCase(),
+      );
+    return [{ pid: row.pid, role }];
+  });
+  expect(engines.map((row) => row.role).sort()).toEqual([
+    "bootstrap",
+    "supervisor",
+  ]);
+  return engines;
 }
 async function independentClient(
   directory: string,
@@ -97,17 +144,18 @@ it("independent command processes reuse a real worker and stop releases that ent
   const first = await independentClient(config.directory);
   expect(first.result).toBe("const a = 1;\n");
   const before = await descendants(first.status.pid);
-  expect(before).toHaveLength(2);
+  const engines = await engineProcesses(first.status.pid);
   const second = await independentClient(config.directory);
   expect(second.status.pid).toBe(first.status.pid);
   expect(second.result).toBe("const a = 1;\n");
   expect(await descendants(first.status.pid)).toEqual(before);
+  expect(await engineProcesses(first.status.pid)).toEqual(engines);
   expect(await stopService(config)).toEqual({ state: "stopped" });
   for (const pid of before) expect(() => process.kill(pid, 0)).toThrow();
 });
 it("a killed caller retires its tree while an independent live client's session remains usable", async () => {
   const config = await options();
-  const live = await acquireServiceExecutor(config);
+  const live = await acquire(config);
   try {
     const session = await live.openSession();
     expect(await session.run(request)).toBe("const a = 1;\n");
@@ -129,7 +177,7 @@ it("a killed caller retires its tree while an independent live client's session 
     expect(await session.run(request)).toBe("const a = 1;\n");
     const status = await serviceStatus(config);
     if (status.state !== "running") throw new Error("Missing service");
-    expect(await descendants(status.pid)).toHaveLength(2);
+    await engineProcesses(status.pid);
     await session.close();
   } finally {
     await live.close();
@@ -137,14 +185,14 @@ it("a killed caller retires its tree while an independent live client's session 
 });
 it("service death with submitted analysis returns incomplete only after its real worker tree is gone", async () => {
   const config = await options();
-  const executor = await acquireServiceExecutor(config);
+  const executor = await acquire(config);
   const session = await executor.openSession();
   // Warm a witnessed worker, then occupy it with real package-selected analysis.
   expect(await session.run(request)).toBe("const a = 1;\n");
   const status = await serviceStatus(config);
   if (status.state !== "running") throw new Error("Missing service");
   const owned = await descendants(status.pid);
-  expect(owned).toHaveLength(2);
+  await engineProcesses(status.pid);
   let settled = false;
   const job = session
     .run({
@@ -168,23 +216,16 @@ it.each([false, true])(
   "service death (also kill supervisor: %s) leaves close pending until all independently witnessed workers are gone and permits stale-state recovery",
   async (killSupervisor) => {
     const config = await options();
-    const executor = await acquireServiceExecutor(config);
+    const executor = await acquire(config);
     const session = await executor.openSession();
     expect(await session.run(request)).toBe("const a = 1;\n");
     const status = await serviceStatus(config);
     expect(status.state).toBe("running");
     if (status.state !== "running") throw new Error("Missing service");
     const owned = await descendants(status.pid);
-    expect(owned).toHaveLength(2);
+    const engines = await engineProcesses(status.pid);
     const supervisor = killSupervisor
-      ? (
-          await Promise.all(
-            owned.map(async (pid) => ({
-              pid,
-              children: await descendants(pid),
-            })),
-          )
-        ).find((row) => row.children.length > 0)?.pid
+      ? engines.find((row) => row.role === "supervisor")?.pid
       : undefined;
     if (killSupervisor) expect(supervisor).toBeDefined();
     process.kill(status.pid, "SIGKILL");
@@ -198,7 +239,7 @@ it.each([false, true])(
     await session.close().catch(() => {});
     await executor.close().catch(() => {});
     for (const pid of owned) expect(() => process.kill(pid, 0)).toThrow();
-    const next = await acquireServiceExecutor(config);
+    const next = await acquire(config);
     try {
       const fresh = await next.openSession();
       expect(await fresh.run(request)).toBe("const a = 1;\n");
@@ -210,10 +251,7 @@ it.each([false, true])(
 );
 it("concurrent startup shares one owned service and concurrency mismatch rejects before work", async () => {
   const config = await options();
-  const [a, b] = await Promise.all([
-    acquireServiceExecutor(config),
-    acquireServiceExecutor(config),
-  ]);
+  const [a, b] = await Promise.all([acquire(config), acquire(config)]);
   try {
     const sa = await a.openSession(),
       sb = await b.openSession();

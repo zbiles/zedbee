@@ -169,11 +169,10 @@ export class ServiceState {
       if ((await file.stat()).size !== 0) throw new ServiceUnavailableError();
       const koffi = (await import("koffi")).default;
       // Noninherited Node fd; LOCK_EX|LOCK_NB, never shell flock or PID guesses.
-      const libc = koffi.load(
-        process.platform === "darwin"
-          ? "/usr/lib/libSystem.B.dylib"
-          : "libc.so.6",
-      );
+      // Koffi maps null to RTLD_DEFAULT: use the runtime's already-loaded
+      // native flock symbol without assuming glibc's filename on musl Linux.
+      // Missing native symbols remain pre-acceptance unavailable, not emulated.
+      const libc = koffi.load(null);
       const flock = libc.func("int flock(int fd, int operation)");
       let closed = false;
       return {

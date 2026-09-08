@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import koffi from "koffi";
 import {
   chmod,
   lstat,
@@ -27,6 +28,29 @@ afterEach(async () => {
     await rm(path, { recursive: true, force: true });
 });
 describe("private service state ownership", () => {
+  it.skipIf(process.platform === "win32")(
+    "uses the runtime's existing flock symbol without requiring a glibc library name",
+    async () => {
+      const original = koffi.load;
+      const load = vi
+        .spyOn(koffi, "load")
+        .mockImplementation((path, options) => {
+          expect(path).toBeNull();
+          return options === undefined
+            ? original(path)
+            : original(path, options);
+        });
+      const state = new ServiceState(join(await root(), "state"));
+      try {
+        await state.prepare();
+        const release = await state.lock();
+        expect(release).toBeDefined();
+        await release!();
+      } finally {
+        load.mockRestore();
+      }
+    },
+  );
   it("permits both authenticated lease owners to finish removal without unlinking startup ownership", async () => {
     const state = new ServiceState(join(await root(), "state"));
     await state.prepare();
@@ -64,10 +88,13 @@ describe("private service state ownership", () => {
           (await lstat(join(directory, "endpoint.json"))).mode & 0o777,
         ).toBe(0o600);
       }
-      expect(await readFile(join(directory, "owner.lock"))).toHaveLength(0);
+      expect((await lstat(join(directory, "owner.lock"))).size).toBe(0);
     } finally {
       await lock?.();
     }
+    // LockFileEx is mandatory: ordinary ReadFile overlaps the exclusive byte
+    // range even for an empty file. Verify its bytes after releasing the lock.
+    expect(await readFile(join(directory, "owner.lock"))).toHaveLength(0);
   });
   it("admits one kernel-lock owner and releases contention when the handle closes", async () => {
     const directory = join(await root(), "state");
