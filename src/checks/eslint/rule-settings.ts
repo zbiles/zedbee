@@ -1,19 +1,12 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { ESLint, Rule } from "eslint";
-import { builtinRules } from "eslint/use-at-your-own-risk";
 import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
 import { freezeRuleSettings } from "./freeze-rule-settings.js";
 export { freezeRuleSettings } from "./freeze-rule-settings.js";
 
 const require = createRequire(import.meta.url);
 const eslintRoot = dirname(require.resolve("eslint/package.json"));
-const jsLanguage = require(
-  join(eslintRoot, "lib/languages/js/index.js"),
-) as unknown;
-const { Config } = require(join(eslintRoot, "lib/config/config.js")) as {
-  readonly Config: new (config: unknown) => unknown;
-};
 
 export type RuleCheckId = "lint" | "reactCorrectness" | "reactAccessibility";
 export type LintRuleSettings = Readonly<
@@ -142,6 +135,14 @@ const resourcesByCheckId = new Map<RuleCheckId, ManagedRuleResources>();
 function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {
   const existing = resourcesByCheckId.get(checkId);
   if (existing !== undefined) return existing;
+  // Default policy metadata needs no ESLint engine. Explicit rule settings
+  // still load and validate against the exact pinned inventory in their owner.
+  const { builtinRules } = require("eslint/use-at-your-own-risk") as {
+    readonly builtinRules: ReadonlyMap<string, Rule.RuleModule>;
+  };
+  const jsLanguage = require(
+    join(eslintRoot, "lib/languages/js/index.js"),
+  ) as unknown;
   const coreRules = Object.fromEntries(builtinRules) as Record<
     string,
     Rule.RuleModule
@@ -397,6 +398,9 @@ function validateWithPinnedEslintConfig(
   checkId: RuleCheckId,
   rules: Readonly<Record<string, EslintRuleConfiguration>>,
 ): void {
+  const { Config } = require(join(eslintRoot, "lib/config/config.js")) as {
+    readonly Config: new (config: unknown) => unknown;
+  };
   new Config({
     language: "@/js",
     plugins: managedRuleResources(checkId).plugins,

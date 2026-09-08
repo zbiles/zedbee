@@ -2,6 +2,7 @@ import js from "@eslint/js";
 import type { ESLint, Linter } from "eslint";
 import type * as ts from "typescript";
 import tseslint from "typescript-eslint";
+import { managedTypescriptPlugin } from "./comment-directive.js";
 import { reuseJavascriptParser, reuseTypescriptParser } from "./parse-store.js";
 import type {
   FilePolicyResolver,
@@ -138,7 +139,7 @@ function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
     case "lint":
       return {
         files: SOURCE_FILES,
-        plugins: { "@typescript-eslint": tseslint.plugin },
+        plugins: { "@typescript-eslint": managedTypescriptPlugin },
       };
     case "react-correctness":
       if (options.reactVersion === undefined) {
@@ -216,7 +217,12 @@ export function managedConfig(
             : { rules: { ...presetConfig.rules } }),
           ...(presetConfig.plugins === undefined
             ? {}
-            : { plugins: { ...presetConfig.plugins } }),
+            : {
+                plugins: {
+                  ...presetConfig.plugins,
+                  "@typescript-eslint": managedTypescriptPlugin,
+                },
+              }),
         });
       }
     } else if (options.typeInformation === "basic") {
@@ -234,7 +240,12 @@ export function managedConfig(
             : { rules: { ...presetConfig.rules } }),
           ...(presetConfig.plugins === undefined
             ? {}
-            : { plugins: { ...presetConfig.plugins } }),
+            : {
+                plugins: {
+                  ...presetConfig.plugins,
+                  "@typescript-eslint": managedTypescriptPlugin,
+                },
+              }),
         });
       }
     }

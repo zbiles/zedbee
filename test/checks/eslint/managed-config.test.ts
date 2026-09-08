@@ -4,6 +4,7 @@ import type { ESLint } from "eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
+import { managedTypescriptPlugin } from "../../../src/checks/eslint/comment-directive.js";
 import {
   reuseJavascriptParser,
   reuseTypescriptParser,
@@ -68,6 +69,7 @@ describe("managedConfig", () => {
   test("uses only Zedbee-owned parser and plugin objects", () => {
     const allowedPlugins = new Set<unknown>([
       tseslint.plugin,
+      managedTypescriptPlugin,
       reactPlugin,
       reactHooksPlugin,
       jsxA11yPlugin,
