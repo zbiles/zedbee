@@ -13,6 +13,20 @@ import {
   type AnalyzerRequest,
   type AnalyzerResult,
 } from "./protocol.js";
+import { types } from "node:util";
+
+const arrayBufferBytes = Object.getOwnPropertyDescriptor(
+  ArrayBuffer.prototype,
+  "byteLength",
+)!.get!;
+const typedArrayBuffer = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "buffer",
+)!.get!;
+const dataViewBuffer = Object.getOwnPropertyDescriptor(
+  DataView.prototype,
+  "buffer",
+)!.get!;
 
 export interface JobIdentity {
   readonly sessionId: string;
@@ -35,15 +49,27 @@ export function analyzerRequestRetentionBytes(value: unknown): number {
     const item = pending.pop();
     if (typeof item === "string") bytes += item.length * 2;
     else if (typeof item === "object" && item !== null && !seen.has(item)) {
+      // Proxies can execute traps even during descriptor/prototype inspection.
+      // No executable request state may run between accounting and cloning.
+      if (types.isProxy(item))
+        throw new TypeError("Invalid analyzer request object.");
       seen.add(item);
       bytes += 128;
-      if (ArrayBuffer.isView(item)) bytes += item.byteLength;
-      else if (item instanceof ArrayBuffer) bytes += item.byteLength;
+      if (ArrayBuffer.isView(item))
+        // Structured cloning a view copies its entire backing buffer. Intrinsic
+        // getters avoid an overridden .buffer or .byteLength executing user code.
+        bytes += arrayBufferBytes.call(
+          (types.isDataView(item) ? dataViewBuffer : typedArrayBuffer).call(
+            item,
+          ),
+        );
+      else if (types.isArrayBuffer(item)) bytes += arrayBufferBytes.call(item);
       else {
+        const prototype = Object.getPrototypeOf(item);
         if (
-          !Array.isArray(item) &&
-          Object.getPrototypeOf(item) !== Object.prototype &&
-          Object.getPrototypeOf(item) !== null
+          prototype !== null &&
+          prototype !==
+            (Array.isArray(item) ? Array.prototype : Object.prototype)
         )
           throw new TypeError("Invalid analyzer request object.");
         for (const key in item)
@@ -51,7 +77,10 @@ export function analyzerRequestRetentionBytes(value: unknown): number {
             bytes += 64 + key.length * 2;
             if (++fields > 100_000 || bytes > 64 * 1024 * 1024)
               throw new AnalyzerCapacityError("request");
-            pending.push((item as Record<string, unknown>)[key]);
+            const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
+            if (!("value" in descriptor))
+              throw new TypeError("Invalid analyzer request accessor.");
+            pending.push(descriptor.value);
           }
       }
     } else bytes += 8;
