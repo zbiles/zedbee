@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { releaseReadiness } from "../../scripts/release-check.mjs";
+import { NODE_ENGINE_RANGE } from "../../src/runtime/node-support.js";
 
 const root = resolve(import.meta.dirname, "../..");
 
@@ -10,7 +11,7 @@ async function text(path: string): Promise<string> {
 }
 
 describe("public package metadata", () => {
-  it("keeps the package license and Node floor aligned with public docs", async () => {
+  it("keeps the package license and Node support range aligned with public docs and lock metadata", async () => {
     const packageJson = JSON.parse(await text("package.json")) as {
       name?: string;
       version?: string;
@@ -21,9 +22,16 @@ describe("public package metadata", () => {
       bugs?: { url?: string };
       publishConfig?: { access?: string; registry?: string };
     };
-    const [readme, commercial] = await Promise.all([
+    const [packageLock, readme, commercial, support] = await Promise.all([
+      text("package-lock.json").then(
+        (contents) =>
+          JSON.parse(contents) as {
+            packages?: { ""?: { engines?: { node?: string } } };
+          },
+      ),
       text("README.md"),
       text("docs/commercial-licensing.md"),
+      text("docs/support.md"),
     ]);
 
     expect(packageJson.license).toBe("PolyForm-Small-Business-1.0.0");
@@ -41,8 +49,14 @@ describe("public package metadata", () => {
         registry: "https://registry.npmjs.org/",
       },
     });
-    expect(packageJson.engines?.node).toBe(">=22.13.0");
-    expect(readme).toContain("Node.js 22.13.0 or newer");
+    expect(packageJson.engines?.node).toBe(NODE_ENGINE_RANGE);
+    expect(packageLock.packages?.[""]?.engines?.node).toBe(NODE_ENGINE_RANGE);
+    expect(readme).toContain(
+      "Node.js versions matching `^22.17.0 || >=24.2.0`",
+    );
+    expect(support).toContain(
+      "Node.js versions matching `^22.17.0 || >=24.2.0`",
+    );
     expect(readme).toContain("PolyForm Small Business License 1.0.0");
     expect(commercial).toMatch(/separate commercial license/i);
     expect(commercial).toMatch(/not legal advice/i);

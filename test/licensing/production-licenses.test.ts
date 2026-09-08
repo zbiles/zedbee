@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execa } from "execa";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { NODE_ENGINE_RANGE } from "../../src/runtime/node-support.js";
 
 const projectRoot = fileURLToPath(new URL("../..", import.meta.url));
 const checkScriptPath = join(
@@ -1004,12 +1005,12 @@ describe("package metadata", () => {
     await expect(runLicenseCheck(root)).resolves.toMatchObject({ exitCode: 0 });
   });
 
-  it("keeps the Node runtime floor required by the pinned analyzer suite", async () => {
+  it("keeps the approved Node runtime support range", async () => {
     const packageMetadata = JSON.parse(
       await readFile(join(projectRoot, "package.json"), "utf8"),
     ) as { engines?: { node?: string } };
 
-    expect(packageMetadata.engines?.node).toBe(">=22.13.0");
+    expect(packageMetadata.engines?.node).toBe(NODE_ENGINE_RANGE);
   });
 
   it("exposes explicit generation and keeps prepack verification non-mutating", async () => {

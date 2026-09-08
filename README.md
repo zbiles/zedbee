@@ -8,7 +8,7 @@ Scan and fix analyzer jobs use fresh supervised child processes with bounded con
 
 ## Requirements
 
-- Node.js 22.13.0 or newer
+- Node.js versions matching `^22.17.0 || >=24.2.0`
 - Git
 
 ## Install

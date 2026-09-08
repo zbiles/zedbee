@@ -16,6 +16,7 @@ import {
 } from "../../src/doctor/diagnostics.js";
 import { OsvUnavailableError } from "../../src/checks/vulnerabilities/osv/errors.js";
 import { ConfigError } from "../../src/config/load-config.js";
+import { NODE_ENGINE_RANGE } from "../../src/runtime/node-support.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const passProbe: DiagnosticProbe = async (id) => ({
@@ -82,6 +83,44 @@ describe("doctor diagnostics", () => {
         "offline-database",
       ]),
     );
+  });
+
+  it.each([
+    ["22.13.0", "fail"],
+    ["22.16.99", "fail"],
+    ["23.0.0", "fail"],
+    ["23.99.99", "fail"],
+    ["24.0.0", "fail"],
+    ["24.1.99", "fail"],
+    ["22.17.0", "pass"],
+    ["22.23.2", "pass"],
+    ["24.2.0", "pass"],
+    ["24.20.0", "pass"],
+    ["25.0.0", "pass"],
+    ["26.0.0", "pass"],
+    ["not-a-version", "fail"],
+    ["22.17.0-rc.1", "fail"],
+    ["24.2.0-rc.1", "fail"],
+  ] as const)("reports Node.js %s as %s", async (nodeVersion, status) => {
+    const probe = createDefaultDiagnosticProbe({ nodeVersion });
+
+    const expected =
+      status === "pass"
+        ? {
+            id: "node",
+            status,
+            message: `Node.js satisfies ${NODE_ENGINE_RANGE}.`,
+          }
+        : {
+            id: "node",
+            status,
+            message: `Node.js does not satisfy ${NODE_ENGINE_RANGE}.`,
+            remediation: `Install a Node.js version matching ${NODE_ENGINE_RANGE}.`,
+          };
+
+    await expect(
+      probe("node", { cwd: "/repo", environment: {} }),
+    ).resolves.toEqual(expected);
   });
 
   it("runs every setup diagnostic without invoking a scan", async () => {
