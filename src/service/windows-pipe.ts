@@ -246,7 +246,8 @@ function pathHandle(path: string, access = 0x20000 | 0x80): unknown {
   }
 }
 export function verifyWindowsPath(path: string, ownerOnly: boolean): void {
-  const handle = pathHandle(path);
+  // Ancestors need attribute inspection, not access to their security descriptor.
+  const handle = pathHandle(path, ownerOnly ? 0x20000 | 0x80 : 0x80);
   try {
     if (ownerOnly) verify(handle, 1);
   } finally {
