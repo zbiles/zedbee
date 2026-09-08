@@ -1,4 +1,13 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ServiceState } from "../../src/service/state.js";
+import { startServiceServer } from "../../src/service/server.js";
+import {
+  connectService,
+  executorForConnection,
+} from "../../src/service/client.js";
 import { createLocalAnalyzerExecutor } from "../../src/checks/runner/executor.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 const request = {
@@ -11,6 +20,91 @@ const request = {
     settings: DEFAULT_FORMATTING_SETTINGS,
   },
 } as const;
+it("retains the client witness after failed native cleanup and waits for independent proof on connection loss", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zw-")));
+  const state = new ServiceState(join(root, "s"));
+  await state.prepare();
+  const release = (await state.lock())!;
+  const server = await startServiceServer(state, "a".repeat(64), 1, release);
+  const client = await connectService(state, (await state.read())!);
+  const executor = executorForConnection(client);
+  let allowProof!: () => void, entered!: () => void;
+  const proofGate = new Promise<void>((resolve) => {
+    allowProof = resolve;
+  });
+  const proofEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let independent = false;
+  const restores: Array<() => void> = [];
+  const independently = async (stop: () => Promise<void>) => {
+    independent = true;
+    entered();
+    await proofGate;
+    await stop();
+  };
+  if (process.platform === "win32") {
+    const native = await import("../../src/checks/runner/windows-job.js");
+    const fail = vi
+      .spyOn(native, "stopWindowsJob")
+      .mockRejectedValueOnce(new Error("Injected native cleanup failure"));
+    restores.push(() => fail.mockRestore());
+    const witnesses = await import("../../src/service/windows-pipe.js");
+    const original = witnesses.openWindowsJobWitness;
+    const open = vi
+      .spyOn(witnesses, "openWindowsJobWitness")
+      .mockImplementation((name) => {
+        const witness = original(name);
+        return { ...witness, stop: () => independently(() => witness.stop()) };
+      });
+    restores.push(() => open.mockRestore());
+  } else {
+    const native = await import("../../src/checks/runner/process-group.js");
+    const original = native.stopProcessGroup;
+    let failed = false;
+    const stop = vi
+      .spyOn(native, "stopProcessGroup")
+      .mockImplementation(async (pid) => {
+        if (!failed) {
+          failed = true;
+          throw new Error("Injected native cleanup failure");
+        }
+        await independently(() => original(pid));
+      });
+    restores.push(() => stop.mockRestore());
+  }
+  try {
+    const session = await executor.openSession();
+    expect(await session.run(request)).toBe("const a = 1;\n");
+    // A real engine error retires the real assigned worker; only its owner's
+    // native cleanup boundary is fault-injected, not worker code or ownership.
+    await expect(
+      session.run({
+        ...request,
+        input: { ...request.input, source: "const =" },
+      }),
+    ).rejects.toMatchObject({ diagnostic: { category: "cleanup" } });
+    expect(independent).toBe(false);
+    let closed = false;
+    const closing = client.close().then(() => {
+      closed = true;
+    });
+    await Promise.race([proofEntered, closing]);
+    expect(independent).toBe(true);
+    expect(closed).toBe(false);
+    allowProof();
+    await closing;
+    expect(closed).toBe(true);
+  } finally {
+    allowProof();
+    await client.close().catch(() => {});
+    for (const restore of restores) restore();
+    await executor.close().catch(() => {});
+    await server.close().catch(() => {});
+    await release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 it("waits for authoritative acquisition and release acknowledgements before execution and reuse", async () => {
   let acquire!: () => void, release!: () => void;
   let acquired = false,

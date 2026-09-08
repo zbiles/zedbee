@@ -356,7 +356,10 @@ export class SupervisedWorkerSlot {
     }
     let ownershipLost = false;
     try {
-      await slot.releaseOwnership();
+      // A failed native stop/query is not a healthy release. The client must
+      // retain its independent group/Job witness for loss-time cleanup even
+      // though this retired slot reports a cleanup error to its session.
+      if (!slot.cleanupFailure) await slot.releaseOwnership();
     } catch {
       // Actual tree cleanup above is still required even if the client vanished.
       slot.witnessOwner = undefined;

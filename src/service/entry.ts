@@ -12,10 +12,24 @@ let starting = false,
   abandoned = false;
 let server: Awaited<ReturnType<typeof startServiceServer>> | undefined;
 let release: (() => Promise<void>) | undefined;
-const finish = async () => {
+let startup: Promise<void> | undefined;
+let finishing: Promise<void> | undefined;
+let endpointStarted = false;
+const finish = () => {
   abandoned = true;
-  await server?.close();
-  await release?.();
+  return (finishing ??= (async () => {
+    // Endpoint construction may already own asynchronous native resources even
+    // before it returns a server. Keep the same kernel lock until it settles
+    // and its resulting endpoint has completed cleanup.
+    await startup?.catch(() => {});
+    // Rejection alone is not endpoint-cleanup evidence. If construction never
+    // returned its cleanup owner, retain this handle until process death; do
+    // not let another candidate race an endpoint whose cleanup is unproved.
+    if (endpointStarted && !server) return;
+    await server?.close();
+    await release?.();
+    release = undefined;
+  })());
 };
 process.on("disconnect", () => {
   if (!detached)
@@ -38,7 +52,7 @@ process.on("message", (value: unknown) => {
     return;
   }
   starting = true;
-  void (async () => {
+  startup = (async () => {
     if (
       !exactFields(value, ["directory", "identity", "concurrency"]) ||
       typeof value.directory !== "string" ||
@@ -60,6 +74,7 @@ process.on("message", (value: unknown) => {
     }
     const identity = await serviceIdentity(value.directory);
     if (identity.content !== value.identity || abandoned) throw new Error();
+    endpointStarted = true;
     server = await startServiceServer(
       state,
       identity.content,
@@ -72,9 +87,15 @@ process.on("message", (value: unknown) => {
       return;
     }
     process.send?.({ type: "ready" }, (error) => {
-      if (error) void finish();
+      if (error)
+        void finish().catch(() => {
+          process.exitCode = 1;
+        });
     });
-  })().catch(async () => {
+  })();
+  // This reaction is outside startup, so finish can await startup settlement
+  // without waiting on its own error-handler promise.
+  void startup.catch(async () => {
     await finish().catch(() => {});
     if (process.connected)
       process.send?.({ type: "unavailable" }, () => process.disconnect?.());
