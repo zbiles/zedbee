@@ -7,6 +7,10 @@ import { startServiceServer } from "./server.js";
 // This installed entry accepts only a private, source-free parent IPC startup.
 // The caller may detach only after the kernel lock and restricted endpoint exist.
 if (!process.connected) process.exit(1);
+// Hash only this fixed installation while the parent independently hashes it.
+// Observe failure immediately, and retain ownership even before startup IPC.
+const pendingIdentity = serviceIdentity();
+void pendingIdentity.catch(() => {});
 let starting = false,
   detached = false,
   abandoned = false;
@@ -22,6 +26,7 @@ const finish = () => {
     // before it returns a server. Keep the same kernel lock until it settles
     // and its resulting endpoint has completed cleanup.
     await startup?.catch(() => {});
+    await pendingIdentity.catch(() => {});
     // Rejection alone is not endpoint-cleanup evidence. If construction never
     // returned its cleanup owner, retain this handle until process death; do
     // not let another candidate race an endpoint whose cleanup is unproved.
@@ -72,7 +77,7 @@ process.on("message", (value: unknown) => {
       await release();
       return;
     }
-    const identity = await serviceIdentity(value.directory);
+    const identity = await pendingIdentity;
     if (identity.content !== value.identity || abandoned) throw new Error();
     endpointStarted = true;
     server = await startServiceServer(

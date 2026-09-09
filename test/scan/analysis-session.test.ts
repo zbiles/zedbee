@@ -97,6 +97,57 @@ async function analyze(
 
 describe("shared analysis session", () => {
   it.each([false, true])(
+    "prepares only after nonempty discovery and before snapshots (snapshot fails: %s)",
+    async (fails) => {
+      const repository = await repositoryFixture();
+      const local = createLocalAnalyzerExecutor();
+      const order: string[] = [];
+      const executor = {
+        prepare() {
+          order.push("prepare");
+        },
+        openSession: async (
+          options: Parameters<typeof local.openSession>[0],
+        ) => {
+          order.push("open");
+          return local.openSession(options);
+        },
+        close: () => local.close(),
+      };
+      try {
+        const outcome = await withAnalysisSession(
+          {
+            repositoryRoot: repository.root,
+            executor,
+            dependencies: {
+              ...defaults,
+              buildIndexSnapshots: async (...args) => {
+                order.push("snapshot");
+                if (fails) throw new Error("snapshot failed");
+                return defaults.buildIndexSnapshots(...args);
+              },
+              inspectRepository: async (...args) => {
+                order.push("inspection");
+                return defaults.inspectRepository(...args);
+              },
+              dispatch: async () => [],
+            },
+          },
+          async () => 42,
+        );
+        expect(outcome.completed).toBe(!fails);
+        expect(order).toEqual(
+          fails
+            ? ["prepare", "snapshot"]
+            : ["prepare", "snapshot", "inspection", "inspection", "open"],
+        );
+      } finally {
+        await local.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
     "retains snapshots only when execution close is unproved (%s)",
     async (failClose) => {
       const repository = await repositoryFixture();

@@ -9,13 +9,20 @@ import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
 export function createCommandExecutor(service = true): AnalyzerExecutor {
   let executor: Promise<AnalyzerExecutor> | undefined;
   let closing: Promise<void> | undefined;
+  const prepare = () => {
+    if (closing) throw new Error("Analyzer executor is closed.");
+    executor ??= service
+      ? acquireServiceExecutor()
+      : Promise.resolve(createLocalAnalyzerExecutor());
+    // Acquisition may finish before snapshot preparation reaches openSession.
+    // Observe failure now while preserving the same rejection for that caller.
+    void executor.catch(() => {});
+  };
   return {
+    prepare,
     async openSession(options) {
-      if (closing) throw new Error("Analyzer executor is closed.");
-      executor ??= service
-        ? acquireServiceExecutor()
-        : Promise.resolve(createLocalAnalyzerExecutor());
-      return (await executor).openSession(options);
+      prepare();
+      return (await executor!).openSession(options);
     },
     close() {
       closing ??= (async () => {

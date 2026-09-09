@@ -344,6 +344,7 @@ export async function withAnalysisSession<T>(
       }
       session = { kind: "empty", config, git, signal, changeSet };
     } else {
+      options.executor?.prepare?.();
       state.phase = "snapshot-construction";
       snapshots =
         baseComparison === undefined

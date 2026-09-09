@@ -496,63 +496,140 @@ function decodeStatus(value: unknown): ServiceStatus {
   return value as unknown as ServiceStatus;
 }
 async function startCandidate(
-  identity: ServiceIdentity,
+  location: Pick<ServiceIdentity, "key" | "entry" | "directory">,
+  pendingIdentity: Promise<ServiceIdentity>,
   concurrency: 1 | 2 | 4,
 ): Promise<void> {
-  const execArgv = identity.entry.endsWith(".ts")
+  const execArgv = location.entry.endsWith(".ts")
     ? ["--import", import.meta.resolve("tsx")]
     : [];
-  const child = spawn(process.execPath, [...execArgv, identity.entry], {
+  const child = spawn(process.execPath, [...execArgv, location.entry], {
     stdio: ["ignore", "ignore", "ignore", "ipc"],
     detached: true,
     windowsHide: true,
   });
   await new Promise<void>((resolve, reject) => {
-    // Bounds a source-free startup/ownership exchange, never accepted analysis.
+    let settling = false,
+      startupSent = false,
+      detaching = false;
+    let witnessExit!: () => void;
+    const exited = new Promise<void>((done) => {
+      witnessExit = done;
+    });
+    // Bounds only the source-free startup exchange. Failed startup still owns
+    // the candidate until its metadata/endpoint cleanup and process exit.
     const timer = setTimeout(() => {
-      child.disconnect();
-      reject(new ServiceUnavailableError());
+      void fail();
     }, 30000);
-    const finish = (error?: Error) => {
-      clearTimeout(timer);
-      child.unref();
+    const disconnect = () => {
       if (child.connected) child.disconnect();
-      if (error) reject(error);
-      else resolve();
     };
-    child.once("error", () => finish(new ServiceUnavailableError()));
-    child.once("exit", () => finish(new ServiceUnavailableError()));
+    const fail = async () => {
+      if (settling) return;
+      settling = true;
+      clearTimeout(timer);
+      disconnect();
+      // A failed detach send may already have reached the child. SIGTERM keeps
+      // its existing graceful cleanup path responsible even if it detached.
+      if (detaching) child.kill("SIGTERM");
+      await exited;
+      child.unref();
+      reject(new ServiceUnavailableError());
+    };
+    child.once("error", () => {
+      // A spawn error has no process whose exit could witness cleanup.
+      if (child.pid === undefined) witnessExit();
+      void fail();
+    });
+    child.once("exit", () => {
+      witnessExit();
+      if (!settling) void fail();
+    });
     child.on("message", (value) => {
-      if (!exactFields(value, ["type"])) {
-        finish(new ServiceUnavailableError());
+      if (settling) return;
+      if (!startupSent || detaching || !exactFields(value, ["type"])) {
+        void fail();
         return;
       }
-      if (value.type === "ready")
-        child.send({ type: "detach" }, (error) =>
-          finish(error ? new ServiceUnavailableError() : undefined),
-        );
-      else if (value.type === "busy") finish();
-      else finish(new ServiceUnavailableError());
+      if (value.type === "ready") {
+        detaching = true;
+        try {
+          child.send({ type: "detach" }, (error) => {
+            if (error) {
+              void fail();
+              return;
+            }
+            if (settling) return;
+            settling = true;
+            clearTimeout(timer);
+            child.unref();
+            disconnect();
+            resolve();
+          });
+        } catch {
+          void fail();
+        }
+      } else if (value.type === "busy") {
+        settling = true;
+        clearTimeout(timer);
+        disconnect();
+        void exited.then(() => {
+          child.unref();
+          resolve();
+        });
+      } else void fail();
     });
-    child.send(
-      {
-        directory: identity.directory,
-        identity: identity.content,
-        concurrency,
-      },
-      (error) => {
-        if (error) finish(new ServiceUnavailableError());
-      },
-    );
+    void pendingIdentity
+      .then((identity) => {
+        if (settling) return;
+        if (
+          identity.key !== location.key ||
+          identity.directory !== location.directory ||
+          identity.entry !== location.entry
+        ) {
+          void fail();
+          return;
+        }
+        startupSent = true;
+        child.send(
+          {
+            directory: identity.directory,
+            identity: identity.content,
+            concurrency,
+          },
+          (error) => {
+            if (error) void fail();
+          },
+        );
+      })
+      .catch(() => {
+        void fail();
+      });
   });
 }
 export async function acquireServiceExecutor(
   options: ServiceOptions = {},
 ): Promise<AnalyzerExecutor> {
   validateOptions(options);
-  const identity = await serviceIdentity(options.directory),
-    state = new ServiceState(identity.directory);
+  const location = await serviceLocation(options.directory),
+    state = new ServiceState(location.directory);
   await state.prepare();
+  const record = await state.read();
+  const pendingIdentity = serviceIdentity(options.directory);
+  // Discovery absence allows independent source-free hashes to overlap. Existing
+  // discovery still requires the caller's complete identity before connecting.
+  const candidate = record
+    ? undefined
+    : startCandidate(location, pendingIdentity, options.concurrency ?? 2);
+  void candidate?.catch(() => {});
+  let identity: ServiceIdentity;
+  try {
+    identity = await pendingIdentity;
+  } catch (error) {
+    await candidate?.catch(() => {});
+    throw error;
+  }
+  if (candidate) await candidate;
   const connectCurrent = async (): Promise<ServiceClient | undefined> => {
     const record = await state.read();
     if (!record) return undefined;
@@ -565,7 +642,14 @@ export async function acquireServiceExecutor(
   };
   let client = await connectCurrent();
   if (!client) {
-    await startCandidate(identity, options.concurrency ?? 2);
+    // A busy/ready early candidate has already attempted startup. Poll its
+    // discovery race rather than launching another candidate and repeating I/O.
+    if (!candidate)
+      await startCandidate(
+        identity,
+        Promise.resolve(identity),
+        options.concurrency ?? 2,
+      );
     const start = performance.now();
     while (!client && performance.now() - start < 30000) {
       client = await connectCurrent();

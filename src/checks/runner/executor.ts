@@ -41,6 +41,8 @@ export interface AnalyzerExecutionSessionOptions {
   readonly sourceSelections?: readonly AnalysisSourceSelection[];
 }
 export interface AnalyzerExecutor {
+  /** Optional source-free preparation; the caller still owns close before open. */
+  prepare?(): void;
   openSession(
     options?: AnalyzerExecutionSessionOptions,
   ): Promise<AnalyzerExecutionSession>;
