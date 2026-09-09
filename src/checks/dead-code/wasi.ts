@@ -1,12 +1,41 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { createRequire, registerHooks } from "node:module";
+import { pathToFileURL } from "node:url";
 import type { ResolverFactory } from "oxc-resolver";
 
 const require = createRequire(import.meta.url);
 /** The pinned same-engine artifact. Never use upstream's native-WASI host preopen. */
 export function loadCapturedResolver(fs: typeof import("node:fs")) {
-  const { WASI, instantiateNapiModuleSync } = require("@napi-rs/wasm-runtime");
+  const runtimeRequire = createRequire(
+    require.resolve("@napi-rs/wasm-runtime"),
+  );
+  const wasiPath = new URL(
+    "./wasi/path.js",
+    pathToFileURL(runtimeRequire.resolve("@tybys/wasm-util")),
+  ).href;
+  // The pinned JS WASI shim otherwise interprets every path as a host Windows
+  // path. Its filesystem here is exclusively virtual, including the preopen.
+  // Replace only that shim's two path helpers before its first CJS evaluation.
+  const pathHook = registerHooks({
+    load(url, context, next) {
+      return url === wasiPath
+        ? {
+            format: "commonjs",
+            source:
+              'const { posix } = require("node:path"); exports.resolve = (...paths) => posix.resolve("/", ...paths); exports.relative = posix.relative;',
+            shortCircuit: true,
+          }
+        : next(url, context);
+    },
+  });
+  let runtime;
+  try {
+    runtime = require("@napi-rs/wasm-runtime");
+  } finally {
+    pathHook.deregister();
+  }
+  const { WASI, instantiateNapiModuleSync } = runtime;
   const { createContext } = require("@emnapi/runtime");
   const bytes = readFileSync(new URL("./resolver.wasm", import.meta.url));
   if (
