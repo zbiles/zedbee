@@ -22,7 +22,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@emnapi/core",
       "@emnapi/runtime",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v1",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v2",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),

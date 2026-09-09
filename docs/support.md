@@ -13,6 +13,8 @@ This document distinguishes implemented coverage from unsupported or deferred be
 | React             | React, React DOM, Ink, Next.js, and Remix correctness                                                         | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink. React correctness calibrates each snapshot/workspace from that snapshot's dependency data.                                                                  |
 | Git input         | Exact staged index against committed `HEAD`, or explicit committed `HEAD` comparison with `scan --base <ref>` | Base mode uses the unique merge base and locally available history. Intent-to-add entries are excluded from index mode. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete. |
 
+On Windows, snapshots containing Git symbolic links require permission to create symbolic links. If Windows denies link creation, snapshot construction fails and the scan is incomplete. Zedbee does not elevate the account, change system settings, or substitute regular files for those links.
+
 ## Dependency vulnerability inventories
 
 | Package manager | Supported lockfile    | Status                                                                     |

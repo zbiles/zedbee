@@ -83,6 +83,16 @@ async function run(job: KnipJob) {
     globals.__zedbeeKnipFs = view.fs;
     globals.__zedbeeKnipPromises = view.fs.promises;
     globals.__zedbeeKnipResolver = resolver.binding;
+    globals.__zedbeeKnipPath = posix;
+    // These snapshot crawlers otherwise resolve /snapshot against the host's
+    // current drive on Windows. Only their own path imports use virtual POSIX
+    // semantics; trusted module loading and host capture retain native paths.
+    const knipRequire = createRequire(import.meta.resolve("knip"));
+    const globRequire = createRequire(knipRequire.resolve("tinyglobby"));
+    const virtualPathOwners = [
+      knipRequire.resolve("tinyglobby"),
+      globRequire.resolve("fdir"),
+    ].map((entry) => pathToFileURL(`${dirname(entry)}/`).href);
     const source = (name: string, keys: string[]) =>
       `const value=globalThis.${name}; export default value; ${keys
         .filter((key) => /^[A-Za-z_$][\w$]*$/u.test(key))
@@ -97,6 +107,7 @@ async function run(job: KnipJob) {
       "zedbee-knip:resolver": source("__zedbeeKnipResolver", [
         "ResolverFactory",
       ]),
+      "zedbee-knip:path": source("__zedbeeKnipPath", Object.keys(posix)),
     };
     const replacements = new Map([
       ["fs", "zedbee-knip:fs"],
@@ -107,6 +118,13 @@ async function run(job: KnipJob) {
     ]);
     hooks = registerHooks({
       resolve(specifier, context, next) {
+        if (
+          (specifier === "path" || specifier === "node:path") &&
+          virtualPathOwners.some((owner) =>
+            context.parentURL?.startsWith(owner),
+          )
+        )
+          return { url: "zedbee-knip:path", shortCircuit: true };
         const url = replacements.get(specifier);
         return url === undefined
           ? next(specifier, context)
@@ -151,6 +169,7 @@ async function run(job: KnipJob) {
     delete globals.__zedbeeKnipFs;
     delete globals.__zedbeeKnipPromises;
     delete globals.__zedbeeKnipResolver;
+    delete globals.__zedbeeKnipPath;
   }
 }
 

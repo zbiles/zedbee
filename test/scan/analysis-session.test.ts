@@ -311,21 +311,6 @@ describe("shared analysis session", () => {
       );
       await repository.write("excluded.ts", "binary\0target");
       await repository.git(["add", "--all"]);
-      await repository.write(".link-target", "value.ts");
-      const linkBlob = await repository.git([
-        "hash-object",
-        "-w",
-        "--",
-        ".link-target",
-      ]);
-      await repository.git([
-        "update-index",
-        "--add",
-        "--cacheinfo",
-        "120000",
-        linkBlob.stdout.trim(),
-        "link.ts",
-      ]);
       let ranges: unknown;
       let exclusions: string[] = [];
       await analyze(consumer, repository.root, {
@@ -339,8 +324,44 @@ describe("shared analysis session", () => {
           return [];
         },
       });
-      expect(exclusions).toEqual(["excluded.ts", "link.ts", "value.ts"]);
+      expect(exclusions).toEqual(["excluded.ts", "value.ts"]);
       expect(ranges).toEqual([{ start: 1, end: 2 }]);
+    },
+  );
+
+  // Creating Git entries does not avoid the OS privilege needed when snapshots
+  // materialize file symlinks. Keep binary recovery covered on normal Windows.
+  it.runIf(process.platform !== "win32").each(consumers)(
+    "%s excludes materialized symbolic-link targets before line diff",
+    async (consumer) => {
+      const repository = await repositoryFixture();
+      await repository.write(".link-target", "value.ts");
+      const linkBlob = await repository.git([
+        "hash-object",
+        "-w",
+        "--",
+        ".link-target",
+      ]);
+      expect(linkBlob.exitCode).toBe(0);
+      const staged = await repository.git([
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "120000",
+        linkBlob.stdout.trim(),
+        "link.ts",
+      ]);
+      expect(staged.exitCode).toBe(0);
+      let exclusions: string[] = [];
+      await analyze(consumer, repository.root, {
+        ...defaults,
+        addIndexLineRanges: async (git, changes, excluded, signal) => {
+          exclusions = [...excluded!].sort();
+          return defaults.addIndexLineRanges!(git, changes, excluded, signal);
+        },
+        dispatch: async () => [],
+      });
+      expect(exclusions).toEqual(["link.ts"]);
     },
   );
 
