@@ -6,6 +6,7 @@ import {
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import {
   decodeWorkerResponse,
   exactFields,
@@ -165,6 +166,9 @@ export class SupervisedWorkerSlot {
       return;
     }
     const child = spawn(process.execPath, [...execArgv, supervisorEntry], {
+      // Retained local/API workers can outlive the caller's repository directory.
+      // Analysis still uses only the explicit inspected roots in each request.
+      cwd: dirname(supervisorEntry),
       stdio: ["ignore", "ignore", "ignore", "ipc"],
       windowsHide: true,
       serialization: "advanced",

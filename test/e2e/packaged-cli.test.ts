@@ -343,6 +343,19 @@ describe("packaged Zedbee CLI", () => {
     ]) {
       expect(tarballFiles).toContain(`dist/checks/dead-code/${entry}`);
     }
+    // Reused processes must not keep this short-lived caller directory as cwd.
+    // The first session only loaded Knip; typed lint initializes after removal.
+    await rm(repository.root, { recursive: true, force: true });
+    const nextRepository = await createInstalledRepository();
+    await nextRepository.write("value.ts", "export const value = 1;\n");
+    await nextRepository.git(["add", "--", "value.ts"]);
+    const next = await runZedbee(nextRepository.root);
+    expect(next.exitCode, `${next.stderr}\n${next.stdout}`).toBe(0);
+    expect(JSON.parse(next.stdout).checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "lint", status: "completed" }),
+      ]),
+    );
   });
 
   it("ships runnable analyzer entries and every engine adapter outside the source repository", async () => {
@@ -408,7 +421,7 @@ describe("packaged Zedbee CLI", () => {
     );
     await repository.git(["add", "--", "value.ts"]);
     const result = await runZedbee(repository.root, "json", ["--diagnostics"]);
-    expect(result.exitCode, result.stderr).toBe(1);
+    expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
       outcome: "blocked",
       exitCode: 1,

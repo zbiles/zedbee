@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { connect } from "node:net";
+import { dirname } from "node:path";
 import {
   AnalyzerCapacityError,
   analyzerRequestRetentionBytes,
@@ -504,6 +505,8 @@ async function startCandidate(
     ? ["--import", import.meta.resolve("tsx")]
     : [];
   const child = spawn(process.execPath, [...execArgv, location.entry], {
+    // The service outlives its initiating checkout; cwd is not source authority.
+    cwd: dirname(location.entry),
     stdio: ["ignore", "ignore", "ignore", "ipc"],
     detached: true,
     windowsHide: true,
