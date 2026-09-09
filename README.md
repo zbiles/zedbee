@@ -13,8 +13,10 @@ Scan and fix commands share a private local analyzer service with bounded, super
 
 ## Install
 
+The first public beta, `0.1.0-beta.1`, is not yet published. Once available, install it from npm's `next` tag:
+
 ```bash
-npm install --save-dev zedbee
+npm install --save-dev zedbee@next
 ```
 
 Run a scan directly:
@@ -116,7 +118,7 @@ npx zedbee scan --base origin/main --format sarif > zedbee.sarif
 
 `--base <ref>` resolves the unique merge base of the locally available ref and committed `HEAD`, then scans only the committed changes from that merge base through `HEAD`. If the base branch advances after the feature branch splits, base-only commits are not treated as feature changes. The named ref and enough common history must already exist locally. Zedbee never fetches automatically; a shallow checkout without the required ancestry is incomplete and exits 2, so configure sufficient fetch depth or fetch more history before retrying.
 
-Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked files are ignored. The command does not change `HEAD`, refs, the index, or the working tree, and cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
+Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked source edits are ignored. The command does not change `HEAD`, refs, the index, or the working tree. It cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation once execution cleanup is proved; otherwise it retains them and reports incomplete. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
 
 In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no staged file content and is excluded as unstaged. Git LFS pointers and submodule pointers in either the selected index or committed target cannot be inspected, so Zedbee reports every affected path as incomplete. Binary assets remain allowed, but a binary file whose path is selected by an enabled source, formatting, or vulnerability check is incomplete rather than silently skipped. Intentional per-path suppressions are configured with `pathExclusions`.
 
@@ -200,7 +202,7 @@ The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.j
 
 ## Managed analyzer boundary
 
-Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.4, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as selected snapshot data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating changed target code under unrelated compiler settings.
+Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.5, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as selected snapshot data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating changed target code under unrelated compiler settings.
 
 Zedbee does not load any native analyzer config files, including native Prettier and ESLint configs. Adoption therefore has a deliberate tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Re-express the supported policy in `.zedbeerc.jsonc`, within Zedbee's bounded managed settings, rather than expecting native configuration parity.
 
@@ -282,9 +284,7 @@ Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected 
 
 Zedbee may cache content-addressed, normalized observations for audited local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript and lint capture their dependency files and resolution state; Knip captures its permitted snapshot inputs and package-absence guards. These inputs are checked again before saved findings are reused. Incomplete metadata prevents saving or reusing a result, and unknown checks default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never stored in the observation cache. Cached and uncached reports are required to remain semantically identical.
 
-Repository benchmark tooling distinguishes complete commands from phase references. After building, run `node --experimental-strip-types bench/run.mts --lifecycle --repository <prepared-git-fixture> --workers 2` to measure fresh local CLI commands, cross-command service reuse with distinct observation caches, repeated observations, explicit API executor reuse, and per-check diagnostics. Supported worker settings are 1, 2 and 4; the fresh local CLI scenario reports its default of 2 separately. Fixtures must already have their intended staged changes, policy and dependencies; the harness does not modify them or disable checks. It retains failed-run temporary data for inspection.
-
-Complete CLI samples include process startup, session release and natural process exit; service startup/stop are reported separately. `--in-process-reference` measures direct engine phases and cannot overwrite historical phase targets. These phase references retain the historical Secretlint/OSV substitutions, and their `snapshot` phase measures cache-key hashing rather than Git materialization. Existing `coldMs`/`warmMs` phase fields are historical names, not proof of fresh/warm process state. No scenario infers engine retention from a service PID or reports whole-tree memory without separate measurement.
+Scan time depends on project size, enabled checks, baseline comparison, and validated cache reuse. A running service does not mean every analyzer remains loaded: some engines retire after a session or snapshot side. These lifecycle choices do not guarantee faster scans. See [safe analyzer diagnostics](docs/reporting.md#safe-analyzer-diagnostics) to investigate a slow or incomplete job.
 
 ## Current coverage
 
@@ -292,7 +292,7 @@ The managed suite currently includes:
 
 1. Prettier formatting, ESLint and typescript-eslint lint, TypeScript diagnostics, both complexity metrics, original ast-grep security checks, React correctness, and React DOM accessibility.
 2. jscpd duplication, Dependency Cruiser architecture validation, and Knip dead-code/package-hygiene analysis across npm, pnpm, Yarn, and Bun workspaces.
-3. Exact index or committed snapshots, baseline comparison, changed-range and syntax-entity attribution, stable text/JSON output, and the approved live Ink progress display.
+3. Exact index or committed snapshots, baseline comparison, changed-range and syntax-entity attribution, stable text/JSON output, and the live Ink progress display.
 4. Direct Secretlint scanning with irreversible redaction, plus the bounded Zedbee OSV API client for disclosed online vulnerability comparison.
 
 Optional Semgrep is not part of the v1 managed suite and is not silently approximated by the current structural rules. Online vulnerability scanning sends package names, exact versions, and the npm ecosystem identifier to `api.osv.dev`; source code and file hashes are not sent. There is no offline database mode. Choose whether an OSV outage blocks or warns with `checks.vulnerabilities.onUnavailable` or guided `zedbee init`.
@@ -303,7 +303,7 @@ See [the complete check matrix](docs/checks.md), [support matrix](docs/support.m
 
 - Run `npx zedbee doctor` first; JSON mode is useful when sharing sanitized diagnostics.
 - Exit code 2 means a required result is incomplete. Resolve the diagnostic rather than treating it as a pass.
-- For a snapshot cleanup failure, inspect and remove the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Then correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
+- For a snapshot cleanup failure, resolve the reported execution/cleanup problem before removing retained snapshots. Inspect the exact listed Zedbee temporary directory when one is safely validated. If no path is listed, inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Correct temporary-directory permissions, locks, or filesystem problems before retrying; persistent problems can leave additional snapshots on later scans.
 - Typed lint checks unchanged workspace source files too, using each snapshot's contained TypeScript projects. In each snapshot, every TypeScript file selected for typed lint must belong to at least one loaded project. Updating only the selected target configuration may leave the baseline snapshot uncovered.
 - For files intentionally outside every TypeScript project, a file override can set `checks.lint.typeInformation` to `"when-available"`. Zedbee then runs basic TypeScript lint without rules that require type information. The default is `"required"`; Zedbee never reduces coverage silently.
 - Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; use `pathExclusions` to intentionally suppress paths for specific checks.

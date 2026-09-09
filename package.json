@@ -1,6 +1,6 @@
 {
   "name": "zedbee",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Diff-aware pre-commit scanning for JavaScript and TypeScript",
   "type": "module",
   "bin": {
@@ -22,13 +22,19 @@
     "url": "https://github.com/zbiles/Zedbee/issues"
   },
   "publishConfig": {
+    "tag": "next",
     "access": "public",
     "registry": "https://registry.npmjs.org/"
+  },
+  "contentPolicy": {
+    "class": "dual-use"
   },
   "files": [
     "dist",
     "README.md",
     "LICENSE",
+    "SECURITY.md",
+    "DISCLOSURE",
     "THIRD_PARTY_NOTICES.md",
     "docs/checks.md",
     "docs/commercial-licensing.md",
@@ -85,6 +91,7 @@
     "@secretlint/core": "13.0.5",
     "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
     "@secretlint/types": "13.0.5",
+    "@tybys/wasm-util": "0.10.3",
     "@yarnpkg/lockfile": "1.1.0",
     "commander": "15.0.0",
     "dependency-cruiser": "18.2.0",

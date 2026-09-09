@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Zedbee is not yet publicly released. The following policy takes effect with the first public beta:
+Zedbee is not yet publicly released. The first beta is `0.1.0-beta.1`, intended for npm's `next` tag. The following policy takes effect with the first public beta:
 
 | Version line | Security fixes |
 | ------------ | -------------- |
@@ -18,16 +18,30 @@ A useful report identifies the affected Zedbee version or commit, platform, secu
 
 ## Security boundaries
 
-Zedbee treats repository content and analyzer output as untrusted. It scans isolated Git-index snapshots, uses inert managed configuration, rejects executable project analyzer configuration, invokes library APIs where available, runs the remaining managed subprocesses without a shell, and removes temporary reports and snapshots after every outcome.
+Zedbee treats repository content and analyzer output as untrusted. Ordinary scans analyze isolated snapshots of committed `HEAD` and the Git index; `scan --base <ref>` uses the unique merge base and committed `HEAD`. Selected source and scan configuration come from those snapshots, not later working-tree edits. Managed analyzers use inert configuration and library APIs where available; remaining managed subprocesses run without a shell. Zedbee does not execute project analyzer configuration, project commands, or package-manager lifecycle scripts.
+
+Scan and fix analysis uses fresh sessions in supervised workers that may be reused by a private local service. This is process isolation, not an operating-system sandbox: the service and workers retain the invoking user's permissions. Session release clears source/project state; engines that require retirement exit before their snapshots can be removed.
+
+The selected-source boundary permits these additional local reads:
+
+- TypeScript and typed lint can capture dependency inputs through constrained installed-package and bundled TypeScript resolution boundaries. Those bytes support analysis; they are not selected repository changes or persisted source-cache entries.
+- Managed fix previews read current working files, including unstaged edits. Exact lint and React edits must not overlap unstaged work; selected formatting intentionally formats the complete current working file. Applying a fix requires interactive confirmation or `--yes`, and writes working files only. Zedbee never stages or commits.
+- `init` and `doctor` inspect working-copy configuration for setup and diagnostics.
+
+Ordinary source excerpts may be displayed according to `reporting.sourceExcerpts` and CLI overrides. Interactive Ink includes them by default; explicit text, JSON, SARIF, and automatic saved reports omit them by default. Detected secret findings and overlapping excerpt lines are redacted regardless of source policy. Detection is not exhaustive; use `--no-source` when ordinary source must not appear. Raw analyzer reports and detected secret values must not enter public findings or the observation cache.
+
+Automatic scans retain complete reports in protected OS temporary storage. By default they become eligible for cleanup after 24 hours and are removed during a subsequent maintenance run; this is not a guaranteed deletion deadline. Explicit JSON or SARIF exports are user-managed. Validated report paths are intentionally shown so users can open reports.
+
+Snapshot deletion waits for proof that analysis has stopped, including after failure, timeout, or cancellation. If execution cleanup cannot be proved, snapshots remain and the scan is incomplete. Cleanup diagnostics may disclose a safely validated managed temporary path for recovery; report cleanup warnings are non-blocking. Do not remove retained snapshots until the reported execution/cleanup problem is resolved. See [privacy and data handling](docs/privacy.md) for retention, cache, service, and network details.
 
 The following are security bugs and should be reported:
 
-- reading or executing unstaged or out-of-snapshot repository content;
-- exposing a detected secret, source line, absolute temporary path, or raw analyzer report;
+- using unstaged or out-of-snapshot repository source as selected scan input, or escaping the documented dependency/fix read boundaries;
+- exposing detected secret content or raw analyzer reports, bypassing source-excerpt policy, or leaking unvalidated or unrelated absolute paths;
 - running an online check without its disclosure and configured network policy;
 - loading project Secretlint, ESLint, Prettier, or other executable analyzer configuration;
 - executing package-manager lifecycle scripts, project commands, or project analyzer configuration;
-- following a staged symlink outside the protected snapshot;
+- following a selected repository symlink outside the protected snapshot;
 - silently passing when a required check cannot complete.
 
 Zedbee does not claim that static analysis finds every vulnerability. Its structural rules are narrower than Semgrep and do not provide general interfile dataflow, taint, reachability, or framework-pack analysis.

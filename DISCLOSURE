@@ -1,0 +1,19 @@
+Zedbee is a defensive code-quality and security analysis tool for JavaScript
+and TypeScript repositories. Its intended use is to review code that the user
+owns or is authorized to assess, including staged changes and committed branch
+changes before they are accepted into a project.
+
+Security-relevant capabilities include detecting possible embedded secrets,
+matching structural security patterns, and checking dependency versions against
+known vulnerability records. Such findings can reveal weaknesses in a codebase;
+users must not use them to gain unauthorized access or harm other parties.
+
+Zedbee does not validate discovered credentials against live services or exploit
+the issues it reports. Analysis uses managed configuration and isolated source
+snapshots. Optional online checks and their metadata disclosures, local report
+retention, and source-excerpt behavior are described in docs/privacy.md.
+
+Report suspected security vulnerabilities privately to security@zedbee.dev.
+See SECURITY.md for reporting guidance and docs/structural-security-coverage.md
+for the limits of the structural checks. Static analysis is not a guarantee
+that a repository is free of vulnerabilities.

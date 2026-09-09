@@ -19,10 +19,11 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "knip",
       "typescript",
       "@napi-rs/wasm-runtime",
+      "@tybys/wasm-util",
       "@emnapi/core",
       "@emnapi/runtime",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v3",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v4",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),

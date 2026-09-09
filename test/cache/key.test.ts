@@ -149,6 +149,16 @@ function behavior(
 }
 
 describe("observation cache keys", () => {
+  it("changes the dead-code cache identity after its WASI helper changes", () => {
+    let helperVersion = "0.10.3";
+    const identity = createObservationCacheEngineIdentityResolver((name) =>
+      name === "@tybys/wasm-util" ? helperVersion : "1.0.0",
+    );
+    const before = identity("deadCode");
+    helperVersion = "0.10.4";
+    expect(identity("deadCode")).not.toBe(before);
+  });
+
   it.each([
     {
       checkId: "cyclomaticComplexity",

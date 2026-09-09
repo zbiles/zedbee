@@ -38,6 +38,8 @@ const PUBLIC_DOCS = Object.freeze([
 ]);
 
 const FIXED_PACKAGE_FILES = Object.freeze([
+  "SECURITY.md",
+  "DISCLOSURE",
   "LICENSE",
   "README.md",
   "THIRD_PARTY_NOTICES.md",
@@ -53,6 +55,8 @@ const FIXED_PACKAGE_FILES = Object.freeze([
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
+  "SECURITY.md",
+  "DISCLOSURE",
   "LICENSE",
   "README.md",
   "THIRD_PARTY_NOTICES.md",

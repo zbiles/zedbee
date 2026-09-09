@@ -2195,8 +2195,6 @@ describe("runScan", () => {
           code: "GIT_LFS_POINTER",
           message: "Zedbee cannot inspect a staged Git LFS pointer.",
           path: "assets/large.dat",
-          remediation:
-            "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
         },
       },
     ]);

@@ -4,10 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { commandInvocation } from "./command-invocation.mjs";
 
-export {
-  commandInvocation,
-  resolveNpmCliPath,
-} from "./command-invocation.mjs";
+export { commandInvocation, resolveNpmCliPath } from "./command-invocation.mjs";
 
 const OWNER_ACTION =
   "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.";
@@ -51,7 +48,23 @@ export function verificationSteps(mode = "verify") {
   if (mode !== "verify" && mode !== "release") {
     throw new TypeError("Unknown release verification mode.");
   }
-  return LOCAL_STEPS.map((step) =>
+  const steps =
+    mode === "release"
+      ? [
+          {
+            id: "dependency-audit",
+            command: "npm",
+            args: [
+              "audit",
+              "--omit=dev",
+              "--ignore-scripts",
+              "--audit-level=high",
+            ],
+          },
+          ...LOCAL_STEPS,
+        ]
+      : LOCAL_STEPS;
+  return steps.map((step) =>
     Object.freeze({ ...step, args: Object.freeze([...step.args]) }),
   );
 }
@@ -242,6 +255,7 @@ export function runVerification(mode, cwd = process.cwd()) {
     const packageJson = JSON.parse(
       readFileSync(resolve(cwd, "package.json"), "utf8"),
     );
+    assertReleaseTag(packageJson.version);
     const readiness = releaseReadiness(packageJson, gitRemotes(cwd));
     if (!readiness.ready) throw new Error(readiness.message);
   }
@@ -249,7 +263,23 @@ export function runVerification(mode, cwd = process.cwd()) {
   if (mode === "release") assertReleaseOnlyGates(cwd);
 }
 
+export function assertReleaseTag(version, ref = process.env.GITHUB_REF ?? "") {
+  if (ref.startsWith("refs/tags/") && ref !== `refs/tags/v${version}`) {
+    throw new Error(
+      `Release tag ${ref.slice("refs/tags/".length)} does not match package version ${version}.`,
+    );
+  }
+}
+
 function main() {
+  if (process.argv.includes("--tag-check")) {
+    const manifest = JSON.parse(
+      readFileSync(resolve(process.cwd(), "package.json"), "utf8"),
+    );
+    assertReleaseTag(manifest.version);
+    process.stdout.write("Release tag check passed.\n");
+    return;
+  }
   const mode = process.argv.includes("--release") ? "release" : "verify";
   runVerification(mode);
   process.stdout.write(

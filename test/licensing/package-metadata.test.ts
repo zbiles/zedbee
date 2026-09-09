@@ -37,7 +37,7 @@ describe("public package metadata", () => {
     expect(packageJson.license).toBe("PolyForm-Small-Business-1.0.0");
     expect(packageJson).toMatchObject({
       name: "zedbee",
-      version: "0.1.0",
+      version: "0.1.0-beta.1",
       repository: {
         type: "git",
         url: "https://github.com/zbiles/Zedbee.git",
@@ -45,9 +45,11 @@ describe("public package metadata", () => {
       homepage: "https://github.com/zbiles/Zedbee#readme",
       bugs: { url: "https://github.com/zbiles/Zedbee/issues" },
       publishConfig: {
+        tag: "next",
         access: "public",
         registry: "https://registry.npmjs.org/",
       },
+      contentPolicy: { class: "dual-use" },
     });
     expect(packageJson.engines?.node).toBe(NODE_ENGINE_RANGE);
     expect(packageLock.packages?.[""]?.engines?.node).toBe(NODE_ENGINE_RANGE);

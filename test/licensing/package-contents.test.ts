@@ -6,6 +6,19 @@ const scriptPath = fileURLToPath(
 );
 
 describe("package contents", () => {
+  it.each(["SECURITY.md", "DISCLOSURE"])(
+    "rejects a package missing %s",
+    async (required) => {
+      const { assertRequiredPackageFiles, REQUIRED_PACKAGE_FILES } =
+        await import(pathToFileURL(scriptPath).href);
+      expect(() =>
+        assertRequiredPackageFiles(
+          REQUIRED_PACKAGE_FILES.filter((path: string) => path !== required),
+        ),
+      ).toThrow(required);
+    },
+  );
+
   it("requires the legal artifacts and built CLI, entrypoint, and types", async () => {
     const { assertRequiredPackageFiles, REQUIRED_PACKAGE_FILES } =
       (await import(pathToFileURL(scriptPath).href)) as {
