@@ -2,12 +2,22 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { diffChars } from "diff";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as analyzerRunner from "../../src/checks/runner/run-job.js";
+import {
+  AnalyzerJobError,
+  analyzerDiagnostic,
+} from "../../src/checks/diagnostics.js";
 import { applyFixPlan } from "../../src/fixes/apply-plan.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import type { PreparedFixPlan } from "../../src/fixes/types.js";
 import { writeWorkingFile } from "../../src/fixes/write-working-file.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
+import {
+  createLocalAnalyzerExecutor,
+  type AnalyzerExecutor,
+} from "../../src/checks/runner/executor.js";
+import { AnalysisSessionCleanupError } from "../../src/scan/analysis-failure.js";
 
 function digest(source: string): string {
   return createHash("sha256").update(source, "utf8").digest("hex");
@@ -49,6 +59,137 @@ function prepared(
 }
 
 describe("applyFixPlan", () => {
+  it("fails closed when a caller-owned formatting session cannot prove cleanup", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const x=1";
+    await fixture.write("a.js", source);
+    const local = createLocalAnalyzerExecutor();
+    const executor: AnalyzerExecutor = {
+      async openSession(options) {
+        const session = await local.openSession(options);
+        return {
+          run: session.run.bind(session),
+          async close() {
+            throw new Error("private close failure");
+          },
+        };
+      },
+      close: () => local.close(),
+    };
+    try {
+      await expect(
+        applyFixPlan(
+          prepared(fixture.root, "a.js", source, source, [
+            {
+              kind: "format-file",
+              checkId: "formatting",
+              file: "a.js",
+              findingIds: ["format"],
+              severities: ["error"],
+              settings: DEFAULT_FORMATTING_SETTINGS,
+            },
+          ]),
+          { executor },
+        ),
+      ).rejects.toBeInstanceOf(AnalysisSessionCleanupError);
+      const next = await local.openSession();
+      await next.close();
+    } finally {
+      await local.close();
+    }
+  });
+  it("retains safe formatting job diagnostics in a fix issue", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const x=1";
+    await fixture.write("a.js", source);
+    const diagnostic = analyzerDiagnostic(
+      "formatting",
+      "format-working-source",
+      "abnormal-exit",
+      7,
+    );
+    const plan = prepared(fixture.root, "a.js", source, source, [
+      {
+        kind: "format-file",
+        checkId: "formatting",
+        file: "a.js",
+        findingIds: ["format"],
+        severities: ["error"],
+        settings: DEFAULT_FORMATTING_SETTINGS,
+      },
+    ]);
+    const result = await applyFixPlan(plan, {
+      async formatWorkingSource() {
+        throw new AnalyzerJobError(diagnostic);
+      },
+    });
+    expect(result.issues[0]).toMatchObject({ kind: "format", diagnostic });
+  });
+  it("formats during apply through a real analyzer job", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const x=1";
+    await fixture.write("a.js", source);
+    const job = vi.spyOn(analyzerRunner, "runAnalyzerJob");
+    try {
+      const plan = prepared(fixture.root, "a.js", source, source, [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: "a.js",
+          findingIds: ["format"],
+          severities: ["error"],
+          settings: DEFAULT_FORMATTING_SETTINGS,
+        },
+      ]);
+      const result = await applyFixPlan(plan);
+      expect(result.changedFiles).toEqual(["a.js"]);
+      expect(await readFile(join(fixture.root, "a.js"), "utf8")).toBe(
+        "const x = 1;\n",
+      );
+      expect(job).toHaveBeenCalledWith(
+        expect.objectContaining({
+          checkId: "formatting",
+          operation: "format-working-source",
+          input: expect.objectContaining({ source }),
+        }),
+        {},
+      );
+    } finally {
+      job.mockRestore();
+    }
+  });
+  it("propagates formatting cancellation and never writes the cancelled file", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "const x=1";
+    await fixture.write("a.js", source);
+    const controller = new AbortController();
+    const plan = prepared(fixture.root, "a.js", source, source, [
+      {
+        kind: "format-file",
+        checkId: "formatting",
+        file: "a.js",
+        findingIds: ["format"],
+        severities: ["error"],
+        settings: DEFAULT_FORMATTING_SETTINGS,
+      },
+    ]);
+    let wrote = false;
+    await expect(
+      applyFixPlan(plan, {
+        signal: controller.signal,
+        async formatWorkingSource(_input, options) {
+          expect(options?.signal).toBe(controller.signal);
+          controller.abort();
+          throw new Error("cancelled");
+        },
+        async writeWorkingFile() {
+          wrote = true;
+        },
+      }),
+    ).rejects.toThrow();
+    expect(wrote).toBe(false);
+    expect(await readFile(join(fixture.root, "a.js"), "utf8")).toBe(source);
+  });
   it("maps exact edits across unrelated working changes without searching repeated text", async () => {
     const fixture = await createInspectionFixture();
     const base = "const target = target;\n";
@@ -494,54 +635,54 @@ describe("applyFixPlan", () => {
   it.skipIf(process.platform === "win32")(
     "reports a committed durability failure without asking callers to retry",
     async () => {
-    const fixture = await createInspectionFixture();
-    const source = "const value = 1;;\n";
-    await fixture.write("src/value.ts", source);
-    const result = await applyFixPlan(
-      prepared(fixture.root, "src/value.ts", source, source, [
-        {
-          kind: "exact-file",
-          checkId: "lint",
-          file: "src/value.ts",
-          baseSource: source,
-          edits: [
-            {
-              findingId: "extra",
-              severity: "error",
-              start: 16,
-              end: 17,
-              replacement: "",
-            },
-          ],
-        },
-      ]),
-      {
-        writeWorkingFile: (request) =>
-          writeWorkingFile({
-            ...request,
-            dependencies: {
-              syncDirectory: async () => {
-                throw new Error("directory sync failed");
+      const fixture = await createInspectionFixture();
+      const source = "const value = 1;;\n";
+      await fixture.write("src/value.ts", source);
+      const result = await applyFixPlan(
+        prepared(fixture.root, "src/value.ts", source, source, [
+          {
+            kind: "exact-file",
+            checkId: "lint",
+            file: "src/value.ts",
+            baseSource: source,
+            edits: [
+              {
+                findingId: "extra",
+                severity: "error",
+                start: 16,
+                end: 17,
+                replacement: "",
               },
-            },
+            ],
+          },
+        ]),
+        {
+          writeWorkingFile: (request) =>
+            writeWorkingFile({
+              ...request,
+              dependencies: {
+                syncDirectory: async () => {
+                  throw new Error("directory sync failed");
+                },
+              },
+            }),
+        },
+      );
+      expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
+        "const value = 1;\n",
+      );
+      expect(result).toMatchObject({
+        exitCode: 1,
+        appliedFixes: 1,
+        changedFiles: ["src/value.ts"],
+        issues: [
+          expect.objectContaining({
+            kind: "write",
+            message: expect.stringContaining("was replaced"),
+            remediation: expect.stringContaining("Do not retry"),
           }),
-      },
-    );
-    expect(await readFile(join(fixture.root, "src/value.ts"), "utf8")).toBe(
-      "const value = 1;\n",
-    );
-    expect(result).toMatchObject({
-      exitCode: 1,
-      appliedFixes: 1,
-      changedFiles: ["src/value.ts"],
-      issues: [
-        expect.objectContaining({
-          kind: "write",
-          message: expect.stringContaining("was replaced"),
-          remediation: expect.stringContaining("Do not retry"),
-        }),
-      ],
-    });
+        ],
+      });
     },
   );
 

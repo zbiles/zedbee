@@ -15,7 +15,18 @@ import {
 } from "../reporting/temporary-reports.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
+import { createCommandExecutor } from "./executor.js";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import type { ScanReport } from "../scan/report.js";
+import type { ScanEvent } from "../checks/events.js";
+import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
+import {
+  writeCommandDiagnostics,
+  SNAPSHOT_CLEANUP_WARNING,
+  type DiagnosticEntry,
+  timeCommandStage,
+  type DiagnosticTimings,
+} from "./diagnostics.js";
 import type {
   ReportingSurface,
   RequestedOutputFormat,
@@ -26,6 +37,8 @@ export type { RequestedOutputFormat } from "../scan/reporting-options.js";
 export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
+  service?: boolean;
+  executor?: AnalyzerExecutor;
   cwd: string;
   format: RequestedOutputFormat;
   color: boolean;
@@ -35,6 +48,7 @@ export interface ScanCommandOptions {
   sourceExcerpts?: SourceExcerptOverride;
   timeout?: string;
   noTimeout?: boolean;
+  diagnostics?: boolean;
   signal?: AbortSignal;
 }
 
@@ -52,24 +66,24 @@ export interface InkRenderOptions {
   color: boolean;
   animations: boolean;
   width: number;
+  signal?: AbortSignal;
 }
 
 export interface ScanCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   scan(options: RunScanOptions): Promise<ScanReport>;
-  renderInk(
-    report: ScanReport,
-    options: InkRenderOptions,
-    presentation?: TerminalPresentation,
-  ): Promise<void>;
+  openInk(options: InkRenderOptions, onError: () => void): Promise<InkSession>;
   preparePresentation(
     report: ScanReport,
     options: Omit<PreparePresentationOptions, "store">,
   ): Promise<TerminalPresentation>;
-  scanInk?(
-    options: RunScanOptions,
-    renderOptions: InkRenderOptions,
-  ): Promise<ScanReport>;
+}
+
+/** Presentation observes controller-owned analysis and never prepares reports. */
+export interface InkSession {
+  update(event: ScanEvent): void;
+  finish(report: ScanReport, presentation: TerminalPresentation): Promise<void>;
+  close(): Promise<void>;
 }
 
 const TEMPORARY_REPORT_STORE = createTemporaryReportStore();
@@ -179,14 +193,9 @@ const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {
       .stdout;
   },
   scan: runScan,
-  async renderInk(report, options) {
-    process.stdout.write(
-      renderText(report, { width: options.width, color: options.color }),
-    );
-  },
-  async scanInk(options, renderOptions) {
-    const { runInkScan } = await import("../ui/render-ink.js");
-    return runInkScan(options, renderOptions);
+  async openInk(options, onError) {
+    const { openInkSession } = await import("../ui/render-ink.js");
+    return openInkSession(options, onError);
   },
   async preparePresentation(report, options) {
     return prepareTerminalPresentation(report, {
@@ -201,9 +210,28 @@ export async function executeScanCommand(
   io: ScanCommandIO,
   dependencies: ScanCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 1 | 2> {
+  const started = performance.now();
+  const stages: DiagnosticTimings = {};
+  let diagnosticEntries: readonly DiagnosticEntry[] = [];
+  let cleanupFailed = false;
+  let session: InkSession | undefined;
+  let renderingFailed = false;
+  const executor = options.executor ?? createCommandExecutor(options.service);
+  const closeExecutor = () =>
+    options.executor === undefined ? executor.close() : Promise.resolve();
+  const close = async (): Promise<void> => {
+    const active = session;
+    session = undefined;
+    try {
+      await active?.close();
+    } catch {
+      renderingFailed = true;
+    }
+  };
   try {
-    const repositoryRoot = await dependencies.resolveRepositoryRoot(
-      options.cwd,
+    options.signal?.throwIfAborted();
+    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
+      dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -224,6 +252,7 @@ export async function executeScanCommand(
       io.env,
     );
     const scanOptions: RunScanOptions = {
+      executor,
       repositoryRoot,
       reportingSurface: format,
       ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
@@ -234,15 +263,16 @@ export async function executeScanCommand(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
-      ...(format === "ink"
-        ? {}
-        : {
-            onEvent(event) {
-              if (event.type === "git-soft-timeout") {
-                writeGitSoftTimeoutWarning(io);
-              }
-            },
-          }),
+      onEvent(event) {
+        // Event observers must never change the analyzer outcome.
+        try {
+          if (format === "ink" && !renderingFailed) session?.update(event);
+          else if (event.type === "git-soft-timeout")
+            writeGitSoftTimeoutWarning(io);
+        } catch {
+          if (format === "ink") renderingFailed = true;
+        }
+      },
     };
     const color = options.color && io.env.NO_COLOR === undefined;
     const requestedInkFormat: InkRenderOptions["requestedFormat"] =
@@ -252,17 +282,39 @@ export async function executeScanCommand(
       color,
       animations: options.animations,
       width: io.width,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
     };
 
-    if (format === "ink" && dependencies.scanInk !== undefined) {
-      return (await dependencies.scanInk(scanOptions, inkOptions)).exitCode;
+    if (format === "ink") {
+      try {
+        session = await dependencies.openInk(inkOptions, () => {
+          renderingFailed = true;
+        });
+      } catch {
+        renderingFailed = true;
+      }
     }
 
-    const report = await dependencies.scan(scanOptions);
-    const presentation = await dependencies.preparePresentation(report, {
-      requestedFormat: options.format,
-      selectedFormat: format,
-    });
+    const report = await timeCommandStage(stages, "analysis", () =>
+      dependencies.scan(scanOptions),
+    );
+    await closeExecutor();
+    diagnosticEntries = report.checks.map((check) => ({
+      durationMs: check.durationMs,
+      checkId: check.checkId,
+      status: check.status,
+      ...(check.error?.diagnostic === undefined
+        ? {}
+        : { diagnostic: check.error.diagnostic }),
+    }));
+    options.signal?.throwIfAborted();
+    const presentation = await timeCommandStage(stages, "report", () =>
+      dependencies.preparePresentation(report, {
+        requestedFormat: options.format,
+        selectedFormat: format,
+      }),
+    );
+    options.signal?.throwIfAborted();
 
     if (format === "json") {
       const json = renderJson(report);
@@ -281,14 +333,58 @@ export async function executeScanCommand(
         }),
       );
     } else {
-      await dependencies.renderInk(report, inkOptions, presentation);
+      if (!renderingFailed) {
+        try {
+          await session?.finish(report, presentation);
+        } catch (error) {
+          if (options.signal?.aborted === true) throw error;
+          renderingFailed = true;
+        }
+      }
+      await close();
+      options.signal?.throwIfAborted();
+      if (renderingFailed) {
+        io.writeStdout(
+          renderText(report, {
+            width: io.width,
+            color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+            presentation: {
+              ...presentation,
+              automatic: false,
+              findings: report.summary.findings,
+              abbreviated: false,
+            },
+          }),
+        );
+      }
     }
     return report.exitCode;
-  } catch {
+  } catch (error) {
+    cleanupFailed = hasAnalysisCleanupFailure(error);
+    if (cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
     if (options.signal?.aborted === true) {
       return 2;
     }
     io.writeStderr("Zedbee could not complete the scan.\n");
     return 2;
+  } finally {
+    await close();
+    try {
+      await closeExecutor();
+    } catch {
+      if (!cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+      cleanupFailed = true;
+    }
+    if (options.diagnostics)
+      writeCommandDiagnostics(io, {
+        command: "scan",
+        durationMs: performance.now() - started,
+        stages,
+        entries: diagnosticEntries,
+        cancelled: options.signal?.aborted === true,
+        cleanupFailed,
+        renderingFailed,
+      });
+    if (cleanupFailed) return 2;
   }
 }

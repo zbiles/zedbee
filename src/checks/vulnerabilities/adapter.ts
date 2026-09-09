@@ -1,7 +1,10 @@
+import {
+  inspectManagedCheck,
+  hasDependencyStateDelta,
+} from "../applicability.js";
 import type {
   CheckObservationSet,
   CheckRunContext,
-  InspectionContext,
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
@@ -18,20 +21,6 @@ import { OsvAnalysisError, OsvUnavailableError } from "./osv/errors.js";
 import type { OsvClient, OsvPackageQuery } from "./osv/types.js";
 import type { ResolvedCheckPolicies } from "../../config/schema.js";
 
-const TARGET = Object.freeze({
-  id: ".",
-  kind: "repository" as const,
-  relativeRoot: ".",
-});
-const DISCLOSURE = Object.freeze({
-  services: Object.freeze(["api.osv.dev"]),
-  metadata: Object.freeze([
-    "package names",
-    "exact versions",
-    "ecosystem identifiers",
-  ]),
-});
-
 export interface VulnerabilitiesAdapterDependencies {
   readonly parseInventory: typeof parseLockfileInventory;
   readonly client: OsvClient;
@@ -41,20 +30,6 @@ const defaults: VulnerabilitiesAdapterDependencies = {
   parseInventory: parseLockfileInventory,
   client: createOsvClient(),
 };
-
-function dependencyStatePaths(context: InspectionContext): ReadonlySet<string> {
-  return new Set([
-    ...context.baselineInspection.lockfiles,
-    ...context.targetInspection.lockfiles,
-  ]);
-}
-
-function hasDependencyStateDelta(context: InspectionContext): boolean {
-  const dependencyPaths = dependencyStatePaths(context);
-  return [...context.changeSet.files.values()].some(({ path }) =>
-    dependencyPaths.has(path),
-  );
-}
 
 function analyzableLockfiles(
   inspection: RepositoryInspection,
@@ -144,24 +119,8 @@ export function createVulnerabilitiesAdapter(
   return Object.freeze({
     id: "vulnerabilities",
     output: "observations" as const,
-    async inspect(context: InspectionContext) {
-      if (
-        context.config.checks.vulnerabilities.when !== "always" &&
-        !hasDependencyStateDelta(context)
-      ) {
-        return {
-          applies: false as const,
-          reason: "No staged dependency state changes",
-        };
-      }
-      return {
-        applies: true as const,
-        executionClass: "network" as const,
-        requiresBaseline: true,
-        targets: [TARGET],
-        networkDisclosure: DISCLOSURE,
-      };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck("vulnerabilities", context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
         const [baselineInventory, targetInventory] = await Promise.all([

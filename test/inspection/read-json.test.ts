@@ -4,11 +4,33 @@ import {
   canonicalizeSnapshotRoot,
   readContainedFile,
   readContainedLines,
+  readContainedBytes,
 } from "../../src/inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../src/inspection/snapshot-registry.js";
 import { createInspectionFixture } from "./fixture.js";
+import { rename } from "node:fs/promises";
 
 describe("readContainedFile", () => {
+  it("applies descriptor identity validation to bounded raw source acquisitions", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.write("value.js", "old");
+    const registry = await captureSnapshotRegistry(
+      await canonicalizeSnapshotRoot(fixture.root),
+    );
+    await expect(
+      readContainedBytes(registry, "value.js", { maxBytes: 3 }),
+    ).resolves.toEqual(Buffer.from("old"));
+    await expect(
+      readContainedBytes(registry, "value.js", {
+        maxBytes: 3,
+        beforeOpen: async ({ canonicalPath }) => {
+          await rename(canonicalPath, `${canonicalPath}.old`);
+          await fixture.write("value.js", "new");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "UNSAFE_SNAPSHOT_PATH" });
+  });
+
   it("rejects a file that exceeds the requested byte limit", async () => {
     const fixture = await createInspectionFixture();
     await fixture.write("large.txt", "12345");

@@ -7,7 +7,7 @@ import type {
 import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
 import type { ResolvedCheckPolicies } from "./schema.js";
 import type { ResolvedCheckPolicyPatch } from "./schema.js";
-import { freezeRuleSettings } from "../checks/eslint/rule-settings.js";
+import { freezeRuleSettings } from "../checks/eslint/freeze-rule-settings.js";
 
 function policyCandidates(
   target: CheckTarget,

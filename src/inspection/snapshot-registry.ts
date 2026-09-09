@@ -82,12 +82,14 @@ function metadataKind(metadata: BigIntStats): "directory" | "file" | undefined {
 
 export async function captureSnapshotRegistry(
   snapshotRoot: string,
+  requestedPaths?: readonly string[],
 ): Promise<SnapshotRegistry> {
   const exactEntries = new Map<string, SnapshotRegistryEntry>();
   const absoluteEntries = new Map<string, SnapshotRegistryEntry>();
   const capturedEntries: SnapshotRegistryEntry[] = [];
 
   const captureEntry = async (repositoryPath: string): Promise<void> => {
+    if (exactEntries.has(repositoryPath)) return;
     const absolutePath =
       repositoryPath === "."
         ? snapshotRoot
@@ -102,6 +104,11 @@ export async function captureSnapshotRegistry(
       targetMetadata = await lstat(canonicalPath, { bigint: true });
     } catch (error) {
       if (error instanceof RepositoryInspectionError) throw error;
+      if (
+        requestedPaths !== undefined &&
+        (error as NodeJS.ErrnoException).code === "ENOENT"
+      )
+        return;
       throw invalidSnapshot();
     }
     const targetKind = metadataKind(targetMetadata);
@@ -123,7 +130,7 @@ export async function captureSnapshotRegistry(
     absoluteEntries.set(absolutePath, entry);
     capturedEntries.push(entry);
 
-    if (kind !== "directory") return;
+    if (kind !== "directory" || requestedPaths !== undefined) return;
     let children;
     try {
       children = await readdir(absolutePath, { withFileTypes: true });
@@ -149,8 +156,28 @@ export async function captureSnapshotRegistry(
   };
 
   await captureEntry(".");
+  const captureRequestedPath = async (path: string): Promise<void> => {
+    if (
+      path.length === 0 ||
+      path.includes("\\") ||
+      isAbsolute(path) ||
+      /^[A-Za-z]:/u.test(path) ||
+      path
+        .split("/")
+        .some((part) => part === "" || part === "." || part === "..")
+    )
+      throw unsafePath();
+    const components = path.split("/");
+    for (let index = 1; index <= components.length; index += 1)
+      await captureEntry(components.slice(0, index).join("/"));
+  };
+  for (const path of requestedPaths ?? []) await captureRequestedPath(path);
   for (const entry of capturedEntries) {
     if (entry.kind !== "symlink") continue;
+    if (requestedPaths !== undefined && entry.canonicalPath !== snapshotRoot)
+      await captureRequestedPath(
+        normalizePath(relative(snapshotRoot, entry.canonicalPath)),
+      );
     const registeredTarget = absoluteEntries.get(entry.canonicalPath);
     if (
       registeredTarget === undefined ||

@@ -1,10 +1,7 @@
-import * as prettier from "prettier";
+import { runAnalyzerJob } from "../checks/runner/run-job.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import type { CheckRunContext } from "../checks/adapter.js";
-import {
-  prettierOptions,
-  type FormattingSettings,
-} from "../checks/prettier/settings.js";
+import type { FormattingSettings } from "../checks/prettier/settings.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Finding } from "../core/types.js";
@@ -77,19 +74,26 @@ export function planPrettierFixes(
   );
 }
 
-export async function formatWorkingSource(input: {
-  readonly file: string;
-  readonly source: string;
-  readonly settings: Readonly<FormattingSettings>;
-}): Promise<string> {
+export async function formatWorkingSource(
+  input: {
+    readonly file: string;
+    readonly source: string;
+    readonly settings: Readonly<FormattingSettings>;
+  },
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<string> {
   const file = normalizeRepositoryRelativePath(input.file);
   const parser = prettierParserFor(file);
   if (parser === undefined) {
     throw new TypeError("Expected a supported Prettier file path");
   }
-  return prettier.format(input.source, {
-    ...prettierOptions(input.settings),
-    filepath: file,
-    parser,
-  });
+  return runAnalyzerJob(
+    {
+      version: 1,
+      checkId: "formatting",
+      operation: "format-working-source",
+      input: { ...input, file },
+    },
+    options,
+  );
 }

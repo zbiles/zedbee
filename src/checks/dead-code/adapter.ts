@@ -1,8 +1,4 @@
-import { lstat } from "node:fs/promises";
-import { isBuiltin } from "node:module";
-import { dirname, join, posix } from "node:path";
-import { fileURLToPath } from "node:url";
-import { execa } from "execa";
+import { inspectManagedCheck } from "../applicability.js";
 import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -21,23 +17,25 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
-import { writeManagedJsonConfig } from "../project/config-boundary.js";
+import {
+  CapturedDependencies,
+  type DependencyCaptureContext,
+} from "../../cache/captured-dependencies.js";
+import {
+  sanitizeDependencyInputManifest,
+  type DependencyInputManifest,
+} from "../../cache/dependency-inputs.js";
+import { exportCurrentAnalysisSourceCapture } from "../../inspection/source-capture.js";
+import { runCapturedKnip } from "./executor.js";
 import { createManagedKnipConfig } from "./managed-config.js";
 import { parseKnipReport } from "./parse-report.js";
+import {
+  createKnipImportValidator,
+  type KnipComment,
+} from "./import-boundary.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
-const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
-const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -48,12 +46,10 @@ function workspaceFor(
   );
 }
 
-function cliPath(): string {
-  const modulePath = fileURLToPath(import.meta.resolve("knip"));
-  return join(dirname(modulePath), "..", "bin", "knip.js");
-}
-
-function staticModuleSpecifier(node: ts.Node): string | undefined {
+function staticModuleSpecifier(
+  node: ts.Node,
+  hasNodeModuleImport: boolean,
+): string | undefined {
   if (
     (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
     node.moduleSpecifier !== undefined &&
@@ -78,96 +74,60 @@ function staticModuleSpecifier(node: ts.Node): string | undefined {
   }
   if (
     ts.isCallExpression(node) &&
-    node.arguments.length === 1 &&
+    node.arguments.length >= 1 &&
     ts.isStringLiteralLike(node.arguments[0]!) &&
     (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
       (ts.isIdentifier(node.expression) &&
-        node.expression.text === "require") ||
+        node.expression.text === "require" &&
+        node.arguments.length === 1) ||
       (ts.isPropertyAccessExpression(node.expression) &&
-        ts.isIdentifier(node.expression.expression) &&
-        node.expression.expression.text === "require" &&
+        ((ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "require") ||
+          (ts.isMetaProperty(node.expression.expression) &&
+            node.expression.expression.keywordToken ===
+              ts.SyntaxKind.ImportKeyword)) &&
         node.expression.name.text === "resolve"))
   ) {
     return node.arguments[0]!.text;
   }
-  return undefined;
-}
-
-function packageName(specifier: string): string | undefined {
   if (
-    specifier.startsWith(".") ||
-    specifier.startsWith("#") ||
-    isBuiltin(specifier)
+    hasNodeModuleImport &&
+    ts.isCallExpression(node) &&
+    node.arguments[0] &&
+    ts.isStringLiteralLike(node.arguments[0]) &&
+    ((ts.isIdentifier(node.expression) &&
+      node.expression.text === "register") ||
+      (ts.isPropertyAccessExpression(node.expression) &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === "module" &&
+        node.expression.name.text === "register"))
   ) {
-    return undefined;
-  }
-  const parts = specifier.split("/");
-  return specifier.startsWith("@")
-    ? parts.length >= 2
-      ? `${parts[0]}/${parts[1]}`
-      : undefined
-    : parts[0];
-}
-
-function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (
-    specifier.includes("\\") ||
-    posix.isAbsolute(specifier) ||
-    WINDOWS_PATH.test(specifier) ||
-    (URL.test(specifier) &&
-      !specifier.startsWith("node:") &&
-      !specifier.startsWith("bun:"))
-  ) {
-    throw new TypeError("Dead-code import escaped the snapshot");
-  }
-  if (!specifier.startsWith(".")) return;
-  const resolved = posix.normalize(
-    posix.join(posix.dirname(sourcePath), specifier),
-  );
-  if (resolved === ".." || resolved.startsWith("../")) {
-    throw new TypeError("Dead-code import escaped the snapshot");
-  }
-}
-
-async function assertMissing(path: string): Promise<void> {
-  try {
-    await lstat(path);
-  } catch (error) {
+    const base = node.arguments[1];
     if (
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      ((error as { readonly code?: unknown }).code === "ENOENT" ||
-        (error as { readonly code?: unknown }).code === "ENOTDIR")
-    ) {
-      return;
-    }
-    throw error;
+      !node.arguments[0].text.startsWith(".") ||
+      (base &&
+        ts.isPropertyAccessExpression(base) &&
+        ts.isMetaProperty(base.expression) &&
+        base.name.text === "url")
+    )
+      return node.arguments[0].text;
   }
-  throw new TypeError("Dead-code dependency resolution escaped the snapshot");
-}
-
-async function validateAncestorResolution(
-  snapshotRoot: string,
-  sourcePath: string,
-  specifier: string,
-): Promise<void> {
-  const name = packageName(specifier);
-  if (name === undefined) return;
-  let directory = dirname(join(snapshotRoot, sourcePath));
-  while (true) {
-    await assertMissing(join(directory, "node_modules", ...name.split("/")));
-    const parent = dirname(directory);
-    if (parent === directory) return;
-    directory = parent;
-  }
+  return undefined;
 }
 
 async function validateSnapshotInputs(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
+  capture?: CapturedDependencies,
 ): Promise<void> {
   const registry = await captureSnapshotRegistry(snapshotRoot);
+  const { validateImport, collectCommentImports } =
+    await createKnipImportValidator(
+      registry,
+      capture === undefined
+        ? undefined
+        : async (path) => capture.assertMissing(path),
+    );
   if (registry.resolve(INERT_TSCONFIG) !== undefined) {
     throw new TypeError("Reserved managed Knip path is present");
   }
@@ -180,28 +140,41 @@ async function validateSnapshotInputs(
       false,
       sourcePath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
     );
+    const hasNodeModuleImport = file.statements.some(
+      (statement) =>
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteralLike(statement.moduleSpecifier) &&
+        ["node:module", "module"].includes(statement.moduleSpecifier.text),
+    );
     const specifiers: string[] = [];
+    const comments = new Map<number, KnipComment>();
     const visit = (node: ts.Node): void => {
-      const specifier = staticModuleSpecifier(node);
+      for (const comment of [
+        ...(ts.getLeadingCommentRanges(source, node.pos) ?? []),
+        ...(ts.getTrailingCommentRanges(source, node.end) ?? []),
+      ]) {
+        const block = comment.kind === ts.SyntaxKind.MultiLineCommentTrivia;
+        comments.set(comment.pos, {
+          type: block ? "Block" : "Line",
+          start: comment.pos,
+          end: comment.end,
+          value: source.slice(comment.pos + 2, comment.end - (block ? 2 : 0)),
+        });
+      }
+      const specifier = staticModuleSpecifier(node, hasNodeModuleImport);
       if (specifier !== undefined) {
-        validateSpecifier(sourcePath, specifier);
         specifiers.push(specifier);
       }
       ts.forEachChild(node, visit);
     };
     visit(file);
-    const jsDocImports = source.matchAll(
-      /\/\*[\s\S]*?import\(\s*['"]([^'"]+)['"]\s*\)[\s\S]*?\*\//gu,
+    collectCommentImports(
+      [...comments.values()],
+      file.statements[0]?.getStart(file) ?? source.length,
+      (specifier) => specifiers.push(specifier),
     );
-    for (const match of jsDocImports) {
-      const specifier = match[1];
-      if (specifier !== undefined) {
-        validateSpecifier(sourcePath, specifier);
-        specifiers.push(specifier);
-      }
-    }
     for (const specifier of specifiers) {
-      await validateAncestorResolution(snapshotRoot, sourcePath, specifier);
+      await validateImport(sourcePath, specifier);
     }
   }
 }
@@ -211,68 +184,46 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   signal: AbortSignal,
-): Promise<readonly Observation[]> {
+  captureContext: DependencyCaptureContext,
+  guards: CapturedDependencies,
+): Promise<{
+  observations: readonly Observation[];
+  dependencyInputs?: DependencyInputManifest;
+}> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
   }
   const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
-  await validateSnapshotInputs(canonicalRoot, workspace);
-  const managed = await writeManagedJsonConfig(
-    "knip",
-    await createManagedKnipConfig(canonicalRoot, inspection),
+  if (workspace === undefined)
+    return {
+      observations: Object.freeze([]),
+      dependencyInputs: guards.manifest()!,
+    };
+  await validateSnapshotInputs(canonicalRoot, workspace, guards);
+  const sourceCapture = exportCurrentAnalysisSourceCapture();
+  const result = await runCapturedKnip(
+    {
+      context: captureContext,
+      snapshotRoot: canonicalRoot,
+      workspace: workspace.relativeRoot,
+      config: await createManagedKnipConfig(canonicalRoot, inspection),
+      ...(sourceCapture === undefined ? {} : { sourceCapture }),
+    },
+    signal,
   );
-  try {
-    const result = await execa(
-      process.execPath,
-      [
-        cliPath(),
-        "--config",
-        managed.path,
-        "--directory",
-        canonicalRoot,
-        "--workspace",
-        workspace.relativeRoot,
-        "--tsConfig",
-        INERT_TSCONFIG,
-        "--reporter",
-        "json",
-        "--no-progress",
-        "--no-config-hints",
-        "--no-tag-hints",
-        "--no-gitignore",
-      ],
-      {
-        cwd: canonicalRoot,
-        shell: false,
-        reject: false,
-        stdin: "ignore",
-        forceKillAfterDelay: 2_000,
-        cancelSignal: signal,
-        maxBuffer: MAX_OUTPUT_BYTES,
-        env: { NO_COLOR: "1", FORCE_COLOR: "0" },
-      },
-    );
-    signal.throwIfAborted();
-    await validateSnapshotInputs(canonicalRoot, workspace);
-    if (result.exitCode !== 0 && result.exitCode !== 1) {
-      throw new Error("Knip analysis failed");
-    }
-    let report: unknown;
-    try {
-      report = JSON.parse(result.stdout) as unknown;
-    } catch {
-      throw new TypeError("Malformed Knip JSON report");
-    }
-    return parseKnipReport(
-      report,
+  signal.throwIfAborted();
+  await validateSnapshotInputs(canonicalRoot, workspace);
+  return {
+    observations: parseKnipReport(
+      result.report,
       new Set([...workspace.sourceFiles, workspace.manifestPath]),
-    );
-  } finally {
-    await managed.cleanup();
-  }
+    ),
+    ...(result.dependencyInputs === undefined
+      ? {}
+      : { dependencyInputs: result.dependencyInputs }),
+  };
 }
 
 function hasProjectDelta(context: CheckRunContext): boolean {
@@ -292,62 +243,83 @@ function hasProjectDelta(context: CheckRunContext): boolean {
 export const deadCodeAdapter: ObservationCheckAdapter = {
   id: "deadCode",
   output: "observations",
-  async inspect(context) {
-    const changed = new Set(context.changeSet.files.keys());
-    const candidates = new Map<string, WorkspaceInspection>();
-    for (const workspace of [
-      ...context.baselineInspection.workspaces,
-      ...context.targetInspection.workspaces,
-    ]) {
-      candidates.set(workspace.relativeRoot, workspace);
-    }
-    const workspaces = [...candidates.values()]
-      .filter((workspace) => {
-        if (context.config.checks.deadCode.when === "always") {
-          return workspace.sourceFiles.some((path) => SOURCE.test(path));
-        }
-        return [
-          ...context.baselineInspection.workspaces,
-          ...context.targetInspection.workspaces,
-        ]
-          .filter(({ relativeRoot }) => relativeRoot === workspace.relativeRoot)
-          .some(
-            (side) =>
-              changed.has(side.manifestPath) ||
-              side.sourceFiles.some((path) => changed.has(path)),
-          );
-      })
-      .sort((left, right) =>
-        compareCodeUnits(left.relativeRoot, right.relativeRoot),
-      );
-    return workspaces.length === 0
-      ? { applies: false, reason: "No supported staged project files" }
-      : {
-          applies: true,
-          executionClass: "project-analysis",
-          requiresBaseline: true,
-          targets: workspaces.map(targetFor),
-        };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("deadCode", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
-      const baselineObservations = await collectSide(
+      const captureContext = {
+        repositoryRoot: context.repositoryRoot,
+        snapshots: {
+          baselineDir: context.baselineInspection.snapshotRoot,
+          targetDir: context.targetInspection.snapshotRoot,
+        },
+      };
+      const guards = new CapturedDependencies(captureContext, true);
+      const baseline = await collectSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
         context.target,
         context.signal,
+        captureContext,
+        guards,
       );
-      const targetObservations = await collectSide(
+      const target = await collectSide(
         context.snapshots.targetDir,
         context.targetInspection,
         context.target,
         context.signal,
+        captureContext,
+        guards,
       );
+      const manifests = [
+        guards.manifest(),
+        baseline.dependencyInputs,
+        target.dependencyInputs,
+      ];
+      let dependencyInputs: DependencyInputManifest | undefined;
+      if (
+        manifests.every(
+          (item): item is DependencyInputManifest => item !== undefined,
+        )
+      ) {
+        const probes = new Map<
+          string,
+          DependencyInputManifest["probes"][number]
+        >();
+        let consistent = true;
+        for (const manifest of manifests) {
+          if (manifest.roots !== manifests[0]!.roots) consistent = false;
+          for (const probe of manifest.probes) {
+            const key = `${probe.path}:${probe.kind === "directory" ? "listing" : "entry"}`;
+            const previous = probes.get(key);
+            if (
+              previous !== undefined &&
+              JSON.stringify(previous) !== JSON.stringify(probe)
+            )
+              consistent = false;
+            probes.set(key, probe);
+          }
+        }
+        if (consistent) {
+          try {
+            dependencyInputs = sanitizeDependencyInputManifest({
+              version: 1,
+              roots: manifests[0]!.roots,
+              probes: [...probes.values()].sort((a, b) =>
+                compareCodeUnits(`${a.path}:${a.kind}`, `${b.path}:${b.kind}`),
+              ),
+            });
+          } catch {
+            /* Bounded unsupported metadata remains uncached. */
+          }
+        }
+      }
       return {
         checkId: "deadCode",
         target: context.target,
-        baselineObservations,
-        targetObservations,
+        baselineObservations: baseline.observations,
+        targetObservations: target.observations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
         projectDelta: hasProjectDelta(context),
       };
     } catch (error) {

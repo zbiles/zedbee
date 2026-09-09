@@ -1,10 +1,10 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type { ESLint } from "eslint";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import type {
-  Environment,
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
@@ -31,6 +31,7 @@ import type {
 import { groupFilesByRules } from "../eslint/managed-config.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
+import { isAnalyzerWorker } from "../runner/context.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import {
   createReactVersionResolver,
@@ -38,14 +39,6 @@ import {
 } from "./version.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const REACT_ENVIRONMENTS = new Set<Environment>([
-  "react",
-  "react-dom",
-  "ink",
-  "next",
-  "remix",
-]);
-const DOM_ENVIRONMENTS = new Set<Environment>(["react-dom", "next", "remix"]);
 
 type ReactEslintEngineFactory = (
   options: ManagedEslintOptions,
@@ -82,21 +75,6 @@ function reactAnalysisFailure(
       "Verify that the source file uses supported JavaScript or TypeScript syntax, then retry. If it does, report a Zedbee React analyzer compatibility issue.",
     ...(path === undefined ? {} : { path }),
   });
-}
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
-
-function hasEnvironment(
-  workspace: WorkspaceInspection,
-  allowed: ReadonlySet<Environment>,
-): boolean {
-  return workspace.environments.some((environment) => allowed.has(environment));
 }
 
 function workspaceFor(
@@ -244,46 +222,11 @@ export function createReactAdapter(
   const resolveTargetReactVersion = cachedWorkspaceResolver(
     targetVersionResolvers,
   );
-  const environments =
-    id === "reactAccessibility" ? DOM_ENVIRONMENTS : REACT_ENVIRONMENTS;
   return {
     id,
     output: "observations",
-    async inspect(context) {
-      const eligible = context.targetInspection.workspaces.filter((workspace) =>
-        hasEnvironment(workspace, environments),
-      );
-      if (eligible.length === 0) {
-        return {
-          applies: false,
-          reason:
-            id === "reactAccessibility"
-              ? "No browser DOM renderer detected"
-              : "No React renderer detected",
-        };
-      }
-      const changed = new Set(
-        [...context.changeSet.files.values()]
-          .filter(({ status }) => status !== "deleted")
-          .map(({ path }) => path),
-      );
-      const workspaces = eligible.filter((workspace) =>
-        workspace.sourceFiles.some(
-          (path) =>
-            SOURCE.test(path) &&
-            (context.config.checks[id].when === "always" || changed.has(path)),
-        ),
-      );
-      if (workspaces.length === 0) {
-        return { applies: false, reason: "No supported staged source files" };
-      }
-      return {
-        applies: true,
-        executionClass: "lightweight",
-        requiresBaseline: true,
-        targets: workspaces.map(targetFor),
-      };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck(id, context),
     ...(id === "reactCorrectness"
       ? {
           async planFixes(context: CheckRunContext, findings) {
@@ -366,23 +309,26 @@ export function createReactAdapter(
       );
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
-          collectPreparedSide(
-            collectBaseline,
-            id,
-            mode,
-            reactCorrectnessConfigFactory,
-            engineFactory,
-            context.signal,
-          ),
-          collectPreparedSide(
-            collectTarget,
-            id,
-            mode,
-            reactCorrectnessConfigFactory,
-            engineFactory,
-            context.signal,
-          ),
+          () =>
+            collectPreparedSide(
+              collectBaseline,
+              id,
+              mode,
+              reactCorrectnessConfigFactory,
+              engineFactory,
+              context.signal,
+            ),
+          () =>
+            collectPreparedSide(
+              collectTarget,
+              id,
+              mode,
+              reactCorrectnessConfigFactory,
+              engineFactory,
+              context.signal,
+            ),
           context.signal,
+          isAnalyzerWorker(),
         );
       return {
         checkId: id,

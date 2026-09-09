@@ -10,7 +10,20 @@ permissions:
   contents: read
 
 jobs:
+  release-identity:
+    name: Release identity and dependency preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: node scripts/release-check.mjs --tag-check
+      - run: npm audit --package-lock-only --omit=dev --ignore-scripts --audit-level=high
+
   cross-platform:
+    needs: release-identity
     timeout-minutes: 60
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
@@ -34,7 +47,7 @@ jobs:
 
   publication-gate:
     timeout-minutes: 60
-    name: Publication metadata and provenance gate
+    name: Publication metadata and artifact gate
     needs: cross-platform
     runs-on: ubuntu-latest
     steps:

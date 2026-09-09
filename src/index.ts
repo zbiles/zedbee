@@ -12,6 +12,15 @@ export { CHECK_IDS, PROFILE_IDS } from "./config/schema.js";
 export type { CheckId, ProfileId } from "./config/schema.js";
 export { DEFAULT_CHECK_ADAPTERS, runScan } from "./scan/run-scan.js";
 export type { RunScanOptions } from "./scan/run-scan.js";
+export {
+  createLocalAnalyzerExecutor,
+  AnalyzerCapacityError,
+} from "./checks/runner/executor.js";
+export type {
+  AnalyzerExecutor,
+  AnalyzerExecutionSession,
+  AnalyzerExecutionSessionOptions,
+} from "./checks/runner/executor.js";
 export type { ScanReport } from "./scan/report.js";
 export type {
   Attribution,

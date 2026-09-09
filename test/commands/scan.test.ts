@@ -10,6 +10,7 @@ import {
   signalExitCode,
   type ScanCommandDependencies,
   type ScanCommandIO,
+  type InkRenderOptions,
 } from "../../src/commands/scan.js";
 import type {
   PreparePresentationOptions,
@@ -37,12 +38,21 @@ function io(
 }
 
 function dependencies(
-  renderInk: ScanCommandDependencies["renderInk"] = async () => undefined,
+  renderInk: (
+    report: ScanReport,
+    options: InkRenderOptions,
+    presentation?: TerminalPresentation,
+  ) => Promise<void> = async () => undefined,
 ): ScanCommandDependencies {
   return {
     resolveRepositoryRoot: async () => "/repo",
     scan: async () => createReport(),
-    renderInk,
+    openInk: async (options) => ({
+      update() {},
+      finish: (report, presentation) =>
+        renderInk(report, options, presentation),
+      async close() {},
+    }),
     preparePresentation: async (report) => completePresentation(report),
   };
 }
@@ -143,7 +153,11 @@ function automaticPresentation(
 
 function renderAutomaticInk(
   terminal: ScanCommandIO,
-): ScanCommandDependencies["renderInk"] {
+): (
+  report: ScanReport,
+  options: InkRenderOptions,
+  presentation?: TerminalPresentation,
+) => Promise<void> {
   return async (report, options, presentation) => {
     expect(options).toEqual({
       requestedFormat: "auto",
@@ -642,15 +656,30 @@ describe("executeScanCommand", () => {
     expect(terminal.stdout).toEqual([]);
   });
 
-  it("lets the Ink session own the scan so lifecycle events can render live", async () => {
+  it("lets the controller own the scan while the Ink session observes live events", async () => {
     const terminal = io(true);
     const deps = dependencies();
-    deps.scan = async () => {
-      throw new Error("the completed-report path must not run");
-    };
     let receivedOptions: unknown;
-    deps.scanInk = async (scanOptions, renderOptions) => {
+    const observed: unknown[] = [];
+    let renderOptions: unknown;
+    deps.openInk = async (options) => {
+      renderOptions = options;
+      return {
+        update: (event) => {
+          observed.push(event);
+        },
+        async finish() {},
+        async close() {},
+      };
+    };
+    deps.scan = async (scanOptions) => {
       receivedOptions = { scanOptions, renderOptions };
+      scanOptions.onEvent?.({
+        type: "check-running",
+        checkId: "lint",
+        target: ".",
+        timestamp: 1,
+      });
       return createReport();
     };
 
@@ -661,6 +690,7 @@ describe("executeScanCommand", () => {
     );
 
     expect(exitCode).toBe(0);
+    expect(observed).toHaveLength(1);
     expect(receivedOptions).toMatchObject({
       scanOptions: { repositoryRoot: "/repo", reportingSurface: "ink" },
       renderOptions: {
@@ -903,6 +933,34 @@ describe("executeScanCommand", () => {
 });
 
 describe("runCli", () => {
+  it.each(["scan", "fix"] as const)(
+    "passes %s --diagnostics to the controller",
+    async (command) => {
+      let received: unknown;
+      const stderr = vi
+        .spyOn(process.stderr, "write")
+        .mockImplementation(() => true);
+      try {
+        const exit = await runCli(
+          ["node", "zedbee", command, "--diagnostics", "--format", "json"],
+          {
+            executeScanCommand: async (options) => {
+              received = options;
+              return 1;
+            },
+            executeFixCommand: async (options) => {
+              received = options;
+              return 1;
+            },
+          },
+        );
+        expect(exit).toBe(1);
+        expect(received).toMatchObject({ diagnostics: true, format: "json" });
+      } finally {
+        stderr.mockRestore();
+      }
+    },
+  );
   it("describes index/base targets and selected-target source excerpts", async () => {
     const stdout: string[] = [];
     const write = vi

@@ -1,4 +1,12 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import {
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -26,6 +34,8 @@ import {
   type RunScanOptions,
 } from "../../src/scan/run-scan.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+import { DEFAULT_ANALYSIS_SESSION_DEPENDENCIES } from "../../src/scan/analysis-session.js";
+import { DEFAULT_CHECK_ADAPTERS } from "../../src/checks/descriptors.js";
 
 function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
   return {
@@ -37,6 +47,98 @@ function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
 }
 
 describe("observation cache integration", () => {
+  it("rebinds real lint/types captures across owned scan snapshots and rejects corrupt manifests", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      '{"name":"captured-cache","type":"module","dependencies":{"installed":"1.0.0"}}\n',
+    );
+    await repository.write(".gitignore", "node_modules/\n");
+    await repository.write(
+      "tsconfig.json",
+      '{"compilerOptions":{"strict":true},"include":["src/**/*.ts"]}\n',
+    );
+    await repository.write("src/value.ts", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write(
+      "src/value.ts",
+      'import { supplied } from "installed";\nexport const value: number = supplied;\n',
+    );
+    await repository.git(["add", "src/value.ts"]);
+    await repository.write(
+      "node_modules/installed/package.json",
+      '{"name":"installed","type":"module","types":"index.d.ts"}\n',
+    );
+    await repository.write(
+      "node_modules/installed/index.d.ts",
+      "export const supplied: number;\n",
+    );
+    const root = await mkdtemp(join(tmpdir(), "zedbee-real-capture-cache-"));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const cache = new ObservationCacheStore({ root });
+    const dependencies: RunScanDependencies = {
+      ...DEFAULT_ANALYSIS_SESSION_DEPENDENCIES,
+      adapters: DEFAULT_CHECK_ADAPTERS.filter(
+        (adapter) => adapter.id === "lint" || adapter.id === "types",
+      ),
+      evaluate: evaluatePolicy,
+      now: () => new Date("2026-09-07T00:00:00Z"),
+    };
+    const scan = (enabled = true) =>
+      runScan({
+        repositoryRoot: repository.root,
+        dependencies,
+        cache: enabled ? cache : false,
+      });
+    const first = await scan();
+    expect(first.summary.incomplete).toBe(0);
+    expect(first.outcome).toBe("pass");
+    const names = (await readdir(root)).filter((name) =>
+      name.endsWith(".json"),
+    );
+    expect(names).toHaveLength(2);
+    const inodes = await Promise.all(
+      names.map(async (name) => (await stat(join(root, name))).ino),
+    );
+    expect(stableReport(await scan())).toEqual(stableReport(first));
+    expect(
+      await Promise.all(
+        names.map(async (name) => (await stat(join(root, name))).ino),
+      ),
+    ).toEqual(inodes);
+    for (const name of names) {
+      const path = join(root, name);
+      const envelope = JSON.parse(await readFile(path, "utf8"));
+      envelope.payload.dependencyInputs.probes = [
+        { kind: "missing", path: "repository:../private-secret" },
+      ];
+      envelope.integrity = createHash("sha256")
+        .update(JSON.stringify(envelope.payload))
+        .digest("hex");
+      await writeFile(path, JSON.stringify(envelope));
+    }
+    expect(stableReport(await scan())).toEqual(stableReport(await scan(false)));
+    await repository.write(
+      "node_modules/installed/package.json",
+      "{malformed\n",
+    );
+    expect(stableReport(await scan())).toEqual(stableReport(await scan(false)));
+    await repository.write(
+      "node_modules/installed/package.json",
+      '{"name":"installed","type":"module","types":"index.d.ts"}\n',
+    );
+    for (const type of ["any", "string", "number"]) {
+      await repository.write(
+        "node_modules/installed/index.d.ts",
+        `export const supplied: ${type};\n`,
+      );
+      const cached = await scan();
+      expect(cached.summary.incomplete).toBe(0);
+      expect(stableReport(cached)).toEqual(stableReport(await scan(false)));
+      expect(cached.outcome).toBe(type === "number" ? "pass" : "blocked");
+    }
+  });
+
   it("reuses staged observation sets while ignoring later unstaged edits", async () => {
     const repository = await createGitRepository();
     await repository.write("package.json", '{"name":"cache-fixture"}\n');
@@ -47,23 +149,23 @@ describe("observation cache integration", () => {
 
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: true,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [
             {
-              check: "lint",
+              check: "reactCorrectness",
               rule: "fixture-rule",
               identity: "fixture:src/value.ts:1",
               severity: "error" as const,
@@ -127,18 +229,18 @@ describe("observation cache integration", () => {
     await repository.git(["add", "--", "src/value.ts"]);
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: false,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [],
@@ -194,18 +296,18 @@ describe("observation cache integration", () => {
     await repository.git(["add", "--", "src/value.ts"]);
     let collections = 0;
     const adapter = {
-      id: "lint",
+      id: "reactCorrectness",
       output: "observations",
       inspect: async () => ({
         applies: true as const,
-        executionClass: "project-analysis" as const,
+        executionClass: "lightweight" as const,
         requiresBaseline: false,
         targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
       }),
       collect: async (context) => {
         collections += 1;
         return {
-          checkId: "lint",
+          checkId: "reactCorrectness",
           target: context.target,
           baselineObservations: [],
           targetObservations: [],
@@ -215,7 +317,7 @@ describe("observation cache integration", () => {
     let currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
     });
     const git = new GitClient(repository.root);
     const dependencies: RunScanDependencies = {
@@ -256,11 +358,13 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
       ],
     });
@@ -268,15 +372,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
         {
           files: ["."],
-          checks: { lint: { rules: { "no-console": "off" } } },
+          checks: { reactCorrectness: { rules: { "react/no-danger": "off" } } },
         },
       ],
     });
@@ -284,15 +390,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["."],
-          checks: { lint: { rules: { "no-console": "off" } } },
+          checks: { reactCorrectness: { rules: { "react/no-danger": "off" } } },
         },
         {
           files: ["package.json"],
-          checks: { lint: { rules: { "no-console": "error" } } },
+          checks: {
+            reactCorrectness: { rules: { "react/no-danger": "error" } },
+          },
         },
       ],
     });
@@ -300,12 +408,17 @@ describe("observation cache integration", () => {
     currentConfig = resolveConfig({
       schemaVersion: 1,
       profile: "recommended",
-      checks: { lint: { rules: { "no-console": "warn" } } },
+      checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
       overrides: [
         {
           files: ["src/**"],
           checks: {
-            lint: { rules: { "no-console": "error", eqeqeq: "warn" } },
+            reactCorrectness: {
+              rules: {
+                "react/no-danger": "error",
+                "react/no-unknown-property": "warn",
+              },
+            },
           },
         },
       ],
@@ -315,12 +428,17 @@ describe("observation cache integration", () => {
       {
         schemaVersion: 1,
         profile: "recommended",
-        checks: { lint: { rules: { "no-console": "warn" } } },
+        checks: { reactCorrectness: { rules: { "react/no-danger": "warn" } } },
         overrides: [
           {
             files: ["src/**"],
             checks: {
-              lint: { rules: { eqeqeq: "warn", "no-console": "error" } },
+              reactCorrectness: {
+                rules: {
+                  "react/no-unknown-property": "warn",
+                  "react/no-danger": "error",
+                },
+              },
             },
           },
         ],

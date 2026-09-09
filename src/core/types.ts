@@ -117,6 +117,7 @@ export interface FindingIdentity {
 }
 
 export interface CheckError {
+  readonly diagnostic?: import("../checks/diagnostics.js").AnalyzerDiagnostic;
   code: string;
   message: string;
   path?: string;

@@ -4,11 +4,21 @@
 
 Index mode materializes two temporary representations: committed `HEAD` and the exact staged Git index. It does not scan later unstaged working-tree edits. Source excerpts are read from that exact index snapshot, so an excerpt cannot be replaced by later working-tree content. An intent-to-add entry supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected and make the scan incomplete. Binary assets remain allowed, but binary paths selected by enabled source, formatting, or vulnerability checks are incomplete rather than silently skipped. Every affected path is reported; intentional suppression is configurable with `pathExclusions`.
 
-Explicit base mode (`scan --base <ref>`) instead materializes the unique merge-base commit and committed `HEAD`. Source, configuration, and excerpts come only from those immutable commit trees; staged, unstaged, and untracked checkout content is not read as scan input. The base ref and common history must already be available locally. Zedbee performs no automatic network fetch, and missing shallow ancestry produces an incomplete result with exit code 2.
+Explicit base mode (`scan --base <ref>`) instead materializes the unique merge-base commit and committed `HEAD`. Selected repository source, configuration, and excerpts come only from those immutable commit trees; staged, unstaged, and untracked source edits are not selected scan inputs. The permitted supporting dependency reads are described below. The base ref and common history must already be available locally. Zedbee performs no automatic network fetch, and missing shallow ancestry produces an incomplete result with exit code 2.
 
-Snapshot paths are validated under a Zedbee-owned temporary directory, staged links may not escape it, and cleanup runs before the command returns. Cleanup failure is itself an incomplete scan and may disclose one validated Zedbee temporary directory so the invoking human or agent can inspect and remove exactly what remains. If Zedbee cannot safely validate the directory's identity, it reports no path and instead directs the operator to inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Correct permissions, locks, or filesystem problems before retrying: a persistent cause can make later cleanups fail and leave additional snapshots.
+Snapshot paths are validated under a Zedbee-owned temporary directory, selected repository links may not escape it, and cleanup is attempted before the command returns once execution has stopped. Unproved execution cleanup retains snapshots and makes the scan incomplete. Cleanup failure may disclose one validated Zedbee temporary directory so the invoking human or agent can inspect exactly what remains; resolve the execution/cleanup problem before removing it. If Zedbee cannot safely validate the directory's identity, it reports no path and instead directs the operator to inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Correct permissions, locks, or filesystem problems before retrying: a persistent cause can make later cleanups fail and leave additional snapshots.
 
-Local analyzers receive only protected snapshot paths and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, remediation, or executable project analyzer configuration.
+Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, remediation, or executable project analyzer configuration.
+
+TypeScript and typed lint can also capture supporting dependency inputs through constrained installed project `node_modules` and bundled TypeScript resolution boundaries. These are permitted local dependency reads outside the selected source snapshots. Captured content supports analysis in memory; only validated input fingerprints and normalized observations may enter the scan cache. Knip's captured inputs remain snapshot-only. Setup and diagnostics (`init` and `doctor`) may read working-copy configuration.
+
+## Local analyzer service
+
+CLI scans and fixes normally share a private service for the current installation and Node runtime. It starts lazily, uses owner-restricted local sockets or Windows named pipes, and authenticates peers before accepting bounded source-bearing requests. Installed production contents are freshly checked when acquiring the service. No repository configuration can select a service endpoint, executable, worker module or ownership capability. This is local IPC, not a network upload or an operating-system sandbox; processes retain the invoking user's permissions.
+
+Each analysis session freshly acquires its selected source bytes and clears source/project state on release. Engine modules with supported cleanup can remain loaded; compiler-backed React checks require worker retirement to release the upstream private source cache. Source, parsed programs and working-file formatting inputs are not a persistent service cache. Service discovery records contain protocol/content identity, a random instance and an authentication secret under owner-only permissions; they contain no source. Source-free coordination files can remain after shutdown, including an inert zero-byte completion file if a management client dies.
+
+`scan --no-service` and `fix --no-service` close a local executor with the command. `service status` creates no state; `service stop` drains sessions and waits for native cleanup. The service also stops after five idle minutes. Snapshot deletion waits for execution cleanup, including an independent native cleanup proof after lost IPC. If cleanup cannot be proved, snapshots remain and the scan is incomplete. Correct the reported cause before retrying or removing them.
 
 ## Working-file fixes
 
@@ -16,8 +26,7 @@ Managed fix analysis uses the same isolated staged snapshots, then previews the
 current working files that have supported candidates. Public managed fix plans
 and results are source-free and contain no source text, replacements, hashes,
 absolute repository paths, or replayable patches. Source-bearing candidate data
-exists only in the invoking process long enough to validate and apply an
-approved plan.
+exists in the invoking process and bounded analyzer-session messages long enough to produce, validate and apply an approved plan. Formatting workers receive the complete current working source; that source is cleared with their session.
 
 `zedbee fix` writes only validated working files. It does not stage or commit.
 Exact lint and React edits are rejected when they overlap unstaged work;
@@ -64,7 +73,7 @@ and is not included in scan findings, temporary reports, or structured exports.
 
 ## Scan cache
 
-When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata. It must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt or incompatible entries are treated as misses.
+When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata from audited analyzers. TypeScript, lint, and Knip entries include private input fingerprints: content digests, scoped path identifiers, directory listings, and missing-file observations. Knip's scope remains the selected snapshot, including guards against installed packages entering resolution; its captured filesystem does not grant access to outside source bytes. Captured bytes remain in memory for analysis and are not saved in this cache. Zedbee rechecks fingerprints before reusing results; incomplete metadata disables caching for that result. Each internal Knip worker exits before its snapshot is released. New or unknown checks remain uncached until their inputs are audited. Installed engine identities come from the package metadata shipped with the active installation; missing identity metadata disables caching for that check. The cache must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt, ineligible, or incompatible entries are treated as misses.
 
 ## Report source visibility
 

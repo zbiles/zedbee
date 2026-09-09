@@ -1,10 +1,10 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { randomBytes } from "node:crypto";
 import { lintSource } from "@secretlint/core";
 import type { SecretLintCoreResult } from "@secretlint/types";
 import type {
   CheckObservationSet,
   CheckRunContext,
-  InspectionContext,
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
@@ -16,12 +16,6 @@ import {
   type SecretTextSource,
 } from "./content.js";
 import { normalizeSecretlintMessages } from "./normalize.js";
-
-const TARGET = Object.freeze({
-  id: ".",
-  kind: "repository" as const,
-  relativeRoot: ".",
-});
 
 export interface SecretsAdapterDependencies {
   readonly lintSource: typeof lintSource;
@@ -83,23 +77,8 @@ export function createSecretsAdapter(
   return Object.freeze({
     id: "secrets",
     output: "observations" as const,
-    async inspect(context: InspectionContext) {
-      const changedFiles = [...context.changeSet.files.values()].filter(
-        ({ status }) => status !== "deleted",
-      );
-      if (changedFiles.length === 0) {
-        return {
-          applies: false as const,
-          reason: "No changed target files to scan",
-        };
-      }
-      return {
-        applies: true as const,
-        executionClass: "project-analysis" as const,
-        requiresBaseline: true,
-        targets: [TARGET],
-      };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck("secrets", context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
         const pairs = await collectSecretSourcePairs(context);

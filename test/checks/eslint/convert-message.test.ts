@@ -1,5 +1,6 @@
 import type { Linter } from "eslint";
 import { describe, expect, it } from "vitest";
+import { normalizeObservation } from "../../../src/attribution/fingerprint.js";
 import { convertEslintMessage } from "../../../src/checks/eslint/convert-message.js";
 
 describe("convertEslintMessage", () => {
@@ -104,6 +105,50 @@ describe("convertEslintMessage", () => {
     expect(observation.message).toContain("https://typescript-eslint.io/rules");
     expect(observation.message).not.toMatch(/C:|secret|\/opt|build\/value/);
   });
+
+  it.each([
+    {
+      ruleId: "@typescript-eslint/unbound-method",
+      message:
+        "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object.\nConsider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. \nIf a function does not access `this`, it can be annotated with `this: void`.",
+      expected:
+        "A method that is not declared with `this: void` may cause unintentional scoping of `this` when separated from its object. Consider using an arrow function or explicitly `.bind()`ing the method to avoid calling the method with an unintended `this` value. If a function does not access `this`, it can be annotated with `this: void`.",
+    },
+    {
+      ruleId: "react-hooks/refs",
+      message:
+        "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering.\n\n/private/tmp/zedbee-snapshot-secret/src/app.tsx:4:3\n  4 | ref.current = value;",
+      expected: "Error: Cannot access refs during render",
+    },
+  ])(
+    "produces a bounded safe summary for multiline $ruleId diagnostics",
+    ({ ruleId, message, expected }) => {
+      const observation = normalizeObservation(
+        convertEslintMessage(
+          "src/app.tsx",
+          {
+            ruleId,
+            severity: 2,
+            message,
+            line: 4,
+            column: 3,
+            nodeType: "Identifier",
+          } as Linter.LintMessage,
+          "/private/tmp/zedbee-snapshot-secret",
+          ruleId.startsWith("react-") ? "reactCorrectness" : "lint",
+        ),
+      );
+
+      expect(observation.message).toBe(expected);
+      expect(observation.message).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+      expect(observation.message).not.toContain("zedbee-snapshot-secret");
+      expect(observation.location).toEqual({
+        file: "src/app.tsx",
+        startLine: 4,
+        startColumn: 3,
+      });
+    },
+  );
 
   it("only marks exact managed lint and React diagnostics with an ESLint fix", () => {
     const message = {

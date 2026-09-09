@@ -2,6 +2,17 @@ import { ESLint } from "eslint";
 import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { managedConfig, type ManagedConfigOptions } from "./managed-config.js";
+import { analysisKey, analysisStore } from "../analysis-reuse.js";
+import {
+  canonicalizeSnapshotRoot,
+  readContainedFile,
+} from "../../inspection/read-json.js";
+import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  capturedSourceInput,
+  capturedSourceRegistry,
+  hasAnalysisSourceCapture,
+} from "../../inspection/source-capture.js";
 
 export interface ManagedEslintOptions extends ManagedConfigOptions {
   readonly cwd: string;
@@ -39,6 +50,13 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
   }
 
+  const captured = capturedSourceInput(cwd, path);
+  if (captured !== undefined) {
+    if (captured.entry !== undefined && captured.entry.targetKind !== "file") {
+      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    }
+    return;
+  }
   try {
     const [canonicalRoot, canonicalTarget] = await Promise.all([
       realpath(cwd),
@@ -61,14 +79,22 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
   }
 }
 
+const rawComplexity = Symbol("common complexity traversal");
+
 class ManagedEslint extends ESLint {
   readonly #cwd: string;
+  readonly #mode: ManagedConfigOptions["mode"];
+  readonly #identity: string | undefined;
 
   constructor(
     options: ConstructorParameters<typeof ESLint>[0] & { cwd: string },
+    mode: ManagedConfigOptions["mode"],
+    identity: string | undefined,
   ) {
     super(options);
     this.#cwd = options.cwd;
+    this.#mode = mode;
+    this.#identity = identity;
   }
 
   override async lintFiles(
@@ -76,19 +102,56 @@ class ManagedEslint extends ESLint {
   ): Promise<ESLint.LintResult[]> {
     const paths = typeof patterns === "string" ? [patterns] : patterns;
     for (const path of paths) await assertInspectorPath(this.#cwd, path);
-    return super.lintFiles(patterns);
+    const store = analysisStore<Promise<ESLint.LintResult[]>>(rawComplexity);
+    if (store === undefined && !hasAnalysisSourceCapture())
+      return super.lintFiles(patterns);
+    const root = await canonicalizeSnapshotRoot(this.#cwd);
+    const livePaths = paths.filter(
+      (path) => capturedSourceInput(root, path) === undefined,
+    );
+    const liveRegistry = await captureSnapshotRegistry(root, livePaths);
+    const results: ESLint.LintResult[] = [];
+    for (const path of [...new Set(paths)]) {
+      const registry = capturedSourceRegistry(root, [path]) ?? liveRegistry;
+      if (registry.resolve(path) === undefined) continue;
+      // Parser ownership alone remains live; only an explicit input view
+      // supplies previously acquired bytes through the trusted boundary.
+      const source = await readContainedFile(registry, path);
+      const filePath = resolve(this.#cwd, path);
+      const key =
+        this.#mode === "complexity" && this.#identity !== undefined
+          ? analysisKey([this.#identity, filePath, source])
+          : undefined;
+      let pending = key === undefined ? undefined : store?.get(key);
+      if (pending === undefined) {
+        pending = super.lintText(source, { filePath });
+        if (key !== undefined)
+          store?.set(key, pending, source.length * 32 + 4096);
+      }
+      try {
+        results.push(...structuredClone(await pending));
+      } catch (error) {
+        if (key !== undefined) store?.delete(key);
+        throw error;
+      }
+    }
+    return results;
   }
 }
 
 export function createManagedEslint(options: ManagedEslintOptions): ESLint {
   const { cwd, ...configOptions } = options;
-  return new ManagedEslint({
-    cwd,
-    overrideConfigFile: true,
-    overrideConfig: [...managedConfig(configOptions)],
-    fix: false,
-    errorOnUnmatchedPattern: false,
-    globInputPaths: false,
-    ignore: false,
-  });
+  return new ManagedEslint(
+    {
+      cwd,
+      overrideConfigFile: true,
+      overrideConfig: [...managedConfig(configOptions)],
+      fix: false,
+      errorOnUnmatchedPattern: false,
+      globInputPaths: false,
+      ignore: false,
+    },
+    options.mode,
+    analysisKey(configOptions),
+  );
 }

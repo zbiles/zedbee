@@ -6,12 +6,14 @@ This document distinguishes implemented coverage from unsupported or deferred be
 
 | Area              | Supported                                                                                                     | Notes                                                                                                                                                                                                                              |
 | ----------------- | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime           | Node.js 22.13.0 and newer                                                                                     | CI verifies current Node 22 and 24 releases.                                                                                                                                                                                       |
+| Runtime           | Node.js versions matching `^22.17.0 \|\| >=24.2.0`                                                            | CI verifies current Node 22 and 24 releases.                                                                                                                                                                                       |
 | Operating systems | Linux, macOS, and Windows                                                                                     | CI runs the core suite on hosted runners for all three systems. Native npm dependencies must provide an artifact for the user's platform.                                                                                          |
 | Source            | `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts`, `.cts`                                                  | Zedbee targets JavaScript and TypeScript initially.                                                                                                                                                                                |
 | Workspaces        | npm, pnpm, Yarn, and Bun JavaScript workspaces                                                                | Discovery uses manifests and workspace declarations from each selected snapshot without running lifecycle scripts.                                                                                                                 |
 | React             | React, React DOM, Ink, Next.js, and Remix correctness                                                         | DOM accessibility runs only for React DOM, Next.js, and Remix—not Ink. React correctness calibrates each snapshot/workspace from that snapshot's dependency data.                                                                  |
 | Git input         | Exact staged index against committed `HEAD`, or explicit committed `HEAD` comparison with `scan --base <ref>` | Base mode uses the unique merge base and locally available history. Intent-to-add entries are excluded from index mode. LFS pointers, submodules, and relevant binary text/source inputs report every affected path as incomplete. |
+
+On Windows, snapshots containing Git symbolic links require permission to create symbolic links. If Windows denies link creation, snapshot construction fails and the scan is incomplete. Zedbee does not elevate the account, change system settings, or substitute regular files for those links.
 
 ## Dependency vulnerability inventories
 
@@ -43,6 +45,28 @@ project `node_modules`; it parses package manifests and supported lockfiles from
 each selected snapshot instead, so it does not execute project React code.
 
 ## Managed configuration compatibility
+
+Scan and fix commands share a private local service scoped to the installed package and Node runtime. It uses one bounded worker scheduler across clients and workspaces. `--no-service` selects a command-owned local executor. Zedbee supervises worker descendants and waits for cleanup before releasing a
+session. Cancellation stops active analysis; a worker crash or invalid response makes
+the affected check incomplete. This process isolation is not an operating-system
+sandbox. The processes retain the user's permissions, and the managed
+configuration and input-resolution boundaries below remain necessary.
+
+The CLI still performs orchestration, configuration validation, snapshot
+inspection, attribution, reporting, and safe file writes. `doctor` also uses a
+built-in Secretlint readiness probe. Process isolation describes scan/fix analyzer
+execution, not every use of analyzer-related metadata in the CLI.
+
+Each scan acquires fresh checked source bytes for its selected baseline and target paths; a pathname or timestamp is never proof of immutable input. Source-selection capacity bypass falls back to ordinary checked reads, while trust/read failures remain failures. Session release clears source-bearing state and project contexts. Reuse-capable engine modules may remain loaded. The default React compiler-backed hooks plugin has a private source-text cache without a supported clear operation, so a worker that uses it retires at session release. Knip uses a fresh internal worker and a shared captured filesystem for its JavaScript and Oxc WebAssembly reads; the worker exits after each snapshot side, including on cancellation. jscpd still launches its managed child tool. Retained service identity does not mean these engines are warm. Knip input or memory limits that prevent analysis make the check incomplete; there is no silent native retry. These lifecycle rules are not a guarantee of faster scans. Normalized
+observation caching requires audited inputs. TypeScript, lint, and Knip capture and
+recheck their permitted input fingerprints before reusing results; incomplete metadata bypasses
+caching. Knip cache hits preserve the snapshot-only package-resolution guards.
+Source, raw engine output, secrets, Secretlint observations,
+OSV results, and online response bodies are never cached.
+
+`zedbee service status` is read-only and never creates service state. `zedbee service stop` waits for active sessions, native worker cleanup, endpoint removal and startup-lock release. Both accept `--format json`; unavailable management returns exit code 2. The service idles out after five minutes without active sessions. No login service is installed. A stopped instance may leave source-free coordination files in its private temporary directory. Source-free zero-byte completion files can also remain if a management client dies during completion; they are inert, not live locks.
+
+Unix service sockets require a sufficiently short canonical OS temporary path and owner-only permissions; Windows uses owner-restricted local named pipes and native process jobs. An unsuitable temporary directory or unverifiable identity fails closed. Use `--no-service` when a service cannot operate in the current environment. Missing permissions, rejected native cleanup, a disconnected client or a socket closing are never treated as proof that analysis stopped: unproved cleanup retains snapshots and reports incomplete.
 
 Zedbee does not load a project's native analyzer config. Prettier, ESLint, React, Hooks, and JSX accessibility behavior comes from Zedbee's managed settings and bundled rules; custom plugins and executable project configuration are outside the supported boundary. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and can change when Zedbee upgrades its managed engines. `zedbee checks` displays effective settings and a primary managed engine summary, not every supporting package version.
 

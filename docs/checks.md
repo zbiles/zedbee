@@ -1,5 +1,14 @@
 # Checks
 
+Scan and fix analysis opens fresh sessions in reusable supervised workers,
+normally shared through a private local service. Session release clears source
+and project state. Compiler-backed React checks retire their worker on release;
+Knip uses a fresh internal worker for each snapshot side, and jscpd launches its
+managed child tool. The CLI owns applicability, attribution, policy, and reports. See the
+[execution boundary](support.md#managed-configuration-compatibility) for isolation
+limits and cache exclusions, and [diagnostics](reporting.md#safe-analyzer-diagnostics)
+for investigating incomplete analyzer jobs.
+
 Zedbee owns the analyzer versions and inert configuration used by every v1 check. `relevant` checks run when staged state can affect them; `always` checks run whenever their required project inputs exist. Analysis scope may be broader than the changed lines, while attribution still blocks only new or worsened staged responsibility.
 
 | Check ID                 | Coverage                                                    | Scope and attribution                                                                                                          | Important limitation                                                                                             |
@@ -10,17 +19,17 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | `cyclomaticComplexity`   | Branch-path complexity                                      | Compares changed syntax entities against `max` and worsening policy                                                            | Thresholds require team calibration                                                                              |
 | `readabilityComplexity`  | Zedbee's original nesting/readability metric                | Compares changed syntax entities against `max` and worsening policy                                                            | It is not Sonar Cognitive Complexity and scores are not interchangeable                                          |
 | `structuralSecurity`     | Managed ast-grep rules for high-confidence local patterns   | Compares rule/location observations in JavaScript and TypeScript source                                                        | Narrower than Semgrep; no general taint, dataflow, reachability, interfile, or live registry coverage            |
-| `secrets`                | Secretlint 13.0.4 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
+| `secrets`                | Secretlint 13.0.5 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
 | `duplication`            | jscpd clone detection and repository duplication percentage | Compares whole workspaces and attributes new clone regions/project regressions                                                 | Large source lists can exceed an operating-system argument limit                                                 |
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
-| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project                                                                                           | Framework plugins are disabled; dynamic conventions and aliases can require future managed profiles              |
+| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards               | Framework plugins are disabled; dynamic conventions and TS path aliases can require future managed profiles              |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
 | `reactAccessibility`     | React DOM JSX accessibility                                 | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
 
 ## Incomplete staged inputs
 
-Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. Materialize the LFS object, stage it again, and rerun the scan. For intentional exclusions, use repository config `pathExclusions`.
+Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. With LFS tracking active, materializing and staging the object again recreates the pointer. Validate the referenced object separately; that validation does not clear Zedbee's incomplete result. If the file is appropriate for ordinary tracked text, deliberately convert it out of LFS tracking, then review, stage, and rescan. In committed base mode, that conversion must be committed. An intentional repository policy can instead exclude the path from the affected checks with `pathExclusions`; an exclusion suppresses those checks and does not validate the object.
 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
 
@@ -65,7 +74,7 @@ A target-only score above `max` and a staged score that crosses `max` are blocki
 
 ### Prettier settings
 
-Formatting comparisons have a two-second limit per file. If a comparison takes longer, Zedbee reports `FORMATTING_DIFF_TIMEOUT` and marks the check incomplete. It does not guess which staged lines changed or treat the file as passing. Run `zedbee fix formatting`, review and stage the formatting changes, then scan again.
+Formatting comparisons have a two-second limit per file. If a comparison takes longer, Zedbee reports `FORMATTING_DIFF_TIMEOUT` and marks the check incomplete. It does not guess which staged lines changed or treat the file as passing. Format the affected file with Prettier directly or manually, using the intended formatting settings, then review, stage, and scan again. A persistently incomplete formatting check cannot produce a managed `zedbee fix formatting` action.
 
 The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
 

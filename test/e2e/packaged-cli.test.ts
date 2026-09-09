@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { getCurrentTest } from "@vitest/runner";
 import { Ajv } from "ajv";
 import { execa } from "execa";
@@ -60,7 +60,7 @@ beforeAll(async () => {
   const hookSignal = new AbortController().signal;
   [packDirectory, temporaryReportRoot] = await Promise.all([
     mkdtemp(join(tmpdir(), "zedbee-pack-")),
-    mkdtemp(join(tmpdir(), "zedbee-pack-reports-")),
+    mkdtemp(join(tmpdir(), "zr-")),
   ]);
   temporaryReportRoot = await realpath(temporaryReportRoot);
   const shared = sharedPackedTarball();
@@ -139,6 +139,30 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (installedNodeModules !== undefined) {
+    const stopped = await execa(
+      process.execPath,
+      [
+        join(installedNodeModules, "zedbee", "dist", "cli.js"),
+        "service",
+        "stop",
+        "--format",
+        "json",
+      ],
+      {
+        env: {
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+          NODE_OPTIONS: "",
+          NODE_PATH: "",
+        },
+        reject: false,
+        stdin: "ignore",
+      },
+    );
+    expect(stopped.exitCode, stopped.stderr).toBe(0);
+  }
   await Promise.all([
     rm(packDirectory, { recursive: true, force: true }),
     rm(temporaryReportRoot, { recursive: true, force: true }),
@@ -175,6 +199,8 @@ async function runZedbee(
     {
       cwd: repositoryRoot,
       env: {
+        NODE_OPTIONS: undefined,
+        NODE_PATH: undefined,
         TMPDIR: temporaryReportRoot,
         TMP: temporaryReportRoot,
         TEMP: temporaryReportRoot,
@@ -199,6 +225,8 @@ async function runPackagedCli(
     {
       cwd: repositoryRoot,
       env: {
+        NODE_OPTIONS: undefined,
+        NODE_PATH: undefined,
         TMPDIR: temporaryReportRoot,
         TMP: temporaryReportRoot,
         TEMP: temporaryReportRoot,
@@ -240,6 +268,170 @@ async function temporaryJsonReports(
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("runs captured Knip from the installed package through the default service on repeat scans", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: Object.fromEntries(
+          [
+            "formatting",
+            "lint",
+            "types",
+            "cyclomaticComplexity",
+            "readabilityComplexity",
+            "structuralSecurity",
+            "secrets",
+            "duplication",
+            "dependencyArchitecture",
+            "deadCode",
+            "reactCorrectness",
+            "reactAccessibility",
+            "vulnerabilities",
+          ].map((id) => [id, id === "deadCode" ? "error" : "off"]),
+        ),
+      }),
+    );
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "knip-packaged-fixture",
+        private: true,
+        main: "src/index.ts",
+      }),
+    );
+    await repository.write(
+      "src/index.ts",
+      'import { used } from "./lib.js";\nconsole.log(used);\n',
+    );
+    await repository.write("src/lib.ts", "export const used = 1;\n");
+    await repository.commitAll("captured Knip baseline");
+    await repository.write(
+      "src/lib.ts",
+      "export const used = 1;\nexport const unused = 2;\n",
+    );
+    await repository.git(["add", "--", "src/lib.ts"]);
+    const findings = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await runZedbee(repository.root);
+      expect(result.exitCode, result.stderr || result.stdout).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        checks: Array<{
+          checkId: string;
+          findings: Array<{ location?: { file: string } }>;
+        }>;
+      };
+      const knip = report.checks.find(({ checkId }) => checkId === "deadCode");
+      expect(knip?.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            location: expect.objectContaining({ file: "src/lib.ts" }),
+          }),
+        ]),
+      );
+      findings.push(knip!.findings);
+    }
+    expect(findings[1]).toEqual(findings[0]);
+    for (const entry of [
+      "knip-worker.js",
+      "executor.js",
+      "resolver.wasm",
+      "resolver.LICENSE",
+      "resolver.provenance.json",
+    ]) {
+      expect(tarballFiles).toContain(`dist/checks/dead-code/${entry}`);
+    }
+    // Reused processes must not keep this short-lived caller directory as cwd.
+    // The first session only loaded Knip; typed lint initializes after removal.
+    await rm(repository.root, { recursive: true, force: true });
+    const nextRepository = await createInstalledRepository();
+    await nextRepository.write("value.ts", "export const value = 1;\n");
+    await nextRepository.git(["add", "--", "value.ts"]);
+    const next = await runZedbee(nextRepository.root);
+    expect(next.exitCode, `${next.stderr}\n${next.stdout}`).toBe(0);
+    expect(JSON.parse(next.stdout).checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkId: "lint", status: "completed" }),
+      ]),
+    );
+  });
+
+  it("ships runnable analyzer entries and every engine adapter outside the source repository", async () => {
+    for (const entry of ["worker", "supervisor", "bootstrap", "windows-job"]) {
+      expect(tarballFiles).toContain(`dist/checks/runner/${entry}.js`);
+    }
+    const installedRoot = await realpath(join(installedNodeModules, "zedbee"));
+    expect(relative(packageRoot, installedRoot)).toMatch(/^\.\./u);
+    await expect(lstat(join(installedRoot, "src"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(
+      lstat(join(installedNodeModules, "tsx")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    // The path comes from the installed package, never a source-tree import.
+    const registry = pathToFileURL(
+      join(installedRoot, "dist/checks/runner/registry.js"),
+    );
+    const result = await execa(
+      process.execPath,
+      [
+        "--input-type=module",
+        "--eval",
+        `
+      const { loadAnalyzerAdapter } = await import(${JSON.stringify(registry.href)});
+      const ids = ["formatting", "lint", "types", "cyclomaticComplexity", "readabilityComplexity", "structuralSecurity", "secrets", "duplication", "dependencyArchitecture", "deadCode", "reactCorrectness", "reactAccessibility", "vulnerabilities"];
+      console.log(JSON.stringify(await Promise.all(ids.map(async id => (await loadAnalyzerAdapter(id)).id))));
+    `,
+      ],
+      {
+        cwd: packDirectory,
+        env: { NODE_OPTIONS: undefined, NODE_PATH: undefined },
+      },
+    );
+    expect(JSON.parse(result.stdout)).toEqual([
+      "formatting",
+      "lint",
+      "types",
+      "cyclomaticComplexity",
+      "readabilityComplexity",
+      "structuralSecurity",
+      "secrets",
+      "duplication",
+      "dependencyArchitecture",
+      "deadCode",
+      "reactCorrectness",
+      "reactAccessibility",
+      "vulnerabilities",
+    ]);
+    expect(result.stderr).toBe("");
+  });
+
+  it("provides installed help and safe scan diagnostics without a runtime TypeScript loader", async () => {
+    const repository = await createInstalledRepository();
+    const help = await runPackagedCli(repository.root, ["scan", "--help"]);
+    expect(help.exitCode, help.stderr).toBe(0);
+    expect(help.stdout).toContain("--diagnostics");
+    expect(help.stdout).toContain("--no-service");
+    const sourceMarker = "privateInstalledWorkerSourceMarker";
+    await repository.write(
+      "value.ts",
+      `export const ${sourceMarker}={answer:42}\n`,
+    );
+    await repository.git(["add", "--", "value.ts"]);
+    const result = await runZedbee(repository.root, "json", ["--diagnostics"]);
+    expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      outcome: "blocked",
+      exitCode: 1,
+    });
+    expect(result.stderr).toContain("ZEDBEE DIAGNOSTICS");
+    expect(result.stderr).not.toContain(sourceMarker);
+    expect(result.stderr).not.toContain(repository.root);
+    expect(result.stderr).not.toContain(packageRoot);
+  });
+
   it("ships the public managed-fix guide without private planning artifacts", () => {
     expect(tarballFiles).toContain("docs/managed-fixes.md");
     expect(tarballFiles).not.toEqual(
@@ -597,9 +789,55 @@ describe("packaged Zedbee CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Usage: zedbee");
-    for (const command of ["init", "scan", "checks", "doctor"]) {
+    for (const command of [
+      "init",
+      "scan",
+      "fix",
+      "checks",
+      "doctor",
+      "service",
+    ]) {
       expect(result.stdout).toContain(command);
     }
+  });
+
+  it("runs the experimental reusable API outside the source tree and exits after close", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write("value.ts", "export const value = 1;\n");
+    await repository.git(["add", "--", "value.ts"]);
+    const result = await execa(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        `
+      import { createLocalAnalyzerExecutor, runScan } from "zedbee";
+      const executor = createLocalAnalyzerExecutor({ concurrency: 1 });
+      try {
+        const report = await runScan({ repositoryRoot: process.cwd(), executor, cache: false });
+        console.log(JSON.stringify({ outcome: report.outcome, incomplete: report.summary.incomplete }));
+      } finally { await executor.close(); }
+    `,
+      ],
+      {
+        cwd: repository.root,
+        env: {
+          NODE_OPTIONS: "",
+          NODE_PATH: "",
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+        },
+        reject: false,
+        stdin: "ignore",
+        ...cancellationOptions(),
+      },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      outcome: "pass",
+      incomplete: 0,
+    });
   });
 
   it("ships customization schema and effective check metadata", async () => {

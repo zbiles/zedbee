@@ -1,8 +1,13 @@
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import type { IncompleteDisposition } from "../core/types.js";
+import {
+  sanitizeAnalyzerDiagnostic,
+  type AnalyzerDiagnostic,
+} from "./diagnostics.js";
 
 export interface CheckIncompleteErrorOptions {
+  readonly diagnostic?: AnalyzerDiagnostic;
   readonly code: string;
   readonly message: string;
   readonly remediation: string;
@@ -15,6 +20,7 @@ export interface CheckIncompleteErrorOptions {
 
 /** A deliberately small, display-safe boundary for expected incomplete checks. */
 export class CheckIncompleteError extends Error {
+  readonly diagnostic?: AnalyzerDiagnostic;
   readonly code: string;
   readonly remediation: string;
   readonly path?: string;
@@ -29,6 +35,8 @@ export class CheckIncompleteError extends Error {
     });
     super(message);
     this.name = "CheckIncompleteError";
+    if (options.diagnostic !== undefined)
+      this.diagnostic = sanitizeAnalyzerDiagnostic(options.diagnostic);
     this.code = displayLabel(options.code, "incomplete error code");
     this.remediation = displayProse(
       options.remediation,

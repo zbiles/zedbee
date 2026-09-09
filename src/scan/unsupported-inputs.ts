@@ -82,8 +82,8 @@ function failureForDecision(
           : "Zedbee cannot inspect a staged Git LFS pointer.",
         path: decision.path,
         remediation: committed
-          ? "Validate the referenced Git LFS object separately or commit analyzable text at this path, then rerun the scan."
-          : "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
+          ? "Validate the referenced Git LFS object separately. To scan this path with Zedbee, deliberately convert an appropriate text file to ordinary Git tracking, review and commit it, then rerun the scan."
+          : "Staging a file tracked by Git LFS creates another pointer. Validate the referenced object separately. To scan this path with Zedbee, deliberately convert an appropriate text file to ordinary Git tracking, then review, stage, and scan again.",
       };
     case "submodule":
       return {

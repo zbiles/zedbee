@@ -18,6 +18,7 @@ import type {
   CheckRunContext,
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import { createObservationCacheEngineIdentityResolver } from "../../src/checks/engine-identity.js";
 import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import type { CheckId, ResolvedConfig } from "../../src/config/schema.js";
@@ -88,14 +89,14 @@ function contextFor(
     baselineInspection: inspection,
     targetInspection: inspection,
     target: { id: ".", kind: "repository", relativeRoot: "." },
-    policy: config.checks.lint,
+    policy: config.checks.cyclomaticComplexity,
     policyForFile: testFilePolicyResolver(config),
     signal: new AbortController().signal,
   };
 }
 
 const adapter = {
-  id: "lint",
+  id: "cyclomaticComplexity",
   output: "observations",
   inspect: async () => ({
     applies: true as const,
@@ -104,7 +105,7 @@ const adapter = {
     targets: [{ id: ".", kind: "repository" as const, relativeRoot: "." }],
   }),
   collect: async (context) => ({
-    checkId: "lint",
+    checkId: "cyclomaticComplexity",
     target: context.target,
     baselineObservations: [],
     targetObservations: [],
@@ -148,6 +149,79 @@ function behavior(
 }
 
 describe("observation cache keys", () => {
+  it("changes the dead-code cache identity after its WASI helper changes", () => {
+    let helperVersion = "0.10.3";
+    const identity = createObservationCacheEngineIdentityResolver((name) =>
+      name === "@tybys/wasm-util" ? helperVersion : "1.0.0",
+    );
+    const before = identity("deadCode");
+    helperVersion = "0.10.4";
+    expect(identity("deadCode")).not.toBe(before);
+  });
+
+  it.each([
+    {
+      checkId: "cyclomaticComplexity",
+      legacyIdentity:
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v1",
+    },
+    {
+      checkId: "readabilityComplexity",
+      legacyIdentity:
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v1",
+    },
+  ] as const)(
+    "misses a completed $checkId entry from the obsolete engine revision",
+    async ({ checkId, legacyIdentity }) => {
+      const fixture = await createInspectionFixture();
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+      const values = new Map<string, CheckObservationSet>();
+      const cache: ObservationCache = {
+        get: async (key) => values.get(key),
+        set: async (key, value) => {
+          values.set(key, value);
+        },
+      };
+      const context = contextFor(fixture.root, "^19.0.0");
+      let collections = 0;
+      const countingAdapter: CheckAdapter = {
+        ...adapter,
+        id: checkId,
+        collect: async (run) => {
+          collections += 1;
+          return {
+            checkId,
+            target: run.target,
+            baselineObservations: [],
+            targetObservations: [],
+          };
+        },
+      };
+
+      await dispatchChecks([countingAdapter], context, {
+        cache,
+        cacheEngineIdentity: () => legacyIdentity,
+      });
+      const versions = new Map([
+        ["eslint", "101.2.3"],
+        ["typescript-eslint", "102.3.4"],
+        ["typescript", "103.4.5"],
+      ]);
+      const currentIdentity = createObservationCacheEngineIdentityResolver(
+        (name) => versions.get(name),
+      )(checkId);
+      if (currentIdentity === undefined) {
+        throw new Error("Expected a current complexity engine identity");
+      }
+      await dispatchChecks([countingAdapter], context, {
+        cache,
+        cacheEngineIdentity: () => currentIdentity,
+      });
+
+      expect(collections).toBe(2);
+    },
+  );
+
   it("does not reuse cached duplication paths from basename normalization", async () => {
     const [fixture, cacheFixture] = await Promise.all([
       createInspectionFixture(),
@@ -248,8 +322,8 @@ describe("observation cache keys", () => {
     const config = resolveConfig({
       schemaVersion: 1,
       checks: {
-        lint: { severity: "error" },
         cyclomaticComplexity: { severity: "error" },
+        readabilityComplexity: { severity: "error" },
       },
     });
     const context = contextFor(
@@ -274,19 +348,21 @@ describe("observation cache keys", () => {
       },
       targetInspection: { ...context.targetInspection, workspaces },
     };
-    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
-      ...adapterFor(id),
-      inspect: async () => ({
-        applies: true as const,
-        executionClass: "lightweight" as const,
-        requiresBaseline: false,
-        targets: roots.map((root) => ({
-          id: root,
-          kind: "workspace" as const,
-          relativeRoot: root,
-        })),
+    const checks = ["cyclomaticComplexity", "readabilityComplexity"].map(
+      (id) => ({
+        ...adapterFor(id),
+        inspect: async () => ({
+          applies: true as const,
+          executionClass: "lightweight" as const,
+          requiresBaseline: false,
+          targets: roots.map((root) => ({
+            id: root,
+            kind: "workspace" as const,
+            relativeRoot: root,
+          })),
+        }),
       }),
-    }));
+    );
     const keys: string[] = [];
     const streamReads = vi.mocked(fs.createReadStream);
     const inventories = vi.mocked(fsPromises.readdir);
@@ -438,24 +514,26 @@ describe("observation cache keys", () => {
     await fixture.symlink(join(outside.root, "private.txt"), "escape.txt");
     const keys: string[] = [];
     const collected: string[] = [];
-    const checks = ["lint", "cyclomaticComplexity"].map((id) => ({
-      ...adapter,
-      id,
-      collect: async (context: CheckRunContext) => {
-        collected.push(id);
-        return {
-          checkId: id,
-          target: context.target,
-          baselineObservations: [],
-          targetObservations: [],
-        };
-      },
-    }));
+    const checks = ["cyclomaticComplexity", "readabilityComplexity"].map(
+      (id) => ({
+        ...adapter,
+        id,
+        collect: async (context: CheckRunContext) => {
+          collected.push(id);
+          return {
+            checkId: id,
+            target: context.target,
+            baselineObservations: [],
+            targetObservations: [],
+          };
+        },
+      }),
+    );
     const config = resolveConfig({
       schemaVersion: 1,
       checks: {
-        lint: { severity: "error" },
         cyclomaticComplexity: { severity: "error" },
+        readabilityComplexity: { severity: "error" },
       },
     });
     const inputs = contextFor(fixture.root, "^19.0.0", config);
@@ -473,7 +551,10 @@ describe("observation cache keys", () => {
       "completed",
       "completed",
     ]);
-    expect(collected.sort()).toEqual(["cyclomaticComplexity", "lint"]);
+    expect(collected.sort()).toEqual([
+      "cyclomaticComplexity",
+      "readabilityComplexity",
+    ]);
     expect(keys).toHaveLength(0);
     expect(streamReads).not.toHaveBeenCalled();
     await fsPromises.rm(join(fixture.root, "escape.txt"));
@@ -491,9 +572,14 @@ describe("observation cache keys", () => {
     await baseline.symlink("value.txt", "alias.txt");
     await target.symlink("value.txt", "alias.txt");
     const input = {
-      checkId: "lint",
+      checkId: "cyclomaticComplexity",
       engineIdentity: "test-engine-v1",
-      policy: { severity: "error" as const, when: "relevant" as const },
+      policy: {
+        severity: "error" as const,
+        when: "relevant" as const,
+        max: 20,
+        blockWorsening: true,
+      },
       checkTarget: {
         id: ".",
         kind: "repository" as const,
@@ -504,9 +590,7 @@ describe("observation cache keys", () => {
       mode: "index" as const,
       baseline: "HEAD" as const,
       target: "index" as const,
-      relevantConfig: {
-        rules: { second: ["warn", { allow: ["a", "b"] }], first: "error" },
-      },
+      relevantConfig: { max: 20, blockWorsening: true },
       nodeVersion: "24.0.0",
       platform: "linux",
       arch: "x64",
@@ -514,7 +598,7 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
+      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
@@ -522,7 +606,7 @@ describe("observation cache keys", () => {
       { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "b4d13693b5d806a8cb1bb6dfdb383961c09089fcebac2fc4fb2bb9322dbb4cf9",
+      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);
@@ -534,9 +618,13 @@ describe("observation cache keys", () => {
     );
   });
 
-  it("versions multi-project typed lint in the engine identity", () => {
+  it("identifies captured lint, types, and Knip engines", () => {
     expect(observationCacheEngineIdentity("lint")).toContain(
-      "zedbee-multi-project-v1",
+      "typescript-eslint@",
+    );
+    expect(observationCacheEngineIdentity("types")).toContain("typescript@");
+    expect(observationCacheEngineIdentity("deadCode")).toContain(
+      "knip-snapshot-wasi-11.24.2",
     );
   });
 
@@ -552,12 +640,20 @@ describe("observation cache keys", () => {
       set: async () => undefined,
     };
 
-    await dispatchChecks([adapter], contextFor(fixture.root, "^18.2.0"), {
-      cache,
-    });
-    await dispatchChecks([adapter], contextFor(fixture.root, "^19.0.0"), {
-      cache,
-    });
+    await dispatchChecks(
+      [adapterFor("reactCorrectness")],
+      contextFor(fixture.root, "^18.2.0"),
+      {
+        cache,
+      },
+    );
+    await dispatchChecks(
+      [adapterFor("reactCorrectness")],
+      contextFor(fixture.root, "^19.0.0"),
+      {
+        cache,
+      },
+    );
 
     expect(keys).toHaveLength(2);
     expect(keys[0]).not.toBe(keys[1]);
@@ -593,24 +689,6 @@ describe("observation cache keys", () => {
       return keys;
     };
 
-    const lintBase = resolveConfig({
-      schemaVersion: 1,
-      checks: {
-        lint: { severity: "error", rules: { "no-console": "warn" } },
-      },
-    });
-    const lintOverride = resolveConfig({
-      schemaVersion: 1,
-      checks: {
-        lint: { severity: "error", rules: { "no-console": "warn" } },
-      },
-      overrides: [
-        {
-          files: ["src/ignored.TS"],
-          checks: { lint: { rules: { "no-console": "error" } } },
-        },
-      ],
-    });
     const reactBase = resolveConfig({
       schemaVersion: 1,
       checks: {
@@ -652,7 +730,6 @@ describe("observation cache keys", () => {
       ],
     });
 
-    const lintKeys = await keyPair("lint", lintBase, lintOverride);
     const reactKeys = await keyPair(
       "reactCorrectness",
       reactBase,
@@ -664,8 +741,6 @@ describe("observation cache keys", () => {
       complexityOverride,
     );
 
-    expect(lintKeys).toHaveLength(2);
-    expect(lintKeys[0]).toBe(lintKeys[1]);
     expect(reactKeys).toHaveLength(2);
     expect(reactKeys[0]).not.toBe(reactKeys[1]);
     expect(complexityKeys).toHaveLength(2);

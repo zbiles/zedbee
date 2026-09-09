@@ -1,6 +1,17 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
 import { applyFixPlan } from "../fixes/apply-plan.js";
+import { createCommandExecutor } from "./executor.js";
+import type { AnalyzerExecutor } from "../checks/runner/executor.js";
+import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
+import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
+import {
+  writeCommandDiagnostics,
+  SNAPSHOT_CLEANUP_WARNING,
+  type DiagnosticEntry,
+  timeCommandStage,
+  type DiagnosticTimings,
+} from "./diagnostics.js";
 import { presentFixResult } from "../fixes/result-presentation.js";
 import {
   FIXABLE_CHECK_IDS,
@@ -28,6 +39,8 @@ const COMPACT_DETAIL_LIMIT = 25;
 const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
 
 export interface FixCommandOptions {
+  readonly service?: boolean;
+  readonly executor?: AnalyzerExecutor;
   readonly cwd: string;
   readonly check?: FixableCheckId;
   readonly yes: boolean;
@@ -36,6 +49,7 @@ export interface FixCommandOptions {
   readonly color: boolean;
   readonly animations: boolean;
   readonly signal?: AbortSignal;
+  readonly diagnostics?: boolean;
 }
 
 export interface FixCommandIO {
@@ -61,7 +75,13 @@ export interface FixCommandDependencies {
   buildFixPlan(
     options: Parameters<typeof buildFixPlan>[0],
   ): Promise<PreparedFixPlan>;
-  applyFixPlan(plan: PreparedFixPlan): Promise<FixResult>;
+  applyFixPlan(
+    plan: PreparedFixPlan,
+    options?: {
+      readonly signal?: AbortSignal;
+      readonly executor?: AnalyzerExecutor;
+    },
+  ): Promise<FixResult>;
   /** Injected by the interactive UI task; the command remains safe until then. */
   confirm(plan: FixPlan, options: FixPromptOptions): Promise<boolean>;
   renderResultDashboard?(
@@ -258,6 +278,9 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
             fixes: check.fixes,
             issues: check.issues.map((issue) => ({
               code: issue.code,
+              ...(issue.diagnostic === undefined
+                ? {}
+                : { diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic) }),
               message: issue.message,
               ...(issue.path === undefined ? {} : { path: issue.path }),
               ...(issue.remediation === undefined
@@ -308,6 +331,9 @@ function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
             unchangedFiles: [...result.unchangedFiles],
             issues: result.issues.map((issue) => ({
               kind: issue.kind,
+              ...(issue.diagnostic === undefined
+                ? {}
+                : { diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic) }),
               file: issue.file,
               checkIds: [...issue.checkIds],
               message: issue.message,
@@ -468,10 +494,17 @@ export async function executeFixCommand(
   io: FixCommandIO,
   dependencies: FixCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 1 | 2> {
+  const started = performance.now();
+  const stages: DiagnosticTimings = {};
+  const diagnosticEntries: DiagnosticEntry[] = [];
+  let cleanupFailed = false;
+  const executor = options.executor ?? createCommandExecutor(options.service);
+  const closeExecutor = () =>
+    options.executor === undefined ? executor.close() : Promise.resolve();
   try {
     options.signal?.throwIfAborted();
-    const repositoryRoot = await dependencies.resolveRepositoryRoot(
-      options.cwd,
+    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
+      dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -483,18 +516,22 @@ export async function executeFixCommand(
       );
       return 2;
     }
-    const prepared = await dependencies.buildFixPlan({
-      repositoryRoot,
-      selectedChecks:
-        options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
-      ...(configPath === undefined ? {} : { configPath }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
+    const prepared = await timeCommandStage(stages, "analysis", () =>
+      dependencies.buildFixPlan({
+        executor,
+        repositoryRoot,
+        selectedChecks:
+          options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
+        ...(configPath === undefined ? {} : { configPath }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
+    );
     const format = formatFor(options);
-    const maintenance = await maintainPlan(
-      prepared,
-      dependencies.store,
-      format === "text",
+    diagnosticEntries.push(
+      ...(prepared.publicPlan.checks ?? []).flatMap((check) => check.issues),
+    );
+    const maintenance = await timeCommandStage(stages, "report", () =>
+      maintainPlan(prepared, dependencies.store, format === "text"),
     );
     const outputPlan = (applied: boolean, result?: FixResult): void => {
       if (format === "json") {
@@ -513,6 +550,7 @@ export async function executeFixCommand(
     };
 
     if (prepared.publicPlan.exitCode === 2) {
+      await closeExecutor();
       outputPlan(false);
       io.writeStderr(renderWarnings(maintenance.warnings));
       return 2;
@@ -532,6 +570,7 @@ export async function executeFixCommand(
           : { reportPath: maintenance.reportPath }),
       });
       if (!confirmed) {
+        await closeExecutor();
         outputPlan(false);
         io.writeStdout(
           applicableFixesAvailable
@@ -544,6 +583,7 @@ export async function executeFixCommand(
     }
 
     if (!confirmed) {
+      await closeExecutor();
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(
@@ -557,6 +597,7 @@ export async function executeFixCommand(
     }
 
     if (!applicableFixesAvailable) {
+      await closeExecutor();
       outputPlan(false);
       if (format === "text") {
         io.writeStdout(
@@ -568,7 +609,14 @@ export async function executeFixCommand(
     }
 
     options.signal?.throwIfAborted();
-    const result = await dependencies.applyFixPlan(prepared);
+    const result = await timeCommandStage(stages, "apply", () =>
+      dependencies.applyFixPlan(prepared, {
+        executor,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      }),
+    );
+    diagnosticEntries.push(...result.issues);
+    await closeExecutor();
     if (format === "json") {
       outputPlan(true, result);
     } else if (
@@ -607,12 +655,31 @@ export async function executeFixCommand(
     }
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
-  } catch {
+  } catch (error) {
+    cleanupFailed = hasAnalysisCleanupFailure(error);
+    if (cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
     if (options.signal?.aborted === true) {
       io.writeStderr("Zedbee fix was interrupted.\n");
     } else {
       io.writeStderr("Zedbee could not complete the managed fix.\n");
     }
     return 2;
+  } finally {
+    try {
+      await closeExecutor();
+    } catch {
+      if (!cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+      cleanupFailed = true;
+    }
+    if (options.diagnostics)
+      writeCommandDiagnostics(io, {
+        command: "fix",
+        durationMs: performance.now() - started,
+        stages,
+        entries: diagnosticEntries,
+        cancelled: options.signal?.aborted === true,
+        cleanupFailed,
+      });
+    if (cleanupFailed) return 2;
   }
 }

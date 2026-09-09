@@ -39,9 +39,28 @@ import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import {
   DEFAULT_CHECK_ADAPTERS,
-  runScan,
+  runScan as runScanProduct,
   type RunScanDependencies,
 } from "../../src/scan/run-scan.js";
+import { createLocalAnalyzerExecutor } from "../../src/checks/runner/executor.js";
+
+// These reporting/preparation fixtures inject synthetic snapshot paths. Their
+// execution boundary deliberately skips source capture; real source epochs and
+// executor ownership are covered by analysis-session and API lifecycle tests.
+async function runScan(options: Parameters<typeof runScanProduct>[0]) {
+  const executor = createLocalAnalyzerExecutor();
+  try {
+    return await runScanProduct({
+      ...options,
+      executor: {
+        openSession: () => executor.openSession(),
+        close: () => executor.close(),
+      },
+    });
+  } finally {
+    await executor.close();
+  }
+}
 import type { ScanEvent } from "../../src/checks/events.js";
 import { prepareTerminalPresentation } from "../../src/reporting/presentation.js";
 import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
@@ -2176,8 +2195,6 @@ describe("runScan", () => {
           code: "GIT_LFS_POINTER",
           message: "Zedbee cannot inspect a staged Git LFS pointer.",
           path: "assets/large.dat",
-          remediation:
-            "Materialize the Git LFS object for this path, stage it again, and rerun the scan.",
         },
       },
     ]);

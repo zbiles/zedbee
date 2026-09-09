@@ -19,6 +19,10 @@ import { hasZedbeeScanCommand } from "../hooks/husky.js";
 import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
+import {
+  isSupportedNodeVersion,
+  NODE_ENGINE_RANGE,
+} from "../runtime/node-support.js";
 
 export const DOCTOR_DIAGNOSTIC_IDS = [
   "git",
@@ -182,17 +186,6 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
   };
 }
 
-function nodeSupported(version: string): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)/u.exec(version);
-  if (match === null) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  return (
-    major > 22 || (major === 22 && (minor > 13 || (minor === 13 && patch >= 0)))
-  );
-}
-
 async function withSnapshots<T>(
   cwd: string,
   operation: (targetDir: string) => Promise<T>,
@@ -223,12 +216,14 @@ async function inventoryIsValid(): Promise<boolean> {
 
 export interface DefaultDiagnosticDependencies {
   readonly lintSource: typeof lintSource;
+  readonly nodeVersion: string;
   readonly parseLockfileInventory: typeof parseLockfileInventory;
   readonly osvClient: OsvClient;
 }
 
 const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
   lintSource,
+  nodeVersion: process.versions.node,
   parseLockfileInventory,
   osvClient: createOsvClient({ timeoutMs: 5_000, retries: 0 }),
 };
@@ -279,17 +274,17 @@ export function createDefaultDiagnosticProbe(
         };
       }
       case "node":
-        return nodeSupported(process.versions.node)
+        return isSupportedNodeVersion(dependencies.nodeVersion)
           ? {
               id,
               status: "pass",
-              message: "Node.js satisfies the 22.13.0 minimum.",
+              message: `Node.js satisfies ${NODE_ENGINE_RANGE}.`,
             }
           : {
               id,
               status: "fail",
-              message: "Node.js is below the 22.13.0 minimum.",
-              remediation: "Install Node.js 22.13.0 or newer.",
+              message: `Node.js does not satisfy ${NODE_ENGINE_RANGE}.`,
+              remediation: `Install a Node.js version matching ${NODE_ENGINE_RANGE}.`,
             };
       case "snapshot-creation":
         await withSnapshots(context.cwd, async () => undefined);

@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { lstat, readFile, readdir } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import * as prettier from "prettier";
@@ -14,6 +15,10 @@ import { compareCodeUnits } from "../../core/compare.js";
 import { incompleteResult } from "../incomplete-result.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { planPrettierFixes } from "../../fixes/prettier-provider.js";
+import {
+  capturedSourceInput,
+  capturedSourcePaths,
+} from "../../inspection/source-capture.js";
 import { prettierOptions } from "./settings.js";
 import {
   isSupportedPrettierPath,
@@ -99,33 +104,34 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
     return planPrettierFixes(context, findings);
   },
 
-  async inspect(context) {
-    if (context.config.checks.formatting.when === "always") {
-      return {
-        applies: true,
-        executionClass: "lightweight",
-        requiresBaseline: false,
-        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-      };
-    }
-    const applies = [...context.changeSet.files.values()].some(
-      (file) => file.status !== "deleted" && isSupportedPrettierPath(file.path),
-    );
-    return applies
-      ? {
-          applies: true,
-          executionClass: "lightweight",
-          requiresBaseline: false,
-          targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-        }
-      : { applies: false, reason: "No supported staged files" };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("formatting", context),
 
   async runLegacy(context) {
     let files =
       context.config.checks.formatting.when === "always"
         ? await allSupportedFiles(context.snapshots.targetDir)
         : relevantFiles(context);
+    if (context.config.checks.formatting.when === "always") {
+      // The selected view augments, never replaces, the complete live inventory.
+      files = [
+        ...new Set([
+          ...files,
+          ...capturedSourcePaths(context.snapshots.targetDir),
+        ]),
+      ]
+        .filter((file) => {
+          const captured = capturedSourceInput(
+            context.snapshots.targetDir,
+            file,
+          );
+          return (
+            isSupportedPrettierPath(file) &&
+            (captured === undefined || captured.entry?.kind === "file")
+          );
+        })
+        .sort(compareCodeUnits);
+    }
     const unsupported = new Set(
       context.snapshots.unsupportedEntries.map((entry) => entry.path),
     );
@@ -141,11 +147,20 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       }
       const targetPath = join(context.snapshots.targetDir, file);
       try {
-        const metadata = await lstat(targetPath);
-        if (!metadata.isFile()) {
-          continue;
+        const captured = capturedSourceInput(context.snapshots.targetDir, file);
+        let source: string;
+        if (captured !== undefined) {
+          if (captured.entry === undefined)
+            throw new Error("Missing captured formatting source.");
+          if (captured.entry.kind !== "file") continue;
+          if (captured.text === undefined)
+            throw new Error("Unreadable captured formatting source.");
+          source = captured.text;
+        } else {
+          const metadata = await lstat(targetPath);
+          if (!metadata.isFile()) continue;
+          source = await readFile(targetPath, "utf8");
         }
-        const source = await readFile(targetPath, "utf8");
         const parser = prettierParserFor(file);
         if (parser === undefined) {
           continue;

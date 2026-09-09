@@ -16,6 +16,7 @@ import type { ValidatedSnapshotPath } from "../git/snapshot-path.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { sanitizeAnalyzerDiagnostic } from "./diagnostics.js";
 
 const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
   "range-overlap",
@@ -113,6 +114,7 @@ export const PUBLIC_SOURCE_EXCERPT_FIELDS = {
 } as const satisfies Readonly<Record<keyof SourceExcerpt, true>>;
 
 export const PUBLIC_CHECK_ERROR_FIELDS = {
+  diagnostic: true,
   code: true,
   message: true,
   path: true,
@@ -260,6 +262,9 @@ function sanitizeError(
   }
   return {
     code: displayLabel(error.code, "error code"),
+    ...(error.diagnostic === undefined
+      ? {}
+      : { diagnostic: sanitizeAnalyzerDiagnostic(error.diagnostic) }),
     message: displayProse(error.message, "error message", {
       allowEmpty: true,
     }),

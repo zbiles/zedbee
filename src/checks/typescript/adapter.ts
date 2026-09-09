@@ -1,5 +1,7 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
+import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import type {
@@ -15,25 +17,10 @@ import type {
 import { createSnapshotProgram } from "./compiler-host.js";
 import { loadSnapshotProgramInput } from "./config.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
+import { CapturedDependencies } from "../../cache/captured-dependencies.js";
+import { captureAnalysisDependencies } from "./reuse-inputs.js";
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
-
-function ownsChangedSource(
-  workspace: WorkspaceInspection,
-  changedPaths: ReadonlySet<string>,
-): boolean {
-  return workspace.sourceFiles.some(
-    (path) => TYPESCRIPT_SOURCE.test(path) && changedPaths.has(path),
-  );
-}
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -49,6 +36,7 @@ async function collectSide(
   repositoryRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
+  dependencies: CapturedDependencies,
 ): Promise<readonly Observation[]> {
   const workspace = workspaceFor(inspection, target);
   if (
@@ -62,7 +50,7 @@ async function collectSide(
     repositoryRoot,
     workspace,
   );
-  const { programs } = createSnapshotProgram(input);
+  const { programs } = createSnapshotProgram({ ...input, dependencies });
   const observations = programs
     .flatMap((program) => ts.getPreEmitDiagnostics(program))
     .map((diagnostic) =>
@@ -87,53 +75,39 @@ export const typescriptAdapter: ObservationCheckAdapter = {
   id: "types",
   output: "observations",
 
-  async inspect(context) {
-    const changedPaths = new Set(
-      [...context.changeSet.files.values()]
-        .filter((file) => file.status !== "deleted")
-        .map((file) => file.path),
-    );
-    const workspaces = context.targetInspection.workspaces.filter(
-      (workspace) =>
-        workspace.sourceFiles.some((path) => TYPESCRIPT_SOURCE.test(path)) &&
-        (context.config.checks.types.when === "always" ||
-          ownsChangedSource(workspace, changedPaths)),
-    );
-    if (workspaces.length === 0) {
-      return {
-        applies: false,
-        reason: "No supported staged TypeScript source files",
-      };
-    }
-    return {
-      applies: true,
-      executionClass: "project-analysis",
-      requiresBaseline: true,
-      targets: workspaces.map(targetFor),
-    };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("types", context),
 
   async collect(context): Promise<CheckObservationSet> {
     try {
-      const [baselineObservations, targetObservations] = await Promise.all([
-        collectSide(
-          context.snapshots.baselineDir,
-          context.repositoryRoot,
-          context.baselineInspection,
-          context.target,
-        ),
-        collectSide(
-          context.snapshots.targetDir,
-          context.repositoryRoot,
-          context.targetInspection,
-          context.target,
-        ),
-      ]);
+      const dependencies = captureAnalysisDependencies(context);
+      const [baselineObservations, targetObservations] =
+        await settleSnapshotSides(
+          () =>
+            collectSide(
+              context.snapshots.baselineDir,
+              context.repositoryRoot,
+              context.baselineInspection,
+              context.target,
+              dependencies,
+            ),
+          () =>
+            collectSide(
+              context.snapshots.targetDir,
+              context.repositoryRoot,
+              context.targetInspection,
+              context.target,
+              dependencies,
+            ),
+          context.signal,
+        );
+      const dependencyInputs = dependencies.manifest();
       return {
         checkId: "types",
         target: context.target,
         baselineObservations,
         targetObservations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     } catch {
       throw new Error("TypeScript analysis failed.");

@@ -54,7 +54,9 @@ describe("public documentation claims", () => {
   it("keeps current coverage free of roadmap wording", async () => {
     const readme = await read("README.md");
     expect(readme).not.toMatch(/planned check|future managed check/i);
-    expect(readme).toContain("Node.js 22.13.0 or newer");
+    expect(readme).toContain(
+      "Node.js versions matching `^22.17.0 || >=24.2.0`",
+    );
   });
 
   it("documents selected-snapshot React version calibration", async () => {

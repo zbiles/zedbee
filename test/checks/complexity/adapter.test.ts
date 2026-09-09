@@ -144,6 +144,113 @@ async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
 }
 
 describe("collectComplexityObservations", () => {
+  it("attributes object-property arrow metrics to the arrow instead of the enclosing function", async () => {
+    const observations = await collectComplexityObservations(
+      "src/adapter.ts",
+      [
+        "export function makeAdapter() {",
+        "  return {",
+        "    inspect: () => (ready ? true : false),",
+        "    async collect() { return true; },",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    const metrics = observations
+      .filter(({ rule }) => rule === "cyclomatic-complexity")
+      .map(({ entity, metric }) => ({
+        name: entity?.name,
+        value: metric?.value,
+      }));
+    expect(metrics).toHaveLength(3);
+    expect(metrics).toEqual(
+      expect.arrayContaining([
+        { name: "makeAdapter", value: 1 },
+        { name: "inspect", value: 2 },
+        { name: "collect", value: 1 },
+      ]),
+    );
+  });
+
+  it("attributes computed object methods without duplicating the enclosing function metric", async () => {
+    const observations = await collectComplexityObservations(
+      "src/readonly-map.ts",
+      [
+        "export function readonlyMap() {",
+        "  return {",
+        "    [Symbol.iterator]() { return [][Symbol.iterator](); },",
+        "  };",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    expect(
+      observations
+        .filter(({ rule }) => rule === "cyclomatic-complexity")
+        .map(({ entity, metric }) => ({
+          name: entity?.name,
+          value: metric?.value,
+        })),
+    ).toEqual(
+      expect.arrayContaining([
+        { name: "readonlyMap", value: 1 },
+        { name: "Symbol.iterator", value: 1 },
+      ]),
+    );
+  });
+
+  it("retains real metrics for unresolved computed-property arrows", async () => {
+    const observations = await collectComplexityObservations(
+      "value.ts",
+      'const key = "run"; export const value = { [key]: () => ready ? 1 : 0 };',
+    );
+
+    expect(
+      observations
+        .filter(({ rule }) => rule === "cyclomatic-complexity")
+        .map(({ entity, identity, metric }) => ({
+          name: entity?.name,
+          identity,
+          value: metric?.value,
+        })),
+    ).toContainEqual({
+      name: "anonymous@1.1.0.1.0.1",
+      identity:
+        "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
+      value: 2,
+    });
+  });
+
+  it("attributes class-field initializer metrics to canonical field entities", async () => {
+    const observations = await collectComplexityObservations(
+      "src/stream.ts",
+      [
+        "export class BatchStream {",
+        "  private current: Buffer<ArrayBufferLike> = Buffer.alloc(0);",
+        "  private offset = 0;",
+        "  private ended = false;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+
+    expect(
+      observations
+        .filter(({ rule }) => rule === "cyclomatic-complexity")
+        .map(({ entity, metric }) => ({
+          name: entity?.name,
+          value: metric?.value,
+        })),
+    ).toEqual([
+      { name: "current", value: 1 },
+      { name: "offset", value: 1 },
+      { name: "ended", value: 1 },
+    ]);
+  });
+
   it("uses canonical member and nested-function entity identities for both metrics", async () => {
     const observations = await collectComplexityObservations(
       "src/owners.ts",

@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type * as ts from "typescript";
 import type { ESLint } from "eslint";
@@ -19,8 +20,11 @@ import { CheckIncompleteError } from "../incomplete-error.js";
 import { createManagedEslint } from "./load-engine.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
+import { CapturedDependencies } from "../../cache/captured-dependencies.js";
+import { captureAnalysisDependencies } from "../typescript/reuse-inputs.js";
 import { loadSnapshotProgramProjects } from "../typescript/config.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
+import { isAnalyzerWorker } from "../runner/context.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -63,21 +67,6 @@ function lintBatches(
   ]);
 }
 
-function sourceChanged(
-  workspace: WorkspaceInspection,
-  paths: ReadonlySet<string>,
-): boolean {
-  return workspace.sourceFiles.some((path) => paths.has(path));
-}
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
-
 function workspaceFor(
   inspection: RepositoryInspection,
   target: CheckTarget,
@@ -106,6 +95,7 @@ async function prepareSide(
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
+  dependencies?: CapturedDependencies,
 ): Promise<PreparedLintSide | undefined> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -148,7 +138,11 @@ async function prepareSide(
       workspace,
     );
     const programs = projects.flatMap(
-      ({ input }) => createSnapshotProgram(input).programs,
+      ({ input }) =>
+        createSnapshotProgram({
+          ...input,
+          ...(dependencies === undefined ? {} : { dependencies }),
+        }).programs,
     );
     const covered = new Set(
       programs.flatMap((program) =>
@@ -206,6 +200,7 @@ async function collectSide(
   policyForFile: FilePolicyResolver,
   engineFactory: LintEslintEngineFactory,
   signal: AbortSignal,
+  dependencies: CapturedDependencies,
 ): Promise<readonly Observation[]> {
   const prepared = await prepareSide(
     snapshotRoot,
@@ -215,6 +210,7 @@ async function collectSide(
     side,
     policyForFile,
     signal,
+    dependencies,
   );
   if (prepared === undefined) return Object.freeze([]);
   const observations: Observation[] = [];
@@ -289,28 +285,8 @@ export function createLintAdapter(
     id: "lint",
     output: "observations",
 
-    async inspect(context) {
-      const changedPaths = new Set(
-        [...context.changeSet.files.values()]
-          .filter((file) => file.status !== "deleted")
-          .map((file) => file.path),
-      );
-      const workspaces = context.targetInspection.workspaces.filter(
-        (workspace) =>
-          workspace.sourceFiles.length > 0 &&
-          (context.config.checks.lint.when === "always" ||
-            sourceChanged(workspace, changedPaths)),
-      );
-      if (workspaces.length === 0) {
-        return { applies: false, reason: "No supported staged source files" };
-      }
-      return {
-        applies: true,
-        executionClass: "project-analysis",
-        requiresBaseline: true,
-        targets: workspaces.map(targetFor),
-      };
-    },
+    inspect: (context: import("../adapter.js").InspectionContext) =>
+      inspectManagedCheck("lint", context),
 
     async planFixes(context, findings) {
       const prepared = await prepareSide(
@@ -369,35 +345,43 @@ export function createLintAdapter(
     },
 
     async collect(context): Promise<CheckObservationSet> {
+      const dependencies = captureAnalysisDependencies(context);
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
-          collectSide(
-            context.snapshots.baselineDir,
-            context.repositoryRoot,
-            context.baselineInspection,
-            context.target,
-            "baseline",
-            context.policyForFile,
-            engineFactory,
-            context.signal,
-          ),
-          collectSide(
-            context.snapshots.targetDir,
-            context.repositoryRoot,
-            context.targetInspection,
-            context.target,
-            "target",
-            context.policyForFile,
-            engineFactory,
-            context.signal,
-          ),
+          () =>
+            collectSide(
+              context.snapshots.baselineDir,
+              context.repositoryRoot,
+              context.baselineInspection,
+              context.target,
+              "baseline",
+              context.policyForFile,
+              engineFactory,
+              context.signal,
+              dependencies,
+            ),
+          () =>
+            collectSide(
+              context.snapshots.targetDir,
+              context.repositoryRoot,
+              context.targetInspection,
+              context.target,
+              "target",
+              context.policyForFile,
+              engineFactory,
+              context.signal,
+              dependencies,
+            ),
           context.signal,
+          isAnalyzerWorker(),
         );
+      const dependencyInputs = dependencies.manifest();
       return {
         checkId: "lint",
         target: context.target,
         baselineObservations,
         targetObservations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     },
   };

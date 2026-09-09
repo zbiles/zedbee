@@ -2,6 +2,8 @@ import js from "@eslint/js";
 import type { ESLint, Linter } from "eslint";
 import type * as ts from "typescript";
 import tseslint from "typescript-eslint";
+import { managedTypescriptPlugin } from "./comment-directive.js";
+import { reuseJavascriptParser, reuseTypescriptParser } from "./parse-store.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -9,6 +11,7 @@ import type {
 import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
 import type { CheckId } from "../../config/schema.js";
 import { compareCodeUnits } from "../../core/compare.js";
+import { markUnresettableAnalyzerState } from "../runner/session.js";
 import { readabilityComplexityRule } from "../complexity/readability-rule.js";
 import {
   managedReactAccessibilityConfig,
@@ -136,7 +139,7 @@ function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
     case "lint":
       return {
         files: SOURCE_FILES,
-        plugins: { "@typescript-eslint": tseslint.plugin },
+        plugins: { "@typescript-eslint": managedTypescriptPlugin },
       };
     case "react-correctness":
       if (options.reactVersion === undefined) {
@@ -173,6 +176,7 @@ export function managedConfig(
       languageOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
+        parser: reuseJavascriptParser,
         parserOptions: { ecmaFeatures: { jsx: true } },
       },
     },
@@ -181,7 +185,7 @@ export function managedConfig(
       languageOptions: {
         ecmaVersion: "latest",
         sourceType: "module",
-        parser: tseslint.parser,
+        parser: reuseTypescriptParser,
         parserOptions: { ecmaFeatures: { jsx: true } },
       },
     },
@@ -200,6 +204,7 @@ export function managedConfig(
           files: TYPESCRIPT_FILES,
           languageOptions: {
             ...presetConfig.languageOptions,
+            parser: reuseTypescriptParser,
             parserOptions: {
               ...(typeof parserOptions === "object" && parserOptions !== null
                 ? parserOptions
@@ -212,7 +217,12 @@ export function managedConfig(
             : { rules: { ...presetConfig.rules } }),
           ...(presetConfig.plugins === undefined
             ? {}
-            : { plugins: { ...presetConfig.plugins } }),
+            : {
+                plugins: {
+                  ...presetConfig.plugins,
+                  "@typescript-eslint": managedTypescriptPlugin,
+                },
+              }),
         });
       }
     } else if (options.typeInformation === "basic") {
@@ -221,12 +231,21 @@ export function managedConfig(
         config.push({
           ...presetConfig,
           files: TYPESCRIPT_FILES,
+          languageOptions: {
+            ...presetConfig.languageOptions,
+            parser: reuseTypescriptParser,
+          },
           ...(presetConfig.rules === undefined
             ? {}
             : { rules: { ...presetConfig.rules } }),
           ...(presetConfig.plugins === undefined
             ? {}
-            : { plugins: { ...presetConfig.plugins } }),
+            : {
+                plugins: {
+                  ...presetConfig.plugins,
+                  "@typescript-eslint": managedTypescriptPlugin,
+                },
+              }),
         });
       }
     }
@@ -265,6 +284,27 @@ export function managedConfig(
         rules: rules as Linter.RulesRecord,
       });
     }
+  }
+  if (options.mode === "react-correctness") {
+    const effective = Object.assign(
+      {},
+      ...config.map((entry) => entry.rules ?? {}),
+    ) as Linter.RulesRecord;
+    if (
+      Object.entries(effective).some(([name, setting]) => {
+        if (
+          !name.startsWith("react-hooks/") ||
+          [
+            "react-hooks/rules-of-hooks",
+            "react-hooks/exhaustive-deps",
+          ].includes(name)
+        )
+          return false;
+        const severity = Array.isArray(setting) ? setting[0] : setting;
+        return severity !== "off" && severity !== 0;
+      })
+    )
+      markUnresettableAnalyzerState();
   }
   return config;
 }

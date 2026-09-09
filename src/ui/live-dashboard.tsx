@@ -24,7 +24,19 @@ interface CheckState {
   id: string;
   status: LiveStatus;
   startedAt?: number;
-  result?: CheckResult;
+}
+
+export interface ScanProgress {
+  readonly states: Map<string, CheckState>;
+  readonly activity: { key: string; text: string; color: string }[];
+}
+
+export function createScanProgress(
+  events: readonly ScanEvent[] = [],
+): ScanProgress {
+  const progress: ScanProgress = { states: new Map(), activity: [] };
+  for (const event of events) updateScanProgress(progress, event);
+  return progress;
 }
 
 const SPINNER_FRAMES = [
@@ -55,37 +67,45 @@ function stateLabel(checkId: string, target: string): string {
   return target === "." ? humanCheck : `${humanCheck} · ${target}`;
 }
 
-function statesFrom(events: readonly ScanEvent[]): CheckState[] {
-  const states = new Map<string, CheckState>();
-  for (const event of events) {
-    if (
-      event.type === "network-disclosure" ||
-      event.type === "git-soft-timeout"
-    ) {
-      continue;
-    }
-    const key = `${event.checkId}\u0000${event.target}`;
-    const existing = states.get(key);
-    if (event.type === "check-queued") {
-      states.set(key, {
-        id: stateLabel(event.checkId, event.target),
-        status: "QUEUED",
-      });
-    } else if (event.type === "check-running") {
-      states.set(key, {
-        id: existing?.id ?? stateLabel(event.checkId, event.target),
-        status: "RUNNING",
-        startedAt: event.timestamp,
-      });
-    } else {
-      states.set(key, {
-        id: existing?.id ?? stateLabel(event.checkId, event.target),
-        status: resultStatus(event.result),
-        result: event.result,
-      });
-    }
+export function updateScanProgress(
+  progress: ScanProgress,
+  event: ScanEvent,
+): void {
+  const { states, activity } = progress;
+  const text = activityText(event);
+  if (text !== undefined) {
+    activity.push({
+      key: `${event.checkId}-${event.target}-${event.type}`,
+      text,
+      color: activityColor(event),
+    });
+    if (activity.length > 6) activity.shift();
   }
-  return [...states.values()];
+  if (
+    event.type === "network-disclosure" ||
+    event.type === "git-soft-timeout"
+  ) {
+    return;
+  }
+  const key = `${event.checkId}\u0000${event.target}`;
+  const existing = states.get(key);
+  if (event.type === "check-queued") {
+    states.set(key, {
+      id: stateLabel(event.checkId, event.target),
+      status: "QUEUED",
+    });
+  } else if (event.type === "check-running") {
+    states.set(key, {
+      id: existing?.id ?? stateLabel(event.checkId, event.target),
+      status: "RUNNING",
+      startedAt: event.timestamp,
+    });
+  } else {
+    states.set(key, {
+      id: existing?.id ?? stateLabel(event.checkId, event.target),
+      status: resultStatus(event.result),
+    });
+  }
 }
 
 function statusColor(status: LiveStatus): string {
@@ -331,21 +351,14 @@ function CheckPanel({
 }
 
 function ActivityPanel({
-  events,
+  activity,
   color,
   width,
 }: {
-  events: readonly ScanEvent[];
+  activity: ScanProgress["activity"];
   color: boolean;
   width: number;
 }) {
-  const activity = events
-    .map((event) => ({ event, text: activityText(event) }))
-    .filter(
-      (entry): entry is { event: ScanEvent; text: string } =>
-        entry.text !== undefined,
-    )
-    .slice(-6);
   return (
     <Box
       flexDirection="column"
@@ -366,9 +379,9 @@ function ActivityPanel({
         justifyContent="flex-end"
         paddingX={2}
       >
-        {activity.map(({ event, text }, index) => (
-          <Text key={`${event.checkId}-${event.target}-${event.type}-${index}`}>
-            <Text {...colorProp(color, activityColor(event))}>■</Text>
+        {activity.map(({ key, text, color: tone }, index) => (
+          <Text key={`${key}-${index}`}>
+            <Text {...colorProp(color, tone)}>■</Text>
             <Text {...colorProp(color, ZEDBEE_THEME.secondary)}> {text}</Text>
           </Text>
         ))}
@@ -471,21 +484,23 @@ function SummaryPanel({
 }
 
 export function LiveDashboard({
-  events,
+  events = [],
+  progress = createScanProgress(events),
   startedAt,
   elapsedMs,
   width,
   color,
   animations,
 }: {
-  events: readonly ScanEvent[];
+  events?: readonly ScanEvent[];
+  progress?: ScanProgress;
   startedAt?: number;
   elapsedMs: number;
   width: number;
   color: boolean;
   animations: boolean;
 }) {
-  const states = statesFrom(events);
+  const states = [...progress.states.values()];
   const now = (startedAt ?? 0) + elapsedMs;
   const frameWidth = Math.max(1, width - 2);
   const wide = width >= 88;
@@ -514,7 +529,11 @@ export function LiveDashboard({
   );
   const activitySummaryWidth = Math.max(1, panelWidth - 1);
   const activity = (
-    <ActivityPanel events={events} color={color} width={activitySummaryWidth} />
+    <ActivityPanel
+      activity={progress.activity}
+      color={color}
+      width={activitySummaryWidth}
+    />
   );
   const summary = (
     <SummaryPanel states={states} color={color} width={activitySummaryWidth} />

@@ -1,12 +1,7 @@
 import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
-import reactPlugin from "eslint-plugin-react";
-import reactHooksPlugin from "eslint-plugin-react-hooks";
 
 const require = createRequire(import.meta.url);
-const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin & {
-  readonly flatConfigs: { readonly recommended: Linter.Config };
-};
 
 const SOURCE_FILES = ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"];
 
@@ -22,6 +17,10 @@ type HooksFlatConfigs = {
 export function managedReactCorrectnessConfig(
   reactVersion: string,
 ): Linter.Config {
+  const reactPlugin =
+    require("eslint-plugin-react") as typeof import("eslint-plugin-react");
+  const reactHooksPlugin =
+    require("eslint-plugin-react-hooks") as typeof import("eslint-plugin-react-hooks");
   const reactConfigs = reactPlugin.configs.flat as unknown as ReactFlatConfigs;
   const hooksConfigs = reactHooksPlugin.configs.flat as HooksFlatConfigs;
   return {
@@ -40,6 +39,9 @@ export function managedReactCorrectnessConfig(
 }
 
 export function managedReactAccessibilityConfig(): Linter.Config {
+  const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin & {
+    readonly flatConfigs: { readonly recommended: Linter.Config };
+  };
   return {
     files: SOURCE_FILES,
     plugins: { "jsx-a11y": jsxA11yPlugin as ESLint.Plugin },

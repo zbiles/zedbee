@@ -354,7 +354,7 @@ describe("partially staged reporting", () => {
           expect(options.reportingSurface).toBe("text");
           return report;
         },
-        renderInk: async () => {
+        openInk: async () => {
           throw new Error("redirected automatic output must not mount Ink");
         },
         preparePresentation: async (_report, options) => {

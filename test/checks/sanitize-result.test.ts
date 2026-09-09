@@ -127,6 +127,7 @@ describe("public result sanitizer contract", () => {
       "truncated",
     ]);
     expect(Object.keys(PUBLIC_CHECK_ERROR_FIELDS)).toEqual([
+      "diagnostic",
       "code",
       "message",
       "path",

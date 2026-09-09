@@ -1,21 +1,12 @@
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { ESLint, Rule } from "eslint";
-import { builtinRules } from "eslint/use-at-your-own-risk";
-import reactPlugin from "eslint-plugin-react";
-import reactHooksPlugin from "eslint-plugin-react-hooks";
-import tseslint from "typescript-eslint";
 import type { EslintRuleConfiguration } from "../../config/settings-definition.js";
+import { freezeRuleSettings } from "./freeze-rule-settings.js";
+export { freezeRuleSettings } from "./freeze-rule-settings.js";
 
 const require = createRequire(import.meta.url);
 const eslintRoot = dirname(require.resolve("eslint/package.json"));
-const jsLanguage = require(
-  join(eslintRoot, "lib/languages/js/index.js"),
-) as unknown;
-const { Config } = require(join(eslintRoot, "lib/config/config.js")) as {
-  readonly Config: new (config: unknown) => unknown;
-};
-const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin;
 
 export type RuleCheckId = "lint" | "reactCorrectness" | "reactAccessibility";
 export type LintRuleSettings = Readonly<
@@ -32,11 +23,6 @@ type RuleInventory = ReadonlyMap<string, Rule.RuleModule>;
 
 type ManagedRulePlugin = ESLint.Plugin & {
   readonly rules?: Record<string, Rule.RuleModule>;
-};
-
-type RuleOwner = {
-  readonly checkId: RuleCheckId;
-  readonly label: string;
 };
 
 export class ManagedRuleConfigurationError extends TypeError {
@@ -136,82 +122,77 @@ class ReadonlyRuleInventory implements RuleInventory {
   }
 }
 
-const coreRules = Object.fromEntries(builtinRules) as Record<
-  string,
-  Rule.RuleModule
->;
-
-const lintInventory = buildInventory("lint", [
-  ...Object.entries(coreRules),
-  ...prefixedRules(
-    "@typescript-eslint",
-    (tseslint.plugin as ManagedRulePlugin).rules,
-  ),
-]);
-const reactCorrectnessInventory = buildInventory("reactCorrectness", [
-  ...prefixedRules("react", (reactPlugin as ManagedRulePlugin).rules),
-  ...prefixedRules(
-    "react-hooks",
-    (reactHooksPlugin as unknown as ManagedRulePlugin).rules,
-  ),
-]);
-const reactAccessibilityInventory = buildInventory("reactAccessibility", [
-  ...prefixedRules("jsx-a11y", jsxA11yPlugin.rules),
-]);
-
-const inventoryByCheckId = Object.freeze({
-  lint: lintInventory,
-  reactCorrectness: reactCorrectnessInventory,
-  reactAccessibility: reactAccessibilityInventory,
-}) satisfies Readonly<Record<RuleCheckId, Map<string, Rule.RuleModule>>>;
-
-const readonlyInventoryByCheckId = Object.freeze({
-  lint: Object.freeze(new ReadonlyRuleInventory(lintInventory)),
-  reactCorrectness: Object.freeze(
-    new ReadonlyRuleInventory(reactCorrectnessInventory),
-  ),
-  reactAccessibility: Object.freeze(
-    new ReadonlyRuleInventory(reactAccessibilityInventory),
-  ),
-}) satisfies Readonly<Record<RuleCheckId, RuleInventory>>;
-
-const ownerByRuleId = new Map<string, RuleOwner>();
-for (const [checkId, inventory] of Object.entries(inventoryByCheckId) as [
-  RuleCheckId,
-  RuleInventory,
-][]) {
-  for (const ruleId of inventory.keys()) {
-    const existing = ownerByRuleId.get(ruleId);
-    if (existing !== undefined) {
-      throw new ManagedRuleConfigurationError(
-        `Managed rule "${ruleId}" is owned by both ${existing.checkId} and ${checkId}.`,
-        ruleId,
-      );
-    }
-    ownerByRuleId.set(ruleId, { checkId, label: checkId });
-  }
+interface ManagedRuleResources {
+  readonly inventory: RuleInventory;
+  readonly plugins: Readonly<Record<string, unknown>>;
 }
 
-const languagePlugin = Object.freeze({
-  languages: Object.freeze({ js: jsLanguage }),
-  rules: coreRules,
-});
+// Only package-owned rule metadata is retained. No repository inputs or results
+// enter this cache. Session release clears input-bearing parser state separately;
+// trusted package rule modules can remain loaded in a reusable worker.
+const resourcesByCheckId = new Map<RuleCheckId, ManagedRuleResources>();
 
-const validationPlugins = Object.freeze({
-  lint: Object.freeze({
-    "@": languagePlugin,
-    "@typescript-eslint": tseslint.plugin,
-  }),
-  reactCorrectness: Object.freeze({
-    "@": languagePlugin,
-    react: reactPlugin,
-    "react-hooks": reactHooksPlugin,
-  }),
-  reactAccessibility: Object.freeze({
-    "@": languagePlugin,
-    "jsx-a11y": jsxA11yPlugin,
-  }),
-}) satisfies Readonly<Record<RuleCheckId, Readonly<Record<string, unknown>>>>;
+function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {
+  const existing = resourcesByCheckId.get(checkId);
+  if (existing !== undefined) return existing;
+  // Default policy metadata needs no ESLint engine. Explicit rule settings
+  // still load and validate against the exact pinned inventory in their owner.
+  const { builtinRules } = require("eslint/use-at-your-own-risk") as {
+    readonly builtinRules: ReadonlyMap<string, Rule.RuleModule>;
+  };
+  const jsLanguage = require(
+    join(eslintRoot, "lib/languages/js/index.js"),
+  ) as unknown;
+  const coreRules = Object.fromEntries(builtinRules) as Record<
+    string,
+    Rule.RuleModule
+  >;
+  const plugins: Record<string, ManagedRulePlugin> = {};
+  switch (checkId) {
+    case "lint":
+      plugins["@typescript-eslint"] = (
+        require("typescript-eslint") as typeof import("typescript-eslint")
+      ).plugin as ManagedRulePlugin;
+      break;
+    case "reactCorrectness":
+      plugins.react = require("eslint-plugin-react") as ManagedRulePlugin;
+      plugins["react-hooks"] =
+        require("eslint-plugin-react-hooks") as ManagedRulePlugin;
+      break;
+    case "reactAccessibility":
+      plugins["jsx-a11y"] =
+        require("eslint-plugin-jsx-a11y") as ManagedRulePlugin;
+      break;
+  }
+  const inventory = buildInventory(checkId, [
+    ...(checkId === "lint" ? Object.entries(coreRules) : []),
+    ...Object.entries(plugins).flatMap(([prefix, plugin]) =>
+      prefixedRules(prefix, plugin.rules),
+    ),
+  ]);
+  for (const [owner, resources] of resourcesByCheckId) {
+    for (const ruleId of inventory.keys()) {
+      if (resources.inventory.has(ruleId)) {
+        throw new ManagedRuleConfigurationError(
+          `Managed rule "${ruleId}" is owned by both ${owner} and ${checkId}.`,
+          ruleId,
+        );
+      }
+    }
+  }
+  const resources = Object.freeze({
+    inventory: Object.freeze(new ReadonlyRuleInventory(inventory)),
+    plugins: Object.freeze({
+      "@": Object.freeze({
+        languages: Object.freeze({ js: jsLanguage }),
+        rules: coreRules,
+      }),
+      ...plugins,
+    }),
+  });
+  resourcesByCheckId.set(checkId, resources);
+  return resources;
+}
 
 const unsafeJsonKeys = new Set(["__proto__", "prototype", "constructor"]);
 
@@ -417,9 +398,12 @@ function validateWithPinnedEslintConfig(
   checkId: RuleCheckId,
   rules: Readonly<Record<string, EslintRuleConfiguration>>,
 ): void {
+  const { Config } = require(join(eslintRoot, "lib/config/config.js")) as {
+    readonly Config: new (config: unknown) => unknown;
+  };
   new Config({
     language: "@/js",
-    plugins: validationPlugins[checkId],
+    plugins: managedRuleResources(checkId).plugins,
     rules: validationRuleSettings(rules),
   });
 }
@@ -440,10 +424,15 @@ function validateRuleId(checkId: RuleCheckId, ruleId: string): void {
 
   if (managedRuleInventory(checkId).has(ruleId)) return;
 
-  const owner = ownerByRuleId.get(ruleId);
+  const owner = (
+    ["lint", "reactCorrectness", "reactAccessibility"] as const
+  ).find(
+    (candidate) =>
+      candidate !== checkId && managedRuleInventory(candidate).has(ruleId),
+  );
   if (owner !== undefined) {
     throw new ManagedRuleConfigurationError(
-      `Managed rule "${ruleId}" belongs to ${owner.label}, not ${checkId}.`,
+      `Managed rule "${ruleId}" belongs to ${owner}, not ${checkId}.`,
       ruleId,
     );
   }
@@ -476,39 +465,8 @@ function validateRuleOptions(
   }
 }
 
-function freezeDeep<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return Object.freeze(value.map((item) => freezeDeep(item))) as T;
-  }
-  if (typeof value === "object" && value !== null) {
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      return Object.freeze(value);
-    }
-    return Object.freeze(
-      Object.fromEntries(
-        Object.entries(value).map(([key, item]) => [key, freezeDeep(item)]),
-      ),
-    ) as T;
-  }
-  return value;
-}
-
-export function freezeRuleSettings(
-  rules: Readonly<Record<string, EslintRuleConfiguration>>,
-): Readonly<Record<string, EslintRuleConfiguration>> {
-  return Object.freeze(
-    Object.fromEntries(
-      Object.entries(rules).map(([ruleId, configuration]) => [
-        ruleId,
-        freezeDeep(configuration),
-      ]),
-    ),
-  ) as Readonly<Record<string, EslintRuleConfiguration>>;
-}
-
 export function managedRuleInventory(checkId: RuleCheckId): RuleInventory {
-  return readonlyInventoryByCheckId[checkId];
+  return managedRuleResources(checkId).inventory;
 }
 
 export function validateManagedRuleConfiguration(

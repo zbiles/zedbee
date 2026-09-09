@@ -1,3 +1,4 @@
+import { inspectManagedCheck } from "../applicability.js";
 import { join, posix } from "node:path";
 import { cruise, type ICruiseResult } from "dependency-cruiser";
 import ts from "typescript";
@@ -28,14 +29,6 @@ const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
 const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-
-function targetFor(workspace: WorkspaceInspection): CheckTarget {
-  return {
-    id: workspace.relativeRoot,
-    kind: "workspace",
-    relativeRoot: workspace.relativeRoot,
-  };
-}
 
 function workspaceFor(
   inspection: RepositoryInspection,
@@ -399,47 +392,8 @@ async function collectSide(
 export const dependencyArchitectureAdapter: ObservationCheckAdapter = {
   id: "dependencyArchitecture",
   output: "observations",
-  async inspect(context) {
-    const changed = new Set(
-      [...context.changeSet.files.values()].map(({ path }) => path),
-    );
-    const candidates = new Map<string, WorkspaceInspection>();
-    for (const workspace of [
-      ...context.baselineInspection.workspaces,
-      ...context.targetInspection.workspaces,
-    ]) {
-      candidates.set(workspace.relativeRoot, workspace);
-    }
-    const workspaces = [...candidates.values()]
-      .filter((workspace) => {
-        if (context.config.checks.dependencyArchitecture.when === "always") {
-          return workspace.sourceFiles.some((path) => SOURCE.test(path));
-        }
-        const peer = [
-          ...context.baselineInspection.workspaces,
-          ...context.targetInspection.workspaces,
-        ].filter(({ relativeRoot }) => relativeRoot === workspace.relativeRoot);
-        return peer.some(
-          (side) =>
-            changed.has(side.manifestPath) ||
-            side.tsconfigPaths.some((path) => changed.has(path)) ||
-            side.sourceFiles.some(
-              (path) => SOURCE.test(path) && changed.has(path),
-            ),
-        );
-      })
-      .sort((left, right) =>
-        compareCodeUnits(left.relativeRoot, right.relativeRoot),
-      );
-    return workspaces.length === 0
-      ? { applies: false, reason: "No supported staged source files" }
-      : {
-          applies: true,
-          executionClass: "project-analysis",
-          requiresBaseline: true,
-          targets: workspaces.map(targetFor),
-        };
-  },
+  inspect: (context: import("../adapter.js").InspectionContext) =>
+    inspectManagedCheck("dependencyArchitecture", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
       const baselineObservations = await collectSide(

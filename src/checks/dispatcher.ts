@@ -14,7 +14,6 @@ import type {
   CheckRunContext,
   CheckTarget,
   CheckApplicability,
-  ExecutionClass,
   InspectionContext,
   ObservationCheckAdapter,
   LegacyCheckResultAdapter,
@@ -26,6 +25,7 @@ import { sanitizeCheckResult } from "./sanitize-result.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
 import { incompleteResult } from "./incomplete-result.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import { AnalyzerJobError } from "./diagnostics.js";
 import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import type {
@@ -39,12 +39,14 @@ import { displayLabel, displayProse } from "../core/display-text.js";
 import {
   createObservationCacheKeyBuilder,
   effectiveBehaviorFingerprint,
-  observationCacheEngineIdentity,
 } from "../cache/key.js";
+import { observationCacheEngineIdentity } from "./engine-identity.js";
+import { isCacheableObservationCheck } from "./metadata.js";
 import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
 } from "../cache/store.js";
+import { validateDependencyInputs } from "../cache/captured-dependencies.js";
 import {
   resolveInspectionPolicy,
   resolveScheduledTargetPolicy,
@@ -389,6 +391,12 @@ async function collectObservations(
   options: DispatchOptions,
   cacheKeyFor: ReturnType<typeof createObservationCacheKeyBuilder>,
 ): Promise<CheckObservationSet> {
+  if (
+    !isCacheableObservationCheck(adapter.id) ||
+    (options.cache === undefined && options.cacheEngineIdentity === undefined)
+  ) {
+    return Reflect.apply(adapter.collect, undefined, [runContext]);
+  }
   const engineIdentity = (
     options.cacheEngineIdentity ?? observationCacheEngineIdentity
   )(adapter.id);
@@ -420,7 +428,15 @@ async function collectObservations(
       if (
         cached !== undefined &&
         cached.checkId === adapter.id &&
-        sameTarget(cached.target, runContext.target)
+        sameTarget(cached.target, runContext.target) &&
+        ((adapter.id !== "lint" &&
+          adapter.id !== "types" &&
+          adapter.id !== "deadCode") ||
+          validateDependencyInputs(
+            cached.dependencyInputs,
+            runContext,
+            adapter.id === "deadCode",
+          ))
       ) {
         return sanitizeCacheableObservationSet(cached);
       }
@@ -435,7 +451,17 @@ async function collectObservations(
   if (
     cacheKey !== undefined &&
     options.cache !== undefined &&
-    !runContext.signal.aborted
+    !runContext.signal.aborted &&
+    (adapter.id !== "deadCode" ||
+      (await cacheKeyFor.matchesSnapshotFiles(collected.dependencyInputs))) &&
+    ((adapter.id !== "lint" &&
+      adapter.id !== "types" &&
+      adapter.id !== "deadCode") ||
+      validateDependencyInputs(
+        collected.dependencyInputs,
+        runContext,
+        adapter.id === "deadCode",
+      ))
   ) {
     await options.cache.set(cacheKey, collected).catch(() => undefined);
   }
@@ -462,6 +488,7 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
     targetInspection: snapshotInspection(context.targetInspection),
     signal: context.signal,
     policyForFile: context.policyForFile,
+    filePolicyConfig: snapshotConfig(context.config),
   });
 }
 
@@ -510,13 +537,6 @@ function compareResults(
     compareCodeUnits(left.result.checkId, right.result.checkId) ||
     compareCodeUnits(left.result.target ?? "", right.result.target ?? "")
   );
-}
-
-function limiterFor(
-  executionClass: ExecutionClass,
-  limits: Readonly<Record<ExecutionClass, ReturnType<typeof pLimit>>>,
-): ReturnType<typeof pLimit> {
-  return limits[executionClass];
 }
 
 type AdapterSnapshot =
@@ -708,11 +728,23 @@ export async function dispatchChecks(
       // Observers are display-only and must not change scan execution.
     }
   };
-  const limits = {
-    lightweight: pLimit(4),
-    "project-analysis": pLimit(1),
-    network: pLimit(1),
-  } as const;
+  // Bounded producers retain only four active adapter inputs. Worker/class
+  // scheduling belongs to the shared executor, including its four-worker mode.
+  const limit = pLimit(4);
+  // Default installed metadata is reused only within this dispatch. Preserve
+  // injected resolvers' per-collection behavior and avoid all reads without cache.
+  const identities = new Map<string, string | undefined>();
+  const executionOptions: DispatchOptions =
+    options.cache === undefined || options.cacheEngineIdentity !== undefined
+      ? options
+      : {
+          ...options,
+          cacheEngineIdentity(checkId) {
+            if (!identities.has(checkId))
+              identities.set(checkId, observationCacheEngineIdentity(checkId));
+            return identities.get(checkId);
+          },
+        };
   const adapterContext: TrustedDispatchContext = adapterBaseContext(context);
   const cacheKeyFor = createObservationCacheKeyBuilder(
     adapterContext.snapshots.baselineDir,
@@ -913,7 +945,6 @@ export async function dispatchChecks(
         target: target.id,
         timestamp: clock(),
       });
-      const limit = limiterFor(applicability.executionClass, limits);
       scheduled.push(
         limit(async () => {
           const started = clock();
@@ -928,6 +959,7 @@ export async function dispatchChecks(
           const durationMs = (): number => Math.max(0, clock() - started);
           const label = checkLabel(adapter.id);
           try {
+            adapterContext.signal.throwIfAborted();
             runContext = scopedContext(
               adapterContext,
               adapter.id,
@@ -961,7 +993,7 @@ export async function dispatchChecks(
                       adapterContext.changeSet,
                     )
                   : undefined,
-                options,
+                executionOptions,
                 cacheKeyFor,
               );
               try {
@@ -1020,6 +1052,9 @@ export async function dispatchChecks(
                     code: error.code,
                     message: error.message,
                     remediation: error.remediation,
+                    ...(error.diagnostic === undefined
+                      ? {}
+                      : { diagnostic: error.diagnostic }),
                     ...(error.path === undefined ? {} : { path: error.path }),
                     ...(error.paths === undefined
                       ? {}
@@ -1039,6 +1074,9 @@ export async function dispatchChecks(
                     target: target.id,
                     durationMs: durationMs(),
                     code: "ADAPTER_EXECUTION_FAILED",
+                    ...(error instanceof AnalyzerJobError
+                      ? { diagnostic: error.diagnostic }
+                      : {}),
                     message: `${label} could not analyze ${target.id === "." ? "the repository root" : target.id}.`,
                     remediation:
                       "Check the analyzer installation and selected input, then retry.",
@@ -1072,12 +1110,18 @@ export async function dispatchChecks(
                   ),
                 },
               );
-            } catch {
+            } catch (error) {
               result = incompleteResult({
                 checkId: adapter.id,
                 target: target.id,
                 durationMs: durationMs(),
                 code: "FIX_PROVIDER_FAILED",
+                ...(error instanceof AnalyzerJobError ||
+                error instanceof CheckIncompleteError
+                  ? error.diagnostic === undefined
+                    ? {}
+                    : { diagnostic: error.diagnostic }
+                  : {}),
                 message: `${label} could not prepare managed fixes.`,
                 remediation:
                   "Update Zedbee or inspect the managed rule compatibility before retrying.",

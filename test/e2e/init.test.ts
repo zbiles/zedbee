@@ -212,6 +212,7 @@ describe("packaged init command", () => {
     );
     const scanned = await invoke([
       "scan",
+      "--no-service",
       "--format",
       "json",
       "--no-source",

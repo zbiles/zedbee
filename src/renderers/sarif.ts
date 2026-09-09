@@ -192,6 +192,9 @@ function createNotification(
     properties: {
       checkId: check.checkId,
       errorCode: error.code,
+      ...(error.diagnostic === undefined
+        ? {}
+        : { diagnostic: error.diagnostic }),
       ...(check.incompleteDisposition === undefined
         ? {}
         : { disposition: check.incompleteDisposition }),

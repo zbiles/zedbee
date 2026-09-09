@@ -27,7 +27,7 @@ function timeoutError(): CheckIncompleteError {
     code: "FORMATTING_DIFF_TIMEOUT",
     message: "The formatting comparison exceeded its time limit.",
     remediation:
-      "Run zedbee fix formatting, review and stage the formatting changes, then scan again.",
+      "Format the affected file with Prettier directly or edit its formatting manually, then review and stage the changes and scan again.",
   });
 }
 

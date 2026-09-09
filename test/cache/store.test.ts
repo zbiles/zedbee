@@ -108,19 +108,25 @@ describe("observation cache", () => {
     });
     const cacheKey = "a".repeat(64);
     const value = {
-      checkId: "lint",
+      checkId: "reactCorrectness",
       target: { id: ".", kind: "repository" as const, relativeRoot: "." },
       baselineObservations: [],
       targetObservations: [
         {
-          check: "lint",
-          rule: "no-unsafe-call",
-          identity: "diagnostic:no-unsafe-call",
+          check: "reactCorrectness",
+          rule: "react/jsx-key",
+          identity: "diagnostic:react/jsx-key",
           severity: "error" as const,
           message: "Complexity is 21.",
           automaticFix: {
             available: true,
-            command: ["npx", "--no-install", "zedbee", "fix", "lint"],
+            command: [
+              "npx",
+              "--no-install",
+              "zedbee",
+              "fix",
+              "reactCorrectness",
+            ],
             scope: "finding",
             writes: "working-tree",
             stagesChanges: false,
@@ -147,7 +153,7 @@ describe("observation cache", () => {
     const store = new ObservationCacheStore({ root });
     const cacheKey = "e".repeat(64);
     const payload = {
-      checkId: "lint",
+      checkId: "cyclomaticComplexity",
       target: { id: ".", kind: "repository" as const, relativeRoot: "." },
       baselineObservations: [],
       targetObservations: [],
@@ -189,31 +195,35 @@ describe("observation cache", () => {
     await expect(store.get("b".repeat(64))).resolves.toEqual(empty);
   });
 
-  it.each(["secrets", "vulnerabilities"])(
-    "never persists %s observations",
-    async (checkId) => {
-      const root = await cacheRoot("zedbee-cache-sensitive-");
-      const store = new ObservationCacheStore({ root });
-      const cacheKey = "c".repeat(64);
+  it.each([
+    "lint",
+    "types",
+    "deadCode",
+    "secrets",
+    "vulnerabilities",
+    "unknown-check",
+  ])("never persists %s observations", async (checkId) => {
+    const root = await cacheRoot("zedbee-cache-sensitive-");
+    const store = new ObservationCacheStore({ root });
+    const cacheKey = "c".repeat(64);
 
-      await store.set(cacheKey, {
-        checkId,
-        target: { id: ".", kind: "repository", relativeRoot: "." },
-        baselineObservations: [],
-        targetObservations: [
-          {
-            check: checkId,
-            rule: "sensitive",
-            identity: "sensitive:1",
-            severity: "error",
-            message: "sensitive package or secret metadata",
-          },
-        ],
-      });
+    await store.set(cacheKey, {
+      checkId,
+      target: { id: ".", kind: "repository", relativeRoot: "." },
+      baselineObservations: [],
+      targetObservations: [
+        {
+          check: checkId,
+          rule: "sensitive",
+          identity: "sensitive:1",
+          severity: "error",
+          message: "sensitive package or secret metadata",
+        },
+      ],
+    });
 
-      await expect(store.get(cacheKey)).resolves.toBeUndefined();
-    },
-  );
+    await expect(store.get(cacheKey)).resolves.toBeUndefined();
+  });
 
   it("treats filesystem failures as cache misses", async () => {
     const parent = await cacheRoot("zedbee-cache-failure-");
@@ -224,7 +234,7 @@ describe("observation cache", () => {
     await expect(store.get("d".repeat(64))).resolves.toBeUndefined();
     await expect(
       store.set("d".repeat(64), {
-        checkId: "lint",
+        checkId: "cyclomaticComplexity",
         target: { id: ".", kind: "repository", relativeRoot: "." },
         baselineObservations: [],
         targetObservations: [],

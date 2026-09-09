@@ -10,6 +10,7 @@ import {
   readContainedFile,
 } from "../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
+import { capturedSourceRegistry } from "../inspection/source-capture.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
 import type { ExactFileFixCandidate } from "./types.js";
 
@@ -109,7 +110,9 @@ export async function planManagedEslintFixes(
   const files = [...new Set(input.files)].sort(compareCodeUnits);
   if (files.length === 0) return Object.freeze([]);
   const allowed = new Set(files);
-  const registry = await captureSnapshotRegistry(canonicalRoot);
+  const registry =
+    capturedSourceRegistry(canonicalRoot, files) ??
+    (await captureSnapshotRegistry(canonicalRoot));
   const reported = selectedFindings(findings, checkId);
   const sources = new Map<string, Promise<string>>();
   const sourceFor = (file: string): Promise<string> => {

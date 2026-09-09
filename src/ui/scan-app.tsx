@@ -11,7 +11,7 @@ import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { FindingsList } from "./findings-list.js";
 import { IncompleteList } from "./incomplete-list.js";
-import { LiveDashboard } from "./live-dashboard.js";
+import { LiveDashboard, type ScanProgress } from "./live-dashboard.js";
 import { OutcomeStrip } from "./outcome-strip.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { chunkTerminalCells } from "../renderers/terminal-cells.js";
@@ -29,7 +29,8 @@ function opaquePathLines(
 }
 
 export interface ScanAppProps {
-  events: readonly ScanEvent[];
+  events?: readonly ScanEvent[];
+  progress?: ScanProgress;
   startedAt?: number;
   elapsedMs: number;
   width: number;
