@@ -1,5 +1,7 @@
-import { access, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import type {
   CheckRunContext,
@@ -13,6 +15,10 @@ import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
+import { ObservationCacheStore } from "../../../src/cache/store.js";
+import { createManagedKnipConfig } from "../../../src/checks/dead-code/managed-config.js";
+import { writeManagedJsonConfig } from "../../../src/checks/project/config-boundary.js";
+import { parseKnipReport } from "../../../src/checks/dead-code/parse-report.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -103,6 +109,242 @@ async function stagedFindings(runContext: CheckRunContext) {
   );
   return result.findings.filter(({ attribution }) => attribution.staged);
 }
+
+describe("captured Knip execution", () => {
+  it("matches pinned native Knip for aliases, exports and multiple workspaces", async () => {
+    const run = await context(
+      "export const used = 1;\n",
+      "export const used = 1; export const unused = 2;\n",
+      {
+        workspaces: ["packages/*"],
+        imports: { "#exact": "./src/dependency.ts", "#wild/*": "./src/*.ts" },
+      },
+      async (fixture) => {
+        await fixture.write("src/dependency.ts", "export const value = 1;\n");
+        await fixture.writeJson("packages/app/package.json", {
+          name: "app",
+          private: true,
+          exports: "./src/index.ts",
+          imports: { "#exact": "./src/lib.ts", "#wild/*": "./src/*.ts" },
+        });
+        await fixture.write(
+          "packages/app/src/index.ts",
+          "import { used } from '#exact'; import { value } from '#wild/other'; console.log(used, value);\n",
+        );
+        await fixture.write(
+          "packages/app/src/lib.ts",
+          "export const used = 1; export const unused = 2;\n",
+        );
+        await fixture.write(
+          "packages/app/src/other.ts",
+          "export const value = 1;\n",
+        );
+      },
+    );
+    const cli = join(
+      dirname(fileURLToPath(import.meta.resolve("knip"))),
+      "../bin/knip.js",
+    );
+    for (const workspacePath of [".", "packages/app"]) {
+      const selection = {
+        ...run,
+        target: {
+          id: workspacePath,
+          kind: "workspace" as const,
+          relativeRoot: workspacePath,
+        },
+      };
+      const product = await deadCodeAdapter.collect(selection);
+      const inspection = run.targetInspection;
+      const workspace = inspection.workspaces.find(
+        (item) => item.relativeRoot === workspacePath,
+      )!;
+      const managed = await writeManagedJsonConfig(
+        "knip",
+        await createManagedKnipConfig(inspection.snapshotRoot, inspection),
+      );
+      try {
+        const native = await execa(
+          process.execPath,
+          [
+            cli,
+            "--config",
+            managed.path,
+            "--directory",
+            inspection.snapshotRoot,
+            "--workspace",
+            workspacePath,
+            "--tsConfig",
+            ".zedbee-managed-no-tsconfig.json",
+            "--reporter",
+            "json",
+            "--no-progress",
+            "--no-config-hints",
+            "--no-tag-hints",
+            "--no-gitignore",
+          ],
+          { cwd: inspection.snapshotRoot, reject: false },
+        );
+        expect([0, 1]).toContain(native.exitCode);
+        expect(product.targetObservations).toEqual(
+          parseKnipReport(
+            JSON.parse(native.stdout),
+            new Set([...workspace.sourceFiles, workspace.manifestPath]),
+          ),
+        );
+      } finally {
+        await managed.cleanup();
+      }
+    }
+  });
+  it("does not store source consumed after the cache key was captured", async () => {
+    const run = await context(
+      "export const used = 1;\n",
+      "export const used = 1; export const unused = 2;\n",
+    );
+    const cacheRoot = await createInspectionFixture();
+    const store = new ObservationCacheStore({ root: cacheRoot.root });
+    let stored = 0;
+    const adapter = {
+      ...deadCodeAdapter,
+      collect: async (input: CheckRunContext) => {
+        const before = await stat(
+          join(input.snapshots.targetDir, "src/lib.ts"),
+        );
+        await writeFile(
+          join(input.snapshots.targetDir, "src/lib.ts"),
+          "export const used = 1; export const hidden = 2;\n",
+        );
+        await utimes(
+          join(input.snapshots.targetDir, "src/lib.ts"),
+          before.atime,
+          before.mtime,
+        );
+        const collected = await deadCodeAdapter.collect(input);
+        expect(
+          collected.targetObservations.some(
+            (item) => item.entity?.name === "hidden",
+          ),
+        ).toBe(true);
+        return collected;
+      },
+    };
+    const result = await dispatchChecks([adapter], run, {
+      cache: {
+        get: (key) => store.get(key),
+        set: async (key, value) => {
+          stored++;
+          await store.set(key, value);
+        },
+      },
+    });
+    expect(
+      result[0]!.result.findings.some((item) => item.rule === "exports"),
+    ).toBe(true);
+    expect(stored).toBe(0);
+  });
+  it("returns cacheable real findings and reuses them across new snapshot roots", async () => {
+    const run = await context(
+      "export const used = 1;\n",
+      "export const used = 1; export const unused = 2;\n",
+    );
+    const collected = await deadCodeAdapter.collect(run);
+    expect(
+      collected.targetObservations.some(
+        (item) => item.entity?.name === "unused",
+      ),
+    ).toBe(true);
+    expect(collected.dependencyInputs).toBeDefined();
+    const cacheRoot = await createInspectionFixture();
+    const cache = new ObservationCacheStore({ root: cacheRoot.root });
+    let collections = 0;
+    const adapter = {
+      ...deadCodeAdapter,
+      collect: async (input: CheckRunContext) => {
+        collections++;
+        return deadCodeAdapter.collect(input);
+      },
+    };
+    const first = await dispatchChecks([adapter], run, { cache });
+    const repeat = await dispatchChecks([adapter], run, { cache });
+    expect(repeat[0]!.result.findings).toEqual(first[0]!.result.findings);
+    expect(collections).toBe(1);
+    const other = await context(
+      "export const used = 1;\n",
+      "export const used = 1; export const unused = 2;\n",
+    );
+    const rebound = { ...other, repositoryRoot: run.repositoryRoot };
+    await dispatchChecks([adapter], rebound, { cache });
+    expect(collections).toBe(1);
+  });
+
+  it("rechecks missing alias-package guards on a cache hit and after removal", async () => {
+    const packageName = "zedbee-knip-guard-fixture";
+    const run = await context(
+      "export const used = 1;\n",
+      "import { value } from '#alias'; export const used = value;\n",
+      { imports: { "#alias": packageName } },
+    );
+    const cacheRoot = await createInspectionFixture();
+    const cache = new ObservationCacheStore({ root: cacheRoot.root });
+    let collections = 0;
+    const adapter = {
+      ...deadCodeAdapter,
+      collect: async (input: CheckRunContext) => {
+        collections++;
+        return deadCodeAdapter.collect(input);
+      },
+    };
+    const first = await dispatchChecks([adapter], run, { cache });
+    expect(
+      first[0]!.result.findings.some((item) => item.rule === "unresolved"),
+    ).toBe(true);
+    await dispatchChecks([adapter], run, { cache });
+    expect(collections).toBe(1);
+    const forbiddenPackage = join(
+      run.snapshots.targetDir,
+      "node_modules",
+      packageName,
+    );
+    await mkdir(forbiddenPackage, { recursive: true });
+    await writeFile(
+      join(forbiddenPackage, "index.js"),
+      "export const value = 1;",
+    );
+    const denied = await dispatchChecks([adapter], run, { cache });
+    expect(denied[0]!.result.status).toBe("incomplete");
+    expect(collections).toBe(2);
+    await rm(forbiddenPackage, { recursive: true });
+    const restored = await dispatchChecks([adapter], run, { cache });
+    expect(restored[0]!.result.findings).toEqual(first[0]!.result.findings);
+  });
+
+  it("awaits inner worker cleanup when cancelled during analysis", async () => {
+    const run = await context(
+      "export const used = 1;\n",
+      "export const used = 1; export const unused = 2;\n",
+    );
+    const controller = new AbortController();
+    const before = process
+      .getActiveResourcesInfo()
+      .filter((name) => name === "MessagePort").length;
+    const pending = deadCodeAdapter.collect({
+      ...run,
+      signal: controller.signal,
+    });
+    const timer = setTimeout(() => controller.abort(), 20);
+    try {
+      await expect(pending).rejects.toThrow("Dead-code analysis failed.");
+    } finally {
+      clearTimeout(timer);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      process.getActiveResourcesInfo().filter((name) => name === "MessagePort")
+        .length,
+    ).toBe(before);
+  });
+});
 
 describe("deadCodeAdapter", () => {
   describe("package import aliases", () => {

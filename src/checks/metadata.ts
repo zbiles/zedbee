@@ -48,7 +48,8 @@ export type CacheableObservationCheckId =
         : never;
     }[CheckId]
   | "lint"
-  | "types";
+  | "types"
+  | "deadCode";
 
 export function managedCheckMetadata(
   checkId: string,
@@ -63,6 +64,7 @@ export function isCacheableObservationCheck(
   return (
     checkId === "lint" ||
     checkId === "types" ||
+    checkId === "deadCode" ||
     managedCheckMetadata(checkId)?.observationInputs === "snapshot-only"
   );
 }

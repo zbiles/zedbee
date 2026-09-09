@@ -137,7 +137,9 @@ export function sanitizeDependencyInputManifest(
       );
       charge(probe.realPath as string);
       if (
-        (canonicalRoot !== "packages" && canonicalRoot !== "typescript") ||
+        !["packages", "typescript", "baseline", "target"].includes(
+          canonicalRoot,
+        ) ||
         canonicalPath.split("/").includes("..")
       )
         throw new TypeError("Invalid canonical dependency path");

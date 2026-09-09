@@ -24,10 +24,10 @@
     },
     {
       "name": "@napi-rs/wasm-runtime",
-      "version": "1.2.3",
+      "version": "1.1.6",
       "license": "MIT",
-      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/70c149321ca4e361f6726349cf9b2258467fb24f/LICENSE",
-      "textFile": "licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE"
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/b77119e711704cc453949e056b45a4996ea0386c/LICENSE",
+      "textFile": "licenses/overrides/napi-rs-wasm-runtime-1.1.6-LICENSE"
     },
     {
       "name": "@tybys/wasm-util",

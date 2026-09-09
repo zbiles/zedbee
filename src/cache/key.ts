@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readlink, realpath } from "node:fs/promises";
+import { isAbsolute, posix, relative, sep } from "node:path";
+import {
+  dependencyPathParts,
+  type DependencyInputManifest,
+} from "./dependency-inputs.js";
 import pLimit from "p-limit";
 import type { CheckTarget } from "../checks/adapter.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
@@ -141,7 +146,13 @@ function stable(value: unknown): unknown {
   );
 }
 
-async function snapshotIdentity(root: string): Promise<readonly unknown[]> {
+type SnapshotInputIdentity =
+  | { readonly path: string; readonly kind: "directory" }
+  | { readonly path: string; readonly kind: "symlink"; readonly target: string }
+  | { readonly path: string; readonly kind: "file"; readonly digest: string };
+async function snapshotIdentity(
+  root: string,
+): Promise<readonly SnapshotInputIdentity[]> {
   const canonicalRoot = await realpath(root);
   const registry = await captureSnapshotRegistry(canonicalRoot);
   const entries = [...registry.entries()].sort((left, right) =>
@@ -194,11 +205,21 @@ export function createObservationCacheKeyBuilder(
   baselineRoot: string,
   targetRoot: string,
   source: CacheSourceIdentity,
-): (input: SnapshotBoundKeyInput) => Promise<string> {
+): ((input: SnapshotBoundKeyInput) => Promise<string>) & {
+  matchesSnapshotFiles(
+    manifest: DependencyInputManifest | undefined,
+  ): Promise<boolean>;
+} {
   const validatedSource = validatedCacheSource(source);
   let identities:
-    Promise<readonly [readonly unknown[], readonly unknown[]]> | undefined;
-  return async (input) => {
+    | Promise<
+        readonly [
+          readonly SnapshotInputIdentity[],
+          readonly SnapshotInputIdentity[],
+        ]
+      >
+    | undefined;
+  const keyFor = async (input: SnapshotBoundKeyInput) => {
     // Share in-flight work as well as results. A rejected inventory disables
     // caching for this dispatch; a new dispatch will capture fresh identities.
     const [baseline, target] = await (identities ??= Promise.all([
@@ -207,6 +228,61 @@ export function createObservationCacheKeyBuilder(
     ]));
     return observationCacheKey(input, validatedSource, baseline, target);
   };
+  return Object.assign(keyFor, {
+    async matchesSnapshotFiles(
+      manifest: DependencyInputManifest | undefined,
+    ): Promise<boolean> {
+      if (manifest === undefined || identities === undefined) return false;
+      try {
+        const snapshots = await identities;
+        const roots = await Promise.all([
+          realpath(baselineRoot),
+          realpath(targetRoot),
+        ]);
+        const maps = snapshots.map(
+          (entries) => new Map(entries.map((entry) => [entry.path, entry])),
+        );
+        const canonical = (path: string, index: number): string | undefined => {
+          for (let depth = 0; depth < 32; depth++) {
+            const parts = path.split("/");
+            let changed = false;
+            for (let length = parts.length; length > 0; length--) {
+              const prefix = parts.slice(0, length).join("/");
+              const entry = maps[index]!.get(prefix);
+              if (entry?.kind !== "symlink") continue;
+              const target = isAbsolute(entry.target)
+                ? relative(roots[index]!, entry.target).split(sep).join("/")
+                : posix.join(posix.dirname(prefix), entry.target);
+              path = posix.join(target, ...parts.slice(length));
+              if (path === ".." || path.startsWith("../")) return undefined;
+              changed = true;
+              break;
+            }
+            if (!changed) return path;
+          }
+          return undefined;
+        };
+        for (const probe of manifest.probes) {
+          if (probe.kind !== "file") continue;
+          const [scope, path] = dependencyPathParts(probe.path);
+          const [realScope, realPath] = dependencyPathParts(probe.realPath);
+          const index = scope === "baseline" ? 0 : scope === "target" ? 1 : -1;
+          if (
+            index < 0 ||
+            scope !== realScope ||
+            canonical(path, index) !== realPath
+          )
+            return false;
+          const entry = maps[index]!.get(realPath);
+          if (entry?.kind !== "file" || entry.digest !== probe.digest)
+            return false;
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  });
 }
 
 function observationCacheKey(

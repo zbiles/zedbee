@@ -47,6 +47,9 @@ const FIXED_PACKAGE_FILES = Object.freeze([
   "licenses/production-inventory.json",
   "licenses/reviewed-overrides.json",
   "licenses/reviewed-obligations.json",
+  "dist/checks/dead-code/resolver.wasm",
+  "dist/checks/dead-code/resolver.LICENSE",
+  "dist/checks/dead-code/resolver.provenance.json",
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
@@ -74,6 +77,11 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "dist/service/client.js",
   "dist/commands/service.js",
   "dist/checks/runner/executor.js",
+  "dist/checks/dead-code/knip-worker.js",
+  "dist/checks/dead-code/executor.js",
+  "dist/checks/dead-code/resolver.wasm",
+  "dist/checks/dead-code/resolver.LICENSE",
+  "dist/checks/dead-code/resolver.provenance.json",
 ]);
 
 function normalizedPackagePath(path) {

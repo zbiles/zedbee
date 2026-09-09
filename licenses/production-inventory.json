@@ -475,14 +475,16 @@
       "name": "@emnapi/core",
       "version": "1.11.2",
       "license": "MIT",
-      "repository": null,
-      "licenseFile": null,
-      "legalFiles": [],
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/toyobayashi/emnapi.git"
+      },
+      "licenseFile": "node_modules/@emnapi/core/LICENSE",
+      "legalFiles": [
+        "node_modules/@emnapi/core/LICENSE"
+      ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
         "@emnapi/core@1.11.2"
       ]
     },
@@ -490,14 +492,16 @@
       "name": "@emnapi/runtime",
       "version": "1.11.2",
       "license": "MIT",
-      "repository": null,
-      "licenseFile": null,
-      "legalFiles": [],
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/toyobayashi/emnapi.git"
+      },
+      "licenseFile": "node_modules/@emnapi/runtime/LICENSE",
+      "legalFiles": [
+        "node_modules/@emnapi/runtime/LICENSE"
+      ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
         "@emnapi/runtime@1.11.2"
       ]
     },
@@ -505,14 +509,16 @@
       "name": "@emnapi/wasi-threads",
       "version": "1.2.2",
       "license": "MIT",
-      "repository": null,
-      "licenseFile": null,
-      "legalFiles": [],
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/toyobayashi/emnapi.git"
+      },
+      "licenseFile": "node_modules/@emnapi/wasi-threads/LICENSE",
+      "legalFiles": [
+        "node_modules/@emnapi/wasi-threads/LICENSE"
+      ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
         "@emnapi/core@1.11.2",
         "@emnapi/wasi-threads@1.2.2"
       ]
@@ -1111,17 +1117,18 @@
     },
     {
       "name": "@napi-rs/wasm-runtime",
-      "version": "1.2.3",
+      "version": "1.1.6",
       "license": "MIT",
-      "repository": null,
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/napi-rs/napi-rs.git",
+        "directory": "wasm-runtime"
+      },
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
-        "@napi-rs/wasm-runtime@1.2.3"
+        "@napi-rs/wasm-runtime@1.1.6"
       ]
     },
     {
@@ -1783,15 +1790,15 @@
       "name": "@tybys/wasm-util",
       "version": "0.10.3",
       "license": "MIT",
-      "repository": null,
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/toyobayashi/wasm-util.git"
+      },
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
-        "@napi-rs/wasm-runtime@1.2.3",
+        "@napi-rs/wasm-runtime@1.1.6",
         "@tybys/wasm-util@0.10.3"
       ]
     },
@@ -7911,14 +7918,16 @@
       "name": "tslib",
       "version": "2.8.1",
       "license": "0BSD",
-      "repository": null,
-      "licenseFile": null,
-      "legalFiles": [],
+      "repository": {
+        "type": "git",
+        "url": "https://github.com/Microsoft/tslib.git"
+      },
+      "licenseFile": "node_modules/tslib/LICENSE.txt",
+      "legalFiles": [
+        "node_modules/tslib/LICENSE.txt"
+      ],
       "dependencyPath": [
         "zedbee@0.1.0",
-        "knip@6.32.2",
-        "oxc-resolver@11.24.2",
-        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
         "@emnapi/core@1.11.2",
         "tslib@2.8.1"
       ]

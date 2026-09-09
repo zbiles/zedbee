@@ -1,0 +1,10 @@
+{
+  "name": "@oxc-resolver/binding-wasm32-wasi",
+  "version": "11.24.2",
+  "license": "MIT",
+  "source": "https://registry.npmjs.org/@oxc-resolver/binding-wasm32-wasi/-/binding-wasm32-wasi-11.24.2.tgz",
+  "archiveIntegrity": "sha512-vHcssMPwO08RTvj/c0iOBz90attxyG3wQJ0dTcyEQK43LRpcdLWZlV5feBhv6Isn6ahbQIzHbCgfa81+RiML0Q==",
+  "wasmSha256": "07f08138508b5b5832874cd5218ee1b7ac4ee987e01fbdc1a825512d380658b9",
+  "licenseSource": "oxc-resolver@11.24.2/LICENSE",
+  "changes": "Unmodified WASM binary; Zedbee supplies a bounded filesystem loader."
+}

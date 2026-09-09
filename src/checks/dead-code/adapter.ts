@@ -1,9 +1,4 @@
 import { inspectManagedCheck } from "../applicability.js";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { execa } from "execa";
-import { isAnalyzerWorker } from "../runner/context.js";
-import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -22,7 +17,16 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
-import { writeManagedJsonConfig } from "../project/config-boundary.js";
+import {
+  CapturedDependencies,
+  type DependencyCaptureContext,
+} from "../../cache/captured-dependencies.js";
+import {
+  sanitizeDependencyInputManifest,
+  type DependencyInputManifest,
+} from "../../cache/dependency-inputs.js";
+import { exportCurrentAnalysisSourceCapture } from "../../inspection/source-capture.js";
+import { runCapturedKnip } from "./executor.js";
 import { createManagedKnipConfig } from "./managed-config.js";
 import { parseKnipReport } from "./parse-report.js";
 import {
@@ -31,7 +35,6 @@ import {
 } from "./import-boundary.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const MAX_OUTPUT_BYTES = 64 * 1024 * 1024;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
 
 function workspaceFor(
@@ -41,11 +44,6 @@ function workspaceFor(
   return inspection.workspaces.find(
     ({ relativeRoot }) => relativeRoot === target.relativeRoot,
   );
-}
-
-function cliPath(): string {
-  const modulePath = fileURLToPath(import.meta.resolve("knip"));
-  return join(dirname(modulePath), "..", "bin", "knip.js");
 }
 
 function staticModuleSpecifier(
@@ -120,10 +118,16 @@ function staticModuleSpecifier(
 async function validateSnapshotInputs(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
+  capture?: CapturedDependencies,
 ): Promise<void> {
   const registry = await captureSnapshotRegistry(snapshotRoot);
   const { validateImport, collectCommentImports } =
-    await createKnipImportValidator(registry);
+    await createKnipImportValidator(
+      registry,
+      capture === undefined
+        ? undefined
+        : async (path) => capture.assertMissing(path),
+    );
   if (registry.resolve(INERT_TSCONFIG) !== undefined) {
     throw new TypeError("Reserved managed Knip path is present");
   }
@@ -180,79 +184,46 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   signal: AbortSignal,
-): Promise<readonly Observation[]> {
+  captureContext: DependencyCaptureContext,
+  guards: CapturedDependencies,
+): Promise<{
+  observations: readonly Observation[];
+  dependencyInputs?: DependencyInputManifest;
+}> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
   }
   const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
-  await validateSnapshotInputs(canonicalRoot, workspace);
-  const managed = await writeManagedJsonConfig(
-    "knip",
-    await createManagedKnipConfig(canonicalRoot, inspection),
+  if (workspace === undefined)
+    return {
+      observations: Object.freeze([]),
+      dependencyInputs: guards.manifest()!,
+    };
+  await validateSnapshotInputs(canonicalRoot, workspace, guards);
+  const sourceCapture = exportCurrentAnalysisSourceCapture();
+  const result = await runCapturedKnip(
+    {
+      context: captureContext,
+      snapshotRoot: canonicalRoot,
+      workspace: workspace.relativeRoot,
+      config: await createManagedKnipConfig(canonicalRoot, inspection),
+      ...(sourceCapture === undefined ? {} : { sourceCapture }),
+    },
+    signal,
   );
-  try {
-    const result = await execa(
-      process.execPath,
-      [
-        cliPath(),
-        "--config",
-        managed.path,
-        "--directory",
-        canonicalRoot,
-        "--workspace",
-        workspace.relativeRoot,
-        "--tsConfig",
-        INERT_TSCONFIG,
-        "--reporter",
-        "json",
-        "--no-progress",
-        "--no-config-hints",
-        "--no-tag-hints",
-        "--no-gitignore",
-      ],
-      {
-        cwd: canonicalRoot,
-        shell: false,
-        reject: false,
-        stdin: "ignore",
-        forceKillAfterDelay: 2_000,
-        killDescendants: !isAnalyzerWorker(),
-        cancelSignal: signal,
-        maxBuffer: MAX_OUTPUT_BYTES,
-        env: { NO_COLOR: "1", FORCE_COLOR: "0" },
-      },
-    );
-    signal.throwIfAborted();
-    await validateSnapshotInputs(canonicalRoot, workspace);
-    if (result.exitCode !== 0 && result.exitCode !== 1) {
-      throw new Error("Knip analysis failed", {
-        cause: new AnalyzerJobError(
-          analyzerDiagnostic(
-            "deadCode",
-            "collect",
-            "abnormal-exit",
-            result.exitCode,
-            result.signal,
-          ),
-        ),
-      });
-    }
-    let report: unknown;
-    try {
-      report = JSON.parse(result.stdout) as unknown;
-    } catch {
-      throw new TypeError("Malformed Knip JSON report");
-    }
-    return parseKnipReport(
-      report,
+  signal.throwIfAborted();
+  await validateSnapshotInputs(canonicalRoot, workspace);
+  return {
+    observations: parseKnipReport(
+      result.report,
       new Set([...workspace.sourceFiles, workspace.manifestPath]),
-    );
-  } finally {
-    await managed.cleanup();
-  }
+    ),
+    ...(result.dependencyInputs === undefined
+      ? {}
+      : { dependencyInputs: result.dependencyInputs }),
+  };
 }
 
 function hasProjectDelta(context: CheckRunContext): boolean {
@@ -276,23 +247,79 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
     inspectManagedCheck("deadCode", context),
   async collect(context: CheckRunContext): Promise<CheckObservationSet> {
     try {
-      const baselineObservations = await collectSide(
+      const captureContext = {
+        repositoryRoot: context.repositoryRoot,
+        snapshots: {
+          baselineDir: context.baselineInspection.snapshotRoot,
+          targetDir: context.targetInspection.snapshotRoot,
+        },
+      };
+      const guards = new CapturedDependencies(captureContext, true);
+      const baseline = await collectSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
         context.target,
         context.signal,
+        captureContext,
+        guards,
       );
-      const targetObservations = await collectSide(
+      const target = await collectSide(
         context.snapshots.targetDir,
         context.targetInspection,
         context.target,
         context.signal,
+        captureContext,
+        guards,
       );
+      const manifests = [
+        guards.manifest(),
+        baseline.dependencyInputs,
+        target.dependencyInputs,
+      ];
+      let dependencyInputs: DependencyInputManifest | undefined;
+      if (
+        manifests.every(
+          (item): item is DependencyInputManifest => item !== undefined,
+        )
+      ) {
+        const probes = new Map<
+          string,
+          DependencyInputManifest["probes"][number]
+        >();
+        let consistent = true;
+        for (const manifest of manifests) {
+          if (manifest.roots !== manifests[0]!.roots) consistent = false;
+          for (const probe of manifest.probes) {
+            const key = `${probe.path}:${probe.kind === "directory" ? "listing" : "entry"}`;
+            const previous = probes.get(key);
+            if (
+              previous !== undefined &&
+              JSON.stringify(previous) !== JSON.stringify(probe)
+            )
+              consistent = false;
+            probes.set(key, probe);
+          }
+        }
+        if (consistent) {
+          try {
+            dependencyInputs = sanitizeDependencyInputManifest({
+              version: 1,
+              roots: manifests[0]!.roots,
+              probes: [...probes.values()].sort((a, b) =>
+                compareCodeUnits(`${a.path}:${a.kind}`, `${b.path}:${b.kind}`),
+              ),
+            });
+          } catch {
+            /* Bounded unsupported metadata remains uncached. */
+          }
+        }
+      }
       return {
         checkId: "deadCode",
         target: context.target,
-        baselineObservations,
-        targetObservations,
+        baselineObservations: baseline.observations,
+        targetObservations: target.observations,
+        ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
         projectDelta: hasProjectDelta(context),
       };
     } catch (error) {

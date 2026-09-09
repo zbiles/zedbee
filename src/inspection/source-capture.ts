@@ -190,6 +190,13 @@ export function hasAnalysisSourceCapture(): boolean {
   return owner !== undefined;
 }
 
+/** Fixed nested analyzer workers inherit only the existing trusted capture. */
+export function exportCurrentAnalysisSourceCapture():
+  AnalysisSourceCaptureTransport | undefined {
+  const owner = current.getStore();
+  return owner === undefined ? undefined : exportAnalysisSourceCapture(owner);
+}
+
 /** Internal trusted-owner IPC only. Service clients send selections, never this. */
 export interface AnalysisSourceCaptureTransport {
   readonly version: 1;

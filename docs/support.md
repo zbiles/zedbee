@@ -55,11 +55,11 @@ inspection, attribution, reporting, and safe file writes. `doctor` also uses a
 built-in Secretlint readiness probe. Process isolation describes scan/fix analyzer
 execution, not every use of analyzer-related metadata in the CLI.
 
-Each scan acquires fresh checked source bytes for its selected baseline and target paths; a pathname or timestamp is never proof of immutable input. Capacity bypass falls back to ordinary checked reads, while trust/read failures remain failures. Session release clears source-bearing state and project contexts. Reuse-capable engine modules may remain loaded. The default React compiler-backed hooks plugin has a private source-text cache without a supported clear operation, so a worker that uses it retires at session release. Knip and jscpd still launch their managed child tools; retained service/worker identity alone does not prove those engines are warm. These lifecycle rules are not a guarantee of faster scans. Normalized
-observation caching requires audited inputs. TypeScript and lint capture and
-recheck their dependency inputs before reusing results; incomplete capture bypasses
-caching. Dead-code results remain uncached because Knip's complete dependency
-inputs are not yet captured. Source, raw engine output, secrets, Secretlint observations,
+Each scan acquires fresh checked source bytes for its selected baseline and target paths; a pathname or timestamp is never proof of immutable input. Source-selection capacity bypass falls back to ordinary checked reads, while trust/read failures remain failures. Session release clears source-bearing state and project contexts. Reuse-capable engine modules may remain loaded. The default React compiler-backed hooks plugin has a private source-text cache without a supported clear operation, so a worker that uses it retires at session release. Knip uses a fresh internal worker and a shared captured filesystem for its JavaScript and Oxc WebAssembly reads; the worker exits after each snapshot side, including on cancellation. jscpd still launches its managed child tool. Retained service identity does not mean these engines are warm. Knip input or memory limits that prevent analysis make the check incomplete; there is no silent native retry. These lifecycle rules are not a guarantee of faster scans. Normalized
+observation caching requires audited inputs. TypeScript, lint, and Knip capture and
+recheck their permitted input fingerprints before reusing results; incomplete metadata bypasses
+caching. Knip cache hits preserve the snapshot-only package-resolution guards.
+Source, raw engine output, secrets, Secretlint observations,
 OSV results, and online response bodies are never cached.
 
 `zedbee service status` is read-only and never creates service state. `zedbee service stop` waits for active sessions, native worker cleanup, endpoint removal and startup-lock release. Both accept `--format json`; unavailable management returns exit code 2. The service idles out after five minutes without active sessions. No login service is installed. A stopped instance may leave source-free coordination files in its private temporary directory. Source-free zero-byte completion files can also remain if a management client dies during completion; they are inert, not live locks.

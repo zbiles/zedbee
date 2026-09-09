@@ -42,7 +42,7 @@ describe("managed check cache metadata", () => {
     });
     expect(isCacheableObservationCheck("types")).toBe(true);
     expect(isCacheableObservationCheck("lint")).toBe(true);
-    expect(isCacheableObservationCheck("deadCode")).toBe(false);
+    expect(isCacheableObservationCheck("deadCode")).toBe(true);
     expect(isCacheableObservationCheck("not-a-managed-check")).toBe(false);
     expect(isCacheableObservationCheck("cyclomaticComplexity")).toBe(true);
   });
@@ -127,7 +127,7 @@ describe("managed check cache metadata", () => {
   });
 
   it.each([
-    { checkId: "deadCode", expectedCollections: 2 },
+    { checkId: "secrets", expectedCollections: 2 },
     { checkId: "unknown-check", expectedCollections: 0 },
   ])(
     "gates $checkId before custom identities, cache reads, and cache writes",

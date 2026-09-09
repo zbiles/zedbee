@@ -75,7 +75,9 @@ export function sanitizeCacheableObservationSet(
       ? undefined
       : sanitizeDependencyInputManifest(input.dependencyInputs);
   if (
-    (input.checkId === "lint" || input.checkId === "types") &&
+    (input.checkId === "lint" ||
+      input.checkId === "types" ||
+      input.checkId === "deadCode") &&
     dependencyInputs === undefined
   )
     throw new TypeError("Missing dependency inputs");

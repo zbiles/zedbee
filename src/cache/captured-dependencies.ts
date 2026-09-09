@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
   DEPENDENCY_LIMITS,
   dependencyPathParts,
@@ -29,6 +30,7 @@ export interface DependencyCaptureContext {
 type Entry = {
   readonly probe: Exclude<DependencyProbe, { kind: "directory" }>;
   readonly text?: string;
+  readonly bytes?: Buffer;
   readonly passthrough?: string;
   readonly unavailable?: boolean;
 };
@@ -78,7 +80,11 @@ export class CapturedDependencies {
   private metadataBytes = 128;
   private supported = true;
 
-  constructor(readonly context: DependencyCaptureContext) {
+  constructor(
+    readonly context: DependencyCaptureContext,
+    readonly snapshotOnly = false,
+    private readonly useCapturedSources = true,
+  ) {
     this.aliases = {
       packages: resolve(context.repositoryRoot, "node_modules"),
       typescript: dirname(fileURLToPath(import.meta.resolve("typescript"))),
@@ -96,16 +102,46 @@ export class CapturedDependencies {
         canonical(path) ?? path,
       ]),
     );
-    this.allowed = {
-      packages: canonical(this.roots.packages!),
-      typescript: canonical(this.roots.typescript!),
-    };
-    this.rootsIdentity = digest(JSON.stringify(this.allowed));
+    this.allowed = snapshotOnly
+      ? {
+          baseline:
+            context.snapshots === undefined
+              ? undefined
+              : canonical(this.roots.baseline!),
+          target:
+            context.snapshots === undefined
+              ? undefined
+              : canonical(this.roots.target!),
+        }
+      : {
+          packages: canonical(this.roots.packages!),
+          typescript: canonical(this.roots.typescript!),
+        };
+    this.rootsIdentity = digest(
+      JSON.stringify(
+        snapshotOnly
+          ? {
+              policy: "knip-snapshot-v1",
+              repository: this.roots.repository,
+            }
+          : this.allowed,
+      ),
+    );
   }
 
   private identify(path: string): string {
     const absolute = resolve(path);
-    for (const [name, root] of Object.entries(this.aliases)) {
+    const priority = (name: string) =>
+      this.snapshotOnly
+        ? name === "baseline"
+          ? 2
+          : name === "target"
+            ? 1
+            : 0
+        : 0;
+    for (const [name, root] of Object.entries(this.aliases).sort(
+      (a, b) => b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
+    )) {
       if (contained(root, absolute))
         return `${name}:${relative(root, absolute).split(sep).join("/") || "."}`;
     }
@@ -164,6 +200,47 @@ export class CapturedDependencies {
     }
     const previous = this.entries.get(identifier);
     if (previous !== undefined) return previous;
+    if (this.snapshotOnly && this.useCapturedSources) {
+      for (const name of ["baseline", "target"] as const) {
+        const root = this.roots[name];
+        if (root === undefined || !contained(root, absolute)) continue;
+        const input = capturedSourceInput(
+          root,
+          relative(root, absolute).split(sep).join("/"),
+        );
+        if (
+          input?.entry?.targetKind !== "file" ||
+          input.text === undefined ||
+          input.digest === undefined
+        )
+          continue;
+        const bytes = Buffer.from(input.text, "utf8");
+        if (
+          digest(bytes) !== input.digest ||
+          bytes.length > DEPENDENCY_LIMITS.fileBytes ||
+          this.bytes + bytes.length > DEPENDENCY_LIMITS.bytes
+        )
+          throw new RangeError("Unsupported captured snapshot bytes");
+        const real = input.entry.canonicalPath;
+        if (!contained(root, real))
+          throw new TypeError("Invalid captured snapshot path");
+        const entry: Entry = {
+          probe: {
+            kind: "file",
+            path: identifier,
+            digest: input.digest,
+            realPath: `${name}:${relative(root, real).split(sep).join("/")}`,
+          },
+          text: input.text,
+          bytes,
+        };
+        this.bytes += bytes.length;
+        if (!this.retain(Buffer.byteLength(identifier) + 512))
+          throw new RangeError("Snapshot capture capacity");
+        this.entries.set(identifier, entry);
+        return entry;
+      }
+    }
     let entry: Entry;
     let fallback: Entry | undefined;
     try {
@@ -188,6 +265,8 @@ export class CapturedDependencies {
           this.bytes + metadata.size > DEPENDENCY_LIMITS.bytes
         ) {
           this.supported = false;
+          if (this.snapshotOnly)
+            throw new RangeError("Snapshot capture capacity");
           // Leave exceptional large reads to the analyzer, without retaining them.
           return fallback;
         }
@@ -244,7 +323,8 @@ export class CapturedDependencies {
             digest: digest(buffer),
             realPath: `${allowed[0]}:${relative(allowed[1]!, real).split(sep).join("/") || "."}`,
           },
-          text: decode(buffer),
+          text: decode(this.snapshotOnly ? Buffer.from(buffer) : buffer),
+          ...(this.snapshotOnly ? { bytes: buffer } : {}),
         };
       } else {
         entry = {
@@ -253,7 +333,7 @@ export class CapturedDependencies {
             path: identifier,
             entryType: metadata.isDirectory() ? "directory" : "denied",
             identity: digest(
-              `${real}:${link.isSymbolicLink()}:${metadata.isDirectory()}`,
+              `${this.snapshotOnly && contained(this.roots[identifier.split(":")[0]!] ?? "", real) ? this.identify(real) : real}:${link.isSymbolicLink()}:${metadata.isDirectory()}`,
             ),
           },
         };
@@ -261,6 +341,7 @@ export class CapturedDependencies {
     } catch (error) {
       if (fallback !== undefined) {
         this.supported = false;
+        if (this.snapshotOnly) throw error;
         return fallback;
       }
       // A dangling symlink is present, and cannot be serialized as absence.
@@ -304,6 +385,27 @@ export class CapturedDependencies {
 
   fileExists(path: string): boolean {
     return this.capture(path).probe.kind === "file";
+  }
+  /** Used by the snapshot-only Knip guard; links and denied entries are present. */
+  assertMissing(path: string): void {
+    if (this.capture(path).probe.kind !== "missing")
+      throw new TypeError(
+        "Dead-code dependency resolution escaped the snapshot",
+      );
+  }
+  /** Exact captured bytes for the controlled Knip filesystem. Never passthrough. */
+  readBytes(path: string, expectedCanonicalPath?: string): Buffer {
+    if (!this.snapshotOnly) throw new TypeError("Snapshot capture required");
+    const entry = this.capture(path);
+    if (entry.bytes === undefined)
+      throw new TypeError("Unavailable snapshot bytes");
+    if (
+      expectedCanonicalPath !== undefined &&
+      (entry.probe.kind !== "file" ||
+        entry.probe.realPath !== this.identify(expectedCanonicalPath))
+    )
+      throw new TypeError("Snapshot link changed during capture");
+    return entry.bytes;
   }
   packageFileExists(path: string): boolean {
     const probe = this.capture(path).probe;
@@ -456,21 +558,30 @@ export class CapturedDependencies {
   }
   /** Always observe live inputs afresh, including when this view has been used. */
   validate(manifest: DependencyInputManifest): boolean {
-    return CapturedDependencies.validate(manifest, this.context);
+    return CapturedDependencies.validate(
+      manifest,
+      this.context,
+      this.snapshotOnly,
+    );
   }
   static validate(
     manifest: DependencyInputManifest,
     context: DependencyCaptureContext,
+    snapshotOnly = false,
   ): boolean {
-    return new CapturedDependencies(context).matches(manifest);
+    return new CapturedDependencies(context, snapshotOnly, false).matches(
+      manifest,
+    );
   }
 }
 
 export function validateDependencyInputs(
   manifest: DependencyInputManifest | undefined,
   context: DependencyCaptureContext,
+  snapshotOnly = false,
 ): boolean {
   return (
-    manifest !== undefined && CapturedDependencies.validate(manifest, context)
+    manifest !== undefined &&
+    CapturedDependencies.validate(manifest, context, snapshotOnly)
   );
 }

@@ -51,6 +51,7 @@ async function validatePackage(
   snapshotRoot: string,
   sourcePath: string,
   specifier: string,
+  missing: (path: string) => Promise<void>,
 ): Promise<void> {
   const parts = specifier.split("/");
   const name = specifier.startsWith("@")
@@ -58,7 +59,7 @@ async function validatePackage(
     : parts[0]!;
   let directory = dirname(join(snapshotRoot, sourcePath));
   while (true) {
-    await assertMissing(join(directory, "node_modules", ...name.split("/")));
+    await missing(join(directory, "node_modules", ...name.split("/")));
     const parent = dirname(directory);
     if (parent === directory) return;
     directory = parent;
@@ -162,6 +163,7 @@ type CommentCollector = (
 
 export async function createKnipImportValidator(
   registry: SnapshotRegistry,
+  missing: (path: string) => Promise<void> = assertMissing,
 ): Promise<{
   validateImport: (sourcePath: string, specifier: string) => Promise<void>;
   collectCommentImports: CommentCollector;
@@ -231,7 +233,7 @@ export async function createKnipImportValidator(
     if (!entry) {
       // A missing target is an ordinary unresolved import, but an existing path
       // excluded from the inventory must not become a back door into analysis.
-      await assertMissing(join(registry.snapshotRoot, path));
+      await missing(join(registry.snapshotRoot, path));
       return;
     }
     if (entry.targetKind !== "directory") return;
@@ -270,7 +272,12 @@ export async function createKnipImportValidator(
     validateSpecifier(sourcePath, specifier);
     if (!specifier.startsWith("#")) {
       if (!specifier.startsWith(".") && !isBuiltin(specifier)) {
-        await validatePackage(registry.snapshotRoot, sourcePath, specifier);
+        await validatePackage(
+          registry.snapshotRoot,
+          sourcePath,
+          specifier,
+          missing,
+        );
       }
       return;
     }
@@ -304,7 +311,12 @@ export async function createKnipImportValidator(
         }
         // An alias target is resolved as a package, even when named "fs" or "#x".
         // It is NOT a new source import to which builtin/# exclusions apply.
-        await validatePackage(registry.snapshotRoot, scope.path, target);
+        await validatePackage(
+          registry.snapshotRoot,
+          scope.path,
+          target,
+          missing,
+        );
         return undefined; // Every install is absent: Oxc can try an array fallback.
       }
       if (Array.isArray(value)) {

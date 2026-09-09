@@ -268,6 +268,83 @@ async function temporaryJsonReports(
 }
 
 describe("packaged Zedbee CLI", () => {
+  it("runs captured Knip from the installed package through the default service on repeat scans", async () => {
+    const repository = await createInstalledRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        checks: Object.fromEntries(
+          [
+            "formatting",
+            "lint",
+            "types",
+            "cyclomaticComplexity",
+            "readabilityComplexity",
+            "structuralSecurity",
+            "secrets",
+            "duplication",
+            "dependencyArchitecture",
+            "deadCode",
+            "reactCorrectness",
+            "reactAccessibility",
+            "vulnerabilities",
+          ].map((id) => [id, id === "deadCode" ? "error" : "off"]),
+        ),
+      }),
+    );
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "knip-packaged-fixture",
+        private: true,
+        main: "src/index.ts",
+      }),
+    );
+    await repository.write(
+      "src/index.ts",
+      'import { used } from "./lib.js";\nconsole.log(used);\n',
+    );
+    await repository.write("src/lib.ts", "export const used = 1;\n");
+    await repository.commitAll("captured Knip baseline");
+    await repository.write(
+      "src/lib.ts",
+      "export const used = 1;\nexport const unused = 2;\n",
+    );
+    await repository.git(["add", "--", "src/lib.ts"]);
+    const findings = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await runZedbee(repository.root);
+      expect(result.exitCode, result.stderr || result.stdout).toBe(1);
+      const report = JSON.parse(result.stdout) as {
+        checks: Array<{
+          checkId: string;
+          findings: Array<{ location?: { file: string } }>;
+        }>;
+      };
+      const knip = report.checks.find(({ checkId }) => checkId === "deadCode");
+      expect(knip?.findings).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            location: expect.objectContaining({ file: "src/lib.ts" }),
+          }),
+        ]),
+      );
+      findings.push(knip!.findings);
+    }
+    expect(findings[1]).toEqual(findings[0]);
+    for (const entry of [
+      "knip-worker.js",
+      "executor.js",
+      "resolver.wasm",
+      "resolver.LICENSE",
+      "resolver.provenance.json",
+    ]) {
+      expect(tarballFiles).toContain(`dist/checks/dead-code/${entry}`);
+    }
+  });
+
   it("ships runnable analyzer entries and every engine adapter outside the source repository", async () => {
     for (const entry of ["worker", "supervisor", "bootstrap", "windows-job"]) {
       expect(tarballFiles).toContain(`dist/checks/runner/${entry}.js`);

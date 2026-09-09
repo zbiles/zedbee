@@ -608,12 +608,14 @@ describe("observation cache keys", () => {
     );
   });
 
-  it("identifies captured lint and types engines while leaving dead code ineligible", () => {
+  it("identifies captured lint, types, and Knip engines", () => {
     expect(observationCacheEngineIdentity("lint")).toContain(
       "typescript-eslint@",
     );
     expect(observationCacheEngineIdentity("types")).toContain("typescript@");
-    expect(observationCacheEngineIdentity("deadCode")).toBeUndefined();
+    expect(observationCacheEngineIdentity("deadCode")).toContain(
+      "knip-snapshot-wasi-11.24.2",
+    );
   });
 
   it("separates otherwise identical inspections by staged React declaration", async () => {

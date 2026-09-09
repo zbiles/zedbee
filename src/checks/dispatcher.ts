@@ -429,8 +429,14 @@ async function collectObservations(
         cached !== undefined &&
         cached.checkId === adapter.id &&
         sameTarget(cached.target, runContext.target) &&
-        ((adapter.id !== "lint" && adapter.id !== "types") ||
-          validateDependencyInputs(cached.dependencyInputs, runContext))
+        ((adapter.id !== "lint" &&
+          adapter.id !== "types" &&
+          adapter.id !== "deadCode") ||
+          validateDependencyInputs(
+            cached.dependencyInputs,
+            runContext,
+            adapter.id === "deadCode",
+          ))
       ) {
         return sanitizeCacheableObservationSet(cached);
       }
@@ -446,8 +452,16 @@ async function collectObservations(
     cacheKey !== undefined &&
     options.cache !== undefined &&
     !runContext.signal.aborted &&
-    ((adapter.id !== "lint" && adapter.id !== "types") ||
-      validateDependencyInputs(collected.dependencyInputs, runContext))
+    (adapter.id !== "deadCode" ||
+      (await cacheKeyFor.matchesSnapshotFiles(collected.dependencyInputs))) &&
+    ((adapter.id !== "lint" &&
+      adapter.id !== "types" &&
+      adapter.id !== "deadCode") ||
+      validateDependencyInputs(
+        collected.dependencyInputs,
+        runContext,
+        adapter.id === "deadCode",
+      ))
   ) {
     await options.cache.set(cacheKey, collected).catch(() => undefined);
   }

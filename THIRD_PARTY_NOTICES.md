@@ -820,10 +820,8 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ## @emnapi/core@1.11.2
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/@emnapi/core/-/core-1.11.2.tgz
-Reviewed override text: licenses/overrides/emnapi-1.11.2-LICENSE
 
-### licenses/overrides/emnapi-1.11.2-LICENSE
+### node_modules/@emnapi/core/LICENSE
 
 MIT License
 
@@ -851,10 +849,8 @@ SOFTWARE.
 ## @emnapi/runtime@1.11.2
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.2.tgz
-Reviewed override text: licenses/overrides/emnapi-1.11.2-LICENSE
 
-### licenses/overrides/emnapi-1.11.2-LICENSE
+### node_modules/@emnapi/runtime/LICENSE
 
 MIT License
 
@@ -882,10 +878,8 @@ SOFTWARE.
 ## @emnapi/wasi-threads@1.2.2
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/@emnapi/wasi-threads/-/wasi-threads-1.2.2.tgz
-Reviewed override text: licenses/overrides/emnapi-1.11.2-LICENSE
 
-### licenses/overrides/emnapi-1.11.2-LICENSE
+### node_modules/@emnapi/wasi-threads/LICENSE
 
 MIT License
 
@@ -3825,13 +3819,13 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## @napi-rs/wasm-runtime@1.2.3
+## @napi-rs/wasm-runtime@1.1.6
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/70c149321ca4e361f6726349cf9b2258467fb24f/LICENSE
-Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/b77119e711704cc453949e056b45a4996ea0386c/LICENSE
+Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.1.6-LICENSE
 
-### licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
+### licenses/overrides/napi-rs-wasm-runtime-1.1.6-LICENSE
 
 MIT License
 
@@ -17267,10 +17261,8 @@ SOFTWARE.
 ## tslib@2.8.1
 
 License: 0BSD
-Reviewed override source: https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz
-Reviewed override text: licenses/overrides/tslib-2.8.1-LICENSE
 
-### licenses/overrides/tslib-2.8.1-LICENSE
+### node_modules/tslib/LICENSE.txt
 
 Copyright (c) Microsoft Corporation.
 

@@ -14,6 +14,16 @@ interface EngineIdentityMetadata {
 }
 
 const ENGINE_IDENTITY_METADATA = Object.freeze({
+  deadCode: Object.freeze({
+    packages: Object.freeze([
+      "knip",
+      "typescript",
+      "@napi-rs/wasm-runtime",
+      "@emnapi/core",
+      "@emnapi/runtime",
+    ]),
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v1",
+  }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
     revision: "captured-inputs-v1",
