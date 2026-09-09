@@ -59,6 +59,7 @@ class Candidate extends EventEmitter {
 }
 const roots: string[] = [];
 afterEach(async () => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   mocks.spawn.mockReset();
   mocks.identity.mockReset();
@@ -116,6 +117,35 @@ it("starts the fixed candidate before parent identity finishes, and owns exit af
     expect(f.settled()).toBe(false);
     f.child.emit("exit", 1);
     await expect(f.request).rejects.toBe(error);
+  } finally {
+    f.pending.reject(new Error("cleanup"));
+    f.child.emit("exit", 1);
+    await f.request.catch(() => {});
+  }
+});
+
+it("bounds startup IPC only after the full parent identity finishes and still owns timed-out exit", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const f = await fixture();
+  try {
+    expect(mocks.spawn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.child.connected).toBe(true);
+    expect(f.child.messages).toEqual([]);
+    expect(f.settled()).toBe(false);
+    f.pending.resolve(f.identity);
+    expect(await f.child.sent.promise).toEqual({
+      directory: f.identity.directory,
+      identity: f.identity.content,
+      concurrency: 2,
+    });
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(f.child.connected).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(f.child.connected).toBe(false);
+    expect(f.settled()).toBe(false);
+    f.child.emit("exit", 0);
+    await expect(f.request).rejects.toThrow();
   } finally {
     f.pending.reject(new Error("cleanup"));
     f.child.emit("exit", 1);
@@ -233,13 +263,13 @@ it("waits for a busy candidate's exit then polls without launching a second cand
     f.child.emit("message", { type: "busy" });
     await f.child.lostConnection.promise;
     expect(f.settled()).toBe(false);
-    vi.spyOn(ServiceState.prototype, "read").mockImplementation(
-      async function (this: ServiceState) {
-        const result = await originalRead.call(this);
-        if (!result) polled.resolve();
-        return result;
-      },
-    );
+    vi.spyOn(ServiceState.prototype, "read").mockImplementation(async function (
+      this: ServiceState,
+    ) {
+      const result = await originalRead.call(this);
+      if (!result) polled.resolve();
+      return result;
+    });
     f.child.emit("exit", 0);
     await polled.promise;
     expect(mocks.spawn).toHaveBeenCalledTimes(1);

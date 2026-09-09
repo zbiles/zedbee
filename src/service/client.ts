@@ -519,11 +519,7 @@ async function startCandidate(
     const exited = new Promise<void>((done) => {
       witnessExit = done;
     });
-    // Bounds only the source-free startup exchange. Failed startup still owns
-    // the candidate until its metadata/endpoint cleanup and process exit.
-    const timer = setTimeout(() => {
-      void fail();
-    }, 30000);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const disconnect = () => {
       if (child.connected) child.disconnect();
     };
@@ -593,6 +589,12 @@ async function startCandidate(
           void fail();
           return;
         }
+        // The caller's full identity is owned computation, not startup IPC.
+        // Preserve the exchange bound only after that work and validation;
+        // failure still awaits the candidate's cleanup and actual exit.
+        timer = setTimeout(() => {
+          void fail();
+        }, 30000);
         startupSent = true;
         child.send(
           {
