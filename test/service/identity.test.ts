@@ -1,18 +1,23 @@
 import { afterEach, expect, it, vi } from "vitest";
-import * as filesystem from "node:fs/promises";
+import * as filesystem from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { installedContentIdentitySync } from "../../src/service/identity-content.js";
 import {
   mkdir,
   mkdtemp,
   realpath,
   rm,
   symlink,
+  stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installedContentIdentity } from "../../src/service/identity.js";
-vi.mock("node:fs/promises", async (original) => ({
-  ...(await original<typeof import("node:fs/promises")>()),
+vi.mock("node:fs", async (original) => ({
+  ...(await original<typeof import("node:fs")>()),
 }));
 const roots: string[] = [];
 afterEach(async () => {
@@ -22,47 +27,47 @@ afterEach(async () => {
 });
 it("rejects additions to an already traversed code directory during acquisition", async () => {
   const { root, dependency } = await fixture();
-  const original = filesystem.readdir;
+  const original = filesystem.readdirSync;
   let mutated = false;
-  vi.spyOn(filesystem, "readdir").mockImplementation((async (
+  vi.spyOn(filesystem, "readdirSync").mockImplementation(((
     path: any,
     options: any,
   ) => {
     if (path === dependency && !mutated) {
       mutated = true;
-      await writeFile(join(root, "dist", "late.js"), "late code");
+      writeFileSync(join(root, "dist", "late.js"), "late code");
     }
     return original(path, options);
-  }) as typeof filesystem.readdir);
-  await expect(installedContentIdentity(root, "dist")).rejects.toThrow();
+  }) as typeof filesystem.readdirSync);
+  expect(() => installedContentIdentitySync(root, "dist")).toThrow();
   expect(mutated).toBe(true);
 });
 it("rejects optional dependency installation after its resolution was captured", async () => {
   const { root, dependency } = await fixture();
-  await writeFile(
+  writeFileSync(
     join(dependency, "package.json"),
     JSON.stringify({ name: "engine", optionalDependencies: { late: "1" } }),
   );
-  await mkdir(join(dependency, "node_modules"));
-  const original = filesystem.readdir;
+  mkdirSync(join(dependency, "node_modules"));
+  const original = filesystem.readdirSync;
   let mutated = false;
-  vi.spyOn(filesystem, "readdir").mockImplementation((async (
+  vi.spyOn(filesystem, "readdirSync").mockImplementation(((
     path: any,
     options: any,
   ) => {
     if (path === dependency && !mutated) {
       mutated = true;
-      await mkdir(join(dependency, "node_modules", "late"), {
+      mkdirSync(join(dependency, "node_modules", "late"), {
         recursive: true,
       });
-      await writeFile(
+      writeFileSync(
         join(dependency, "node_modules", "late", "package.json"),
         JSON.stringify({ name: "late" }),
       );
     }
     return original(path, options);
-  }) as typeof filesystem.readdir);
-  await expect(installedContentIdentity(root, "dist")).rejects.toThrow();
+  }) as typeof filesystem.readdirSync);
+  expect(() => installedContentIdentitySync(root, "dist")).toThrow();
   expect(mutated).toBe(true);
 });
 async function fixture() {
@@ -158,4 +163,49 @@ it("includes installed packages whose name also identifies a Node builtin", asyn
   const first = await installedContentIdentity(root, "dist");
   await writeFile(join(nested, "implementation.js"), "changed");
   expect(await installedContentIdentity(root, "dist")).not.toBe(first);
+});
+
+it("preserves the exact content record digest and catches restored-mtime same-size edits", async () => {
+  const { root, dependency } = await fixture();
+  const hash = (value: string) =>
+    createHash("sha256").update(value).digest("hex");
+  const records = [
+    JSON.stringify([root, "engine", dependency]),
+    JSON.stringify([
+      JSON.stringify([root, "package.json"]),
+      hash(
+        JSON.stringify({
+          name: "zedbee",
+          version: "1.0.0",
+          dependencies: { engine: "1.0.0" },
+        }),
+      ),
+    ]),
+    JSON.stringify([
+      JSON.stringify([root, join("dist", "entry.js")]),
+      hash("export {};"),
+    ]),
+    JSON.stringify([
+      JSON.stringify([dependency, "package.json"]),
+      hash(
+        JSON.stringify({
+          name: "engine",
+          version: "1.0.0",
+          main: "engine.js",
+        }),
+      ),
+    ]),
+    JSON.stringify([
+      JSON.stringify([dependency, "engine.js"]),
+      hash("export const engine = 1;"),
+    ]),
+  ];
+  const expected = hash(JSON.stringify(records.sort()));
+  expect(await installedContentIdentity(root, "dist")).toBe(expected);
+  expect(installedContentIdentitySync(root, "dist")).toBe(expected);
+  const path = join(dependency, "engine.js");
+  const before = await stat(path);
+  await writeFile(path, "export const engine = 2;");
+  await utimes(path, before.atime, before.mtime);
+  expect(await installedContentIdentity(root, "dist")).not.toBe(expected);
 });
