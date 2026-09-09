@@ -2,7 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import * as filesystem from "node:fs";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { installedContentIdentitySync } from "../../src/service/identity-content.js";
+import { installedContentIdentityInWorker } from "../../src/service/identity-content.js";
 import {
   mkdir,
   mkdtemp,
@@ -39,7 +39,9 @@ it("rejects additions to an already traversed code directory during acquisition"
     }
     return original(path, options);
   }) as typeof filesystem.readdirSync);
-  expect(() => installedContentIdentitySync(root, "dist")).toThrow();
+  await expect(
+    installedContentIdentityInWorker(root, "dist"),
+  ).rejects.toThrow();
   expect(mutated).toBe(true);
 });
 it("rejects optional dependency installation after its resolution was captured", async () => {
@@ -67,7 +69,9 @@ it("rejects optional dependency installation after its resolution was captured",
     }
     return original(path, options);
   }) as typeof filesystem.readdirSync);
-  expect(() => installedContentIdentitySync(root, "dist")).toThrow();
+  await expect(
+    installedContentIdentityInWorker(root, "dist"),
+  ).rejects.toThrow();
   expect(mutated).toBe(true);
 });
 async function fixture() {
@@ -202,7 +206,7 @@ it("preserves the exact content record digest and catches restored-mtime same-si
   ];
   const expected = hash(JSON.stringify(records.sort()));
   expect(await installedContentIdentity(root, "dist")).toBe(expected);
-  expect(installedContentIdentitySync(root, "dist")).toBe(expected);
+  expect(await installedContentIdentityInWorker(root, "dist")).toBe(expected);
   const path = join(dependency, "engine.js");
   const before = await stat(path);
   await writeFile(path, "export const engine = 2;");

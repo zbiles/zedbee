@@ -70,6 +70,7 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "dist/service/entry.js",
   "dist/service/identity-worker.js",
   "dist/service/identity-content.js",
+  "dist/service/identity-parallel.js",
   "dist/service/client.js",
   "dist/commands/service.js",
   "dist/checks/runner/executor.js",

@@ -13,6 +13,7 @@ import {
 import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 import { ServiceUnavailableError } from "./protocol.js";
+import { hashFilesInWorkers } from "./identity-parallel.js";
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -20,6 +21,7 @@ function hashFile(
   path: string,
   collect = false,
   observed?: Map<string, BigIntStats>,
+  budget?: BigInt64Array<SharedArrayBuffer>,
 ): { hash: string; text?: string; bytes: number } {
   const before = lstatSync(path, { bigint: true });
   if (
@@ -28,6 +30,22 @@ function hashFile(
     before.size > BigInt(collect ? 1024 * 1024 : 256 * 1024 * 1024)
   )
     throw new ServiceUnavailableError();
+  // Reserve before opening/reading. Failed acquisitions never reuse a budget.
+  if (budget) {
+    let used = Atomics.load(budget, 0);
+    while (true) {
+      if (used < 0n || used + before.size > 2n * 1024n ** 3n)
+        throw new ServiceUnavailableError();
+      const actual = Atomics.compareExchange(
+        budget,
+        0,
+        used,
+        used + before.size,
+      );
+      if (actual === used) break;
+      used = actual;
+    }
+  }
   const file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     const opened = fstatSync(file, { bigint: true });
@@ -37,8 +55,11 @@ function hashFile(
       parts: Buffer[] = [];
     let bytes = 0;
     const buffer = Buffer.allocUnsafe(64 * 1024);
-    while (true) {
-      const bytesRead = readSync(file, buffer, 0, buffer.length, null);
+    while (BigInt(bytes) < before.size) {
+      // A concurrent growth must not read beyond the reserved size; final
+      // descriptor/path observations still reject any observed mutation.
+      const length = Math.min(buffer.length, Number(before.size) - bytes);
+      const bytesRead = readSync(file, buffer, 0, length, null);
       if (!bytesRead) break;
       bytes += bytesRead;
       if (BigInt(bytes) > before.size) throw new ServiceUnavailableError();
@@ -65,6 +86,34 @@ function hashFile(
     };
   } finally {
     closeSync(file);
+  }
+}
+
+export function hashIdentityFiles(
+  files: readonly string[],
+  budget: BigInt64Array<SharedArrayBuffer>,
+) {
+  const observed = new Map<string, BigIntStats>();
+  const hashes = files.map(
+    (path) => hashFile(path, false, observed, budget).hash,
+  );
+  return { hashes, observed };
+}
+
+export function validateIdentityObservations(
+  observed: Map<string, BigIntStats>,
+): void {
+  for (const [path, before] of observed) {
+    const after = lstatSync(path, { bigint: true });
+    if (
+      before.dev !== after.dev ||
+      before.ino !== after.ino ||
+      before.mode !== after.mode ||
+      before.size !== after.size ||
+      before.mtimeNs !== after.mtimeNs ||
+      before.ctimeNs !== after.ctimeNs
+    )
+      throw new ServiceUnavailableError();
   }
 }
 function dependencyNames(manifest: Record<string, any>): Map<string, boolean> {
@@ -122,10 +171,7 @@ function resolveDependency(root: string, name: string): string | undefined {
   }
   return undefined;
 }
-export function installedContentIdentitySync(
-  root: string,
-  tree: string,
-): string {
+function collectIdentityFiles(root: string, tree: string) {
   root = realpathSync(root);
   const packages = [root],
     seen = new Set<string>(),
@@ -138,8 +184,7 @@ export function installedContentIdentitySync(
     name: string;
     resolved: string | undefined;
   }> = [];
-  let directoryCount = 0,
-    totalBytes = 0;
+  let directoryCount = 0;
   function walk(directory: string, packageRoot: string): void {
     if (++directoryCount > 20000) throw new ServiceUnavailableError();
     const before = lstatSync(directory, { bigint: true });
@@ -198,14 +243,19 @@ export function installedContentIdentitySync(
       walk(join(root, tree), root);
     } else walk(packageRoot, packageRoot);
   }
-  for (const file of files) {
-    const content = hashFile(file.path, false, observed);
-    totalBytes += content.bytes;
-    if (totalBytes > 2 * 1024 * 1024 * 1024)
+  return { files, manifests, records, observed, edges };
+}
+
+function finishIdentity(
+  installation: ReturnType<typeof collectIdentityFiles>,
+  hashes: readonly string[],
+): string {
+  const { files, manifests, records, observed, edges } = installation;
+  for (const [index, file] of files.entries()) {
+    const hash = hashes[index]!;
+    if (manifests.has(file.path) && manifests.get(file.path) !== hash)
       throw new ServiceUnavailableError();
-    if (manifests.has(file.path) && manifests.get(file.path) !== content.hash)
-      throw new ServiceUnavailableError();
-    records.push(JSON.stringify([file.label, content.hash]));
+    records.push(JSON.stringify([file.label, hash]));
   }
   // A live installation is not an immutable snapshot. Reject changes observed
   // after an earlier directory walk/hash, including newly present optional or
@@ -214,17 +264,35 @@ export function installedContentIdentitySync(
     if (resolveDependency(edge.root, edge.name) !== edge.resolved)
       throw new ServiceUnavailableError();
   }
-  for (const [path, before] of observed) {
-    const after = lstatSync(path, { bigint: true });
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.mode !== after.mode ||
-      before.size !== after.size ||
-      before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs
-    )
-      throw new ServiceUnavailableError();
-  }
+  validateIdentityObservations(observed);
   return digest(JSON.stringify(records.sort()));
+}
+
+function hashLocally(
+  installation: ReturnType<typeof collectIdentityFiles>,
+): string[] {
+  const { hashes, observed } = hashIdentityFiles(
+    installation.files.map((file) => file.path),
+    new BigInt64Array(new SharedArrayBuffer(8)),
+  );
+  for (const [path, observation] of observed)
+    installation.observed.set(path, observation);
+  return hashes;
+}
+
+export async function installedContentIdentityInWorker(
+  root: string,
+  tree: string,
+): Promise<string> {
+  const installation = collectIdentityFiles(root, tree);
+  // Four thread startups are only worthwhile once there is enough file I/O.
+  // Small installations stay on this metadata worker, never on the CLI thread.
+  const hashes =
+    installation.files.length < 4096
+      ? hashLocally(installation)
+      : await hashFilesInWorkers(
+          installation.files.map((file) => file.path),
+          new SharedArrayBuffer(8),
+        );
+  return finishIdentity(installation, hashes);
 }
