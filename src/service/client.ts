@@ -500,7 +500,7 @@ async function startCandidate(
   location: Pick<ServiceIdentity, "key" | "entry" | "directory">,
   pendingIdentity: Promise<ServiceIdentity>,
   concurrency: 1 | 2 | 4,
-): Promise<void> {
+): Promise<"ready" | "busy"> {
   const execArgv = location.entry.endsWith(".ts")
     ? ["--import", import.meta.resolve("tsx")]
     : [];
@@ -511,7 +511,7 @@ async function startCandidate(
     detached: true,
     windowsHide: true,
   });
-  await new Promise<void>((resolve, reject) => {
+  return new Promise<"ready" | "busy">((resolve, reject) => {
     let settling = false,
       startupSent = false,
       detaching = false;
@@ -563,7 +563,7 @@ async function startCandidate(
             clearTimeout(timer);
             child.unref();
             disconnect();
-            resolve();
+            resolve("ready");
           });
         } catch {
           void fail();
@@ -574,7 +574,7 @@ async function startCandidate(
         disconnect();
         void exited.then(() => {
           child.unref();
-          resolve();
+          resolve("busy");
         });
       } else void fail();
     });
@@ -634,8 +634,8 @@ export async function acquireServiceExecutor(
     await candidate?.catch(() => {});
     throw error;
   }
-  if (candidate) await candidate;
-  let attempted = candidate !== undefined;
+  // Busy means ownership is still held, not that a usable service started.
+  let attempted = (await candidate) === "ready";
   const connectCurrent = async (): Promise<ServiceClient | undefined> => {
     const record = await state.read();
     if (!record) return undefined;
@@ -692,12 +692,12 @@ export async function acquireServiceExecutor(
         const release = await state.lock();
         if (release) {
           await release();
-          await startCandidate(
-            identity,
-            Promise.resolve(identity),
-            options.concurrency ?? 2,
-          );
-          attempted = true;
+          attempted =
+            (await startCandidate(
+              identity,
+              Promise.resolve(identity),
+              options.concurrency ?? 2,
+            )) === "ready";
         }
       }
       client = await connectCurrent();

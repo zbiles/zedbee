@@ -95,6 +95,50 @@ it.each([
   },
 );
 
+it("retries a busy startup after discovery was cleared but ownership is still releasing", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zu-")));
+  const state = new ServiceState(join(root, "s"));
+  await state.prepare();
+  const release = (await state.lock())!;
+  const releasing = gate(),
+    allowRelease = gate();
+  const old = await startServiceServer(state, "a".repeat(64), 2, async () => {
+    releasing.resolve();
+    await allowRelease.promise;
+    await release();
+  });
+  const closing = old.close();
+  await releasing.promise;
+  expect(await state.read()).toBeUndefined();
+  const originalRead = ServiceState.prototype.read;
+  let reads = 0;
+  const read = vi.spyOn(ServiceState.prototype, "read").mockImplementation(
+    async function (this: ServiceState) {
+      const record = await originalRead.call(this);
+      // The second parent-side discovery read follows the real candidate's
+      // busy reply. Keep ownership held until that reply has been observed.
+      if (this.directory === state.directory && ++reads === 2)
+        allowRelease.resolve();
+      return record;
+    },
+  );
+  let executor: Awaited<ReturnType<typeof acquireServiceExecutor>> | undefined;
+  try {
+    executor = await acquireServiceExecutor({ directory: state.directory });
+    await closing;
+    await (await executor.openSession()).close();
+    expect((await state.read())!.identity).not.toBe("a".repeat(64));
+  } finally {
+    read.mockRestore();
+    allowRelease.resolve();
+    await closing;
+    await executor?.close();
+    await stopService({ directory: state.directory });
+    await release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("lets existing sessions finish while rejecting new sessions during upgrade", async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "zu-")));
   const state = new ServiceState(join(root, "s"));
