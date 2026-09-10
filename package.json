@@ -15,11 +15,11 @@
   "types": "./dist/index.d.ts",
   "repository": {
     "type": "git",
-    "url": "https://github.com/zbiles/Zedbee.git"
+    "url": "https://github.com/zbiles/zedbee.git"
   },
-  "homepage": "https://github.com/zbiles/Zedbee#readme",
+  "homepage": "https://zedbee.dev",
   "bugs": {
-    "url": "https://github.com/zbiles/Zedbee/issues"
+    "url": "https://github.com/zbiles/zedbee/issues"
   },
   "publishConfig": {
     "tag": "next",

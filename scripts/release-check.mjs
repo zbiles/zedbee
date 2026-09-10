@@ -175,7 +175,8 @@ export function releaseReadiness(packageJson, remoteUrls) {
     : [];
   const related =
     repository !== undefined &&
-    repositoryPage(repository, homepage) &&
+    (homepage?.href === "https://zedbee.dev/" ||
+      repositoryPage(repository, homepage)) &&
     repositoryPage(repository, bugs) &&
     remotes.some((remote) => sameRepository(repository, remote));
   return related

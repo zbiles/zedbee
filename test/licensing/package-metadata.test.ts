@@ -40,10 +40,10 @@ describe("public package metadata", () => {
       version: "0.1.0-beta.1",
       repository: {
         type: "git",
-        url: "https://github.com/zbiles/Zedbee.git",
+        url: "https://github.com/zbiles/zedbee.git",
       },
-      homepage: "https://github.com/zbiles/Zedbee#readme",
-      bugs: { url: "https://github.com/zbiles/Zedbee/issues" },
+      homepage: "https://zedbee.dev",
+      bugs: { url: "https://github.com/zbiles/zedbee/issues" },
       publishConfig: {
         tag: "next",
         access: "public",
@@ -63,6 +63,39 @@ describe("public package metadata", () => {
     expect(readme).toContain("PolyForm Small Business License 1.0.0");
     expect(commercial).toMatch(/separate commercial license/i);
     expect(commercial).toMatch(/not legal advice/i);
+  });
+
+  it("accepts the public website while keeping repository and issue links tied to the remote", async () => {
+    const manifest = {
+      ...JSON.parse(await text("package.json")),
+      repository: { url: "https://github.com/zbiles/zedbee.git" },
+      homepage: "https://zedbee.dev",
+      bugs: { url: "https://github.com/zbiles/zedbee/issues" },
+    };
+    const remotes = ["git@github.com:zbiles/zedbee.git"];
+    expect(releaseReadiness(manifest, remotes)).toEqual({ ready: true });
+    expect(
+      releaseReadiness(manifest, ["git@github.com:other/zedbee.git"]),
+    ).toMatchObject({ ready: false });
+    expect(
+      releaseReadiness(
+        {
+          ...manifest,
+          bugs: { url: "https://github.com/other/zedbee/issues" },
+        },
+        remotes,
+      ),
+    ).toMatchObject({ ready: false });
+    for (const homepage of [
+      "http://zedbee.dev",
+      "https://zedbee.dev.evil",
+      "https://user@zedbee.dev",
+      "https://example.com",
+    ]) {
+      expect(
+        releaseReadiness({ ...manifest, homepage }, remotes),
+      ).toMatchObject({ ready: false });
+    }
   });
 
   it("blocks publication until owner-supplied metadata matches a remote", () => {

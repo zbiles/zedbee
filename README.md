@@ -13,7 +13,7 @@ Scan and fix commands share a private local analyzer service with bounded, super
 
 ## Install
 
-The first public beta, `0.1.0-beta.1`, is not yet published. Once available, install it from npm's `next` tag:
+Install the public beta from npm's `next` tag:
 
 ```bash
 npm install --save-dev zedbee@next

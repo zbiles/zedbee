@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Zedbee is not yet publicly released. The first beta is `0.1.0-beta.1`, intended for npm's `next` tag. The following policy takes effect with the first public beta:
+The following release line receives security fixes:
 
 | Version line | Security fixes |
 | ------------ | -------------- |
