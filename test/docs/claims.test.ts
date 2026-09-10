@@ -17,14 +17,14 @@ describe("public documentation claims", () => {
   });
 
   it("documents Node-native security engines, support, licensing, and privacy", async () => {
-    const [readme, privacy, licensing, support] = await Promise.all([
-      read("README.md"),
+    const [reference, privacy, licensing, support] = await Promise.all([
+      read("docs/cli-reference.md"),
       read("docs/privacy.md"),
       read("docs/commercial-licensing.md"),
       read("docs/support.md"),
     ]);
-    expect(readme).toContain("Secretlint");
-    expect(readme).toContain("Zedbee OSV API client");
+    expect(reference).toContain("Secretlint");
+    expect(reference).toContain("Zedbee OSV API client");
     expect(privacy).toContain("api.osv.dev");
     for (const category of [
       "package names",
@@ -71,13 +71,13 @@ describe("public documentation claims", () => {
   });
 
   it("publishes runnable source-excerpt and report redirection commands", async () => {
-    const readme = await read("README.md");
+    const reference = await read("docs/cli-reference.md");
     for (const command of [
       "npx zedbee scan --include-source",
       "npx zedbee scan --no-source",
       "npx zedbee scan --format text --include-source > zedbee-report-with-source.txt",
     ]) {
-      expect(readme).toContain(command);
+      expect(reference).toContain(command);
     }
   });
 
@@ -112,16 +112,16 @@ describe("public documentation claims", () => {
   });
 
   it("documents bounded automatic terminal reports and their complete-report contract", async () => {
-    const [readme, reporting, privacy, support] = await Promise.all([
-      read("README.md"),
+    const [reference, reporting, privacy, support] = await Promise.all([
+      read("docs/cli-reference.md"),
       read("docs/reporting.md"),
       read("docs/privacy.md"),
       read("docs/support.md"),
     ]);
-    const publicDocs = [readme, reporting, privacy, support].join("\n");
+    const publicDocs = [reference, reporting, privacy, support].join("\n");
 
-    expect(readme).toContain('"terminalFindingLimit": 25');
-    expect(readme).toContain('"temporaryReportMaxAge": "24h"');
+    expect(reference).toContain('"terminalFindingLimit": 25');
+    expect(reference).toContain('"temporaryReportMaxAge": "24h"');
     expect(publicDocs).toMatch(/terminalFindingLimit[^.]*default[^.]*25/i);
     expect(publicDocs).toMatch(/terminalFindingLimit[^.]*"all"/i);
     expect(publicDocs).toMatch(/temporaryReportMaxAge[^.]*default[^.]*24h/i);
@@ -161,21 +161,23 @@ describe("public documentation claims", () => {
   });
 
   it("documents automatic-report delivery as a complete, accessible handoff", async () => {
-    const [readme, reporting, privacy, support, checks] = await Promise.all([
-      read("README.md"),
+    const [reference, reporting, privacy, support, checks] = await Promise.all([
+      read("docs/cli-reference.md"),
       read("docs/reporting.md"),
       read("docs/privacy.md"),
       read("docs/support.md"),
       read("docs/checks.md"),
     ]);
-    const publicDocs = [readme, reporting, privacy, support, checks].join("\n");
+    const publicDocs = [reference, reporting, privacy, support, checks].join(
+      "\n",
+    );
 
-    expect(readme).toContain('"agentGuidance"');
-    expect(readme).toContain('"opening"');
-    expect(readme).toContain('"nextStep"');
-    expect(readme).toMatch(/example[^.]*illustrative/i);
-    expect(readme).toMatch(/init[^.]*editable recommended guidance/i);
-    expect(readme).not.toMatch(/init[^.]*text shown above/i);
+    expect(reference).toContain('"agentGuidance"');
+    expect(reference).toContain('"opening"');
+    expect(reference).toContain('"nextStep"');
+    expect(reference).toMatch(/example[^.]*illustrative/i);
+    expect(reference).toMatch(/init[^.]*editable recommended guidance/i);
+    expect(reference).not.toMatch(/init[^.]*text shown above/i);
     expect(publicDocs).toMatch(
       /automatic scans[^.]*always[^.]*complete versioned JSON report/i,
     );
@@ -215,7 +217,7 @@ describe("public documentation claims", () => {
     expect(publicDocs).toMatch(/CLI overrides[^.]*automatic reports/i);
     expect(publicDocs).toMatch(/secret content[^.]*always redacted/i);
     expect(publicDocs).toMatch(/operating-system temporary/i);
-    for (const document of [readme, reporting, privacy, support]) {
+    for (const document of [reference, reporting, privacy, support]) {
       expect(document).toMatch(
         /temporary reports[^.]*eligible for cleanup[^.]*configured age/i,
       );
@@ -230,37 +232,39 @@ describe("public documentation claims", () => {
       /durable JSON[^.]*SARIF[^.]*explicit output[^.]*redirection/i,
     );
     expect(publicDocs).not.toMatch(/Windows ACL/i);
-    expect(readme).toContain("PolyForm Small Business License 1.0.0");
+    expect(await read("README.md")).toContain(
+      "PolyForm Small Business License 1.0.0",
+    );
   });
 
   it("documents responsive Doctor output and stable plain fallbacks", async () => {
-    const readme = await read("README.md");
+    const reference = await read("docs/cli-reference.md");
 
-    expect(readme).toMatch(/Doctor uses[^.]*yellow Zedbee frame/i);
-    expect(readme).toMatch(/DOCTOR` panel[^.]*wide interactive terminal/i);
-    expect(readme).toMatch(
+    expect(reference).toMatch(/Doctor uses[^.]*yellow Zedbee frame/i);
+    expect(reference).toMatch(/DOCTOR` panel[^.]*wide interactive terminal/i);
+    expect(reference).toMatch(
       /narrow terminal[^.]*redirected output[^.]*CI environment[^.]*plain text/i,
     );
-    expect(readme).toMatch(/doctor --format text[^.]*plain/i);
-    expect(readme).toMatch(/doctor --format json[^.]*ANSI-free/i);
+    expect(reference).toMatch(/doctor --format text[^.]*plain/i);
+    expect(reference).toMatch(/doctor --format json[^.]*ANSI-free/i);
   });
 
   it("documents responsive Checks output without changing its machine format", async () => {
-    const readme = await read("README.md");
+    const reference = await read("docs/cli-reference.md");
 
-    expect(readme).toMatch(/Checks uses[^.]*yellow Zedbee frame/i);
-    expect(readme).toMatch(/CHECKS` panel[^.]*wide interactive terminal/i);
-    expect(readme).toMatch(/checks --format text[^.]*plain/i);
-    expect(readme).toMatch(/checks --format json[^.]*ANSI-free/i);
+    expect(reference).toMatch(/Checks uses[^.]*yellow Zedbee frame/i);
+    expect(reference).toMatch(/CHECKS` panel[^.]*wide interactive terminal/i);
+    expect(reference).toMatch(/checks --format text[^.]*plain/i);
+    expect(reference).toMatch(/checks --format json[^.]*ANSI-free/i);
   });
 
   it("documents the complete managed check customization contract", async () => {
-    const [readme, checks, support] = await Promise.all([
-      read("README.md"),
+    const [reference, checks, support] = await Promise.all([
+      read("docs/cli-reference.md"),
       read("docs/checks.md"),
       read("docs/support.md"),
     ]);
-    const publicDocs = [readme, checks, support].join("\n");
+    const publicDocs = [reference, checks, support].join("\n");
 
     for (const checkId of [
       "formatting",

@@ -26,6 +26,7 @@ const reviewedOverrideTexts = [
 
 const PUBLIC_DOCS = Object.freeze([
   "docs/checks.md",
+  "docs/cli-reference.md",
   "docs/commercial-licensing.md",
   "docs/dependency-license-obligations.md",
   "docs/managed-fixes.md",
@@ -62,6 +63,7 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "THIRD_PARTY_NOTICES.md",
   "schema/zedbee.schema.json",
   "docs/checks.md",
+  "docs/cli-reference.md",
   "docs/managed-fixes.md",
   "docs/privacy.md",
   "docs/reporting.md",

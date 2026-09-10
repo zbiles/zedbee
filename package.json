@@ -37,6 +37,7 @@
     "DISCLOSURE",
     "THIRD_PARTY_NOTICES.md",
     "docs/checks.md",
+    "docs/cli-reference.md",
     "docs/commercial-licensing.md",
     "docs/dependency-license-obligations.md",
     "docs/managed-fixes.md",
