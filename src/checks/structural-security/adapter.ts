@@ -1,4 +1,6 @@
 import { inspectManagedCheck } from "../applicability.js";
+import { changedFilePaths } from "../changed-file-paths.js";
+import type { FilePolicyResolver } from "../../config/file-policy.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import * as ts from "typescript";
@@ -102,14 +104,32 @@ async function collectSide(
   target: CheckTarget,
   signal: AbortSignal,
   side: "baseline" | "staged",
+  selectedPaths: ReadonlySet<string>,
+  policyForFile: FilePolicyResolver,
 ): Promise<readonly Observation[]> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Structural security analysis failed.");
   const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
-  const files = workspace.sourceFiles
+  const candidates = new Set(workspace?.sourceFiles ?? []);
+  if (side === "baseline") {
+    for (const owner of inspection.workspaces) {
+      for (const file of owner.sourceFiles) {
+        if (selectedPaths.has(file)) candidates.add(file);
+      }
+    }
+  }
+  const files = [...candidates]
     .filter((file) => SOURCE.test(file))
+    .filter(
+      (file) =>
+        selectedPaths.has(file) ||
+        policyForFile(
+          "structuralSecurity",
+          file,
+          side === "baseline" ? "baseline" : "target",
+        ).when === "always",
+    )
     .sort(compareCodeUnits);
   const liveRegistry = await captureSnapshotRegistry(
     canonicalRoot,
@@ -158,6 +178,8 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
         context.target,
         context.signal,
         "baseline",
+        changedFilePaths(context, "baseline"),
+        context.policyForFile,
       );
       const targetObservations = await collectSide(
         context.snapshots.targetDir,
@@ -165,6 +187,8 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
         context.target,
         context.signal,
         "staged",
+        changedFilePaths(context, "target"),
+        context.policyForFile,
       );
       return {
         checkId: "structuralSecurity",

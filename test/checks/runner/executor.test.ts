@@ -243,7 +243,16 @@ describe("reusable analyzer executor", () => {
       targetInspection: inspection,
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       changeSet: {
-        files: new Map(),
+        files: new Map([
+          [
+            "src/app.ts",
+            {
+              path: "src/app.ts",
+              status: "modified",
+              addedRanges: [{ start: 1, end: 1 }],
+            },
+          ],
+        ]),
         isEmpty: false,
         containsAddedLine: () => true,
       },

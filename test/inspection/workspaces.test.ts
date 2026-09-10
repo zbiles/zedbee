@@ -7,6 +7,216 @@ import { parsePackageManifest } from "../../src/inspection/workspaces.js";
 import { createInspectionFixture } from "./fixture.js";
 
 describe("workspace discovery", () => {
+  it.each([{ main: "../src/dependency.ts" }, { type: "module" }])(
+    "keeps resolution-only nested manifests in their parent project: %j",
+    async (manifest) => {
+      const fixture = await createInspectionFixture();
+      await fixture.writeJson("package.json", { name: "app" });
+      await fixture.write("src/dependency.ts", "export const value = 1;\n");
+      await fixture.writeJson("redirect/package.json", manifest);
+      await fixture.write("redirect/source.ts", "export const nested = 1;\n");
+
+      const inspection = await inspectRepository(fixture.root);
+
+      expect(
+        inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+      ).toEqual(["."]);
+      expect(inspection.workspaces[0]?.sourceFiles).toEqual([
+        "redirect/source.ts",
+        "src/dependency.ts",
+      ]);
+    },
+  );
+
+  it("discovers a standalone project with only module-resolution metadata", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("app/package.json", { type: "module" });
+    await fixture.write("app/index.ts", "export const value = 1;\n");
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(
+      inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+    ).toEqual(["app"]);
+    expect(inspection.workspaces[0]?.sourceFiles).toEqual(["app/index.ts"]);
+  });
+
+  it("retains a nested pnpm project with a resolution-only package manifest", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "root" });
+    await fixture.writeJson("frontend/package.json", { type: "module" });
+    await fixture.write(
+      "frontend/pnpm-workspace.yaml",
+      "packages:\n  - packages/*\n  - '!packages/excluded'\n",
+    );
+    for (const name of ["included", "excluded"]) {
+      await fixture.writeJson(`frontend/packages/${name}/package.json`, {
+        name,
+      });
+    }
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(
+      inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+    ).toEqual([".", "frontend", "frontend/packages/included"]);
+  });
+
+  it.each([".", "frontend"])(
+    "retains a resolution-only manifest explicitly selected by %s",
+    async (parent) => {
+      const fixture = await createInspectionFixture();
+      const prefix = parent === "." ? "" : `${parent}/`;
+      await fixture.writeJson(`${prefix}package.json`, {
+        workspaces: ["redirect"],
+      });
+      await fixture.writeJson(`${prefix}redirect/package.json`, {
+        type: "module",
+      });
+
+      const inspection = await inspectRepository(fixture.root);
+
+      expect(
+        inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+      ).toEqual([parent, `${prefix}redirect`]);
+    },
+  );
+
+  it("discovers nested manifests with project fields even when they lack a name", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "root" });
+    await fixture.writeJson("app/package.json", {
+      type: "module",
+      scripts: { test: "vitest" },
+    });
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(
+      inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+    ).toEqual([".", "app"]);
+  });
+
+  it.each([false, true])(
+    "discovers independent nested projects with root manifest=%s",
+    async (withRoot) => {
+      const fixture = await createInspectionFixture();
+      if (withRoot) await fixture.writeJson("package.json", { private: true });
+      for (const root of ["web", "extension"]) {
+        await fixture.writeJson(`${root}/package.json`, {
+          name: root,
+          dependencies:
+            root === "web" ? { react: "19.0.0", "react-dom": "19.0.0" } : {},
+        });
+        await fixture.write(
+          `${root}/src/app.tsx`,
+          "export const App = () => null;\n",
+        );
+        await fixture.writeJson(`${root}/tsconfig.json`, { include: ["src"] });
+        await fixture.writeJson(`${root}/package-lock.json`, {
+          lockfileVersion: 3,
+        });
+      }
+      await fixture.writeJson("web/node_modules/ignored/package.json", {
+        name: "ignored",
+      });
+      await fixture.writeJson("generated/ignored/package.json", {
+        name: "ignored",
+      });
+      const inspection = await inspectRepository(fixture.root);
+      expect(
+        inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+      ).toEqual(withRoot ? [".", "extension", "web"] : ["extension", "web"]);
+      expect(
+        inspection.workspaces.find(
+          ({ relativeRoot }) => relativeRoot === "web",
+        ),
+      ).toMatchObject({
+        sourceFiles: ["web/src/app.tsx"],
+        tsconfigPaths: ["web/tsconfig.json"],
+        environments: ["javascript", "typescript", "react", "react-dom"],
+      });
+      expect(inspection.lockfiles).toEqual([
+        "extension/package-lock.json",
+        "web/package-lock.json",
+      ]);
+    },
+  );
+
+  it("honors workspace exclusions inside an independently discovered project", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("frontend/package.json", {
+      workspaces: ["packages/*", "!packages/excluded"],
+    });
+    await fixture.writeJson("frontend/packages/included/package.json", {
+      name: "included",
+    });
+    await fixture.writeJson("frontend/packages/excluded/package.json", {
+      name: "excluded",
+    });
+    const inspection = await inspectRepository(fixture.root);
+    expect(
+      inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+    ).toEqual(["frontend", "frontend/packages/included"]);
+  });
+
+  it.each([false, true])(
+    "honors nested pnpm patterns with manifest workspace patterns=%s",
+    async (withManifestPatterns) => {
+      const fixture = await createInspectionFixture();
+      await fixture.writeJson("frontend/package.json", {
+        name: "frontend",
+        ...(withManifestPatterns ? { workspaces: ["apps/*"] } : {}),
+      });
+      await fixture.write(
+        "frontend/pnpm-workspace.yaml",
+        "packages:\n  - packages/*\n  - '!packages/excluded'\n  - '!apps/excluded'\n",
+      );
+      for (const root of [
+        "frontend/packages/included",
+        "frontend/packages/excluded",
+        "frontend/apps/included",
+        "frontend/apps/excluded",
+        "frontend/unselected",
+        "backend",
+      ]) {
+        await fixture.writeJson(`${root}/package.json`, { name: root });
+      }
+
+      const inspection = await inspectRepository(fixture.root);
+
+      expect(
+        inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+      ).toEqual([
+        "backend",
+        "frontend",
+        ...(withManifestPatterns ? ["frontend/apps/included"] : []),
+        "frontend/packages/included",
+      ]);
+    },
+  );
+
+  it("keeps explicit repository workspace patterns authoritative over nested pnpm patterns", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      workspaces: ["frontend/**"],
+    });
+    await fixture.writeJson("frontend/package.json", { name: "frontend" });
+    await fixture.write(
+      "frontend/pnpm-workspace.yaml",
+      "packages:\n  - packages/*\n  - '!packages/excluded'\n",
+    );
+    await fixture.writeJson("frontend/packages/excluded/package.json", {
+      name: "selected-by-repository",
+    });
+
+    const inspection = await inspectRepository(fixture.root);
+
+    expect(
+      inspection.workspaces.map(({ relativeRoot }) => relativeRoot),
+    ).toEqual([".", "frontend", "frontend/packages/excluded"]);
+  });
+
   it("retains dependency declarations in fixed section precedence", () => {
     expect(
       parsePackageManifest(

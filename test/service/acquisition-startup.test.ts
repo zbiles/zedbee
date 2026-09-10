@@ -248,6 +248,9 @@ it.each([false, true])(
 it("waits for a busy candidate's exit then polls without launching a second candidate", async () => {
   const f = await fixture();
   const state = new ServiceState(f.identity.directory);
+  // A busy response means another startup owns this lock. Keep ownership
+  // through publication so the client cannot legitimately start a replacement.
+  const release = (await state.lock())!;
   let server: Awaited<ReturnType<typeof startServiceServer>> | undefined;
   let executor: Awaited<typeof f.request> | undefined;
   const polled = gate();
@@ -273,7 +276,6 @@ it("waits for a busy candidate's exit then polls without launching a second cand
     f.child.emit("exit", 0);
     await polled.promise;
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
-    const release = (await state.lock())!;
     server = await startServiceServer(state, f.identity.content, 2, release);
     executor = await f.request;
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
@@ -282,6 +284,7 @@ it("waits for a busy candidate's exit then polls without launching a second cand
     f.child.emit("exit", 1);
     await executor?.close();
     await server?.close();
+    await release();
     await f.request.catch(() => {});
   }
 });

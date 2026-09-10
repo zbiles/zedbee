@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type {
   CheckRunContext,
   CheckTarget,
@@ -14,6 +16,8 @@ import type { ChangeSet } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
+import { collectChangedEntities } from "../../../src/attribution/entities.js";
+import { attributeMetricDelta } from "../../../src/attribution/metrics.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -144,6 +148,28 @@ async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
 }
 
 describe("collectComplexityObservations", () => {
+  it.each(complexityAdapters)(
+    "$id does not parse unrelated unchanged files",
+    async (adapter) => {
+      const context = await complexityContext(adapter.id as CheckId);
+      for (const root of [
+        context.snapshots.baselineDir,
+        context.snapshots.targetDir,
+      ]) {
+        await writeFile(
+          join(root, "src/untouched.ts"),
+          "export const invalid = &;\n",
+        );
+      }
+      const collected = await adapter.collect(context);
+      expect(collected.targetObservations).toHaveLength(1);
+      expect(collected.baselineObservations).toHaveLength(1);
+      expect(collected.targetObservations[0]?.entity?.file).toBe(
+        "src/changed.ts",
+      );
+    },
+  );
+
   it("attributes object-property arrow metrics to the arrow instead of the enclosing function", async () => {
     const observations = await collectComplexityObservations(
       "src/adapter.ts",
@@ -222,6 +248,89 @@ describe("collectComplexityObservations", () => {
         "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
       value: 2,
     });
+  });
+
+  it.each([
+    {
+      property:
+        "[key()]: async () => { if (a) { if (b) return 1; } return 0; }",
+      outerCyclomatic: 1,
+      outerReadability: 0,
+    },
+    {
+      property:
+        "[ready ? first : second]:\n async () => { if (a) { if (b) return 1; } return 0; }",
+      outerCyclomatic: 2,
+      outerReadability: 1,
+    },
+    {
+      property:
+        "[key()]: function () { if (a) { if (b) return 1; } return 0; }",
+      outerCyclomatic: 1,
+      outerReadability: 0,
+    },
+  ])(
+    "keeps nested computed-property metrics separate: $property",
+    async ({ property, outerCyclomatic, outerReadability }) => {
+      const source = `function outer() { const routes = { ${property} }; }`;
+      const observations = await collectComplexityObservations(
+        "routes.tsx",
+        source,
+      );
+
+      for (const [rule, outerValue] of [
+        ["cyclomatic-complexity", outerCyclomatic],
+        ["readability-complexity", outerReadability],
+      ] as const) {
+        const metrics = observations.filter(
+          (observation) => observation.rule === rule,
+        );
+        expect(metrics).toHaveLength(2);
+        expect(new Set(metrics.map(({ identity }) => identity)).size).toBe(2);
+        expect(
+          metrics.find(({ entity }) => entity?.name === "outer")?.metric?.value,
+        ).toBe(outerValue);
+        expect(
+          metrics.find(({ entity }) => entity?.name.startsWith("anonymous@"))
+            ?.metric?.value,
+        ).toBe(3);
+      }
+    },
+  );
+
+  it("attributes computed-property worsening to the same inner entity across snapshots", async () => {
+    const file = "routes.tsx";
+    const baselineSource =
+      "function outer() { const routes = { [key()]: async () => { return 0; } }; }";
+    const targetSource =
+      "\nfunction outer() { const routes = { [key()]: async () => { if (a) { if (b) return 1; } return 0; } }; }";
+    const baseline = await collectComplexityObservations(file, baselineSource);
+    const target = await collectComplexityObservations(file, targetSource);
+    const changed = collectChangedEntities(targetSource, file, [
+      { start: 2, end: 2 },
+    ]);
+
+    for (const rule of ["cyclomatic-complexity", "readability-complexity"]) {
+      const previous = baseline.filter(
+        (observation) => observation.rule === rule,
+      );
+      const current = target.filter((observation) => observation.rule === rule);
+      expect(current.map(({ identity }) => identity)).toEqual(
+        previous.map(({ identity }) => identity),
+      );
+      const staged = current.filter(
+        (observation) =>
+          attributeMetricDelta(
+            previous.find(({ identity }) => identity === observation.identity),
+            observation,
+            changed,
+            { limit: 1, blockWorsening: true },
+          ).attribution.staged,
+      );
+      expect(staged).toHaveLength(1);
+      expect(staged[0]?.entity?.name).toMatch(/^anonymous@/u);
+      expect(staged[0]?.metric?.value).toBe(3);
+    }
   });
 
   it("attributes class-field initializer metrics to canonical field entities", async () => {

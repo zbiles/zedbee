@@ -504,6 +504,7 @@ function inspectionContext(
       ...context.config,
       checks: { ...context.config.checks, [checkId]: policy },
     }),
+    filePolicyConfig: context.config,
     baselineInspection: context.baselineInspection,
     targetInspection: context.targetInspection,
   });
@@ -820,20 +821,44 @@ export async function dispatchChecks(
           inspectionContext(adapterContext, adapter.id, inspectPolicy),
         ]),
       );
-    } catch {
+    } catch (error) {
       const label = checkLabel(adapter.id);
       scheduled.push(
         Promise.resolve(
           executionResult(
-            incompleteResult({
-              checkId: adapter.id,
-              durationMs: 0,
-              code: "ADAPTER_INSPECTION_FAILED",
-              message: `${label} could not determine whether it applies.`,
-              remediation:
-                "Check the repository configuration and run zedbee doctor.",
-            }),
-            null,
+            error instanceof CheckIncompleteError
+              ? incompleteResult({
+                  checkId: adapter.id,
+                  durationMs: 0,
+                  code: error.code,
+                  message: error.message,
+                  remediation: error.remediation,
+                  ...(error.diagnostic === undefined
+                    ? {}
+                    : { diagnostic: error.diagnostic }),
+                  ...(error.path === undefined ? {} : { path: error.path }),
+                  ...(error.paths === undefined ? {} : { paths: error.paths }),
+                  ...(error.snapshot === undefined
+                    ? {}
+                    : { snapshot: error.snapshot }),
+                  ...(error.projectPaths === undefined
+                    ? {}
+                    : { projectPaths: error.projectPaths }),
+                  ...(error.disposition === undefined
+                    ? {}
+                    : { disposition: error.disposition }),
+                })
+              : incompleteResult({
+                  checkId: adapter.id,
+                  durationMs: 0,
+                  code: "ADAPTER_INSPECTION_FAILED",
+                  message: `${label} could not determine whether it applies.`,
+                  remediation:
+                    "Check the repository configuration and run zedbee doctor.",
+                }),
+            error instanceof CheckIncompleteError
+              ? inspectExecutionPolicy
+              : null,
           ),
         ),
       );

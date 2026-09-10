@@ -22,6 +22,16 @@ const DEPENDENCY_SECTIONS = [
   "peerDependencies",
 ] as const satisfies readonly DependencySection[];
 
+const MODULE_RESOLUTION_FIELDS = new Set([
+  "type",
+  "main",
+  "module",
+  "imports",
+  "exports",
+  "types",
+  "typings",
+]);
+
 export interface PackageManifest {
   readonly name?: string;
   readonly packageManager?: string;
@@ -221,8 +231,9 @@ function discoverSelectedWorkspaceManifests(
 async function readPnpmWorkspacePatterns(
   registry: SnapshotRegistry,
   readHooks: ReadHooksResolver,
+  relativeRoot = ".",
 ): Promise<readonly string[]> {
-  const repositoryPath = "pnpm-workspace.yaml";
+  const repositoryPath = posix.join(relativeRoot, "pnpm-workspace.yaml");
   if (!pathExists(registry, repositoryPath)) {
     return [];
   }
@@ -237,7 +248,7 @@ async function readPnpmWorkspacePatterns(
   } catch {
     throw new RepositoryInspectionError(
       "INVALID_SNAPSHOT_DATA",
-      "Zedbee could not parse pnpm-workspace.yaml as YAML.",
+      `Zedbee could not parse ${repositoryPath} as YAML.`,
     );
   }
   if (!isRecord(parsed) || parsed.packages === undefined) {
@@ -266,17 +277,31 @@ export async function discoverWorkspaces(
     ...(rootManifest?.workspacePatterns ?? []),
     ...(await readPnpmWorkspacePatterns(registry, readHooks)),
   ].map(normalizeWorkspacePattern);
-  const matchedManifests = discoverSelectedWorkspaceManifests(
-    registry,
-    workspacePatterns,
-  );
+  // Explicit workspace patterns remain authoritative. Otherwise, independent
+  // projects may live below a non-JavaScript repository root.
+  const discoverIndependentProjects = workspacePatterns.length === 0;
+  const matchedManifests = discoverIndependentProjects
+    ? registry
+        .entries()
+        .filter(
+          (entry) =>
+            entry.targetKind === "file" &&
+            posix.basename(entry.repositoryPath) === "package.json",
+        )
+        .map((entry) => entry.repositoryPath)
+    : discoverSelectedWorkspaceManifests(registry, workspacePatterns);
 
   const selectedManifestPaths = [
     ...new Set(matchedManifests.map(normalizeRepositoryPath)),
   ]
     .filter((path) => path !== rootManifestPath)
-    .sort(compareCodeUnits);
+    .sort(
+      (left, right) =>
+        left.split("/").length - right.split("/").length ||
+        compareCodeUnits(left, right),
+    );
   const workspaces: DiscoveredWorkspace[] = [];
+  const independentWorkspacePatterns = new Map<string, readonly string[]>();
   if (rootManifest !== undefined) {
     workspaces.push({
       relativeRoot: ".",
@@ -286,11 +311,33 @@ export async function discoverWorkspaces(
     });
   }
   for (const manifestPath of selectedManifestPaths) {
+    const relativeRoot = posix.dirname(manifestPath);
+    let explicitlySelected = !discoverIndependentProjects;
+    if (discoverIndependentProjects) {
+      const declaredParent = workspaces
+        .filter(
+          (workspace) =>
+            relativeRoot.startsWith(`${workspace.relativeRoot}/`) &&
+            (independentWorkspacePatterns.get(workspace.relativeRoot)?.length ??
+              0) > 0,
+        )
+        .sort(
+          (left, right) => right.relativeRoot.length - left.relativeRoot.length,
+        )[0];
+      if (
+        declaredParent !== undefined &&
+        !matchesWorkspacePattern(
+          posix.relative(declaredParent.relativeRoot, relativeRoot),
+          independentWorkspacePatterns.get(declaredParent.relativeRoot)!,
+        )
+      )
+        continue;
+      explicitlySelected = declaredParent !== undefined;
+    }
     const registeredManifest = registry.resolve(manifestPath);
     if (registeredManifest?.targetKind !== "file") {
       throw invalidData(manifestPath);
     }
-    const relativeRoot = posix.dirname(manifestPath);
     const registeredWorkspace = registry.resolve(relativeRoot);
     if (registeredWorkspace?.targetKind !== "directory") {
       throw invalidData(manifestPath);
@@ -301,16 +348,50 @@ export async function discoverWorkspaces(
             relative(registry.snapshotRoot, registeredWorkspace.canonicalPath),
           )
         : relativeRoot;
+    const manifestValue = await readJsonData(
+      registry,
+      manifestPath,
+      readHooks(manifestPath),
+    );
+    const manifest = parsePackageManifest(manifestValue, manifestPath);
+    const pnpmWorkspacePatterns = discoverIndependentProjects
+      ? await readPnpmWorkspacePatterns(registry, readHooks, relativeRoot)
+      : [];
+    if (
+      !explicitlySelected &&
+      pnpmWorkspacePatterns.length === 0 &&
+      workspaces.some(
+        (workspace) =>
+          workspace.relativeRoot === "." ||
+          relativeRoot.startsWith(`${workspace.relativeRoot}/`),
+      ) &&
+      isRecord(manifestValue) &&
+      Object.keys(manifestValue).length > 0 &&
+      Object.keys(manifestValue).every((key) =>
+        MODULE_RESOLUTION_FIELDS.has(key),
+      )
+    ) {
+      // A nested package.json can scope module resolution without defining a
+      // separate project; its sources retain their existing project owner.
+      continue;
+    }
+    if (discoverIndependentProjects) {
+      independentWorkspacePatterns.set(
+        relativeRoot,
+        [...manifest.workspacePatterns, ...pnpmWorkspacePatterns].map(
+          normalizeWorkspacePattern,
+        ),
+      );
+    }
     workspaces.push({
       relativeRoot,
       canonicalRelativeRoot:
         canonicalRelativeRoot === "" ? "." : canonicalRelativeRoot,
       manifestPath,
-      manifest: parsePackageManifest(
-        await readJsonData(registry, manifestPath, readHooks(manifestPath)),
-        manifestPath,
-      ),
+      manifest,
     });
   }
-  return workspaces;
+  return workspaces.sort((left, right) =>
+    compareCodeUnits(left.relativeRoot, right.relativeRoot),
+  );
 }

@@ -134,6 +134,12 @@ In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no st
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by the selected target changes.
 
+Independent projects can live in subdirectories without a root `package.json`.
+Zedbee discovers them from the selected snapshot; running from `web/` is not
+required. Complexity and structural-security checks normally read only changed
+files and their baseline counterparts. Other checks may need surrounding project
+code. See [nested projects and scan scope](support.md#nested-projects-and-scan-scope).
+
 ## Configuration
 
 The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable project code.

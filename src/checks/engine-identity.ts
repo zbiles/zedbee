@@ -35,15 +35,15 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v2",
+    revision: "complexity-v3",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v2",
+    revision: "zedbee-readability-v3",
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
-    revision: "zedbee-structural-rules-v2",
+    revision: "zedbee-structural-rules-v3",
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),

@@ -15,6 +15,28 @@ This document distinguishes implemented coverage from unsupported or deferred be
 
 On Windows, snapshots containing Git symbolic links require permission to create symbolic links. If Windows denies link creation, snapshot construction fails and the scan is incomplete. Zedbee does not elevate the account, change system settings, or substitute regular files for those links.
 
+## Nested projects and scan scope
+
+A repository can contain independent JavaScript projects in folders such as
+`web/` and `extension/`, without a root `package.json`. Zedbee discovers their
+manifests from the selected Git snapshot and assigns source files to the nearest
+discovered project. Explicit workspace patterns still control workspace discovery.
+Dependency, generated, and vendor directories remain excluded.
+Within an existing project, a nested manifest containing only module-resolution
+settings stays part of that project unless workspace patterns select it separately.
+
+Each project has its own analysis target. An uncovered TypeScript file in an
+unrelated project does not stop lint for the project being changed. Within an
+affected project, typed lint still requires the configured TypeScript coverage;
+it does not silently skip an uncovered file and claim a complete result.
+
+Complexity and structural-security checks normally analyze changed files and
+their baseline versions, including previous paths after a rename. They do not
+parse unrelated unchanged files. Files explicitly configured with
+`when: "always"` are also analyzed. Checks that need project context, such as typed lint
+and TypeScript, still inspect surrounding code. Reported findings remain tied to
+the changes under review in both staged and `--base` modes.
+
 ## Dependency vulnerability inventories
 
 | Package manager | Supported lockfile    | Status                                                                     |
