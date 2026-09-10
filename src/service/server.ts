@@ -123,7 +123,8 @@ export async function startServiceServer(
     output = new ByteBudget(GLOBAL_BYTES);
   const clients = new Set<ServiceConnection>(),
     cleaning = new Set<Promise<void>>();
-  let stopping = false,
+  let draining = false,
+    stopping = false,
     cleanupFailed = false,
     closing: Promise<void> | undefined,
     operations = 0;
@@ -262,7 +263,7 @@ export async function startServiceServer(
           void operation
             .then(
               (result) =>
-                value.op === "stop"
+                value.op === "stop" || value.op === "drain"
                   ? undefined
                   : peer.send({ id, ok: true, result }),
               (error) => peer.send({ id, ok: false, error: wireError(error) }),
@@ -374,7 +375,14 @@ export async function startServiceServer(
       if (stopping) throw new ServiceUnavailableError();
       if (value.op === "status" && exactFields(value, ["id", "op"]))
         return status();
-      if (value.op === "stop" && exactFields(value, ["id", "op"])) {
+      if (
+        (value.op === "stop" || value.op === "drain") &&
+        exactFields(value, ["id", "op"])
+      ) {
+        // Drain admission changes synchronously with accepting the operation.
+        // Already admitted sessions (including opens still in flight) retain
+        // their source ownership and may continue running until they close.
+        if (value.op === "drain") draining = true;
         // A management socket must close before the listener can finish. Hand
         // off a source-free cleanup witness before the provisional stop reply;
         // public stop awaits client.close(), which independently waits on it.
@@ -384,6 +392,10 @@ export async function startServiceServer(
         try {
           if (!lease.acquire()) throw new ServiceUnavailableError();
           await exchange("io-acquire", { sessionId: id });
+          if (value.op === "drain") {
+            while (idle.active > 0 && !socket.destroyed && !stopping)
+              await new Promise((resolve) => setTimeout(resolve, 25));
+          }
           if (socket.destroyed || stopping) throw new ServiceUnavailableError();
           retained = true;
           stopRequestId = value.id as number;
@@ -397,6 +409,7 @@ export async function startServiceServer(
         }
       }
       if (value.op === "open" && exactFields(value, ["id", "op", "options"])) {
+        if (draining) throw new ServiceUnavailableError();
         if (sessions.size + opening >= 4 || idle.active >= 32)
           throw new AnalyzerCapacityError("session");
         if (!exactFields(value.options, ["sourceSelections"]))
