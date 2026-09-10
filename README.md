@@ -84,6 +84,8 @@ Start with `npx zedbee doctor` if setup or a scan isn't working.
 
 ## License
 
-Zedbee is source-available under the [PolyForm Small Business License 1.0.0](LICENSE). It is not an OSI-approved open-source license. Uses outside its permissions need a commercial license.
+Zedbee is source-available under the [PolyForm Small Business License 1.0.0](LICENSE).
+
+Zedbee is free to use and modify for businesses with fewer than 100 employees and contractors combined, and prior-year revenue below US$1 million in 2019 dollars, adjusted for inflation. These limits include related organizations as defined by the license. Commercial licenses are available for organizations outside those limits.
 
 See the [licensing guide](docs/commercial-licensing.md) or email [licensing@zedbee.dev](mailto:licensing@zedbee.dev).
