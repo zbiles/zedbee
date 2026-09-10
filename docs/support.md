@@ -64,7 +64,11 @@ caching. Knip cache hits preserve the snapshot-only package-resolution guards.
 Source, raw engine output, secrets, Secretlint observations,
 OSV results, and online response bodies are never cached.
 
-`zedbee service status` is read-only and never creates service state. `zedbee service stop` waits for active sessions, native worker cleanup, endpoint removal and startup-lock release. Both accept `--format json`; unavailable management returns exit code 2. The service idles out after five minutes without active sessions. No login service is installed. A stopped instance may leave source-free coordination files in its private temporary directory. Source-free zero-byte completion files can also remain if a management client dies during completion; they are inert, not live locks.
+`zedbee service status` is read-only and never creates service state. `zedbee service stop` stops active work and waits for native worker cleanup, endpoint removal and startup-lock release. Both accept `--format json`; unavailable management returns exit code 2. The service idles out after five minutes without active sessions. No login service is installed. A stopped instance may leave source-free coordination files in its private temporary directory. Source-free zero-byte completion files can also remain if a management client dies during completion; they are inert, not live locks.
+
+After an in-place upgrade, the next scan or fix asks the previous service to finish its existing sessions without accepting new ones, then waits for cleanup before starting the updated service. An older development build that does not support this handoff is not stopped automatically. Let its scans finish, run `zedbee service stop`, then retry. Use `--no-service` if you explicitly want a separate executor for that command.
+
+If the upgrading command is interrupted, existing sessions can still finish, but the old service keeps new sessions blocked. Retry the scan to complete the handoff; otherwise the old service stops after its usual idle period.
 
 Unix service sockets require a sufficiently short canonical OS temporary path and owner-only permissions; Windows uses owner-restricted local named pipes and native process jobs. An unsuitable temporary directory or unverifiable identity fails closed. Use `--no-service` when a service cannot operate in the current environment. Missing permissions, rejected native cleanup, a disconnected client or a socket closing are never treated as proof that analysis stopped: unproved cleanup retains snapshots and reports incomplete.
 

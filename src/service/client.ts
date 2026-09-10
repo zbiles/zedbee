@@ -635,28 +635,71 @@ export async function acquireServiceExecutor(
     throw error;
   }
   if (candidate) await candidate;
+  let attempted = candidate !== undefined;
   const connectCurrent = async (): Promise<ServiceClient | undefined> => {
     const record = await state.read();
     if (!record) return undefined;
-    if (record.identity !== identity.content) return undefined;
+    let connected: ServiceClient;
     try {
-      return await connectService(state, record);
+      connected = await connectService(state, record);
     } catch {
       return undefined;
+    }
+    if (record.identity === identity.content) return connected;
+    // An early candidate may have reported busy while this stale owner was
+    // publishing discovery. Retiring it permits one fresh startup attempt.
+    attempted = false;
+    // Authenticate the exact stale record. Rereading through stopService could
+    // target a replacement published by another upgrader in the meantime.
+    try {
+      let result: unknown;
+      try {
+        result = await connected.request("drain");
+      } catch {
+        // A competing drain may close this connection before its reply. A live
+        // service that still answers status instead needs explicit recovery;
+        // legacy stop would cancel a session admitted after a status check.
+        let running = false;
+        try {
+          decodeStatus(await connected.request("status"));
+          running = true;
+        } catch {}
+        if (running) {
+          const error = new ServiceUnavailableError();
+          error.message =
+            "The previous analyzer service could not drain safely. After active scans finish, run `zedbee service stop` and retry.";
+          throw error;
+        }
+        return undefined;
+      }
+      if (!exactFields(result, ["state"]) || result.state !== "stopped")
+        throw new ServiceUnavailableError();
+      return undefined;
+    } finally {
+      // The provisional reply/socket loss is not cleanup proof. This awaits
+      // the handed-off lease, released after endpoint and owner-lock cleanup.
+      await connected.close();
     }
   };
   let client = await connectCurrent();
   if (!client) {
-    // A busy/ready early candidate has already attempted startup. Poll its
-    // discovery race rather than launching another candidate and repeating I/O.
-    if (!candidate)
-      await startCandidate(
-        identity,
-        Promise.resolve(identity),
-        options.concurrency ?? 2,
-      );
     const start = performance.now();
     while (!client && performance.now() - start < 30000) {
+      // A competing upgrader can lose its drain socket while the old owner is
+      // still cleaning up. Wait for ownership availability or matching discovery
+      // before starting; a premature busy candidate cannot replace that owner.
+      if (!attempted) {
+        const release = await state.lock();
+        if (release) {
+          await release();
+          await startCandidate(
+            identity,
+            Promise.resolve(identity),
+            options.concurrency ?? 2,
+          );
+          attempted = true;
+        }
+      }
       client = await connectCurrent();
       if (!client) await new Promise((resolve) => setTimeout(resolve, 25));
     }
