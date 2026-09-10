@@ -37,7 +37,7 @@ describe("public package metadata", () => {
     expect(packageJson.license).toBe("PolyForm-Small-Business-1.0.0");
     expect(packageJson).toMatchObject({
       name: "zedbee",
-      version: "0.1.0-beta.1",
+      version: "0.1.0-beta.2",
       repository: {
         type: "git",
         url: "https://github.com/zbiles/zedbee.git",
