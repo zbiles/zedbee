@@ -14,8 +14,8 @@ const RELEASE_VERSION =
   /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
 
 const LOCAL_STEPS = Object.freeze([
-  { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
   { id: "build", command: "npm", args: ["run", "build"] },
+  { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
   {
     id: "tests",
     command: "node",

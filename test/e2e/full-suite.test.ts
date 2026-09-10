@@ -106,8 +106,8 @@ describe("release verification contract", () => {
 
   it("builds once before running every release-safety gate", () => {
     expect(verificationSteps("verify")).toEqual([
-      { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
       { id: "build", command: "npm", args: ["run", "build"] },
+      { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
       {
         id: "tests",
         command: "node",
@@ -135,6 +135,71 @@ describe("release verification contract", () => {
         args: ["--no-pager", "diff", "--check"],
       },
     ]);
+  });
+
+  it("verifies a fresh project whose typecheck imports generated build output", async () => {
+    const fixture = await mkdtemp(join(tmpdir(), "zedbee-clean-verify-"));
+    onTestFinished(() =>
+      rm(fixture, { recursive: true, force: true }).catch(() => {}),
+    );
+    await execa("git", ["init", "--initial-branch=main"], { cwd: fixture });
+    for (const directory of [
+      "src",
+      "scripts",
+      "bench",
+      "node_modules/vitest",
+    ]) {
+      await mkdir(join(fixture, directory), { recursive: true });
+    }
+    const compiler = join(root, "node_modules/typescript/bin/tsc");
+    await writeFile(
+      join(fixture, "package.json"),
+      JSON.stringify({
+        name: "clean-verification-fixture",
+        private: true,
+        type: "module",
+        scripts: {
+          build: "node build.mjs",
+          typecheck: `node ${JSON.stringify(compiler)} --noEmit`,
+          "licenses:check": "node scripts/check-package-contents.mjs",
+        },
+      }),
+    );
+    await writeFile(
+      join(fixture, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: { module: "NodeNext", strict: true, types: [] },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    await writeFile(
+      join(fixture, "src/index.ts"),
+      'import { value } from "../dist/generated.js"; export const result: number = value;\n',
+    );
+    await writeFile(
+      join(fixture, "build.mjs"),
+      [
+        'import { mkdirSync, writeFileSync } from "node:fs";',
+        'mkdirSync("dist/config", { recursive: true });',
+        'writeFileSync("dist/generated.js", "export const value = 1;\\n");',
+        'writeFileSync("dist/generated.d.ts", "export declare const value: number;\\n");',
+        'writeFileSync("dist/config/json-schema.js", "export {};\\n");',
+      ].join("\n"),
+    );
+    for (const file of [
+      "scripts/check-package-contents.mjs",
+      "bench/run.mts",
+      "node_modules/vitest/vitest.mjs",
+    ]) {
+      await writeFile(join(fixture, file), "export {};\n");
+    }
+    const result = await execa(
+      process.execPath,
+      [join(root, "scripts/release-check.mjs"), "--verify"],
+      { cwd: fixture, reject: false },
+    );
+    expect(result.exitCode, result.stderr || result.stdout).toBe(0);
+    expect(result.stdout).toContain("Local verification passed.");
   });
 
   it("disables Git's pager for diff verification", () => {

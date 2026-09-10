@@ -35,7 +35,10 @@ describe("public documentation claims", () => {
     }
     expect(privacy).toMatch(/source code and file hashes are not sent/i);
     expect(privacy).not.toContain("api.deps.dev");
-    expect(licensing).toContain("Secretlint 13.0.4");
+    const manifest = JSON.parse(await read("package.json"));
+    expect(licensing).toContain(
+      `Secretlint ${manifest.dependencies["@secretlint/core"]}`,
+    );
     expect(licensing).toContain("MIT");
     expect(licensing).toMatch(/OSV API client[^.]*Zedbee's own code/i);
     expect(licensing).toContain("PolyForm Small Business");

@@ -13,8 +13,10 @@ import { resolveConfig } from "../dist/config/profiles.js";
 import { inspectRepository } from "../dist/inspection/inspect-repository.js";
 import { renderJson } from "../dist/renderers/json.js";
 import { loadAnalyzerAdapter } from "../dist/checks/runner/registry.js";
+import { createLocalAnalyzerExecutor } from "../dist/checks/runner/executor.js";
 import type { CheckId } from "../dist/config/schema.js";
 import type * as Lifecycle from "./lifecycle.mjs";
+import type * as PhaseSession from "./phase-session.mjs";
 
 type FixtureName = "small" | "monorepo";
 type Phase = () => Promise<void> | void;
@@ -335,19 +337,28 @@ async function main(): Promise<void> {
       "Corrected in-process references never overwrite historical phase targets.",
     );
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-bench-"));
+  const executor = createLocalAnalyzerExecutor();
   try {
+    const { withPhaseSession } = (await import(
+      new URL("./phase-session.mts", import.meta.url).href
+    )) as typeof PhaseSession;
     const measurements: Baselines = { schemaVersion: 1, fixtures: {} };
     for (const fixture of ["small", "monorepo"] as const) {
-      const fixturePhases = await phases(fixture, scratch);
-      const results: Record<string, Measurement> = {};
-      for (const [name, phase] of Object.entries(fixturePhases)) {
-        process.stderr.write(`Benchmarking ${fixture}/${name}\n`);
-        results[name] = {
-          coldMs: rounded(await measure(phase, 3)),
-          warmMs: rounded(await measure(phase, 5)),
-        };
-      }
-      measurements.fixtures[fixture] = results;
+      const measureFixture = async () => {
+        const fixturePhases = await phases(fixture, scratch);
+        const results: Record<string, Measurement> = {};
+        for (const [name, phase] of Object.entries(fixturePhases)) {
+          process.stderr.write(`Benchmarking ${fixture}/${name}\n`);
+          results[name] = {
+            coldMs: rounded(await measure(phase, 3)),
+            warmMs: rounded(await measure(phase, 5)),
+          };
+        }
+        return results;
+      };
+      measurements.fixtures[fixture] = inProcessReference
+        ? await measureFixture()
+        : await withPhaseSession(executor, measureFixture);
     }
 
     if (update) {
@@ -359,10 +370,19 @@ async function main(): Promise<void> {
       return;
     }
 
+    const report = {
+      ...measurements,
+      kind: inProcessReference
+        ? "corrected-in-process-phase-reference"
+        : "within-session-phase-comparison",
+      limitations:
+        (inProcessReference
+          ? "Phase samples call engines directly in the benchmark process. "
+          : "Repeated phase samples share one fixture-scoped analysis session; final session cleanup is outside phase timings. ") +
+        "These are not complete CLI timings. coldMs/warmMs are historical field names, not fresh/warm process guarantees. Historical Secretlint and OSV substitutions remain; the snapshot phase measures cache-key hashing, not Git materialization.",
+    };
     if (smoke || inProcessReference) {
-      process.stdout.write(
-        `${JSON.stringify({ ...measurements, kind: inProcessReference ? "corrected-in-process-phase-reference" : "historical-phase-comparison", limitations: "Phase samples exclude complete CLI startup and cleanup. coldMs/warmMs are historical field names, not fresh/warm process guarantees. Historical Secretlint and OSV substitutions remain; the snapshot phase measures cache-key hashing, not Git materialization." }, null, 2)}\n`,
-      );
+      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return;
     }
 
@@ -387,11 +407,13 @@ async function main(): Promise<void> {
         }
       }
     }
-    process.stdout.write(`${JSON.stringify(measurements, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
     if (regressions.length > 0) {
       throw new Error(`Benchmark regressions:\n${regressions.join("\n")}`);
     }
   } finally {
+    // Prove worker cleanup before removing the fixtures they could still read.
+    await executor.close();
     if (
       dirname(scratch) === tmpdir() &&
       basename(scratch).startsWith("zedbee-bench-")
