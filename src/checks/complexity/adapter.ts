@@ -1,4 +1,5 @@
 import { inspectManagedCheck } from "../applicability.js";
+import { changedFilePaths } from "../changed-file-paths.js";
 import { relative, sep } from "node:path";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
@@ -220,14 +221,27 @@ async function collectSide(
   metricName: ComplexityMetricName,
   policyForFile: FilePolicyResolver,
   side: SnapshotSide,
+  selectedPaths: ReadonlySet<string>,
 ): Promise<readonly Observation[]> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Complexity analysis failed.");
   const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
-  const files = workspace.sourceFiles
+  const candidates = new Set(workspace?.sourceFiles ?? []);
+  if (side === "baseline") {
+    for (const owner of inspection.workspaces) {
+      for (const file of owner.sourceFiles) {
+        if (selectedPaths.has(file)) candidates.add(file);
+      }
+    }
+  }
+  const files = [...candidates]
     .filter((path) => SOURCE.test(path))
+    .filter(
+      (path) =>
+        selectedPaths.has(path) ||
+        policyForFile(checkId, path, side).when === "always",
+    )
     .sort(compareCodeUnits);
   if (files.length === 0) return Object.freeze([]);
   const engine = createManagedEslint({
@@ -291,6 +305,7 @@ function createComplexityAdapter(
           metricName,
           context.policyForFile,
           "baseline",
+          changedFilePaths(context, "baseline"),
         );
         const targetObservations = await collectSide(
           context.snapshots.targetDir,
@@ -300,6 +315,7 @@ function createComplexityAdapter(
           metricName,
           context.policyForFile,
           "target",
+          changedFilePaths(context, "target"),
         );
         return {
           checkId: id,

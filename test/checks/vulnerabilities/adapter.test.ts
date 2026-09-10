@@ -120,7 +120,7 @@ describe("vulnerabilitiesAdapter", () => {
     });
     await expect(adapter.inspect(await context({ changed: false }))).resolves.toEqual({
       applies: false,
-      reason: "No staged dependency state changes",
+      reason: "No dependency state changes",
     });
     await expect(
       adapter.inspect(await context({ changed: false, when: "always" })),

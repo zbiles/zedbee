@@ -409,7 +409,16 @@ describe("owned analysis reuse", () => {
       targetInspection: await inspectRepository(target.root),
       target: { id: ".", kind: "workspace", relativeRoot: "." },
       changeSet: {
-        files: new Map(),
+        files: new Map([
+          [
+            "src/app.tsx",
+            {
+              path: "src/app.tsx",
+              status: "modified",
+              addedRanges: [{ start: 1, end: 6 }],
+            },
+          ],
+        ]),
         isEmpty: false,
         containsAddedLine: () => true,
       },

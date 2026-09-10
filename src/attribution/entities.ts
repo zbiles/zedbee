@@ -449,10 +449,19 @@ export function collectMetricEntitySpans(
   ): void {
     const declaration = entityDeclaration(node, syntaxPath);
     if (declaration !== undefined && declaration.kind !== "class") {
-      const startOffset = declaration.node.getStart(parsed);
+      const declarationStart = declaration.node.getStart(parsed);
+      const parent = declaration.node.parent;
+      // ESLint reports a property function's cyclomatic metric at its key,
+      // including computed keys before an anonymous initializer's own span.
+      // Extend only metric matching; keep the canonical entity coordinates.
+      const startOffset =
+        ts.isPropertyAssignment(parent) &&
+        parent.initializer === declaration.node
+          ? parent.getStart(parsed)
+          : declarationStart;
       const endOffset = declaration.node.getEnd();
       const startLine =
-        parsed.getLineAndCharacterOfPosition(startOffset).line + 1;
+        parsed.getLineAndCharacterOfPosition(declarationStart).line + 1;
       const endLine = parsed.getLineAndCharacterOfPosition(endOffset).line + 1;
       spans.push(
         Object.freeze({

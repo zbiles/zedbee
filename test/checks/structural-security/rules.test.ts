@@ -339,6 +339,53 @@ describe("collectStructuralSecurityObservations", () => {
     );
   });
 
+  it.each(["jsx", "tsx"])(
+    "accepts literal ampersands in valid .%s JSX text",
+    (extension) => {
+      expect(
+        collectStructuralSecurityObservations(
+          `src/view.${extension}`,
+          "const App = () => <p>Works & more</p>;",
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("checks JSX expressions after literal ampersands at original source coordinates", () => {
+    const source = [
+      "const App = () => <p>",
+      "  🐝 & {eval(source)}",
+      "</p>;",
+    ].join("\n");
+
+    expect(
+      collectStructuralSecurityObservations("src/view.tsx", source),
+    ).toEqual([
+      expect.objectContaining({
+        rule: "direct-eval",
+        identity: "direct-eval:src/view.tsx:2:9:2:21",
+        location: {
+          file: "src/view.tsx",
+          startLine: 2,
+          startColumn: 9,
+          endLine: 2,
+          endColumn: 21,
+        },
+      }),
+    ]);
+  });
+
+  it.each([
+    "const App = () => <p>Works & more {eval(}</p>;",
+    "const App = () => <p>Works & more</div>;",
+    "const App = () => <p>Works & more</p>; const broken = ;",
+    "const App = () => <p>{value &}</p>;",
+  ])("rejects invalid syntax alongside JSX text: %s", (source) => {
+    expect(() =>
+      collectStructuralSecurityObservations("src/broken.tsx", source),
+    ).toThrow("Structural security analysis failed.");
+  });
+
   it("fails closed when the source cannot be parsed completely", () => {
     for (const source of [
       "export function broken( {\n",

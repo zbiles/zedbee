@@ -69,6 +69,21 @@ async function structuralSecurityContext() {
 }
 
 describe("structuralSecurityAdapter", () => {
+  it("does not parse unrelated unchanged files", async () => {
+    const { fixtures, run } = await structuralSecurityContext();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.write("src/untouched.ts", "export const invalid = &;\n");
+    }
+    const collected = await structuralSecurityAdapter.collect(run);
+    expect(collected.targetObservations).toHaveLength(2);
+    expect(collected.baselineObservations).toHaveLength(1);
+    expect(
+      collected.targetObservations.every(
+        ({ location }) => location?.file === "src/security.ts",
+      ),
+    ).toBe(true);
+  });
+
   it("analyzes exact baseline and staged snapshots and attributes only a new changed range", async () => {
     const { run } = await structuralSecurityContext();
 
@@ -88,7 +103,7 @@ describe("structuralSecurityAdapter", () => {
       true,
     );
 
-    expect(collected.targetObservations).toHaveLength(3);
+    expect(collected.targetObservations).toHaveLength(2);
     expect(
       result.findings
         .filter(({ attribution }) => attribution.staged)
@@ -110,7 +125,7 @@ describe("structuralSecurityAdapter", () => {
       result.findings
         .filter(({ attribution }) => !attribution.staged)
         .map(({ location }) => `${location?.file}:${location?.startLine}`),
-    ).toEqual(["src/security.ts:1", "src/untouched.ts:1"]);
+    ).toEqual(["src/security.ts:1"]);
   });
 
   it("fails closed when an inspected snapshot does not match the supplied inspection", async () => {

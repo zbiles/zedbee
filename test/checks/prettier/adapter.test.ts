@@ -138,7 +138,7 @@ describe("prettierAdapter.inspect", () => {
       prettierAdapter.inspect(inspectionContext(onlyDeletion)),
     ).resolves.toEqual({
       applies: false,
-      reason: "No supported staged files",
+      reason: "No supported changed files",
     });
   });
 

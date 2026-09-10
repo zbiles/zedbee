@@ -1,5 +1,6 @@
 import { extname } from "node:path";
 import { Lang, parse, type SgNode, type SgRoot } from "@ast-grep/napi";
+import * as ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation, SourceLocation } from "../../core/types.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
@@ -420,7 +421,10 @@ const insecureCredentialRequest: ContextualStructuralRule = {
       "node:https",
     ]);
     return context.nodes.filter((node) => {
-      if (node.kind() !== "object" || !isRequestOptions(context, node, bindings))
+      if (
+        node.kind() !== "object" ||
+        !isRequestOptions(context, node, bindings)
+      )
         return false;
       const descendants = [node, ...node.findAll({ rule: { kind: "pair" } })];
       const insecureUrl =
@@ -485,22 +489,72 @@ function location(file: string, node: SgNode): SourceLocation {
   };
 }
 
+function hasParseErrors(context: RuleContext): boolean {
+  return context.nodes.some(
+    (node, index) =>
+      node.kind() === "ERROR" ||
+      (index > 0 && node.range().start.index === node.range().end.index),
+  );
+}
+
+function compatibleJsxTextSource(file: string, source: string): string {
+  const validation = ts.transpileModule(source, {
+    fileName: file,
+    reportDiagnostics: true,
+    compilerOptions: {
+      jsx: ts.JsxEmit.Preserve,
+      target: ts.ScriptTarget.Latest,
+    },
+  });
+  if (
+    validation.diagnostics?.some(
+      ({ category }) => category === ts.DiagnosticCategory.Error,
+    )
+  ) {
+    throw new Error("parse failed");
+  }
+
+  const parsed = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    false,
+    ts.ScriptKind.TSX,
+  );
+  const parts: string[] = [];
+  let offset = 0;
+  const visit = (node: ts.Node): void => {
+    if (ts.isJsxText(node)) {
+      // ast-grep rejects bare ampersands in otherwise valid JSX text. Change
+      // only confirmed text, preserving UTF-16/byte offsets and all code.
+      parts.push(source.slice(offset, node.pos));
+      parts.push(source.slice(node.pos, node.end).replace(/&/g, " "));
+      offset = node.end;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(parsed);
+  parts.push(source.slice(offset));
+  const compatible = parts.join("");
+  if (compatible === source) throw new Error("parse failed");
+  return compatible;
+}
+
 export function collectStructuralSecurityObservations(
   file: string,
   source: string,
 ): readonly Observation[] {
   try {
     const normalizedFile = normalizeRepositoryRelativePath(file);
-    const root = parse(languageFor(normalizedFile), source);
-    const context = createRuleContext(root);
-    if (
-      context.nodes.some(
-        (node, index) =>
-          node.kind() === "ERROR" ||
-          (index > 0 && node.range().start.index === node.range().end.index),
-      )
-    )
-      throw new Error("parse failed");
+    const language = languageFor(normalizedFile);
+    let context = createRuleContext(parse(language, source));
+    if (hasParseErrors(context)) {
+      if (language !== Lang.Tsx) throw new Error("parse failed");
+      context = createRuleContext(
+        parse(language, compatibleJsxTextSource(normalizedFile, source)),
+      );
+      if (hasParseErrors(context)) throw new Error("parse failed");
+    }
     const observations = contextualRules.flatMap((rule) =>
       rule.matches(context).map((match): Observation => {
         const normalizedLocation = location(normalizedFile, match);

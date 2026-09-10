@@ -8,9 +8,15 @@ import type {
 import type { WorkspaceInspection } from "../inspection/types.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
+import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
+import { CheckIncompleteError } from "./incomplete-error.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
+const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(
+  IGNORED_DIRECTORY_NAMES,
+);
 const ROOT: CheckTarget = Object.freeze({
   id: ".",
   kind: "repository",
@@ -68,14 +74,14 @@ export async function inspectManagedCheck(
           file.status !== "deleted" && isSupportedPrettierPath(file.path),
       )
       ? applicable([ROOT])
-      : { applies: false, reason: "No supported staged files" };
+      : { applies: false, reason: "No supported changed files" };
   if (checkId === "secrets")
     return changed.size > 0
       ? applicable([ROOT])
       : { applies: false, reason: "No changed target files to scan" };
   if (checkId === "vulnerabilities") {
     if (!always && !hasDependencyStateDelta(context))
-      return { applies: false, reason: "No staged dependency state changes" };
+      return { applies: false, reason: "No dependency state changes" };
     return {
       applies: true,
       executionClass: "network",
@@ -86,6 +92,31 @@ export async function inspectManagedCheck(
         metadata: ["package names", "exact versions", "ecosystem identifiers"],
       },
     };
+  }
+  if (context.targetInspection.workspaces.length === 0) {
+    const policyForFile = createFilePolicyResolver(
+      context.filePolicyConfig ?? context.config,
+      context.changeSet,
+    );
+    const undiscovered = [...changed].sort(compareCodeUnits).find(
+      (path) =>
+        (checkId === "types" ? TYPESCRIPT : SOURCE).test(path) &&
+        !path
+          .split("/")
+          .slice(0, -1)
+          .some((part) => IGNORED_DIRECTORIES.has(part)) &&
+        policyForFile(checkId, path, "target").severity !== "off",
+    );
+    if (undiscovered !== undefined) {
+      throw new CheckIncompleteError({
+        code: "PROJECT_NOT_DISCOVERED",
+        path: undiscovered,
+        message:
+          "Changed source files are present, but no project was discovered in the selected target.",
+        remediation:
+          "Verify that the selected target contains the project's package.json and that project discovery includes its source files, then retry.",
+      });
+    }
   }
   let workspaces = context.targetInspection.workspaces;
   if (checkId === "dependencyArchitecture" || checkId === "deadCode") {
@@ -162,9 +193,9 @@ export async function inspectManagedCheck(
         applies: false,
         reason:
           checkId === "types"
-            ? "No supported staged TypeScript source files"
+            ? "No supported changed TypeScript source files"
             : checkId === "deadCode"
-              ? "No supported staged project files"
-              : "No supported staged source files",
+              ? "No supported changed project files"
+              : "No supported changed source files",
       };
 }
