@@ -45,6 +45,16 @@ const ROOTS = new Set([
   "target",
 ]);
 
+/** Canonical repository paths may expose installed packages, never live source. */
+export function isInstalledDependencyPath(path: string): boolean {
+  const parts = path.split("/");
+  return (
+    parts.includes("node_modules") &&
+    parts.at(-1) !== "node_modules" &&
+    parts.every((part) => part !== "" && part !== "." && part !== "..")
+  );
+}
+
 export function dependencyPathParts(value: unknown): readonly [string, string] {
   if (typeof value !== "string" || value.length > 4096)
     throw new TypeError("Invalid dependency path");
@@ -137,8 +147,12 @@ export function sanitizeDependencyInputManifest(
       );
       charge(probe.realPath as string);
       if (
-        !["packages", "typescript", "baseline", "target"].includes(
-          canonicalRoot,
+        !(
+          ["packages", "typescript", "baseline", "target"].includes(
+            canonicalRoot,
+          ) ||
+          (canonicalRoot === "repository" &&
+            isInstalledDependencyPath(canonicalPath))
         ) ||
         canonicalPath.split("/").includes("..")
       )

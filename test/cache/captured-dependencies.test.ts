@@ -14,6 +14,64 @@ import {
 import { createInspectionFixture } from "../inspection/fixture.js";
 
 describe("captured dependency view", () => {
+  it("captures nested installations and invalidates reuse when their declarations change", async () => {
+    const live = await createInspectionFixture();
+    const file = "web/node_modules/example/index.d.ts";
+    await live.write(file, "export const value: number;");
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(view.packageFileExists(join(live.root, file))).toBe(true);
+    expect(view.readFile(join(live.root, file))).toBe(
+      "export const value: number;",
+    );
+    const manifest = view.manifest();
+    expect(manifest).toBeDefined();
+    expect(
+      validateDependencyInputs(manifest, { repositoryRoot: live.root }),
+    ).toBe(true);
+    await live.write(file, "export const value: string;");
+    expect(
+      validateDependencyInputs(manifest, { repositoryRoot: live.root }),
+    ).toBe(false);
+  });
+
+  it("does not follow nested package links into working-copy source or outside the repository", async () => {
+    const live = await createInspectionFixture();
+    const outside = await createInspectionFixture();
+    await live.write("web/source.d.ts", "export const secret: string;");
+    await outside.write(
+      "node_modules/example/index.d.ts",
+      "export const secret: string;",
+    );
+    await live.symlink(
+      "../../source.d.ts",
+      "web/node_modules/example/index.d.ts",
+    );
+    await live.symlink(
+      join(outside.root, "node_modules/example"),
+      "web/node_modules/external",
+    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(view.fileExists(join(live.root, "web/source.d.ts"))).toBe(false);
+    expect(
+      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
+    ).toBe(false);
+    expect(
+      view.fileExists(join(live.root, "web/node_modules/external/index.d.ts")),
+    ).toBe(false);
+  });
+
+  it("keeps nested installed dependencies unavailable to snapshot-only readers", async () => {
+    const live = await createInspectionFixture();
+    await live.write(
+      "web/node_modules/example/index.d.ts",
+      "export const value: number;",
+    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root }, true);
+    expect(
+      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
+    ).toBe(false);
+  });
+
   it("serves the first captured bytes and rejects mutation before storage", async () => {
     const live = await createInspectionFixture();
     await live.write("node_modules/x/index.d.ts", "export const x: number;");

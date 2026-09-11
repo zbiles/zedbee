@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import ts from "typescript";
+import { createInspectionFixture } from "../../inspection/fixture.js";
 
 import {
   createSnapshotProgram,
@@ -21,6 +22,105 @@ function project(files: Record<string, string>): SnapshotProgramInput {
 }
 
 describe("snapshot-aware TypeScript compiler host", () => {
+  it("resolves nested config aliases without baseUrl against snapshot source", () => {
+    const snapshotRoot = path.resolve("/virtual/zedbee-snapshot");
+    const config = ts.parseJsonConfigFileContent(
+      {
+        compilerOptions: {
+          paths: { "@/*": ["./*"] },
+          moduleResolution: "bundler",
+          module: "esnext",
+        },
+      },
+      { ...ts.sys, readDirectory: () => [] },
+      path.join(snapshotRoot, "web"),
+    );
+    const result = createSnapshotProgram({
+      repositoryRoot: process.cwd(),
+      snapshotRoot,
+      files: {
+        "web/main.ts":
+          'import { value } from "@/lib/value"; const answer: string = value;',
+        "web/lib/value.ts": "export const value = 42;",
+      },
+      rootNames: ["web/main.ts"],
+      options: { ...config.options, types: [] },
+    });
+    expect(
+      result.program.getSemanticDiagnostics().map((item) => item.code),
+    ).toEqual([2322]);
+    expect(result.localReads).toContain("web/lib/value.ts");
+  });
+
+  it.each(["automatic", "explicit"])(
+    "uses nested packages before root packages with %s ambient type roots",
+    async (typeRootsMode) => {
+      const fixture = await createInspectionFixture();
+      await fixture.write(
+        "web/node_modules/example/index.d.ts",
+        "export const value: number;",
+      );
+      await fixture.write(
+        "node_modules/example/index.d.ts",
+        "export const value: string;",
+      );
+      await fixture.write(
+        "web/node_modules/@types/environment/index.d.ts",
+        "declare const environment: number;",
+      );
+      const snapshotRoot = path.join(fixture.root, "snapshot");
+      const result = createSnapshotProgram({
+        repositoryRoot: fixture.root,
+        snapshotRoot,
+        files: {
+          "web/main.ts":
+            'import { value } from "example"; const answer: string = value; const env: number = environment;',
+        },
+        rootNames: ["web/main.ts"],
+        options: {
+          module: ts.ModuleKind.ESNext,
+          moduleResolution: ts.ModuleResolutionKind.Bundler,
+          configFilePath: path.join(snapshotRoot, "web/tsconfig.json"),
+          ...(typeRootsMode === "explicit"
+            ? {
+                types: ["environment"],
+                typeRoots: [path.join(snapshotRoot, "web/node_modules/@types")],
+              }
+            : {}),
+        },
+      });
+      expect(
+        result.program.getSemanticDiagnostics().map((item) => item.code),
+      ).toEqual([2322]);
+      expect(result.packageReads).toContain(
+        path.join(fixture.root, "web/node_modules/example/index.d.ts"),
+      );
+    },
+  );
+
+  it("does not satisfy aliases with source absent from the snapshot", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.write("web/lib/value.ts", "export const value = 42;");
+    const result = createSnapshotProgram({
+      repositoryRoot: fixture.root,
+      snapshotRoot: path.join(fixture.root, "snapshot"),
+      files: {
+        "web/main.ts": 'import { value } from "@/lib/value"; export { value };',
+      },
+      rootNames: ["web/main.ts"],
+      options: {
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.Bundler,
+        types: [],
+        baseUrl: path.join(fixture.root, "web"),
+        paths: { "@/*": ["./*"] },
+      },
+    });
+    expect(
+      result.program.getSemanticDiagnostics().map((item) => item.code),
+    ).toEqual([2307]);
+  });
+
   it("reads local project source only from the immutable snapshot", () => {
     const result = createSnapshotProgram(
       project({
