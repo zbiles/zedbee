@@ -145,6 +145,11 @@ function rawObservationsFromMessages(
           metric.name === "cyclomatic-complexity"
             ? "Cyclomatic complexity metric."
             : "Readability complexity metric.",
+        location: {
+          file,
+          startLine: span.entity.startLine,
+          endLine: span.entity.endLine,
+        },
         entity: {
           kind: span.entity.kind,
           name: span.entity.name,
