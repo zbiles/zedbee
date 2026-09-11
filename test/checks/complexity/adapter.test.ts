@@ -522,6 +522,7 @@ describe("collectComplexityObservations", () => {
       expect(staged).toHaveLength(1);
       expect(staged[0]).toMatchObject({
         check: adapter.id,
+        location: { file: "src/changed.ts", startLine: 1, endLine: 4 },
         attribution: {
           kind: "metric-delta",
           staged: true,

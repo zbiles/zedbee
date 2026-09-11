@@ -163,12 +163,12 @@ describe("observation cache keys", () => {
     {
       checkId: "cyclomaticComplexity",
       legacyIdentity:
-        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v1",
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v3",
     },
     {
       checkId: "readabilityComplexity",
       legacyIdentity:
-        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v1",
+        "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v3",
     },
   ] as const)(
     "misses a completed $checkId entry from the obsolete engine revision",

@@ -51,6 +51,7 @@ describe("complexity source indexing", () => {
         message: "Cyclomatic complexity metric.",
         entity: { kind: "function", name: "first", file },
         metric: { name: "cyclomatic-complexity", value: 2 },
+        location: { file, startLine: 2, endLine: 2 },
       },
     ]);
   });
@@ -99,12 +100,14 @@ describe("complexity source indexing", () => {
         metrics.find(({ entity }) => entity?.name === "inner"),
       ).toMatchObject({
         identity: "function:src/lines.ts:function=outer/function=inner",
+        location: { file, startLine: 2, endLine: 2 },
         metric: { value: check === "cyclomaticComplexity" ? 2 : 1, limit: 5 },
       });
       expect(
         metrics.find(({ entity }) => entity?.name === "outer"),
       ).toMatchObject({
         identity: "function:src/lines.ts:outer",
+        location: { file, startLine: 1, endLine: 4 },
         metric: { value: check === "cyclomaticComplexity" ? 1 : 0, limit: 5 },
       });
       const fields = metrics.filter(({ entity }) => entity?.name === "task");
@@ -171,6 +174,7 @@ describe("complexity source indexing", () => {
         message: "Cyclomatic complexity metric.",
         entity: { kind: "function", name: "first", file },
         metric: { name: "cyclomatic-complexity", value: 2, limit: 5 },
+        location: { file, startLine: 1, endLine: 3 },
       },
       {
         check: "readabilityComplexity",
@@ -180,6 +184,7 @@ describe("complexity source indexing", () => {
         message: "Readability complexity metric.",
         entity: { kind: "function", name: "first", file },
         metric: { name: "readability-complexity", value: 1, limit: 5 },
+        location: { file, startLine: 1, endLine: 3 },
       },
       {
         check: "cyclomaticComplexity",
@@ -189,6 +194,7 @@ describe("complexity source indexing", () => {
         message: "Cyclomatic complexity metric.",
         entity: { kind: "function", name: "last", file },
         metric: { name: "cyclomatic-complexity", value: 2, limit: 5 },
+        location: { file, startLine: 5, endLine: 8 },
       },
       {
         check: "readabilityComplexity",
@@ -198,6 +204,7 @@ describe("complexity source indexing", () => {
         message: "Readability complexity metric.",
         entity: { kind: "function", name: "last", file },
         metric: { name: "readability-complexity", value: 1, limit: 5 },
+        location: { file, startLine: 5, endLine: 8 },
       },
     ]);
     expect(metricSlices).toBe(parsingSlices);
