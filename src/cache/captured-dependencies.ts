@@ -18,6 +18,7 @@ import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
   DEPENDENCY_LIMITS,
   dependencyPathParts,
+  isInstalledDependencyPath,
   sanitizeDependencyInputManifest,
   type DependencyInputManifest,
   type DependencyProbe,
@@ -124,9 +125,29 @@ export class CapturedDependencies {
               policy: "knip-snapshot-v1",
               repository: this.roots.repository,
             }
-          : this.allowed,
+          : {
+              policy: "installed-packages-v2",
+              repository: this.roots.repository,
+              allowed: this.allowed,
+            },
       ),
     );
+  }
+
+  private allowedRoot(real: string): readonly [string, string] | undefined {
+    const root = Object.entries(this.allowed).find(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && contained(entry[1], real),
+    );
+    if (root !== undefined) return root;
+    const repository = this.roots.repository!;
+    if (
+      !this.snapshotOnly &&
+      contained(repository, real) &&
+      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
+    )
+      return ["repository", repository];
+    return undefined;
   }
 
   private identify(path: string): string {
@@ -247,9 +268,7 @@ export class CapturedDependencies {
       const link = lstatSync(absolute);
       const real = realpathSync(absolute);
       const metadata = statSync(real);
-      const allowed = Object.entries(this.allowed).find(
-        ([, root]) => root !== undefined && contained(root, real),
-      );
+      const allowed = this.allowedRoot(real);
       if (metadata.isFile() && allowed !== undefined) {
         fallback = {
           probe: {
@@ -409,7 +428,15 @@ export class CapturedDependencies {
   }
   packageFileExists(path: string): boolean {
     const probe = this.capture(path).probe;
-    return probe.kind === "file" && probe.realPath.startsWith("packages:");
+    return (
+      probe.kind === "file" &&
+      (probe.realPath.startsWith("packages:") ||
+        (!this.snapshotOnly &&
+          probe.realPath.startsWith("repository:") &&
+          isInstalledDependencyPath(
+            probe.realPath.slice("repository:".length),
+          )))
+    );
   }
   readFile(path: string): string | undefined {
     const entry = this.capture(path);
@@ -417,12 +444,7 @@ export class CapturedDependencies {
     let fd: number | undefined;
     try {
       const real = canonical(path);
-      if (
-        real === undefined ||
-        !Object.values(this.allowed).some(
-          (root) => root !== undefined && contained(root, real),
-        )
-      )
+      if (real === undefined || this.allowedRoot(real) === undefined)
         return undefined;
       const metadata = statSync(real);
       fd = openSync(

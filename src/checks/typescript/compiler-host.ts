@@ -175,16 +175,43 @@ function createFreshSnapshotProgram(
   const typescriptLibraryRoot = dirname(ts.getDefaultLibFilePath(options));
   const dependencyFileAllowed = (candidate: string): boolean =>
     dependencies.fileExists(candidate);
-  if (options.types === undefined && options.typeRoots === undefined) {
-    const typeRoot = resolve(packageRoot, "@types");
-    options.typeRoots = [typeRoot];
-    options.types = dependencies
-      .directoryEntries(typeRoot)
-      .filter(
-        (entry) => entry.type === "directory" && !entry.name.startsWith("."),
-      )
-      .map((entry) => entry.name)
-      .sort();
+  if (options.typeRoots !== undefined) {
+    options.typeRoots = options.typeRoots.map((typeRoot) => {
+      const path = repositoryPath(snapshotRoot, typeRoot);
+      // Custom declarations remain in the snapshot; only installed type roots
+      // use the project's dependency directory.
+      return path?.split("/").includes("node_modules")
+        ? resolve(repositoryRoot, path)
+        : typeRoot;
+    });
+  } else {
+    const projectDirectory = dirname(
+      typeof options.configFilePath === "string"
+        ? options.configFilePath
+        : resolve(snapshotRoot, input.rootNames[0] ?? "index.ts"),
+    );
+    const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
+    let directory = resolve(repositoryRoot, projectPath);
+    options.typeRoots = [];
+    while (contained(repositoryRoot, directory)) {
+      options.typeRoots.push(resolve(directory, "node_modules/@types"));
+      if (directory === repositoryRoot) break;
+      directory = dirname(directory);
+    }
+    if (options.types === undefined)
+      options.types = [
+        ...new Set(
+          options.typeRoots.flatMap((typeRoot) =>
+            dependencies
+              .directoryEntries(typeRoot)
+              .filter(
+                (entry) =>
+                  entry.type === "directory" && !entry.name.startsWith("."),
+              )
+              .map((entry) => entry.name),
+          ),
+        ),
+      ].sort();
   }
 
   const defaultHost = ts.createCompilerHost(options, true);
@@ -212,12 +239,23 @@ function createFreshSnapshotProgram(
       );
     },
     getDirectories: (path) =>
-      contained(packageRoot, resolve(path)) ||
+      contained(repositoryRoot, resolve(path)) ||
       contained(typescriptLibraryRoot, resolve(path))
         ? dependencies.getDirectories(resolve(path))
         : [],
     realpath: (path) =>
       files.has(resolve(path)) ? resolve(path) : dependencies.realpath(path),
+  };
+
+  // Resolve project aliases and relative imports in the captured tree first.
+  // Installed packages are resolved separately from the original project path,
+  // so a snapshot's temporary location cannot select a different installation.
+  const snapshotModuleHost: ts.ModuleResolutionHost = {
+    fileExists: (path) => files.has(resolve(path)),
+    readFile: (path) => files.get(resolve(path)),
+    directoryExists: (path) =>
+      snapshotDirectories.has(directoryKey(resolve(path))),
+    realpath: (path) => resolve(path),
   };
 
   const host: ts.CompilerHost = {
@@ -285,10 +323,12 @@ function createFreshSnapshotProgram(
     },
     resolveModuleNames(moduleNames, containingFile) {
       return moduleNames.map((specifier) => {
-        const localResolution = !isBareSpecifier(specifier)
-          ? ts.resolveModuleName(specifier, containingFile, options, moduleHost)
-              .resolvedModule
-          : undefined;
+        const localResolution = ts.resolveModuleName(
+          specifier,
+          containingFile,
+          options,
+          files.has(resolve(containingFile)) ? snapshotModuleHost : moduleHost,
+        ).resolvedModule;
         if (localResolution !== undefined) return localResolution;
         if (!isBareSpecifier(specifier)) return undefined;
         const relativeContaining =
