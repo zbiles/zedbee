@@ -301,6 +301,16 @@ export class ServiceClient {
       });
     await this.cleanup;
   }
+  async closeSession(sessionId: string): Promise<void> {
+    try {
+      await this.request("close", { sessionId });
+    } catch (error) {
+      if (!this.closed && !this.peer.socket.destroyed) throw error;
+      // Disconnect is not proof. Only successful settlement of the independent
+      // process-tree and source-lease witnesses permits snapshot deletion.
+      await this.close();
+    }
+  }
 }
 export async function connectService(
   state: ServiceState,
@@ -369,7 +379,7 @@ export async function connectService(
             value.type === "authenticated"
           ) {
             clearTimeout(timer);
-            peer.authenticated();
+            peer.authenticated(true);
             client = new ServiceClient(peer, state);
             resolve(client);
           } else throw new ServiceUnavailableError();
@@ -432,7 +442,7 @@ export function executorForConnection(client: ServiceClient): AnalyzerExecutor {
         close() {
           if (!release) {
             released = true;
-            release = client.request("close", { sessionId }).then(() => {
+            release = client.closeSession(sessionId).then(() => {
               sessions.delete(session);
             });
           }

@@ -9,6 +9,42 @@ import {
 } from "../../src/service/protocol.js";
 
 describe("private service framing and authentication", () => {
+  it("waits for payload space while leaving room for control traffic", async () => {
+    const budget = new ByteBudget(100);
+    const releasePayload = budget.reserve(90);
+    let acquired = false;
+    const waiting = budget
+      .acquire(5, new AbortController().signal, 10)
+      .then((release) => {
+        acquired = true;
+        return release;
+      });
+    await Promise.resolve();
+    expect(acquired).toBe(false);
+    const releaseControl = budget.reserve(10);
+    expect(budget.used).toBe(100);
+    releasePayload();
+    const release = await waiting;
+    expect(budget.used).toBe(15);
+    release();
+    releaseControl();
+    expect(budget.used).toBe(0);
+  });
+  it("cancels waiting payload writes on disconnect without taking a later reservation", async () => {
+    const budget = new ByteBudget(100);
+    const release = budget.reserve(100);
+    const controller = new AbortController();
+    const waiting = budget.acquire(20, controller.signal);
+    controller.abort();
+    await expect(waiting).rejects.toThrow();
+    release();
+    expect(budget.used).toBe(0);
+    await expect(
+      budget.acquire(101, new AbortController().signal),
+    ).rejects.toThrow();
+    await expect(budget.acquire(20, controller.signal)).rejects.toThrow();
+    expect(budget.used).toBe(0);
+  });
   it("reconstructs fragmented frames without accepting a partial message", () => {
     const messages: unknown[] = [];
     const budget = new ByteBudget(1024);

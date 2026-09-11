@@ -95,6 +95,10 @@ describe("service executor isolation", () => {
     expect(await a.run(request)).toBe("const a = 1;\n");
     expect(await b.run(request)).toBe("const a = 1;\n");
     await firstClient.close();
+    // Independent cleanup witnesses have settled. A lost socket must not make
+    // the caller retain a snapshot that no analyzer can still read.
+    await expect(a.close()).resolves.toBeUndefined();
+    await expect(first.close()).resolves.toBeUndefined();
     await expect
       .poll(() => server.status())
       .toMatchObject({ state: "running", activeSessions: 1 });

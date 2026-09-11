@@ -15,6 +15,7 @@ import {
 } from "../reporting/temporary-reports.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
+import { withUnreportableCleanupFailure } from "../scan/incomplete-report.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import type { ScanReport } from "../scan/report.js";
@@ -295,10 +296,25 @@ export async function executeScanCommand(
       }
     }
 
-    const report = await timeCommandStage(stages, "analysis", () =>
+    let report = await timeCommandStage(stages, "analysis", () =>
       dependencies.scan(scanOptions),
     );
-    await closeExecutor();
+    try {
+      await closeExecutor();
+    } catch {
+      cleanupFailed = true;
+      if (
+        !report.checks.some(
+          (check) => check.error?.code === "SNAPSHOT_CLEANUP_FAILED",
+        )
+      ) {
+        report = withUnreportableCleanupFailure(
+          report,
+          performance.now() - started,
+        );
+      }
+      io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+    }
     diagnosticEntries = report.checks.map((check) => ({
       durationMs: check.durationMs,
       checkId: check.checkId,
@@ -360,8 +376,10 @@ export async function executeScanCommand(
     }
     return report.exitCode;
   } catch (error) {
-    cleanupFailed = hasAnalysisCleanupFailure(error);
-    if (cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+    if (hasAnalysisCleanupFailure(error) && !cleanupFailed) {
+      cleanupFailed = true;
+      io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+    }
     if (options.signal?.aborted === true) {
       return 2;
     }
