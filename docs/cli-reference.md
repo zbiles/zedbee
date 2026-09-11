@@ -88,6 +88,8 @@ remain manual. Review, stage, and rescan after applying; see the
 
 `zedbee doctor` defaults to responsive automatic output. Doctor uses the yellow Zedbee frame with one full-width `DOCTOR` panel in a wide interactive terminal. A narrow terminal, redirected output, CI environment, or `TERM=dumb` receives compact plain text instead. `zedbee doctor --format text` always forces the plain view, while `zedbee doctor --format json` is deterministic and ANSI-free. `--no-color` keeps an eligible framed layout but removes semantic status colors.
 
+Doctor checks snapshot filesystem creation and cleanup separately from background-service execution. The service check starts or reuses the local service, opens a session, formats a small built-in JavaScript string, validates the result, then closes its session and connection. It does not send repository source to the service and leaves the reusable service running. Passing these checks does not establish that a full repository scan will succeed, including large analyzer results. If the service check fails, inspect `zedbee service status` and retry; `zedbee scan --no-service` bypasses the service.
+
 `zedbee checks` uses the same responsive behavior. Checks uses the yellow Zedbee frame with one full-width `CHECKS` panel in a wide interactive terminal, showing each check's severity, applicability, engine, targets, execution details, network use, and limitations. `zedbee checks --format text` forces the complete plain view, while `zedbee checks --format json` keeps the existing deterministic, ANSI-free machine output. Narrow terminals, redirected output, CI, and `TERM=dumb` use plain text; `--no-color` keeps an eligible framed layout without semantic colors.
 
 ## Experimental programmatic API

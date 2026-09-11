@@ -1,11 +1,220 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   executeScanCommand,
   type ScanCommandDependencies,
 } from "../../src/commands/scan.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
+const acquire = vi.hoisted(() => vi.fn());
+vi.mock("../../src/service/client.js", async (original) => ({
+  ...(await original<typeof import("../../src/service/client.js")>()),
+  acquireServiceExecutor: acquire,
+}));
+afterEach(() => acquire.mockReset());
+
 describe("controller-owned scan rendering", () => {
+  it.each([false, true])(
+    "reports cleanup failure once when a completed report already has cleanup failure: %s",
+    async (alreadyFailed) => {
+      const completed = createReport();
+      const cleanup = {
+        checkId: "zedbee",
+        status: "incomplete" as const,
+        durationMs: 15,
+        findings: [],
+        error: {
+          code: "SNAPSHOT_CLEANUP_FAILED",
+          message: "Snapshot cleanup could not finish.",
+          remediation: "Remove the retained snapshot after its analyzer stops.",
+        },
+      };
+      const report = alreadyFailed
+        ? createReport({
+            outcome: "incomplete",
+            exitCode: 2,
+            checks: [...completed.checks, cleanup],
+            summary: { ...completed.summary, incomplete: 1 },
+          })
+        : completed;
+      acquire.mockResolvedValue({
+        async openSession() {
+          throw new Error("scan fixture does not open analyzer sessions");
+        },
+        async close() {
+          throw new Error("private-executor-secret-marker");
+        },
+      });
+      const stdout: string[] = [];
+      const exit = await executeScanCommand(
+        { cwd: "/repo", format: "json", color: false, animations: false },
+        {
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+          width: 120,
+          env: {},
+          writeStdout: (value) => {
+            stdout.push(value);
+          },
+          writeStderr() {},
+        },
+        {
+          resolveRepositoryRoot: async () => "/repo",
+          scan: async (options) => {
+            options.executor!.prepare!();
+            return report;
+          },
+          openInk: async () => {
+            throw new Error("unexpected ink rendering");
+          },
+          preparePresentation: async () => ({
+            automatic: false,
+            reportStatus: "not-requested",
+            findings: [],
+            totalFindingCount: 0,
+            abbreviated: false,
+            warnings: [],
+          }),
+        },
+      );
+      const delivered = JSON.parse(stdout.join(""));
+      expect(exit).toBe(2);
+      expect(delivered.exitCode).toBe(2);
+      expect(delivered.outcome).toBe("incomplete");
+      expect(delivered.summary).toMatchObject({ passed: 1, incomplete: 1 });
+      expect(delivered.checks).toHaveLength(2);
+      expect(delivered.checks[0]).toEqual(completed.checks[0]);
+      expect(delivered.checks[1].error.code).toBe("SNAPSHOT_CLEANUP_FAILED");
+      if (alreadyFailed) expect(delivered.checks[1]).toEqual(cleanup);
+    },
+  );
+
+  it.each(["json", "text"] as const)(
+    "retains completed findings and the original failure in %s when executor cleanup fails",
+    async (format) => {
+      const finding = createFinding({
+        message: "Retained formatting finding.",
+      });
+      const diagnostic = {
+        checkId: "types",
+        operation: "collect",
+        category: "abnormal-exit",
+        engine: { name: "typescript", version: "6.0.3" },
+      } as const;
+      const report = createReport({
+        outcome: "incomplete",
+        exitCode: 2,
+        checks: [
+          {
+            checkId: "formatting",
+            status: "completed",
+            durationMs: 4,
+            findings: [finding],
+          },
+          {
+            checkId: "types",
+            status: "incomplete",
+            durationMs: 25,
+            findings: [],
+            error: {
+              code: "ANALYZER_FAILED",
+              message: "Type analysis could not finish.",
+              diagnostic,
+            },
+          },
+        ],
+        summary: {
+          passed: 0,
+          warnings: 0,
+          failed: 1,
+          incomplete: 1,
+          findings: [finding],
+        },
+      });
+      acquire.mockResolvedValue({
+        async openSession() {
+          throw new Error("scan fixture does not open analyzer sessions");
+        },
+        async close() {
+          throw new Error("private-executor-secret-marker");
+        },
+      });
+      const stdout: string[] = [],
+        stderr: string[] = [];
+      const exit = await executeScanCommand(
+        {
+          cwd: "/repo",
+          format,
+          color: false,
+          animations: false,
+          diagnostics: true,
+        },
+        {
+          stdinIsTTY: false,
+          stdoutIsTTY: false,
+          width: 120,
+          env: {},
+          writeStdout: (value) => {
+            stdout.push(value);
+          },
+          writeStderr: (value) => {
+            stderr.push(value);
+          },
+        },
+        {
+          resolveRepositoryRoot: async () => "/repo",
+          scan: async (options) => {
+            options.executor!.prepare!();
+            return report;
+          },
+          openInk: async () => {
+            throw new Error("unexpected ink rendering");
+          },
+          preparePresentation: async (retained) => ({
+            automatic: false,
+            reportStatus: "not-requested",
+            findings: retained.summary.findings,
+            totalFindingCount: retained.summary.findings.length,
+            abbreviated: false,
+            warnings: [],
+          }),
+        },
+      );
+      expect(exit).toBe(2);
+      expect(stdout.join("")).toContain("Retained formatting finding.");
+      expect(stdout.join("")).toContain("Type analysis could not finish.");
+      if (format === "json") {
+        const delivered = JSON.parse(stdout.join(""));
+        expect(delivered.outcome).toBe("incomplete");
+        expect(delivered.exitCode).toBe(2);
+        expect(delivered.summary).toMatchObject({ failed: 1, incomplete: 2 });
+        expect(delivered.checks).toHaveLength(3);
+        expect(delivered.checks[0].findings[0].message).toBe(
+          "Retained formatting finding.",
+        );
+        expect(delivered.checks[1].error.diagnostic).toEqual(diagnostic);
+        expect(delivered.checks[2].error.code).toBe("SNAPSHOT_CLEANUP_FAILED");
+      } else {
+        expect(stdout.join("")).toContain("temporary snapshot");
+      }
+      const metadata = JSON.parse(
+        stderr.join("").split("ZEDBEE DIAGNOSTICS\n")[1]!,
+      );
+      expect(metadata.cleanupFailed).toBe(true);
+      expect(metadata.checks).toEqual(
+        expect.arrayContaining([
+          { checkId: "formatting", status: "completed", durationMs: 4 },
+          { checkId: "types", status: "incomplete", durationMs: 25 },
+        ]),
+      );
+      expect(metadata.analyzers).toEqual([{ ...diagnostic, durationMs: 25 }]);
+      expect(stdout.join("") + stderr.join("")).not.toContain(
+        "private-executor-secret-marker",
+      );
+      expect(stderr.join("").match(/SNAPSHOT CLEANUP FAILED/g)).toHaveLength(1);
+      expect(stderr.join("")).not.toContain("could not complete the scan");
+    },
+  );
+
   it.each(["json", "sarif", "text", "ink"] as const)(
     "does not deliver %s when cancellation arrives during report preparation",
     async (format) => {

@@ -13,6 +13,7 @@ export class ServiceUnavailableError extends Error {
 }
 export class ByteBudget {
   used = 0;
+  private readonly waiters = new Set<() => void>();
   constructor(readonly limit: number) {}
   reserve(bytes: number): () => void {
     if (
@@ -27,8 +28,43 @@ export class ByteBudget {
       if (held) {
         held = false;
         this.used -= bytes;
+        for (const waiter of [...this.waiters]) waiter();
       }
     };
+  }
+  acquire(
+    bytes: number,
+    signal: AbortSignal,
+    headroom = 0,
+  ): Promise<() => void> {
+    if (
+      !Number.isSafeInteger(bytes) ||
+      bytes < 0 ||
+      bytes > this.limit - headroom
+    )
+      return Promise.reject(new AnalyzerCapacityError("request"));
+    return new Promise((resolve, reject) => {
+      const cleanup = () => {
+        this.waiters.delete(attempt);
+        signal.removeEventListener("abort", abort);
+      };
+      const abort = () => {
+        cleanup();
+        reject(new ServiceUnavailableError());
+      };
+      const attempt = () => {
+        if (signal.aborted) {
+          abort();
+          return;
+        }
+        if (this.used + bytes > this.limit - headroom) return;
+        cleanup();
+        resolve(this.reserve(bytes));
+      };
+      this.waiters.add(attempt);
+      signal.addEventListener("abort", abort, { once: true });
+      attempt();
+    });
   }
 }
 export class FrameDecoder {
@@ -95,7 +131,7 @@ export class FrameDecoder {
     this.headerBytes = 0;
   }
 }
-function decodeJson(bytes: Buffer): unknown {
+export function decodeJson(bytes: Buffer): unknown {
   // Bound parser nesting before JSON allocation; strings and escapes are lexical.
   let depth = 0,
     quoted = false,

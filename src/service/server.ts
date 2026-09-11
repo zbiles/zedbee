@@ -22,6 +22,7 @@ import {
   verifyProof,
 } from "./protocol.js";
 import { ServiceConnection, listenPrivate } from "./transport.js";
+import { RETAINED_RESULT_BYTES } from "./large-result.js";
 import type { ServiceState } from "./state.js";
 
 export type ServiceStatus =
@@ -89,6 +90,7 @@ export async function startServiceServer(
   concurrency: 1 | 2 | 4,
   releaseOwnership: () => Promise<void>,
 ) {
+  const resultOutput = new ByteBudget(RETAINED_RESULT_BYTES);
   const instance = randomBytes(32).toString("hex"),
     secret = randomBytes(32).toString("hex");
   type Owner = {
@@ -265,7 +267,23 @@ export async function startServiceServer(
               (result) =>
                 value.op === "stop" || value.op === "drain"
                   ? undefined
-                  : peer.send({ id, ok: true, result }),
+                  : peer.sendResult({ id, ok: true, result }).catch((error) => {
+                      if (!(error instanceof AnalyzerCapacityError))
+                        throw error;
+                      return peer.send({
+                        id,
+                        ok: false,
+                        error: wireError(
+                          new CheckIncompleteError({
+                            code: "ANALYZER_RESULT_CAPACITY_EXCEEDED",
+                            message:
+                              "The analyzer result exceeds the background service's transfer capacity.",
+                            remediation:
+                              "Retry with --no-service, or scan a smaller set of projects.",
+                          }),
+                        ),
+                      });
+                    }),
               (error) => peer.send({ id, ok: false, error: wireError(error) }),
             )
             .catch(() => peer.destroy())
@@ -292,6 +310,7 @@ export async function startServiceServer(
           }
         }
       },
+      resultOutput,
     );
     clients.add(peer);
     socket.once("close", () => {

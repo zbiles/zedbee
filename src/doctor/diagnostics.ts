@@ -3,6 +3,8 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
 import { SECRET_LINT_CONFIG } from "../checks/secrets/config.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
+import { acquireServiceExecutor } from "../service/client.js";
 import { LockfileInventoryError } from "../checks/vulnerabilities/inventory/errors.js";
 import { parseLockfileInventory } from "../checks/vulnerabilities/inventory/parse-lockfile.js";
 import { createOsvClient } from "../checks/vulnerabilities/osv/client.js";
@@ -29,6 +31,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "config",
   "node",
   "snapshot-creation",
+  "background-service",
   "workspace-inspection",
   "secretlint-readiness",
   "lockfile-support",
@@ -215,6 +218,7 @@ async function inventoryIsValid(): Promise<boolean> {
 }
 
 export interface DefaultDiagnosticDependencies {
+  readonly acquireServiceExecutor: typeof acquireServiceExecutor;
   readonly lintSource: typeof lintSource;
   readonly nodeVersion: string;
   readonly parseLockfileInventory: typeof parseLockfileInventory;
@@ -222,6 +226,7 @@ export interface DefaultDiagnosticDependencies {
 }
 
 const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
+  acquireServiceExecutor,
   lintSource,
   nodeVersion: process.versions.node,
   parseLockfileInventory,
@@ -291,8 +296,50 @@ export function createDefaultDiagnosticProbe(
         return {
           id,
           status: "pass",
-          message: "The staged Git snapshot can be created and cleaned up.",
+          message:
+            "Snapshot filesystem only: the staged Git snapshot can be created and cleaned up; this does not verify a full scan.",
         };
+      case "background-service": {
+        try {
+          const executor = await dependencies.acquireServiceExecutor();
+          try {
+            const session = await executor.openSession();
+            try {
+              const result = await session.run({
+                version: 1,
+                checkId: "formatting",
+                operation: "format-working-source",
+                input: {
+                  file: "zedbee-doctor-probe.js",
+                  source: "const zedbeeDoctor=true",
+                  settings: DEFAULT_FORMATTING_SETTINGS,
+                },
+              });
+              if (result !== "const zedbeeDoctor = true;\n")
+                throw new Error("Unexpected service probe result.");
+            } finally {
+              await session.close();
+            }
+          } finally {
+            await executor.close();
+          }
+          return {
+            id,
+            status: "pass",
+            message:
+              "The background service completed a small synthetic formatting task and released its session; this does not verify a full scan.",
+          };
+        } catch {
+          return {
+            id,
+            status: "fail",
+            message:
+              "The background service could not complete and clean up its synthetic formatting task.",
+            remediation:
+              "Check zedbee service status and retry zedbee doctor. Use zedbee scan --no-service to bypass the background service.",
+          };
+        }
+      }
       case "workspace-inspection": {
         const count = await withSnapshots(
           context.cwd,
