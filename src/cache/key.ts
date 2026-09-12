@@ -4,6 +4,7 @@ import { readlink, realpath } from "node:fs/promises";
 import { isAbsolute, posix, relative, sep } from "node:path";
 import {
   dependencyPathParts,
+  isInstalledDependencyPath,
   type DependencyInputManifest,
 } from "./dependency-inputs.js";
 import pLimit from "p-limit";
@@ -266,6 +267,17 @@ export function createObservationCacheKeyBuilder(
           if (probe.kind !== "file") continue;
           const [scope, path] = dependencyPathParts(probe.path);
           const [realScope, realPath] = dependencyPathParts(probe.realPath);
+          // Installed manifest reads are checked afresh by validateDependencyInputs;
+          // they are deliberately not part of the source snapshot inventory.
+          if (
+            (scope === "packages" ||
+              (scope === "repository" && isInstalledDependencyPath(path))) &&
+            path.endsWith("/package.json") &&
+            realScope === "repository" &&
+            isInstalledDependencyPath(realPath) &&
+            realPath.endsWith("/package.json")
+          )
+            continue;
           const index = scope === "baseline" ? 0 : scope === "target" ? 1 : -1;
           if (
             index < 0 ||

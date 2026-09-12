@@ -18,6 +18,8 @@ import {
   sep,
 } from "node:path";
 import { GitClient } from "../git/client.js";
+import { customGitHookPath } from "../hooks/detect.js";
+import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
 import { initContentHash } from "./recommend.js";
 import type {
   ApplyInitDependencies,
@@ -32,6 +34,13 @@ const EXACT_TARGETS = new Set([
   "lefthook.yaml",
   "package.json",
   ".husky/pre-commit",
+  ".husky/install.mjs",
+  ".husky/_/.gitignore",
+  ".husky/_/h",
+  ...TRACKED_HOOK_NAMES.flatMap((name) => [
+    `.husky/${name}`,
+    `.husky/_/${name}`,
+  ]),
 ]);
 
 function normalizedPath(path: string): string {
@@ -79,6 +88,23 @@ async function currentContents(path: string): Promise<string | null> {
   if (state === undefined) return null;
   if (state.isSymbolicLink() || !state.isFile()) throw unsafeTarget();
   return readFile(path, "utf8");
+}
+
+async function validateGitConfig(root: string): Promise<void> {
+  const output = await new GitClient(root).run([
+    "rev-parse",
+    "--git-path",
+    "config",
+  ]);
+  const path = resolve(root, output.stdout);
+  const state = await metadata(path);
+  if (
+    state === undefined ||
+    state.isSymbolicLink() ||
+    !state.isFile() ||
+    (await realpath(dirname(path))) !== dirname(path)
+  )
+    throw unsafeTarget();
 }
 
 async function validatedRawGitPath(
@@ -134,7 +160,19 @@ async function validateChange(
   const portable = normalizedPath(change.relativePath).replace(/^\.\//u, "");
   let path: string;
   if (change.absolutePath !== undefined) {
-    path = await validatedRawGitPath(root, change);
+    if (change.relativePath === ".git/hooks/pre-commit") {
+      path = await validatedRawGitPath(root, change);
+    } else {
+      const configured = await customGitHookPath(root);
+      if (
+        configured === undefined ||
+        configured !== change.absolutePath ||
+        normalizedPath(relative(root, configured)) !== change.relativePath
+      )
+        throw unsafeTarget();
+      path = configured;
+      await validateAncestors(root, path);
+    }
   } else {
     if (!EXACT_TARGETS.has(portable) || portable !== change.relativePath) {
       throw unsafeTarget();
@@ -217,6 +255,14 @@ export async function applyInitProposal(
     readonly mode: number;
   }>;
   const paths = new Set<string>();
+  if (proposal.hooksPathChange !== undefined) await validateGitConfig(root);
+  if (
+    proposal.hooksPathChange !== undefined &&
+    (proposal.hooksPathChange.after !== ".husky/_" ||
+      (await hooksPathValue(root)) !== proposal.hooksPathChange.before)
+  ) {
+    throw new Error("Zedbee initialization proposal is stale.");
+  }
   for (const change of proposal.files) {
     const state = await validateChange(root, change);
     if (paths.has(state.path)) throw unsafeTarget();
@@ -230,8 +276,24 @@ export async function applyInitProposal(
     for (const [index, item] of validated.entries()) {
       await dependencies.beforeWrite?.(index, item.change);
       const refreshed = await validateChange(root, item.change);
-      await atomicReplace(item.path, item.change.after, refreshed.mode);
+      const mode = item.change.relativePath.startsWith(".husky/_/")
+        ? item.change.mode
+        : refreshed.mode;
+      await atomicReplace(item.path, item.change.after, mode);
       applied.push({ path: item.path, before: item.before, mode: item.mode });
+    }
+    if (proposal.hooksPathChange !== undefined) {
+      await validateGitConfig(root);
+      if ((await hooksPathValue(root)) !== proposal.hooksPathChange.before)
+        throw new Error(
+          "Git hook configuration changed during initialization.",
+        );
+      await new GitClient(root).run([
+        "config",
+        "--local",
+        "core.hooksPath",
+        proposal.hooksPathChange.after,
+      ]);
     }
   } catch {
     try {

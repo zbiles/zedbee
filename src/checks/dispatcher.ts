@@ -435,7 +435,7 @@ async function collectObservations(
           validateDependencyInputs(
             cached.dependencyInputs,
             runContext,
-            adapter.id === "deadCode",
+            adapter.id === "deadCode" ? "knip" : false,
           ))
       ) {
         return sanitizeCacheableObservationSet(cached);
@@ -460,7 +460,7 @@ async function collectObservations(
       validateDependencyInputs(
         collected.dependencyInputs,
         runContext,
-        adapter.id === "deadCode",
+        adapter.id === "deadCode" ? "knip" : false,
       ))
   ) {
     await options.cache.set(cacheKey, collected).catch(() => undefined);

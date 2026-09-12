@@ -2,6 +2,42 @@ import { describe, expect, it } from "vitest";
 import { parseKnipReport } from "../../../src/checks/dead-code/parse-report.js";
 
 describe("parseKnipReport", () => {
+  it.each(["dependencies", "devDependencies"])(
+    "treats Zedbee in %s as an intentional CLI tool, including workspace manifests",
+    (field) => {
+      for (const file of ["package.json", "web/package.json"]) {
+        const result = parseKnipReport(
+          {
+            issues: [
+              {
+                file,
+                [field]: [
+                  { name: "zedbee" },
+                  { name: "another-tool" },
+                  { name: "zedbee-helper" },
+                ],
+                unlisted: [{ name: "zedbee" }],
+                unresolved: [{ name: "zedbee" }],
+                exports: [{ name: "zedbee" }],
+              },
+            ],
+          },
+          new Set([file]),
+        );
+        expect(
+          result
+            .filter((item) => item.rule === field)
+            .map((item) => item.entity?.name),
+        ).toEqual(["another-tool", "zedbee-helper"]);
+        expect(
+          result
+            .filter((item) => item.entity?.name === "zedbee")
+            .map((item) => item.rule),
+        ).toEqual(["exports", "unlisted", "unresolved"]);
+      }
+    },
+  );
+
   it("normalizes every managed Knip issue without source text", () => {
     const report = {
       issues: [

@@ -66,6 +66,12 @@ describe("hook manager data writers", () => {
     expect(updated.match(/^[^#\n]*zedbee scan/gmu) ?? []).toHaveLength(1);
   });
 
+  it("refuses to append shell commands to an existing non-shell hook", () => {
+    expect(() =>
+      updateRawGitHook("#!/usr/bin/env node\nprocess.exit(0);\n"),
+    ).toThrow();
+  });
+
   it("inserts before a terminal exit without removing surrounding hook work", () => {
     const updated = updateHuskyHook(
       "#!/bin/sh\nprintf before\nnpm test\nexit 0\n",
@@ -140,6 +146,49 @@ describe("hook manager data writers", () => {
 });
 
 describe("detectHookIntegration", () => {
+  it("recognizes existing tracked hooks without a pre-commit hook or dependency", async () => {
+    const repository = await createGitRepository("zedbee-husky-other-hook-");
+    await repository.write(".husky/commit-msg", "exit 0\n");
+    const integration = await detectHookIntegration(repository.root, "auto");
+    expect(integration.hook).toBe("husky");
+    expect(integration.change?.relativePath).toBe(".husky/pre-commit");
+    expect(integration.activation.status).toBe("pending");
+  });
+  it("does not claim a Husky file activates Git without an installed dispatcher", async () => {
+    const repository = await createGitRepository("zedbee-inactive-husky-");
+    await repository.write(".husky/pre-commit", "#!/bin/sh\nnpm test\n");
+    const integration = await detectHookIntegration(repository.root, "auto");
+    expect(integration.hook).toBe("husky");
+    expect(integration.activation.status).toBe("pending");
+  });
+
+  it("reuses an in-repository core.hooksPath and preserves its hook", async () => {
+    const repository = await createGitRepository("zedbee-custom-hooks-");
+    await repository.write(
+      "scripts/hooks/pre-commit",
+      "#!/bin/sh\nprintf before\n",
+    );
+    await chmod(join(repository.root, "scripts/hooks/pre-commit"), 0o755);
+    await repository.git(["config", "core.hooksPath", "scripts/hooks"]);
+    const integration = await detectHookIntegration(repository.root, "auto");
+    expect(integration.hook).toBe("custom");
+    const proposal = createInitProposal(
+      await inspectRepository(repository.root),
+      {
+        repositoryRoot: repository.root,
+        profile: "recommended",
+        hook: integration.hook,
+        hookChange: integration.change!,
+      },
+    );
+    await applyInitProposal(proposal);
+    expect(await repository.read("scripts/hooks/pre-commit")).toContain(
+      "printf before\nnpx --no-install zedbee scan",
+    );
+    expect((await repository.git(["config", "core.hooksPath"])).stdout).toBe(
+      "scripts/hooks",
+    );
+  });
   it.each([
     {
       name: "Husky",

@@ -1,12 +1,16 @@
 {
   "name": "zedbee",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "description": "Diff-aware pre-commit scanning for JavaScript and TypeScript",
   "type": "module",
   "bin": {
     "zedbee": "./dist/cli.js"
   },
   "exports": {
+    "./hooks": {
+      "types": "./dist/hooks/install.d.ts",
+      "import": "./dist/hooks/install.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
@@ -102,6 +106,7 @@
     "eslint-plugin-react": "7.37.5",
     "eslint-plugin-react-hooks": "7.1.1",
     "execa": "10.0.1",
+    "husky": "9.1.7",
     "ink": "7.1.1",
     "jscpd": "5.0.15",
     "jsonc-parser": "3.3.1",

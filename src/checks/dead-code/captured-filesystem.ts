@@ -29,7 +29,7 @@ export async function createKnipFilesystem(
   const entries = registry.entries();
   if (entries.length > DEPENDENCY_LIMITS.probes)
     throw new RangeError("Knip snapshot capacity");
-  const capture = new CapturedDependencies(context, true);
+  const capture = new CapturedDependencies(context, "knip");
   const { memfs } = (await import(
     new URL(
       "./dist/fs.js",

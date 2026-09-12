@@ -19,6 +19,7 @@ import {
 import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitFileChange,
+  InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
   ResolvedHookChoice,
@@ -50,6 +51,7 @@ export interface InitAppProps extends InitPromptOptions {
     profile: ProfileId,
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
+    hook?: InitHookChoice,
   ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
   readonly onMouseCleanupReady?: (cleanup: () => void) => void;
@@ -64,6 +66,7 @@ const PROFILE_EXPLANATIONS = {
 const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
   none: "None",
   raw: "Git pre-commit hook",
+  custom: "Existing tracked hook",
   husky: "Husky",
   lefthook: "Lefthook",
   "simple-git-hooks": "simple-git-hooks",
@@ -97,6 +100,7 @@ function SetupSummary({
   profile,
   baseProfile,
   focused,
+  hookFocus,
   activeTargetRef,
   color,
 }: {
@@ -104,6 +108,7 @@ function SetupSummary({
   readonly profile: ProfileId | "custom";
   readonly baseProfile: ProfileId;
   readonly focused: boolean;
+  readonly hookFocus: number;
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
@@ -146,7 +151,10 @@ function SetupSummary({
         </Text>
       </Box>
       <Text> </Text>
-      <Box>
+      <Box ref={hookFocus === 1 ? activeTargetRef : undefined}>
+        {proposal.hookChoices === undefined ? null : (
+          <Text>{hookFocus === 1 ? "➜ " : "  "}</Text>
+        )}
         <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Install pre-commit hook:{" "}
         </Text>
@@ -157,10 +165,39 @@ function SetupSummary({
             installsHook ? ZEDBEE_THEME.pass : ZEDBEE_THEME.muted,
           )}
         >
-          {installsHook ? "Yes" : "No"}
+          {proposal.hookChoices === undefined
+            ? installsHook
+              ? "Yes"
+              : "No"
+            : `${installsHook ? "[✽]" : "[ ]"} Yes  ${installsHook ? "[ ]" : "[✽]"} No`}
         </Text>
       </Box>
-      {installsHook ? (
+      {installsHook &&
+      proposal.hookChoices?.includes("tracked") &&
+      proposal.hookChoices.includes("raw") ? (
+        <Box
+          flexDirection="column"
+          ref={hookFocus === 2 ? activeTargetRef : undefined}
+        >
+          <Text>
+            {hookFocus === 2 ? "➜ " : "  "}[
+            {proposal.hookSelection === "tracked" ? "✽" : " "}] Tracked — shared
+            with teammates
+          </Text>
+          <Text>
+            {"  "}[{proposal.hookSelection === "raw" ? "✽" : " "}] Local — this
+            checkout only
+          </Text>
+        </Box>
+      ) : installsHook && proposal.hookChoices !== undefined ? (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {proposal.hookSelection === "tracked"
+            ? "Tracked — shared with teammates"
+            : proposal.hook === "raw"
+              ? "Local — this checkout only"
+              : "Reuse the existing tracked integration."}
+        </Text>
+      ) : installsHook ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Method: {HOOK_METHODS[proposal.hook]}
         </Text>
@@ -175,6 +212,17 @@ function SetupSummary({
           Next step: {proposal.hookActivation.remediation}
         </Text>
       )}
+      {proposal.limitations
+        .filter((message) => message.startsWith("Tracked setup is unavailable"))
+        .map((message) => (
+          <Text
+            key={message}
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.warning)}
+          >
+            {message}
+          </Text>
+        ))}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         Detected: {proposal.detectedEnvironments.join(", ") || "none"}
       </Text>
@@ -313,6 +361,15 @@ function setupReviewFocusIndex(vulnerabilityScanningAvailable: boolean) {
   return CHECK_IDS.length + (vulnerabilityScanningAvailable ? 3 : 1);
 }
 
+function hookFocusCount(proposal: InitProposal): number {
+  if (proposal.hookChoices === undefined) return 0;
+  return proposal.hook !== "none" &&
+    proposal.hookChoices.includes("tracked") &&
+    proposal.hookChoices.includes("raw")
+    ? 2
+    : 1;
+}
+
 function InitActionButton({
   label,
   focused,
@@ -360,18 +417,22 @@ function InitActionButton({
 
 function initFileDescription(file: InitFileChange): string {
   const action = file.before === null ? "Create" : "Update";
+  if (file.relativePath.startsWith(".husky/_/"))
+    return `${action} the local, ignored dispatcher used to activate Git hooks.`;
   switch (file.relativePath) {
     case ".zedbeerc.jsonc":
       return `${action} Zedbee's repository configuration with the selected profile, checks, and reporting settings.`;
     case ".git/hooks/pre-commit":
       return `${action} the Git pre-commit hook so Zedbee runs before each commit.`;
     case ".husky/pre-commit":
-      return `${action} the Husky pre-commit hook so Zedbee runs before each commit.`;
+      return `${action} the tracked pre-commit hook so Zedbee runs before each commit.`;
     case "lefthook.yml":
     case "lefthook.yaml":
       return `${action} the Lefthook configuration so Zedbee runs before each commit.`;
     case "package.json":
-      return `${action} package.json so simple-git-hooks runs Zedbee before each commit.`;
+      return `${action} package.json to configure hook setup while preserving existing scripts.`;
+    case ".husky/install.mjs":
+      return `${action} the tracked installer used by prepare; it skips CI and installs without Zedbee.`;
     default:
       return `${action} this file as part of Zedbee initialization.`;
   }
@@ -398,6 +459,7 @@ function SetupPanel({
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
+  const hookRows = hookFocusCount(proposal);
   return (
     <BrandedCommandPanel title="SETUP" width={width} color={color}>
       <SetupSummary
@@ -405,12 +467,13 @@ function SetupPanel({
         profile={profile}
         baseProfile={baseProfile}
         focused={focus === 0}
+        hookFocus={focus}
         activeTargetRef={activeTargetRef}
         color={color}
       />
       <BrandedCommandPanelRule width={width} color={color} />
       <CheckChoices
-        cursor={focus - 1}
+        cursor={focus - 1 - hookRows}
         selected={selected}
         activeTargetRef={activeTargetRef}
         color={color}
@@ -421,7 +484,7 @@ function SetupPanel({
           <BrandedCommandPanelRule width={width} color={color} />
           <VulnerabilityOutageChoice
             value={osvUnavailable}
-            cursor={focus - CHECK_IDS.length - 1}
+            cursor={focus - CHECK_IDS.length - 1 - hookRows}
             activeTargetRef={activeTargetRef}
             color={color}
           />
@@ -432,7 +495,8 @@ function SetupPanel({
         label="REVIEW CHANGES"
         focused={
           focus ===
-          setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable)
+          setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+            hookRows
         }
         activeTargetRef={activeTargetRef}
         color={color}
@@ -440,7 +504,8 @@ function SetupPanel({
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
-          ↑↓ Move · ←→ Change profile · Space Select · Enter Review · Esc Cancel
+          ↑↓ Move · ←→ Change profile/choice · Space Select · Enter Review · Esc
+          Cancel
         </Text>
       </Box>
       <Text> </Text>
@@ -476,6 +541,10 @@ function ReviewPanel({
               {initFileDescription(file)}
             </Text>
             <Text> </Text>
+            {proposal.hooksPathChange !== undefined &&
+            !file.relativePath.startsWith(".husky/_/") ? (
+              <Text wrap="wrap">{file.diff}</Text>
+            ) : null}
           </Box>
           {index < proposal.files.length - 1 ? (
             <BrandedCommandPanelRule width={width} color={color} />
@@ -483,6 +552,15 @@ function ReviewPanel({
         </Box>
       ))}
       <InitActionButton label="APPLY CHANGES" focused color={color} />
+      {proposal.hooksPathChange === undefined ? null : (
+        <Box paddingX={2}>
+          <Text wrap="wrap">
+            Activate Git hooks: core.hooksPath →{" "}
+            {proposal.hooksPathChange.after}. Commit the tracked hook and
+            installer files to share them with teammates.
+          </Text>
+        </Box>
+      )}
       <Text> </Text>
       <Box paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
@@ -519,6 +597,9 @@ export function InitApp({
     });
   const [baseProfile, setBaseProfile] = useState<ProfileId>(proposal.profile);
   const [customized, setCustomized] = useState(false);
+  const [hookSelection, setHookSelection] = useState<InitHookChoice>(
+    proposal.hookSelection ?? proposal.hook,
+  );
   const [selected, setSelected] = useState(
     () => new Set<CheckId>(proposal.recommendedChecks),
   );
@@ -544,9 +625,17 @@ export function InitApp({
         baseProfile,
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
+        hookSelection,
       ),
-    [baseProfile, osvUnavailable, proposalForSelection, selected],
+    [
+      baseProfile,
+      osvUnavailable,
+      hookSelection,
+      proposalForSelection,
+      selected,
+    ],
   );
+  const hookRows = hookFocusCount(reviewedProposal);
 
   useEffect(() => {
     const cleanup = enableTerminalMouse(stdout);
@@ -637,12 +726,32 @@ export function InitApp({
       exit();
     } else if (key.upArrow) {
       const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) + 1;
+        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+        hookRows +
+        1;
       setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
       const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) + 1;
+        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+        hookRows +
+        1;
       setFocus((value) => (value + 1) % focusCount);
+    } else if (
+      hookRows > 0 &&
+      focus === 1 &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setHookSelection((value) =>
+        value === "none"
+          ? proposal.hookChoices!.find((choice) => choice !== "none")!
+          : "none",
+      );
+    } else if (
+      hookRows === 2 &&
+      focus === 2 &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setHookSelection((value) => (value === "tracked" ? "raw" : "tracked"));
     } else if (focus === 0 && (key.leftArrow || key.rightArrow)) {
       const currentIndex = PROFILE_IDS.indexOf(baseProfile);
       const offset = key.rightArrow ? 1 : -1;
@@ -654,6 +763,7 @@ export function InitApp({
         nextProfile,
         undefined,
         osvUnavailable,
+        hookSelection,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
@@ -661,25 +771,27 @@ export function InitApp({
     } else if (input === " ") {
       if (
         proposal.vulnerabilityScanningAvailable &&
-        focus === CHECK_IDS.length + 1
+        focus === CHECK_IDS.length + 1 + hookRows
       ) {
         setOsvUnavailable("block");
         return;
       }
       if (
         proposal.vulnerabilityScanningAvailable &&
-        focus === CHECK_IDS.length + 2
+        focus === CHECK_IDS.length + 2 + hookRows
       ) {
         setOsvUnavailable("warn");
         return;
       }
       if (
-        focus === setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable)
+        focus ===
+        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+          hookRows
       ) {
         setPhase("review");
         return;
       }
-      const check = CHECK_IDS[focus - 1];
+      const check = CHECK_IDS[focus - 1 - hookRows];
       if (check !== undefined) {
         setSelected((current) => {
           const next = new Set(current);
@@ -739,6 +851,7 @@ export async function runInitPrompt(
     profile: ProfileId,
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
+    hook?: InitHookChoice,
   ) => InitProposal,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;

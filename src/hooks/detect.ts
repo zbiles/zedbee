@@ -1,5 +1,13 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
 import type {
@@ -13,11 +21,24 @@ import { updateLefthookConfig } from "./lefthook.js";
 import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
 import { hasLefthookRunCommand } from "./state.js";
+import {
+  hookFile,
+  hooksPathValue,
+  TRACKED_HOOK_NAMES,
+  TRACKED_INSTALL_SCRIPT,
+  trackedRuntimeChanges,
+  validateLocalHookMigration,
+} from "./install.js";
 
 export interface DetectedHookIntegration {
   readonly hook: ResolvedHookChoice;
   readonly change?: InitFileChange;
   readonly activation: InitHookActivation;
+  readonly changes?: readonly InitFileChange[];
+  readonly hooksPathChange?: Readonly<{
+    before: string | null;
+    after: ".husky/_";
+  }>;
 }
 
 const ACTIVE_DIRECT = (hook: ResolvedHookChoice): InitHookActivation =>
@@ -76,17 +97,7 @@ async function existingFile(
   root: string,
   relativePath: string,
 ): Promise<ExistingFile | undefined> {
-  const path = join(root, relativePath);
-  try {
-    const state = await lstat(path);
-    if (state.isSymbolicLink() || !state.isFile()) {
-      throw new Error("Zedbee refused an unsafe hook target.");
-    }
-    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
+  return hookFile(root, relativePath);
 }
 
 async function existingAbsoluteFile(
@@ -104,7 +115,7 @@ async function existingAbsoluteFile(
   }
 }
 
-async function rawGitHookPath(root: string): Promise<string> {
+export async function rawGitHookPath(root: string): Promise<string> {
   const git = new GitClient(root);
   const [hookOutput, commonOutput] = await Promise.all([
     git.run(["rev-parse", "--git-path", "hooks/pre-commit"]),
@@ -127,6 +138,69 @@ async function rawGitHookPath(root: string): Promise<string> {
     throw new Error("Zedbee refused an unsafe hook target.");
   }
   return canonicalHook;
+}
+
+export async function customGitHookPath(
+  root: string,
+): Promise<string | undefined> {
+  const git = new GitClient(root);
+  const configured = await git.run(["config", "--get", "core.hooksPath"], {
+    reject: false,
+  });
+  if (configured.exitCode !== 0 || configured.stdout === "") return undefined;
+  const canonicalRoot = await realpath(root);
+  const directory = resolve(canonicalRoot, configured.stdout);
+  const fromRoot = relative(canonicalRoot, directory);
+  if (
+    fromRoot === "" ||
+    isAbsolute(fromRoot) ||
+    fromRoot === ".." ||
+    fromRoot.startsWith(`..${sep}`) ||
+    fromRoot.split(sep).includes(".git")
+  ) {
+    throw new Error("Zedbee refused an unsafe hook target.");
+  }
+  let ancestor = canonicalRoot;
+  for (const part of fromRoot.split(sep)) {
+    ancestor = join(ancestor, part);
+    try {
+      const state = await lstat(ancestor);
+      if (state.isSymbolicLink() || !state.isDirectory())
+        throw new Error("Zedbee refused an unsafe hook target.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return join(directory, "pre-commit");
+}
+
+async function huskyActivation(root: string): Promise<InitHookActivation> {
+  try {
+    const path = await customGitHookPath(root);
+    const direct = resolve(root, ".husky/pre-commit");
+    const dispatcher = resolve(root, ".husky/_/pre-commit");
+    const installed =
+      path === undefined ? undefined : await existingAbsoluteFile(path);
+    if (
+      installed !== undefined &&
+      (installed.mode & 0o111) !== 0 &&
+      (path === direct ||
+        (path === dispatcher &&
+          installed.contents.includes('/h"') &&
+          (await exists(root, ".husky/_/h"))))
+    ) {
+      return ACTIVE_DIRECT("husky");
+    }
+  } catch {
+    /* Configuration alone does not establish activation. */
+  }
+  return Object.freeze({
+    status: "pending",
+    message:
+      "The tracked pre-commit hook is configured, but its Git dispatcher is not active.",
+    remediation:
+      "After reviewing the project tooling, run its existing hook installation command to activate the hook.",
+  });
 }
 
 async function exists(root: string, relativePath: string): Promise<boolean> {
@@ -167,9 +241,27 @@ function dependencyNames(
 }
 
 async function autoChoice(root: string): Promise<ResolvedHookChoice> {
+  try {
+    const custom = await customGitHookPath(root);
+    if (
+      custom !== undefined &&
+      custom !== resolve(root, ".husky/pre-commit") &&
+      custom !== resolve(root, ".husky/_/pre-commit")
+    )
+      return "custom";
+  } catch {
+    return "none";
+  }
   const manifest = await packageData(root);
   const dependencies = dependencyNames(manifest);
-  if ((await exists(root, ".husky/pre-commit")) || dependencies.has("husky")) {
+  if (
+    (
+      await Promise.all(
+        TRACKED_HOOK_NAMES.map((name) => exists(root, `.husky/${name}`)),
+      )
+    ).some(Boolean) ||
+    dependencies.has("husky")
+  ) {
     return "husky";
   }
   if (
@@ -213,6 +305,71 @@ export async function detectHookIntegration(
   repositoryRoot: string,
   requested: InitHookChoice,
 ): Promise<DetectedHookIntegration> {
+  repositoryRoot = await realpath(repositoryRoot);
+  if (requested === "tracked") {
+    const existing = await autoChoice(repositoryRoot);
+    if (existing !== "raw" && existing !== "none")
+      return detectHookIntegration(repositoryRoot, existing);
+    const beforePath = await hooksPathValue(repositoryRoot);
+    if (beforePath !== null)
+      throw new Error("Zedbee will not replace an existing hook integration.");
+    const manifest = await existingFile(repositoryRoot, "package.json");
+    if (manifest === undefined)
+      throw new Error("Tracked hook setup requires package.json.");
+    const data = JSON.parse(manifest.contents) as Record<string, unknown>;
+    const scripts = data.scripts ?? {};
+    if (
+      typeof scripts !== "object" ||
+      scripts === null ||
+      Array.isArray(scripts)
+    )
+      throw new Error("Invalid package scripts.");
+    const values = scripts as Record<string, unknown>;
+    const prepare = values.prepare;
+    if (prepare !== undefined && typeof prepare !== "string")
+      throw new Error("Invalid prepare script.");
+    values.prepare = prepare
+      ? `${prepare} && node .husky/install.mjs`
+      : "node .husky/install.mjs";
+    data.scripts = values;
+    const installer = await hookFile(repositoryRoot, ".husky/install.mjs");
+    if (
+      installer !== undefined &&
+      installer.contents !== TRACKED_INSTALL_SCRIPT
+    )
+      throw new Error("Existing hook installer must be preserved.");
+    const changes = [
+      initFileChange(
+        "package.json",
+        manifest.contents,
+        `${JSON.stringify(data, null, 2)}\n`,
+        manifest.mode,
+      ),
+      initFileChange(
+        ".husky/install.mjs",
+        installer?.contents ?? null,
+        TRACKED_INSTALL_SCRIPT,
+        0o644,
+      ),
+    ];
+    await validateLocalHookMigration(repositoryRoot);
+    changes.push(
+      initFileChange(".husky/pre-commit", null, updateHuskyHook(null), 0o755),
+    );
+    changes.push(...(await trackedRuntimeChanges(repositoryRoot)));
+    return Object.freeze({
+      hook: "husky",
+      changes,
+      hooksPathChange: { before: beforePath, after: ".husky/_" as const },
+      activation: {
+        status: "active" as const,
+        message:
+          "Applying this proposal activates the tracked pre-commit hook for this checkout.",
+        remediation:
+          "Commit the tracked .husky files and package.json. Teammates activate hooks during normal dependency installation; CI and production-only installs skip activation when Zedbee is unavailable.",
+      },
+    });
+  }
   const hook =
     requested === "auto" ? await autoChoice(repositoryRoot) : requested;
   if (hook === "none") {
@@ -227,12 +384,39 @@ export async function detectHookIntegration(
   if (hook === "husky") {
     return Object.freeze({
       hook,
-      activation: ACTIVE_DIRECT(hook),
+      activation: await huskyActivation(repositoryRoot),
       change: await changedFile(
         repositoryRoot,
         ".husky/pre-commit",
         updateHuskyHook,
         0o755,
+      ),
+    });
+  }
+  if (hook === "custom") {
+    const absolutePath = await customGitHookPath(repositoryRoot);
+    if (absolutePath === undefined)
+      throw new Error("No tracked Git hooks path is configured.");
+    const relativePath = relative(await realpath(repositoryRoot), absolutePath)
+      .split(sep)
+      .join("/");
+    const file = await existingAbsoluteFile(absolutePath);
+    return Object.freeze({
+      hook,
+      activation:
+        file === undefined || (file.mode & 0o111) === 0
+          ? {
+              status: "pending" as const,
+              message: "The configured hook needs executable permission.",
+              remediation: `Make ${relativePath} executable to activate it.`,
+            }
+          : ACTIVE_DIRECT(hook),
+      change: initFileChange(
+        relativePath,
+        file?.contents ?? null,
+        updateRawGitHook(file?.contents),
+        file?.mode ?? 0o755,
+        absolutePath,
       ),
     });
   }

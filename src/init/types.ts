@@ -2,9 +2,16 @@ import type { CheckId, ProfileId } from "../config/schema.js";
 import type { Environment } from "../inspection/types.js";
 
 export type InitHookChoice =
-  "auto" | "husky" | "lefthook" | "simple-git-hooks" | "raw" | "none";
+  | "auto"
+  | "tracked"
+  | "husky"
+  | "lefthook"
+  | "simple-git-hooks"
+  | "custom"
+  | "raw"
+  | "none";
 
-export type ResolvedHookChoice = Exclude<InitHookChoice, "auto">;
+export type ResolvedHookChoice = Exclude<InitHookChoice, "auto" | "tracked">;
 export type InitOsvUnavailable = "block" | "warn";
 
 export const OSV_NETWORK_DISCLOSURE =
@@ -39,6 +46,12 @@ export interface InitProposal {
   readonly repositoryRoot: string;
   readonly profile: ProfileId;
   readonly hook: ResolvedHookChoice;
+  readonly hookSelection?: InitHookChoice;
+  readonly hookChoices?: readonly InitHookChoice[];
+  readonly hooksPathChange?: Readonly<{
+    before: string | null;
+    after: ".husky/_";
+  }>;
   readonly hookActivation: InitHookActivation;
   readonly detectedEnvironments: readonly Environment[];
   readonly recommendedChecks: readonly CheckId[];
@@ -57,6 +70,9 @@ export interface CreateInitProposalOptions {
   readonly osvUnavailable?: InitOsvUnavailable;
   readonly configBefore?: string | null;
   readonly hookChange?: InitFileChange;
+  readonly hookChanges?: readonly InitFileChange[] | undefined;
+  readonly hooksPathChange?:
+    Readonly<{ before: string | null; after: ".husky/_" }> | undefined;
   readonly hookActivation?: InitHookActivation;
 }
 

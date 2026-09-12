@@ -341,17 +341,25 @@ export function createInitProposal(
     0o644,
   );
   const hook: ResolvedHookChoice =
-    options.hook === "auto" ? "none" : options.hook;
+    options.hook === "auto"
+      ? "none"
+      : options.hook === "tracked"
+        ? "husky"
+        : options.hook;
   const hookActivation = options.hookActivation ?? defaultHookActivation(hook);
   const files = [
     config,
     ...(options.hookChange === undefined ? [] : [options.hookChange]),
+    ...(options.hookChanges ?? []),
   ];
   return Object.freeze({
     repositoryRoot: options.repositoryRoot,
     profile: options.profile,
     hook,
     hookActivation,
+    ...(options.hooksPathChange === undefined
+      ? {}
+      : { hooksPathChange: options.hooksPathChange }),
     detectedEnvironments: detected,
     recommendedChecks: selectedChecks,
     vulnerabilityScanningAvailable,

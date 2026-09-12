@@ -1124,6 +1124,89 @@ describe("packaged Zedbee CLI", () => {
     );
   });
 
+  it("shares tracked hook setup and activates it through the installed package's prepare step", async () => {
+    const repository = await createInstalledRepository();
+    await rm(join(repository.root, ".zedbeerc.jsonc"));
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--hook",
+      "tracked",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({ applied: true });
+    expect(
+      (await repository.git(["config", "core.hooksPath"])).stdout.trim(),
+    ).toBe(".husky/_");
+    await repository.git(["config", "--unset", "core.hooksPath"]);
+    await rm(join(repository.root, ".husky/_"), { recursive: true });
+    const installed = await execa("npm", ["run", "prepare"], {
+      cwd: repository.root,
+      env: { CI: "", HUSKY: "1" },
+      reject: false,
+      ...cancellationOptions(),
+    });
+    expect(installed.exitCode, installed.stderr).toBe(0);
+    expect(
+      (await repository.git(["config", "core.hooksPath"])).stdout.trim(),
+    ).toBe(".husky/_");
+    expect(await repository.read(".husky/pre-commit")).toContain(
+      "npx --no-install zedbee scan",
+    );
+  });
+
+  it("does not report its installed CLI dependency as unused without a hook or script alias", async () => {
+    const repository = await createInstalledRepository();
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--hook",
+      "none",
+      "--checks",
+      "deadCode",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await expect(
+      lstat(join(repository.root, ".git/hooks/pre-commit")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "zedbee-cli-only-fixture",
+        private: true,
+        main: "index.ts",
+        devDependencies: {
+          zedbee: "0.1.0-beta.3",
+          "unused-fixture-dependency": "1.0.0",
+        },
+      }),
+    );
+    await repository.write("index.ts", "console.log('fixture');\n");
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".zedbeerc.jsonc",
+      "index.ts",
+    ]);
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(scanned.exitCode, scanned.stderr).toBe(1);
+    const report = JSON.parse(scanned.stdout);
+    const deadCode = report.checks.find(
+      (check: { checkId: string }) => check.checkId === "deadCode",
+    );
+    expect(deadCode.status).toBe("completed");
+    expect(
+      deadCode.findings.filter(
+        (finding: { rule: string }) => finding.rule === "devDependencies",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("rejects conflicting source excerpt overrides before scanning", async () => {
     const repository = await createInstalledRepository();
 

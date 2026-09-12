@@ -90,6 +90,37 @@ function finding(
 }
 
 describe("planPrettierFixes", () => {
+  it("excludes generated lockfiles while keeping ordinary JSON and YAML fix candidates", () => {
+    const files = [
+      "package-lock.json",
+      "packages/app/package-lock.json",
+      "npm-shrinkwrap.json",
+      "packages/app/npm-shrinkwrap.json",
+      "pnpm-lock.yaml",
+      "packages/app/pnpm-lock.yaml",
+      "yarn.lock",
+      "packages/app/yarn.lock",
+      "bun.lock",
+      "packages/app/bun.lock",
+      "bun.lockb",
+      "packages/app/bun.lockb",
+      "package.json",
+      "package-lock.jsonc",
+      "config/lock-settings.yaml",
+    ];
+
+    const candidates = planPrettierFixes(
+      context(),
+      files.map((file) => finding(file, file)),
+    );
+
+    expect(candidates.map((candidate) => candidate.file)).toEqual([
+      "config/lock-settings.yaml",
+      "package-lock.jsonc",
+      "package.json",
+    ]);
+  });
+
   it("plans sorted correlated candidates from target-side managed settings", () => {
     const run = context();
     const policyCalls: string[] = [];
@@ -140,6 +171,24 @@ describe("planPrettierFixes", () => {
 });
 
 describe("formatWorkingSource", () => {
+  it.each([
+    "package-lock.json",
+    "packages/app/package-lock.json",
+    "npm-shrinkwrap.json",
+    "packages/app/npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "packages/app/pnpm-lock.yaml",
+    "packages\\app\\package-lock.json",
+  ])("refuses to format generated lockfile %s directly", async (file) => {
+    await expect(
+      formatWorkingSource({
+        file,
+        source: '{"value":1}\n',
+        settings: context().config.checks.formatting.settings,
+      }),
+    ).rejects.toThrow("Expected a supported Prettier file path");
+  });
+
   it("formats the entire supplied working source with managed options", async () => {
     await expect(
       formatWorkingSource({

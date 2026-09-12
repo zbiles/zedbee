@@ -11,6 +11,7 @@ import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeServiceCommand } from "./commands/service.js";
 import { executeFixCommand } from "./commands/fix.js";
 import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
+import { installTrackedHooks } from "./hooks/install.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
 import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
@@ -173,6 +174,7 @@ export async function runCli(
       new Option("--hook <hook>", "pre-commit integration")
         .choices([
           "auto",
+          "tracked",
           "husky",
           "lefthook",
           "simple-git-hooks",
@@ -223,6 +225,22 @@ export async function runCli(
           writeStderr: (value) => process.stderr.write(value),
         },
       );
+    });
+
+  program
+    .command("hooks")
+    .description("manage tracked hook activation")
+    .command("install")
+    .description("activate the reviewed tracked hooks using bundled tooling")
+    .action(async () => {
+      try {
+        await installTrackedHooks(process.cwd());
+      } catch {
+        process.stderr.write(
+          "Zedbee could not activate tracked hooks safely.\n",
+        );
+        exitCode = 2;
+      }
     });
 
   program
