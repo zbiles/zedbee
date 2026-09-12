@@ -1180,7 +1180,7 @@ describe("packaged Zedbee CLI", () => {
         private: true,
         main: "index.ts",
         devDependencies: {
-          zedbee: "0.1.0-beta.2",
+          zedbee: "0.1.0-beta.3",
           "unused-fixture-dependency": "1.0.0",
         },
       }),
