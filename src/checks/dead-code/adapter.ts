@@ -254,7 +254,7 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
           targetDir: context.targetInspection.snapshotRoot,
         },
       };
-      const guards = new CapturedDependencies(captureContext, true);
+      const guards = new CapturedDependencies(captureContext, "knip");
       const baseline = await collectSide(
         context.snapshots.baselineDir,
         context.baselineInspection,

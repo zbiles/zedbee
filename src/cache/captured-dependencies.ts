@@ -12,7 +12,14 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { fileURLToPath } from "node:url";
 import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
@@ -83,7 +90,7 @@ export class CapturedDependencies {
 
   constructor(
     readonly context: DependencyCaptureContext,
-    readonly snapshotOnly = false,
+    readonly snapshotOnly: boolean | "knip" = false,
     private readonly useCapturedSources = true,
   ) {
     this.aliases = {
@@ -122,7 +129,10 @@ export class CapturedDependencies {
       JSON.stringify(
         snapshotOnly
           ? {
-              policy: "knip-snapshot-v1",
+              policy:
+                snapshotOnly === "knip"
+                  ? "knip-snapshot-manifests-v2"
+                  : "knip-snapshot-v1",
               repository: this.roots.repository,
             }
           : {
@@ -141,6 +151,15 @@ export class CapturedDependencies {
     );
     if (root !== undefined) return root;
     const repository = this.roots.repository!;
+    // Knip may read installed command metadata, never installed source code.
+    // Canonical containment also rejects package links into live source/outside.
+    if (
+      this.snapshotOnly === "knip" &&
+      basename(real) === "package.json" &&
+      contained(repository, real) &&
+      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
+    )
+      return ["repository", repository];
     if (
       !this.snapshotOnly &&
       contained(repository, real) &&
@@ -589,7 +608,7 @@ export class CapturedDependencies {
   static validate(
     manifest: DependencyInputManifest,
     context: DependencyCaptureContext,
-    snapshotOnly = false,
+    snapshotOnly: boolean | "knip" = false,
   ): boolean {
     return new CapturedDependencies(context, snapshotOnly, false).matches(
       manifest,
@@ -600,7 +619,7 @@ export class CapturedDependencies {
 export function validateDependencyInputs(
   manifest: DependencyInputManifest | undefined,
   context: DependencyCaptureContext,
-  snapshotOnly = false,
+  snapshotOnly: boolean | "knip" = false,
 ): boolean {
   return (
     manifest !== undefined &&

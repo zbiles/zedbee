@@ -4679,6 +4679,23 @@
       ]
     },
     {
+      "name": "husky",
+      "version": "9.1.7",
+      "license": "MIT",
+      "repository": {
+        "type": "git",
+        "url": "git+https://github.com/typicode/husky.git"
+      },
+      "licenseFile": "node_modules/husky/LICENSE",
+      "legalFiles": [
+        "node_modules/husky/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.2",
+        "husky@9.1.7"
+      ]
+    },
+    {
       "name": "ignore",
       "version": "5.3.2",
       "license": "MIT",

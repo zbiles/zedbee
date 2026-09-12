@@ -15,6 +15,7 @@ import {
 } from "./captured-filesystem.js";
 import { loadCapturedResolver } from "./wasi.js";
 import type { KnipJob } from "./executor.js";
+import { createPackageMetadataReader } from "./package-metadata.js";
 
 const require = createRequire(import.meta.url);
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -84,10 +85,17 @@ async function run(job: KnipJob) {
     globals.__zedbeeKnipPromises = view.fs.promises;
     globals.__zedbeeKnipResolver = resolver.binding;
     globals.__zedbeeKnipPath = posix;
+    globals.__zedbeeKnipPackageMetadata = createPackageMetadataReader(
+      view.capture,
+    );
     // These snapshot crawlers otherwise resolve /snapshot against the host's
     // current drive on Windows. Only their own path imports use virtual POSIX
     // semantics; trusted module loading and host capture retain native paths.
     const knipRequire = createRequire(import.meta.resolve("knip"));
+    const manifestOwner = new URL(
+      "./manifest/helpers.js",
+      import.meta.resolve("knip"),
+    ).href;
     const globRequire = createRequire(knipRequire.resolve("tinyglobby"));
     const virtualPathOwners = [
       knipRequire.resolve("tinyglobby"),
@@ -99,6 +107,8 @@ async function run(job: KnipJob) {
         .map((key) => `export const ${key}=value.${key};`)
         .join("\n")}`;
     const sources: Record<string, string> = {
+      "zedbee-knip:package-metadata":
+        "export const _require = globalThis.__zedbeeKnipPackageMetadata;",
       "zedbee-knip:fs": source("__zedbeeKnipFs", Object.keys(nodeFs)),
       "zedbee-knip:promises": source(
         "__zedbeeKnipPromises",
@@ -118,6 +128,11 @@ async function run(job: KnipJob) {
     ]);
     hooks = registerHooks({
       resolve(specifier, context, next) {
+        if (
+          context.parentURL === manifestOwner &&
+          specifier === "../util/require.js"
+        )
+          return { url: "zedbee-knip:package-metadata", shortCircuit: true };
         if (
           (specifier === "path" || specifier === "node:path") &&
           virtualPathOwners.some((owner) =>
@@ -168,6 +183,7 @@ async function run(job: KnipJob) {
     view.close();
     delete globals.__zedbeeKnipFs;
     delete globals.__zedbeeKnipPromises;
+    delete globals.__zedbeeKnipPackageMetadata;
     delete globals.__zedbeeKnipResolver;
     delete globals.__zedbeeKnipPath;
   }

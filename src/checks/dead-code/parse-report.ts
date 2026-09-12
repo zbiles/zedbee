@@ -118,6 +118,14 @@ export function parseKnipReport(
   }
   const unique = new Map<string, Observation>();
   for (const observation of observations) {
+    // Zedbee is also used directly from a terminal; static imports/scripts
+    // cannot prove it unused. Keep this exception limited to that declaration.
+    if (
+      (observation.rule === "dependencies" ||
+        observation.rule === "devDependencies") &&
+      observation.entity?.name === "zedbee"
+    )
+      continue;
     unique.set(`${observation.rule}:${observation.identity}`, observation);
   }
   return Object.freeze(

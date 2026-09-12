@@ -22,7 +22,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | `secrets`                | Secretlint 13.0.5 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
 | `duplication`            | jscpd clone detection and repository duplication percentage | Compares whole workspaces and attributes new clone regions/project regressions                                                 | Large source lists can exceed an operating-system argument limit                                                 |
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
-| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards               | Framework plugins are disabled; dynamic conventions and TS path aliases can require future managed profiles              |
+| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic conventions and TS path aliases can require future managed profiles      |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
 | `reactAccessibility`     | React DOM JSX accessibility                                 | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
@@ -73,6 +73,12 @@ Exactly seven configurable checks expose settings beyond severity and timing:
 A target-only score above `max` and a staged score that crosses `max` are blocking. `blockWorsening: true` additionally blocks an increase when both the baseline and target were already above `max`; set it to `false` to tolerate that above-limit worsening while teams pay down existing debt. Duplication `threshold` accepts 0 through 100. `minLines` and `minTokens` are positive safe integers. Duplication mode is one of `strict`, `mild`, or `weak`.
 
 ### Prettier settings
+
+Formatting scans and fixes leave generated package-manager lockfiles alone:
+`package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`,
+`bun.lock`, and `bun.lockb`, including copies in subdirectories. Other JSON
+and YAML files are still checked. This does not exclude lockfiles from secrets
+or supported vulnerability checks.
 
 Formatting comparisons have a two-second limit per file. If a comparison takes longer, Zedbee reports `FORMATTING_DIFF_TIMEOUT` and marks the check incomplete. It does not guess which staged lines changed or treat the file as passing. Format the affected file with Prettier directly or manually, using the intended formatting settings, then review, stage, and scan again. A persistently incomplete formatting check cannot produce a managed `zedbee fix formatting` action.
 

@@ -1,7 +1,10 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GitClient } from "../git/client.js";
-import { detectHookIntegration } from "../hooks/detect.js";
+import {
+  detectHookIntegration,
+  type DetectedHookIntegration,
+} from "../hooks/detect.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
@@ -54,6 +57,7 @@ export interface InitCommandDependencies {
       profile: ProfileId,
       checks: readonly CheckId[] | undefined,
       osvUnavailable: InitOsvUnavailable,
+      hook?: InitHookChoice,
     ) => InitProposal,
   ): Promise<false | InitProposal>;
 }
@@ -89,6 +93,9 @@ function publicProposal(proposal: InitProposal) {
     profile: proposal.profile,
     hook: proposal.hook,
     hookActivation: proposal.hookActivation,
+    ...(proposal.hooksPathChange === undefined
+      ? {}
+      : { hooksPathChange: proposal.hooksPathChange }),
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
     vulnerabilityScanningAvailable: proposal.vulnerabilityScanningAvailable,
@@ -130,6 +137,10 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     );
   }
   for (const file of proposal.files) lines.push("", file.diff);
+  if (proposal.hooksPathChange !== undefined)
+    lines.push(
+      `Git configuration: core.hooksPath → ${proposal.hooksPathChange.after}`,
+    );
   if (!applied) lines.push("", "No files were written without confirmation.");
   return `${lines.join("\n")}\n`;
 }
@@ -182,6 +193,8 @@ export async function executeInitCommand(
         ? {}
         : { hookChange: hookIntegration.change }),
       hookActivation: hookIntegration.activation,
+      hookChanges: hookIntegration.changes,
+      hooksPathChange: hookIntegration.hooksPathChange,
     };
     const proposalOptions: CreateInitProposalOptions = {
       ...proposalBaseOptions,
@@ -202,6 +215,72 @@ export async function executeInitCommand(
       io.stdoutIsTTY
     ) {
       promptedInteractively = true;
+      const integrations = new Map<InitHookChoice, DetectedHookIntegration>([
+        [hookIntegration.hook, hookIntegration],
+      ]);
+      integrations.set(
+        "none",
+        await detectHookIntegration(repositoryRoot, "none"),
+      );
+      let selection: InitHookChoice = hookIntegration.hook;
+      let choices: readonly InitHookChoice[] =
+        hookIntegration.hook === "none"
+          ? ["none"]
+          : ["none", hookIntegration.hook];
+      const hookLimitations: string[] = [];
+      if (options.hook === "auto" && hookIntegration.hook === "raw") {
+        try {
+          integrations.set(
+            "tracked",
+            await detectHookIntegration(repositoryRoot, "tracked"),
+          );
+          selection = "tracked";
+          choices = ["none", "tracked", "raw"];
+        } catch {
+          hookLimitations.push(
+            "Tracked setup is unavailable: it needs a root package.json and hook files that can be safely preserved. Local or No remains available.",
+          );
+        }
+      } else if (options.hook === "tracked") {
+        integrations.set("tracked", hookIntegration);
+        selection = "tracked";
+        choices = ["none", "tracked"];
+      }
+      const proposalForSelection = (
+        profile: ProfileId,
+        checks: readonly CheckId[] | undefined,
+        osvUnavailable: InitOsvUnavailable,
+        selectedHook: InitHookChoice = selection,
+      ): InitProposal => {
+        const selectedIntegration = integrations.get(selectedHook);
+        if (selectedIntegration === undefined)
+          throw new Error("Invalid hook selection.");
+        const selectedProposal = createInitProposal(inspection, {
+          repositoryRoot,
+          configBefore,
+          profile,
+          osvUnavailable,
+          hook: selectedIntegration.hook,
+          hookActivation: selectedIntegration.activation,
+          hookChanges: selectedIntegration.changes,
+          hooksPathChange: selectedIntegration.hooksPathChange,
+          ...(selectedIntegration.change === undefined
+            ? {}
+            : { hookChange: selectedIntegration.change }),
+          ...(checks === undefined ? {} : { checks }),
+        });
+        return Object.freeze({
+          ...selectedProposal,
+          limitations: [...selectedProposal.limitations, ...hookLimitations],
+          hookSelection: selectedHook,
+          ...(choices.length > 1 ? { hookChoices: choices } : {}),
+        });
+      };
+      proposal = proposalForSelection(
+        options.profile,
+        options.checks,
+        options.osvUnavailable ?? "block",
+      );
       const decision = await dependencies.confirm(
         proposal,
         {
@@ -209,13 +288,7 @@ export async function executeInitCommand(
           color,
           animations: options.animations && io.env.NO_COLOR === undefined,
         },
-        (profile, checks, osvUnavailable) =>
-          createInitProposal(inspection, {
-            ...proposalBaseOptions,
-            profile,
-            ...(checks === undefined ? {} : { checks }),
-            osvUnavailable,
-          }),
+        proposalForSelection,
       );
       if (decision !== false) {
         proposal = decision;

@@ -8,6 +8,7 @@ import {
   type InitCommandIO,
 } from "../../src/commands/init.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import { createGitRepository } from "../helpers/git-repository.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -53,6 +54,139 @@ function dependencies(root: string): InitCommandDependencies {
 }
 
 describe("executeInitCommand", () => {
+  it.each([
+    ["auto", "raw"],
+    ["tracked", "husky"],
+    ["none", "none"],
+  ] as const)(
+    "applies --hook %s --yes without questions",
+    async (hook, resolved) => {
+      const repository = await createGitRepository(
+        "zedbee-init-noninteractive-",
+      );
+      await repository.write("package.json", '{"name":"fixture"}');
+      const deps = dependencies(repository.root);
+      deps.confirm = async () => {
+        throw new Error("must not prompt");
+      };
+      const io = terminal(true);
+      expect(
+        await executeInitCommand(
+          {
+            cwd: repository.root,
+            profile: "recommended",
+            hook,
+            yes: true,
+            format: "json",
+            color: false,
+            animations: false,
+          },
+          io,
+          deps,
+        ),
+      ).toBe(0);
+      const output = JSON.parse(io.stdout.join(""));
+      expect(output.applied).toBe(true);
+      expect(output.proposal.hook).toBe(resolved);
+    },
+  );
+  it("offers new tracked/local alternatives interactively and honors choosing no hook", async () => {
+    const repository = await createGitRepository("zedbee-init-choices-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    const io = terminal(true);
+    const deps = dependencies(repository.root);
+    deps.confirm = async (proposal, _options, select) => {
+      expect(proposal.hookSelection).toBe("tracked");
+      expect(proposal.hookChoices).toEqual(["none", "tracked", "raw"]);
+      const local = select("recommended", undefined, "block", "raw");
+      expect(
+        local.files.some(
+          (file) => file.relativePath === ".git/hooks/pre-commit",
+        ),
+      ).toBe(true);
+      return select("recommended", undefined, "block", "none");
+    };
+    const code = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "auto",
+        yes: false,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      deps,
+    );
+    expect(code).toBe(0);
+    expect(
+      (await repository.git(["config", "--get", "core.hooksPath"])).exitCode,
+    ).toBe(1);
+    await expect(repository.read(".git/hooks/pre-commit")).rejects.toThrow();
+    expect(await repository.read(".zedbeerc.jsonc")).toContain("recommended");
+  });
+
+  it("reuses an existing manager without offering tracked/local alternatives", async () => {
+    const repository = await createGitRepository("zedbee-init-existing-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(
+      "lefthook.yml",
+      "pre-commit:\n  commands:\n    test:\n      run: npm test\n",
+    );
+    const io = terminal(true);
+    const deps = dependencies(repository.root);
+    deps.confirm = async (proposal) => {
+      expect(proposal.hookChoices).toEqual(["none", "lefthook"]);
+      return proposal;
+    };
+    expect(
+      await executeInitCommand(
+        {
+          cwd: repository.root,
+          profile: "recommended",
+          hook: "auto",
+          yes: false,
+          format: "text",
+          color: false,
+          animations: false,
+        },
+        io,
+        deps,
+      ),
+    ).toBe(0);
+    expect(await repository.read("lefthook.yml")).toContain("npm test");
+  });
+
+  it("keeps Local and No available when tracked setup has no root manifest", async () => {
+    const repository = await createGitRepository("zedbee-init-local-fallback-");
+    const deps = dependencies(repository.root);
+    deps.confirm = async (proposal, _options, select) => {
+      expect(proposal.hookChoices).toEqual(["none", "raw"]);
+      expect(proposal.limitations.join(" ")).toContain(
+        "Tracked setup is unavailable",
+      );
+      return select("recommended", undefined, "block", "raw");
+    };
+    expect(
+      await executeInitCommand(
+        {
+          cwd: repository.root,
+          profile: "recommended",
+          hook: "auto",
+          yes: false,
+          format: "text",
+          color: false,
+          animations: false,
+        },
+        terminal(true),
+        deps,
+      ),
+    ).toBe(0);
+    expect(await repository.read(".git/hooks/pre-commit")).toContain(
+      "zedbee scan",
+    );
+  });
   it("explains a known unsafe repository-inspection failure without exposing paths", async () => {
     const root = await fixture();
     const outside = await mkdtemp(join(tmpdir(), "zedbee-init-outside-"));

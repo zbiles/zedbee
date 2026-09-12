@@ -9,7 +9,11 @@ import {
   type CheckId,
   type ProfileId,
 } from "../../src/config/schema.js";
-import type { InitFileChange, InitProposal } from "../../src/init/types.js";
+import type {
+  InitFileChange,
+  InitHookChoice,
+  InitProposal,
+} from "../../src/init/types.js";
 import {
   InitApp,
   initMaxFps,
@@ -39,6 +43,104 @@ const proposal: InitProposal = {
 };
 
 const DEFAULT_TEST_ROWS = 120;
+
+describe("hook setup choices", () => {
+  it("lets users turn installation off and choose local instead of tracked", async () => {
+    const onDecision = vi.fn();
+    const selectable: InitProposal = {
+      ...proposal,
+      hook: "husky",
+      hookSelection: "tracked",
+      hookChoices: ["none", "tracked", "raw"],
+    };
+    const view = render(
+      <InitApp
+        proposal={selectable}
+        proposalForSelection={(
+          _profile,
+          _checks,
+          _osv,
+          selection: InitHookChoice = "tracked",
+        ) => ({
+          ...selectable,
+          hookSelection: selection,
+          hook:
+            selection === "none"
+              ? "none"
+              : selection === "raw"
+                ? "raw"
+                : "husky",
+        })}
+        width={109}
+        terminalSize={{ columns: 109, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await settleInput();
+    expect(view.lastFrame()).toContain("Tracked — shared with teammates");
+    expect(view.lastFrame()).not.toContain("Method: Husky");
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write(" ");
+    await settleInput();
+    expect(view.lastFrame()).not.toContain("Tracked — shared with teammates");
+    view.stdin.write(" ");
+    await settleInput();
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write("\u001b[C");
+    await settleInput();
+    view.stdin.write("\r");
+    await settleInput();
+    view.stdin.write("\r");
+    await settleInput();
+    expect(onDecision.mock.calls[0]?.[0].hook).toBe("raw");
+  });
+
+  it("skips scope choices when an existing manager is reused and applies No", async () => {
+    const onDecision = vi.fn();
+    const selectable: InitProposal = {
+      ...proposal,
+      hook: "lefthook",
+      hookSelection: "lefthook",
+      hookChoices: ["none", "lefthook"],
+    };
+    const view = render(
+      <InitApp
+        proposal={selectable}
+        proposalForSelection={(
+          _profile,
+          _checks,
+          _osv,
+          selection: InitHookChoice = "lefthook",
+        ) => ({
+          ...selectable,
+          hookSelection: selection,
+          hook: selection === "none" ? "none" : "lefthook",
+        })}
+        width={109}
+        terminalSize={{ columns: 109, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await settleInput();
+    expect(view.lastFrame()).not.toContain("Tracked — shared with teammates");
+    expect(view.lastFrame()).toContain("existing tracked integration");
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write(" ");
+    await settleInput();
+    view.stdin.write("\r");
+    await settleInput();
+    view.stdin.write("\r");
+    await settleInput();
+    expect(onDecision.mock.calls[0]?.[0].hook).toBe("none");
+  });
+});
 const SHORT_TERMINAL = Object.freeze({ columns: 109, rows: 20 });
 
 function lastVisibleFrame(view: {
@@ -991,9 +1093,9 @@ describe("InitApp", () => {
     expect(frame).toContain("Review these changes before Zedbee saves them");
     expect(frame).toContain("Create Zedbee's repository configuration");
     expect(frame).toContain("Update the Git pre-commit hook");
-    expect(frame).toContain("Create the Husky pre-commit hook");
+    expect(frame).toContain("Create the tracked pre-commit hook");
     expect(frame).toContain("Update the Lefthook configuration");
-    expect(frame).toContain("Update package.json so simple-git-hooks");
+    expect(frame).toContain("Update package.json to configure hook setup");
     expect(frame).toContain(
       "Create this file as part of Zedbee initialization",
     );

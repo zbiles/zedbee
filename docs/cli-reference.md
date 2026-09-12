@@ -64,7 +64,8 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 | Command                 | Purpose                                                                                                                                                      |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus a Husky, Lefthook, simple-git-hooks, or raw Git pre-commit integration                                |
+| `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus an optional tracked or local pre-commit hook                                                          |
+| `zedbee hooks install`  | Activate the tracked hook files in this checkout after installation                                                                                          |
 | `zedbee scan`           | Scan the exact index target, or a committed target with `--base`, and return pass, blocked, or incomplete                                                    |
 | `zedbee fix`            | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
 | `zedbee checks`         | Explain every configured check, applicability, targets, engine/license, network use, and limitation without running analysis                                 |
@@ -74,7 +75,7 @@ Nothing is written until the interactive confirmation. Automation can apply the 
 
 `scan --no-service` and `fix --no-service` use a local executor that closes with the command. Ordinary commands acquire the service only when analysis is needed; empty-index scans and help do not start it. The service stops after five minutes with no active sessions. `service status` and `service stop` support `--format json` for machine-readable state. A service failure makes analysis incomplete; it is never silently retried through another executor.
 
-`init` supports `--profile fast|recommended|thorough`, `--hook auto|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--yes`, and text/JSON output. Interactive setup exposes the same check toggles and OSV outage choice without requiring documentation lookup. `scan`, `checks`, and `doctor` accept `--config <path>`.
+`init` supports `--profile fast|recommended|thorough`, `--hook auto|tracked|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--yes`, and text/JSON output. Interactive setup exposes check toggles, the OSV outage choice, and whether to install a hook. If no tracked hook setup is detected, choosing to install a hook also offers **Tracked—shared with teammates** or **Local—this checkout only**. Existing tracked setups are reused without that extra question. `scan`, `checks`, and `doctor` accept `--config <path>`.
 
 Bare `zedbee fix` selects `formatting`, `lint`, and `reactCorrectness`; a named
 selector limits the plan to that supported check. Interactive terminals preview
@@ -222,7 +223,20 @@ The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.j
 
 Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.5, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.0.15, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Prettier, Secretlint, Babel, parser, plugin, or executable analyzer configuration. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as selected snapshot data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating changed target code under unrelated compiler settings.
 
-Zedbee does not load any native analyzer config files, including native Prettier and ESLint configs. Adoption therefore has a deliberate tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Re-express the supported policy in `.zedbeerc.jsonc`, within Zedbee's bounded managed settings, rather than expecting native configuration parity.
+Zedbee does not load any native analyzer config files, including native Prettier and ESLint configs. Adoption therefore has a deliberate tradeoff: teams with native configs may see different Zedbee results because those files are not loaded. Re-express the supported policy in `.zedbeerc.jsonc`, within Zedbee's bounded managed settings, rather than expecting native configuration parity. Generated package-manager lockfiles are excluded from formatting scans and fixes, but remain eligible for other supported checks; see [formatting settings](checks.md#prettier-settings).
+
+For commands used in package scripts, Knip reads the installed dependency's
+`package.json` command names as data. This lets it connect commands such as
+`project-check` to the dependency that provides them, including workspace-local
+and root installations. It does not execute those commands, install packages,
+or load their code or plugins. Missing installed metadata can limit command
+recognition. Changes to this metadata invalidate saved dead-code results.
+
+Zedbee treats its own entry in `dependencies` or `devDependencies` as intentional
+use, including in workspace packages. You can run it directly from the terminal;
+no hook, package-script alias, or source import is required. This exception applies
+only to unused-dependency findings for the package named `zedbee`. Other unused
+dependencies, undeclared imports, vulnerabilities, and other checks are unchanged.
 
 Project checks inspect a workspace as a whole, then compare the isolated selected baseline and target snapshots so existing debt remains non-blocking. This roughly doubles analyzer work. Zedbee runs Knip in a fresh internal worker for each snapshot side, using a captured filesystem shared by Knip and its pinned Oxc WebAssembly resolver. Framework plugins and executable project configs remain disabled. Dynamic imports, framework conventions, wildcard package exports, and TypeScript path aliases may need future managed profiles. Package import aliases (`#name`) in the selected `package.json` are supported, including exact mappings, wildcard mappings, conditions, and fallback arrays. They use the nearest package manifest and the same scan boundary as other imports: an alias cannot bypass checks against installed packages outside the snapshot inventory. Missing aliases remain normal Knip findings; unsafe targets make the dead-code check incomplete. Knip findings can be cached when complete input metadata is available, including the absence checks that protect package resolution. jscpd runs as a subprocess and receives an exact source-file list; exceptionally large workspaces can exceed the operating system argument limit and fail incomplete. Dependency Cruiser runs through its public API.
 
@@ -293,6 +307,28 @@ For coding tools and CI, prefer `zedbee scan --format json` or `zedbee scan --fo
 Interrupted scans wait for execution cleanup before removing temporary snapshots and returning the platform's conventional interruption status. Unproved cleanup retains snapshots and reports the cleanup failure.
 
 ## Hooks
+
+Interactive setup asks whether to install a pre-commit hook. With no existing
+tracked setup, you can choose a tracked hook for the team or a local hook for
+this checkout. A new tracked setup adds hook files and an installer under
+`.husky/`, plus a `prepare` step in `package.json`. Existing `prepare` commands
+are preserved. Review and commit those changes; normal dependency installation
+then activates the hook for teammates. Installation with scripts disabled does
+not activate hooks; run `npx --no-install zedbee hooks install` afterward if needed.
+The installer skips CI, `HUSKY=0`, and directories without Git metadata; the
+tracked prepare script also skips when Zedbee is absent in a production-only
+install. Setup itself does not download dependencies or run project scripts.
+
+New tracked setup requires a root `package.json` and refuses to replace custom
+local hooks whose execution cannot be preserved. Interactive setup keeps Local
+and No available when tracked setup is unavailable. Automatic edits of non-shell
+pre-commit scripts are refused; integrate Zedbee through their existing tooling.
+Noninteractive `--hook auto --yes` retains the detected integration or uses a
+local hook. Use `--hook tracked --yes` to explicitly request tracked setup.
+
+A local hook stays in Git's private checkout files. It is not shared by a
+commit, push, or clone, so each teammate must opt in separately. Either kind
+can be bypassed by Git options; neither makes checks mandatory on a server.
 
 `zedbee init --hook auto` detects Husky, Lefthook, simple-git-hooks, or raw Git hooks. It preserves unrelated commands, shows exact before/after hashes and diffs, refuses symlink targets, writes atomically, and rolls back earlier writes if a later write fails. Linked worktrees resolve the real Git hook path instead of assuming `.git` is a directory.
 

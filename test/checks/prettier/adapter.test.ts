@@ -4,6 +4,7 @@ import { CheckIncompleteError } from "../../../src/checks/incomplete-error.js";
 import type { ConfigFile, ResolvedConfig } from "../../../src/config/schema.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import { prettierAdapter } from "../../../src/checks/prettier/adapter.js";
+import { inspectManagedCheck } from "../../../src/checks/applicability.js";
 import { GitClient } from "../../../src/git/client.js";
 import {
   readStagedChangeSet,
@@ -91,6 +92,47 @@ function inspectionContext(changes: ChangeSet, resolvedConfig = config()) {
 }
 
 describe("prettierAdapter.inspect", () => {
+  it.each([
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+  ])(
+    "excludes %s from formatting but retains other check applicability",
+    async (name) => {
+      const files = [name, `packages/app/${name}`];
+      const changes = changeSet(
+        new Map(
+          files.map((path) => [
+            path,
+            {
+              path,
+              status: "added" as const,
+              addedRanges: [{ start: 1, end: 1 }],
+            },
+          ]),
+        ),
+      );
+      const context = inspectionContext(changes);
+      context.targetInspection = {
+        ...context.targetInspection,
+        lockfiles: files,
+      };
+
+      await expect(prettierAdapter.inspect(context)).resolves.toMatchObject({
+        applies: false,
+      });
+      await expect(
+        inspectManagedCheck("vulnerabilities", context),
+      ).resolves.toMatchObject({ applies: true });
+      await expect(
+        inspectManagedCheck("secrets", context),
+      ).resolves.toMatchObject({ applies: true });
+    },
+  );
+
   it("applies to supported staged target files and ignores deletions", async () => {
     const supported = changeSet(
       new Map([
@@ -186,6 +228,38 @@ describe("prettierAdapter.inspect", () => {
 });
 
 describe("prettierAdapter.run", () => {
+  it.each(["relevant", "always"] as const)(
+    "excludes generated lockfiles from %s scans while checking ordinary JSON and YAML",
+    async (when) => {
+      const repository = await createGitRepository();
+      await repository.write("README.md", "# Fixture\n");
+      await repository.commitAll("base");
+      const sources = {
+        "package-lock.json":
+          '{"name":"fixture","lockfileVersion":3,"packages":{}}\n',
+        "packages/app/npm-shrinkwrap.json":
+          '{"name":"app","lockfileVersion":3,"packages":{}}\n',
+        "packages/app/pnpm-lock.yaml": 'lockfileVersion:    "9.0"\n',
+        "package.json": '{"name":"fixture","version":"1.0.0"}\n',
+        "config/lock-settings.yaml": "value:    ready\n",
+        "package-lock.jsonc": '{"value":1}\n',
+      };
+      for (const [file, source] of Object.entries(sources)) {
+        await repository.write(file, source);
+      }
+      await repository.git(["add", "--all"]);
+
+      const result = await runAdapter(repository, when);
+
+      expect(result.status).toBe("completed");
+      expect(result.findings.map((finding) => finding.location?.file)).toEqual([
+        "config/lock-settings.yaml",
+        "package-lock.jsonc",
+        "package.json",
+      ]);
+    },
+  );
+
   it("applies singleAttributePerLine to staged JSX", async () => {
     const repository = await createGitRepository();
     await repository.write("component.tsx", "export const existing = true;\n");

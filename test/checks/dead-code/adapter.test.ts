@@ -19,6 +19,7 @@ import { ObservationCacheStore } from "../../../src/cache/store.js";
 import { createManagedKnipConfig } from "../../../src/checks/dead-code/managed-config.js";
 import { writeManagedJsonConfig } from "../../../src/checks/project/config-boundary.js";
 import { parseKnipReport } from "../../../src/checks/dead-code/parse-report.js";
+import { validateDependencyInputs } from "../../../src/cache/captured-dependencies.js";
 
 const target: CheckTarget = { id: ".", kind: "workspace", relativeRoot: "." };
 
@@ -111,6 +112,105 @@ async function stagedFindings(runContext: CheckRunContext) {
 }
 
 describe("captured Knip execution", () => {
+  it.each(["node_modules", "web/node_modules"])(
+    "recognizes a workspace script using commands installed in %s",
+    async (installation) => {
+      const run = await context(
+        "export const used = 1;\n",
+        "export const used = 1;\n",
+        { workspaces: ["web"] },
+        async (fixture) => {
+          await fixture.writeJson("web/package.json", {
+            name: "web",
+            main: "index.ts",
+            scripts: { check: "project-check" },
+            devDependencies: { "@tools/runner": "1.0.0" },
+          });
+          await fixture.write("web/index.ts", "console.log('web');\n");
+        },
+      );
+      const dir = join(run.repositoryRoot, installation, "@tools/runner");
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ bin: { "project-check": "cli.js" } }),
+      );
+      const result = await deadCodeAdapter.collect({
+        ...run,
+        target: { id: "web", kind: "workspace", relativeRoot: "web" },
+      });
+      expect(
+        result.targetObservations.map((item) => item.entity?.name),
+      ).not.toContain("@tools/runner");
+      expect(result.dependencyInputs).toBeDefined();
+      expect(
+        validateDependencyInputs(result.dependencyInputs, run, "knip"),
+      ).toBe(true);
+    },
+  );
+
+  it("recognizes installed command aliases in scripts without hiding unused packages", async () => {
+    const run = await context(
+      "export const used = 1;\n",
+      "export const used = 1;\n",
+      {
+        scripts: { swarm: "zedbee scan", check: "project-check --all" },
+        devDependencies: {
+          zedbee: "1.0.0",
+          "@tools/runner": "1.0.0",
+          unused: "1.0.0",
+        },
+      },
+    );
+    for (const [name, bin] of Object.entries({
+      zedbee: "./cli.js",
+      "@tools/runner": { "project-check": "./cli.js" },
+      unused: "./cli.js",
+    })) {
+      const dir = join(run.repositoryRoot, "node_modules", name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, "package.json"),
+        JSON.stringify({ name, bin, scripts: { postinstall: "exit 99" } }),
+      );
+      await writeFile(
+        join(dir, "cli.js"),
+        "throw new Error('Project code must not run');\n",
+      );
+    }
+    const result = await deadCodeAdapter.collect(run);
+    const names = result.targetObservations.map((item) => item.entity?.name);
+    expect(names).toContain("unused");
+    expect(names).not.toContain("zedbee");
+    expect(names).not.toContain("@tools/runner");
+    expect(result.dependencyInputs).toBeDefined();
+    expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
+      true,
+    );
+    const storeRoot = await createInspectionFixture();
+    const cache = new ObservationCacheStore({ root: storeRoot.root });
+    let collections = 0;
+    const adapter = {
+      ...deadCodeAdapter,
+      collect: async (input: CheckRunContext) => {
+        collections++;
+        return deadCodeAdapter.collect(input);
+      },
+    };
+    await dispatchChecks([adapter], run, { cache });
+    await dispatchChecks([adapter], run, { cache });
+    expect(collections).toBe(1);
+    await writeFile(
+      join(run.repositoryRoot, "node_modules/zedbee/package.json"),
+      JSON.stringify({ name: "zedbee", bin: { renamed: "./cli.js" } }),
+    );
+    expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
+      false,
+    );
+    await dispatchChecks([adapter], run, { cache });
+    expect(collections).toBe(2);
+  });
+
   it("matches pinned native Knip for aliases, exports and multiple workspaces", async () => {
     const run = await context(
       "export const used = 1;\n",
