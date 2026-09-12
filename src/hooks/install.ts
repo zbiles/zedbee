@@ -133,6 +133,7 @@ export async function installTrackedHooks(root = process.cwd()): Promise<void> {
 
 export const TRACKED_INSTALL_SCRIPT = `// Activate the reviewed tracked hooks after dependency installation.
 import { existsSync } from "node:fs";
+import process from "node:process";
 if (!process.env.CI && process.env.HUSKY !== "0" && existsSync(".git")) {
   let available = true;
   try { import.meta.resolve("zedbee/hooks"); }

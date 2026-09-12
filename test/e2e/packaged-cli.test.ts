@@ -1124,7 +1124,7 @@ describe("packaged Zedbee CLI", () => {
     );
   });
 
-  it("shares tracked hook setup and activates it through the installed package's prepare step", async () => {
+  it("shares tracked hook setup, activates prepare, and passes its own setup commit", async () => {
     const repository = await createInstalledRepository();
     await rm(join(repository.root, ".zedbeerc.jsonc"));
     const result = await runPackagedCli(repository.root, [
@@ -1155,6 +1155,37 @@ describe("packaged Zedbee CLI", () => {
     expect(await repository.read(".husky/pre-commit")).toContain(
       "npx --no-install zedbee scan",
     );
+    await repository.git(["add", "--all"]);
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    const report = JSON.parse(scanned.stdout);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        checkId: "lint",
+        status: "completed",
+        findings: [],
+      }),
+    );
+    expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(0);
+    const committed = await execa(
+      "git",
+      ["commit", "-m", "Set up tracked hooks"],
+      {
+        cwd: repository.root,
+        env: {
+          CI: "",
+          HUSKY: "1",
+          NODE_OPTIONS: undefined,
+          NODE_PATH: undefined,
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+        },
+        reject: false,
+        stdin: "ignore",
+        ...cancellationOptions(),
+      },
+    );
+    expect(committed.exitCode, committed.stdout + committed.stderr).toBe(0);
   });
 
   it("does not report its installed CLI dependency as unused without a hook or script alias", async () => {
