@@ -92,7 +92,7 @@
     "@emnapi/core": "1.11.2",
     "@emnapi/runtime": "1.11.2",
     "@eslint/js": "9.39.5",
-    "@napi-rs/wasm-runtime": "1.1.6",
+    "@napi-rs/wasm-runtime": "1.2.3",
     "@secretlint/core": "13.0.5",
     "@secretlint/secretlint-rule-preset-recommend": "13.0.5",
     "@secretlint/types": "13.0.5",
