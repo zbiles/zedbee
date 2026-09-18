@@ -38,3 +38,7 @@ export function prettierParserFor(file: string): PrettierParser | undefined {
 export function isSupportedPrettierPath(file: string): boolean {
   return prettierParserFor(file) !== undefined;
 }
+
+export function isGeneratedLockfile(file: string): boolean {
+  return GENERATED_LOCKFILES.has(basename(file.replaceAll("\\", "/")));
+}
