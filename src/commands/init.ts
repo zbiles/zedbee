@@ -11,11 +11,18 @@ import { RepositoryInspectionError } from "../inspection/types.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
+  InitFormattingChoice,
+  InitFormattingImport,
   InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
 } from "../init/types.js";
 import { applyInitProposal } from "../init/write-config.js";
+import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import { previewPrettierSettingsImport } from "../init/prettier-import.js";
+import {
+  readProjectPrettierTrust,
+} from "../checks/prettier/project-trust.js";
 import { CHECK_IDS, type CheckId, type ProfileId } from "../config/schema.js";
 
 export interface InitCommandOptions {
@@ -24,6 +31,8 @@ export interface InitCommandOptions {
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
   readonly osvUnavailable?: InitOsvUnavailable;
+  readonly formatting?: InitFormattingChoice;
+  readonly trustProjectPrettier?: boolean;
   readonly yes: boolean;
   readonly format: "text" | "json";
   readonly color: boolean;
@@ -58,6 +67,7 @@ export interface InitCommandDependencies {
       checks: readonly CheckId[] | undefined,
       osvUnavailable: InitOsvUnavailable,
       hook?: InitHookChoice,
+      formatting?: InitFormattingChoice,
     ) => InitProposal,
   ): Promise<false | InitProposal>;
 }
@@ -98,6 +108,16 @@ function publicProposal(proposal: InitProposal) {
       : { hooksPathChange: proposal.hooksPathChange }),
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
+    formatting: proposal.formatting ?? "managed",
+    ...(proposal.formattingImport === undefined
+      ? {}
+      : {
+          formattingImport: {
+            settings: proposal.formattingImport.settings,
+            overrides: proposal.formattingImport.overrides,
+            limitations: proposal.formattingImport.limitations,
+          },
+        }),
     vulnerabilityScanningAvailable: proposal.vulnerabilityScanningAvailable,
     osvUnavailable: proposal.osvUnavailable,
     networkChecks: proposal.networkChecks,
@@ -124,6 +144,7 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
+    `Formatting: ${proposal.formatting ?? "managed"}`,
     ...(proposal.vulnerabilityScanningAvailable
       ? [`OSV unavailable: ${proposal.osvUnavailable}`]
       : []),
@@ -155,6 +176,19 @@ function renderInitFailure(error: unknown): string {
       "Reason: Repository inspection found a symbolic link that leaves the repository.",
       "Remediation: Remove the external link or move it into a directory Zedbee ignores.",
     );
+  } else if (error instanceof ProjectPrettierTrustRequiredError) {
+    lines.push(`Reason: ${error.message}`);
+    lines.push(
+      "Remediation: Re-run zedbee init with --trust-project-prettier, or run interactively to review the execution disclosure.",
+    );
+  } else if (
+    error instanceof Error &&
+    error.message.includes("unresolved limitations")
+  ) {
+    lines.push(`Reason: ${error.message}`);
+    lines.push(
+      "Remediation: Run zedbee init interactively to review and accept the settings-copy limitations.",
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -171,6 +205,58 @@ function renderInteractiveResult(
   return `${lines.join("\n")}\n`;
 }
 
+interface FormattingSetup {
+  readonly imported: InitFormattingImport;
+  readonly projectRoot: string;
+}
+
+async function resolveFormattingSetup(
+  repositoryRoot: string,
+  options: InitCommandOptions,
+  canPrompt: boolean,
+): Promise<FormattingSetup> {
+  const discoveries = await discoverProjectPrettier(repositoryRoot).catch(
+    () => [] as const,
+  );
+  const projectRoot =
+    discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
+    discoveries[0]?.projectRoot ??
+    ".";
+  const preview = await previewPrettierSettingsImport(repositoryRoot).catch(
+    () => ({ settings: {}, overrides: [], limitations: [] }),
+  );
+  if (options.formatting === "project") {
+    if (!options.trustProjectPrettier && !canPrompt) {
+      const stored = await readProjectPrettierTrust(
+        repositoryRoot,
+        projectRoot,
+      ).catch(() => undefined);
+      if (stored !== "v1") {
+        throw new ProjectPrettierTrustRequiredError(projectRoot);
+      }
+    }
+  }
+  return Object.freeze({
+    imported: Object.freeze({
+      settings: preview.settings,
+      overrides: preview.overrides,
+      limitations: preview.limitations,
+    }),
+    projectRoot,
+  });
+}
+
+class ProjectPrettierTrustRequiredError extends Error {
+  readonly projectRoot: string;
+  constructor(projectRoot: string) {
+    super(
+      `Using the project's Prettier in ${projectRoot === "." ? "the repository root" : projectRoot} requires explicit trust. Re-run with --trust-project-prettier or interactively.`,
+    );
+    this.name = "ProjectPrettierTrustRequiredError";
+    this.projectRoot = projectRoot;
+  }
+}
+
 export async function executeInitCommand(
   options: InitCommandOptions,
   io: InitCommandIO,
@@ -180,11 +266,42 @@ export async function executeInitCommand(
     const repositoryRoot = await dependencies.resolveRepositoryRoot(
       options.cwd,
     );
+    const canPrompt =
+      !options.yes &&
+      options.format === "text" &&
+      io.stdinIsTTY &&
+      io.stdoutIsTTY;
     const [inspection, hookIntegration, configBefore] = await Promise.all([
       dependencies.inspect(repositoryRoot),
       detectHookIntegration(repositoryRoot, options.hook),
       existingConfig(repositoryRoot),
     ]);
+    const formattingSetup = await resolveFormattingSetup(
+      repositoryRoot,
+      options,
+      canPrompt,
+    );
+    if (
+      options.formatting === "copy" &&
+      !canPrompt &&
+      formattingSetup.imported.limitations.length > 0
+    ) {
+      throw new Error(
+        "The settings copy has unresolved limitations and cannot be applied noninteractively.",
+      );
+    }
+    const formattingProposalFields = {
+      ...(options.formatting === undefined
+        ? {}
+        : { formatting: options.formatting }),
+      ...(options.formatting === "copy"
+        ? { formattingImport: formattingSetup.imported }
+        : {}),
+      ...(options.formatting === "project" &&
+      (options.trustProjectPrettier || canPrompt)
+        ? { projectPrettierTrustRoot: formattingSetup.projectRoot }
+        : {}),
+    };
     const proposalBaseOptions = {
       repositoryRoot,
       hook: hookIntegration.hook,
@@ -198,6 +315,7 @@ export async function executeInitCommand(
     };
     const proposalOptions: CreateInitProposalOptions = {
       ...proposalBaseOptions,
+      ...formattingProposalFields,
       profile: options.profile,
       ...(options.checks === undefined ? {} : { checks: options.checks }),
       ...(options.osvUnavailable === undefined
@@ -251,10 +369,23 @@ export async function executeInitCommand(
         checks: readonly CheckId[] | undefined,
         osvUnavailable: InitOsvUnavailable,
         selectedHook: InitHookChoice = selection,
+        selectedFormatting: InitFormattingChoice | undefined = options.formatting,
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
           throw new Error("Invalid hook selection.");
+        const formattingFields =
+          selectedFormatting === undefined
+            ? {}
+            : {
+                formatting: selectedFormatting,
+                ...(selectedFormatting === "copy"
+                  ? { formattingImport: formattingSetup.imported }
+                  : {}),
+                ...(selectedFormatting === "project"
+                  ? { projectPrettierTrustRoot: formattingSetup.projectRoot }
+                  : {}),
+              };
         const selectedProposal = createInitProposal(inspection, {
           repositoryRoot,
           configBefore,
@@ -264,6 +395,7 @@ export async function executeInitCommand(
           hookActivation: selectedIntegration.activation,
           hookChanges: selectedIntegration.changes,
           hooksPathChange: selectedIntegration.hooksPathChange,
+          ...formattingFields,
           ...(selectedIntegration.change === undefined
             ? {}
             : { hookChange: selectedIntegration.change }),

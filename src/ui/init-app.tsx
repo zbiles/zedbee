@@ -19,6 +19,7 @@ import {
 import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitFileChange,
+  InitFormattingChoice,
   InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
@@ -52,6 +53,7 @@ export interface InitAppProps extends InitPromptOptions {
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
     hook?: InitHookChoice,
+    formatting?: InitFormattingChoice,
   ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
   readonly onMouseCleanupReady?: (cleanup: () => void) => void;
@@ -70,6 +72,20 @@ const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
   husky: "Husky",
   lefthook: "Lefthook",
   "simple-git-hooks": "simple-git-hooks",
+};
+
+const FORMATTING_CHOICES: readonly InitFormattingChoice[] = [
+  "copy",
+  "project",
+  "managed",
+  "off",
+];
+
+const FORMATTING_LABELS: Readonly<Record<InitFormattingChoice, string>> = {
+  copy: "Copy my settings — one-time import into Zedbee's Prettier.",
+  project: "Use my project's Prettier — its version, config, and plugins.",
+  managed: "Use Zedbee defaults — keep the bundled Prettier and settings.",
+  off: "Do not check formatting — other Zedbee checks still run.",
 };
 
 const INIT_EVENT_MAX_FPS = 30;
@@ -370,6 +386,49 @@ function hookFocusCount(proposal: InitProposal): number {
     : 1;
 }
 
+function formattingFocusIndex(proposal: InitProposal): number {
+  return (
+    setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+    hookFocusCount(proposal)
+  );
+}
+
+function reviewFocusIndex(proposal: InitProposal): number {
+  return formattingFocusIndex(proposal) + 1;
+}
+
+function FormattingChoice({
+  value,
+  focused,
+  activeTargetRef,
+  color,
+}: {
+  readonly value: InitFormattingChoice;
+  readonly focused: boolean;
+  readonly activeTargetRef?: RefObject<DOMElement | null>;
+  readonly color: boolean;
+}) {
+  return (
+    <Box ref={focused ? activeTargetRef : undefined} flexDirection="column">
+      <Box paddingX={2}>
+        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {focused ? "➜ " : "  "}Formatting
+        </Text>
+      </Box>
+      {FORMATTING_CHOICES.map((choice) => (
+        <Box key={choice} paddingX={4}>
+          <Text
+            {...colorProp(color, ZEDBEE_THEME.secondary)}
+            bold={choice === value}
+          >
+            [{choice === value ? "✽" : " "}] {FORMATTING_LABELS[choice]}
+          </Text>
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
 function InitActionButton({
   label,
   focused,
@@ -445,6 +504,7 @@ function SetupPanel({
   baseProfile,
   selected,
   osvUnavailable,
+  formatting,
   width,
   activeTargetRef,
   color,
@@ -455,6 +515,7 @@ function SetupPanel({
   readonly baseProfile: ProfileId;
   readonly selected: ReadonlySet<CheckId>;
   readonly osvUnavailable: InitOsvUnavailable;
+  readonly formatting: InitFormattingChoice;
   readonly width: number;
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
@@ -490,14 +551,17 @@ function SetupPanel({
           />
         </>
       ) : null}
+      <BrandedCommandPanelRule width={width} color={color} />
+      <FormattingChoice
+        value={formatting}
+        focused={focus === formattingFocusIndex(proposal)}
+        activeTargetRef={activeTargetRef}
+        color={color}
+      />
       <Text> </Text>
       <InitActionButton
         label="REVIEW CHANGES"
-        focused={
-          focus ===
-          setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-            hookRows
-        }
+        focused={focus === reviewFocusIndex(proposal)}
         activeTargetRef={activeTargetRef}
         color={color}
       />
@@ -606,6 +670,11 @@ export function InitApp({
   const [osvUnavailable, setOsvUnavailable] = useState<InitOsvUnavailable>(
     proposal.osvUnavailable,
   );
+  const [formatting, setFormatting] = useState<
+    InitFormattingChoice | undefined
+  >(undefined);
+  const effectiveFormatting: InitFormattingChoice =
+    formatting ?? proposal.formatting ?? "managed";
   const activeTargetRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
   const setupOffsetRef = useRef(setupOffset);
@@ -626,11 +695,13 @@ export function InitApp({
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
         hookSelection,
+        formatting,
       ),
     [
       baseProfile,
       osvUnavailable,
       hookSelection,
+      formatting,
       proposalForSelection,
       selected,
     ],
@@ -725,16 +796,10 @@ export function InitApp({
       onDecision(false);
       exit();
     } else if (key.upArrow) {
-      const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-        hookRows +
-        1;
+      const focusCount = reviewFocusIndex(reviewedProposal) + 1;
       setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
-      const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-        hookRows +
-        1;
+      const focusCount = reviewFocusIndex(reviewedProposal) + 1;
       setFocus((value) => (value + 1) % focusCount);
     } else if (
       hookRows > 0 &&
@@ -764,10 +829,24 @@ export function InitApp({
         undefined,
         osvUnavailable,
         hookSelection,
+        formatting,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
       setSelected(new Set(nextProposal.recommendedChecks));
+    } else if (
+      focus === formattingFocusIndex(reviewedProposal) &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setFormatting((current) => {
+        const base = current ?? proposal.formatting ?? "managed";
+        const index = FORMATTING_CHOICES.indexOf(base);
+        const offset = key.leftArrow ? -1 : 1;
+        return FORMATTING_CHOICES[
+          (index + offset + FORMATTING_CHOICES.length) %
+            FORMATTING_CHOICES.length
+        ]!;
+      });
     } else if (input === " ") {
       if (
         proposal.vulnerabilityScanningAvailable &&
@@ -783,11 +862,7 @@ export function InitApp({
         setOsvUnavailable("warn");
         return;
       }
-      if (
-        focus ===
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-          hookRows
-      ) {
+      if (focus === reviewFocusIndex(reviewedProposal)) {
         setPhase("review");
         return;
       }
@@ -828,6 +903,7 @@ export function InitApp({
             baseProfile={baseProfile}
             selected={selected}
             osvUnavailable={osvUnavailable}
+            formatting={effectiveFormatting}
             width={panelWidth}
             activeTargetRef={activeTargetRef}
             color={color}
@@ -852,6 +928,7 @@ export async function runInitPrompt(
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
     hook?: InitHookChoice,
+    formatting?: InitFormattingChoice,
   ) => InitProposal,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;

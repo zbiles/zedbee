@@ -561,7 +561,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -651,7 +651,7 @@ describe("InitApp", () => {
     );
     const view = render(elementFor(DEFAULT_TEST_ROWS));
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await settleInput();
@@ -894,7 +894,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -920,7 +920,7 @@ describe("InitApp", () => {
     await waitForAssertion(() =>
       expect(reference.lastFrame()).toContain("↓ MORE BELOW"),
     );
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       reference.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -1047,7 +1047,7 @@ describe("InitApp", () => {
       />,
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await new Promise((resolve) => setImmediate(resolve));
@@ -1361,5 +1361,39 @@ describe("runInitPrompt mouse fallback", () => {
       vi.doUnmock("ink");
       vi.resetModules();
     }
+  });
+});
+
+describe("formatting engine choice", () => {
+  it("shows the four formatting choices and cycles them", async () => {
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("Use Zedbee defaults"),
+    );
+    expect(view.lastFrame()).toContain("Copy my settings");
+    expect(view.lastFrame()).toContain("Use my project's Prettier");
+    expect(view.lastFrame()).toContain("Do not check formatting");
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("➜ Formatting"),
+    );
+    view.stdin.write("\u001b[C");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("[✽] Do not check formatting"),
+    );
   });
 });

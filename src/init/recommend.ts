@@ -7,11 +7,43 @@ import { OSV_NETWORK_DISCLOSURE } from "./types.js";
 import type {
   CreateInitProposalOptions,
   InitFileChange,
+  InitFormattingChoice,
+  InitFormattingImport,
   InitHookActivation,
   InitOsvUnavailable,
   InitProposal,
   ResolvedHookChoice,
 } from "./types.js";
+
+function formattingPolicyValue(
+  choice: InitFormattingChoice,
+  imported: InitFormattingImport | undefined,
+  severity: "off" | "error",
+): unknown {
+  if (choice === "off") return "off";
+  if (choice === "project") return { engine: "project", severity: "error" };
+  if (choice === "copy") {
+    return {
+      severity: "error",
+      settings: imported?.settings ?? {},
+    };
+  }
+  return severity;
+}
+
+function importedOverrideEntries(
+  imported: InitFormattingImport | undefined,
+): readonly Record<string, unknown>[] {
+  if (imported === undefined) return [];
+  return imported.overrides.map((override) => ({
+    files: [
+      ...override.files,
+      ...override.excludeFiles.map((pattern) => `!${pattern}`),
+    ],
+    checks: { formatting: { settings: override.settings } },
+  }));
+}
+
 
 function defaultHookActivation(hook: ResolvedHookChoice): InitHookActivation {
   if (hook === "none") {
@@ -132,12 +164,18 @@ export function initFileChange(
   });
 }
 
+interface FormattingConfigInput {
+  readonly choice: InitFormattingChoice;
+  readonly imported?: InitFormattingImport;
+}
+
 function configContents(
   profile: CreateInitProposalOptions["profile"],
   before: string | null,
   checks: readonly CheckId[] | undefined,
   vulnerabilitiesEnabled: boolean,
   osvUnavailable: InitOsvUnavailable,
+  formatting: FormattingConfigInput | undefined,
 ): string {
   const configuredChecks =
     checks === undefined
@@ -158,12 +196,25 @@ function configContents(
       ? { vulnerabilities: { onUnavailable: osvUnavailable } }
       : undefined);
   if (before === null) {
+    const checksValue =
+      formatting === undefined
+        ? initialChecks
+        : {
+            ...(initialChecks ?? {}),
+            formatting: formattingPolicyValue(
+              formatting.choice,
+              formatting.imported,
+              "error",
+            ),
+          };
+    const overrideValues = importedOverrideEntries(formatting?.imported);
     return `${JSON.stringify(
       {
         $schema: "./node_modules/zedbee/schema/zedbee.schema.json",
         schemaVersion: 1,
         profile,
-        ...(initialChecks === undefined ? {} : { checks: initialChecks }),
+        ...(checksValue === undefined ? {} : { checks: checksValue }),
+        ...(overrideValues.length === 0 ? {} : { overrides: overrideValues }),
         reporting: {
           agentGuidance: RECOMMENDED_AGENT_GUIDANCE,
         },
@@ -228,8 +279,99 @@ function configContents(
       updated = applyEdits(updated, modify(updated, path, value, options));
     }
   }
+  if (formatting !== undefined) {
+    updated = applyFormattingChoice(updated, parsed, formatting, options);
+  }
   return updated.endsWith("\n") ? updated : `${updated}\n`;
 }
+
+interface JsoncFormatOptions {
+  readonly formattingOptions: {
+    readonly insertSpaces: boolean;
+    readonly tabSize: number;
+    readonly eol: string;
+  };
+}
+
+function applyFormattingChoice(
+  updated: string,
+  parsed: unknown,
+  formatting: FormattingConfigInput,
+  options: JsoncFormatOptions,
+): string {
+  const root = parsed as Record<string, unknown>;
+  const checksValue = root.checks;
+  const checksObject =
+    typeof checksValue === "object" &&
+    checksValue !== null &&
+    !Array.isArray(checksValue)
+      ? (checksValue as Record<string, unknown>)
+      : {};
+  const existing = checksObject.formatting;
+  const existingObject =
+    typeof existing === "object" && existing !== null && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : undefined;
+  const existingSeverity =
+    existing === "off" || existing === "warn" || existing === "error"
+      ? existing
+      : existingObject?.severity === "off" ||
+          existingObject?.severity === "warn" ||
+          existingObject?.severity === "error"
+        ? existingObject.severity
+        : "error";
+
+  let next = updated;
+  if (formatting.choice === "managed") {
+    if (existingObject === undefined) {
+      next = applyEdits(
+        next,
+        modify(next, ["checks", "formatting"], "error", options),
+      );
+    } else {
+      next = applyEdits(
+        next,
+        modify(next, ["checks", "formatting", "engine"], "managed", options),
+      );
+    }
+  } else if (formatting.choice === "off") {
+    if (existingObject === undefined) {
+      next = applyEdits(
+        next,
+        modify(next, ["checks", "formatting"], "off", options),
+      );
+    } else {
+      next = applyEdits(
+        next,
+        modify(next, ["checks", "formatting", "severity"], "off", options),
+      );
+    }
+  } else {
+    const value =
+      formatting.choice === "project"
+        ? { engine: "project", severity: existingSeverity }
+        : {
+            severity: existingSeverity,
+            settings: formatting.imported?.settings ?? {},
+          };
+    next = applyEdits(
+      next,
+      modify(next, ["checks", "formatting"], value, options),
+    );
+    const overrides = importedOverrideEntries(formatting.imported);
+    if (overrides.length > 0) {
+      const existingOverrides = Array.isArray(root.overrides)
+        ? (root.overrides as readonly unknown[])
+        : [];
+      next = applyEdits(
+        next,
+        modify(next, ["overrides"], [...existingOverrides, ...overrides], options),
+      );
+    }
+  }
+  return next;
+}
+
 
 function existingVulnerabilitySeverity(
   before: string | null,
@@ -328,6 +470,16 @@ export function createInitProposal(
         : configuredVulnerabilitySeverity !== "off"
       : selectedChecks.includes("vulnerabilities"));
   const osvUnavailable = options.osvUnavailable ?? "block";
+  const formattingChoice: InitFormattingChoice = options.formatting ?? "managed";
+  const formattingConfig: FormattingConfigInput | undefined =
+    options.formatting === undefined
+      ? undefined
+      : {
+          choice: options.formatting,
+          ...(options.formattingImport === undefined
+            ? {}
+            : { imported: options.formattingImport }),
+        };
   const config = initFileChange(
     ".zedbeerc.jsonc",
     before,
@@ -337,6 +489,7 @@ export function createInitProposal(
       options.checks,
       vulnerabilitiesEnabled,
       osvUnavailable,
+      formattingConfig,
     ),
     0o644,
   );
@@ -382,7 +535,16 @@ export function createInitProposal(
       hookActivation.remediation !== undefined
         ? [hookActivation.remediation]
         : []),
+      ...(options.formattingImport?.limitations ?? []),
     ]),
+    formatting: formattingChoice,
+    ...(options.formattingImport === undefined
+      ? {}
+      : { formattingImport: options.formattingImport }),
+    ...(formattingChoice === "project" &&
+    options.projectPrettierTrustRoot !== undefined
+      ? { projectPrettierTrustRoot: options.projectPrettierTrustRoot }
+      : {}),
     files: Object.freeze(files),
   });
 }

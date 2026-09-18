@@ -509,4 +509,170 @@ describe("executeInitCommand", () => {
       await readFile(join(interactiveRoot, ".zedbeerc.jsonc"), "utf8"),
     ).toBe(await readFile(join(nonInteractiveRoot, ".zedbeerc.jsonc"), "utf8"));
   });
+
+  it("refuses non-interactive project formatting without explicit trust", async () => {
+    const repository = await createGitRepository("zedbee-init-project-trust-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "project",
+        yes: true,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(2);
+    expect(io.stderr.join("")).toMatch(/trust/u);
+    await expect(
+      readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("does not treat a tracked trust field as consent", async () => {
+    const repository = await createGitRepository("zedbee-init-tracked-trust-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{\n  "schemaVersion": 1,\n  "projectPrettierTrust": true\n}\n',
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "project",
+        yes: true,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(2);
+    expect(io.stderr.join("")).toMatch(/trust/u);
+  });
+
+  it("applies project formatting and persists local consent with --trust-project-prettier", async () => {
+    const repository = await createGitRepository("zedbee-init-project-apply-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "project",
+        trustProjectPrettier: true,
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"engine": "project"');
+    expect(config).not.toMatch(/trustProjectPrettier/u);
+    const stored = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "allowed",
+    ]);
+    expect(stored.stdout).toContain("v1");
+  });
+
+  it("copies detected settings non-interactively", async () => {
+    const repository = await createGitRepository("zedbee-init-copy-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"trailingComma":"es5"}',
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"printWidth": 100');
+    expect(config).toContain('"trailingComma": "es5"');
+  });
+
+  it("refuses a non-interactive copy with unresolved limitations", async () => {
+    const repository = await createGitRepository("zedbee-init-copy-limits-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"plugins":["some-plugin"]}',
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        yes: true,
+        format: "text",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(2);
+    await expect(
+      readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8"),
+    ).rejects.toThrow();
+  });
 });

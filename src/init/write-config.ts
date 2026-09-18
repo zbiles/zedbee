@@ -20,6 +20,11 @@ import {
 import { GitClient } from "../git/client.js";
 import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
+import {
+  persistProjectPrettierTrust,
+  restoreProjectPrettierTrust,
+  type ProjectPrettierTrustSnapshot,
+} from "../checks/prettier/project-trust.js";
 import { initContentHash } from "./recommend.js";
 import type {
   ApplyInitDependencies,
@@ -272,6 +277,7 @@ export async function applyInitProposal(
 
   const applied: Array<{ path: string; before: string | null; mode: number }> =
     [];
+  let trustSnapshot: ProjectPrettierTrustSnapshot | undefined;
   try {
     for (const [index, item] of validated.entries()) {
       await dependencies.beforeWrite?.(index, item.change);
@@ -295,9 +301,18 @@ export async function applyInitProposal(
         proposal.hooksPathChange.after,
       ]);
     }
+    if (proposal.projectPrettierTrustRoot !== undefined) {
+      trustSnapshot = await persistProjectPrettierTrust(
+        root,
+        proposal.projectPrettierTrustRoot,
+      );
+    }
   } catch {
     try {
       await rollback(applied);
+      if (trustSnapshot !== undefined) {
+        await restoreProjectPrettierTrust(root, trustSnapshot);
+      }
     } catch {
       throw new Error(
         "Zedbee initialization failed and rollback was incomplete.",
