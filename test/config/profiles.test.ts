@@ -202,6 +202,7 @@ describe("managed check profiles", () => {
     expect(config.checks.formatting).toEqual({
       severity: "warn",
       when: "relevant",
+      engine: "managed",
       settings: {
         printWidth: 100,
         tabWidth: 4,
@@ -230,6 +231,7 @@ describe("managed check profiles", () => {
     expect(config.checks.formatting).toEqual({
       severity: "warn",
       when: "relevant",
+      engine: "managed",
       settings: {
         printWidth: 80,
         tabWidth: 2,

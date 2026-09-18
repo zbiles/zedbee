@@ -3,7 +3,9 @@ import { DISPLAY_TEXT_LIMITS, displayProse } from "../core/display-text.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import { parseTemporaryReportMaxAge } from "../reporting/report-age.js";
 import {
+  FORMATTING_ENGINES,
   formattingSettingsSchema,
+  type FormattingEngine,
   type FormattingSettings,
 } from "../checks/prettier/settings.js";
 import {
@@ -63,6 +65,7 @@ export interface ResolvedCheckPolicyBase {
 }
 
 export interface ResolvedFormattingPolicy extends ResolvedCheckPolicyBase {
+  engine: FormattingEngine;
   settings: Readonly<FormattingSettings>;
 }
 
@@ -110,6 +113,7 @@ export type ResolvedCheckPolicyPatch = Readonly<
     readonly threshold?: number;
     readonly blockWorsening?: boolean;
     readonly onUnavailable?: "block" | "warn";
+    readonly engine?: FormattingEngine;
     readonly settings?:
       Partial<FormattingSettings> | Partial<DuplicationSettings>;
     readonly rules?: Readonly<Record<string, EslintRuleConfiguration>>;
@@ -302,9 +306,27 @@ const duplicationPolicyObjectSchema = z
 const formattingPolicyObjectSchema = z
   .object({
     ...commonPolicyFields,
+    engine: z
+      .enum(FORMATTING_ENGINES)
+      .optional()
+      .meta({
+        description:
+          'Formatting engine: "managed" uses Zedbee\'s bundled Prettier with managed settings; "project" uses the selected project\'s installed Prettier, configuration, and plugins.',
+        default: "managed",
+      }),
     settings: formattingSettingsSchema.partial().strict().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((policy, context) => {
+    if (policy.engine === "project" && policy.settings !== undefined) {
+      context.addIssue({
+        code: "custom",
+        path: ["settings"],
+        message:
+          'Managed formatting settings cannot be combined with engine "project". Remove the settings or use engine "managed".',
+      });
+    }
+  });
 const vulnerabilityPolicyObjectSchema = z
   .object({
     ...commonPolicyFields,
