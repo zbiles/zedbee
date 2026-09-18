@@ -14,7 +14,11 @@ import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
 import { installTrackedHooks } from "./hooks/install.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
-import type { InitHookChoice, InitOsvUnavailable } from "./init/types.js";
+import type {
+  InitFormattingChoice,
+  InitHookChoice,
+  InitOsvUnavailable,
+} from "./init/types.js";
 import type { RequestedOutputFormat } from "./scan/reporting-options.js";
 import {
   executeScanCommand,
@@ -53,6 +57,8 @@ interface CommanderInitOptions {
   hook: InitHookChoice;
   checks?: readonly CheckId[];
   osvUnavailable: InitOsvUnavailable;
+  formatting?: InitFormattingChoice;
+  trustProjectPrettier: boolean;
   yes: boolean;
   format: "text" | "json";
   color: boolean;
@@ -192,6 +198,17 @@ export async function runCli(
         .default("block"),
     )
     .addOption(
+      new Option(
+        "--formatting <choice>",
+        "formatting engine: copy detected settings, use the project's Prettier, keep Zedbee defaults, or disable formatting",
+      ).choices(["copy", "project", "managed", "off"]),
+    )
+    .option(
+      "--trust-project-prettier",
+      "allow this invocation to run the project's installed Prettier (never persisted by itself)",
+      false,
+    )
+    .addOption(
       new Option("--format <format>", "output format")
         .choices(["text", "json"])
         .default("text"),
@@ -211,6 +228,10 @@ export async function runCli(
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
           osvUnavailable: options.osvUnavailable,
+          ...(options.formatting === undefined
+            ? {}
+            : { formatting: options.formatting }),
+          trustProjectPrettier: options.trustProjectPrettier,
           yes: options.yes,
           format: options.format,
           color: options.color,

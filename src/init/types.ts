@@ -1,5 +1,15 @@
 import type { CheckId, ProfileId } from "../config/schema.js";
+import type { FormattingSettings } from "../checks/prettier/settings.js";
+import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
 import type { Environment } from "../inspection/types.js";
+
+export type InitFormattingChoice = "copy" | "project" | "managed" | "off";
+
+export interface InitFormattingImport {
+  readonly settings: Partial<FormattingSettings>;
+  readonly overrides: readonly ImportedFormattingOverride[];
+  readonly limitations: readonly string[];
+}
 
 export type InitHookChoice =
   | "auto"
@@ -59,6 +69,9 @@ export interface InitProposal {
   readonly osvUnavailable: InitOsvUnavailable;
   readonly networkChecks: readonly InitNetworkCheck[];
   readonly limitations: readonly string[];
+  readonly formatting?: InitFormattingChoice;
+  readonly formattingImport?: InitFormattingImport;
+  readonly projectPrettierTrustRoot?: string;
   readonly files: readonly InitFileChange[];
 }
 
@@ -74,6 +87,9 @@ export interface CreateInitProposalOptions {
   readonly hooksPathChange?:
     Readonly<{ before: string | null; after: ".husky/_" }> | undefined;
   readonly hookActivation?: InitHookActivation;
+  readonly formatting?: InitFormattingChoice;
+  readonly formattingImport?: InitFormattingImport;
+  readonly projectPrettierTrustRoot?: string;
 }
 
 export interface ApplyResult {
