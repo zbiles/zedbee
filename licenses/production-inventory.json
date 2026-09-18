@@ -5862,7 +5862,6 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "dependency-cruiser@18.2.0",
         "json5@2.2.3"
       ]
     },
@@ -7585,7 +7584,6 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "knip@6.32.2",
         "smol-toml@1.8.0"
       ]
     },
