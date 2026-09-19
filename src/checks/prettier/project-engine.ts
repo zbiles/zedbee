@@ -1,9 +1,5 @@
 import { createHash } from "node:crypto";
-import {
-  fork,
-  type ChildProcess,
-  type Serializable,
-} from "node:child_process";
+import { fork, type ChildProcess, type Serializable } from "node:child_process";
 import { createRequire } from "node:module";
 import { lstat, open, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -24,7 +20,10 @@ import type {
   ProjectPrettierReply,
   ProjectPrettierRequest,
 } from "./project-types.js";
-import { parseProjectReply, PROJECT_PROTOCOL_MAX_BYTES } from "./project-protocol.js";
+import {
+  parseProjectReply,
+  PROJECT_PROTOCOL_MAX_BYTES,
+} from "./project-protocol.js";
 import {
   createProjectWorkspace,
   ProjectWorkspaceLayoutError,
@@ -55,7 +54,9 @@ export interface ProjectFormatterSession {
   format(file: string, source: string): Promise<ProjectFormatResult>;
   readConfigForImport(configPath: string): Promise<ImportableNativeConfig>;
   /** Consent-required evaluation of a package-exported shared configuration. */
-  readSharedConfigForImport(configPackage: string): Promise<ImportableNativeConfig>;
+  readSharedConfigForImport(
+    configPackage: string,
+  ): Promise<ImportableNativeConfig>;
   close(): Promise<void>;
 }
 
@@ -99,7 +100,9 @@ export function owningProjectRoot(
         workspace.relativeRoot === "." ||
         file.startsWith(`${workspace.relativeRoot}/`),
     )
-    .sort((left, right) => right.relativeRoot.length - left.relativeRoot.length);
+    .sort(
+      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
+    );
   return candidates[0]?.relativeRoot ?? ".";
 }
 
@@ -134,7 +137,8 @@ export async function snapshotIdentity(snapshotRoot: string): Promise<string> {
     )) {
       if (entry.name === "node_modules") continue;
       const absolute = join(directory, entry.name);
-      const relativePath = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const relativePath =
+        prefix === "" ? entry.name : `${prefix}/${entry.name}`;
       const metadata = await lstat(absolute);
       if (metadata.isSymbolicLink()) continue;
       if (metadata.isDirectory()) {
@@ -241,14 +245,13 @@ async function resolveEntryUrl(packageRoot: string): Promise<string> {
   } catch {
     /* Fall through to declared entry points. */
   }
-  const manifest = JSON.parse(
-    await readFile(manifestPath, "utf8"),
-  ) as {
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
     main?: string;
     module?: string;
   };
   const candidate =
-    (typeof manifest.module === "string" && join(packageRoot, manifest.module)) ||
+    (typeof manifest.module === "string" &&
+      join(packageRoot, manifest.module)) ||
     (typeof manifest.main === "string" && join(packageRoot, manifest.main));
   if (typeof candidate === "string") {
     return pathToFileURL(resolve(candidate)).href;
@@ -269,7 +272,12 @@ export async function resolveProjectPrettierInstallation(
   const projectDirectory = resolve(repositoryRoot, projectRoot);
   let current = await realpath(projectDirectory).catch(() => projectDirectory);
   while (true) {
-    const manifestPath = join(current, "node_modules", "prettier", "package.json");
+    const manifestPath = join(
+      current,
+      "node_modules",
+      "prettier",
+      "package.json",
+    );
     try {
       const canonicalManifest = await realpath(manifestPath);
       const manifestMetadata = await lstat(canonicalManifest);
@@ -279,7 +287,8 @@ export async function resolveProjectPrettierInstallation(
       ) {
         throw new ProjectPrettierFailureError({
           code: "PROJECT_PRETTIER_INSTALL_MISSING",
-          message: "The installed Prettier manifest is unreadable or too large.",
+          message:
+            "The installed Prettier manifest is unreadable or too large.",
           projectRoot: projectRoot === "" ? "." : projectRoot,
         });
       }
@@ -325,7 +334,12 @@ export async function resolveProjectPrettierInstallation(
         try {
           const chunk = Buffer.alloc(IDENTITY_CHUNK_BYTES);
           while (true) {
-            const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+            const { bytesRead } = await handle.read(
+              chunk,
+              0,
+              chunk.length,
+              null,
+            );
             if (bytesRead === 0) break;
             entryHash.update(chunk.subarray(0, bytesRead));
           }
@@ -359,7 +373,8 @@ export async function resolveProjectPrettierInstallation(
   }
   throw new ProjectPrettierFailureError({
     code: "PROJECT_PRETTIER_INSTALL_MISSING",
-    message: "No installed Prettier satisfying the project declaration was found.",
+    message:
+      "No installed Prettier satisfying the project declaration was found.",
     projectRoot: projectRoot === "" ? "." : projectRoot,
   });
 }
@@ -402,9 +417,11 @@ function pendingFailure(
  */
 async function stopProcessGroupBestEffort(
   pid: number | undefined,
-  workerExited: boolean,
 ): Promise<void> {
-  if (pid === undefined || workerExited) return;
+  // A cooperative worker can exit before a process it spawned. The process
+  // group retains the worker PID as its identity, so probe and retire the
+  // group even after the leader has exited.
+  if (pid === undefined) return;
   await stopProcessGroup(pid).catch(() => undefined);
 }
 
@@ -417,7 +434,11 @@ async function openSession(
     );
   }
   if (
-    !projectPrettierPermitAllows(input.permit, input.checkoutRoot, input.projectRoot)
+    !projectPrettierPermitAllows(
+      input.permit,
+      input.checkoutRoot,
+      input.projectRoot,
+    )
   ) {
     throw new ProjectPrettierFailureError({
       code: "PROJECT_PRETTIER_TRUST_REQUIRED",
@@ -464,18 +485,36 @@ async function openSession(
   let nextId = 1;
   let closed = false;
   let workerExited = false;
+  let protocolFailure: ProjectPrettierFailure | undefined;
   const failAll = (failure: ProjectPrettierFailure): void => {
     for (const request of pending.values()) {
       request.reject(new ProjectPrettierFailureError(failure));
     }
     pending.clear();
   };
+  const invalidateProtocol = (): void => {
+    if (protocolFailure !== undefined) return;
+    protocolFailure = {
+      code: "PROJECT_PRETTIER_PROTOCOL_INVALID",
+      message: "The project formatter returned an invalid response.",
+      projectRoot: input.projectRoot,
+    };
+    failAll(protocolFailure);
+    void (async () => {
+      try {
+        await stopProcessGroupBestEffort(child.pid);
+      } finally {
+        await workspace.dispose().catch(() => undefined);
+      }
+    })();
+  };
 
   // Startup cancellation and early worker death must reject the pending
   // `ready` handshake immediately; nothing waits out the startup timer.
   let settleReady: ((error: ProjectPrettierFailure) => void) | undefined;
   const readyAborted = new Promise<void>((_, rejectReady) => {
-    settleReady = (failure) => rejectReady(new ProjectPrettierFailureError(failure));
+    settleReady = (failure) =>
+      rejectReady(new ProjectPrettierFailureError(failure));
   });
   const exited = new Promise<void>((resolveExit) => {
     child.once("exit", () => {
@@ -499,27 +538,28 @@ async function openSession(
     if (value?.type !== "reply") return;
     const reply = value.reply as { id?: unknown } | undefined;
     const id = typeof reply?.id === "number" ? reply.id : undefined;
-    if (id === undefined) return;
+    if (id === undefined) {
+      invalidateProtocol();
+      return;
+    }
     const request = pending.get(id);
-    if (request === undefined) return;
-    pending.delete(id);
+    if (request === undefined) {
+      invalidateProtocol();
+      return;
+    }
     try {
       const parsed = parseProjectReply(value.reply, id);
       if (parsed.operation === "error") {
+        pending.delete(id);
         request.reject(new ProjectPrettierFailureError(parsed.failure));
       } else if (parsed.operation !== request.expectedOperation) {
         throw new TypeError("Reply operation mismatch");
       } else {
+        pending.delete(id);
         request.resolve(parsed);
       }
     } catch {
-      request.reject(
-        new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_PROTOCOL_INVALID",
-          message: "The project formatter returned an invalid response.",
-          projectRoot: input.projectRoot,
-        }),
-      );
+      invalidateProtocol();
     }
   });
 
@@ -566,7 +606,7 @@ async function openSession(
     settleReady?.(failure);
     void (async () => {
       try {
-        await stopProcessGroupBestEffort(child.pid, workerExited);
+        await stopProcessGroupBestEffort(child.pid);
       } finally {
         await workspace.dispose().catch(() => undefined);
       }
@@ -584,7 +624,7 @@ async function openSession(
     await Promise.race([ready, readyAborted]);
   } catch (error) {
     input.signal.removeEventListener("abort", abort);
-    await stopProcessGroupBestEffort(child.pid, workerExited);
+    await stopProcessGroupBestEffort(child.pid);
     await workspace.dispose();
     throw error;
   }
@@ -593,6 +633,9 @@ async function openSession(
     operation: "classify" | "format" | "importConfig",
     payload: Record<string, unknown>,
   ): Promise<ProjectPrettierReply> => {
+    if (protocolFailure !== undefined) {
+      return Promise.reject(new ProjectPrettierFailureError(protocolFailure));
+    }
     if (closed || workerExited) {
       return Promise.reject(
         new ProjectPrettierFailureError(
@@ -610,9 +653,15 @@ async function openSession(
         resolve: resolveRequest,
         reject: rejectRequest,
       });
-      const message = { type: "request", request: { id, operation, ...payload } };
+      const message = {
+        type: "request",
+        request: { id, operation, ...payload },
+      };
       const serialized = JSON.stringify(message);
-      if (Buffer.byteLength(serialized, "utf8") > PROJECT_PROTOCOL_MAX_BYTES * 4) {
+      if (
+        Buffer.byteLength(serialized, "utf8") >
+        PROJECT_PROTOCOL_MAX_BYTES * 4
+      ) {
         pending.delete(id);
         rejectRequest(
           new ProjectPrettierFailureError({
@@ -654,14 +703,16 @@ async function openSession(
       configPath: string,
     ): Promise<ImportableNativeConfig> {
       const reply = await request("importConfig", { configFile: configPath });
-      if (reply.operation !== "importConfig") throw new Error("Unexpected reply");
+      if (reply.operation !== "importConfig")
+        throw new Error("Unexpected reply");
       return reply.result;
     },
     async readSharedConfigForImport(
       configPackage: string,
     ): Promise<ImportableNativeConfig> {
       const reply = await request("importConfig", { configPackage });
-      if (reply.operation !== "importConfig") throw new Error("Unexpected reply");
+      if (reply.operation !== "importConfig")
+        throw new Error("Unexpected reply");
       return reply.result;
     },
     async close(): Promise<void> {
@@ -679,15 +730,13 @@ async function openSession(
       } catch {
         /* Already gone. */
       }
-      const exitedGracefully = await Promise.race([
+      await Promise.race([
         exited.then(() => true),
         new Promise<boolean>((resolveRace) =>
           setTimeout(() => resolveRace(false), CLOSE_GRACE_MS),
         ),
       ]);
-      if (!exitedGracefully) {
-        await stopProcessGroupBestEffort(child.pid, workerExited);
-      }
+      await stopProcessGroupBestEffort(child.pid);
       await workspace.dispose();
     },
   });

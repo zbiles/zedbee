@@ -1,4 +1,4 @@
-import { cp, lstat, mkdir, rm, symlink } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
@@ -15,7 +15,9 @@ import { buildSnapshotPair } from "../../../src/git/snapshot.js";
 import { GitClient } from "../../../src/git/client.js";
 import { realpath } from "node:fs/promises";
 
-const repositoryPackageRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const repositoryPackageRoot = fileURLToPath(
+  new URL("../../..", import.meta.url),
+);
 
 const FIXTURE_PLUGIN = `export const languages = [
   { name: "Fixture", parsers: ["fixture"], extensions: [".fixturetxt"] },
@@ -50,6 +52,31 @@ describe("project Prettier engine", () => {
     await expect(session.classify("asset.bin")).resolves.toEqual({
       kind: "ignored",
       reason: "unsupported",
+    });
+  });
+
+  it("honors an explicit parser for a file without an inferred parser", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({
+        overrides: [{ files: "*.custom", options: { parser: "typescript" } }],
+      }),
+    );
+    await fixture.write("value.custom", "const value=1");
+    await fixture.stage(".prettierrc.json", "value.custom");
+
+    const session = await fixture.open({ source: "index", trust: true });
+
+    await expect(session.classify("value.custom")).resolves.toEqual({
+      kind: "supported",
+    });
+    await expect(
+      session.format("value.custom", "const value=1"),
+    ).resolves.toEqual({
+      kind: "formatted",
+      text: "const value = 1;\n",
     });
   });
 
@@ -165,6 +192,41 @@ describe("project Prettier engine", () => {
         settings: { printWidth: 80 },
       },
     ]);
+    expect(imported.limitations).toEqual([]);
+  });
+
+  it("retires descendant processes when the worker exits cleanly", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    const pidPath = join(fixture.root, "CHILD_PID");
+    await fixture.write(
+      "prettier.config.mjs",
+      [
+        "import { spawn } from 'node:child_process';",
+        "import { writeFileSync } from 'node:fs';",
+        "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+        "child.unref();",
+        `writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));`,
+        "export default {};",
+      ].join("\n"),
+    );
+    await fixture.write("value.ts", "export const value = 1;\n");
+    await fixture.stage("prettier.config.mjs", "value.ts");
+
+    const session = await fixture.open({ source: "index", trust: true });
+    await session.format("value.ts", "export const value = 1;");
+    const descendantPid = Number(await readFile(pidPath, "utf8"));
+    onTestFinished(() => {
+      try {
+        process.kill(descendantPid, "SIGKILL");
+      } catch {
+        // The session is expected to have retired it already.
+      }
+    });
+
+    await session.close();
+
+    expect(() => process.kill(descendantPid, 0)).toThrow();
   });
 
   it("runs a real plugin through the snapshot workspace remap", async () => {
@@ -190,14 +252,8 @@ describe("project Prettier engine", () => {
       "packages/fixture-plugin/package.json",
       '{"name":"fixture-plugin","version":"1.0.0","type":"module","main":"index.mjs"}',
     );
-    await fixture.write(
-      "packages/fixture-plugin/index.mjs",
-      FIXTURE_PLUGIN,
-    );
-    await fixture.write(
-      ".prettierrc.json",
-      '{"plugins":["fixture-plugin"]}',
-    );
+    await fixture.write("packages/fixture-plugin/index.mjs", FIXTURE_PLUGIN);
+    await fixture.write(".prettierrc.json", '{"plugins":["fixture-plugin"]}');
     await fixture.write("value.fixturetxt", "anything");
     // npm-style workspace link: node_modules/fixture-plugin -> packages/fixture-plugin
     await symlink(
@@ -315,6 +371,31 @@ describe("project Prettier engine", () => {
     ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_WORKER_FAILED" });
   });
 
+  it("invalidates the session when a configuration forges an unknown reply id", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      "forged.config.mjs",
+      [
+        "process.send?.({",
+        "  type: 'reply',",
+        "  reply: { id: 999, operation: 'classify', result: { kind: 'supported' } },",
+        "});",
+        "export default {};",
+      ].join("\n"),
+    );
+    await fixture.stage("forged.config.mjs");
+
+    const session = await fixture.open({ source: "index", trust: true });
+
+    await expect(
+      session.readConfigForImport("forged.config.mjs"),
+    ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_PROTOCOL_INVALID" });
+    await expect(
+      session.format("value.ts", "export const value = 1;"),
+    ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_PROTOCOL_INVALID" });
+  });
+
   it("rejects an already-cancelled session before spawning", async () => {
     const fixture = await createProjectPrettierFixture();
     onTestFinished(() => fixture.dispose());
@@ -371,7 +452,12 @@ describe("project Prettier engine", () => {
     await fixture.write("value.ts", "export const value = 1;\n");
     await fixture.write("nested/value.ts", "export const value = 1;\n");
     await fixture.write("docs.md", "# a\n");
-    await fixture.stage(".editorconfig", "value.ts", "nested/value.ts", "docs.md");
+    await fixture.stage(
+      ".editorconfig",
+      "value.ts",
+      "nested/value.ts",
+      "docs.md",
+    );
 
     const session = await fixture.open({ source: "index", trust: true });
 
@@ -432,7 +518,10 @@ describe("project Prettier engine", () => {
   it("rejects the ready handshake promptly on abort after spawn", async () => {
     const fixture = await createProjectPrettierFixture();
     onTestFinished(() => fixture.dispose());
-    await fixture.write("package.json", `{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}\n`);
+    await fixture.write(
+      "package.json",
+      `{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}\n`,
+    );
     await fixture.write(
       "slow-entry.mjs",
       "await new Promise((resolve) => setTimeout(resolve, 4_000));\n" +
