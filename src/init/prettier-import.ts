@@ -360,7 +360,7 @@ async function loadProjectConfig(
   const executable = EXECUTABLE_EXTENSIONS.has(posix.extname(configPath));
   if (executable) {
     limitations.push(
-      "This project uses an executable or shared Prettier configuration; its dynamic values cannot be copied as inert settings.",
+      `The Prettier configuration ${configPath} is executable; its dynamic values cannot be copied as inert settings.`,
     );
     return { settings: {}, overrides: [], limitations, configPath, configRoot };
   }

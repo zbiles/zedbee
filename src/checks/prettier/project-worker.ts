@@ -14,7 +14,10 @@ import type {
   ProjectPrettierReply,
 } from "./project-types.js";
 import { parseProjectRequest } from "./project-protocol.js";
-import { formattingSettingsSchema, type FormattingSettings } from "./settings.js";
+import {
+  formattingSettingsSchema,
+  type FormattingSettings,
+} from "./settings.js";
 
 type PrettierModule = typeof import("prettier");
 
@@ -83,7 +86,9 @@ async function fileInfoIgnoredBy(
   return info.ignored === true;
 }
 
-async function ignoreReason(file: string): Promise<"prettierignore" | "gitignore"> {
+async function ignoreReason(
+  file: string,
+): Promise<"prettierignore" | "gitignore"> {
   const directory = projectDirectory();
   const prettierIgnore = join(directory, ".prettierignore");
   const gitIgnore = join(directory, ".gitignore");
@@ -112,8 +117,11 @@ const EDITORCONFIG_MAX_BYTES = 256 * 1024;
 
 function parseEditorConfig(contents: string): BoundedEditorConfig {
   let root = false;
-  let current: { pattern: string; settings: Partial<FormattingSettings> } | undefined;
-  const sections: { pattern: string; settings: Partial<FormattingSettings> }[] = [];
+  let current:
+    | { pattern: string; settings: Partial<FormattingSettings> }
+    | undefined;
+  const sections: { pattern: string; settings: Partial<FormattingSettings> }[] =
+    [];
   for (const rawLine of contents.split(/\r?\n|\r/u)) {
     const line = rawLine.trim();
     if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
@@ -190,7 +198,10 @@ async function editorConfigOptions(
     let contents: string;
     try {
       const metadata = await lstat(configPath);
-      if (!metadata.isFile() || metadata.size > BigInt(EDITORCONFIG_MAX_BYTES)) {
+      if (
+        !metadata.isFile() ||
+        metadata.size > BigInt(EDITORCONFIG_MAX_BYTES)
+      ) {
         continue;
       }
       contents = await readFile(configPath, "utf8");
@@ -205,9 +216,7 @@ async function editorConfigOptions(
       // EditorConfig semantics: a pattern without a path separator matches
       // the file name (so [*] and [*.ts] apply at any depth); a pattern with
       // a separator matches the path relative to this configuration file.
-      const candidate = section.pattern.includes("/")
-        ? relativePath
-        : fileName;
+      const candidate = section.pattern.includes("/") ? relativePath : fileName;
       let matches = false;
       try {
         matches = picomatch.isMatch(candidate, section.pattern, {
@@ -246,10 +255,12 @@ async function resolveOptions(
       "The resolved Prettier configuration is outside the selected snapshot.",
     );
   }
-  return (await prettier.resolveConfig(file, {
-    config: configPath,
-    editorconfig: true,
-  })) ?? {};
+  return (
+    (await prettier.resolveConfig(file, {
+      config: configPath,
+      editorconfig: true,
+    })) ?? {}
+  );
 }
 
 interface SupportedFile {
@@ -257,14 +268,18 @@ interface SupportedFile {
   readonly options: import("prettier").Options;
 }
 
-type ClassifiedFile = SupportedFile | Exclude<ProjectFormatSupport, { kind: "supported" }>;
+type ClassifiedFile =
+  | SupportedFile
+  | Exclude<ProjectFormatSupport, { kind: "supported" }>;
 
 const classificationCache = new Map<string, SupportedFile>();
 const CLASSIFICATION_CACHE_MAX_ENTRIES = 128;
 
 function rememberClassification(file: string, result: SupportedFile): void {
   if (classificationCache.size >= CLASSIFICATION_CACHE_MAX_ENTRIES) {
-    const oldest = classificationCache.keys().next().value as string | undefined;
+    const oldest = classificationCache.keys().next().value as
+      | string
+      | undefined;
     if (oldest !== undefined) classificationCache.delete(oldest);
   }
   classificationCache.set(file, result);
@@ -276,10 +291,16 @@ async function classifyFile(file: string): Promise<ClassifiedFile> {
   if (!isContainedPath(current.treeRoot, absolute)) {
     return { kind: "ignored", reason: "unsupported" };
   }
-  if (await fileInfoIgnoredBy(current.prettier, absolute, projectIgnorePaths())) {
+  if (
+    await fileInfoIgnoredBy(current.prettier, absolute, projectIgnorePaths())
+  ) {
     return { kind: "ignored", reason: await ignoreReason(absolute) };
   }
-  const options = await resolveOptions(absolute, current.prettier, current.treeRoot);
+  const options = await resolveOptions(
+    absolute,
+    current.prettier,
+    current.treeRoot,
+  );
   // Parser inference must see the project's own plugins; otherwise a file
   // supported only through a plugin would be reported as unsupported.
   const supported = await current.prettier.getFileInfo(absolute, {
@@ -287,7 +308,7 @@ async function classifyFile(file: string): Promise<ClassifiedFile> {
     resolveConfig: false,
     plugins: (options.plugins as string[] | undefined) ?? [],
   });
-  if (supported.inferredParser === null) {
+  if (supported.inferredParser === null && typeof options.parser !== "string") {
     return { kind: "ignored", reason: "unsupported" };
   }
   return { kind: "supported", options };
@@ -324,7 +345,9 @@ function sanitizeSettings(
   context: string,
 ): Partial<FormattingSettings> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    limitations.push(`The ${context} is not a plain object and was not copied.`);
+    limitations.push(
+      `The ${context} is not a plain object and was not copied.`,
+    );
     return {};
   }
   const result: Record<string, unknown> = {};
@@ -342,10 +365,16 @@ function sanitizeSettings(
       continue;
     }
     const entry = descriptor.value;
+    // Overrides are sanitized separately below. Treating this known metadata
+    // key as a dynamic formatting value produces a false limitation even
+    // when every override is representable.
+    if (key === "overrides") continue;
     if (key === "plugins") {
-      limitations.push(
-        "Configured Prettier plugins cannot be copied into managed settings.",
-      );
+      if (!Array.isArray(entry) || entry.length > 0) {
+        limitations.push(
+          "Configured Prettier plugins cannot be copied into managed settings.",
+        );
+      }
       continue;
     }
     if (
@@ -378,11 +407,13 @@ function sanitizeSettings(
 function sanitizeOverrideEntry(
   entry: unknown,
   limitations: string[],
-): {
-  files: string | readonly string[];
-  excludeFiles?: string | readonly string[];
-  settings: Partial<FormattingSettings>;
-} | undefined {
+):
+  | {
+      files: string | readonly string[];
+      excludeFiles?: string | readonly string[];
+      settings: Partial<FormattingSettings>;
+    }
+  | undefined {
   if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
     limitations.push(
       "An exported configuration override is not a plain object and was not copied.",
@@ -438,10 +469,7 @@ function sanitizeOverrideEntry(
 }
 
 async function importConfig(
-  request: Extract<
-    ProjectPrettierRequest,
-    { operation: "importConfig" }
-  >,
+  request: Extract<ProjectPrettierRequest, { operation: "importConfig" }>,
 ): Promise<ImportableNativeConfig> {
   const current = state!;
   const limitations: string[] = [];
