@@ -8544,7 +8544,7 @@
     },
     {
       "name": "zod",
-      "version": "4.4.3",
+      "version": "4.5.4",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -8556,7 +8556,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "zod@4.4.3"
+        "zod@4.5.4"
       ]
     },
     {
