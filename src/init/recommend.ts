@@ -91,9 +91,31 @@ function existingFormattingChoice(before: string | null): InitFormattingChoice {
   if (typeof formatting === "object" && formatting !== null) {
     const record = formatting as Record<string, unknown>;
     if (record.severity === "off") return "off";
-    if (record.engine === "project" || record.engine === "managed") {
-      return record.engine;
-    }
+    if (record.generated === "prettier-copy") return "copy";
+    if (record.engine === "project") return "project";
+  }
+  const overrides = (parsed as Record<string, unknown>).overrides;
+  if (
+    Array.isArray(overrides) &&
+    overrides.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const record = entry as Record<string, unknown>;
+      if (record.generated !== "prettier-engine") return false;
+      const overrideChecks = record.checks;
+      if (typeof overrideChecks !== "object" || overrideChecks === null) {
+        return false;
+      }
+      const overrideFormatting = (
+        overrideChecks as Record<string, unknown>
+      ).formatting;
+      return (
+        typeof overrideFormatting === "object" &&
+        overrideFormatting !== null &&
+        (overrideFormatting as Record<string, unknown>).engine === "project"
+      );
+    })
+  ) {
+    return "project";
   }
   return "managed";
 }

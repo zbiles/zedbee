@@ -170,6 +170,50 @@ describe("createInitProposal", () => {
     expect(proposal.files[0]?.after).toContain('"profile": "thorough"');
   });
 
+  it("reports an existing generated settings copy on repeat init", () => {
+    const proposal = createInitProposal(inspection(["javascript"]), {
+      repositoryRoot: "/repo",
+      profile: "recommended",
+      hook: "none",
+      configBefore: JSON.stringify({
+        schemaVersion: 1,
+        checks: {
+          formatting: {
+            severity: "error",
+            settings: { printWidth: 100 },
+            generated: "prettier-copy",
+          },
+        },
+      }),
+    });
+
+    expect(proposal.formatting).toBe("copy");
+  });
+
+  it("reports generated workspace project engines on repeat init", () => {
+    const proposal = createInitProposal(
+      inspection(["javascript"], { monorepo: true }),
+      {
+        repositoryRoot: "/repo",
+        profile: "recommended",
+        hook: "none",
+        configBefore: JSON.stringify({
+          schemaVersion: 1,
+          checks: { formatting: { engine: "managed", severity: "error" } },
+          overrides: [
+            {
+              files: ["packages/app/**"],
+              checks: { formatting: { engine: "project" } },
+              generated: "prettier-engine",
+            },
+          ],
+        }),
+      },
+    );
+
+    expect(proposal.formatting).toBe("project");
+  });
+
   it("preserves omitted and explicitly blank existing agent guidance", () => {
     const omitted = createInitProposal(inspection(["javascript"]), {
       repositoryRoot: "/repo",
