@@ -4,9 +4,9 @@ import { lstat, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { getCurrentTest } from "@vitest/runner";
 import { execa } from "execa";
 import { inject } from "vitest";
+import { currentTestSignal } from "./current-test-signal.js";
 
 const CACHE_KEY_PREFIX = "make-fetch-happen:request-cache:";
 
@@ -352,8 +352,7 @@ export async function installPackedFixture(
   await Promise.all([writeFile(userConfig, ""), writeFile(globalConfig, "")]);
   const registry = await startLocalRegistry(packageRoot);
   try {
-    const cancelSignal =
-      options.cancelSignal ?? getCurrentTest()?.context.signal;
+    const cancelSignal = options.cancelSignal ?? currentTestSignal();
     const installed = await execa(
       "npm",
       ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarballPath],
