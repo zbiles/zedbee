@@ -646,6 +646,39 @@ describe("executeInitCommand", () => {
     expect(config).toContain('"trailingComma": "es5"');
   });
 
+  it("preserves formatting timing when copying detected settings", async () => {
+    const repository = await createGitRepository("zedbee-init-copy-timing-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"checks":{"formatting":{"severity":"warn","when":"always"}}}',
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"when": "always"');
+  });
+
   it("refuses a non-interactive copy with unresolved limitations", async () => {
     const repository = await createGitRepository("zedbee-init-copy-limits-");
     await repository.write("package.json", '{"name":"fixture"}');
@@ -831,7 +864,7 @@ describe("executeInitCommand", () => {
 
     expect(second).toBe(first);
     expect(second.match(/packages\/web\*\*/gu)?.length ?? 0).toBe(0);
-    expect(second).toContain('"*.md"');
+    expect(second).toContain('"**/*.md"');
   });
 
   it("reports a detected setup on default non-interactive init without importing it", async () => {
@@ -927,7 +960,7 @@ describe("executeInitCommand", () => {
     expect(config).toContain('"src/**"');
     expect(config.match(/"src\/\*\*"/gu)).toHaveLength(1);
     expect(config).toContain('"generated": "prettier-copy"');
-    expect(config).toContain('"*.md"');
+    expect(config).toContain('"**/*.md"');
   });
 
   it("restores Zedbee defaults by removing copied settings and generated overrides only", async () => {
@@ -1220,7 +1253,7 @@ describe("executeInitCommand", () => {
       join(repository.root, ".zedbeerc.jsonc"),
       "utf8",
     );
-    expect(config).toContain('"*.md"');
+    expect(config).toContain('"**/*.md"');
     expect(config).not.toContain("!*.draft.md");
   });
 });

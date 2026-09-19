@@ -423,6 +423,10 @@ function applyFormattingChoice(
           existingObject?.severity === "error"
         ? existingObject.severity
         : "error";
+  const existingWhen =
+    existingObject?.when === "always" || existingObject?.when === "relevant"
+      ? existingObject.when
+      : undefined;
   // Ownership of the settings block is proven only by the authorship marker
   // a previous setup wrote; hand-written settings are never destroyed.
   const settingsOwnedBySetup =
@@ -435,7 +439,11 @@ function applyFormattingChoice(
     // Zedbee copied are removed, hand-written settings survive untouched.
     const value =
       settingsOwnedBySetup || existingObject === undefined
-        ? { severity: existingSeverity, engine: "managed" }
+        ? {
+            severity: existingSeverity,
+            engine: "managed",
+            ...(existingWhen === undefined ? {} : { when: existingWhen }),
+          }
         : { ...existingObject, engine: "managed" };
     next = applyEdits(
       next,
@@ -445,7 +453,9 @@ function applyFormattingChoice(
   } else if (formatting.choice === "off") {
     const value =
       settingsOwnedBySetup || existingObject === undefined
-        ? "off"
+        ? existingWhen === undefined
+          ? "off"
+          : { severity: "off", when: existingWhen }
         : { ...existingObject, severity: "off" };
     next = applyEdits(
       next,
@@ -463,6 +473,7 @@ function applyFormattingChoice(
         {
           engine: formatting.rootProject ? "project" : "managed",
           severity: existingSeverity,
+          ...(existingWhen === undefined ? {} : { when: existingWhen }),
         },
         options,
       ),
@@ -476,6 +487,7 @@ function applyFormattingChoice(
         ["checks", "formatting"],
         {
           severity: existingSeverity,
+          ...(existingWhen === undefined ? {} : { when: existingWhen }),
           settings: formatting.imported?.settings ?? {},
           generated: "prettier-copy",
         },
