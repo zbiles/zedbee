@@ -19,7 +19,7 @@ import {
   discoverProjectPrettier,
   type ProjectPrettierDiscovery,
 } from "./prettier-discovery.js";
-import { editorConfigSettings } from "./prettier-editorconfig.js";
+import { editorConfigImport } from "./prettier-editorconfig.js";
 
 const CONFIG_MAX_BYTES = 1024 * 1024;
 const SUPPORTED_OPTION_KEYS = new Set(Object.keys(DEFAULT_FORMATTING_SETTINGS));
@@ -40,7 +40,11 @@ const CONFIG_PRECEDENCE = [
   ".prettierrc.mjs",
   "prettier.config.mjs",
   ".prettierrc.ts",
+  ".prettierrc.cts",
+  ".prettierrc.mts",
   "prettier.config.ts",
+  "prettier.config.cts",
+  "prettier.config.mts",
   ".prettierrc.toml",
 ] as const;
 
@@ -97,6 +101,13 @@ function patternList(value: unknown): readonly string[] | undefined {
     return Object.freeze([...value]);
   }
   return undefined;
+}
+
+function scopedPattern(prefix: string, pattern: string): string {
+  const relative = pattern.includes("/") ? pattern : `**/${pattern}`;
+  return prefix === "" || prefix === "."
+    ? relative
+    : posix.join(prefix, relative);
 }
 
 function supportedSettings(
@@ -162,9 +173,11 @@ function parseOverrides(
     overrides.push(
       Object.freeze({
         files: Object.freeze(
-          files.map((file) => (prefix === "" ? file : posix.join(prefix, file))),
+          files.map((file) => scopedPattern(prefix, file)),
         ),
-        excludeFiles,
+        excludeFiles: Object.freeze(
+          excludeFiles.map((file) => scopedPattern(prefix, file)),
+        ),
         settings,
       }),
     );
@@ -213,52 +226,55 @@ function classifyConfigValue(
   return { settings, overrides, limitations };
 }
 
-async function selectedConfigPath(
+async function selectedConfigPaths(
   registry: SnapshotRegistry,
-  projectRoot: string,
-  configPaths: readonly string[],
-): Promise<string | undefined> {
-  const available = new Set(configPaths);
-  for (const name of CONFIG_PRECEDENCE) {
-    if (name === "package.json") {
-      const manifestPath =
-        projectRoot === "." ? "package.json" : posix.join(projectRoot, name);
-      if (registry.resolve(manifestPath)?.targetKind === "file") {
-        const manifest = await readJsonData(registry, manifestPath);
-        if (isRecord(manifest) && manifest.prettier !== undefined) {
-          return manifestPath;
+  discovery: ProjectPrettierDiscovery,
+): Promise<readonly string[]> {
+  const available = new Set(discovery.configPaths);
+  const directories = new Set(
+    discovery.configPaths.map((path) => {
+      const directory = posix.dirname(path);
+      return directory === "" ? "." : directory;
+    }),
+  );
+  directories.add(discovery.projectRoot);
+  const selected: string[] = [];
+  for (const directory of [...directories].sort((left, right) => {
+    const depth = left.split("/").length - right.split("/").length;
+    return depth === 0 ? left.localeCompare(right) : depth;
+  })) {
+    for (const name of CONFIG_PRECEDENCE) {
+      const path = directory === "." ? name : posix.join(directory, name);
+      if (name === "package.json") {
+        if (directory !== discovery.projectRoot) continue;
+        if (registry.resolve(path)?.targetKind === "file") {
+          const manifest = await readJsonData(registry, path);
+          if (isRecord(manifest) && manifest.prettier !== undefined) {
+            selected.push(path);
+            break;
+          }
         }
+      } else if (available.has(path)) {
+        selected.push(path);
+        break;
       }
-      continue;
     }
-    const path = projectRoot === "." ? name : posix.join(projectRoot, name);
-    if (available.has(path)) return path;
   }
-  return undefined;
+  return Object.freeze(selected);
 }
 
 async function loadProjectConfig(
   registry: SnapshotRegistry,
-  discovery: ProjectPrettierDiscovery,
-): Promise<ParsedConfigData & { readonly configPath?: string }> {
-  const configPath = await selectedConfigPath(
-    registry,
-    discovery.projectRoot,
-    discovery.configPaths,
-  );
-  if (configPath === undefined) {
-    return { settings: {}, overrides: [], limitations: [] };
-  }
+  configPath: string,
+): Promise<ParsedConfigData & { readonly configPath: string; readonly configRoot: string }> {
+  const configRoot = posix.dirname(configPath) === "" ? "." : posix.dirname(configPath);
   const limitations: string[] = [];
-  const executable =
-    discovery.executableConfig &&
-    (configPath === "package.json" ||
-      EXECUTABLE_EXTENSIONS.has(posix.extname(configPath)));
+  const executable = EXECUTABLE_EXTENSIONS.has(posix.extname(configPath));
   if (executable) {
     limitations.push(
       "This project uses an executable or shared Prettier configuration; its dynamic values cannot be copied as inert settings.",
     );
-    return { settings: {}, overrides: [], limitations, configPath };
+    return { settings: {}, overrides: [], limitations, configPath, configRoot };
   }
   let value: unknown;
   if (posix.basename(configPath) === "package.json") {
@@ -268,7 +284,7 @@ async function loadProjectConfig(
       limitations.push(
         "The package.json prettier field references a shared configuration that cannot be copied as inert settings.",
       );
-      return { settings: {}, overrides: [], limitations, configPath };
+      return { settings: {}, overrides: [], limitations, configPath, configRoot };
     }
   } else {
     try {
@@ -277,19 +293,35 @@ async function loadProjectConfig(
       limitations.push(
         `The Prettier configuration ${configPath} could not be parsed as data.`,
       );
-      return { settings: {}, overrides: [], limitations, configPath };
+      return { settings: {}, overrides: [], limitations, configPath, configRoot };
     }
   }
-  const prefix = discovery.projectRoot === "." ? "" : discovery.projectRoot;
+  const prefix = configRoot === "." ? "" : configRoot;
   const classified = classifyConfigValue(value, false, limitations, prefix);
   // Prettier configuration files win over applicable .editorconfig values;
   // the data-only copy therefore fills only the keys the configuration omits.
-  const editorConfig = await editorConfigSettings(
+  const editorConfig = await editorConfigImport(
     registry,
-    discovery.projectRoot,
-  ).catch(() => ({}) as Partial<FormattingSettings>);
-  const settings = { ...editorConfig, ...classified.settings };
-  return { ...classified, settings, configPath };
+    configRoot,
+  ).catch(() => ({ settings: {}, overrides: [] }));
+  const settings = { ...editorConfig.settings, ...classified.settings };
+  const editorOverrides = editorConfig.overrides.map((override) => ({
+    ...override,
+    settings: Object.freeze(
+      Object.fromEntries(
+        Object.entries(override.settings).filter(
+          ([key]) => !(key in classified.settings),
+        ),
+      ),
+    ) as Partial<FormattingSettings>,
+  }));
+  return {
+    ...classified,
+    settings,
+    overrides: Object.freeze([...editorOverrides, ...classified.overrides]),
+    configPath,
+    configRoot,
+  };
 }
 
 function ignoreFileLimitations(
@@ -320,54 +352,35 @@ export async function previewPrettierSettingsImport(
   const discoveries = await discoverProjectPrettier(repositoryRoot);
 
   const limitations: string[] = [];
-  // Only a real root configuration supplies global settings. Independent
-  // workspace configurations stay scoped to their project; the root keeps
-  // managed defaults instead of promoting the first workspace globally.
-  const rootDiscovery = discoveries.find(
-    (discovery) => discovery.projectRoot === ".",
-  );
-
   let settings: Partial<FormattingSettings> = {};
-  let overrides: readonly ImportedFormattingOverride[] = [];
-  if (rootDiscovery !== undefined) {
-    const loaded = await loadProjectConfig(registry, rootDiscovery);
-    settings = loaded.settings;
-    overrides = loaded.overrides;
-    limitations.push(...loaded.limitations);
-    if (loaded.configPath !== undefined) {
-      ignoreFileLimitations(registry, rootDiscovery.projectRoot, limitations);
-    }
-  }
-
-  const nestedOverrides: ImportedFormattingOverride[] = [];
+  const overrides: ImportedFormattingOverride[] = [];
   for (const discovery of discoveries) {
-    if (discovery.projectRoot === ".") continue;
-    if (discovery.configPaths.length === 0) continue;
-    const loaded = await loadProjectConfig(registry, discovery);
-    limitations.push(...loaded.limitations);
-    ignoreFileLimitations(registry, discovery.projectRoot, limitations);
-    if (
-      Object.keys(loaded.settings).length === 0 &&
-      loaded.overrides.length === 0
-    ) {
-      continue;
-    }
-    nestedOverrides.push(
-      Object.freeze({
-        files: Object.freeze([`${discovery.projectRoot}/**`]),
-        excludeFiles: Object.freeze([]),
-        settings: Object.freeze({
-          ...DEFAULT_FORMATTING_SETTINGS,
-          ...loaded.settings,
+    for (const configPath of await selectedConfigPaths(registry, discovery)) {
+      const loaded = await loadProjectConfig(registry, configPath);
+      limitations.push(...loaded.limitations);
+      ignoreFileLimitations(registry, loaded.configRoot, limitations);
+      if (discovery.projectRoot === "." && loaded.configRoot === ".") {
+        settings = loaded.settings;
+        overrides.push(...loaded.overrides);
+        continue;
+      }
+      overrides.push(
+        Object.freeze({
+          files: Object.freeze([`${loaded.configRoot}/**`]),
+          excludeFiles: Object.freeze([]),
+          settings: Object.freeze({
+            ...DEFAULT_FORMATTING_SETTINGS,
+            ...loaded.settings,
+          }),
         }),
-      }),
-    );
-    nestedOverrides.push(...loaded.overrides);
+      );
+      overrides.push(...loaded.overrides);
+    }
   }
 
   return {
     settings,
-    overrides: Object.freeze([...overrides, ...nestedOverrides]),
+    overrides: Object.freeze(overrides),
     limitations: Object.freeze([...new Set(limitations)]),
   };
 }

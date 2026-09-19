@@ -64,11 +64,31 @@ describe("previewPrettierSettingsImport", () => {
     });
     expect(preview.overrides).toEqual([
       {
-        files: ["*.md"],
+        files: ["**/*.md"],
         excludeFiles: [],
         settings: { printWidth: 80 },
       },
     ]);
+  });
+
+  it("translates basename override patterns relative to their config directory", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({
+        printWidth: 100,
+        overrides: [{ files: "*.md", options: { printWidth: 80 } }],
+      }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.overrides).toContainEqual({
+      files: ["**/*.md"],
+      excludeFiles: [],
+      settings: { printWidth: 80 },
+    });
   });
 
   it("reports plugins and unsupported options as limitations", async () => {
@@ -146,6 +166,39 @@ describe("previewPrettierSettingsImport", () => {
     });
   });
 
+  it("materializes a nested empty config as a reset", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write(".prettierrc.json", JSON.stringify({ singleQuote: true }));
+    await fixture.write("packages/app/.prettierrc.json", "{}");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(
+      preview.overrides.find((override) =>
+        override.files.includes("packages/app/**"),
+      )?.settings.singleQuote,
+    ).toBe(false);
+  });
+
+  it("copies a nested config directory without a package manifest", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(".prettierrc.json", JSON.stringify({ singleQuote: true }));
+    await fixture.write("src/.prettierrc.json", JSON.stringify({ semi: false }));
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(
+      preview.overrides.find((override) => override.files.includes("src/**")),
+    ).toMatchObject({ settings: { semi: false, singleQuote: false } });
+  });
+
   it("fills omitted settings from applicable root .editorconfig values", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });
@@ -165,6 +218,24 @@ describe("previewPrettierSettingsImport", () => {
       tabWidth: 4,
       useTabs: false,
       endOfLine: "lf",
+    });
+  });
+
+  it("copies path-scoped EditorConfig values as managed overrides", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(".prettierrc.json", "{}");
+    await fixture.write(
+      ".editorconfig",
+      "root = true\n\n[*.ts]\nindent_size = 4\n",
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.overrides).toContainEqual({
+      files: ["**/*.ts"],
+      excludeFiles: [],
+      settings: { tabWidth: 4 },
     });
   });
 

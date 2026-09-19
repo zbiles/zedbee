@@ -211,12 +211,27 @@ function manifestPrettierConfig(value: unknown): unknown {
 async function configPathsForProject(
   registry: SnapshotRegistry,
   projectRoot: string,
+  projectRoots: readonly string[],
 ): Promise<readonly string[]> {
-  const paths: string[] = [];
-  for (const name of DATA_CONFIG_FILES) {
-    const path = projectRoot === "." ? name : posix.join(projectRoot, name);
-    if (registry.resolve(path)?.targetKind === "file") paths.push(path);
-  }
+  const prefix = projectRoot === "." ? "" : `${projectRoot}/`;
+  const nestedRoots = projectRoots
+    .filter(
+      (root) =>
+        root !== projectRoot &&
+        (projectRoot === "." || root.startsWith(`${projectRoot}/`)),
+    )
+    .map((root) => `${root}/`);
+  const names = new Set<string>(DATA_CONFIG_FILES);
+  const paths = registry
+    .entries()
+    .filter(
+      (entry) =>
+        entry.targetKind === "file" &&
+        entry.repositoryPath.startsWith(prefix) &&
+        !nestedRoots.some((root) => entry.repositoryPath.startsWith(root)) &&
+        names.has(posix.basename(entry.repositoryPath)),
+    )
+    .map((entry) => entry.repositoryPath);
   return Object.freeze(paths.sort(compareCodeUnits));
 }
 
@@ -231,11 +246,16 @@ async function discoveryForProject(
       readonly specifier: string;
     }[];
   },
+  projectRoots: readonly string[],
 ): Promise<ProjectPrettierDiscovery | undefined> {
   const rawManifest = await readJsonData(registry, manifestPath);
   const prettierField = manifestPrettierConfig(rawManifest);
   const prettierFieldIsString = typeof prettierField === "string";
-  const configPaths = await configPathsForProject(registry, projectRoot);
+  const configPaths = await configPathsForProject(
+    registry,
+    projectRoot,
+    projectRoots,
+  );
   const executableConfig =
     configPaths.some(executableConfigPath) || prettierFieldIsString;
   const declaredRange = await declaredPrettierRangeForProject(
@@ -293,6 +313,7 @@ export async function discoverProjectPrettier(
   }
   const registry = await captureSnapshotRegistry(canonicalRoot);
   const workspaces = await discoverWorkspaces(registry);
+  const projectRoots = workspaces.map((workspace) => workspace.relativeRoot);
   const results: ProjectPrettierDiscovery[] = [];
   for (const workspace of workspaces) {
     const discovery = await discoveryForProject(
@@ -301,6 +322,7 @@ export async function discoverProjectPrettier(
       workspace.relativeRoot,
       workspace.manifestPath,
       workspace.manifest,
+      projectRoots,
     );
     if (discovery !== undefined) results.push(discovery);
   }

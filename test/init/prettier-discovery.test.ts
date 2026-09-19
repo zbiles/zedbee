@@ -240,4 +240,21 @@ describe("discoverProjectPrettier", () => {
     expect(discovered[0]?.executableConfig).toBe(true);
     expect(await markerExists(fixture.root, "MARKER_EXECUTED")).toBe(false);
   });
+
+  it("discovers configuration directories below a package root", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.write(".prettierrc.json", "{}");
+    await fixture.write("src/.prettierrc.json", '{"semi":false}');
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(discovered[0]?.configPaths).toEqual([
+      ".prettierrc.json",
+      "src/.prettierrc.json",
+    ]);
+  });
 });
