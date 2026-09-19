@@ -300,15 +300,13 @@ async function resolveFormattingSetup(
   );
   const preview = await previewPrettierSettingsImport(repositoryRoot);
   const limitations = [...preview.limitations];
-  if (preview.overrides.some((entry) => entry.excludeFiles.length > 0)) {
-    limitations.push(
-      "Prettier excludeFiles cannot be copied exactly; imported overrides keep their files patterns without the exclusions.",
-    );
-  }
   return Object.freeze({
     imported: Object.freeze({
       settings: preview.settings,
       overrides: preview.overrides,
+      ...(preview.pathExclusions === undefined
+        ? {}
+        : { pathExclusions: preview.pathExclusions }),
       limitations: Object.freeze(limitations),
     }),
     detection,
@@ -426,11 +424,6 @@ async function evaluateExecutableProjectConfig(
         ? await session.readConfigForImport(target.configPath)
         : await session.readSharedConfigForImport(target.sharedConfig);
     const limitations = [...imported.limitations];
-    if (imported.overrides.some((entry) => entry.excludeFiles !== undefined)) {
-      limitations.push(
-        "Prettier excludeFiles cannot be copied exactly; imported overrides keep their files patterns without the exclusions.",
-      );
-    }
     const boundPath =
       "configPath" in target
         ? target.configPath
@@ -505,6 +498,9 @@ function mergeEvaluatedExecutableImport(
       evaluatedConfig: evaluated.evaluatedConfig,
       imported: Object.freeze({
         settings: evaluated.imported.settings,
+        ...(base.pathExclusions === undefined
+          ? {}
+          : { pathExclusions: base.pathExclusions }),
         overrides: Object.freeze([
           ...evaluated.imported.overrides,
           ...base.overrides,
@@ -556,6 +552,9 @@ function mergeEvaluatedExecutableImport(
     evaluatedConfig: evaluated.evaluatedConfig,
     imported: Object.freeze({
       settings: base.settings,
+      ...(base.pathExclusions === undefined
+        ? {}
+        : { pathExclusions: base.pathExclusions }),
       overrides: Object.freeze(overrides),
       limitations,
     }),

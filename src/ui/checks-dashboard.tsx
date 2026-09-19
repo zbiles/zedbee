@@ -112,7 +112,11 @@ function CheckEntry({
           wrap="wrap"
           {...colorProp(color, ZEDBEE_THEME.secondary)}
         >
-          {configurationOverrideLine(override.files, override.values)}
+          {configurationOverrideLine(
+            override.files,
+            override.values,
+            override.excludeFiles,
+          )}
         </Text>
       ))}
       {check.automaticFix === undefined ? null : (

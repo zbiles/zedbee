@@ -19,6 +19,7 @@ export interface CheckConfigurationDescription {
   readonly values: Readonly<Record<string, EffectiveSettingDescription>>;
   readonly overrides: readonly Readonly<{
     readonly files: readonly string[];
+    readonly excludeFiles?: readonly string[];
     readonly values: Readonly<Record<string, unknown>>;
   }>[];
 }

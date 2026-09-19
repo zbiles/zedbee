@@ -1,3 +1,4 @@
+import type { PathExclusion } from "../config/schema.js";
 import { posix } from "node:path";
 import JSON5 from "json5";
 import { parse as parseToml } from "smol-toml";
@@ -89,6 +90,7 @@ const EXECUTABLE_EXTENSIONS = new Set([
 ]);
 
 export interface PrettierSettingsImportPreview {
+  readonly pathExclusions?: readonly PathExclusion[];
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
   readonly limitations: readonly string[];
@@ -224,13 +226,18 @@ function parseOverrides(
       );
       continue;
     }
-    const excludeFiles = patternList(entry.excludeFiles) ?? [];
-    if (excludeFiles.length > 0) {
+    const parsedExclusions =
+      entry.excludeFiles === undefined ? [] : patternList(entry.excludeFiles);
+    if (
+      parsedExclusions === undefined ||
+      parsedExclusions.some((pattern) => pattern.trim().length === 0)
+    ) {
       limitations.push(
-        "A Prettier override with excludeFiles cannot be represented exactly and was not copied.",
+        "A Prettier override has invalid excludeFiles and was not copied.",
       );
       continue;
     }
+    const excludeFiles = parsedExclusions;
     const settings = supportedSettings(
       entry.options,
       limitations,
@@ -430,19 +437,39 @@ async function loadProjectConfig(
   };
 }
 
-function ignoreFileLimitations(
+async function importIgnoreFiles(
   registry: SnapshotRegistry,
   projectRoot: string,
   limitations: string[],
-): void {
+): Promise<readonly PathExclusion[]> {
+  const exclusions: PathExclusion[] = [];
   for (const name of [".prettierignore", ".gitignore"]) {
     const path = projectRoot === "." ? name : posix.join(projectRoot, name);
-    if (registry.resolve(path)?.targetKind === "file") {
+    if (registry.resolve(path)?.targetKind !== "file") continue;
+    try {
+      const contents = await readContainedFile(registry, path, {
+        maxBytes: 256 * 1024,
+      });
+      const files = contents.split(/\r\n|\n|\r/u);
+      if (files.length > 10000 || contents.includes("\0"))
+        throw new Error("Unsupported ignore file");
+      exclusions.push(
+        Object.freeze({
+          syntax: "gitignore",
+          basePath: projectRoot,
+          files: Object.freeze(files),
+          checks: Object.freeze(["formatting"] as const),
+          reason: `Copied from ${path}`.slice(0, 200),
+          generated: "prettier-copy",
+        }),
+      );
+    } catch {
       limitations.push(
-        `${path} is not copied; use project mode or existing formatting-only exclusions for ignored paths.`,
+        `${path} could not be copied within the ignore-file limits.`,
       );
     }
   }
+  return exclusions;
 }
 
 export async function previewPrettierSettingsImport(
@@ -476,6 +503,7 @@ export async function previewPrettierSettingsImport(
     readonly configPath: string;
     readonly specifier: string;
   }[] = [];
+  const pathExclusions: PathExclusion[] = [];
   for (const discovery of discoveries) {
     for (const path of await selectedConfigPaths(
       registry,
@@ -500,8 +528,22 @@ export async function previewPrettierSettingsImport(
           });
       }
     }
-    ignoreFileLimitations(registry, discovery.projectRoot, limitations);
   }
+  const ignoreRoots = new Set([
+    ".",
+    ...discoveries.map((entry) => entry.projectRoot),
+  ]);
+  for (const entry of registry.entries()) {
+    if (
+      posix.basename(entry.repositoryPath) === "package.json" &&
+      entry.targetKind === "file"
+    )
+      ignoreRoots.add(posix.dirname(entry.repositoryPath));
+  }
+  for (const root of [...ignoreRoots].sort())
+    pathExclusions.push(
+      ...(await importIgnoreFiles(registry, root, limitations)),
+    );
   const scopes = new Set(configs.keys());
   for (const entry of registry.entries()) {
     if (
@@ -597,5 +639,8 @@ export async function previewPrettierSettingsImport(
             left.configPath.localeCompare(right.configPath),
         ),
     ),
+    ...(pathExclusions.length === 0
+      ? {}
+      : { pathExclusions: Object.freeze(pathExclusions) }),
   };
 }

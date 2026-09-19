@@ -1421,6 +1421,92 @@ async function repositoryWithProjectPrettier() {
 }
 
 describe("project Prettier integration", () => {
+  it("copies ignore rules and override exceptions into managed scans and fixes", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      JSON.stringify({
+        singleQuote: false,
+        overrides: [
+          {
+            files: "*.ts",
+            excludeFiles: "*default.ts",
+            options: { singleQuote: true },
+          },
+        ],
+      }),
+    );
+    await repository.write(".prettierignore", "skip*.ts\n!skip-keep.ts\n");
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "copy",
+      "--hook",
+      "none",
+      "--checks",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stdout + initialized.stderr).toBe(
+      0,
+    );
+    const config = await repository.read(".zedbeerc.jsonc");
+    expect(config).toContain('"excludeFiles"');
+    expect(config).toContain('"syntax": "gitignore"');
+    await repository.commitAll("copied formatting policy");
+    const sources = {
+      "included.ts": 'export const value = "value";\n',
+      "default.ts": "export const value = 'value';\n",
+      "skip-drop.ts": "not valid TypeScript !!",
+      "skip-keep.ts": 'export const value = "value";\n',
+    };
+    for (const [file, text] of Object.entries(sources))
+      await repository.write(file, text);
+    await repository.git(["add", "--", ...Object.keys(sources)]);
+    const index = (await repository.git(["write-tree"])).stdout;
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(1);
+    const report = JSON.parse(scanned.stdout);
+    const formatting = report.checks.find(
+      (check: { checkId: string }) => check.checkId === "formatting",
+    );
+    expect(formatting.status).toBe("completed");
+    expect(
+      formatting.findings
+        .map((finding: { location: { file: string } }) => finding.location.file)
+        .sort(),
+    ).toEqual(["default.ts", "included.ts", "skip-keep.ts"]);
+    expect(report.appliedPathExclusions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          syntax: "gitignore",
+          checks: ["formatting"],
+        }),
+      ]),
+    );
+    const applied = await runPackagedCli(repository.root, [
+      "fix",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(applied.exitCode, applied.stdout + applied.stderr).toBe(0);
+    expect(await repository.read("included.ts")).toBe(
+      "export const value = 'value';\n",
+    );
+    expect(await repository.read("default.ts")).toBe(
+      'export const value = "value";\n',
+    );
+    expect(await repository.read("skip-keep.ts")).toBe(
+      "export const value = 'value';\n",
+    );
+    expect(await repository.read("skip-drop.ts")).toBe(sources["skip-drop.ts"]);
+    expect((await repository.git(["write-tree"])).stdout).toBe(index);
+  });
+
   it("applies a project formatting fix through the packaged command without changing the index", async () => {
     const repository = await repositoryWithProjectPrettier();
     await repository.write(".prettierrc.json", '{"singleQuote":true}');

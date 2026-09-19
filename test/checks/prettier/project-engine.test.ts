@@ -701,7 +701,7 @@ describe("project Prettier engine", () => {
     expect(joined).toMatch(/"self"/u);
   });
 
-  it("omits an executable override whose exclusions cannot be represented", async () => {
+  it("preserves executable override exclusions for copying", async () => {
     const fixture = await createProjectPrettierFixture();
     onTestFinished(() => fixture.dispose());
     await fixture.write(
@@ -713,10 +713,14 @@ describe("project Prettier engine", () => {
     const session = await fixture.open({ source: "index", trust: true });
     const imported = await session.readConfigForImport("prettier.config.mjs");
 
-    expect(imported.overrides).toEqual([]);
-    expect(imported.limitations.join("\n")).toMatch(
-      /excludeFiles.+not copied/iu,
-    );
+    expect(imported.overrides).toEqual([
+      {
+        files: "*.md",
+        excludeFiles: "generated/*.md",
+        settings: { printWidth: 80 },
+      },
+    ]);
+    expect(imported.limitations).toEqual([]);
   });
 
   it("rejects the ready handshake promptly on abort after spawn", async () => {

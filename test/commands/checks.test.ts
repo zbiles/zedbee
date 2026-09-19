@@ -1,3 +1,4 @@
+import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   executeChecksCommand,
@@ -877,4 +878,12 @@ describe("executeChecksCommand", () => {
     ]);
     expect(JSON.stringify(failed)).not.toContain("/private/tmp/secret");
   });
+});
+
+it("shows override exceptions without implying excluded files are unchecked", () => {
+  expect(
+    configurationOverrideLine(["src/**"], { "settings.tabWidth": 4 }, [
+      "src/generated/**",
+    ]),
+  ).toBe("Override src/** except src/generated/**: settings.tabWidth: 4");
 });

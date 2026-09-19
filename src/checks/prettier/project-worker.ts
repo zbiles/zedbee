@@ -328,9 +328,19 @@ function sanitizeOverrideEntry(
     excludeDescriptor !== undefined && "value" in excludeDescriptor
       ? excludeDescriptor.value
       : undefined;
-  if (excludeFiles !== undefined) {
+  if (
+    (excludeDescriptor !== undefined && !("value" in excludeDescriptor)) ||
+    (excludeFiles !== undefined &&
+      !(
+        typeof excludeFiles === "string" ||
+        (Array.isArray(excludeFiles) &&
+          excludeFiles.every(
+            (item) => typeof item === "string" && item.length > 0,
+          ))
+      ))
+  ) {
     limitations.push(
-      "Prettier excludeFiles cannot be copied exactly, so the affected override was not copied.",
+      "An override has invalid or non-data excludeFiles and was not copied.",
     );
     return undefined;
   }
@@ -350,6 +360,9 @@ function sanitizeOverrideEntry(
   }
   return {
     files: files as string | readonly string[],
+    ...(excludeFiles === undefined
+      ? {}
+      : { excludeFiles: excludeFiles as string | readonly string[] }),
     settings,
   };
 }

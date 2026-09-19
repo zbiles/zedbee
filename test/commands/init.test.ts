@@ -1557,7 +1557,7 @@ describe("executeInitCommand", () => {
     expect(config).not.toContain("printWidth");
   });
 
-  it("reports excludeFiles and omits the affected override", async () => {
+  it("copies override exclusions without limitations", async () => {
     const repository = await createGitRepository("zedbee-init-copy-exclude-");
     await repository.write("package.json", '{"name":"fixture"}');
     await repository.write(
@@ -1567,9 +1567,7 @@ describe("executeInitCommand", () => {
     const io = terminal(true);
     const deps = dependencies(repository.root);
     deps.confirm = async (proposal) => {
-      expect(proposal.formattingImport?.limitations.join("\n")).toMatch(
-        /excludeFiles/u,
-      );
+      expect(proposal.formattingImport?.limitations).toEqual([]);
       return proposal;
     };
 
@@ -1593,8 +1591,93 @@ describe("executeInitCommand", () => {
       join(repository.root, ".zedbeerc.jsonc"),
       "utf8",
     );
-    expect(config).not.toContain('"**/*.md"');
+    expect(config).toContain('"**/*.md"');
+    expect(config).toContain('"excludeFiles"');
+    expect(config).toContain('"**/*.draft.md"');
     expect(config).not.toContain("!*.draft.md");
     expect(config).toContain('"printWidth": 100');
   });
+});
+
+it("refreshes copied exclusions on repeat init and preserves user exclusions", async () => {
+  const repository = await createGitRepository("zedbee-copy-ignore-");
+  await repository.write("package.json", '{"name":"fixture"}');
+  await repository.write(
+    ".prettierrc.json",
+    JSON.stringify({
+      overrides: [
+        {
+          files: "*.ts",
+          excludeFiles: "old.ts",
+          options: { singleQuote: true },
+        },
+      ],
+    }),
+  );
+  await repository.write(".prettierignore", "skip*.ts\n!skip-keep.ts\n");
+  await repository.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      pathExclusions: [
+        { files: ["vendor/**"], checks: ["lint"], reason: "Vendor code" },
+      ],
+    }),
+  );
+  const options = {
+    cwd: repository.root,
+    profile: "recommended" as const,
+    hook: "none" as const,
+    formatting: "copy" as const,
+    yes: true,
+    format: "json" as const,
+    color: false,
+    animations: false,
+  };
+  expect(
+    await executeInitCommand(
+      options,
+      terminal(false),
+      dependencies(repository.root),
+    ),
+  ).toBe(0);
+  await repository.write(
+    ".prettierrc.json",
+    JSON.stringify({
+      overrides: [
+        {
+          files: "*.ts",
+          excludeFiles: "new.ts",
+          options: { singleQuote: true },
+        },
+      ],
+    }),
+  );
+  await repository.write(".prettierignore", "other*.ts\n");
+  expect(
+    await executeInitCommand(
+      options,
+      terminal(false),
+      dependencies(repository.root),
+    ),
+  ).toBe(0);
+  const text = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
+  expect(text).toContain("**/new.ts");
+  expect(text).not.toContain("**/old.ts");
+  expect(text).toContain("other*.ts");
+  expect(text).not.toContain("skip*.ts");
+  expect(text).toContain("Vendor code");
+  expect(
+    await executeInitCommand(
+      { ...options, formatting: "managed" },
+      terminal(false),
+      dependencies(repository.root),
+    ),
+  ).toBe(0);
+  const reset = await readFile(
+    join(repository.root, ".zedbeerc.jsonc"),
+    "utf8",
+  );
+  expect(reset).not.toContain("other*.ts");
+  expect(reset).toContain("Vendor code");
 });

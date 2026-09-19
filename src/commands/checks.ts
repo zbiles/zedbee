@@ -402,6 +402,9 @@ function describeConfiguration(
         if (patch === undefined) return undefined;
         return Object.freeze({
           files: Object.freeze([...override.files]),
+          ...(override.excludeFiles === undefined
+            ? {}
+            : { excludeFiles: Object.freeze([...override.excludeFiles]) }),
           values: orderedRecord(
             patchValueEntries(checkId, patch).map(([key, value]) => [
               key,
@@ -415,6 +418,7 @@ function describeConfiguration(
           override,
         ): override is Readonly<{
           readonly files: readonly string[];
+          readonly excludeFiles?: readonly string[];
           readonly values: Readonly<Record<string, unknown>>;
         }> => override !== undefined,
       ),

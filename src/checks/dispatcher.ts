@@ -228,6 +228,9 @@ function snapshotOverride(
 ): ResolvedPolicyOverride {
   return Object.freeze({
     files: Object.freeze([...override.files]),
+    ...(override.excludeFiles === undefined
+      ? {}
+      : { excludeFiles: Object.freeze([...override.excludeFiles]) }),
     checks: Object.freeze(
       Object.fromEntries(
         Object.entries(override.checks).map(([id, patch]) => [

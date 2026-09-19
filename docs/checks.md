@@ -91,9 +91,9 @@ The formatting check accepts all and only these fourteen Prettier fields. Values
 - `"managed"` uses Zedbee's bundled Prettier with the fourteen managed settings below.
 - `"project"` uses the selected project's installed Prettier (supported range `>=3.0.0 <4.0.0`), its native configuration, and its plugins. `settings` cannot be combined with `engine: "project"`.
 
-During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins, unsupported options, and native ignore files (`.prettierignore`/`.gitignore`) are not copied.
+During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins and unsupported options are not copied. Project-root `.prettierignore` and `.gitignore` rules are copied as formatting-only path exclusions, preserving their order, negations, and directory-relative meaning. Subsequent scans use the saved rules; editing the original ignore file does not refresh the copy.
 
-A native override with `excludeFiles` is omitted from a settings copy in full, with a preview limitation, because Zedbee's ordered override model cannot represent its exclusion semantics exactly. Noninteractive copy refuses unresolved limitations. Choose project mode when exact native overrides are required. EditorConfig-only setups and nested EditorConfig scopes are included; nonfinite values such as `max_line_length=off` are disclosed rather than silently converted.
+Native override `excludeFiles` patterns are copied with the override. These files keep their normal formatting settings; they are not skipped. EditorConfig-only setups and nested EditorConfig scopes are included; nonfinite values such as `max_line_length=off` are disclosed rather than silently converted.
 
 Project-format reports include `formattingCoverage` counts for `checkedFiles`, `ignoredFiles`, and `unsupportedFiles`. Ignored and unsupported files are not counted as checked. An entirely ignored/unsupported run is skipped.
 
@@ -164,6 +164,33 @@ Duplication uses these workspace-wide values:
 ```
 
 ### Ordered file overrides
+
+There are two ways to exclude files:
+
+- Use `excludeFiles` inside an override to leave matching files on their normal settings. This works for every check supported in file overrides.
+- Use `pathExclusions` to skip named checks entirely for matching files. Other checks still run.
+
+```json
+{
+  "schemaVersion": 1,
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "excludeFiles": ["src/generated/**"],
+      "checks": { "formatting": { "settings": { "tabWidth": 4 } } }
+    }
+  ],
+  "pathExclusions": [
+    {
+      "files": ["vendor/**"],
+      "checks": ["formatting"],
+      "reason": "Preserve vendor formatting"
+    }
+  ]
+}
+```
+
+Here, `src/generated/**` still gets checked with the normal formatting settings. `vendor/**` skips formatting. Excluding a file from one override does not stop a later override from matching it.
 
 File overrides are evaluated in array order independently for every repository-relative file. All matching entries contribute a patch; a later matching override takes precedence only for fields it supplies. Settings omitted by that later entry retain the result of the profile, repository check policy, and earlier matches.
 

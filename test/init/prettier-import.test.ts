@@ -1,3 +1,4 @@
+import { configFileSchema } from "../../src/config/schema.js";
 import { cp, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -74,7 +75,7 @@ describe("previewPrettierSettingsImport", () => {
     ]);
   });
 
-  it("omits an override whose exclusions cannot be represented", async () => {
+  it("copies override exclusions without excluding files from formatting", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });
     await fixture.write(
@@ -92,10 +93,14 @@ describe("previewPrettierSettingsImport", () => {
 
     const preview = await previewPrettierSettingsImport(fixture.root);
 
-    expect(preview.overrides).toEqual([]);
-    expect(preview.limitations.join("\n")).toMatch(
-      /override.+excludeFiles.+not copied/iu,
-    );
+    expect(preview.overrides).toEqual([
+      {
+        files: ["**/*.md"],
+        excludeFiles: ["generated/*.md"],
+        settings: { printWidth: 80 },
+      },
+    ]);
+    expect(preview.limitations).toEqual([]);
   });
 
   it("translates basename override patterns relative to their config directory", async () => {
@@ -495,7 +500,7 @@ describe("previewPrettierSettingsImport", () => {
     });
   });
 
-  it("reports ignore-file limitations for nested projects too", async () => {
+  it("copies ignore files for nested projects too", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
       name: "root",
@@ -511,9 +516,13 @@ describe("previewPrettierSettingsImport", () => {
 
     const preview = await previewPrettierSettingsImport(fixture.root);
 
-    expect(preview.limitations.join("\n")).toMatch(
-      /packages\/app\/\.prettierignore/u,
-    );
+    expect(preview.pathExclusions).toEqual([
+      expect.objectContaining({
+        basePath: "packages/app",
+        files: ["dist", ""],
+      }),
+    ]);
+    expect(preview.limitations).toEqual([]);
   });
 
   it("is deterministic across repeat imports", async () => {
@@ -738,4 +747,90 @@ it("does not replay universal indentation after a scoped indentation override", 
     "[*]\nindent_size=2\n[*.ts]\nindent_size=4\n[*]\nmax_line_length=100\n",
   );
   expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(4);
+});
+
+it("copies ignore rules as ordered formatting-only exclusions with their original root", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", {
+    name: "app",
+    workspaces: ["packages/*"],
+  });
+  await fixture.writeJson("packages/web/package.json", { name: "web" });
+  await fixture.write(".prettierignore", "# generated\n*.ts\n!keep.ts\n");
+  await fixture.write("packages/web/.prettierignore", "/build/\n");
+  const preview = await previewPrettierSettingsImport(fixture.root);
+  expect(preview.pathExclusions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        syntax: "gitignore",
+        basePath: ".",
+        files: ["# generated", "*.ts", "!keep.ts", ""],
+        checks: ["formatting"],
+      }),
+      expect.objectContaining({
+        syntax: "gitignore",
+        basePath: "packages/web",
+        files: ["/build/", ""],
+        checks: ["formatting"],
+      }),
+    ]),
+  );
+  expect(preview.limitations).toEqual([]);
+});
+
+it("matches native Prettier ignore decisions after copying, including negation and escaping", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "app" });
+  const patterns =
+    "# comment\n*.ts\n!keep.ts\n/root.js\nbuild/\n!build/keep.js\nUPPER.js\n\\#literal.js\n\\!literal.js\nspace\\ .js\n";
+  await fixture.write(".prettierignore", patterns);
+  await fixture.write(".gitignore", "/keep.ts\n");
+  const preview = await previewPrettierSettingsImport(fixture.root);
+  const config = resolveConfig(
+    configFileSchema.parse({
+      schemaVersion: 1,
+      pathExclusions: preview.pathExclusions,
+    }),
+  );
+  const resolve = createFilePolicyResolver(config, {
+    files: new Map(),
+    isEmpty: true,
+    containsAddedLine: () => false,
+  });
+  for (const file of [
+    "drop.ts",
+    "keep.ts",
+    "nested/keep.ts",
+    "root.js",
+    "nested/root.js",
+    "build/keep.js",
+    "upper.js",
+    "#literal.js",
+    "!literal.js",
+    "space .js",
+  ]) {
+    const native = await prettier.getFileInfo(join(fixture.root, file), {
+      ignorePath: [
+        join(fixture.root, ".prettierignore"),
+        join(fixture.root, ".gitignore"),
+      ],
+      resolveConfig: false,
+    });
+    expect(resolve("formatting", file, "target").severity === "off", file).toBe(
+      native.ignored,
+    );
+  }
+});
+
+it("does not broaden an override with malformed exclusions", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "app" });
+  await fixture.writeJson(".prettierrc.json", {
+    overrides: [
+      { files: "*.ts", excludeFiles: 42, options: { singleQuote: true } },
+    ],
+  });
+  const preview = await previewPrettierSettingsImport(fixture.root);
+  expect(preview.overrides).toEqual([]);
+  expect(preview.limitations.join("\n")).toMatch(/excludeFiles/u);
 });
