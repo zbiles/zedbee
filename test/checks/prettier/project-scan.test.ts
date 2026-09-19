@@ -12,6 +12,7 @@ import { inspectRepository } from "../../../src/inspection/inspect-repository.js
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ResolvedConfig } from "../../../src/config/schema.js";
 import { prettierAdapter } from "../../../src/checks/prettier/adapter.js";
+import { PROJECT_FORMAT_SOURCE_MAX_BYTES } from "../../../src/checks/prettier/project-protocol.js";
 import { persistProjectPrettierTrust } from "../../../src/checks/prettier/project-trust.js";
 import { createGitRepository } from "../../helpers/git-repository.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
@@ -250,6 +251,45 @@ describe("project Prettier scan integration", () => {
     expect(result.status).toBe("skipped");
     expect(result.skipReason).toMatch(/ignored or unsupported/u);
     expect(result.findings).toEqual([]);
+  });
+
+  it("classifies an unsupported large file before loading its contents", async () => {
+    const repository = await scanFixture();
+    await writeFile(
+      join(repository.root, "asset.bin"),
+      "x".repeat(PROJECT_FORMAT_SOURCE_MAX_BYTES + 1),
+    );
+    await repository.git(["add", "--", "asset.bin"]);
+
+    const result = await runScan(repository, {
+      config: projectConfig(),
+      invocationTrust: true,
+    });
+
+    expect(result.status).toBe("skipped");
+    expect(result.skipReason).toMatch(/ignored or unsupported/u);
+  });
+
+  it("reports a supported file that exceeds the project source limit", async () => {
+    const repository = await scanFixture();
+    await writeFile(
+      join(repository.root, "large.ts"),
+      `// ${"x".repeat(PROJECT_FORMAT_SOURCE_MAX_BYTES)}`,
+    );
+    await repository.git(["add", "--", "large.ts"]);
+
+    const result = await runScan(repository, {
+      config: projectConfig(),
+      invocationTrust: true,
+    });
+
+    expect(result).toMatchObject({
+      status: "incomplete",
+      error: {
+        code: "PROJECT_PRETTIER_OUTPUT_LIMIT",
+        path: "large.ts",
+      },
+    });
   });
 
   it("routes each workspace through its own project formatter", async () => {

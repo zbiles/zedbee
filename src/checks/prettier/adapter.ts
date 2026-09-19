@@ -39,8 +39,11 @@ import {
 import type { ProjectFormatterSession } from "./project-engine.js";
 import type { FormattingProvenance } from "./project-types.js";
 import { DATA_CONFIG_FILE_NAMES } from "../../init/prettier-discovery.js";
-
-const MAX_INVENTORY_FILES = 20_000;
+import {
+  collectProjectFormattingInventory,
+  PROJECT_FORMATTING_INVENTORY_MAX_FILES,
+} from "./project-inventory.js";
+import { PROJECT_FORMAT_SOURCE_MAX_BYTES } from "./project-protocol.js";
 
 function relevantFiles(context: CheckRunContext): string[] {
   return [...context.changeSet.files.values()]
@@ -69,35 +72,6 @@ async function allSupportedFiles(
         files.push(repositoryPath);
       }
     }
-  }
-  return files;
-}
-
-/**
- * Bounded regular-file inventory independent of the managed parser allowlist.
- * Project mode must let the selected formatter and plugins decide support,
- * so the inventory only excludes generated lockfiles, symlinks, and files
- * that cannot be read as bounded UTF-8 text.
- */
-async function allInventoryFiles(
-  root: string,
-  directory = root,
-): Promise<string[]> {
-  const files: string[] = [];
-  if (files.length >= MAX_INVENTORY_FILES) return files;
-  const entries = await readdir(directory, { withFileTypes: true });
-  for (const entry of entries.sort((left, right) =>
-    compareCodeUnits(left.name, right.name),
-  )) {
-    if (entry.name === "node_modules") continue;
-    const fullPath = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...(await allInventoryFiles(root, fullPath)));
-    } else if (entry.isFile()) {
-      const repositoryPath = relative(root, fullPath).split(sep).join("/");
-      if (!isGeneratedLockfile(repositoryPath)) files.push(repositoryPath);
-    }
-    if (files.length >= MAX_INVENTORY_FILES) return files;
   }
   return files;
 }
@@ -151,6 +125,7 @@ function skipped(reason: string): CheckResult {
 async function sourceForFile(
   context: CheckRunContext,
   file: string,
+  maxBytes?: number,
 ): Promise<string | undefined> {
   const targetPath = join(context.snapshots.targetDir, file);
   const captured = capturedSourceInput(context.snapshots.targetDir, file);
@@ -159,14 +134,27 @@ async function sourceForFile(
       throw new Error("Missing captured formatting source.");
     }
     if (captured.entry.kind !== "file") return undefined;
+    if (maxBytes !== undefined && captured.byteLength > maxBytes) {
+      throw new ProjectFormattingSourceLimitError(file);
+    }
     if (captured.text === undefined) {
       throw new Error("Unreadable captured formatting source.");
     }
     return captured.text;
   }
-  const metadata = await lstat(targetPath);
+  const metadata = await lstat(targetPath, { bigint: true });
   if (!metadata.isFile()) return undefined;
+  if (maxBytes !== undefined && metadata.size > BigInt(maxBytes)) {
+    throw new ProjectFormattingSourceLimitError(file);
+  }
   return readFile(targetPath, "utf8");
+}
+
+class ProjectFormattingSourceLimitError extends Error {
+  constructor(readonly file: string) {
+    super("Project formatting source exceeds its size limit.");
+    this.name = "ProjectFormattingSourceLimitError";
+  }
 }
 
 async function attribute(
@@ -272,7 +260,16 @@ async function runProjectFiles(
         if (context.signal.aborted) throw new Error("Formatting check aborted");
         const policy = context.policyForFile("formatting", file, "target");
         if (policy.severity === "off") continue;
-        const source = await sourceForFile(context, file);
+        const support = await session.classify(file);
+        if (support.kind === "ignored") {
+          ignored.push({ file, reason: support.reason });
+          continue;
+        }
+        const source = await sourceForFile(
+          context,
+          file,
+          PROJECT_FORMAT_SOURCE_MAX_BYTES,
+        );
         if (source === undefined) continue;
         const result = await session.format(file, source);
         if (result.kind === "ignored") {
@@ -299,6 +296,17 @@ async function runProjectFiles(
             : { path: error.failure.file }),
           remediation:
             "Fix the project Prettier configuration or plugin, then retry.",
+        });
+      }
+      if (error instanceof ProjectFormattingSourceLimitError) {
+        return incompleteResult({
+          checkId: "formatting",
+          durationMs: 0,
+          code: "PROJECT_PRETTIER_OUTPUT_LIMIT",
+          message: `${error.file} is too large for project formatting.`,
+          path: error.file,
+          remediation:
+            "Exclude this file from formatting or reduce it below the project formatting size limit.",
         });
       }
       return incompleteResult({
@@ -428,10 +436,43 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       if (mayUseProject) {
         // The project engine decides support itself; the inventory is a
         // bounded regular-file view independent of the managed allowlist.
-        files = await allInventoryFiles(context.snapshots.targetDir);
-        files = [...new Set([...files, ...capturedSourcePaths(context.snapshots.targetDir)])]
-          .filter((file) => !isGeneratedLockfile(file))
-          .sort(compareCodeUnits);
+        const inventory = await collectProjectFormattingInventory(
+          context.snapshots.targetDir,
+        );
+        const combined = new Set(inventory.files);
+        let inventoryTruncated = inventory.truncated;
+        for (const file of [
+          ...capturedSourcePaths(context.snapshots.targetDir),
+        ].sort(compareCodeUnits)) {
+          const captured = capturedSourceInput(
+            context.snapshots.targetDir,
+            file,
+          );
+          if (
+            combined.has(file) ||
+            isGeneratedLockfile(file) ||
+            captured?.entry?.kind !== "file"
+          ) {
+            continue;
+          }
+          if (combined.size === PROJECT_FORMATTING_INVENTORY_MAX_FILES) {
+            inventoryTruncated = true;
+            break;
+          }
+          combined.add(file);
+        }
+        if (inventoryTruncated) {
+          return incompleteResult({
+            checkId: "formatting",
+            durationMs: 0,
+            code: "PROJECT_PRETTIER_INVENTORY_LIMIT",
+            message:
+              "Project formatting found more files than it can safely inventory.",
+            remediation:
+              "Narrow formatting with path overrides or run formatting on a smaller project.",
+          });
+        }
+        files = [...combined].sort(compareCodeUnits);
       } else {
         files = await allSupportedFiles(context.snapshots.targetDir);
         // The selected view augments, never replaces, the complete live inventory.
