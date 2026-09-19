@@ -1,6 +1,9 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { createFilePolicyResolver } from "../../src/config/file-policy.js";
+import { resolveConfig } from "../../src/config/profiles.js";
+import * as prettier from "prettier";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import { previewPrettierSettingsImport } from "../../src/init/prettier-import.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
@@ -149,7 +152,10 @@ describe("previewPrettierSettingsImport", () => {
       workspaces: ["packages/*"],
     });
     await fixture.writeJson("packages/app/package.json", { name: "app" });
-    await fixture.write(".prettierrc.json", JSON.stringify({ singleQuote: true }));
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({ singleQuote: true }),
+    );
     await fixture.write(
       "packages/app/.prettierrc.json",
       JSON.stringify({ semi: false }),
@@ -174,7 +180,10 @@ describe("previewPrettierSettingsImport", () => {
       workspaces: ["packages/*"],
     });
     await fixture.writeJson("packages/app/package.json", { name: "app" });
-    await fixture.write(".prettierrc.json", JSON.stringify({ singleQuote: true }));
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({ singleQuote: true }),
+    );
     await fixture.write("packages/app/.prettierrc.json", "{}");
 
     const preview = await previewPrettierSettingsImport(fixture.root);
@@ -189,8 +198,14 @@ describe("previewPrettierSettingsImport", () => {
   it("copies a nested config directory without a package manifest", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });
-    await fixture.write(".prettierrc.json", JSON.stringify({ singleQuote: true }));
-    await fixture.write("src/.prettierrc.json", JSON.stringify({ semi: false }));
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({ singleQuote: true }),
+    );
+    await fixture.write(
+      "src/.prettierrc.json",
+      JSON.stringify({ semi: false }),
+    );
 
     const preview = await previewPrettierSettingsImport(fixture.root);
 
@@ -246,10 +261,7 @@ describe("previewPrettierSettingsImport", () => {
       ".editorconfig",
       "root = true\n\n[*]\nindent_size = 4\n",
     );
-    await fixture.write(
-      ".prettierrc.json",
-      JSON.stringify({ tabWidth: 2 }),
-    );
+    await fixture.write(".prettierrc.json", JSON.stringify({ tabWidth: 2 }));
 
     const preview = await previewPrettierSettingsImport(fixture.root);
 
@@ -268,10 +280,7 @@ describe("previewPrettierSettingsImport", () => {
       ".editorconfig",
       "root = true\n\n[*]\nindent_size = 4\n",
     );
-    await fixture.write(
-      "packages/app/.editorconfig",
-      "[*]\nindent_size = 2\n",
-    );
+    await fixture.write("packages/app/.editorconfig", "[*]\nindent_size = 2\n");
     await fixture.write(
       "packages/app/.prettierrc.json",
       JSON.stringify({ semi: false }),
@@ -348,4 +357,91 @@ describe("previewPrettierSettingsImport", () => {
 
     expect(second).toEqual(first);
   });
+});
+
+async function copiedSettings(root: string, file: string) {
+  const preview = await previewPrettierSettingsImport(root);
+  expect(preview.limitations).toEqual([]);
+  const config = resolveConfig({
+    schemaVersion: 1,
+    checks: { formatting: { settings: preview.settings } },
+    overrides: preview.overrides.map((o) => ({
+      files: [...o.files],
+      checks: { formatting: { settings: o.settings } },
+    })),
+  });
+  return createFilePolicyResolver(config, {
+    files: new Map(),
+    isEmpty: true,
+    containsAddedLine: () => false,
+  })("formatting", file, "target").settings;
+}
+
+describe("EditorConfig copy fidelity", () => {
+  it.each([
+    {
+      name: "without a Prettier config",
+      config: undefined,
+      editor: ".editorconfig",
+      file: "value.ts",
+    },
+    {
+      name: "below a Prettier config",
+      config: {},
+      editor: "src/.editorconfig",
+      file: "src/value.ts",
+    },
+  ])("copies EditorConfig $name", async ({ config, editor, file }) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    if (config) await f.writeJson(".prettierrc.json", config);
+    await f.write(editor, "root = true\n[*]\nindent_size = 4\n");
+    await f.write(file, "const x=1");
+    expect(
+      (await prettier.resolveConfig(join(f.root, file), { editorconfig: true }))
+        ?.tabWidth,
+    ).toBe(4);
+    expect((await copiedSettings(f.root, file)).tabWidth).toBe(4);
+  });
+  it("preserves later universal sections over earlier scoped sections", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      "root = true\n[*.ts]\nindent_size = 4\n[*]\nindent_size = 2\n",
+    );
+    expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
+  });
+  it("keeps native options above nested EditorConfig values", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", { tabWidth: 6 });
+    await f.write("src/.editorconfig", "[*]\nindent_size = 4\n");
+    expect((await copiedSettings(f.root, "src/value.ts")).tabWidth).toBe(6);
+  });
+  it("uses indent_size for space indentation regardless of property order", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      "[*]\nindent_style = space\nindent_size = 2\ntab_width = 8\n",
+    );
+    expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
+  });
+});
+
+it("does not replay universal indentation after a scoped indentation override", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", { name: "app" });
+  await f.writeJson(".prettierrc.json", {});
+  await f.write(
+    ".editorconfig",
+    "[*]\nindent_size=2\n[*.ts]\nindent_size=4\n[*]\nmax_line_length=100\n",
+  );
+  expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(4);
 });

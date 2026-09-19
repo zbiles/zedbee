@@ -6,73 +6,13 @@ import type { SnapshotRegistry } from "../inspection/snapshot-registry.js";
 
 const EDITORCONFIG_MAX_BYTES = 256 * 1024;
 
-interface EditorConfigSection {
-  readonly pattern: string;
-  readonly settings: Partial<FormattingSettings>;
-}
-
-interface ParsedEditorConfig {
-  readonly root: boolean;
-  readonly sections: readonly EditorConfigSection[];
-}
-
-function applySetting(
-  settings: Partial<FormattingSettings>,
-  key: string,
-  value: string,
-): void {
-  switch (key) {
-    case "indent_style":
-      if (value === "tab") settings.useTabs = true;
-      else if (value === "space") settings.useTabs = false;
-      break;
-    case "indent_size":
-    case "tab_width": {
-      if (value === "tab") {
-        if (key === "indent_size") settings.useTabs = true;
-        break;
-      }
-      const parsed = Number(value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) settings.tabWidth = parsed;
-      break;
-    }
-    case "max_line_length": {
-      const parsed = Number(value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) settings.printWidth = parsed;
-      break;
-    }
-    case "end_of_line":
-      if (value === "lf" || value === "crlf" || value === "cr") {
-        settings.endOfLine = value;
-      }
-      break;
-  }
-}
-
-function parseEditorConfig(contents: string): ParsedEditorConfig {
-  let root = false;
-  let current: { pattern: string; settings: Partial<FormattingSettings> } | undefined;
-  const sections: { pattern: string; settings: Partial<FormattingSettings> }[] = [];
-  for (const rawLine of contents.split(/\r?\n|\r/u)) {
-    const line = rawLine.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    if (line.startsWith("[") && line.endsWith("]")) {
-      current = { pattern: line.slice(1, -1).trim(), settings: {} };
-      sections.push(current);
-      continue;
-    }
-    const separator = line.indexOf("=");
-    if (separator <= 0) continue;
-    const key = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim().toLowerCase();
-    if (current === undefined) {
-      if (key === "root" && value === "true") root = true;
-      continue;
-    }
-    applySetting(current.settings, key, value);
-  }
-  return { root, sections };
-}
+import {
+  parseEditorConfig,
+  editorConfigOptions,
+  type EditorProperties,
+} from "../checks/prettier/editorconfig.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
+type ParsedEditorConfig = ReturnType<typeof parseEditorConfig>;
 
 function parentDirectory(directory: string): string | undefined {
   if (directory === ".") return undefined;
@@ -88,6 +28,7 @@ function scopedPattern(directory: string, pattern: string): string {
 export interface EditorConfigImport {
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
+  readonly limitations: readonly string[];
 }
 
 /** Reads applicable EditorConfig files as data and preserves scoped sections. */
@@ -95,6 +36,7 @@ export async function editorConfigImport(
   registry: SnapshotRegistry,
   projectRoot: string,
 ): Promise<EditorConfigImport> {
+  const limitations: string[] = [];
   const parsed: { directory: string; config: ParsedEditorConfig }[] = [];
   let current: string | undefined = projectRoot === "" ? "." : projectRoot;
   while (current !== undefined) {
@@ -109,7 +51,9 @@ export async function editorConfigImport(
         parsed.push({ directory: current, config });
         if (config.root) break;
       } catch {
-        // An unreadable EditorConfig contributes no copied values.
+        limitations.push(
+          `${path} could not be read; its EditorConfig values were not copied.`,
+        );
       }
     }
     current = parentDirectory(current);
@@ -117,17 +61,75 @@ export async function editorConfigImport(
 
   const settings: Partial<FormattingSettings> = {};
   const overrides: ImportedFormattingOverride[] = [];
+  const universal: EditorProperties = {};
+  let scoped = false;
+  const scope = projectRoot === "." ? "**/*" : `${projectRoot}/**`;
   for (const { directory, config } of [...parsed].reverse()) {
     for (const section of config.sections) {
-      if (Object.keys(section.settings).length === 0) continue;
-      if (section.pattern === "*" || section.pattern === "*.*") {
-        Object.assign(settings, section.settings);
-      } else {
+      const all = section.pattern === "*";
+      const properties = { ...universal, ...section.properties };
+      const converted = editorConfigOptions(properties);
+      const changed = new Set(Object.keys(section.properties));
+      if (
+        !["indent_size", "indent_style", "tab_width"].some((key) =>
+          changed.has(key),
+        )
+      ) {
+        delete converted.tabWidth;
+        delete converted.useTabs;
+      }
+      if (!changed.has("max_line_length")) delete converted.printWidth;
+      if (!changed.has("end_of_line")) delete converted.endOfLine;
+      if (!changed.has("quote_type")) delete converted.singleQuote;
+      if (!Number.isFinite(converted.printWidth ?? 80)) {
+        limitations.push(
+          "EditorConfig max_line_length=off cannot be copied as a finite managed printWidth.",
+        );
+        delete converted.printWidth;
+      }
+      // An unset must clear a previously imported value, not inherit it.
+      const unsetKeys: Record<string, keyof FormattingSettings> = {
+        indent_size: "tabWidth",
+        tab_width: "tabWidth",
+        indent_style: "useTabs",
+        max_line_length: "printWidth",
+        end_of_line: "endOfLine",
+        quote_type: "singleQuote",
+      };
+      for (const [key, value] of Object.entries(section.properties)) {
+        if (value === "unset" && unsetKeys[key]) {
+          const setting = unsetKeys[key]!;
+          Object.assign(converted, {
+            [setting]: DEFAULT_FORMATTING_SETTINGS[setting],
+          });
+        }
+      }
+      if (Object.keys(converted).length === 0) continue;
+      if (all) Object.assign(universal, section.properties);
+      if (all && !scoped) Object.assign(settings, converted);
+      else {
+        scoped = true;
+        const original = scopedPattern(
+          directory,
+          section.pattern.replace(/^\//u, ""),
+        );
+        let pattern = original;
+        if (projectRoot !== "." && !original.startsWith(`${projectRoot}/`)) {
+          // Basename patterns have an exact scope-relative representation.
+          if (!section.pattern.includes("/"))
+            pattern = `${projectRoot}/**/${section.pattern}`;
+          else {
+            limitations.push(
+              `EditorConfig pattern ${section.pattern} from ${directory} cannot be copied into ${projectRoot} exactly.`,
+            );
+            continue;
+          }
+        }
         overrides.push(
           Object.freeze({
-            files: Object.freeze([scopedPattern(directory, section.pattern)]),
+            files: Object.freeze([all ? scope : pattern]),
             excludeFiles: Object.freeze([]),
-            settings: Object.freeze({ ...section.settings }),
+            settings: Object.freeze(converted),
           }),
         );
       }
@@ -136,6 +138,7 @@ export async function editorConfigImport(
   return Object.freeze({
     settings: Object.freeze(settings),
     overrides: Object.freeze(overrides),
+    limitations: Object.freeze(limitations),
   });
 }
 

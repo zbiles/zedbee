@@ -134,7 +134,9 @@ function supportedSettings(
         [key]: candidate[key],
       });
       if (!single.success) {
-        limitations.push(`${context} option "${key}" has an unsupported value.`);
+        limitations.push(
+          `${context} option "${key}" has an unsupported value.`,
+        );
         delete candidate[key];
       }
     }
@@ -150,7 +152,9 @@ function parseOverrides(
 ): readonly ImportedFormattingOverride[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
-    limitations.push("Prettier overrides are not an array and were not copied.");
+    limitations.push(
+      "Prettier overrides are not an array and were not copied.",
+    );
     return [];
   }
   const overrides: ImportedFormattingOverride[] = [];
@@ -161,7 +165,9 @@ function parseOverrides(
     }
     const files = patternList(entry.files);
     if (files === undefined || files.length === 0) {
-      limitations.push("A Prettier override entry has no usable files pattern.");
+      limitations.push(
+        "A Prettier override entry has no usable files pattern.",
+      );
       continue;
     }
     const excludeFiles = patternList(entry.excludeFiles) ?? [];
@@ -172,9 +178,7 @@ function parseOverrides(
     );
     overrides.push(
       Object.freeze({
-        files: Object.freeze(
-          files.map((file) => scopedPattern(prefix, file)),
-        ),
+        files: Object.freeze(files.map((file) => scopedPattern(prefix, file))),
         excludeFiles: Object.freeze(
           excludeFiles.map((file) => scopedPattern(prefix, file)),
         ),
@@ -217,11 +221,7 @@ function classifyConfigValue(
     }
     optionValues[key] = value[key];
   }
-  const settings = supportedSettings(
-    optionValues,
-    limitations,
-    "Prettier",
-  );
+  const settings = supportedSettings(optionValues, limitations, "Prettier");
   const overrides = parseOverrides(value.overrides, limitations, prefix);
   return { settings, overrides, limitations };
 }
@@ -266,8 +266,15 @@ async function selectedConfigPaths(
 async function loadProjectConfig(
   registry: SnapshotRegistry,
   configPath: string,
-): Promise<ParsedConfigData & { readonly configPath: string; readonly configRoot: string }> {
-  const configRoot = posix.dirname(configPath) === "" ? "." : posix.dirname(configPath);
+  editorScope?: string,
+): Promise<
+  ParsedConfigData & {
+    readonly configPath: string;
+    readonly configRoot: string;
+  }
+> {
+  const configRoot =
+    posix.dirname(configPath) === "" ? "." : posix.dirname(configPath);
   const limitations: string[] = [];
   const executable = EXECUTABLE_EXTENSIONS.has(posix.extname(configPath));
   if (executable) {
@@ -284,7 +291,13 @@ async function loadProjectConfig(
       limitations.push(
         "The package.json prettier field references a shared configuration that cannot be copied as inert settings.",
       );
-      return { settings: {}, overrides: [], limitations, configPath, configRoot };
+      return {
+        settings: {},
+        overrides: [],
+        limitations,
+        configPath,
+        configRoot,
+      };
     }
   } else {
     try {
@@ -293,7 +306,13 @@ async function loadProjectConfig(
       limitations.push(
         `The Prettier configuration ${configPath} could not be parsed as data.`,
       );
-      return { settings: {}, overrides: [], limitations, configPath, configRoot };
+      return {
+        settings: {},
+        overrides: [],
+        limitations,
+        configPath,
+        configRoot,
+      };
     }
   }
   const prefix = configRoot === "." ? "" : configRoot;
@@ -302,8 +321,9 @@ async function loadProjectConfig(
   // the data-only copy therefore fills only the keys the configuration omits.
   const editorConfig = await editorConfigImport(
     registry,
-    configRoot,
-  ).catch(() => ({ settings: {}, overrides: [] }));
+    editorScope ?? configRoot,
+  );
+  limitations.push(...editorConfig.limitations);
   const settings = { ...editorConfig.settings, ...classified.settings };
   const editorOverrides = editorConfig.overrides.map((override) => ({
     ...override,
@@ -354,19 +374,45 @@ export async function previewPrettierSettingsImport(
   const limitations: string[] = [];
   let settings: Partial<FormattingSettings> = {};
   const overrides: ImportedFormattingOverride[] = [];
+  const configs = new Map<string, string>();
   for (const discovery of discoveries) {
-    for (const configPath of await selectedConfigPaths(registry, discovery)) {
-      const loaded = await loadProjectConfig(registry, configPath);
-      limitations.push(...loaded.limitations);
-      ignoreFileLimitations(registry, loaded.configRoot, limitations);
-      if (discovery.projectRoot === "." && loaded.configRoot === ".") {
-        settings = loaded.settings;
-        overrides.push(...loaded.overrides);
-        continue;
-      }
+    for (const path of await selectedConfigPaths(registry, discovery))
+      configs.set(posix.dirname(path), path);
+    ignoreFileLimitations(registry, discovery.projectRoot, limitations);
+  }
+  const scopes = new Set(configs.keys());
+  for (const entry of registry.entries()) {
+    if (
+      posix.basename(entry.repositoryPath) === ".editorconfig" &&
+      entry.targetKind === "file"
+    )
+      scopes.add(posix.dirname(entry.repositoryPath));
+  }
+  const ordered = [...scopes].sort(
+    (a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b),
+  );
+  for (const scope of ordered) {
+    let owner = scope;
+    while (!configs.has(owner) && owner !== ".") owner = posix.dirname(owner);
+    const path = configs.get(owner);
+    const editor =
+      path === undefined
+        ? await editorConfigImport(registry, scope)
+        : undefined;
+    const loaded =
+      path === undefined
+        ? {
+            settings: editor!.settings,
+            overrides: editor!.overrides,
+            limitations: editor!.limitations,
+          }
+        : await loadProjectConfig(registry, path, scope);
+    limitations.push(...loaded.limitations);
+    if (scope === ".") settings = loaded.settings;
+    else
       overrides.push(
         Object.freeze({
-          files: Object.freeze([`${loaded.configRoot}/**`]),
+          files: Object.freeze([`${scope}/**`]),
           excludeFiles: Object.freeze([]),
           settings: Object.freeze({
             ...DEFAULT_FORMATTING_SETTINGS,
@@ -374,7 +420,22 @@ export async function previewPrettierSettingsImport(
           }),
         }),
       );
-      overrides.push(...loaded.overrides);
+    for (const override of loaded.overrides) {
+      const files: string[] = [];
+      for (const pattern of override.files) {
+        if (scope === "." || pattern.startsWith(`${scope}/`))
+          files.push(pattern);
+        else if (pattern.startsWith("**/")) files.push(`${scope}/${pattern}`);
+        else {
+          limitations.push(
+            `Prettier pattern ${pattern} cannot be copied into EditorConfig scope ${scope} exactly.`,
+          );
+        }
+      }
+      if (files.length)
+        overrides.push(
+          Object.freeze({ ...override, files: Object.freeze(files) }),
+        );
     }
   }
 
