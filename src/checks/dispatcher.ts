@@ -489,6 +489,9 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
     signal: context.signal,
     policyForFile: context.policyForFile,
     filePolicyConfig: snapshotConfig(context.config),
+    ...(context.projectPrettierTrust === true
+      ? { projectPrettierTrust: true }
+      : {}),
   });
 }
 

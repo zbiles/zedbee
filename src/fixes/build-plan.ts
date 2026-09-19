@@ -89,6 +89,8 @@ export interface BuildFixPlanOptions {
   readonly configPath?: string;
   readonly selectedChecks?: readonly FixableCheckId[];
   readonly signal?: AbortSignal;
+  /** Invocation-only consent for project Prettier execution. */
+  readonly projectPrettierTrust?: boolean;
   readonly dependencies?: BuildFixPlanDependencies;
 }
 
@@ -722,6 +724,9 @@ export async function buildFixPlan(
         ? {}
         : { configPath: options.configPath }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...(options.projectPrettierTrust === true
+        ? { projectPrettierTrust: true }
+        : {}),
       dependencies: sessionDependencies(dependencies, selectedSet),
       resolveEmptyBaseline: false,
       dispatchOptions: () => ({ collectFixes: true }),

@@ -22,7 +22,10 @@ import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
 import {
   persistProjectPrettierTrust,
+  projectPrettierTrustKey,
+  readProjectPrettierTrust,
   restoreProjectPrettierTrust,
+  revokeProjectPrettierTrust,
   type ProjectPrettierTrustSnapshot,
 } from "../checks/prettier/project-trust.js";
 import { initContentHash } from "./recommend.js";
@@ -278,6 +281,7 @@ export async function applyInitProposal(
   const applied: Array<{ path: string; before: string | null; mode: number }> =
     [];
   let trustSnapshot: ProjectPrettierTrustSnapshot | undefined;
+  let revokeSnapshot: ProjectPrettierTrustSnapshot | undefined;
   try {
     for (const [index, item] of validated.entries()) {
       await dependencies.beforeWrite?.(index, item.change);
@@ -302,16 +306,37 @@ export async function applyInitProposal(
       ]);
     }
     if (proposal.projectPrettierTrustRoot !== undefined) {
+      if (proposal.projectPrettierTrustConfirmed !== true) {
+        throw unsafeTarget();
+      }
       trustSnapshot = await persistProjectPrettierTrust(
         root,
         proposal.projectPrettierTrustRoot,
       );
+    }
+    if (proposal.projectPrettierRevokeRoot !== undefined) {
+      // Switching a project to managed/off withdraws its executable-code
+      // grant in the same transaction; a failure restores the previous value.
+      const previous = await readProjectPrettierTrust(
+        root,
+        proposal.projectPrettierRevokeRoot,
+      ).catch(() => undefined);
+      if (previous !== undefined) {
+        revokeSnapshot = {
+          key: projectPrettierTrustKey(root, proposal.projectPrettierRevokeRoot),
+          previous,
+        };
+        await revokeProjectPrettierTrust(root, proposal.projectPrettierRevokeRoot);
+      }
     }
   } catch {
     try {
       await rollback(applied);
       if (trustSnapshot !== undefined) {
         await restoreProjectPrettierTrust(root, trustSnapshot);
+      }
+      if (revokeSnapshot !== undefined) {
+        await restoreProjectPrettierTrust(root, revokeSnapshot);
       }
     } catch {
       throw new Error(

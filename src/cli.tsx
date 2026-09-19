@@ -37,7 +37,10 @@ interface CommanderScanOptions {
   source: boolean;
   color: boolean;
   animations: boolean;
-  timeout?: string | false;
+  timeout?: string;
+  noTimeout: boolean;
+  signal?: AbortSignal;
+  trustProjectPrettier: boolean;
 }
 
 interface CommanderChecksOptions {
@@ -73,6 +76,7 @@ interface CommanderFixOptions {
   yes: boolean;
   color: boolean;
   animations: boolean;
+  trustProjectPrettier: boolean;
 }
 
 export function scanTimeoutOverrides(
@@ -298,6 +302,11 @@ export async function runCli(
     .addOption(
       new Option("--no-timeout", "disable configured Git hard timeouts"),
     )
+    .option(
+      "--trust-project-prettier",
+      "allow this scan to run the project's installed Prettier (invocation-only)",
+      false,
+    )
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderScanOptions) => {
@@ -319,6 +328,9 @@ export async function runCli(
               : {}),
           ...scanTimeoutOverrides(argv, options.timeout),
           ...(options.diagnostics === true ? { diagnostics: true } : {}),
+          ...(options.trustProjectPrettier === true
+            ? { projectPrettierTrust: true }
+            : {}),
           signal: controller.signal,
         },
         {
@@ -352,6 +364,11 @@ export async function runCli(
       "--diagnostics",
       "write safe analyzer and runtime diagnostics to stderr",
     )
+    .option(
+      "--trust-project-prettier",
+      "allow project Prettier execution for this fix invocation only",
+      false,
+    )
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(
@@ -366,6 +383,9 @@ export async function runCli(
             ...(check === undefined ? {} : { check }),
             yes: options.yes,
             ...(options.diagnostics === true ? { diagnostics: true } : {}),
+            ...(options.trustProjectPrettier === true
+              ? { projectPrettierTrust: true }
+              : {}),
             format: options.format,
             color: options.color,
             animations: options.animations,

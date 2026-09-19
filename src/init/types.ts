@@ -11,6 +11,15 @@ export interface InitFormattingImport {
   readonly limitations: readonly string[];
 }
 
+/** Data-only detection summary; never grants or executes anything. */
+export interface InitFormattingDetection {
+  readonly projectRoot: string;
+  readonly version?: string;
+  readonly status: "available" | "missing" | "unsupported";
+  readonly executableConfig: boolean;
+  readonly configPaths: readonly string[];
+}
+
 export type InitHookChoice =
   | "auto"
   | "tracked"
@@ -71,7 +80,11 @@ export interface InitProposal {
   readonly limitations: readonly string[];
   readonly formatting?: InitFormattingChoice;
   readonly formattingImport?: InitFormattingImport;
+  readonly formattingDetection?: readonly InitFormattingDetection[];
   readonly projectPrettierTrustRoot?: string;
+  /** Set only when the executable-code disclosure was separately confirmed. */
+  readonly projectPrettierTrustConfirmed?: boolean;
+  readonly projectPrettierRevokeRoot?: string;
   readonly files: readonly InitFileChange[];
 }
 
@@ -89,7 +102,10 @@ export interface CreateInitProposalOptions {
   readonly hookActivation?: InitHookActivation;
   readonly formatting?: InitFormattingChoice;
   readonly formattingImport?: InitFormattingImport;
+  readonly formattingDetection?: readonly InitFormattingDetection[];
   readonly projectPrettierTrustRoot?: string;
+  readonly projectPrettierTrustConfirmed?: boolean;
+  readonly projectPrettierRevokeRoot?: string;
 }
 
 export interface ApplyResult {
