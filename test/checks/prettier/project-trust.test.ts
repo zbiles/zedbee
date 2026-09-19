@@ -132,3 +132,17 @@ describe("project Prettier trust", () => {
     expect(projectPrettierPermitAllows(forged, checkoutRoot, ".")).toBe(false);
   });
 });
+
+it("does not share a local grant with a sibling worktree", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"fixture"}');
+  await repo.commitAll("fixture");
+  const sibling = join(repo.root, "sibling");
+  const added = await repo.git(["worktree", "add", "--detach", sibling, "HEAD"]);
+  expect(added.exitCode, added.stderr).toBe(0);
+  await persistProjectPrettierTrust(repo.root, ".");
+  await expect(requireProjectPrettierTrust(sibling, ".", false)).rejects.toMatchObject({code:"PROJECT_PRETTIER_TRUST_REQUIRED"});
+  await persistProjectPrettierTrust(sibling, ".");
+  await revokeProjectPrettierTrust(repo.root, ".");
+  await expect(requireProjectPrettierTrust(sibling, ".", false)).resolves.toBeDefined();
+});
