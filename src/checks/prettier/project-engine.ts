@@ -29,7 +29,7 @@ import {
   ProjectWorkspaceLayoutError,
   type ProjectWorkspace,
 } from "./project-workspace.js";
-import { stopProcessGroup } from "../runner/process-group.js";
+import { createProjectProcessOwner } from "./project-process.js";
 
 const READY_TIMEOUT_MS = 10_000;
 const CLOSE_GRACE_MS = 2_000;
@@ -409,22 +409,6 @@ function pendingFailure(
   };
 }
 
-/**
- * Best-effort process-tree termination for cancellation and failure paths.
- * The group may already be gone (leader exit can surface EPERM/ESRCH); the
- * caller's rejection must never be replaced by a cleanup error, and the
- * owned workspace is always disposed afterwards.
- */
-async function stopProcessGroupBestEffort(
-  pid: number | undefined,
-): Promise<void> {
-  // A cooperative worker can exit before a process it spawned. The process
-  // group retains the worker PID as its identity, so probe and retire the
-  // group even after the leader has exited.
-  if (pid === undefined) return;
-  await stopProcessGroup(pid).catch(() => undefined);
-}
-
 async function openSession(
   input: ProjectFormatterInput,
 ): Promise<ProjectFormatterSession> {
@@ -472,15 +456,71 @@ async function openSession(
       import.meta.url,
     ),
   );
-  const child: ChildProcess = fork(workerEntry, [], {
-    cwd: workspace.workerCwd,
-    env: minimalEnvironment(workspace.root),
-    execArgv: [...sourceExecArgv()],
-    stdio: ["ignore", "ignore", "ignore", "ipc"],
-    detached: process.platform !== "win32",
-    serialization: "advanced",
+  const owner = await createProjectProcessOwner().catch(async () => {
+    await workspace.dispose();
+    throw new ProjectPrettierFailureError(
+      pendingFailure(
+        input.projectRoot,
+        "The project formatter process owner could not be created.",
+      ),
+    );
   });
+  const bootstrap = fileURLToPath(
+    new URL(
+      `../runner/bootstrap.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
+      import.meta.url,
+    ),
+  );
+  let child: ChildProcess;
+  try {
+    child = fork(bootstrap, [], {
+      cwd: workspace.workerCwd,
+      env: minimalEnvironment(workspace.root),
+      execArgv: [...sourceExecArgv()],
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      detached: process.platform !== "win32",
+      serialization: "advanced",
+    });
+  } catch {
+    await owner.stop();
+    await workspace.dispose();
+    throw new ProjectPrettierFailureError(
+      pendingFailure(
+        input.projectRoot,
+        "The project formatter could not be started.",
+      ),
+    );
+  }
+  // Native ownership is established before sending owned-start. A failed
+  // termination retains both the owner and mirror; it is never proof of exit.
+  let cleanupPromise: Promise<void> | undefined;
+  const cleanup = (): Promise<void> =>
+    (cleanupPromise ??= (async () => {
+      try {
+        await owner.stop();
+      } catch {
+        throw new ProjectPrettierFailureError(
+          pendingFailure(
+            input.projectRoot,
+            "Project formatter cleanup could not be verified; its workspace was retained.",
+          ),
+        );
+      }
+      await workspace.dispose();
+    })());
 
+  try {
+    if (child.pid !== undefined) owner.assign(child.pid);
+  } catch {
+    child.kill(); // Assignment failed while only the inert bootstrap existed.
+    await cleanup();
+    throw new ProjectPrettierFailureError(
+      pendingFailure(
+        input.projectRoot,
+        "The project formatter process could not be owned.",
+      ),
+    );
+  }
   const pending = new Map<number, PendingRequest>();
   let nextId = 1;
   let closed = false;
@@ -500,13 +540,7 @@ async function openSession(
       projectRoot: input.projectRoot,
     };
     failAll(protocolFailure);
-    void (async () => {
-      try {
-        await stopProcessGroupBestEffort(child.pid);
-      } finally {
-        await workspace.dispose().catch(() => undefined);
-      }
-    })();
+    void cleanup().catch(() => undefined);
   };
 
   // Startup cancellation and early worker death must reject the pending
@@ -563,8 +597,9 @@ async function openSession(
     }
   });
 
+  let readyTimer: ReturnType<typeof setTimeout> | undefined;
   const ready = new Promise<void>((resolveReady, rejectReady) => {
-    const timer = setTimeout(() => {
+    const timer = (readyTimer = setTimeout(() => {
       rejectReady(
         new ProjectPrettierFailureError(
           pendingFailure(
@@ -573,9 +608,36 @@ async function openSession(
           ),
         ),
       );
-    }, READY_TIMEOUT_MS);
+    }, READY_TIMEOUT_MS));
     const onMessage = (message: unknown): void => {
-      if ((message as { type?: string } | null)?.type !== "ready") return;
+      const type = (message as { type?: string } | null)?.type;
+      if (type === "ready-for-ownership") {
+        try {
+          if (child.pid === undefined) throw new Error("Missing worker PID");
+          owner.assign(child.pid);
+          if (input.signal.aborted) throw new Error("Cancelled");
+          child.send(
+            {
+              type: "owned-start",
+              workerEntry,
+              request: {
+                type: "init",
+                installation: { entryUrl: input.installation.entryUrl },
+                treeRoot: workspace.treeRoot,
+                projectRoot: input.projectRoot,
+              },
+            },
+            (error) => {
+              if (error) rejectReady(error);
+            },
+          );
+        } catch (error) {
+          child.kill(); // Only the inert bootstrap has started if assignment failed.
+          rejectReady(error);
+        }
+        return;
+      }
+      if (type !== "ready") return;
       clearTimeout(timer);
       child.off("message", onMessage);
       resolveReady();
@@ -604,29 +666,19 @@ async function openSession(
     );
     failAll(failure);
     settleReady?.(failure);
-    void (async () => {
-      try {
-        await stopProcessGroupBestEffort(child.pid);
-      } finally {
-        await workspace.dispose().catch(() => undefined);
-      }
-    })();
+    void cleanup().catch(() => undefined);
   };
   input.signal.addEventListener("abort", abort, { once: true });
+  if (input.signal.aborted) abort();
 
   try {
-    child.send({
-      type: "init",
-      installation: { entryUrl: input.installation.entryUrl },
-      treeRoot: workspace.treeRoot,
-      projectRoot: input.projectRoot,
-    } as Serializable);
     await Promise.race([ready, readyAborted]);
   } catch (error) {
     input.signal.removeEventListener("abort", abort);
-    await stopProcessGroupBestEffort(child.pid);
-    await workspace.dispose();
+    await cleanup();
     throw error;
+  } finally {
+    clearTimeout(readyTimer);
   }
 
   const request = (
@@ -736,8 +788,7 @@ async function openSession(
           setTimeout(() => resolveRace(false), CLOSE_GRACE_MS),
         ),
       ]);
-      await stopProcessGroupBestEffort(child.pid);
-      await workspace.dispose();
+      await cleanup();
     },
   });
 }

@@ -1,3 +1,4 @@
+import * as nativePrettier from "prettier";
 import { cp, lstat, mkdir, readFile, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -461,14 +462,24 @@ describe("project Prettier engine", () => {
 
     const session = await fixture.open({ source: "index", trust: true });
 
-    // [*.ts] via the brace section: tabs with tab_width 6.
+    // indent_size=tab supplies a width; indent_style alone chooses tabs.
     const tsResult = await session.format(
       "value.ts",
       "function indented(){if(true){return 1}}\n",
     );
     expect(tsResult.kind).toBe("formatted");
     if (tsResult.kind === "formatted") {
-      expect(tsResult.text).toContain("\t");
+      const options = await nativePrettier.resolveConfig(
+        join(fixture.root, "value.ts"),
+        { editorconfig: true },
+      );
+      expect(tsResult.text).toBe(
+        await nativePrettier.format(
+          "function indented(){if(true){return 1}}\n",
+          { ...options, filepath: "value.ts" },
+        ),
+      );
+      expect(tsResult.text).toContain("      if");
     }
     // [nested/*.ts] is path-scoped and wins over the shallower sections.
     const nested = await session.format(
@@ -591,4 +602,56 @@ describe("project Prettier engine", () => {
     // project's EditorConfig width of 100 keeps it on one line.
     expect(result.text.trim().split("\n")).toHaveLength(1);
   });
+});
+
+it("keeps native indentation semantics without a Prettier config", async () => {
+  const fixture = await createProjectPrettierFixture();
+  onTestFinished(() => fixture.dispose());
+  await fixture.write(
+    ".editorconfig",
+    "root = true\n[*]\nindent_style = space\nindent_size = 2\ntab_width = 8\n",
+  );
+  await fixture.write("value.ts", "function x(){return 1;}");
+  await fixture.stage(".editorconfig", "value.ts");
+  const session = await fixture.open({ source: "index", trust: true });
+  expect(await session.format("value.ts", "function x(){return 1;}")).toEqual({
+    kind: "formatted",
+    text: "function x() {\n  return 1;\n}\n",
+  });
+});
+
+it("batches files in one worker and retires it before the next session", async () => {
+  const fixture = await createProjectPrettierFixture();
+  onTestFinished(() => fixture.dispose());
+  await fixture.write(
+    "prettier.config.mjs",
+    "export default {semi: process.pid % 2 === 0};",
+  );
+  await fixture.write(
+    "node_modules/pid-plugin/package.json",
+    '{"name":"pid-plugin","type":"module","exports":"./index.js"}',
+  );
+  await fixture.write(
+    "node_modules/pid-plugin/index.js",
+    `export const languages=[{name:"pid",parsers:["pid"],extensions:[".pid"]}];export const parsers={pid:{parse:()=>({}),astFormat:"pid",locStart:()=>0,locEnd:()=>0}};export const printers={pid:{print:()=>String(process.pid)}};`,
+  );
+  await fixture.write(
+    "package.json",
+    '{"name":"fixture","devDependencies":{"prettier":"^3.0.0","pid-plugin":"*"}}',
+  );
+  await fixture.write(
+    "prettier.config.mjs",
+    'export default {plugins:["pid-plugin"]};',
+  );
+  await fixture.write("a.pid", "a");
+  await fixture.write("b.pid", "b");
+  await fixture.stage("package.json", "prettier.config.mjs", "a.pid", "b.pid");
+  const first = await fixture.open({ source: "index", trust: true });
+  const a = await first.format("a.pid", "a");
+  expect(await first.format("b.pid", "b")).toEqual(a);
+  await first.close();
+  if (a.kind !== "formatted") throw new Error("Expected formatted PID");
+  expect(() => process.kill(Number(a.text), 0)).toThrow();
+  const second = await fixture.open({ source: "index", trust: true });
+  expect(await second.format("a.pid", "a")).not.toEqual(a);
 });
