@@ -159,7 +159,7 @@ async function createMonorepo(manager: "npm" | "pnpm" | "yarn" | "bun") {
   return repository;
 }
 
-describe.sequential("managed project suite", () => {
+describe("managed project suite", { concurrent: false }, () => {
   it.each(["npm", "pnpm", "yarn", "bun"] as const)(
     "attributes project regressions in a %s workspace without changing the index",
     async (manager) => {

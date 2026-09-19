@@ -131,7 +131,7 @@ const FAST_CONFIG = `${JSON.stringify(
   2,
 )}\n`;
 
-describe.sequential("packaged managed local suite", () => {
+describe("packaged managed local suite", { concurrent: false }, () => {
   it("isolates existing JS debt, detects worsened complexity and structural security, and never loads project ESLint config", async () => {
     const repository = await installedRepository();
     await repository.write(".zedbeerc.jsonc", FAST_CONFIG);

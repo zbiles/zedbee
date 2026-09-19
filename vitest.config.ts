@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: "node",
     globalSetup: ["test/global-setup.ts"],
+    setupFiles: ["test/setup.ts"],
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
     // Deadlines belong to the whole run (scripts/run-with-deadline.mjs locally, the
     // Actions job in CI), not individual tests or setup/cleanup hooks.
