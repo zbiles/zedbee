@@ -1378,3 +1378,104 @@ describe("packaged Zedbee CLI", () => {
     ).toBe("CONFIG_INVALID");
   });
 });
+
+async function repositoryWithProjectPrettier() {
+  const repository = await createInstalledRepository();
+  const nodeModules = join(repository.root, "node_modules");
+  await rm(nodeModules, { recursive: true, force: true });
+  await mkdir(nodeModules, { recursive: true });
+  const type = process.platform === "win32" ? "junction" : "dir";
+  await symlink(join(installedNodeModules, "zedbee"), join(nodeModules, "zedbee"), type);
+  await cp(join(installedNodeModules, "prettier"), join(nodeModules, "prettier"), {
+    recursive: true,
+  });
+  await rm(join(repository.root, ".gitignore"), { force: true });
+  await repository.write(
+    "package.json",
+    `${JSON.stringify(
+      { name: "project-prettier-fixture", private: true, devDependencies: { prettier: "^3.0.0" } },
+      null,
+      2,
+    )}\n`,
+  );
+  return repository;
+}
+
+describe("project Prettier integration", () => {
+  it("copies detected settings through packaged init", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{"printWidth":100,"trailingComma":"es5"}');
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "copy",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const config = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
+    expect(config).toContain('"printWidth": 100');
+    expect(config).toContain('"trailingComma": "es5"');
+  });
+
+  it("uses the trusted project engine in packaged init and scan", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write("value.ts", "export const value = 'ok';\n");
+    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+
+    const init = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(init.exitCode, init.stderr).toBe(0);
+    const config = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
+    expect(config).toContain('"engine": "project"');
+    const trust = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "allowed",
+    ]);
+    expect(trust.stdout).toContain("v1");
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const withService = await runZedbee(repository.root, "json");
+    const withoutService = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(withService.exitCode, withService.stderr).toBe(0);
+    expect(withoutService.exitCode, withoutService.stderr).toBe(0);
+  });
+
+  it("refuses project formatting without trust non-interactively", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode).toBe(2);
+  });
+});
