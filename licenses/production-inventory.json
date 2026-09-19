@@ -6555,7 +6555,7 @@
     },
     {
       "name": "p-limit",
-      "version": "7.3.1",
+      "version": "7.3.2",
       "license": "MIT",
       "repository": "sindresorhus/p-limit",
       "licenseFile": "node_modules/p-limit/license",
@@ -6564,7 +6564,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.1"
+        "p-limit@7.3.2"
       ]
     },
     {
@@ -6868,7 +6868,7 @@
     },
     {
       "name": "react",
-      "version": "19.2.8",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -6881,7 +6881,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "react@19.2.8"
+        "react@19.3.0"
       ]
     },
     {
@@ -8507,7 +8507,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.1",
+        "p-limit@7.3.2",
         "yocto-queue@1.2.2"
       ]
     },
