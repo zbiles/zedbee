@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, rm } from "node:fs/promises";
+import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -220,6 +220,27 @@ describe("discoverProjectPrettier", () => {
 
     expect(discovered[0]).toMatchObject({ status: "missing" });
     expect(discovered[0]?.packageRoot).toBeUndefined();
+  });
+
+  it("accepts a declared pnpm-style installation link outside the repository", async () => {
+    const fixture = await createInspectionFixture();
+    const outside = await mkdtemp(join(tmpdir(), "zedbee-prettier-store-"));
+    onTestFinished(() => rm(outside, { recursive: true, force: true }));
+    await fixture.writeJson("package.json", {
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await writeFile(
+      join(outside, "package.json"),
+      '{"name":"prettier","version":"3.9.6"}',
+    );
+    await fixture.symlink(outside, "node_modules/prettier");
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(discovered[0]).toMatchObject({
+      status: "available",
+      version: "3.9.6",
+    });
   });
 
   it("finds an executable config without executing it", async () => {

@@ -121,7 +121,6 @@ async function installedPrettierAt(
   } catch {
     return undefined;
   }
-  if (!isContainedPath(canonicalRoot, canonicalManifest)) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(
