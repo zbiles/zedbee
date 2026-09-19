@@ -5,7 +5,7 @@ import {
   type Serializable,
 } from "node:child_process";
 import { createRequire } from "node:module";
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
+import { lstat, open, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import semver from "semver";
@@ -52,6 +52,8 @@ export class ProjectPrettierFailureError extends Error {
 export interface ProjectFormatterSession {
   format(file: string, source: string): Promise<ProjectFormatResult>;
   readConfigForImport(configPath: string): Promise<ImportableNativeConfig>;
+  /** Consent-required evaluation of a package-exported shared configuration. */
+  readSharedConfigForImport(configPackage: string): Promise<ImportableNativeConfig>;
   close(): Promise<void>;
 }
 
@@ -100,8 +102,29 @@ export function owningProjectRoot(
 }
 
 /** Hashes all regular mirrored files (sorted path + bytes) for stale-plan checks. */
+const IDENTITY_CHUNK_BYTES = 64 * 1024;
+const MAX_IDENTITY_FILE_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Hashes every regular mirrored file (sorted path and bytes) with fixed
+ * memory: files stream through a bounded buffer instead of being loaded in
+ * full, so one huge tracked asset cannot exhaust the Zedbee process.
+ */
 export async function snapshotIdentity(snapshotRoot: string): Promise<string> {
   const hash = createHash("sha256");
+  const buffer = Buffer.alloc(IDENTITY_CHUNK_BYTES);
+  const streamFile = async (absolute: string): Promise<void> => {
+    const handle = await open(absolute, "r");
+    try {
+      while (true) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) return;
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+    } finally {
+      await handle.close().catch(() => undefined);
+    }
+  };
   const walk = async (directory: string, prefix: string): Promise<void> => {
     const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((left, right) =>
@@ -117,9 +140,17 @@ export async function snapshotIdentity(snapshotRoot: string): Promise<string> {
         continue;
       }
       if (!metadata.isFile()) continue;
+      if (metadata.size > BigInt(MAX_IDENTITY_FILE_BYTES)) {
+        throw new ProjectPrettierFailureError({
+          code: "PROJECT_PRETTIER_LAYOUT_UNSUPPORTED",
+          message:
+            "A snapshot file is too large to fingerprint for stale-plan checks.",
+          projectRoot: ".",
+        });
+      }
       hash.update(relativePath, "utf8");
       hash.update("\0", "utf8");
-      hash.update(await readFile(absolute));
+      await streamFile(absolute);
       hash.update("\0", "utf8");
     }
   };
@@ -239,6 +270,17 @@ export async function resolveProjectPrettierInstallation(
     const manifestPath = join(current, "node_modules", "prettier", "package.json");
     try {
       const canonicalManifest = await realpath(manifestPath);
+      const manifestMetadata = await lstat(canonicalManifest);
+      if (
+        !manifestMetadata.isFile() ||
+        manifestMetadata.size > BigInt(MAX_MANIFEST_BYTES)
+      ) {
+        throw new ProjectPrettierFailureError({
+          code: "PROJECT_PRETTIER_INSTALL_MISSING",
+          message: "The installed Prettier manifest is unreadable or too large.",
+          projectRoot: projectRoot === "" ? "." : projectRoot,
+        });
+      }
       const bytes = await readFile(canonicalManifest);
       const manifest = JSON.parse(bytes.toString("utf8")) as {
         version?: unknown;
@@ -259,16 +301,38 @@ export async function resolveProjectPrettierInstallation(
         });
       }
       // Identity covers the executable entry bytes, the manifest bytes, and
-      // the validated realpath, so an in-place engine swap is detectable.
-      const entryBytes = await readFile(fileURLToPath(entryUrl)).catch(
-        () => Buffer.alloc(0),
-      );
-      const entryBytesBounded =
-        entryBytes.byteLength <= MAX_ENTRY_BYTES
-          ? entryBytes
-          : entryBytes.subarray(0, MAX_ENTRY_BYTES);
+      // the validated realpath, so an in-place engine swap is detectable. The
+      // entry is stat-checked before reading: a too-large or unreadable entry
+      // is an explicit failure, never a partial or empty-byte identity.
+      const entryPath = fileURLToPath(entryUrl);
+      const entryMetadata = await lstat(entryPath);
+      if (
+        !entryMetadata.isFile() ||
+        entryMetadata.size > BigInt(MAX_ENTRY_BYTES)
+      ) {
+        throw new ProjectPrettierFailureError({
+          code: "PROJECT_PRETTIER_INSTALL_MISSING",
+          message:
+            "The installed Prettier entry is unreadable or too large to validate.",
+          projectRoot: projectRoot === "" ? "." : projectRoot,
+        });
+      }
+      const entryHash = createHash("sha256");
+      {
+        const handle = await open(entryPath, "r");
+        try {
+          const chunk = Buffer.alloc(IDENTITY_CHUNK_BYTES);
+          while (true) {
+            const { bytesRead } = await handle.read(chunk, 0, chunk.length, null);
+            if (bytesRead === 0) break;
+            entryHash.update(chunk.subarray(0, bytesRead));
+          }
+        } finally {
+          await handle.close().catch(() => undefined);
+        }
+      }
       const identity = createHash("sha256")
-        .update(entryBytesBounded)
+        .update(entryHash.digest())
         .update("\0")
         .update(bytes)
         .update("\0")
@@ -326,6 +390,20 @@ function pendingFailure(
     message,
     projectRoot,
   };
+}
+
+/**
+ * Best-effort process-tree termination for cancellation and failure paths.
+ * The group may already be gone (leader exit can surface EPERM/ESRCH); the
+ * caller's rejection must never be replaced by a cleanup error, and the
+ * owned workspace is always disposed afterwards.
+ */
+async function stopProcessGroupBestEffort(
+  pid: number | undefined,
+  workerExited: boolean,
+): Promise<void> {
+  if (pid === undefined || workerExited) return;
+  await stopProcessGroup(pid).catch(() => undefined);
 }
 
 async function openSession(
@@ -391,6 +469,12 @@ async function openSession(
     pending.clear();
   };
 
+  // Startup cancellation and early worker death must reject the pending
+  // `ready` handshake immediately; nothing waits out the startup timer.
+  let settleReady: ((error: ProjectPrettierFailure) => void) | undefined;
+  const readyAborted = new Promise<void>((_, rejectReady) => {
+    settleReady = (failure) => rejectReady(new ProjectPrettierFailureError(failure));
+  });
   const exited = new Promise<void>((resolveExit) => {
     child.once("exit", () => {
       workerExited = true;
@@ -400,12 +484,12 @@ async function openSession(
   // A dead worker must fail its pending work immediately; the caller's
   // cancellation signal governs every deadline from here on.
   child.once("exit", () => {
-    failAll(
-      pendingFailure(
-        input.projectRoot,
-        "The project formatter exited before completing its work.",
-      ),
+    const failure = pendingFailure(
+      input.projectRoot,
+      "The project formatter exited before completing its work.",
     );
+    failAll(failure);
+    settleReady?.(failure);
   });
 
   child.on("message", (message: unknown) => {
@@ -470,15 +554,17 @@ async function openSession(
 
   const abort = (): void => {
     // Cancellation ends the process tree and the owned workspace promptly,
-    // including while startup is still waiting for the worker.
-    failAll(
-      pendingFailure(input.projectRoot, "The project formatter was cancelled."),
+    // including while startup is still waiting for the worker; the ready
+    // handshake rejects immediately instead of waiting out its timer.
+    const failure = pendingFailure(
+      input.projectRoot,
+      "The project formatter was cancelled.",
     );
+    failAll(failure);
+    settleReady?.(failure);
     void (async () => {
       try {
-        if (child.pid !== undefined && !workerExited) {
-          await stopProcessGroup(child.pid);
-        }
+        await stopProcessGroupBestEffort(child.pid, workerExited);
       } finally {
         await workspace.dispose().catch(() => undefined);
       }
@@ -493,10 +579,10 @@ async function openSession(
       treeRoot: workspace.treeRoot,
       projectRoot: input.projectRoot,
     } as Serializable);
-    await ready;
+    await Promise.race([ready, readyAborted]);
   } catch (error) {
     input.signal.removeEventListener("abort", abort);
-    if (child.pid !== undefined) await stopProcessGroup(child.pid);
+    await stopProcessGroupBestEffort(child.pid, workerExited);
     await workspace.dispose();
     throw error;
   }
@@ -564,6 +650,13 @@ async function openSession(
       if (reply.operation !== "importConfig") throw new Error("Unexpected reply");
       return reply.result;
     },
+    async readSharedConfigForImport(
+      configPackage: string,
+    ): Promise<ImportableNativeConfig> {
+      const reply = await request("importConfig", { configPackage });
+      if (reply.operation !== "importConfig") throw new Error("Unexpected reply");
+      return reply.result;
+    },
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
@@ -585,8 +678,8 @@ async function openSession(
           setTimeout(() => resolveRace(false), CLOSE_GRACE_MS),
         ),
       ]);
-      if (!exitedGracefully && child.pid !== undefined) {
-        await stopProcessGroup(child.pid);
+      if (!exitedGracefully) {
+        await stopProcessGroupBestEffort(child.pid, workerExited);
       }
       await workspace.dispose();
     },

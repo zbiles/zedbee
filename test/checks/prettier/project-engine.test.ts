@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { mkdtemp } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import {
   openProjectFormatter,
   resolveProjectPrettierInstallation,
@@ -323,6 +324,140 @@ describe("project Prettier engine", () => {
         signal: controller.signal,
       }),
     ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_WORKER_FAILED" });
+  });
+
+  it("applies path-scoped and tab EditorConfig sections", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      ".editorconfig",
+      [
+        "root = true",
+        "",
+        "[*]",
+        "indent_size = 4",
+        "",
+        "[*.{js,ts}]",
+        "indent_size = tab",
+        "tab_width = 6",
+        "",
+        "[*.md]",
+        "max_line_length = 40",
+        "",
+        "[nested/*.ts]",
+        "indent_style = space",
+        "indent_size = 2",
+      ].join("\n"),
+    );
+    await fixture.write("value.ts", "export const value = 1;\n");
+    await fixture.write("nested/value.ts", "export const value = 1;\n");
+    await fixture.write("docs.md", "# a\n");
+    await fixture.stage(".editorconfig", "value.ts", "nested/value.ts", "docs.md");
+
+    const session = await fixture.open({ source: "index", trust: true });
+
+    // [*.ts] via the brace section: tabs with tab_width 6.
+    const tsResult = await session.format(
+      "value.ts",
+      "function indented(){if(true){return 1}}\n",
+    );
+    expect(tsResult.kind).toBe("formatted");
+    if (tsResult.kind === "formatted") {
+      expect(tsResult.text).toContain("\t");
+    }
+    // [nested/*.ts] is path-scoped and wins over the shallower sections.
+    const nested = await session.format(
+      "nested/value.ts",
+      "function indented(){if(true){return 2}}\n",
+    );
+    expect(nested.kind).toBe("formatted");
+    if (nested.kind === "formatted") {
+      expect(nested.text).not.toContain("\t");
+      expect(nested.text).toContain("  ");
+    }
+    // [*.md] applies by file name at any depth with its own width.
+    const md = await session.format("docs.md", "# a\n");
+    expect(md.kind).toBe("formatted");
+  });
+
+  it("reports every dropped value from a consented executable configuration", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      "prettier.config.mjs",
+      [
+        "const config = { printWidth: 90, semi: false };",
+        "config.self = config;",
+        "config.plugins = ['a-plugin'];",
+        "config.parser = 'babel';",
+        "config.mystery = () => 2;",
+        "Object.defineProperty(config, 'guarded', { get() { return 1; }, enumerable: true });",
+        "export default config;",
+      ].join("\n"),
+    );
+    await fixture.stage("prettier.config.mjs");
+
+    const session = await fixture.open({ source: "index", trust: true });
+    const imported = await session.readConfigForImport("prettier.config.mjs");
+
+    expect(imported.settings).toEqual({ printWidth: 90, semi: false });
+    const joined = imported.limitations.join("\n");
+    expect(joined).toMatch(/plugins/u);
+    expect(joined).toMatch(/"parser"/u);
+    expect(joined).toMatch(/"mystery"/u);
+    expect(joined).toMatch(/accessor|non-data/u);
+    expect(joined).toMatch(/"guarded"/u);
+    expect(joined).toMatch(/"self"/u);
+  });
+
+  it("rejects the ready handshake promptly on abort after spawn", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write("package.json", `{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}\n`);
+    await fixture.write(
+      "slow-entry.mjs",
+      "await new Promise((resolve) => setTimeout(resolve, 4_000));\n" +
+        "export async function format(source) { return source; }\n" +
+        "export async function resolveConfigFile() { return null; }\n" +
+        "export async function resolveConfig() { return {}; }\n" +
+        "export async function getFileInfo() { return { ignored: false, inferredParser: 'babel' }; }\n",
+    );
+    await fixture.stage("package.json", "slow-entry.mjs");
+    const git = new GitClient(fixture.root);
+    const snapshot = await buildSnapshotPair(fixture.root, git);
+    onTestFinished(() => snapshot.cleanup());
+    const permit = await requireProjectPrettierTrust(fixture.root, ".", true);
+    const installation = await resolveProjectPrettierInstallation(
+      fixture.root,
+      ".",
+      snapshot.targetDir,
+    );
+    const slowInstallation = {
+      ...installation,
+      entryUrl: pathToFileURL(join(fixture.root, "slow-entry.mjs")).href,
+    };
+    const controller = new AbortController();
+    const startedAt = Date.now();
+
+    const opening = openProjectFormatter({
+      checkoutRoot: await realpath(fixture.root),
+      snapshotRoot: snapshot.targetDir,
+      projectRoot: ".",
+      installation: slowInstallation,
+      permit,
+      signal: controller.signal,
+    });
+    // Abort while startup is still waiting for the slow worker's ready.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    controller.abort();
+
+    await expect(opening).rejects.toMatchObject({
+      code: "PROJECT_PRETTIER_WORKER_FAILED",
+    });
+    const elapsed = Date.now() - startedAt;
+    // The rejection must be prompt: the worker deliberately sleeps past
+    // this bound, and the startup timer alone is 10 seconds.
+    expect(elapsed).toBeLessThan(2_000);
   });
 
   it("applies snapshot EditorConfig values when no Prettier config exists", async () => {

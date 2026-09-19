@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
-import { dirname, join, posix, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
+import picomatch from "picomatch";
 import { isContainedPath } from "../../inspection/read-json.js";
 import type {
   ImportableNativeConfig,
@@ -11,7 +13,7 @@ import type {
   ProjectPrettierReply,
 } from "./project-types.js";
 import { parseProjectRequest } from "./project-protocol.js";
-import type { FormattingSettings } from "./settings.js";
+import { formattingSettingsSchema, type FormattingSettings } from "./settings.js";
 
 type PrettierModule = typeof import("prettier");
 
@@ -99,51 +101,74 @@ async function ignoreReason(file: string): Promise<"prettierignore" | "gitignore
 
 interface BoundedEditorConfig {
   readonly root: boolean;
-  readonly settings: Partial<FormattingSettings>;
-}
-
-function parseEditorConfig(contents: string): BoundedEditorConfig {
-  let root = false;
-  const settings: Partial<FormattingSettings> = {};
-  let appliesToAll = false;
-  for (const rawLine of contents.split(/\r?\n|\r/u)) {
-    const line = rawLine.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    if (line.startsWith("[") && line.endsWith("]")) {
-      const section = line.slice(1, -1).trim();
-      appliesToAll = section === "*" || section === "*.*";
-      continue;
-    }
-    const separator = line.indexOf("=");
-    if (separator <= 0) continue;
-    const key = line.slice(0, separator).trim();
-    const value = line.slice(separator + 1).trim();
-    if (key === "root") {
-      if (value.toLowerCase() === "true") root = true;
-      continue;
-    }
-    if (!appliesToAll) continue;
-    if (key === "indent_style") {
-      if (value === "tab") settings.useTabs = true;
-      else if (value === "space") settings.useTabs = false;
-    } else if (key === "indent_size" || key === "max_line_length") {
-      const parsed = Number(value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) {
-        if (key === "indent_size") settings.tabWidth = parsed;
-        else settings.printWidth = parsed;
-      }
-    } else if (key === "end_of_line") {
-      if (value === "lf" || value === "crlf" || value === "cr") {
-        settings.endOfLine = value;
-      }
-    }
-  }
-  return { root, settings };
+  readonly sections: readonly {
+    readonly pattern: string;
+    readonly settings: Partial<FormattingSettings>;
+  }[];
 }
 
 const EDITORCONFIG_MAX_BYTES = 256 * 1024;
 
-/** Data-only EditorConfig values for a file, bounded to the mirror. */
+function parseEditorConfig(contents: string): BoundedEditorConfig {
+  let root = false;
+  let current: { pattern: string; settings: Partial<FormattingSettings> } | undefined;
+  const sections: { pattern: string; settings: Partial<FormattingSettings> }[] = [];
+  for (const rawLine of contents.split(/\r?\n|\r/u)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
+    if (line.startsWith("[") && line.endsWith("]")) {
+      current = {
+        pattern: line.slice(1, -1).trim(),
+        settings: {},
+      };
+      sections.push(current);
+      continue;
+    }
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    const key = line.slice(0, separator).trim().toLowerCase();
+    const value = line.slice(separator + 1).trim();
+    if (current === undefined) {
+      if (key === "root" && value.toLowerCase() === "true") root = true;
+      continue;
+    }
+    if (key === "root") {
+      if (value.toLowerCase() === "true") root = true;
+      continue;
+    }
+    if (key === "indent_style") {
+      if (value === "tab") current.settings.useTabs = true;
+      else if (value === "space") current.settings.useTabs = false;
+    } else if (key === "indent_size" || key === "tab_width") {
+      if (value === "tab") {
+        if (key === "indent_size") current.settings.useTabs = true;
+      } else {
+        const parsed = Number(value);
+        if (Number.isSafeInteger(parsed) && parsed > 0) {
+          current.settings.tabWidth = parsed;
+        }
+      }
+    } else if (key === "max_line_length") {
+      const parsed = Number(value);
+      if (Number.isSafeInteger(parsed) && parsed > 0) {
+        current.settings.printWidth = parsed;
+      }
+    } else if (key === "end_of_line") {
+      if (value === "lf" || value === "crlf" || value === "cr") {
+        current.settings.endOfLine = value;
+      }
+    }
+  }
+  return { root, sections };
+}
+
+/**
+ * Data-only EditorConfig values for one file, bounded to the mirror. Sections
+ * match with EditorConfig glob semantics (`*` stays within a path segment,
+ * `**` crosses, `{a,b}` alternates) against the path relative to each
+ * configuration file; the nearest file wins per key, and within a file later
+ * matching sections win, matching Prettier's EditorConfig behavior.
+ */
 async function editorConfigOptions(
   file: string,
 ): Promise<Partial<FormattingSettings>> {
@@ -172,7 +197,27 @@ async function editorConfigOptions(
       continue;
     }
     const parsed = parseEditorConfig(contents);
-    collected.unshift(parsed.settings);
+    const applicable: Partial<FormattingSettings> = {};
+    const relativePath = relative(entry, file).split(sep).join("/");
+    const fileName = relativePath.split("/").at(-1) ?? relativePath;
+    for (const section of parsed.sections) {
+      // EditorConfig semantics: a pattern without a path separator matches
+      // the file name (so [*] and [*.ts] apply at any depth); a pattern with
+      // a separator matches the path relative to this configuration file.
+      const candidate = section.pattern.includes("/")
+        ? relativePath
+        : fileName;
+      let matches = false;
+      try {
+        matches = picomatch.isMatch(candidate, section.pattern, {
+          dot: true,
+        });
+      } catch {
+        matches = false;
+      }
+      if (matches) Object.assign(applicable, section.settings);
+    }
+    collected.unshift(applicable);
     if (parsed.root) break;
   }
   for (const entry of collected) {
@@ -235,35 +280,164 @@ async function formatFile(
   return { kind: "formatted", text };
 }
 
-function sanitizeSettings(value: unknown): Partial<FormattingSettings> {
+const SUPPORTED_SETTINGS_KEYS: ReadonlySet<string> = new Set(
+  Object.keys(formattingSettingsSchema.shape),
+);
+const SUPPORTED_SETTINGS_SCHEMA = formattingSettingsSchema.partial().strict();
+
+/**
+ * Copies only supported plain data values. Own data descriptors are read
+ * directly — accessors are never invoked — and every dropped plugin, key, or
+ * value is reported as a visible limitation instead of disappearing.
+ */
+function sanitizeSettings(
+  value: unknown,
+  limitations: string[],
+  context: string,
+): Partial<FormattingSettings> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    limitations.push(`The ${context} is not a plain object and was not copied.`);
     return {};
   }
   const result: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (
-      typeof entry === "string" ||
-      typeof entry === "number" ||
-      typeof entry === "boolean"
+      descriptor === undefined ||
+      descriptor.enumerable !== true ||
+      !("value" in descriptor)
     ) {
-      result[key] = entry;
+      limitations.push(
+        `The ${context} property "${key}" is an accessor or non-data value and was not copied.`,
+      );
+      continue;
     }
+    const entry = descriptor.value;
+    if (key === "plugins") {
+      limitations.push(
+        "Configured Prettier plugins cannot be copied into managed settings.",
+      );
+      continue;
+    }
+    if (
+      typeof entry === "function" ||
+      (typeof entry === "object" && entry !== null)
+    ) {
+      limitations.push(
+        `The ${context} option "${key}" is a dynamic value and was not copied.`,
+      );
+      continue;
+    }
+    if (!SUPPORTED_SETTINGS_KEYS.has(key)) {
+      limitations.push(
+        `The ${context} option "${key}" is not a managed setting and was not copied.`,
+      );
+      continue;
+    }
+    const single = SUPPORTED_SETTINGS_SCHEMA.safeParse({ [key]: entry });
+    if (!single.success) {
+      limitations.push(
+        `The ${context} option "${key}" has an unsupported value and was not copied.`,
+      );
+      continue;
+    }
+    result[key] = entry;
   }
   return result as Partial<FormattingSettings>;
 }
 
+function sanitizeOverrideEntry(
+  entry: unknown,
+  limitations: string[],
+): {
+  files: string | readonly string[];
+  excludeFiles?: string | readonly string[];
+  settings: Partial<FormattingSettings>;
+} | undefined {
+  if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+    limitations.push(
+      "An exported configuration override is not a plain object and was not copied.",
+    );
+    return undefined;
+  }
+  const filesDescriptor = Object.getOwnPropertyDescriptor(entry, "files");
+  const files =
+    filesDescriptor !== undefined && "value" in filesDescriptor
+      ? filesDescriptor.value
+      : undefined;
+  const hasFiles =
+    typeof files === "string" ||
+    (Array.isArray(files) &&
+      files.every((item) => typeof item === "string" && item.length > 0));
+  if (!hasFiles || files === undefined) {
+    limitations.push(
+      "An exported configuration override has no usable files pattern and was not copied.",
+    );
+    return undefined;
+  }
+  const excludeDescriptor = Object.getOwnPropertyDescriptor(
+    entry,
+    "excludeFiles",
+  );
+  const excludeFiles =
+    excludeDescriptor !== undefined && "value" in excludeDescriptor
+      ? excludeDescriptor.value
+      : undefined;
+  if (excludeFiles !== undefined) {
+    limitations.push(
+      "Prettier excludeFiles cannot be copied exactly; the override keeps its files patterns without the exclusions.",
+    );
+  }
+  const optionsDescriptor = Object.getOwnPropertyDescriptor(entry, "options");
+  const settings = sanitizeSettings(
+    optionsDescriptor !== undefined && "value" in optionsDescriptor
+      ? optionsDescriptor.value
+      : undefined,
+    limitations,
+    "override",
+  );
+  if (Object.keys(settings).length === 0) {
+    limitations.push(
+      "An exported configuration override has no supported settings and was not copied.",
+    );
+    return undefined;
+  }
+  return {
+    files: files as string | readonly string[],
+    settings,
+  };
+}
+
 async function importConfig(
-  request: Extract<ProjectPrettierRequest, { operation: "importConfig" }>,
+  request: Extract<
+    ProjectPrettierRequest,
+    { operation: "importConfig" }
+  >,
 ): Promise<ImportableNativeConfig> {
   const current = state!;
-  const absolute = resolve(current.treeRoot, request.configFile);
-  if (!isContainedPath(current.treeRoot, absolute)) {
-    throw new Error("Configuration is outside the formatting workspace");
-  }
   const limitations: string[] = [];
-  const module = (await import(pathToFileURL(absolute).href)) as {
-    default?: unknown;
-  };
+  let module: { default?: unknown };
+  if ("configPackage" in request) {
+    // A package-exported shared configuration resolves through the project's
+    // approved installed dependencies inside the mirror, then executes once
+    // under this consented evaluation.
+    const require = createRequire(
+      join(current.treeRoot, current.projectRoot, "package.json"),
+    );
+    const resolved = require.resolve(request.configPackage);
+    module = (await import(pathToFileURL(resolved).href)) as {
+      default?: unknown;
+    };
+  } else {
+    const absolute = resolve(current.treeRoot, request.configFile);
+    if (!isContainedPath(current.treeRoot, absolute)) {
+      throw new Error("Configuration is outside the formatting workspace");
+    }
+    module = (await import(pathToFileURL(absolute).href)) as {
+      default?: unknown;
+    };
+  }
   const exported = module.default;
   if (typeof exported === "function") {
     limitations.push(
@@ -271,30 +445,38 @@ async function importConfig(
     );
     return { settings: {}, overrides: [], limitations };
   }
-  const settings = sanitizeSettings(exported);
+  if (
+    typeof exported !== "object" ||
+    exported === null ||
+    Array.isArray(exported)
+  ) {
+    limitations.push(
+      "The exported configuration is not a plain object and cannot be represented.",
+    );
+    return { settings: {}, overrides: [], limitations };
+  }
+  const settings = sanitizeSettings(exported, limitations, "configuration");
   const overrides: {
     files: string | readonly string[];
-    excludeFiles?: string | readonly string[];
     settings: Partial<FormattingSettings>;
   }[] = [];
-  if (
-    typeof exported === "object" &&
-    exported !== null &&
-    Array.isArray((exported as { overrides?: unknown }).overrides)
-  ) {
-    for (const entry of (exported as { overrides: unknown[] }).overrides) {
-      if (typeof entry !== "object" || entry === null) continue;
-      const record = entry as Record<string, unknown>;
-      const files = record.files;
-      if (typeof files !== "string" && !Array.isArray(files)) continue;
-      const options = record.options;
-      overrides.push({
-        files: files as string | readonly string[],
-        ...(record.excludeFiles === undefined
-          ? {}
-          : { excludeFiles: record.excludeFiles as string | readonly string[] }),
-        settings: sanitizeSettings(options),
-      });
+  const overridesDescriptor = Object.getOwnPropertyDescriptor(
+    exported,
+    "overrides",
+  );
+  const overridesValue =
+    overridesDescriptor !== undefined && "value" in overridesDescriptor
+      ? overridesDescriptor.value
+      : undefined;
+  if (overridesValue !== undefined && !Array.isArray(overridesValue)) {
+    limitations.push(
+      "The exported overrides value is not an array and was not copied.",
+    );
+  }
+  if (Array.isArray(overridesValue)) {
+    for (const entry of overridesValue) {
+      const sanitized = sanitizeOverrideEntry(entry, limitations);
+      if (sanitized !== undefined) overrides.push(sanitized);
     }
   }
   return { settings, overrides, limitations };

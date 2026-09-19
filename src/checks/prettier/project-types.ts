@@ -69,6 +69,12 @@ export type ProjectPrettierRequest =
       readonly id: number;
       readonly operation: "importConfig";
       readonly configFile: string;
+    }
+  | {
+      readonly id: number;
+      readonly operation: "importConfig";
+      /** Package-exported shared configuration specifier. */
+      readonly configPackage: string;
     };
 
 export type ProjectPrettierReply =
