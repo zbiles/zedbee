@@ -122,7 +122,7 @@ function issuePath(issue: ValidationIssue): string {
 function policyFields(checkId: CheckId): readonly string[] {
   switch (checkId) {
     case "formatting":
-      return ["severity", "when", "settings"];
+      return ["severity", "when", "engine", "settings", "generated"];
     case "duplication":
       return ["severity", "when", "threshold", "settings"];
     case "cyclomaticComplexity":

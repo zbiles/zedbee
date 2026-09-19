@@ -96,7 +96,7 @@ const FORMATTING_LABELS: Readonly<Record<InitFormattingChoice, string>> = {
 };
 
 export const PROJECT_PRETTIER_DISCLOSURE =
-  "The project formatter, its configuration, and its plugins are executable code. Trusting them covers their current and future versions in this checkout.";
+  "The project formatter, its configuration, and its plugins are executable code. Trusting them covers every detected Prettier project's formatter in this checkout, including its future versions and edits.";
 
 const INIT_EVENT_MAX_FPS = 30;
 const CURSOR_HOME = "\u001b[H";

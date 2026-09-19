@@ -239,6 +239,9 @@ function snapshotOverride(
     configurationOrigins: snapshotConfigurationOrigins(
       override.configurationOrigins,
     ),
+    ...(override.generated === undefined
+      ? {}
+      : { generated: override.generated }),
   });
 }
 
