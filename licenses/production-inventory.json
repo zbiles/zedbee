@@ -475,6 +475,21 @@
       "name": "@emnapi/core",
       "version": "1.11.2",
       "license": "MIT",
+      "repository": null,
+      "licenseFile": null,
+      "legalFiles": [],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.3",
+        "knip@6.32.2",
+        "oxc-resolver@11.24.2",
+        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
+        "@emnapi/core@1.11.2"
+      ]
+    },
+    {
+      "name": "@emnapi/core",
+      "version": "1.11.3",
+      "license": "MIT",
       "repository": {
         "type": "git",
         "url": "git+https://github.com/toyobayashi/emnapi.git"
@@ -485,7 +500,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "@emnapi/core@1.11.2"
+        "@emnapi/core@1.11.3"
       ]
     },
     {
@@ -509,6 +524,22 @@
       "name": "@emnapi/wasi-threads",
       "version": "1.2.2",
       "license": "MIT",
+      "repository": null,
+      "licenseFile": null,
+      "legalFiles": [],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.3",
+        "knip@6.32.2",
+        "oxc-resolver@11.24.2",
+        "@oxc-resolver/binding-wasm32-wasi@11.24.2",
+        "@emnapi/core@1.11.2",
+        "@emnapi/wasi-threads@1.2.2"
+      ]
+    },
+    {
+      "name": "@emnapi/wasi-threads",
+      "version": "1.2.3",
+      "license": "MIT",
       "repository": {
         "type": "git",
         "url": "git+https://github.com/toyobayashi/emnapi.git"
@@ -519,8 +550,8 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "@emnapi/core@1.11.2",
-        "@emnapi/wasi-threads@1.2.2"
+        "@emnapi/core@1.11.3",
+        "@emnapi/wasi-threads@1.2.3"
       ]
     },
     {
@@ -7944,7 +7975,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "@emnapi/core@1.11.2",
+        "@emnapi/core@1.11.3",
         "tslib@2.8.1"
       ]
     },
