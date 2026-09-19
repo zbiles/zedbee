@@ -42,6 +42,25 @@ export async function createProjectPrettierFixture(
   );
   const sessions: ProjectFormatterSession[] = [];
   const snapshots: SnapshotPair[] = [];
+  const version = options.prettierVersion ?? "3.9.6";
+  // The fixture installs a genuinely provisioned Prettier; a missing prepared
+  // installation is a setup error, never simulated metadata.
+  const sourcePackage =
+    version === "3.0.3" ? "prettier-3-0-3" : "prettier";
+  const sourceDirectory = join(
+    repositoryPackageRoot,
+    "node_modules",
+    sourcePackage,
+  );
+  try {
+    await lstat(join(sourceDirectory, "package.json"));
+  } catch {
+    throw new Error(
+      `The prepared Prettier ${version} fixture installation is missing; install dependencies first.`,
+    );
+  }
+  const declaredRange =
+    version === "3.0.3" ? "3.0.3" : version === "3.9.6" ? "^3.0.0" : version;
 
   await repository.write(
     "package.json",
@@ -49,7 +68,7 @@ export async function createProjectPrettierFixture(
       {
         name: "prettier-fixture",
         private: true,
-        devDependencies: { prettier: options.prettierVersion ?? "3.9.6" },
+        devDependencies: { prettier: declaredRange },
       },
       null,
       2,
@@ -57,7 +76,7 @@ export async function createProjectPrettierFixture(
   );
   await mkdir(join(repository.root, "node_modules"), { recursive: true });
   await cp(
-    join(repositoryPackageRoot, "node_modules", "prettier"),
+    sourceDirectory,
     join(repository.root, "node_modules", "prettier"),
     { recursive: true },
   );
@@ -92,12 +111,10 @@ export async function createProjectPrettierFixture(
         projectRoot,
         trust,
       );
-      const installation = await resolveProjectPrettierInstallation(
-        repository.root,
-        projectRoot,
-        ">=3.0.0 <4.0.0",
-      );
       const git = new GitClient(repository.root);
+      // The declaration must be part of the selected snapshot, so the fixture
+      // manifest is always staged before a session is opened.
+      await repository.git(["add", "--", "package.json"]);
       const snapshot =
         source === "commit"
           ? await buildCommitSnapshotPair(
@@ -108,6 +125,16 @@ export async function createProjectPrettierFixture(
             )
           : await buildSnapshotPair(repository.root, git);
       snapshots.push(snapshot);
+      const installation = await resolveProjectPrettierInstallation(
+        repository.root,
+        projectRoot,
+        snapshot.targetDir,
+      );
+      if (installation.version !== version) {
+        throw new Error(
+          `Fixture expected Prettier ${version} but resolved ${installation.version}.`,
+        );
+      }
       const session = await openProjectFormatter({
         checkoutRoot: await realpath(repository.root),
         snapshotRoot: snapshot.targetDir,

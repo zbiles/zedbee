@@ -133,6 +133,7 @@
     "@types/semver": "7.8.0",
     "ajv": "8.20.0",
     "ink-testing-library": "4.0.0",
+    "prettier-3-0-3": "npm:prettier@3.0.3",
     "spdx-expression-parse": "5.0.0",
     "tsx": "4.23.13",
     "vitest": "5.0.0"

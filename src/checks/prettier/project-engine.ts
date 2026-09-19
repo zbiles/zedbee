@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import semver from "semver";
 import { compareCodeUnits } from "../../core/compare.js";
 import { isContainedPath } from "../../inspection/read-json.js";
 import {
@@ -25,13 +26,15 @@ import type {
 import { parseProjectReply, PROJECT_PROTOCOL_MAX_BYTES } from "./project-protocol.js";
 import {
   createProjectWorkspace,
-  type DependencyRoot,
+  ProjectWorkspaceLayoutError,
   type ProjectWorkspace,
 } from "./project-workspace.js";
 import { stopProcessGroup } from "../runner/process-group.js";
 
 const READY_TIMEOUT_MS = 10_000;
 const CLOSE_GRACE_MS = 2_000;
+const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
+const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 export class ProjectPrettierFailureError extends Error {
   readonly code: ProjectPrettierFailure["code"];
@@ -82,42 +85,112 @@ function minimalEnvironment(workspaceRoot: string): NodeJS.ProcessEnv {
   return environment;
 }
 
-async function dependencyRoots(
-  repositoryRoot: string,
-): Promise<readonly DependencyRoot[]> {
-  const roots: DependencyRoot[] = [];
-  const add = async (relativePath: string): Promise<void> => {
-    const absolute = resolve(repositoryRoot, relativePath);
-    try {
-      const canonical = await realpath(absolute);
-      const metadata = await lstat(canonical);
+export function owningProjectRoot(
+  workspaces: readonly { readonly relativeRoot: string }[],
+  file: string,
+): string {
+  const candidates = workspaces
+    .filter(
+      (workspace) =>
+        workspace.relativeRoot === "." ||
+        file.startsWith(`${workspace.relativeRoot}/`),
+    )
+    .sort((left, right) => right.relativeRoot.length - left.relativeRoot.length);
+  return candidates[0]?.relativeRoot ?? ".";
+}
+
+/** Hashes all regular mirrored files (sorted path + bytes) for stale-plan checks. */
+export async function snapshotIdentity(snapshotRoot: string): Promise<string> {
+  const hash = createHash("sha256");
+  const walk = async (directory: string, prefix: string): Promise<void> => {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries.sort((left, right) =>
+      compareCodeUnits(left.name, right.name),
+    )) {
+      if (entry.name === "node_modules") continue;
+      const absolute = join(directory, entry.name);
+      const relativePath = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const metadata = await lstat(absolute);
+      if (metadata.isSymbolicLink()) continue;
       if (metadata.isDirectory()) {
-        roots.push({ relativePath, absolutePath: canonical });
+        await walk(absolute, relativePath);
+        continue;
       }
-    } catch {
-      /* Missing dependency directories are simply not linked. */
+      if (!metadata.isFile()) continue;
+      hash.update(relativePath, "utf8");
+      hash.update("\0", "utf8");
+      hash.update(await readFile(absolute));
+      hash.update("\0", "utf8");
     }
   };
-  await add("node_modules");
-  let entries;
-  try {
-    entries = await readdir(repositoryRoot, { withFileTypes: true });
-  } catch {
-    return Object.freeze(roots);
-  }
-  for (const entry of entries.sort((left, right) =>
-    compareCodeUnits(left.name, right.name),
-  )) {
-    if (!entry.isDirectory() || entry.name === "node_modules") continue;
-    const candidate = join(repositoryRoot, entry.name, "node_modules");
-    try {
-      await lstat(candidate);
-      await add(`${entry.name}/node_modules`.replaceAll("\\", "/"));
-    } catch {
-      /* Not a workspace dependency directory. */
+  await walk(snapshotRoot, "");
+  return hash.digest("hex");
+}
+
+interface ManifestDeclaration {
+  readonly range: string;
+  readonly section: string;
+}
+
+function manifestPrettierDeclaration(
+  value: unknown,
+): ManifestDeclaration | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  for (const section of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    const dependencies = (value as Record<string, unknown>)[section];
+    if (typeof dependencies !== "object" || dependencies === null) continue;
+    const specifier = (dependencies as Record<string, unknown>).prettier;
+    if (typeof specifier === "string") {
+      return { range: specifier, section };
     }
   }
-  return Object.freeze(roots);
+  return undefined;
+}
+
+async function readBounded(path: string, maxBytes: number): Promise<string> {
+  const metadata = await lstat(path);
+  if (!metadata.isFile() || metadata.size > BigInt(maxBytes)) {
+    throw new Error("unbounded read");
+  }
+  return readFile(path, "utf8");
+}
+
+/**
+ * Resolves the Prettier declaration from the *selected snapshot*, never the
+ * live working tree, so an unstaged manifest edit cannot change whether a
+ * staged or committed scan may execute the formatter.
+ */
+async function snapshotPrettierDeclaration(
+  snapshotRoot: string,
+  projectRoot: string,
+): Promise<ManifestDeclaration> {
+  let directory = resolve(snapshotRoot, projectRoot);
+  while (isContainedPath(snapshotRoot, directory)) {
+    try {
+      const manifest = JSON.parse(
+        await readBounded(join(directory, "package.json"), MAX_MANIFEST_BYTES),
+      );
+      const declaration = manifestPrettierDeclaration(manifest);
+      if (declaration !== undefined) return declaration;
+    } catch {
+      /* Missing or unreadable manifest; keep walking upward. */
+    }
+    if (directory === snapshotRoot) break;
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  throw new ProjectPrettierFailureError({
+    code: "PROJECT_PRETTIER_INSTALL_MISSING",
+    message:
+      "The selected snapshot does not declare Prettier for this project.",
+    projectRoot: projectRoot === "" ? "." : projectRoot,
+  });
 }
 
 async function resolveEntryUrl(packageRoot: string): Promise<string> {
@@ -135,7 +208,9 @@ async function resolveEntryUrl(packageRoot: string): Promise<string> {
   } catch {
     /* Fall through to declared entry points. */
   }
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+  const manifest = JSON.parse(
+    await readFile(manifestPath, "utf8"),
+  ) as {
     main?: string;
     module?: string;
   };
@@ -151,40 +226,64 @@ async function resolveEntryUrl(packageRoot: string): Promise<string> {
 export async function resolveProjectPrettierInstallation(
   repositoryRoot: string,
   projectRoot: string,
-  declaredRange = "*",
+  snapshotRoot: string,
 ): Promise<ProjectPrettierInstallation> {
   const checkoutRoot = await realpath(repositoryRoot);
-  let current = await realpath(resolve(repositoryRoot, projectRoot)).catch(
-    () => resolve(repositoryRoot, projectRoot),
+  const declaration = await snapshotPrettierDeclaration(
+    snapshotRoot,
+    projectRoot,
   );
-  while (isContainedPath(checkoutRoot, current)) {
+  const projectDirectory = resolve(repositoryRoot, projectRoot);
+  let current = await realpath(projectDirectory).catch(() => projectDirectory);
+  while (true) {
     const manifestPath = join(current, "node_modules", "prettier", "package.json");
     try {
-      const canonical = await realpath(manifestPath);
-      if (!isContainedPath(checkoutRoot, canonical)) break;
-      const bytes = await readFile(canonical);
+      const canonicalManifest = await realpath(manifestPath);
+      const bytes = await readFile(canonicalManifest);
       const manifest = JSON.parse(bytes.toString("utf8")) as {
         version?: unknown;
       };
       if (typeof manifest.version !== "string") break;
-      const packageRoot = dirname(canonical);
+      const packageRoot = dirname(canonicalManifest);
       const entryUrl = await resolveEntryUrl(packageRoot);
+      const normalizedVersion = semver.valid(manifest.version);
+      if (
+        normalizedVersion === null ||
+        !semver.satisfies(normalizedVersion, ">=3.0.0 <4.0.0") ||
+        !satisfiesDeclaredRange(normalizedVersion, declaration.range)
+      ) {
+        throw new ProjectPrettierFailureError({
+          code: "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
+          message: `The installed Prettier ${manifest.version} does not satisfy the supported range >=3.0.0 <4.0.0 or the project's declared ${declaration.range}.`,
+          projectRoot: projectRoot === "" ? "." : projectRoot,
+        });
+      }
+      // Identity covers the executable entry bytes, the manifest bytes, and
+      // the validated realpath, so an in-place engine swap is detectable.
+      const entryBytes = await readFile(fileURLToPath(entryUrl)).catch(
+        () => Buffer.alloc(0),
+      );
+      const entryBytesBounded =
+        entryBytes.byteLength <= MAX_ENTRY_BYTES
+          ? entryBytes
+          : entryBytes.subarray(0, MAX_ENTRY_BYTES);
       const identity = createHash("sha256")
-        .update(entryUrl)
+        .update(entryBytesBounded)
         .update("\0")
         .update(bytes)
         .update("\0")
-        .update(packageRoot)
+        .update(packageRoot, "utf8")
         .digest("hex");
       return Object.freeze({
         projectRoot: projectRoot === "" ? "." : projectRoot,
         packageRoot,
         entryUrl,
-        version: manifest.version,
-        declaredRange,
+        version: normalizedVersion,
+        declaredRange: declaration.range,
         identity,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof ProjectPrettierFailureError) throw error;
       /* Try the next hoisted level. */
     }
     if (current === checkoutRoot) break;
@@ -194,37 +293,78 @@ export async function resolveProjectPrettierInstallation(
   }
   throw new ProjectPrettierFailureError({
     code: "PROJECT_PRETTIER_INSTALL_MISSING",
-    message: "No supported project Prettier installation was found.",
+    message: "No installed Prettier satisfying the project declaration was found.",
     projectRoot: projectRoot === "" ? "." : projectRoot,
   });
+}
+
+function satisfiesDeclaredRange(
+  version: string,
+  declaredRange: string,
+): boolean {
+  const normalizedRange = semver.validRange(declaredRange);
+  if (normalizedRange === null) return true;
+  try {
+    return semver.satisfies(version, normalizedRange);
+  } catch {
+    return false;
+  }
 }
 
 interface PendingRequest {
   readonly expectedOperation: "format" | "importConfig";
   readonly resolve: (reply: ProjectPrettierReply) => void;
   readonly reject: (error: unknown) => void;
-  readonly timer: NodeJS.Timeout;
+}
+
+function pendingFailure(
+  projectRoot: string,
+  message: string,
+): ProjectPrettierFailure {
+  return {
+    code: "PROJECT_PRETTIER_WORKER_FAILED",
+    message,
+    projectRoot,
+  };
 }
 
 async function openSession(
   input: ProjectFormatterInput,
-  installation: ProjectPrettierInstallation,
 ): Promise<ProjectFormatterSession> {
-  if (!projectPrettierPermitAllows(input.permit, input.checkoutRoot, input.projectRoot)) {
+  if (input.signal.aborted) {
+    throw new ProjectPrettierFailureError(
+      pendingFailure(input.projectRoot, "The project formatter was cancelled."),
+    );
+  }
+  if (
+    !projectPrettierPermitAllows(input.permit, input.checkoutRoot, input.projectRoot)
+  ) {
     throw new ProjectPrettierFailureError({
       code: "PROJECT_PRETTIER_TRUST_REQUIRED",
       message: "Project Prettier execution requires explicit trust.",
       projectRoot: input.projectRoot,
     });
   }
-  const workspace: ProjectWorkspace = await createProjectWorkspace(
-    {
-      snapshotRoot: input.snapshotRoot,
-      projectRoot: input.projectRoot,
-      dependencyRoots: await dependencyRoots(input.checkoutRoot),
-    },
-    input.signal,
-  );
+  let workspace: ProjectWorkspace;
+  try {
+    workspace = await createProjectWorkspace(
+      {
+        repositoryRoot: input.checkoutRoot,
+        snapshotRoot: input.snapshotRoot,
+        projectRoot: input.projectRoot,
+      },
+      input.signal,
+    );
+  } catch (error) {
+    if (error instanceof ProjectWorkspaceLayoutError) {
+      throw new ProjectPrettierFailureError({
+        code: "PROJECT_PRETTIER_LAYOUT_UNSUPPORTED",
+        message: error.message,
+        projectRoot: input.projectRoot,
+      });
+    }
+    throw error;
+  }
   const workerEntry = fileURLToPath(
     new URL(
       `./project-worker.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
@@ -244,20 +384,29 @@ async function openSession(
   let nextId = 1;
   let closed = false;
   let workerExited = false;
+  const failAll = (failure: ProjectPrettierFailure): void => {
+    for (const request of pending.values()) {
+      request.reject(new ProjectPrettierFailureError(failure));
+    }
+    pending.clear();
+  };
+
   const exited = new Promise<void>((resolveExit) => {
     child.once("exit", () => {
       workerExited = true;
       resolveExit();
     });
   });
-
-  const failAll = (failure: ProjectPrettierFailure): void => {
-    for (const request of pending.values()) {
-      clearTimeout(request.timer);
-      request.reject(new ProjectPrettierFailureError(failure));
-    }
-    pending.clear();
-  };
+  // A dead worker must fail its pending work immediately; the caller's
+  // cancellation signal governs every deadline from here on.
+  child.once("exit", () => {
+    failAll(
+      pendingFailure(
+        input.projectRoot,
+        "The project formatter exited before completing its work.",
+      ),
+    );
+  });
 
   child.on("message", (message: unknown) => {
     const value = message as { type?: string; reply?: unknown } | null;
@@ -268,7 +417,6 @@ async function openSession(
     const request = pending.get(id);
     if (request === undefined) return;
     pending.delete(id);
-    clearTimeout(request.timer);
     try {
       const parsed = parseProjectReply(value.reply, id);
       if (parsed.operation === "error") {
@@ -292,11 +440,12 @@ async function openSession(
   const ready = new Promise<void>((resolveReady, rejectReady) => {
     const timer = setTimeout(() => {
       rejectReady(
-        new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_WORKER_FAILED",
-          message: "The project formatter did not start in time.",
-          projectRoot: input.projectRoot,
-        }),
+        new ProjectPrettierFailureError(
+          pendingFailure(
+            input.projectRoot,
+            "The project formatter did not start in time.",
+          ),
+        ),
       );
     }, READY_TIMEOUT_MS);
     const onMessage = (message: unknown): void => {
@@ -309,35 +458,45 @@ async function openSession(
     child.once("error", () => {
       clearTimeout(timer);
       rejectReady(
-        new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_WORKER_FAILED",
-          message: "The project formatter could not be started.",
-          projectRoot: input.projectRoot,
-        }),
+        new ProjectPrettierFailureError(
+          pendingFailure(
+            input.projectRoot,
+            "The project formatter could not be started.",
+          ),
+        ),
       );
     });
   });
 
   const abort = (): void => {
-    failAll({
-      code: "PROJECT_PRETTIER_WORKER_FAILED",
-      message: "The project formatter was cancelled.",
-      projectRoot: input.projectRoot,
-    });
+    // Cancellation ends the process tree and the owned workspace promptly,
+    // including while startup is still waiting for the worker.
+    failAll(
+      pendingFailure(input.projectRoot, "The project formatter was cancelled."),
+    );
+    void (async () => {
+      try {
+        if (child.pid !== undefined && !workerExited) {
+          await stopProcessGroup(child.pid);
+        }
+      } finally {
+        await workspace.dispose().catch(() => undefined);
+      }
+    })();
   };
   input.signal.addEventListener("abort", abort, { once: true });
 
   try {
     child.send({
       type: "init",
-      installation: { entryUrl: installation.entryUrl },
+      installation: { entryUrl: input.installation.entryUrl },
       treeRoot: workspace.treeRoot,
       projectRoot: input.projectRoot,
     } as Serializable);
     await ready;
   } catch (error) {
     input.signal.removeEventListener("abort", abort);
-    child.kill("SIGKILL");
+    if (child.pid !== undefined) await stopProcessGroup(child.pid);
     await workspace.dispose();
     throw error;
   }
@@ -345,39 +504,27 @@ async function openSession(
   const request = (
     operation: "format" | "importConfig",
     payload: Record<string, unknown>,
-    timeoutMs = 30_000,
   ): Promise<ProjectPrettierReply> => {
     if (closed || workerExited) {
       return Promise.reject(
-        new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_WORKER_FAILED",
-          message: "The project formatter is not available.",
-          projectRoot: input.projectRoot,
-        }),
+        new ProjectPrettierFailureError(
+          pendingFailure(
+            input.projectRoot,
+            "The project formatter is not available.",
+          ),
+        ),
       );
     }
     const id = nextId++;
     return new Promise((resolveRequest, rejectRequest) => {
-      const timer = setTimeout(() => {
-        pending.delete(id);
-        rejectRequest(
-          new ProjectPrettierFailureError({
-            code: "PROJECT_PRETTIER_WORKER_FAILED",
-            message: "The project formatter timed out.",
-            projectRoot: input.projectRoot,
-          }),
-        );
-      }, timeoutMs);
       pending.set(id, {
         expectedOperation: operation,
-        resolve: resolveRequest as PendingRequest["resolve"],
+        resolve: resolveRequest,
         reject: rejectRequest,
-        timer,
       });
       const message = { type: "request", request: { id, operation, ...payload } };
       const serialized = JSON.stringify(message);
       if (Buffer.byteLength(serialized, "utf8") > PROJECT_PROTOCOL_MAX_BYTES * 4) {
-        clearTimeout(timer);
         pending.delete(id);
         rejectRequest(
           new ProjectPrettierFailureError({
@@ -390,14 +537,14 @@ async function openSession(
       }
       child.send(message as Serializable, (error) => {
         if (error) {
-          clearTimeout(timer);
           pending.delete(id);
           rejectRequest(
-            new ProjectPrettierFailureError({
-              code: "PROJECT_PRETTIER_WORKER_FAILED",
-              message: "The project formatter could not receive the request.",
-              projectRoot: input.projectRoot,
-            }),
+            new ProjectPrettierFailureError(
+              pendingFailure(
+                input.projectRoot,
+                "The project formatter could not receive the request.",
+              ),
+            ),
           );
         }
       });
@@ -421,11 +568,12 @@ async function openSession(
       if (closed) return;
       closed = true;
       input.signal.removeEventListener("abort", abort);
-      failAll({
-        code: "PROJECT_PRETTIER_WORKER_FAILED",
-        message: "The project formatter session was closed.",
-        projectRoot: input.projectRoot,
-      });
+      failAll(
+        pendingFailure(
+          input.projectRoot,
+          "The project formatter session was closed.",
+        ),
+      );
       try {
         child.send({ type: "close" } as Serializable, () => {});
       } catch {
@@ -448,5 +596,5 @@ async function openSession(
 export async function openProjectFormatter(
   input: ProjectFormatterInput,
 ): Promise<ProjectFormatterSession> {
-  return openSession(input, input.installation);
+  return openSession(input);
 }

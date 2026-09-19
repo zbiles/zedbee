@@ -20,6 +20,7 @@ import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitFileChange,
   InitFormattingChoice,
+  InitFormattingImport,
   InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
@@ -48,14 +49,19 @@ import { colorProp, ZEDBEE_THEME } from "./theme.js";
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
   readonly terminalSize?: Readonly<{ columns: number; rows: number }>;
-  readonly   proposalForSelection: (
+  readonly proposalForSelection: (
     profile: ProfileId,
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
     hook?: InitHookChoice,
     formatting?: InitFormattingChoice,
     projectTrust?: boolean,
+    evaluatedImport?: InitFormattingImport,
   ) => InitProposal;
+  /** Present only when an executable configuration can be consented evaluated. */
+  readonly evaluateExecutableImport?: () => Promise<
+    InitFormattingImport | undefined
+  >;
   onDecision(decision: false | InitProposal): void;
   readonly onMouseCleanupReady?: (cleanup: () => void) => void;
 }
@@ -429,6 +435,8 @@ function FormattingChoice({
   detection,
   limitations,
   trustConfirmed,
+  canEvaluate,
+  evaluated,
   activeTargetRef,
   color,
 }: {
@@ -444,6 +452,8 @@ function FormattingChoice({
     | undefined;
   readonly limitations: readonly string[];
   readonly trustConfirmed: boolean;
+  readonly canEvaluate: boolean;
+  readonly evaluated: boolean;
   readonly activeTargetRef?: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
@@ -502,6 +512,30 @@ function FormattingChoice({
             </Text>
           ))}
         </Box>
+      ) : null}
+      {value === "copy" && canEvaluate ? (
+        evaluated ? (
+          <Box paddingX={4}>
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              Executable configuration evaluated once through the project's Prettier; unsupported values stay listed as limitations.
+            </Text>
+          </Box>
+        ) : (
+          <>
+            <Box paddingX={4}>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+                {PROJECT_PRETTIER_DISCLOSURE}
+              </Text>
+            </Box>
+            <Box paddingX={4}>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                {trustConfirmed
+                  ? "Press E to evaluate the executable configuration once through the project's Prettier."
+                  : "Press T to confirm executable-code trust, then E to evaluate this configuration once."}
+              </Text>
+            </Box>
+          </>
+        )
       ) : null}
     </Box>
   );
@@ -586,6 +620,8 @@ function SetupPanel({
   detection,
   limitations,
   trustConfirmed,
+  canEvaluateExecutable,
+  evaluatedExecutable,
   width,
   activeTargetRef,
   color,
@@ -600,6 +636,8 @@ function SetupPanel({
   readonly detection: InitProposal["formattingDetection"];
   readonly limitations: readonly string[];
   readonly trustConfirmed: boolean;
+  readonly canEvaluateExecutable: boolean;
+  readonly evaluatedExecutable: boolean;
   readonly width: number;
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
@@ -642,6 +680,8 @@ function SetupPanel({
         detection={detection}
         limitations={limitations}
         trustConfirmed={trustConfirmed}
+        canEvaluate={canEvaluateExecutable}
+        evaluated={evaluatedExecutable}
         activeTargetRef={activeTargetRef}
         color={color}
       />
@@ -726,6 +766,7 @@ function ReviewPanel({
 export function InitApp({
   proposal,
   proposalForSelection,
+  evaluateExecutableImport,
   width,
   terminalSize,
   color,
@@ -761,10 +802,16 @@ export function InitApp({
     InitFormattingChoice | undefined
   >(undefined);
   const [projectTrust, setProjectTrust] = useState(false);
+  const [evaluatedImport, setEvaluatedImport] = useState<
+    InitFormattingImport | undefined
+  >(undefined);
   const effectiveFormatting: InitFormattingChoice =
     formatting ?? proposal.formatting ?? "managed";
   const formattingDetected =
     (proposal.formattingDetection?.length ?? 0) > 0;
+  const canEvaluateExecutable = evaluateExecutableImport !== undefined;
+  const executableEvaluationAvailable =
+    canEvaluateExecutable && effectiveFormatting === "copy";
   const projectTrustRequired =
     effectiveFormatting === "project" &&
     proposal.projectPrettierTrustConfirmed !== true &&
@@ -791,6 +838,7 @@ export function InitApp({
         hookSelection,
         formatting,
         projectTrust,
+        evaluatedImport,
       ),
     [
       baseProfile,
@@ -798,6 +846,7 @@ export function InitApp({
       hookSelection,
       formatting,
       projectTrust,
+      evaluatedImport,
       proposalForSelection,
       selected,
     ],
@@ -892,8 +941,21 @@ export function InitApp({
         return;
       }
       setPhase("review");
-    } else if (normalized === "t" && effectiveFormatting === "project") {
-      setProjectTrust((value) => !value);
+    } else if (
+      (normalized === "t" &&
+        (effectiveFormatting === "project" || executableEvaluationAvailable)) ||
+      (normalized === "e" &&
+        executableEvaluationAvailable &&
+        projectTrust &&
+        evaluateExecutableImport !== undefined)
+    ) {
+      if (normalized === "t") {
+        setProjectTrust((value) => !value);
+      } else {
+        void evaluateExecutableImport?.().then((evaluated) => {
+          setEvaluatedImport(evaluated);
+        });
+      }
     } else if (normalized === "n" || key.escape) {
       onDecision(false);
       exit();
@@ -933,6 +995,7 @@ export function InitApp({
         hookSelection,
         formatting,
         projectTrust,
+        evaluatedImport,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
@@ -1017,6 +1080,8 @@ export function InitApp({
                 : []
             }
             trustConfirmed={projectTrust || proposal.projectPrettierTrustConfirmed === true}
+            canEvaluateExecutable={canEvaluateExecutable}
+            evaluatedExecutable={evaluatedImport !== undefined}
             width={panelWidth}
             activeTargetRef={activeTargetRef}
             color={color}
@@ -1043,7 +1108,9 @@ export async function runInitPrompt(
     hook?: InitHookChoice,
     formatting?: InitFormattingChoice,
     projectTrust?: boolean,
+    evaluatedImport?: InitFormattingImport,
   ) => InitProposal,
+  evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
   let cleanupMouse = () => disableTerminalMouse(process.stdout);
@@ -1052,6 +1119,9 @@ export async function runInitPrompt(
       <InitApp
         proposal={proposal}
         proposalForSelection={proposalForSelection}
+        {...(evaluateExecutableImport === undefined
+          ? {}
+          : { evaluateExecutableImport })}
         {...options}
         onDecision={(value) => {
           decision = value;

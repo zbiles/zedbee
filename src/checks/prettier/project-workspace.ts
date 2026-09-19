@@ -1,30 +1,34 @@
-import { constants } from "node:fs";
 import {
   lstat,
   mkdir,
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
+import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
+import { discoverWorkspaces } from "../../inspection/workspaces.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { isContainedPath } from "../../inspection/read-json.js";
 
-export interface DependencyRoot {
-  /** Repository-relative directory that should carry an installed link, e.g. "node_modules" or "apps/web/node_modules". */
-  readonly relativePath: string;
-  /** Validated absolute realpath of the installed directory. */
-  readonly absolutePath: string;
-}
-
 export interface ProjectWorkspaceInput {
+  /** Canonical live checkout root; used only to locate installed dependency roots. */
+  readonly repositoryRoot: string;
   readonly snapshotRoot: string;
   readonly projectRoot: string;
-  readonly dependencyRoots: readonly DependencyRoot[];
 }
 
 export interface ProjectWorkspace {
@@ -37,14 +41,28 @@ export interface ProjectWorkspace {
   dispose(): Promise<void>;
 }
 
-const MAX_MIRROR_FILE_BYTES = 32 * 1024 * 1024;
+/** Layouts the mirror cannot reproduce faithfully fail instead of guessing. */
+export class ProjectWorkspaceLayoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProjectWorkspaceLayoutError";
+  }
+}
 
-function relativeRepositoryPath(
-  snapshotRoot: string,
+const MAX_MIRROR_FILE_BYTES = 32 * 1024 * 1024;
+const MAX_DEPENDENCY_LINKS = 1024;
+
+function repositoryRelative(
+  root: string,
   absolute: string,
 ): string | undefined {
-  const value = relative(snapshotRoot, absolute).split(sep).join("/");
-  if (value === "" || isAbsolute(value) || value === ".." || value.startsWith("../")) {
+  const value = relative(root, absolute).split(sep).join("/");
+  if (
+    value === "" ||
+    isAbsolute(value) ||
+    value === ".." ||
+    value.startsWith("../")
+  ) {
     return undefined;
   }
   return value;
@@ -71,9 +89,9 @@ async function copyRegularFiles(
       }
       if (!metadata.isFile()) continue;
       if (metadata.size > MAX_MIRROR_FILE_BYTES) continue;
-      const repositoryPath = relativeRepositoryPath(snapshotRoot, absolute);
-      if (repositoryPath === undefined) continue;
-      const destination = join(treeRoot, ...repositoryPath.split("/"));
+      const path = repositoryRelative(snapshotRoot, absolute);
+      if (path === undefined) continue;
+      const destination = join(treeRoot, ...path.split("/"));
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, await readFile(absolute), { mode: 0o600 });
     }
@@ -81,24 +99,111 @@ async function copyRegularFiles(
   await walk(snapshotRoot);
 }
 
-async function attachDependencyRoot(
+/**
+ * Plans the installed dependency links for the mirror. Only dependency roots
+ * that the selected snapshot's own manifests declare are linked — never a
+ * whole live `node_modules` tree. A link that resolves into a tracked
+ * workspace package is remapped to that package's snapshot copy; anything
+ * else that would reintroduce live repository code fails as an unsupported
+ * layout.
+ */
+async function planDependencyLinks(
+  input: ProjectWorkspaceInput,
   treeRoot: string,
-  dependency: DependencyRoot,
-): Promise<void> {
-  const destination = join(treeRoot, ...dependency.relativePath.split("/"));
-  if (!isContainedPath(treeRoot, destination)) return;
-  try {
-    const metadata = await lstat(dependency.absolutePath);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) return;
-  } catch {
-    return;
+): Promise<readonly { readonly linkPath: string; readonly target: string }[]> {
+  const repositoryRoot = await canonicalizeSnapshotRoot(input.repositoryRoot);
+  const registry = await captureSnapshotRegistry(
+    await canonicalizeSnapshotRoot(input.snapshotRoot),
+  );
+  const workspaces = await discoverWorkspaces(registry);
+  const links = new Map<string, string>();
+  const workspaceRealRoots = await Promise.all(
+    workspaces.map(async (workspace) => ({
+      relativeRoot: workspace.relativeRoot,
+      realRoot: await realpath(
+        resolve(repositoryRoot, workspace.relativeRoot),
+      ).catch(() => undefined),
+    })),
+  );
+
+  for (const workspace of workspaces) {
+    const names = new Set(
+      workspace.manifest.dependencyDeclarations.map(({ name }) => name),
+    );
+    for (const name of names) {
+      let directory: string | undefined = resolve(
+        repositoryRoot,
+        workspace.relativeRoot,
+      );
+      while (directory !== undefined && isContainedPath(repositoryRoot, directory)) {
+        const candidate = join(directory, "node_modules", name);
+        try {
+          const metadata = await lstat(candidate);
+          if (!metadata.isDirectory() && !metadata.isSymbolicLink()) {
+            throw new Error("skip");
+          }
+          const real = await realpath(candidate);
+          const linkPath = repositoryRelative(repositoryRoot, candidate);
+          if (linkPath === undefined) throw new Error("skip");
+          const fromRepositoryRoot = repositoryRelative(
+            repositoryRoot,
+            real,
+          );
+          const insideRepository =
+            fromRepositoryRoot !== undefined;
+          const underNodeModules =
+            insideRepository &&
+            fromRepositoryRoot!.split("/").includes("node_modules");
+          if (metadata.isSymbolicLink() && insideRepository && !underNodeModules) {
+            // A workspace package linked into node_modules must use the
+            // snapshot copy, never live source or untracked build output.
+            const owner = workspaceRealRoots.find(
+              (entry) => entry.realRoot === real,
+            );
+            if (owner === undefined) {
+              throw new ProjectWorkspaceLayoutError(
+                `The ${name} installation resolves to live repository code outside the selected snapshot; this layout is unsupported.`,
+              );
+            }
+            links.set(linkPath, join(treeRoot, ...owner.relativeRoot.split("/")));
+          } else {
+            links.set(linkPath, real);
+          }
+          break;
+        } catch (error) {
+          if (error instanceof ProjectWorkspaceLayoutError) throw error;
+          /* Try the next hoisted level. */
+        }
+        if (directory === repositoryRoot) break;
+        const parent = dirname(directory);
+        directory = parent === directory ? undefined : parent;
+      }
+    }
   }
-  await mkdir(dirname(destination), { recursive: true });
-  await symlink(
-    dependency.absolutePath,
-    destination,
-    process.platform === "win32" ? "junction" : "dir",
-  ).catch(() => undefined);
+
+  if (links.size > MAX_DEPENDENCY_LINKS) {
+    throw new ProjectWorkspaceLayoutError(
+      "The project declares more dependencies than the formatting workspace supports.",
+    );
+  }
+  return [...links.entries()]
+    .map(([linkPath, target]) => ({ linkPath, target }))
+    .sort((left, right) => compareCodeUnits(left.linkPath, right.linkPath));
+}
+
+async function attachDependencyLinks(
+  treeRoot: string,
+  links: readonly { readonly linkPath: string; readonly target: string }[],
+): Promise<void> {
+  for (const { linkPath, target } of links) {
+    const destination = join(treeRoot, ...linkPath.split("/"));
+    await mkdir(dirname(destination), { recursive: true });
+    await symlink(
+      target,
+      destination,
+      process.platform === "win32" ? "junction" : "dir",
+    ).catch(() => undefined);
+  }
 }
 
 export async function createProjectWorkspace(
@@ -115,9 +220,10 @@ export async function createProjectWorkspace(
       mode: 0o600,
     });
     await copyRegularFiles(input.snapshotRoot, treeRoot, signal);
-    for (const dependency of input.dependencyRoots) {
-      await attachDependencyRoot(treeRoot, dependency);
-    }
+    await attachDependencyLinks(
+      treeRoot,
+      await planDependencyLinks(input, treeRoot),
+    );
   } catch (error) {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -134,15 +240,4 @@ export async function createProjectWorkspace(
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
     },
   });
-}
-
-/** Exposes the open flag constants for callers that need bounded reads. */
-export const PROJECT_WORKSPACE_READ_FLAGS = constants.O_RDONLY;
-
-export function resolveInsideTree(
-  treeRoot: string,
-  candidate: string,
-): string | undefined {
-  const absolute = resolve(treeRoot, candidate);
-  return isContainedPath(treeRoot, absolute) ? absolute : undefined;
 }
