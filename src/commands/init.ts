@@ -53,6 +53,7 @@ export interface InitCommandOptions {
   readonly format: "text" | "json";
   readonly color: boolean;
   readonly animations: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export interface InitCommandIO {
@@ -399,6 +400,7 @@ async function evaluateExecutableProjectConfig(
   repositoryRoot: string,
   projectRoot: string,
   target: { readonly configPath: string } | { readonly sharedConfig: string },
+  signal: AbortSignal,
 ): Promise<EvaluatedExecutableImport> {
   const permit = await requireProjectPrettierTrust(
     repositoryRoot,
@@ -416,7 +418,7 @@ async function evaluateExecutableProjectConfig(
     projectRoot,
     installation,
     permit,
-    signal: new AbortController().signal,
+    signal,
   });
   try {
     const imported =
@@ -617,6 +619,7 @@ export async function executeInitCommand(
             repositoryRoot,
             formattingSetup.projectRoot,
             executableTarget,
+            options.signal ?? new AbortController().signal,
           )
         : undefined;
     const evaluatedExecutableImport =
@@ -634,6 +637,7 @@ export async function executeInitCommand(
               repositoryRoot,
               formattingSetup.projectRoot,
               executableTarget,
+              options.signal ?? new AbortController().signal,
             );
             return mergeEvaluatedExecutableImport(
               formattingSetup.imported,

@@ -1,7 +1,7 @@
 import type { IFlattenedRuleSet } from "dependency-cruiser";
 
 const TEST_PATH =
-  "(^|/)(?:test|tests|__tests__|spec)(?:/|$)|\\.(?:test|spec)\\.[^.]+$";
+  "(^|/)(?:test|tests|__tests__|spec|\\.husky)(?:/|$)|\\.(?:test|spec)\\.[^.]+$";
 const PRODUCTION_SOURCE = "(^|/)src/";
 
 export const DEPENDENCY_RULE_NAMES = Object.freeze({

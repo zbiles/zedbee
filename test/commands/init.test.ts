@@ -1557,7 +1557,7 @@ describe("executeInitCommand", () => {
     expect(config).not.toContain("printWidth");
   });
 
-  it("reports excludeFiles as a copy limitation instead of negating patterns", async () => {
+  it("reports excludeFiles and omits the affected override", async () => {
     const repository = await createGitRepository("zedbee-init-copy-exclude-");
     await repository.write("package.json", '{"name":"fixture"}');
     await repository.write(
@@ -1593,7 +1593,8 @@ describe("executeInitCommand", () => {
       join(repository.root, ".zedbeerc.jsonc"),
       "utf8",
     );
-    expect(config).toContain('"**/*.md"');
+    expect(config).not.toContain('"**/*.md"');
     expect(config).not.toContain("!*.draft.md");
+    expect(config).toContain('"printWidth": 100');
   });
 });

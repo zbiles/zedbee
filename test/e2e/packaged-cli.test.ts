@@ -378,7 +378,9 @@ describe("packaged Zedbee CLI", () => {
         "--input-type=module",
         "--eval",
         `
-      const { loadAnalyzerAdapter } = await import(${JSON.stringify(registry.href)});
+      const { loadAnalyzerAdapter } = await import(${JSON.stringify(
+        registry.href,
+      )});
       const ids = ["formatting", "lint", "types", "cyclomaticComplexity", "readabilityComplexity", "structuralSecurity", "secrets", "duplication", "dependencyArchitecture", "deadCode", "reactCorrectness", "reactAccessibility", "vulnerabilities"];
       console.log(JSON.stringify(await Promise.all(ids.map(async id => (await loadAnalyzerAdapter(id)).id))));
     `,
@@ -1385,15 +1387,32 @@ async function repositoryWithProjectPrettier() {
   await rm(nodeModules, { recursive: true, force: true });
   await mkdir(nodeModules, { recursive: true });
   const type = process.platform === "win32" ? "junction" : "dir";
-  await symlink(join(installedNodeModules, "zedbee"), join(nodeModules, "zedbee"), type);
-  await cp(join(installedNodeModules, "prettier"), join(nodeModules, "prettier"), {
-    recursive: true,
-  });
+  await symlink(
+    join(installedNodeModules, "zedbee"),
+    join(nodeModules, "zedbee"),
+    type,
+  );
+  await symlink(
+    join(installedNodeModules, ".bin"),
+    join(nodeModules, ".bin"),
+    type,
+  );
+  await cp(
+    join(installedNodeModules, "prettier"),
+    join(nodeModules, "prettier"),
+    {
+      recursive: true,
+    },
+  );
   await rm(join(repository.root, ".gitignore"), { force: true });
   await repository.write(
     "package.json",
     `${JSON.stringify(
-      { name: "project-prettier-fixture", private: true, devDependencies: { prettier: "^3.0.0" } },
+      {
+        name: "project-prettier-fixture",
+        private: true,
+        devDependencies: { prettier: "^3.0.0", zedbee: "*" },
+      },
       null,
       2,
     )}\n`,
@@ -1404,7 +1423,10 @@ async function repositoryWithProjectPrettier() {
 describe("project Prettier integration", () => {
   it("copies detected settings through packaged init", async () => {
     const repository = await repositoryWithProjectPrettier();
-    await repository.write(".prettierrc.json", '{"printWidth":100,"trailingComma":"es5"}');
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"trailingComma":"es5"}',
+    );
 
     const result = await runPackagedCli(repository.root, [
       "init",
@@ -1418,7 +1440,10 @@ describe("project Prettier integration", () => {
     ]);
 
     expect(result.exitCode, result.stderr).toBe(0);
-    const config = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
     expect(config).toContain('"printWidth": 100');
     expect(config).toContain('"trailingComma": "es5"');
     // Detection is reported in the machine-readable proposal without executing
@@ -1440,7 +1465,13 @@ describe("project Prettier integration", () => {
       '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
     );
     await repository.write("value.ts", "export const value = 'ok';\n");
-    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
 
     const init = await runPackagedCli(repository.root, [
       "init",
@@ -1454,7 +1485,10 @@ describe("project Prettier integration", () => {
       "json",
     ]);
     expect(init.exitCode, init.stderr).toBe(0);
-    const config = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
     expect(config).toContain('"engine": "project"');
     const trust = await repository.git([
       "config",
@@ -1466,7 +1500,9 @@ describe("project Prettier integration", () => {
     await repository.git(["add", "--", ".zedbeerc.jsonc"]);
 
     const withService = await runZedbee(repository.root, "json");
-    const withoutService = await runZedbee(repository.root, "json", ["--no-service"]);
+    const withoutService = await runZedbee(repository.root, "json", [
+      "--no-service",
+    ]);
     expect(withService.exitCode, withService.stderr).toBe(0);
     expect(withoutService.exitCode, withoutService.stderr).toBe(0);
     // The checks actually ran through the project engine: exit code zero alone
@@ -1508,7 +1544,13 @@ describe("project Prettier integration", () => {
       '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
     );
     await repository.write("value.ts", 'export const value = "double";\n');
-    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
 
     const init = await runPackagedCli(repository.root, [
       "init",
@@ -1530,7 +1572,9 @@ describe("project Prettier integration", () => {
       readonly checks: readonly {
         readonly checkId: string;
         readonly status: string;
-        readonly findings: readonly { readonly location?: { readonly file: string } }[];
+        readonly findings: readonly {
+          readonly location?: { readonly file: string };
+        }[];
         readonly formattingProvenance?: readonly { readonly engine: string }[];
       }[];
     };
@@ -1538,20 +1582,23 @@ describe("project Prettier integration", () => {
       (check) => check.checkId === "formatting",
     );
     expect(formatting?.status).toBe("completed");
-    expect(formatting?.findings.map((finding) => finding.location?.file)).toEqual([
-      "value.ts",
-    ]);
+    expect(
+      formatting?.findings.map((finding) => finding.location?.file),
+    ).toEqual(["value.ts"]);
     expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
   });
 
   it("carries invocation-only trust into a fresh scan without init", async () => {
     const repository = await repositoryWithProjectPrettier();
-    await repository.write(
-      ".prettierrc.json",
-      '{\n  "singleQuote": true\n}\n',
-    );
+    await repository.write(".prettierrc.json", '{\n  "singleQuote": true\n}\n');
     await repository.write("value.ts", 'export const value = "hello";\n');
-    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
     await repository.write(
       ".zedbeerc.jsonc",
       '{\n  "schemaVersion": 1,\n  "profile": "recommended",\n  "checks": {\n    "formatting": {\n      "engine": "project"\n    }\n  }\n}\n',
@@ -1594,7 +1641,10 @@ describe("project Prettier integration", () => {
 
   it("refuses project formatting without trust non-interactively", async () => {
     const repository = await repositoryWithProjectPrettier();
-    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
 
     const result = await runPackagedCli(repository.root, [
       "init",
@@ -1608,5 +1658,69 @@ describe("project Prettier integration", () => {
     ]);
 
     expect(result.exitCode).toBe(2);
+  });
+
+  it("commits generated tracked hooks with project formatting, lint, and dependency architecture", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write(
+      "src/index.ts",
+      `export const value = ${Date.now()};\n`,
+    );
+
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "tracked",
+      "--checks",
+      "formatting,lint,dependencyArchitecture",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await repository.git(["add", "--all"]);
+
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(0);
+    const report = JSON.parse(scanned.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly findings: readonly unknown[];
+      }[];
+    };
+    for (const checkId of ["formatting", "lint", "dependencyArchitecture"]) {
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({ checkId, status: "completed", findings: [] }),
+      );
+    }
+
+    const committed = await execa(
+      "git",
+      ["commit", "-m", "Set up trusted project formatting"],
+      {
+        cwd: repository.root,
+        env: {
+          CI: "",
+          HUSKY: "1",
+          NODE_OPTIONS: undefined,
+          NODE_PATH: undefined,
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+        },
+        reject: false,
+        stdin: "ignore",
+        ...cancellationOptions(),
+      },
+    );
+    expect(committed.exitCode, committed.stdout + committed.stderr).toBe(0);
   });
 });

@@ -3,10 +3,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import * as prettier from "prettier";
 import type { CheckRunContext, LegacyCheckResultAdapter } from "../adapter.js";
-import type {
-  CheckApplicability,
-  InspectionContext,
-} from "../adapter.js";
+import type { CheckApplicability, InspectionContext } from "../adapter.js";
 import type { CheckResult, Finding } from "../../core/types.js";
 import type { ChangedFile } from "../../git/change-set.js";
 import { formattingFingerprint } from "./fingerprint.js";
@@ -38,7 +35,6 @@ import {
 } from "./project-engine.js";
 import type { ProjectFormatterSession } from "./project-engine.js";
 import type { FormattingProvenance } from "./project-types.js";
-import { DATA_CONFIG_FILE_NAMES } from "../../init/prettier-discovery.js";
 import {
   collectProjectFormattingInventory,
   PROJECT_FORMATTING_INVENTORY_MAX_FILES,
@@ -169,8 +165,13 @@ async function attribute(
     formatted,
     { signal: context.signal },
   );
-  const attributed = intersectRanges(transformations, stagedRanges(context, file));
-  return attributed.map((range) => finding(file, range.start, range.end, engine));
+  const attributed = intersectRanges(
+    transformations,
+    stagedRanges(context, file),
+  );
+  return attributed.map((range) =>
+    finding(file, range.start, range.end, engine),
+  );
 }
 
 async function runProjectFiles(
@@ -192,6 +193,7 @@ async function runProjectFiles(
     grouped.set(projectRoot, group);
   }
   for (const [projectRoot, projectFiles] of grouped) {
+    const selectedConfigFiles = new Set<string>();
     // Invocation-only consent comes only from the trusted parent CLI flag;
     // tracked configuration can never supply executable-code permission.
     let permit;
@@ -265,6 +267,9 @@ async function runProjectFiles(
           ignored.push({ file, reason: support.reason });
           continue;
         }
+        if (support.configFile !== undefined) {
+          selectedConfigFiles.add(support.configFile);
+        }
         const source = await sourceForFile(
           context,
           file,
@@ -325,13 +330,8 @@ async function runProjectFiles(
         engine: "project",
         version: installation.version,
         projectRoot,
-        // Data-only inventory of the project's native configuration inside
-        // the selected snapshot; nothing is executed to collect this.
         configFiles: Object.freeze(
-          await snapshotConfigFiles(
-            context.snapshots.targetDir,
-            projectRoot,
-          ).then((paths) => paths.sort(compareCodeUnits)),
+          [...selectedConfigFiles].sort(compareCodeUnits),
         ),
       }),
     );
@@ -353,35 +353,6 @@ function mayUseProjectEngine(
   );
 }
 
-/** Data-only config inventory of one project inside the selected snapshot. */
-async function snapshotConfigFiles(
-  snapshotRoot: string,
-  projectRoot: string,
-): Promise<string[]> {
-  const paths: string[] = [];
-  for (const name of DATA_CONFIG_FILE_NAMES) {
-    const relative = projectRoot === "." ? name : `${projectRoot}/${name}`;
-    try {
-      if ((await lstat(join(snapshotRoot, relative))).isFile()) {
-        paths.push(relative);
-      }
-    } catch {
-      /* Absent configuration files are simply not reported. */
-    }
-  }
-  const manifestRelative =
-    projectRoot === "." ? "package.json" : `${projectRoot}/package.json`;
-  try {
-    const manifest = JSON.parse(
-      await readFile(join(snapshotRoot, manifestRelative), "utf8"),
-    ) as { prettier?: unknown };
-    if (manifest.prettier !== undefined) paths.push(manifestRelative);
-  } catch {
-    /* No manifest prettier field. */
-  }
-  return paths;
-}
-
 // Legacy CheckResult compatibility bridge: managed and project engines both
 // return formatted text to the same staged-diff attribution path.
 export const prettierAdapter: LegacyCheckResultAdapter = {
@@ -392,9 +363,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
     return planPrettierFixes(context, findings);
   },
 
-  inspect: async (
-    context: InspectionContext,
-  ): Promise<CheckApplicability> => {
+  inspect: async (context: InspectionContext): Promise<CheckApplicability> => {
     // Project mode must let the selected formatter and its plugins decide
     // support, so applicability accepts bounded changed files without the
     // managed parser allowlist and without executing any configuration.
@@ -537,7 +506,9 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           filepath: file,
           parser,
         });
-        findings.push(...(await attribute(context, file, formatted, source, "managed")));
+        findings.push(
+          ...(await attribute(context, file, formatted, source, "managed")),
+        );
       } catch (error) {
         if (context.signal.aborted) throw error;
         if (error instanceof CheckIncompleteError) {
@@ -585,7 +556,9 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       ignored.length > 0
     ) {
       return skipped(
-        `All ${ignored.length} target file${ignored.length === 1 ? "" : "s"} were ignored or unsupported under the project formatter`,
+        `All ${ignored.length} target file${
+          ignored.length === 1 ? "" : "s"
+        } were ignored or unsupported under the project formatter`,
       );
     }
 

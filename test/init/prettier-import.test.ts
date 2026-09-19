@@ -74,6 +74,30 @@ describe("previewPrettierSettingsImport", () => {
     ]);
   });
 
+  it("omits an override whose exclusions cannot be represented", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({
+        overrides: [
+          {
+            files: "*.md",
+            excludeFiles: "generated/*.md",
+            options: { printWidth: 80 },
+          },
+        ],
+      }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.overrides).toEqual([]);
+    expect(preview.limitations.join("\n")).toMatch(
+      /override.+excludeFiles.+not copied/iu,
+    );
+  });
+
   it("translates basename override patterns relative to their config directory", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });

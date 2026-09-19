@@ -1,4 +1,11 @@
-import { cp, mkdir, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  readFile,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -17,7 +24,9 @@ import { persistProjectPrettierTrust } from "../../../src/checks/prettier/projec
 import { createGitRepository } from "../../helpers/git-repository.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
 
-const repositoryPackageRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const repositoryPackageRoot = fileURLToPath(
+  new URL("../../../", import.meta.url),
+);
 
 const FIXTURE_PLUGIN = `export const languages = [
   { name: "Fixture", parsers: ["fixture"], extensions: [".fixturetxt"] },
@@ -35,10 +44,12 @@ export const printers = {
 };
 `;
 
-async function scanFixture(options: {
-  plugin?: boolean;
-  ignore?: string;
-} = {}) {
+async function scanFixture(
+  options: {
+    plugin?: boolean;
+    ignore?: string;
+  } = {},
+) {
   const repository = await createGitRepository("zedbee-project-scan-");
   await repository.write(
     "package.json",
@@ -115,9 +126,7 @@ async function runScan(
     target: { id: ".", kind: "repository", relativeRoot: "." },
     policy: options.config.checks.formatting,
     policyForFile: testFilePolicyResolver(options.config),
-    ...(options.invocationTrust === true
-      ? { projectPrettierTrust: true }
-      : {}),
+    ...(options.invocationTrust === true ? { projectPrettierTrust: true } : {}),
     signal: new AbortController().signal,
   });
 }
@@ -152,6 +161,26 @@ describe("project Prettier scan integration", () => {
         version: "3.9.6",
         projectRoot: ".",
         configFiles: [".prettierrc.json"],
+      },
+    ]);
+  });
+
+  it("reports only the native configuration selected for checked files", async () => {
+    const repository = await scanFixture();
+    await repository.write("src/.prettierrc.json", '{"semi":false}');
+    await repository.write("src/value.ts", "export const value = 'ok'\n");
+    await repository.git(["add", "--", "src/.prettierrc.json", "src/value.ts"]);
+    await persistProjectPrettierTrust(repository.root, ".");
+
+    const result = await runScan(repository, { config: projectConfig() });
+
+    expect(result.status).toBe("completed");
+    expect(result.formattingProvenance).toEqual([
+      {
+        engine: "project",
+        version: "3.9.6",
+        projectRoot: ".",
+        configFiles: ["src/.prettierrc.json"],
       },
     ]);
   });
@@ -221,7 +250,9 @@ describe("project Prettier scan integration", () => {
   });
 
   it("keeps ignored files distinguishable from checked files", async () => {
-    const repository = await scanFixture({ ignore: "ignored.ts\n!included.ts\n" });
+    const repository = await scanFixture({
+      ignore: "ignored.ts\n!included.ts\n",
+    });
     await repository.write("ignored.ts", 'export const value = "no";\n');
     await repository.write("included.ts", 'export const value = "no";\n');
     await repository.git(["add", "--", "ignored.ts", "included.ts"]);
@@ -240,7 +271,10 @@ describe("project Prettier scan integration", () => {
 
   it("reports an all-ignored run as skipped instead of checked-and-passed", async () => {
     const repository = await scanFixture({ ignore: "generated/**\n" });
-    await repository.write("generated/value.ts", 'export const value = "no";\n');
+    await repository.write(
+      "generated/value.ts",
+      'export const value = "no";\n',
+    );
     await repository.git(["add", "--", "generated/value.ts"]);
 
     const result = await runScan(repository, {
@@ -377,7 +411,10 @@ describe("project Prettier scan integration", () => {
 
     // Staging a configuration change must affect the very next scan; project
     // results are never persisted or reused across scans.
-    await repository.write(".prettierrc.json", '{\n  "singleQuote": false\n}\n');
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": false\n}\n',
+    );
     await repository.git(["add", "--", ".prettierrc.json"]);
 
     const second = await runScan(repository, {

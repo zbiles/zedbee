@@ -81,6 +81,7 @@ export interface ChecksCommandDependencies {
     repositoryRoot: string,
     config: ResolvedConfig,
   ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>>;
+  discoverProjectPrettier?: typeof discoverProjectPrettier;
   renderDashboard?(
     checks: readonly CheckDescription[],
     options: { readonly width: number; readonly color: boolean },
@@ -486,16 +487,19 @@ export async function executeChecksCommand(
       repositoryRoot,
       config,
     );
-    const discoveredProjectPrettier =
-      config.checks.formatting.engine === "project"
-        ? await discoverProjectPrettier(repositoryRoot).catch(
-            () => [] as const,
-          )
-        : [];
+    const formattingUsesProject =
+      config.checks.formatting.engine === "project" ||
+      config.overrides.some(
+        (override) => override.checks.formatting?.engine === "project",
+      );
+    const discoveredProjectPrettier = formattingUsesProject
+      ? await (dependencies.discoverProjectPrettier ?? discoverProjectPrettier)(
+          repositoryRoot,
+        ).catch(() => [] as const)
+      : [];
     const projectPrettier =
-      discoveredProjectPrettier.find(
-        (entry) => entry.projectRoot === ".",
-      ) ?? discoveredProjectPrettier[0];
+      discoveredProjectPrettier.find((entry) => entry.projectRoot === ".") ??
+      discoveredProjectPrettier[0];
     const checks = Object.freeze(
       CHECK_IDS.map((id): CheckDescription => {
         const runtime = applicability.get(id) ?? {
@@ -524,8 +528,7 @@ export async function executeChecksCommand(
                 })
               : Object.freeze({ ...CATALOG[id].engine }),
           limitation:
-            id === "formatting" &&
-            config.checks.formatting.engine === "project"
+            id === "formatting" && formattingUsesProject
               ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
               : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined

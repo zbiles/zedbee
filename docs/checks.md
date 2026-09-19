@@ -95,6 +95,8 @@ During `zedbee init`, when an existing setup is found you can copy supported set
 
 Project execution is an explicit trust decision. Choosing it in `init` records consent in local Git configuration keyed to the checkout and project root; a fresh clone needs its own consent, and CI must pass `--trust-project-prettier` from a trusted workflow. That flag is invocation-only. `--yes` alone never grants it, and tracked repository configuration can never grant it. When the installation is missing, the version is unsupported, a plugin is missing, the configuration is invalid, or trust is absent, the formatting check is incomplete with a concrete remedy. Zedbee never silently falls back to managed formatting, and project-format results are not persisted in the observation cache. Managed behavior is unchanged when `engine` is omitted.
 
+Do not grant project-Prettier trust automatically to unreviewed pull-request code. Native configuration and plugins are project code with the invoking user's permissions; the worker boundary supervises their lifetime but is not an operating-system sandbox. The selected Git snapshot supplies configuration files, relative helpers, ignore files, and source bytes, so an unstaged helper edit cannot alter an index scan.
+
 `zedbee checks` shows the effective engine and, for project mode, the detected version. `zedbee doctor` inspects project setup as data only; pass `--trust-project-prettier` to run the same installation and snapshot probe used by scans.
 
 | Field                    |       Default | Accepted value                                 |
@@ -140,20 +142,20 @@ Duplication uses these workspace-wide values:
         "no-console": "warn",
         "@typescript-eslint/no-unused-vars": [
           "error",
-          { "argsIgnorePattern": "^_" },
-        ],
-      },
+          { "argsIgnorePattern": "^_" }
+        ]
+      }
     },
     "reactCorrectness": {
       "rules": {
         "react/prop-types": "off",
-        "react-hooks/rules-of-hooks": "error",
-      },
+        "react-hooks/rules-of-hooks": "error"
+      }
     },
     "reactAccessibility": {
-      "rules": { "jsx-a11y/no-autofocus": "warn" },
-    },
-  },
+      "rules": { "jsx-a11y/no-autofocus": "warn" }
+    }
+  }
 }
 ```
 
@@ -166,30 +168,30 @@ File overrides are evaluated in array order independently for every repository-r
   "schemaVersion": 1,
   "checks": {
     "formatting": {
-      "settings": { "printWidth": 100, "singleAttributePerLine": true },
+      "settings": { "printWidth": 100, "singleAttributePerLine": true }
     },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "duplication": {
       "threshold": 5,
-      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" },
-    },
+      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" }
+    }
   },
   "overrides": [
     {
       "files": ["packages/**"],
       "checks": {
         "formatting": { "settings": { "printWidth": 90 } },
-        "cyclomaticComplexity": { "max": 18 },
-      },
+        "cyclomaticComplexity": { "max": 18 }
+      }
     },
     {
       "files": ["packages/legacy/**"],
       "checks": {
         "formatting": { "settings": { "printWidth": 120 } },
-        "cyclomaticComplexity": { "blockWorsening": false },
-      },
-    },
-  ],
+        "cyclomaticComplexity": { "blockWorsening": false }
+      }
+    }
+  ]
 }
 ```
 

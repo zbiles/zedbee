@@ -648,6 +648,47 @@ describe("executeChecksCommand", () => {
     );
   });
 
+  it("describes a nested project engine under a managed root", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { engine: "managed" } },
+      overrides: [
+        {
+          files: ["packages/app/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    });
+
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      {
+        ...configuredDependencies(config),
+        discoverProjectPrettier: async () => [
+          {
+            projectRoot: "packages/app",
+            status: "available",
+            version: "3.9.6",
+            executableConfig: false,
+            configPaths: ["packages/app/.prettierrc.json"],
+          },
+        ],
+      },
+    );
+
+    expect(result.checks.find(({ id }) => id === "formatting")).toMatchObject({
+      engine: {
+        name: "Project Prettier",
+        version: "3.9.6",
+        license: "project-installed",
+      },
+      limitation:
+        "Uses the project's installed Prettier, native configuration, and plugins under explicit trust.",
+    });
+  });
+
   it("detaches and deep-freezes nested configuration values in descriptions", async () => {
     const repositoryOption = {
       selector: "CallExpression",

@@ -11,11 +11,16 @@ import {
   resolveProjectPrettierInstallation,
   snapshotIdentity,
 } from "../../../src/checks/prettier/project-engine.js";
-import { persistProjectPrettierTrust } from "../../../src/checks/prettier/project-trust.js";
+import {
+  persistProjectPrettierTrust,
+  revokeProjectPrettierTrust,
+} from "../../../src/checks/prettier/project-trust.js";
 import type { PreparedFixPlan } from "../../../src/fixes/types.js";
 import { createGitRepository } from "../../helpers/git-repository.js";
 
-const repositoryPackageRoot = fileURLToPath(new URL("../../../", import.meta.url));
+const repositoryPackageRoot = fileURLToPath(
+  new URL("../../../", import.meta.url),
+);
 
 function digest(source: string): string {
   return createHash("sha256").update(source, "utf8").digest("hex");
@@ -120,7 +125,11 @@ describe("project Prettier fix parity", () => {
   it("formats the working file with the project engine and preserves the index", async () => {
     const repository = await projectRepository();
     const selection = await projectSelection(repository.root);
-    const plan = planFor(repository.root, selection, 'export const value = "hello";\n');
+    const plan = planFor(
+      repository.root,
+      selection,
+      'export const value = "hello";\n',
+    );
 
     const result = await applyFixPlan(plan);
 
@@ -136,10 +145,15 @@ describe("project Prettier fix parity", () => {
   it("applies with invocation-only trust on a fresh checkout without a stored grant", async () => {
     const repository = await projectRepository();
     const selection = await projectSelection(repository.root);
-    const plan = planFor(repository.root, selection, 'export const value = "hello";\n');
+    const plan = planFor(
+      repository.root,
+      selection,
+      'export const value = "hello";\n',
+    );
+    await revokeProjectPrettierTrust(repository.root, ".");
 
-    // No persistProjectPrettierTrust here: only the in-memory invocation
-    // consent carried by the apply call authorizes the project engine.
+    // The fixture's persisted grant has been removed. Only the in-memory
+    // invocation consent carried by the apply call authorizes the engine.
     const result = await applyFixPlan(plan, { projectPrettierTrust: true });
 
     expect(result.exitCode).toBe(0);
@@ -154,7 +168,11 @@ describe("project Prettier fix parity", () => {
   it("rejects a plan whose selected snapshot changed", async () => {
     const repository = await projectRepository();
     const selection = await projectSelection(repository.root);
-    const plan = planFor(repository.root, selection, 'export const value = "hello";\n');
+    const plan = planFor(
+      repository.root,
+      selection,
+      'export const value = "hello";\n',
+    );
     await repository.write(".prettierrc.json", '{"singleQuote":false}');
     await repository.git(["add", "--", ".prettierrc.json"]);
 

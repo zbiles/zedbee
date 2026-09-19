@@ -241,6 +241,7 @@ export async function runCli(
           format: options.format,
           color: options.color,
           animations: options.animations,
+          signal: controller.signal,
         },
         {
           stdinIsTTY: process.stdin.isTTY === true,
@@ -325,8 +326,8 @@ export async function runCli(
           ...(options.includeSource === true
             ? { sourceExcerpts: "include" as const }
             : options.source === false
-              ? { sourceExcerpts: "exclude" as const }
-              : {}),
+            ? { sourceExcerpts: "exclude" as const }
+            : {}),
           ...scanTimeoutOverrides(argv, options.timeout),
           ...(options.diagnostics === true ? { diagnostics: true } : {}),
           ...(options.trustProjectPrettier === true
@@ -466,6 +467,7 @@ export async function runCli(
           ...(options.trustProjectPrettier === true
             ? { projectPrettierTrust: true }
             : {}),
+          signal: controller.signal,
         },
         {
           stdoutIsTTY: process.stdout.isTTY === true,

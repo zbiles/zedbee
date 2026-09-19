@@ -225,6 +225,12 @@ function parseOverrides(
       continue;
     }
     const excludeFiles = patternList(entry.excludeFiles) ?? [];
+    if (excludeFiles.length > 0) {
+      limitations.push(
+        "A Prettier override with excludeFiles cannot be represented exactly and was not copied.",
+      );
+      continue;
+    }
     const settings = supportedSettings(
       entry.options,
       limitations,

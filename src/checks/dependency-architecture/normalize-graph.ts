@@ -8,7 +8,7 @@ import { DEPENDENCY_RULE_NAMES } from "./rules.js";
 
 const RULES = new Set<string>(Object.values(DEPENDENCY_RULE_NAMES));
 const TEST_PATH =
-  /(^|\/)(?:test|tests|__tests__|spec)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
+  /(^|\/)(?:test|tests|__tests__|spec|\.husky)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
 
 export interface DependencyDeclarations {
   readonly production: ReadonlySet<string>;
@@ -245,8 +245,8 @@ export function normalizeDependencyViolations(
       const from = allowedSources.has(reportedFrom)
         ? reportedFrom
         : rule === DEPENDENCY_RULE_NAMES.circular
-          ? reportedCycle.find((path) => allowedSources.has(path))
-          : undefined;
+        ? reportedCycle.find((path) => allowedSources.has(path))
+        : undefined;
       if (from === undefined) {
         return [];
       }

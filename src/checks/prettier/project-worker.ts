@@ -107,16 +107,22 @@ async function resolveOptions(
   file: string,
   prettier: PrettierModule,
   treeRoot: string,
-): Promise<import("prettier").Options> {
+): Promise<{
+  readonly options: import("prettier").Options;
+  readonly configFile?: string;
+}> {
   const configPath = await prettier.resolveConfigFile(file);
   if (configPath === null) {
-    // Keep native EditorConfig matching, bounded by the owned parent root.
-    return (
-      (await prettier.resolveConfig(file, {
-        config: join(dirname(treeRoot), "empty-prettier-config.json"),
-        editorconfig: true,
-      })) ?? {}
-    );
+    // Keep native EditorConfig matching (including numeric ranges). The
+    // owned workspace parent has root=true, bounding its ancestor search;
+    // this explicit empty config is never reported as repository provenance.
+    return {
+      options:
+        (await prettier.resolveConfig(file, {
+          config: join(dirname(treeRoot), "empty-prettier-config.json"),
+          editorconfig: true,
+        })) ?? {},
+    };
   }
   if (!isContainedPath(treeRoot, configPath)) {
     // A resolved path outside the mirror must never be executed; reporting
@@ -126,17 +132,20 @@ async function resolveOptions(
       "The resolved Prettier configuration is outside the selected snapshot.",
     );
   }
-  return (
-    (await prettier.resolveConfig(file, {
-      config: configPath,
-      editorconfig: true,
-    })) ?? {}
-  );
+  return {
+    options:
+      (await prettier.resolveConfig(file, {
+        config: configPath,
+        editorconfig: true,
+      })) ?? {},
+    configFile: relative(treeRoot, configPath).split(sep).join("/"),
+  };
 }
 
 interface SupportedFile {
   readonly kind: "supported";
   readonly options: import("prettier").Options;
+  readonly configFile?: string;
 }
 
 type ClassifiedFile =
@@ -165,11 +174,12 @@ async function classifyFile(file: string): Promise<ClassifiedFile> {
   ) {
     return { kind: "ignored", reason: await ignoreReason(absolute) };
   }
-  const options = await resolveOptions(
+  const resolved = await resolveOptions(
     absolute,
     current.prettier,
     current.treeRoot,
   );
+  const options = resolved.options;
   // Parser inference must see the project's own plugins; otherwise a file
   // supported only through a plugin would be reported as unsupported.
   const supported = await current.prettier.getFileInfo(absolute, {
@@ -180,7 +190,13 @@ async function classifyFile(file: string): Promise<ClassifiedFile> {
   if (supported.inferredParser === null && typeof options.parser !== "string") {
     return { kind: "ignored", reason: "unsupported" };
   }
-  return { kind: "supported", options };
+  return {
+    kind: "supported",
+    options,
+    ...(resolved.configFile === undefined
+      ? {}
+      : { configFile: resolved.configFile }),
+  };
 }
 
 async function formatFile(
@@ -314,8 +330,9 @@ function sanitizeOverrideEntry(
       : undefined;
   if (excludeFiles !== undefined) {
     limitations.push(
-      "Prettier excludeFiles cannot be copied exactly; the override keeps its files patterns without the exclusions.",
+      "Prettier excludeFiles cannot be copied exactly, so the affected override was not copied.",
     );
+    return undefined;
   }
   const optionsDescriptor = Object.getOwnPropertyDescriptor(entry, "options");
   const settings = sanitizeSettings(
@@ -418,7 +435,12 @@ async function handle(
         return {
           id: request.id,
           operation: "classify",
-          result: { kind: "supported" },
+          result: {
+            kind: "supported",
+            ...(classified.configFile === undefined
+              ? {}
+              : { configFile: classified.configFile }),
+          },
         };
       }
       return {

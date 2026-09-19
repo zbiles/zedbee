@@ -58,9 +58,21 @@ function renderRemediation(diagnostic: Diagnostic, color: boolean): string {
   if (diagnostic.remediation === undefined) return "";
   const commandIndex = diagnostic.remediation.indexOf(INIT_COMMAND);
   if (diagnostic.id !== "hook-state" || commandIndex < 0) {
-    return `\n${terminalText(`  Remediation: ${diagnostic.remediation}`, "reason", color)}`;
+    return `\n${terminalText(
+      `  Remediation: ${diagnostic.remediation}`,
+      "reason",
+      color,
+    )}`;
   }
-  return `\n${terminalText("  Remediation:", "reason", color)}${terminalText(` ${diagnostic.remediation.slice(0, commandIndex)}`, "primary", color)}${terminalText(INIT_COMMAND, "reason", color)}${terminalText(diagnostic.remediation.slice(commandIndex + INIT_COMMAND.length), "primary", color)}`;
+  return `\n${terminalText("  Remediation:", "reason", color)}${terminalText(
+    ` ${diagnostic.remediation.slice(0, commandIndex)}`,
+    "primary",
+    color,
+  )}${terminalText(INIT_COMMAND, "reason", color)}${terminalText(
+    diagnostic.remediation.slice(commandIndex + INIT_COMMAND.length),
+    "primary",
+    color,
+  )}`;
 }
 
 function renderText(result: DoctorCommandResult, color: boolean): string {
@@ -71,9 +83,17 @@ function renderText(result: DoctorCommandResult, color: boolean): string {
         diagnostic.status === "pass"
           ? "pass"
           : diagnostic.status === "warning"
-            ? "warning"
-            : "failure";
-      return `${terminalText(diagnostic.status.toUpperCase(), statusTone, color)} ${terminalText(diagnostic.id, "primary", color)}${terminalText(`: ${diagnostic.message}`, "secondary", color)}${remediation}`;
+          ? "warning"
+          : "failure";
+      return `${terminalText(
+        diagnostic.status.toUpperCase(),
+        statusTone,
+        color,
+      )} ${terminalText(diagnostic.id, "primary", color)}${terminalText(
+        `: ${diagnostic.message}`,
+        "secondary",
+        color,
+      )}${remediation}`;
     })
     .join("\n\n")}\n`;
 }
@@ -94,6 +114,7 @@ export async function executeDoctorCommand(
         ...(options.projectPrettierTrust === undefined
           ? {}
           : { projectPrettierTrust: options.projectPrettierTrust }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
       })),
     ]);
     const exitCode = diagnostics.some(({ status }) => status === "fail")
