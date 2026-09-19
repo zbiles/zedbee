@@ -6555,7 +6555,7 @@
     },
     {
       "name": "p-limit",
-      "version": "7.3.1",
+      "version": "7.3.2",
       "license": "MIT",
       "repository": "sindresorhus/p-limit",
       "licenseFile": "node_modules/p-limit/license",
@@ -6564,7 +6564,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.1"
+        "p-limit@7.3.2"
       ]
     },
     {
@@ -8522,7 +8522,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.1",
+        "p-limit@7.3.2",
         "yocto-queue@1.2.2"
       ]
     },
