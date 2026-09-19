@@ -12,6 +12,7 @@ import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
   InitFormattingChoice,
+  InitFormattingDetection,
   InitFormattingImport,
   InitHookChoice,
   InitOsvUnavailable,
@@ -68,6 +69,7 @@ export interface InitCommandDependencies {
       osvUnavailable: InitOsvUnavailable,
       hook?: InitHookChoice,
       formatting?: InitFormattingChoice,
+      projectTrust?: boolean,
     ) => InitProposal,
   ): Promise<false | InitProposal>;
 }
@@ -109,6 +111,9 @@ function publicProposal(proposal: InitProposal) {
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
     formatting: proposal.formatting ?? "managed",
+    ...(proposal.formattingDetection === undefined
+      ? {}
+      : { formattingDetection: proposal.formattingDetection }),
     ...(proposal.formattingImport === undefined
       ? {}
       : {
@@ -145,6 +150,14 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
     `Formatting: ${proposal.formatting ?? "managed"}`,
+    ...(proposal.formattingDetection ?? []).map(
+      (entry) =>
+        `Prettier setup: ${entry.projectRoot === "." ? "repository root" : entry.projectRoot} — ${entry.status}${entry.version === undefined ? "" : ` (Prettier ${entry.version})`}${entry.executableConfig ? "; executable configuration" : ""}`,
+    ),
+    ...(proposal.formattingDetection !== undefined &&
+    proposal.formattingDetection.length === 0
+      ? ["Prettier setup: none detected; Zedbee keeps its managed formatter."]
+      : []),
     ...(proposal.vulnerabilityScanningAvailable
       ? [`OSV unavailable: ${proposal.osvUnavailable}`]
       : []),
@@ -207,42 +220,52 @@ function renderInteractiveResult(
 
 interface FormattingSetup {
   readonly imported: InitFormattingImport;
+  readonly detection: readonly InitFormattingDetection[];
   readonly projectRoot: string;
+  readonly storedTrust: boolean;
 }
 
 async function resolveFormattingSetup(
   repositoryRoot: string,
-  options: InitCommandOptions,
-  canPrompt: boolean,
 ): Promise<FormattingSetup> {
-  const discoveries = await discoverProjectPrettier(repositoryRoot).catch(
-    () => [] as const,
+  // Discovery failures are reported; they are never converted into an empty
+  // setup that would misrepresent the project.
+  const discoveries = await discoverProjectPrettier(repositoryRoot);
+  const detection = Object.freeze(
+    discoveries.map((entry) =>
+      Object.freeze({
+        projectRoot: entry.projectRoot,
+        ...(entry.version === undefined ? {} : { version: entry.version }),
+        status: entry.status,
+        executableConfig: entry.executableConfig,
+        configPaths: Object.freeze([...entry.configPaths]),
+      }),
+    ),
   );
   const projectRoot =
     discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
     discoveries[0]?.projectRoot ??
     ".";
-  const preview = await previewPrettierSettingsImport(repositoryRoot).catch(
-    () => ({ settings: {}, overrides: [], limitations: [] }),
-  );
-  if (options.formatting === "project") {
-    if (!options.trustProjectPrettier && !canPrompt) {
-      const stored = await readProjectPrettierTrust(
-        repositoryRoot,
-        projectRoot,
-      ).catch(() => undefined);
-      if (stored !== "v1") {
-        throw new ProjectPrettierTrustRequiredError(projectRoot);
-      }
-    }
+  const preview = await previewPrettierSettingsImport(repositoryRoot);
+  const limitations = [...preview.limitations];
+  if (preview.overrides.some((entry) => entry.excludeFiles.length > 0)) {
+    limitations.push(
+      "Prettier excludeFiles cannot be copied exactly; imported overrides keep their files patterns without the exclusions.",
+    );
   }
+  const storedTrust =
+    (await readProjectPrettierTrust(repositoryRoot, projectRoot).catch(
+      () => undefined,
+    )) === "v1";
   return Object.freeze({
     imported: Object.freeze({
       settings: preview.settings,
       overrides: preview.overrides,
-      limitations: preview.limitations,
+      limitations: Object.freeze(limitations),
     }),
+    detection,
     projectRoot,
+    storedTrust,
   });
 }
 
@@ -276,11 +299,17 @@ export async function executeInitCommand(
       detectHookIntegration(repositoryRoot, options.hook),
       existingConfig(repositoryRoot),
     ]);
-    const formattingSetup = await resolveFormattingSetup(
-      repositoryRoot,
-      options,
-      canPrompt,
-    );
+    const formattingSetup = await resolveFormattingSetup(repositoryRoot);
+    if (
+      options.formatting === "project" &&
+      !options.trustProjectPrettier &&
+      !canPrompt &&
+      !formattingSetup.storedTrust
+    ) {
+      throw new ProjectPrettierTrustRequiredError(
+        formattingSetup.projectRoot,
+      );
+    }
     if (
       options.formatting === "copy" &&
       !canPrompt &&
@@ -291,15 +320,23 @@ export async function executeInitCommand(
       );
     }
     const formattingProposalFields = {
+      // Detection is always reported, even when nothing is imported/executed.
+      formattingDetection: formattingSetup.detection,
       ...(options.formatting === undefined
         ? {}
         : { formatting: options.formatting }),
       ...(options.formatting === "copy"
         ? { formattingImport: formattingSetup.imported }
         : {}),
-      ...(options.formatting === "project" &&
-      (options.trustProjectPrettier || canPrompt)
-        ? { projectPrettierTrustRoot: formattingSetup.projectRoot }
+      ...(options.formatting === "project" && options.trustProjectPrettier
+        ? {
+            projectPrettierTrustRoot: formattingSetup.projectRoot,
+            projectPrettierTrustConfirmed: true,
+          }
+        : {}),
+      ...((options.formatting === "managed" || options.formatting === "off") &&
+      formattingSetup.storedTrust
+        ? { projectPrettierRevokeRoot: formattingSetup.projectRoot }
         : {}),
     };
     const proposalBaseOptions = {
@@ -370,20 +407,38 @@ export async function executeInitCommand(
         osvUnavailable: InitOsvUnavailable,
         selectedHook: InitHookChoice = selection,
         selectedFormatting: InitFormattingChoice | undefined = options.formatting,
+        selectedProjectTrust = false,
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
           throw new Error("Invalid hook selection.");
+        // Prompt capability alone never authorizes executable code; only the
+        // separately confirmed disclosure (or the explicit CLI flag) does.
+        const trustGranted =
+          selectedFormatting === "project" &&
+          (options.trustProjectPrettier || selectedProjectTrust);
         const formattingFields =
           selectedFormatting === undefined
-            ? {}
+            ? {
+                // Detection stays visible even when no engine choice is made.
+                formattingDetection: formattingSetup.detection,
+              }
             : {
+                formattingDetection: formattingSetup.detection,
                 formatting: selectedFormatting,
                 ...(selectedFormatting === "copy"
                   ? { formattingImport: formattingSetup.imported }
                   : {}),
-                ...(selectedFormatting === "project"
-                  ? { projectPrettierTrustRoot: formattingSetup.projectRoot }
+                ...(trustGranted
+                  ? {
+                      projectPrettierTrustRoot: formattingSetup.projectRoot,
+                      projectPrettierTrustConfirmed: true,
+                    }
+                  : {}),
+                ...((selectedFormatting === "managed" ||
+                  selectedFormatting === "off") &&
+                formattingSetup.storedTrust
+                  ? { projectPrettierRevokeRoot: formattingSetup.projectRoot }
                   : {}),
               };
         const selectedProposal = createInitProposal(inspection, {

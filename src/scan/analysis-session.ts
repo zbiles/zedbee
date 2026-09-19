@@ -177,6 +177,8 @@ export interface AnalysisSessionOptions {
   onConfiguration?: (config: ResolvedConfig) => void;
   /** Fix previews have no public baseline and preserve their empty-index fast path. */
   resolveEmptyBaseline?: boolean;
+  /** Invocation-only consent for project Prettier; never tracked configuration. */
+  projectPrettierTrust?: boolean;
   dependencies?: AnalysisSessionDependencies;
   dispatchOptions?: () => DispatchOptions;
 }
@@ -481,6 +483,9 @@ export async function withAnalysisSession<T>(
               targetInspection,
               signal,
               policyForFile,
+              ...(options.projectPrettierTrust === true
+                ? { projectPrettierTrust: true }
+                : {}),
             },
             options.dispatchOptions?.(),
           ),

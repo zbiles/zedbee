@@ -50,6 +50,8 @@ export interface FixCommandOptions {
   readonly animations: boolean;
   readonly signal?: AbortSignal;
   readonly diagnostics?: boolean;
+  /** Invocation-only consent for project Prettier execution. */
+  readonly projectPrettierTrust?: boolean;
 }
 
 export interface FixCommandIO {
@@ -524,6 +526,9 @@ export async function executeFixCommand(
           options.check === undefined ? FIXABLE_CHECK_IDS : [options.check],
         ...(configPath === undefined ? {} : { configPath }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.projectPrettierTrust === true
+          ? { projectPrettierTrust: true }
+          : {}),
       }),
     );
     const format = formatFor(options);

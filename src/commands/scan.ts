@@ -51,6 +51,8 @@ export interface ScanCommandOptions {
   noTimeout?: boolean;
   diagnostics?: boolean;
   signal?: AbortSignal;
+  /** Invocation-only consent for project Prettier execution. */
+  projectPrettierTrust?: boolean;
 }
 
 export interface ScanCommandIO {
@@ -264,6 +266,9 @@ export async function executeScanCommand(
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
+      ...(options.projectPrettierTrust === true
+        ? { projectPrettierTrust: true }
+        : {}),
       onEvent(event) {
         // Event observers must never change the analyzer outcome.
         try {

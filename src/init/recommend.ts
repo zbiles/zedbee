@@ -35,13 +35,56 @@ function importedOverrideEntries(
   imported: InitFormattingImport | undefined,
 ): readonly Record<string, unknown>[] {
   if (imported === undefined) return [];
+  // Prettier's excludeFiles has AND-within-OR semantics that Zedbee's
+  // override globs cannot express; encoding it as a negated pattern would
+  // widen the override to nearly every path. The importer reports it as a
+  // copy limitation instead of silently changing its meaning.
   return imported.overrides.map((override) => ({
-    files: [
-      ...override.files,
-      ...override.excludeFiles.map((pattern) => `!${pattern}`),
-    ],
+    files: [...override.files],
     checks: { formatting: { settings: override.settings } },
   }));
+}
+
+/** True for entries this feature previously generated for an import. */
+function isImportedOverrideEntry(entry: unknown): boolean {
+  if (typeof entry !== "object" || entry === null) return false;
+  const candidate = entry as Record<string, unknown>;
+  if (
+    !Array.isArray(candidate.files) ||
+    typeof candidate.checks !== "object" ||
+    candidate.checks === null
+  ) {
+    return false;
+  }
+  const checks = candidate.checks as Record<string, unknown>;
+  const formatting = checks.formatting;
+  if (
+    typeof formatting !== "object" ||
+    formatting === null ||
+    Object.keys(checks).length !== 1
+  ) {
+    return false;
+  }
+  const keys = Object.keys(formatting);
+  return keys.length === 1 && keys[0] === "settings";
+}
+
+/** An existing explicit engine choice survives repeat init untouched. */
+function existingFormattingChoice(before: string | null): InitFormattingChoice {
+  if (before === null) return "managed";
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(before, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || typeof parsed !== "object" || parsed === null) {
+    return "managed";
+  }
+  const checks = (parsed as Record<string, unknown>).checks;
+  if (typeof checks !== "object" || checks === null) return "managed";
+  const formatting = (checks as Record<string, unknown>).formatting;
+  if (typeof formatting === "object" && formatting !== null) {
+    const engine = (formatting as Record<string, unknown>).engine;
+    if (engine === "project" || engine === "managed") return engine;
+  }
+  return "managed";
 }
 
 
@@ -358,11 +401,16 @@ function applyFormattingChoice(
       next,
       modify(next, ["checks", "formatting"], value, options),
     );
+    // Repeat imports replace the previously imported policy instead of
+    // appending duplicates; project mode additionally cannot keep imported
+    // managed settings alive as file-scoped overrides.
+    const existingOverrides = Array.isArray(root.overrides)
+      ? (root.overrides as readonly unknown[]).filter(
+          (entry) => !isImportedOverrideEntry(entry),
+        )
+      : [];
     const overrides = importedOverrideEntries(formatting.imported);
-    if (overrides.length > 0) {
-      const existingOverrides = Array.isArray(root.overrides)
-        ? (root.overrides as readonly unknown[])
-        : [];
+    if (overrides.length > 0 || existingOverrides.length !== (Array.isArray(root.overrides) ? (root.overrides as readonly unknown[]).length : 0)) {
       next = applyEdits(
         next,
         modify(next, ["overrides"], [...existingOverrides, ...overrides], options),
@@ -470,7 +518,10 @@ export function createInitProposal(
         : configuredVulnerabilitySeverity !== "off"
       : selectedChecks.includes("vulnerabilities"));
   const osvUnavailable = options.osvUnavailable ?? "block";
-  const formattingChoice: InitFormattingChoice = options.formatting ?? "managed";
+  // Repeat init preserves an existing explicit engine choice unless the user
+  // selects a different one, so the preview never misstates current policy.
+  const formattingChoice: InitFormattingChoice =
+    options.formatting ?? existingFormattingChoice(before);
   const formattingConfig: FormattingConfigInput | undefined =
     options.formatting === undefined
       ? undefined
@@ -541,9 +592,25 @@ export function createInitProposal(
     ...(options.formattingImport === undefined
       ? {}
       : { formattingImport: options.formattingImport }),
+    ...(options.formattingDetection === undefined
+      ? {}
+      : {
+          formattingDetection: Object.freeze(
+            options.formattingDetection.map((entry) => Object.freeze({ ...entry })),
+          ),
+        }),
     ...(formattingChoice === "project" &&
     options.projectPrettierTrustRoot !== undefined
       ? { projectPrettierTrustRoot: options.projectPrettierTrustRoot }
+      : {}),
+    ...(formattingChoice === "project" &&
+    options.projectPrettierTrustRoot !== undefined &&
+    options.projectPrettierTrustConfirmed === true
+      ? { projectPrettierTrustConfirmed: true }
+      : {}),
+    ...((formattingChoice === "managed" || formattingChoice === "off") &&
+    options.projectPrettierRevokeRoot !== undefined
+      ? { projectPrettierRevokeRoot: options.projectPrettierRevokeRoot }
       : {}),
     files: Object.freeze(files),
   });
