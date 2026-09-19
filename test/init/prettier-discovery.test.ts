@@ -82,6 +82,58 @@ describe("discoverProjectPrettier", () => {
     expect(discovered).toEqual([]);
   });
 
+  it("does not report config-only setup as runnable through an undeclared hoisted copy", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { typescript: "^5.0.0" },
+    });
+    await fixture.write(".prettierrc.json", "{}");
+    // This may be Zedbee's own hoisted dependency. Project mode must not use it
+    // unless the selected project or one of its ancestors declares Prettier.
+    await fixture.writeJson("node_modules/prettier/package.json", {
+      name: "prettier",
+      version: "3.9.6",
+    });
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(discovered).toHaveLength(1);
+    expect(discovered[0]).toMatchObject({
+      projectRoot: ".",
+      status: "missing",
+      configPaths: [".prettierrc.json"],
+    });
+    expect(discovered[0]?.version).toBeUndefined();
+    expect(discovered[0]?.packageRoot).toBeUndefined();
+  });
+
+  it("accepts a nested config backed by an ancestor Prettier declaration", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write("packages/app/.prettierrc.json", "{}");
+    await fixture.writeJson("node_modules/prettier/package.json", {
+      name: "prettier",
+      version: "3.9.6",
+    });
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(
+      discovered.find((entry) => entry.projectRoot === "packages/app"),
+    ).toMatchObject({
+      declaredRange: "^3.0.0",
+      version: "3.9.6",
+      status: "available",
+    });
+  });
+
   it("rejects an installed version that violates the project's declared range", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {

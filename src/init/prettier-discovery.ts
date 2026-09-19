@@ -159,15 +159,48 @@ async function findInstalledPrettier(
   return undefined;
 }
 
-function declaredPrettierRange(manifest: {
-  dependencyDeclarations: readonly {
-    readonly name: string;
-    readonly specifier: string;
-  }[];
-}): string | undefined {
-  return manifest.dependencyDeclarations.find(
-    (declaration) => declaration.name === PRETTIER_PACKAGE_NAME,
-  )?.specifier;
+function manifestPrettierRange(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  for (const section of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+  ]) {
+    const dependencies = (value as Record<string, unknown>)[section];
+    if (typeof dependencies !== "object" || dependencies === null) continue;
+    const specifier = (dependencies as Record<string, unknown>).prettier;
+    if (typeof specifier === "string") return specifier;
+  }
+  return undefined;
+}
+
+async function declaredPrettierRangeForProject(
+  registry: SnapshotRegistry,
+  projectRoot: string,
+  projectManifest: unknown,
+): Promise<string | undefined> {
+  let current = projectRoot;
+  while (true) {
+    let value: unknown = projectManifest;
+    if (current !== projectRoot) {
+      const manifestPath =
+        current === "." ? "package.json" : posix.join(current, "package.json");
+      if (registry.resolve(manifestPath)?.targetKind === "file") {
+        try {
+          value = await readJsonData(registry, manifestPath);
+        } catch {
+          value = undefined;
+        }
+      } else {
+        value = undefined;
+      }
+    }
+    const declaredRange = manifestPrettierRange(value);
+    if (declaredRange !== undefined) return declaredRange;
+    if (current === ".") return undefined;
+    current = posix.dirname(current);
+  }
 }
 
 function manifestPrettierConfig(value: unknown): unknown {
@@ -205,7 +238,11 @@ async function discoveryForProject(
   const configPaths = await configPathsForProject(registry, projectRoot);
   const executableConfig =
     configPaths.some(executableConfigPath) || prettierFieldIsString;
-  const declaredRange = declaredPrettierRange(manifest);
+  const declaredRange = await declaredPrettierRangeForProject(
+    registry,
+    projectRoot,
+    rawManifest,
+  );
   const installed = await findInstalledPrettier(
     resolve(canonicalRoot, projectRoot),
     canonicalRoot,
@@ -220,10 +257,11 @@ async function discoveryForProject(
     configPaths.length > 0;
   if (!hasSetup) return undefined;
 
-  const status: ProjectPrettierDiscovery["status"] = installed === undefined
+  const usableInstallation = declaredRange === undefined ? undefined : installed;
+  const status: ProjectPrettierDiscovery["status"] = usableInstallation === undefined
     ? "missing"
     : isProjectPrettierVersionAccepted(
-        installed.version,
+        usableInstallation.version,
         declaredRange,
       )
       ? "available"
@@ -231,8 +269,12 @@ async function discoveryForProject(
 
   return Object.freeze({
     projectRoot,
-    ...(installed === undefined ? {} : { version: installed.version }),
-    ...(installed === undefined ? {} : { packageRoot: installed.packageRoot }),
+    ...(usableInstallation === undefined
+      ? {}
+      : { version: usableInstallation.version }),
+    ...(usableInstallation === undefined
+      ? {}
+      : { packageRoot: usableInstallation.packageRoot }),
     ...(declaredRange === undefined ? {} : { declaredRange }),
     configPaths,
     executableConfig,
