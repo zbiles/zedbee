@@ -1148,7 +1148,7 @@
     },
     {
       "name": "@napi-rs/wasm-runtime",
-      "version": "1.1.6",
+      "version": "1.2.3",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -1159,7 +1159,7 @@
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "@napi-rs/wasm-runtime@1.1.6"
+        "@napi-rs/wasm-runtime@1.2.3"
       ]
     },
     {
