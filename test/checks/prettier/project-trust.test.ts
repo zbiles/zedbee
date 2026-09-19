@@ -1,3 +1,6 @@
+import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
+import { createInitProposal } from "../../../src/init/recommend.js";
+import { applyInitProposal } from "../../../src/init/write-config.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -51,7 +54,9 @@ describe("project Prettier trust", () => {
     const repo = await createGitRepository();
 
     await persistProjectPrettierTrust(repo.root, "packages/app");
-    expect(await readProjectPrettierTrust(repo.root, "packages/app")).toBe("v1");
+    expect(await readProjectPrettierTrust(repo.root, "packages/app")).toBe(
+      "v1",
+    );
     await expect(
       requireProjectPrettierTrust(repo.root, "packages/app", false),
     ).resolves.toBeDefined();
@@ -138,11 +143,45 @@ it("does not share a local grant with a sibling worktree", async () => {
   await repo.write("package.json", '{"name":"fixture"}');
   await repo.commitAll("fixture");
   const sibling = join(repo.root, "sibling");
-  const added = await repo.git(["worktree", "add", "--detach", sibling, "HEAD"]);
+  const added = await repo.git([
+    "worktree",
+    "add",
+    "--detach",
+    sibling,
+    "HEAD",
+  ]);
   expect(added.exitCode, added.stderr).toBe(0);
   await persistProjectPrettierTrust(repo.root, ".");
-  await expect(requireProjectPrettierTrust(sibling, ".", false)).rejects.toMatchObject({code:"PROJECT_PRETTIER_TRUST_REQUIRED"});
+  await expect(
+    requireProjectPrettierTrust(sibling, ".", false),
+  ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
   await persistProjectPrettierTrust(sibling, ".");
   await revokeProjectPrettierTrust(repo.root, ".");
-  await expect(requireProjectPrettierTrust(sibling, ".", false)).resolves.toBeDefined();
+  await expect(
+    requireProjectPrettierTrust(sibling, ".", false),
+  ).resolves.toBeDefined();
 });
+
+it.each([false, true])(
+  "restores the prior grant after a later setup grant fails (existing=%s)",
+  async (existing) => {
+    const repo = await createGitRepository();
+    await repo.write("package.json", '{"name":"fixture"}');
+    if (existing) await persistProjectPrettierTrust(repo.root, ".");
+    const proposal = createInitProposal(await inspectRepository(repo.root), {
+      repositoryRoot: repo.root,
+      profile: "recommended",
+      hook: "none",
+      formatting: "project",
+      projectPrettierTrustRoots: [".", "../invalid"],
+      projectPrettierTrustConfirmed: true,
+    });
+    await expect(applyInitProposal(proposal)).rejects.toThrow(/rolled back/);
+    expect(await readProjectPrettierTrust(repo.root, ".")).toBe(
+      existing ? "v1" : undefined,
+    );
+    await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
