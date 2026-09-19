@@ -275,7 +275,11 @@ function assertFormattingEngineConsistency(
         'Formatting engine "project" cannot inherit managed formatting settings; remove the managed settings first.',
       );
     }
-    if (rootEngine === "project" && patch.settings !== undefined) {
+    if (
+      rootEngine === "project" &&
+      patch.settings !== undefined &&
+      patch.engine !== "managed"
+    ) {
       throw new TypeError(
         'Managed formatting settings cannot be added to a file scope while the formatting engine is "project".',
       );

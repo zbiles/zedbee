@@ -142,6 +142,29 @@ describe("formatting engine policy", () => {
     expect(config.checks.formatting.engine).toBe("managed");
   });
 
+  it("allows a project default to switch to managed settings in one file scope", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: { formatting: { engine: "project" } },
+      overrides: [
+        {
+          files: ["docs/**"],
+          checks: {
+            formatting: {
+              engine: "managed",
+              settings: { printWidth: 100 },
+            },
+          },
+        },
+      ],
+    });
+
+    expect(config.overrides[0]?.checks.formatting).toMatchObject({
+      engine: "managed",
+      settings: { printWidth: 100 },
+    });
+  });
+
   it("survives the dispatcher immutable policy snapshot", () => {
     const config = resolveConfig({
       schemaVersion: 1,
