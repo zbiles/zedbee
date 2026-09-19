@@ -878,6 +878,312 @@ describe("executeInitCommand", () => {
     expect(config).not.toContain("singleQuote");
   });
 
+  it("preserves hand-authored overrides while replacing generated entries", async () => {
+    const repository = await createGitRepository("zedbee-init-ownership-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"trailingComma":"es5","overrides":[{"files":"*.md","options":{"printWidth":80}}]}',
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          profile: "recommended",
+          overrides: [
+            {
+              files: ["src/**"],
+              checks: { formatting: { settings: { printWidth: 90 } } },
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode, io.stderr.join("")).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"src/**"');
+    expect(config.match(/"src\/\*\*"/gu)).toHaveLength(1);
+    expect(config).toContain('"generated": "prettier-copy"');
+    expect(config).toContain('"*.md"');
+  });
+
+  it("restores Zedbee defaults by removing copied settings and generated overrides only", async () => {
+    const repository = await createGitRepository("zedbee-init-managed-reset-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"trailingComma":"es5"}',
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify(
+        {
+          schemaVersion: 1,
+          profile: "recommended",
+          overrides: [
+            {
+              files: ["src/**"],
+              checks: { formatting: { settings: { printWidth: 90 } } },
+            },
+          ],
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const copy = {
+      cwd: repository.root,
+      profile: "recommended" as const,
+      hook: "none" as const,
+      yes: true,
+      format: "json" as const,
+      color: false,
+      animations: false,
+    };
+    await executeInitCommand(
+      { ...copy, formatting: "copy" as const },
+      terminal(false),
+      dependencies(repository.root),
+    );
+    const copied = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(copied).toContain('"trailingComma": "es5"');
+
+    const exitCode = await executeInitCommand(
+      { ...copy, formatting: "managed" as const },
+      terminal(false),
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"engine": "managed"');
+    // Copied settings are gone; the hand-authored override survives untouched.
+    expect(config).not.toContain('"trailingComma"');
+    expect(config).toContain('"src/**"');
+    expect(config).not.toContain('"generated"');
+  });
+
+  it("preserves an explicit formatting-off choice on repeat init", async () => {
+    const repository = await createGitRepository("zedbee-init-repeat-off-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    const first = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "off",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      terminal(false),
+      dependencies(repository.root),
+    );
+    expect(first).toBe(0);
+
+    const io = terminal(false);
+    const second = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(second).toBe(0);
+    expect(JSON.parse(io.stdout.join(""))).toMatchObject({
+      proposal: { formatting: "off" },
+    });
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"formatting": "off"');
+  });
+
+  it("enables and trusts every discovered project with file-scoped engine overrides", async () => {
+    const repository = await createGitRepository("zedbee-init-multiproject-");
+    await repository.write(
+      "package.json",
+      '{"name":"root","private":true,"workspaces":["web","app"]}',
+    );
+    await repository.write(
+      "web/package.json",
+      '{"name":"web","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("web/.prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      "app/package.json",
+      '{"name":"app","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("app/.prettierrc.json", '{"printWidth":100}');
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "project",
+        trustProjectPrettier: true,
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode, io.stderr.join("")).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    // Only the root keeps managed defaults; each project gets a scoped engine.
+    expect(config).toContain('"engine": "managed"');
+    expect(config).toContain('"web/**"');
+    expect(config).toContain('"app/**"');
+    expect(config).toContain('"generated": "prettier-engine"');
+    const grants = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "allowed",
+    ]);
+    expect(grants.stdout.match(/v1/gu)).toHaveLength(2);
+  });
+
+  it("revokes every project grant and removes engine overrides on managed", async () => {
+    const repository = await createGitRepository("zedbee-init-multi-revoke-");
+    await repository.write(
+      "package.json",
+      '{"name":"root","private":true,"workspaces":["web","app"]}',
+    );
+    await repository.write(
+      "web/package.json",
+      '{"name":"web","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("web/.prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      "app/package.json",
+      '{"name":"app","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("app/.prettierrc.json", '{"printWidth":100}');
+    const base = {
+      cwd: repository.root,
+      profile: "recommended" as const,
+      hook: "none" as const,
+      yes: true,
+      format: "json" as const,
+      color: false,
+      animations: false,
+    };
+    await executeInitCommand(
+      { ...base, formatting: "project" as const, trustProjectPrettier: true },
+      terminal(false),
+      dependencies(repository.root),
+    );
+
+    const exitCode = await executeInitCommand(
+      { ...base, formatting: "managed" as const },
+      terminal(false),
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    const revoked = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "allowed",
+    ]);
+    expect(revoked.exitCode).toBe(1);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"overrides": []');
+    expect(config).not.toContain("prettier-engine");
+  });
+
+  it("reports a shared-config specifier in detection without evaluating it", async () => {
+    const repository = await createGitRepository("zedbee-init-shared-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"},"prettier":"@org/prettier-config"}',
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(io.stdout.join(""))).toMatchObject({
+      proposal: {
+        formattingDetection: [
+          {
+            projectRoot: ".",
+            executableConfig: true,
+            sharedConfig: "@org/prettier-config",
+          },
+        ],
+      },
+    });
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).not.toContain("printWidth");
+  });
+
   it("reports excludeFiles as a copy limitation instead of negating patterns", async () => {
     const repository = await createGitRepository("zedbee-init-copy-exclude-");
     await repository.write("package.json", '{"name":"fixture"}');

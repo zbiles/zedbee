@@ -221,16 +221,37 @@ function renderInteractiveResult(
 interface FormattingSetup {
   readonly imported: InitFormattingImport;
   readonly detection: readonly InitFormattingDetection[];
+  /** Primary project used for messages and executable-config evaluation. */
   readonly projectRoot: string;
-  readonly storedTrust: boolean;
+  /** Every discovered project root; project mode enables each of them. */
+  readonly projectRoots: readonly string[];
+  /** Roots that already hold a local executable-code grant. */
+  readonly storedTrustRoots: readonly string[];
+  /** Package specifier when the primary package.json#prettier is shared. */
+  readonly sharedConfig: string | undefined;
 }
-
 async function resolveFormattingSetup(
   repositoryRoot: string,
 ): Promise<FormattingSetup> {
   // Discovery failures are reported; they are never converted into an empty
   // setup that would misrepresent the project.
   const discoveries = await discoverProjectPrettier(repositoryRoot);
+  const projectRoots = discoveries.map((entry) => entry.projectRoot);
+  const storedTrustRoots: string[] = [];
+  for (const root of projectRoots) {
+    const stored = await readProjectPrettierTrust(repositoryRoot, root).catch(
+      () => undefined,
+    );
+    if (stored === "v1") storedTrustRoots.push(root);
+  }
+  const projectRoot =
+    discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
+    discoveries[0]?.projectRoot ??
+    ".";
+  const sharedConfig = await readSharedConfigSpecifier(
+    repositoryRoot,
+    projectRoot,
+  );
   const detection = Object.freeze(
     discoveries.map((entry) =>
       Object.freeze({
@@ -239,13 +260,12 @@ async function resolveFormattingSetup(
         status: entry.status,
         executableConfig: entry.executableConfig,
         configPaths: Object.freeze([...entry.configPaths]),
+        ...(entry.projectRoot === projectRoot && sharedConfig !== undefined
+          ? { sharedConfig }
+          : {}),
       }),
     ),
   );
-  const projectRoot =
-    discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
-    discoveries[0]?.projectRoot ??
-    ".";
   const preview = await previewPrettierSettingsImport(repositoryRoot);
   const limitations = [...preview.limitations];
   if (preview.overrides.some((entry) => entry.excludeFiles.length > 0)) {
@@ -253,10 +273,6 @@ async function resolveFormattingSetup(
       "Prettier excludeFiles cannot be copied exactly; imported overrides keep their files patterns without the exclusions.",
     );
   }
-  const storedTrust =
-    (await readProjectPrettierTrust(repositoryRoot, projectRoot).catch(
-      () => undefined,
-    )) === "v1";
   return Object.freeze({
     imported: Object.freeze({
       settings: preview.settings,
@@ -265,8 +281,32 @@ async function resolveFormattingSetup(
     }),
     detection,
     projectRoot,
-    storedTrust,
+    projectRoots: Object.freeze(projectRoots),
+    storedTrustRoots: Object.freeze(storedTrustRoots),
+    sharedConfig,
   });
+}
+
+/** Data-only read of a project's package.json#prettier shared-config string. */
+async function readSharedConfigSpecifier(
+  repositoryRoot: string,
+  projectRoot: string,
+): Promise<string | undefined> {
+  try {
+    const manifestPath = join(
+      repositoryRoot,
+      projectRoot === "." ? "" : projectRoot,
+      "package.json",
+    );
+    const metadata = await lstat(manifestPath);
+    if (!metadata.isFile() || metadata.size > 1024n * 1024n) return undefined;
+    const manifest = JSON.parse(
+      await readFile(manifestPath, "utf8"),
+    ) as { prettier?: unknown };
+    return typeof manifest.prettier === "string" ? manifest.prettier : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 class ProjectPrettierTrustRequiredError extends Error {
@@ -300,11 +340,15 @@ export async function executeInitCommand(
       existingConfig(repositoryRoot),
     ]);
     const formattingSetup = await resolveFormattingSetup(repositoryRoot);
+    // Project mode enables every discovered project; a non-interactive run
+    // needs invocation consent or an existing grant for each of them.
     if (
       options.formatting === "project" &&
       !options.trustProjectPrettier &&
       !canPrompt &&
-      !formattingSetup.storedTrust
+      formattingSetup.projectRoots.some(
+        (root) => !formattingSetup.storedTrustRoots.includes(root),
+      )
     ) {
       throw new ProjectPrettierTrustRequiredError(
         formattingSetup.projectRoot,
@@ -319,6 +363,9 @@ export async function executeInitCommand(
         "The settings copy has unresolved limitations and cannot be applied noninteractively.",
       );
     }
+    const enabledProjectRoots = formattingSetup.projectRoots.filter(
+      (root) => root !== ".",
+    );
     const formattingProposalFields = {
       // Detection is always reported, even when nothing is imported/executed.
       formattingDetection: formattingSetup.detection,
@@ -328,15 +375,21 @@ export async function executeInitCommand(
       ...(options.formatting === "copy"
         ? { formattingImport: formattingSetup.imported }
         : {}),
+      ...(options.formatting === "project"
+        ? {
+            formattingProjectRoots: enabledProjectRoots,
+            formattingRootProject: formattingSetup.projectRoots.includes("."),
+          }
+        : {}),
       ...(options.formatting === "project" && options.trustProjectPrettier
         ? {
-            projectPrettierTrustRoot: formattingSetup.projectRoot,
+            projectPrettierTrustRoots: formattingSetup.projectRoots,
             projectPrettierTrustConfirmed: true,
           }
         : {}),
       ...((options.formatting === "managed" || options.formatting === "off") &&
-      formattingSetup.storedTrust
-        ? { projectPrettierRevokeRoot: formattingSetup.projectRoot }
+      formattingSetup.storedTrustRoots.length > 0
+        ? { projectPrettierRevokeRoots: formattingSetup.storedTrustRoots }
         : {}),
     };
     const proposalBaseOptions = {
@@ -429,16 +482,26 @@ export async function executeInitCommand(
                 ...(selectedFormatting === "copy"
                   ? { formattingImport: formattingSetup.imported }
                   : {}),
+                ...(selectedFormatting === "project"
+                  ? {
+                      formattingProjectRoots: enabledProjectRoots,
+                      formattingRootProject:
+                        formattingSetup.projectRoots.includes("."),
+                    }
+                  : {}),
                 ...(trustGranted
                   ? {
-                      projectPrettierTrustRoot: formattingSetup.projectRoot,
+                      projectPrettierTrustRoots: formattingSetup.projectRoots,
                       projectPrettierTrustConfirmed: true,
                     }
                   : {}),
                 ...((selectedFormatting === "managed" ||
                   selectedFormatting === "off") &&
-                formattingSetup.storedTrust
-                  ? { projectPrettierRevokeRoot: formattingSetup.projectRoot }
+                formattingSetup.storedTrustRoots.length > 0
+                  ? {
+                      projectPrettierRevokeRoots:
+                        formattingSetup.storedTrustRoots,
+                    }
                   : {}),
               };
         const selectedProposal = createInitProposal(inspection, {

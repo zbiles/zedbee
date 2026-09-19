@@ -403,6 +403,9 @@ function resolveOverrides(
       files: Object.freeze([...override.files]),
       checks: Object.freeze(checks),
       configurationOrigins: freezeOrigins(configurationOrigins),
+      ...(override.generated === undefined
+        ? {}
+        : { generated: override.generated }),
     };
   });
 }

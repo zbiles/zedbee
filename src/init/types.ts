@@ -18,6 +18,14 @@ export interface InitFormattingDetection {
   readonly status: "available" | "missing" | "unsupported";
   readonly executableConfig: boolean;
   readonly configPaths: readonly string[];
+  /** Package specifier when package.json#prettier is a shared-config string. */
+  readonly sharedConfig?: string;
+}
+
+/** Working-copy bytes an executable-config evaluation was bound to. */
+export interface ExecutableEvaluatedConfig {
+  readonly path: string;
+  readonly sha256: string;
 }
 
 export type InitHookChoice =
@@ -81,10 +89,13 @@ export interface InitProposal {
   readonly formatting?: InitFormattingChoice;
   readonly formattingImport?: InitFormattingImport;
   readonly formattingDetection?: readonly InitFormattingDetection[];
-  readonly projectPrettierTrustRoot?: string;
+  /** Every discovered project root that project mode enables. */
+  readonly projectPrettierTrustRoots?: readonly string[];
   /** Set only when the executable-code disclosure was separately confirmed. */
   readonly projectPrettierTrustConfirmed?: boolean;
-  readonly projectPrettierRevokeRoot?: string;
+  /** Roots whose local grants a managed/off switch withdraws. */
+  readonly projectPrettierRevokeRoots?: readonly string[];
+  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
   readonly files: readonly InitFileChange[];
 }
 
@@ -103,9 +114,14 @@ export interface CreateInitProposalOptions {
   readonly formatting?: InitFormattingChoice;
   readonly formattingImport?: InitFormattingImport;
   readonly formattingDetection?: readonly InitFormattingDetection[];
-  readonly projectPrettierTrustRoot?: string;
+  /** Nested project roots that receive generated engine overrides. */
+  readonly formattingProjectRoots?: readonly string[];
+  /** Whether the repository root itself runs the project engine. */
+  readonly formattingRootProject?: boolean;
+  readonly projectPrettierTrustRoots?: readonly string[];
   readonly projectPrettierTrustConfirmed?: boolean;
-  readonly projectPrettierRevokeRoot?: string;
+  readonly projectPrettierRevokeRoots?: readonly string[];
+  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
 }
 
 export interface ApplyResult {
