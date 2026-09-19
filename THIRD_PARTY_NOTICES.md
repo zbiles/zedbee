@@ -13748,13 +13748,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## jscpd-darwin-arm64@5.0.15
+## jscpd-darwin-arm64@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-darwin-arm64/-/jscpd-darwin-arm64-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13779,13 +13779,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-darwin-x64@5.0.15
+## jscpd-darwin-x64@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-darwin-x64/-/jscpd-darwin-x64-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13810,13 +13810,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-arm64-gnu@5.0.15
+## jscpd-linux-arm64-gnu@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-linux-arm64-gnu/-/jscpd-linux-arm64-gnu-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13841,13 +13841,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-gnu@5.0.15
+## jscpd-linux-arm64-musl@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-linux-x64-gnu/-/jscpd-linux-x64-gnu-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13872,13 +13872,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-musl@5.0.15
+## jscpd-linux-x64-gnu@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-linux-x64-musl/-/jscpd-linux-x64-musl-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13903,13 +13903,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-windows-x64-msvc@5.0.15
+## jscpd-linux-x64-musl@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-windows-x64-msvc/-/jscpd-windows-x64-msvc-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -13934,13 +13934,75 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd@5.0.15
+## jscpd-windows-arm64-msvc@5.2.1
 
 License: MIT
-Reviewed override source: https://registry.npmjs.org/jscpd-darwin-arm64/-/jscpd-darwin-arm64-5.0.15.tgz
-Reviewed override text: licenses/overrides/jscpd-5.0.15-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
 
-### licenses/overrides/jscpd-5.0.15-LICENSE
+### licenses/overrides/jscpd-5.2.1-LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2013-2024 Andrey Kucherenko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+---
+
+## jscpd-windows-x64-msvc@5.2.1
+
+License: MIT
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+
+### licenses/overrides/jscpd-5.2.1-LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2013-2024 Andrey Kucherenko
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+---
+
+## jscpd@5.2.1
+
+License: MIT
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+
+### licenses/overrides/jscpd-5.2.1-LICENSE
 
 The MIT License (MIT)
 
@@ -15838,7 +15900,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## react@19.2.8
+## react@19.3.0
 
 License: MIT
 

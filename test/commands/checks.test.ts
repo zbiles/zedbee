@@ -171,7 +171,10 @@ describe("executeChecksCommand", () => {
       profile: "fast",
       checks: { formatting: "error" },
     } as const;
-    await repository.write("package.json", '{"name":"fixture","private":true}\n');
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
     await repository.write("src/value.js", "export const value = 1;\n");
     await repository.write(
       ".zedbeerc.jsonc",
@@ -440,6 +443,14 @@ describe("executeChecksCommand", () => {
           engine: expect.objectContaining({
             name: "Secretlint",
             version: "13.0.4",
+            license: "MIT",
+          }),
+        }),
+        expect.objectContaining({
+          id: "duplication",
+          engine: expect.objectContaining({
+            name: "jscpd",
+            version: "5.2.1",
             license: "MIT",
           }),
         }),

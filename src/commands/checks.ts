@@ -147,7 +147,7 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
   },
   duplication: {
     description: "Detects new and enlarged code clones.",
-    engine: { name: "jscpd", version: "5.0.15", license: "MIT" },
+    engine: { name: "jscpd", version: "5.2.1", license: "MIT" },
     executionClass: "project-analysis",
     limitation:
       "Baseline comparison runs project analysis twice and small clones below managed thresholds are omitted.",
