@@ -43,6 +43,36 @@ function workspaceCandidates(
   ];
 }
 
+/**
+ * Validates the effective formatting engine/settings combination after ordered
+ * per-file override merging. Root-level and same-object conflicts are rejected
+ * at parse time; this closes ordered override combinations in which one
+ * matching override selects the project engine and a later one reintroduces
+ * managed settings (or vice versa).
+ */
+export function assertEffectiveFormattingPolicy(
+  config: ResolvedConfig,
+  patches: readonly ResolvedCheckPolicyPatch[],
+): void {
+  const root = config.checks.formatting;
+  let engine = root.engine;
+  let explicitSettings = Object.entries(
+    config.configurationOrigins.formatting,
+  ).some(
+    ([key, origin]) =>
+      key.startsWith("settings.") && origin.kind !== "profile",
+  );
+  for (const patch of patches) {
+    if (patch.settings !== undefined) explicitSettings = true;
+    if (patch.engine !== undefined) engine = patch.engine;
+  }
+  if (engine === "project" && explicitSettings) {
+    throw new TypeError(
+      'The effective formatting policy selects engine "project" while managed formatting settings still apply. Remove the managed settings from the repository policy or matching overrides.',
+    );
+  }
+}
+
 export function resolveTargetPolicy(
   config: ResolvedConfig,
   checkId: CheckId,
@@ -52,6 +82,7 @@ export function resolveTargetPolicy(
   let policy: ResolvedCheckPolicy = { ...config.checks[checkId] };
   const candidates = policyCandidates(target, inspection);
 
+  const matched: ResolvedCheckPolicyPatch[] = [];
   for (const override of config.overrides) {
     const patch = override.checks[checkId];
     if (patch === undefined) continue;
@@ -64,7 +95,13 @@ export function resolveTargetPolicy(
       const isMatch = picomatch(pattern, { dot: true });
       return candidates.some((candidate) => isMatch(candidate));
     });
-    if (matches) policy = mergePolicyPatch(policy, patch);
+    if (matches) matched.push(patch);
+  }
+  if (checkId === "formatting") {
+    assertEffectiveFormattingPolicy(config, matched);
+  }
+  for (const patch of matched) {
+    policy = mergePolicyPatch(policy, patch);
   }
 
   return policy;

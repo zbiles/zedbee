@@ -173,4 +173,77 @@ describe("formatting engine policy", () => {
 
     expect(restored.config.checks.formatting.engine).toBe("project");
   });
+
+  it("rejects a project engine selected by one override when a later matching override adds managed settings", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["packages/web/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+        {
+          files: ["packages/**"],
+          checks: { formatting: { settings: { printWidth: 100 } } },
+        },
+      ],
+    });
+
+    expect(() =>
+      testFilePolicyResolver(config)(
+        "formatting",
+        "packages/web/value.ts",
+        "target",
+      ),
+    ).toThrow(/project/u);
+  });
+
+  it("rejects managed settings added by an earlier matching override that later selects the project engine", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["packages/**"],
+          checks: { formatting: { settings: { printWidth: 100 } } },
+        },
+        {
+          files: ["packages/web/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    });
+
+    expect(() =>
+      testFilePolicyResolver(config)(
+        "formatting",
+        "packages/web/value.ts",
+        "target",
+      ),
+    ).toThrow(/project/u);
+  });
+
+  it("allows ordered overrides that never combine the project engine with managed settings", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["packages/web/**"],
+          checks: { formatting: { engine: "managed" } },
+        },
+        {
+          files: ["packages/**"],
+          checks: { formatting: { settings: { printWidth: 100 } } },
+        },
+      ],
+    });
+
+    const policy = testFilePolicyResolver(config)(
+      "formatting",
+      "packages/web/value.ts",
+      "target",
+    );
+
+    expect(policy.engine).toBe("managed");
+    expect(policy.settings.printWidth).toBe(100);
+  });
 });
