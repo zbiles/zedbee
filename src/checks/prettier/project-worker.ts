@@ -19,6 +19,12 @@ import {
   type FormattingSettings,
 } from "./settings.js";
 
+import {
+  parseEditorConfig,
+  editorConfigOptions as convertEditorConfig,
+  type EditorProperties,
+} from "./editorconfig.js";
+
 type PrettierModule = typeof import("prettier");
 
 interface WorkerState {
@@ -105,71 +111,7 @@ async function ignoreReason(
   return "prettierignore";
 }
 
-interface BoundedEditorConfig {
-  readonly root: boolean;
-  readonly sections: readonly {
-    readonly pattern: string;
-    readonly settings: Partial<FormattingSettings>;
-  }[];
-}
-
 const EDITORCONFIG_MAX_BYTES = 256 * 1024;
-
-function parseEditorConfig(contents: string): BoundedEditorConfig {
-  let root = false;
-  let current:
-    | { pattern: string; settings: Partial<FormattingSettings> }
-    | undefined;
-  const sections: { pattern: string; settings: Partial<FormattingSettings> }[] =
-    [];
-  for (const rawLine of contents.split(/\r?\n|\r/u)) {
-    const line = rawLine.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    if (line.startsWith("[") && line.endsWith("]")) {
-      current = {
-        pattern: line.slice(1, -1).trim(),
-        settings: {},
-      };
-      sections.push(current);
-      continue;
-    }
-    const separator = line.indexOf("=");
-    if (separator <= 0) continue;
-    const key = line.slice(0, separator).trim().toLowerCase();
-    const value = line.slice(separator + 1).trim();
-    if (current === undefined) {
-      if (key === "root" && value.toLowerCase() === "true") root = true;
-      continue;
-    }
-    if (key === "root") {
-      if (value.toLowerCase() === "true") root = true;
-      continue;
-    }
-    if (key === "indent_style") {
-      if (value === "tab") current.settings.useTabs = true;
-      else if (value === "space") current.settings.useTabs = false;
-    } else if (key === "indent_size" || key === "tab_width") {
-      if (value === "tab") {
-        if (key === "indent_size") current.settings.useTabs = true;
-      } else {
-        const parsed = Number(value);
-        if (Number.isSafeInteger(parsed) && parsed > 0) {
-          current.settings.tabWidth = parsed;
-        }
-      }
-    } else if (key === "max_line_length") {
-      const parsed = Number(value);
-      if (Number.isSafeInteger(parsed) && parsed > 0) {
-        current.settings.printWidth = parsed;
-      }
-    } else if (key === "end_of_line") {
-      if (value === "lf" || value === "crlf" || value === "cr") {
-        current.settings.endOfLine = value;
-      }
-    }
-  }
-  return { root, sections };
-}
 
 /**
  * Data-only EditorConfig values for one file, bounded to the mirror. Sections
@@ -182,7 +124,7 @@ async function editorConfigOptions(
   file: string,
 ): Promise<Partial<FormattingSettings>> {
   const treeRoot = state!.treeRoot;
-  const settings: Partial<FormattingSettings> = {};
+  const settings: EditorProperties = {};
   const chain: string[] = [];
   let directory = dirname(file);
   while (isContainedPath(treeRoot, directory)) {
@@ -191,7 +133,7 @@ async function editorConfigOptions(
     if (parent === directory) break;
     directory = parent;
   }
-  const collected: Partial<FormattingSettings>[] = [];
+  const collected: EditorProperties[] = [];
   for (const entry of [...chain].reverse()) {
     const configPath = join(entry, ".editorconfig");
     if (!existsSync(configPath)) continue;
@@ -209,7 +151,7 @@ async function editorConfigOptions(
       continue;
     }
     const parsed = parseEditorConfig(contents);
-    const applicable: Partial<FormattingSettings> = {};
+    const applicable: EditorProperties = {};
     const relativePath = relative(entry, file).split(sep).join("/");
     const fileName = relativePath.split("/").at(-1) ?? relativePath;
     for (const section of parsed.sections) {
@@ -219,13 +161,17 @@ async function editorConfigOptions(
       const candidate = section.pattern.includes("/") ? relativePath : fileName;
       let matches = false;
       try {
-        matches = picomatch.isMatch(candidate, section.pattern, {
-          dot: true,
-        });
+        matches = picomatch.isMatch(
+          candidate,
+          section.pattern.replace(/^\//u, ""),
+          {
+            dot: true,
+          },
+        );
       } catch {
         matches = false;
       }
-      if (matches) Object.assign(applicable, section.settings);
+      if (matches) Object.assign(applicable, section.properties);
     }
     collected.unshift(applicable);
     if (parsed.root) break;
@@ -233,7 +179,7 @@ async function editorConfigOptions(
   for (const entry of collected) {
     Object.assign(settings, entry);
   }
-  return settings;
+  return convertEditorConfig(settings);
 }
 
 async function resolveOptions(
@@ -269,8 +215,7 @@ interface SupportedFile {
 }
 
 type ClassifiedFile =
-  | SupportedFile
-  | Exclude<ProjectFormatSupport, { kind: "supported" }>;
+  SupportedFile | Exclude<ProjectFormatSupport, { kind: "supported" }>;
 
 const classificationCache = new Map<string, SupportedFile>();
 const CLASSIFICATION_CACHE_MAX_ENTRIES = 128;
@@ -278,8 +223,7 @@ const CLASSIFICATION_CACHE_MAX_ENTRIES = 128;
 function rememberClassification(file: string, result: SupportedFile): void {
   if (classificationCache.size >= CLASSIFICATION_CACHE_MAX_ENTRIES) {
     const oldest = classificationCache.keys().next().value as
-      | string
-      | undefined;
+      string | undefined;
     if (oldest !== undefined) classificationCache.delete(oldest);
   }
   classificationCache.set(file, result);
