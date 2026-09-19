@@ -3819,13 +3819,13 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## @napi-rs/wasm-runtime@1.1.6
+## @napi-rs/wasm-runtime@1.2.3
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/b77119e711704cc453949e056b45a4996ea0386c/LICENSE
-Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.1.6-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/70c149321ca4e361f6726349cf9b2258467fb24f/LICENSE
+Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
 
-### licenses/overrides/napi-rs-wasm-runtime-1.1.6-LICENSE
+### licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
 
 MIT License
 
