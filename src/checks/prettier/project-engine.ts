@@ -17,6 +17,7 @@ import {
 } from "./project-trust.js";
 import type {
   ImportableNativeConfig,
+  ProjectFormatSupport,
   ProjectFormatResult,
   ProjectPrettierFailure,
   ProjectPrettierInstallation,
@@ -50,6 +51,7 @@ export class ProjectPrettierFailureError extends Error {
 }
 
 export interface ProjectFormatterSession {
+  classify(file: string): Promise<ProjectFormatSupport>;
   format(file: string, source: string): Promise<ProjectFormatResult>;
   readConfigForImport(configPath: string): Promise<ImportableNativeConfig>;
   /** Consent-required evaluation of a package-exported shared configuration. */
@@ -376,7 +378,7 @@ function satisfiesDeclaredRange(
 }
 
 interface PendingRequest {
-  readonly expectedOperation: "format" | "importConfig";
+  readonly expectedOperation: "classify" | "format" | "importConfig";
   readonly resolve: (reply: ProjectPrettierReply) => void;
   readonly reject: (error: unknown) => void;
 }
@@ -588,7 +590,7 @@ async function openSession(
   }
 
   const request = (
-    operation: "format" | "importConfig",
+    operation: "classify" | "format" | "importConfig",
     payload: Record<string, unknown>,
   ): Promise<ProjectPrettierReply> => {
     if (closed || workerExited) {
@@ -638,6 +640,11 @@ async function openSession(
   };
 
   return Object.freeze({
+    async classify(file: string): Promise<ProjectFormatSupport> {
+      const reply = await request("classify", { file });
+      if (reply.operation !== "classify") throw new Error("Unexpected reply");
+      return reply.result;
+    },
     async format(file: string, source: string): Promise<ProjectFormatResult> {
       const reply = await request("format", { file, source });
       if (reply.operation !== "format") throw new Error("Unexpected reply");
