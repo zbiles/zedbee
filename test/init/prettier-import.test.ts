@@ -146,6 +146,124 @@ describe("previewPrettierSettingsImport", () => {
     });
   });
 
+  it("fills omitted settings from applicable root .editorconfig values", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(
+      ".editorconfig",
+      "root = true\n\n[*]\nindent_style = space\nindent_size = 4\nmax_line_length = 110\nend_of_line = lf\n",
+    );
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({ printWidth: 100 }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toEqual({
+      printWidth: 100,
+      tabWidth: 4,
+      useTabs: false,
+      endOfLine: "lf",
+    });
+  });
+
+  it("keeps configuration-file values above .editorconfig values", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.write(
+      ".editorconfig",
+      "root = true\n\n[*]\nindent_size = 4\n",
+    );
+    await fixture.write(
+      ".prettierrc.json",
+      JSON.stringify({ tabWidth: 2 }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toEqual({ tabWidth: 2 });
+  });
+
+  it("applies the nearest .editorconfig file over an ancestor", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write(
+      ".editorconfig",
+      "root = true\n\n[*]\nindent_size = 4\n",
+    );
+    await fixture.write(
+      "packages/app/.editorconfig",
+      "[*]\nindent_size = 2\n",
+    );
+    await fixture.write(
+      "packages/app/.prettierrc.json",
+      JSON.stringify({ semi: false }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    const nested = preview.overrides.find((override) =>
+      override.files.includes("packages/app/**"),
+    );
+    expect(nested?.settings).toMatchObject({
+      semi: false,
+      tabWidth: 2,
+    });
+  });
+
+  it("keeps workspace settings scoped when only a workspace configures Prettier", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write(
+      "packages/app/.prettierrc.json",
+      JSON.stringify({ printWidth: 100, singleQuote: true }),
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toEqual({});
+    const scoped = preview.overrides.filter((override) =>
+      override.files.includes("packages/app/**"),
+    );
+    expect(scoped).toHaveLength(1);
+    expect(scoped[0]?.settings).toMatchObject({
+      printWidth: 100,
+      singleQuote: true,
+    });
+  });
+
+  it("reports ignore-file limitations for nested projects too", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "root",
+      private: true,
+      workspaces: ["packages/*"],
+    });
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write(
+      "packages/app/.prettierrc.json",
+      JSON.stringify({ printWidth: 100 }),
+    );
+    await fixture.write("packages/app/.prettierignore", "dist\n");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.limitations.join("\n")).toMatch(
+      /packages\/app\/\.prettierignore/u,
+    );
+  });
+
   it("is deterministic across repeat imports", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });

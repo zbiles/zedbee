@@ -19,6 +19,7 @@ import {
   discoverProjectPrettier,
   type ProjectPrettierDiscovery,
 } from "./prettier-discovery.js";
+import { editorConfigSettings } from "./prettier-editorconfig.js";
 
 const CONFIG_MAX_BYTES = 1024 * 1024;
 const SUPPORTED_OPTION_KEYS = new Set(Object.keys(DEFAULT_FORMATTING_SETTINGS));
@@ -280,10 +281,15 @@ async function loadProjectConfig(
     }
   }
   const prefix = discovery.projectRoot === "." ? "" : discovery.projectRoot;
-  return {
-    ...classifyConfigValue(value, false, limitations, prefix),
-    configPath,
-  };
+  const classified = classifyConfigValue(value, false, limitations, prefix);
+  // Prettier configuration files win over applicable .editorconfig values;
+  // the data-only copy therefore fills only the keys the configuration omits.
+  const editorConfig = await editorConfigSettings(
+    registry,
+    discovery.projectRoot,
+  ).catch(() => ({}) as Partial<FormattingSettings>);
+  const settings = { ...editorConfig, ...classified.settings };
+  return { ...classified, settings, configPath };
 }
 
 function ignoreFileLimitations(
@@ -295,7 +301,7 @@ function ignoreFileLimitations(
     const path = projectRoot === "." ? name : posix.join(projectRoot, name);
     if (registry.resolve(path)?.targetKind === "file") {
       limitations.push(
-        `${name} is not copied; use project mode or existing formatting-only exclusions for ignored paths.`,
+        `${path} is not copied; use project mode or existing formatting-only exclusions for ignored paths.`,
       );
     }
   }
@@ -314,29 +320,32 @@ export async function previewPrettierSettingsImport(
   const discoveries = await discoverProjectPrettier(repositoryRoot);
 
   const limitations: string[] = [];
+  // Only a real root configuration supplies global settings. Independent
+  // workspace configurations stay scoped to their project; the root keeps
+  // managed defaults instead of promoting the first workspace globally.
   const rootDiscovery = discoveries.find(
     (discovery) => discovery.projectRoot === ".",
   );
-  const selected =
-    rootDiscovery ??
-    discoveries.find((discovery) => discovery.configPaths.length > 0);
 
   let settings: Partial<FormattingSettings> = {};
   let overrides: readonly ImportedFormattingOverride[] = [];
-  if (selected !== undefined) {
-    const loaded = await loadProjectConfig(registry, selected);
+  if (rootDiscovery !== undefined) {
+    const loaded = await loadProjectConfig(registry, rootDiscovery);
     settings = loaded.settings;
     overrides = loaded.overrides;
     limitations.push(...loaded.limitations);
-    ignoreFileLimitations(registry, selected.projectRoot, limitations);
+    if (loaded.configPath !== undefined) {
+      ignoreFileLimitations(registry, rootDiscovery.projectRoot, limitations);
+    }
   }
 
   const nestedOverrides: ImportedFormattingOverride[] = [];
   for (const discovery of discoveries) {
-    if (discovery.projectRoot === "." || discovery === selected) continue;
+    if (discovery.projectRoot === ".") continue;
     if (discovery.configPaths.length === 0) continue;
     const loaded = await loadProjectConfig(registry, discovery);
     limitations.push(...loaded.limitations);
+    ignoreFileLimitations(registry, discovery.projectRoot, limitations);
     if (
       Object.keys(loaded.settings).length === 0 &&
       loaded.overrides.length === 0

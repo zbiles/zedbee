@@ -35,6 +35,8 @@ const DATA_CONFIG_FILES = [
   "prettier.config.mjs",
   "prettier.config.cjs",
   "prettier.config.ts",
+  "prettier.config.cts",
+  "prettier.config.mts",
   ".prettierrc",
   ".prettierrc.json",
   ".prettierrc.json5",
@@ -45,6 +47,8 @@ const DATA_CONFIG_FILES = [
   ".prettierrc.cjs",
   ".prettierrc.mjs",
   ".prettierrc.ts",
+  ".prettierrc.cts",
+  ".prettierrc.mts",
 ] as const;
 
 const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
@@ -59,6 +63,28 @@ const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
 export function isSupportedProjectPrettierVersion(version: string): boolean {
   const normalized = semver.valid(version);
   return normalized !== null && semver.satisfies(normalized, SUPPORTED_PROJECT_PRETTIER_RANGE);
+}
+
+/**
+ * An installed version is accepted only when it satisfies the supported
+ * engine range and, when the project declares a semver range, that exact
+ * declaration. Non-semver declarations (URLs, tags, `workspace:*`) do not
+ * restrict the installed version here; the engine revalidates against the
+ * selected snapshot before executing anything.
+ */
+export function isProjectPrettierVersionAccepted(
+  version: string,
+  declaredRange: string | undefined,
+): boolean {
+  if (!isSupportedProjectPrettierVersion(version)) return false;
+  if (declaredRange === undefined) return true;
+  const normalizedRange = semver.validRange(declaredRange);
+  if (normalizedRange === null) return true;
+  try {
+    return semver.satisfies(semver.valid(version)!, normalizedRange);
+  } catch {
+    return false;
+  }
 }
 
 function executableConfigPath(path: string): boolean {
@@ -184,19 +210,24 @@ async function discoveryForProject(
     resolve(canonicalRoot, projectRoot),
     canonicalRoot,
   );
+  // An installed copy alone is not a project setup: npm can hoist Zedbee's own
+  // transitive Prettier into the repository root, and that must never be
+  // offered as the project's formatter. A project setup exists only when the
+  // project declares Prettier or configures it natively.
   const hasSetup =
     declaredRange !== undefined ||
     prettierField !== undefined ||
-    configPaths.length > 0 ||
-    installed !== undefined;
+    configPaths.length > 0;
   if (!hasSetup) return undefined;
 
-  const status: ProjectPrettierDiscovery["status"] =
-    installed === undefined
-      ? "missing"
-      : isSupportedProjectPrettierVersion(installed.version)
-        ? "available"
-        : "unsupported";
+  const status: ProjectPrettierDiscovery["status"] = installed === undefined
+    ? "missing"
+    : isProjectPrettierVersionAccepted(
+        installed.version,
+        declaredRange,
+      )
+      ? "available"
+      : "unsupported";
 
   return Object.freeze({
     projectRoot,

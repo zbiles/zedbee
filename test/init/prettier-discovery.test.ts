@@ -48,7 +48,10 @@ describe("discoverProjectPrettier", () => {
       workspaces: ["packages/*"],
       devDependencies: { prettier: "^3.0.0" },
     });
-    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.writeJson("packages/app/package.json", {
+      name: "app",
+      devDependencies: { prettier: "^3.0.0" },
+    });
     await fixture.writeJson("node_modules/prettier/package.json", {
       name: "prettier",
       version: "3.3.0",
@@ -60,6 +63,65 @@ describe("discoverProjectPrettier", () => {
       (entry) => entry.projectRoot === "packages/app",
     );
     expect(nested).toMatchObject({ version: "3.3.0", status: "available" });
+  });
+
+  it("does not offer a hoisted installation the project never declared or configured", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { typescript: "^5.0.0" },
+    });
+    // npm can hoist Zedbee's own transitive Prettier here; it is not a choice.
+    await fixture.writeJson("node_modules/prettier/package.json", {
+      name: "prettier",
+      version: "3.9.6",
+    });
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(discovered).toEqual([]);
+  });
+
+  it("rejects an installed version that violates the project's declared range", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "~3.3.0" },
+    });
+    await fixture.writeJson("node_modules/prettier/package.json", {
+      name: "prettier",
+      version: "3.9.6",
+    });
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    expect(discovered[0]).toMatchObject({
+      version: "3.9.6",
+      declaredRange: "~3.3.0",
+      status: "unsupported",
+    });
+  });
+
+  it("recognizes TypeScript executable configuration forms", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.write(".prettierrc.cts", "export default {}\n");
+    await fixture.writeJson("packages/app/package.json", { name: "app" });
+    await fixture.write("packages/app/prettier.config.mts", "export default {}\n");
+
+    const discovered = await discoverProjectPrettier(fixture.root);
+
+    const root = discovered.find((entry) => entry.projectRoot === ".");
+    expect(root?.configPaths).toEqual([".prettierrc.cts"]);
+    expect(root?.executableConfig).toBe(true);
+    const nested = discovered.find(
+      (entry) => entry.projectRoot === "packages/app",
+    );
+    expect(nested?.configPaths).toEqual(["packages/app/prettier.config.mts"]);
+    expect(nested?.executableConfig).toBe(true);
   });
 
   it("reports a declared but uninstalled Prettier as missing", async () => {
