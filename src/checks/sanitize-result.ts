@@ -4,6 +4,7 @@ import type {
   CheckResult,
   Finding,
   FormattingProvenance,
+  FormattingCoverage,
   IncompleteDisposition,
   SourceExcerpt,
   SourceLocation,
@@ -79,6 +80,7 @@ export const PUBLIC_CHECK_RESULT_FIELDS = {
   skipReason: true,
   incompleteDisposition: true,
   formattingProvenance: true,
+  formattingCoverage: true,
 } as const satisfies Readonly<Record<keyof CheckResult, true>>;
 
 export const PUBLIC_FINDING_FIELDS = {
@@ -365,6 +367,21 @@ function sanitizeFormattingProvenance(
   );
 }
 
+export function sanitizeFormattingCoverage(
+  value: FormattingCoverage,
+): FormattingCoverage {
+  const count = (value: number): number => {
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new TypeError("Invalid formatting coverage count");
+    return value;
+  };
+  return Object.freeze({
+    checkedFiles: count(value.checkedFiles),
+    ignoredFiles: count(value.ignoredFiles),
+    unsupportedFiles: count(value.unsupportedFiles),
+  });
+}
+
 export function sanitizeCheckResult(
   result: CheckResult,
   overrides: CheckResultOverrides = {},
@@ -400,6 +417,13 @@ export function sanitizeCheckResult(
           }),
         }),
     ...(incompleteDisposition === undefined ? {} : { incompleteDisposition }),
+    ...(result.formattingCoverage === undefined
+      ? {}
+      : {
+          formattingCoverage: sanitizeFormattingCoverage(
+            result.formattingCoverage,
+          ),
+        }),
     ...(result.formattingProvenance === undefined
       ? {}
       : {

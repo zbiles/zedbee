@@ -4,11 +4,12 @@ import type { ICruiseResult, IViolation } from "dependency-cruiser";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
-import { DEPENDENCY_RULE_NAMES } from "./rules.js";
+import { DEPENDENCY_RULE_NAMES, HOOK_INSTALLER_PATH } from "./rules.js";
 
+const HOOK_INSTALLER = new RegExp(HOOK_INSTALLER_PATH);
 const RULES = new Set<string>(Object.values(DEPENDENCY_RULE_NAMES));
 const TEST_PATH =
-  /(^|\/)(?:test|tests|__tests__|spec|\.husky)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
+  /(^|\/)(?:test|tests|__tests__|spec)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
 
 export interface DependencyDeclarations {
   readonly production: ReadonlySet<string>;
@@ -181,6 +182,7 @@ function declarationObservations(
       const production = declarations.production.has(dependencyName);
       const development = declarations.development.has(dependencyName);
       if (development && !production) {
+        if (HOOK_INSTALLER.test(from)) continue;
         observations.push(
           observation(
             DEPENDENCY_RULE_NAMES.productionToDev,
@@ -245,8 +247,8 @@ export function normalizeDependencyViolations(
       const from = allowedSources.has(reportedFrom)
         ? reportedFrom
         : rule === DEPENDENCY_RULE_NAMES.circular
-        ? reportedCycle.find((path) => allowedSources.has(path))
-        : undefined;
+          ? reportedCycle.find((path) => allowedSources.has(path))
+          : undefined;
       if (from === undefined) {
         return [];
       }

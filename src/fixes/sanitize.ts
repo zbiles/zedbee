@@ -216,9 +216,11 @@ function sanitizeSelection(value: unknown): FormattingFixSelection {
     });
   }
   if (engine === "project") {
-    const projectRoot = normalizeRepositoryRelativePath(
-      ownData(input, "projectRoot") as string,
-    );
+    const rawProjectRoot = ownData(input, "projectRoot");
+    const projectRoot =
+      rawProjectRoot === "."
+        ? "."
+        : normalizeRepositoryRelativePath(rawProjectRoot as string);
     const installationIdentity = ownData(input, "installationIdentity");
     const snapshotIdentity = ownData(input, "snapshotIdentity");
     const hashPattern = /^[0-9a-f]{64}$/u;

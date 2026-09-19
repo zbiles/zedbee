@@ -1,7 +1,8 @@
 import type { IFlattenedRuleSet } from "dependency-cruiser";
 
 const TEST_PATH =
-  "(^|/)(?:test|tests|__tests__|spec|\\.husky)(?:/|$)|\\.(?:test|spec)\\.[^.]+$";
+  "(^|/)(?:test|tests|__tests__|spec)(?:/|$)|\\.(?:test|spec)\\.[^.]+$";
+export const HOOK_INSTALLER_PATH = "(^|/)\\.husky/install\\.mjs$";
 const PRODUCTION_SOURCE = "(^|/)src/";
 
 export const DEPENDENCY_RULE_NAMES = Object.freeze({
@@ -36,7 +37,7 @@ export function createManagedDependencyRules(): IFlattenedRuleSet {
       {
         name: DEPENDENCY_RULE_NAMES.productionToDev,
         severity: "error" as const,
-        from: { pathNot: TEST_PATH },
+        from: { pathNot: `${TEST_PATH}|${HOOK_INSTALLER_PATH}` },
         to: { dependencyTypes: ["npm-dev"] },
       },
       {

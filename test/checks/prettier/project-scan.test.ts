@@ -267,6 +267,13 @@ describe("project Prettier scan integration", () => {
       "included.ts",
     ]);
     expect(result.findings[0]?.location?.file).not.toBe("ignored.ts");
+    expect(result).toMatchObject({
+      formattingCoverage: {
+        checkedFiles: 1,
+        ignoredFiles: 1,
+        unsupportedFiles: 0,
+      },
+    });
   });
 
   it("reports an all-ignored run as skipped instead of checked-and-passed", async () => {
@@ -284,6 +291,11 @@ describe("project Prettier scan integration", () => {
 
     expect(result.status).toBe("skipped");
     expect(result.skipReason).toMatch(/ignored or unsupported/u);
+    expect(result.formattingCoverage).toEqual({
+      checkedFiles: 0,
+      ignoredFiles: 1,
+      unsupportedFiles: 0,
+    });
     expect(result.findings).toEqual([]);
   });
 
@@ -302,6 +314,11 @@ describe("project Prettier scan integration", () => {
 
     expect(result.status).toBe("skipped");
     expect(result.skipReason).toMatch(/ignored or unsupported/u);
+    expect(result.formattingCoverage).toEqual({
+      checkedFiles: 0,
+      ignoredFiles: 0,
+      unsupportedFiles: 1,
+    });
   });
 
   it("reports a supported file that exceeds the project source limit", async () => {

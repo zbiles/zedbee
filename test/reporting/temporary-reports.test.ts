@@ -31,6 +31,7 @@ const uuidControl = vi.hoisted(() => ({ values: [] as string[] }));
 const filesystemControl = vi.hoisted(() => ({
   lstatFailures: new Map<string, string>(),
   openFailures: new Map<string, string>(),
+  unlinkFailures: new Map<string, string>(),
   rejectNumericDirectoryOpen: false,
 }));
 
@@ -66,6 +67,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       }
       return original.open(...args);
     },
+    async unlink(path: Parameters<typeof original.unlink>[0]) {
+      const code = filesystemControl.unlinkFailures.get(String(path));
+      if (code)
+        throw Object.assign(new Error("Injected unlink failure"), { code });
+      return original.unlink(path);
+    },
     async lstat(
       path: Parameters<typeof original.lstat>[0],
       options?: Parameters<typeof original.lstat>[1],
@@ -92,6 +99,7 @@ afterEach(() => {
   uuidControl.values.length = 0;
   filesystemControl.lstatFailures.clear();
   filesystemControl.openFailures.clear();
+  filesystemControl.unlinkFailures.clear();
   filesystemControl.rejectNumericDirectoryOpen = false;
 });
 
@@ -1070,38 +1078,36 @@ describe("temporary report store", () => {
     expect(reportNames).toEqual([basename(created.reportPath!)]);
   });
 
-  it.skipIf(process.platform !== "darwin")(
-    "names a validated lock when its unlink fails",
-    async () => {
-      const { repositoryRoot, temporaryRoot } = await fixture();
-      const store = createTemporaryReportStore({ temporaryRoot });
-      const initial = await store.maintain({
+  it("names a validated lock when its unlink fails", async () => {
+    const { repositoryRoot, temporaryRoot } = await fixture();
+    const store = createTemporaryReportStore({ temporaryRoot });
+    const initial = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json: "initial\n",
+    });
+    const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
+    // Fail exactly the filesystem operation under test. A concurrent chflags
+    // raced the complete write/unlink and did not reliably inject any failure.
+    filesystemControl.unlinkFailures.set(lockPath, "EPERM");
+    try {
+      const maintained = await store.maintain({
         repositoryRoot,
         maxAgeMs: 86_400_000,
-        json: "initial\n",
+        json: "next\n",
       });
-      const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
-      const pending = store.maintain({
-        repositoryRoot,
-        maxAgeMs: 86_400_000,
-        json: `${"lock payload".repeat(500_000)}\n`,
-      });
-      await waitForRegularFile(lockPath);
-      await execFileAsync("/usr/bin/chflags", ["uchg", lockPath]);
-      try {
-        const maintained = await pending;
-        expect(maintained.warnings).toContainEqual(
-          expect.objectContaining({
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            path: lockPath,
-          }),
-        );
-      } finally {
-        await execFileAsync("/usr/bin/chflags", ["nouchg", lockPath]);
-        await unlink(lockPath);
-      }
-    },
-  );
+      expect(maintained.warnings).toContainEqual(
+        expect.objectContaining({
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          path: lockPath,
+        }),
+      );
+      expect((await lstat(lockPath)).isFile()).toBe(true);
+    } finally {
+      filesystemControl.unlinkFailures.delete(lockPath);
+      await unlink(lockPath);
+    }
+  });
 
   it.skipIf(process.platform === "win32")(
     "omits the removed lock path when only directory synchronization fails",

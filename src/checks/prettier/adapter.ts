@@ -323,7 +323,7 @@ async function runProjectFiles(
           "Fix the project Prettier configuration or plugin, then retry.",
       });
     } finally {
-      await session.close().catch(() => undefined);
+      await session.close();
     }
     provenance.push(
       Object.freeze({
@@ -491,6 +491,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       else if (isSupportedPrettierPath(file)) managedFiles.push(file);
     }
 
+    let managedChecked = 0;
     for (const file of managedFiles) {
       if (context.signal.aborted) {
         throw new Error("Formatting check aborted");
@@ -506,6 +507,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
           filepath: file,
           parser,
         });
+        managedChecked++;
         findings.push(
           ...(await attribute(context, file, formatted, source, "managed")),
         );
@@ -548,6 +550,14 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       if (incomplete !== undefined) return incomplete;
     }
 
+    const formattingCoverage = Object.freeze({
+      checkedFiles: managedChecked + checked.size,
+      ignoredFiles: ignored.filter((entry) => entry.reason !== "unsupported")
+        .length,
+      unsupportedFiles: ignored.filter(
+        (entry) => entry.reason === "unsupported",
+      ).length,
+    });
     // An all-ignored run must not be presented as having checked those files.
     if (
       projectFiles.length > 0 &&
@@ -555,11 +565,14 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       checked.size === 0 &&
       ignored.length > 0
     ) {
-      return skipped(
-        `All ${ignored.length} target file${
-          ignored.length === 1 ? "" : "s"
-        } were ignored or unsupported under the project formatter`,
-      );
+      return {
+        ...skipped(
+          `All ${ignored.length} target file${
+            ignored.length === 1 ? "" : "s"
+          } were ignored or unsupported under the project formatter`,
+        ),
+        formattingCoverage,
+      };
     }
 
     return {
@@ -567,6 +580,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       status: "completed",
       durationMs: 0,
       findings,
+      ...(mayUseProject ? { formattingCoverage } : {}),
       ...(provenance.length > 0
         ? { formattingProvenance: Object.freeze(provenance) }
         : {}),

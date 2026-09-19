@@ -1,3 +1,4 @@
+import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, SourceExcerpt } from "../core/types.js";
@@ -136,8 +137,15 @@ function copyCheck(
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
+    ...(check.formattingCoverage === undefined
+      ? {}
+      : {
+          formattingCoverage: sanitizeFormattingCoverage(
+            check.formattingCoverage,
+          ),
+        }),
     ...(check.formattingProvenance === undefined ||
-      check.formattingProvenance.length === 0
+    check.formattingProvenance.length === 0
       ? {}
       : {
           formattingProvenance: Object.freeze(

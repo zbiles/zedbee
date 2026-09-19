@@ -1,3 +1,4 @@
+import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { compareFindings } from "../core/summarize.js";
 import type { CheckResult, Finding } from "../core/types.js";
 import type { ScanReport } from "../scan/report.js";
@@ -85,16 +86,25 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
-    ...(check.formattingProvenance === undefined ||
-      check.formattingProvenance.length === 0
+    ...(check.formattingCoverage === undefined
       ? {}
       : {
-          formattingProvenance: [...check.formattingProvenance].map((entry) => ({
-            engine: entry.engine,
-            version: entry.version,
-            projectRoot: entry.projectRoot,
-            configFiles: [...entry.configFiles],
-          })),
+          formattingCoverage: sanitizeFormattingCoverage(
+            check.formattingCoverage,
+          ),
+        }),
+    ...(check.formattingProvenance === undefined ||
+    check.formattingProvenance.length === 0
+      ? {}
+      : {
+          formattingProvenance: [...check.formattingProvenance].map(
+            (entry) => ({
+              engine: entry.engine,
+              version: entry.version,
+              projectRoot: entry.projectRoot,
+              configFiles: [...entry.configFiles],
+            }),
+          ),
         }),
   };
 }

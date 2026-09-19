@@ -21,3 +21,29 @@ describe("managed dependency rules", () => {
     });
   });
 });
+
+it("does not classify arbitrary hook files as tests or exempt undeclared imports", () => {
+  const rules = managedDependencyRules.forbidden!;
+  const missing = rules.find(
+    (rule) => rule.name === DEPENDENCY_RULE_NAMES.missingDependency,
+  )!;
+  const dev = rules.find(
+    (rule) => rule.name === DEPENDENCY_RULE_NAMES.productionToDev,
+  )!;
+  const boundary = rules.find(
+    (rule) => rule.name === DEPENDENCY_RULE_NAMES.sourceToTest,
+  )!;
+  expect(
+    new RegExp(missing.from.pathNot as string).test(".husky/install.mjs"),
+  ).toBe(false);
+  expect(new RegExp(dev.from.pathNot as string).test(".husky/custom.js")).toBe(
+    false,
+  );
+  expect(
+    new RegExp(dev.from.pathNot as string).test(".husky/install.mjs"),
+  ).toBe(true);
+  if (!("to" in boundary)) throw new Error("Expected dependency rule");
+  expect(new RegExp(boundary.to.path as string).test(".husky/custom.js")).toBe(
+    false,
+  );
+});

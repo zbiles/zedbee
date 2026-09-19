@@ -121,11 +121,13 @@ async function formatProjectWorkingFile(input: {
     try {
       const result = await session.format(input.file, input.source);
       if (result.kind === "ignored") {
-        throw new FixPlanIgnoredError("The project formatter ignored the file.");
+        throw new FixPlanIgnoredError(
+          "The project formatter ignored the file.",
+        );
       }
       return result.text;
     } finally {
-      await session.close().catch(() => undefined);
+      await session.close();
     }
   } finally {
     await snapshot.cleanup().catch(() => undefined);

@@ -443,7 +443,7 @@ export function createDefaultDiagnosticProbe(
                     } (${installation.version})`,
                   );
                 } finally {
-                  await session.close().catch(() => undefined);
+                  await session.close();
                 }
               }
               return probed;

@@ -136,6 +136,12 @@ export interface FormattingProvenance {
   readonly configFiles: readonly string[];
 }
 
+export interface FormattingCoverage {
+  readonly checkedFiles: number;
+  readonly ignoredFiles: number;
+  readonly unsupportedFiles: number;
+}
+
 export interface CheckResult {
   checkId: string;
   target?: string;
@@ -147,6 +153,7 @@ export interface CheckResult {
   incompleteDisposition?: IncompleteDisposition;
   /** Present when the formatting check ran through the project engine. */
   formattingProvenance?: readonly FormattingProvenance[];
+  formattingCoverage?: FormattingCoverage;
 }
 
 export interface RunSummary {

@@ -1,3 +1,4 @@
+import { buildFixPlan } from "../../../src/fixes/build-plan.js";
 import { createHash } from "node:crypto";
 import { cp, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -186,3 +187,63 @@ describe("project Prettier fix parity", () => {
     );
   });
 });
+
+it.each(["unchanged", "installation", "revoked", "working"] as const)(
+  "revalidates the real scan-to-fix plan after %s inputs",
+  async (change) => {
+    const repository = await projectRepository();
+    await repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: { formatting: { engine: "project", severity: "error" } },
+      }),
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+    await repository.git([
+      "commit",
+      "--message",
+      "project policy",
+      "--no-verify",
+    ]);
+    await repository.write("value.ts", 'export const value = "changed";\n');
+    await repository.git(["add", "--", ".zedbeerc.jsonc", "value.ts"]);
+    const plan = await buildFixPlan({
+      repositoryRoot: repository.root,
+      selectedChecks: ["formatting"],
+    });
+    expect(
+      plan.candidates.some(
+        (candidate) =>
+          candidate.kind === "format-file" &&
+          candidate.selection?.engine === "project",
+      ),
+      JSON.stringify(plan.publicPlan),
+    ).toBe(true);
+    if (change === "installation") {
+      const path = join(repository.root, "node_modules/prettier/index.mjs");
+      await repository.write(
+        "node_modules/prettier/index.mjs",
+        (await readFile(path, "utf8")) + "\n// changed installation\n",
+      );
+    }
+    if (change === "revoked")
+      await revokeProjectPrettierTrust(repository.root, ".");
+    if (change === "working")
+      await repository.write("value.ts", 'export const value = "unstaged";\n');
+    const before = await repository.read("value.ts");
+    const index = (await repository.git(["show", ":value.ts"])).stdout;
+    const result = await applyFixPlan(plan);
+    expect((await repository.git(["show", ":value.ts"])).stdout).toBe(index);
+    if (change === "unchanged") {
+      expect(result.changedFiles).toEqual(["value.ts"]);
+      expect(await repository.read("value.ts")).toBe(
+        "export const value = 'changed';\n",
+      );
+    } else {
+      expect(result.changedFiles).toEqual([]);
+      expect(result.issues.length).toBeGreaterThan(0);
+      expect(await repository.read("value.ts")).toBe(before);
+    }
+  },
+);

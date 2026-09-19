@@ -370,7 +370,7 @@ function normalizeEvaluatedOverrides(
     const excludeFiles =
       typeof entry.excludeFiles === "string"
         ? [entry.excludeFiles]
-        : entry.excludeFiles ?? [];
+        : (entry.excludeFiles ?? []);
     overrides.push(
       Object.freeze({
         files: Object.freeze(files.map(scopePattern)),
@@ -435,8 +435,8 @@ async function evaluateExecutableProjectConfig(
       "configPath" in target
         ? target.configPath
         : projectRoot === "."
-        ? "package.json"
-        : `${projectRoot}/package.json`;
+          ? "package.json"
+          : `${projectRoot}/package.json`;
     const configRoot =
       "configPath" in target
         ? posix.dirname(target.configPath) || "."
@@ -477,7 +477,7 @@ async function evaluateExecutableProjectConfig(
       }),
     });
   } finally {
-    await session.close().catch(() => undefined);
+    await session.close();
   }
 }
 
@@ -609,8 +609,8 @@ export async function executeInitCommand(
       executableConfigPath !== undefined
         ? { configPath: executableConfigPath }
         : formattingSetup.sharedConfig !== undefined
-        ? { sharedConfig: formattingSetup.sharedConfig }
-        : undefined;
+          ? { sharedConfig: formattingSetup.sharedConfig }
+          : undefined;
     const rawEvaluatedExecutableImport =
       options.formatting === "copy" &&
       options.trustProjectPrettier &&
@@ -769,8 +769,7 @@ export async function executeInitCommand(
         osvUnavailable: InitOsvUnavailable,
         selectedHook: InitHookChoice = selection,
         selectedFormatting:
-          | InitFormattingChoice
-          | undefined = options.formatting,
+          InitFormattingChoice | undefined = options.formatting,
         selectedProjectTrust = false,
         evaluatedImport: InitFormattingImport | undefined = undefined,
       ): InitProposal => {

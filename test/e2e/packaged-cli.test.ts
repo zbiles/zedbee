@@ -1421,6 +1421,45 @@ async function repositoryWithProjectPrettier() {
 }
 
 describe("project Prettier integration", () => {
+  it("applies a project formatting fix through the packaged command without changing the index", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--checks",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await repository.commitAll("project formatting policy");
+    await repository.write("value.ts", 'export const value = "changed";\n');
+    await repository.git(["add", "--", "value.ts"]);
+    const beforeIndex = (await repository.git(["write-tree"])).stdout;
+    const applied = await runPackagedCli(repository.root, [
+      "fix",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(applied.exitCode, applied.stdout + applied.stderr).toBe(0);
+    expect(JSON.parse(applied.stdout)).toMatchObject({
+      applied: true,
+      result: { changedFiles: ["value.ts"], issues: [] },
+    });
+    expect(await repository.read("value.ts")).toBe(
+      "export const value = 'changed';\n",
+    );
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeIndex);
+  });
+
   it("copies detected settings through packaged init", async () => {
     const repository = await repositoryWithProjectPrettier();
     await repository.write(
