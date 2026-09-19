@@ -13,10 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { getCurrentTest } from "@vitest/runner";
 import { Ajv } from "ajv";
 import { execa } from "execa";
 import { afterAll, beforeAll, describe, expect, inject, it } from "vitest";
+import { currentTestSignal } from "../helpers/current-test-signal.js";
 import { copyGitRepository } from "../helpers/git-repository.js";
 import {
   installPackedFixture,
@@ -31,9 +31,7 @@ let tarballFiles: readonly string[];
 let installedNodeModules: string;
 let installedRepositoryTemplate: string;
 
-function cancellationOptions(
-  signal = getCurrentTest()?.context.signal,
-): Readonly<{
+function cancellationOptions(signal = currentTestSignal()): Readonly<{
   cancelSignal?: AbortSignal;
   killDescendants: false;
 }> {
