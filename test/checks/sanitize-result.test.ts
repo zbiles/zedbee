@@ -95,6 +95,7 @@ describe("public result sanitizer contract", () => {
       "error",
       "skipReason",
       "incompleteDisposition",
+      "formattingProvenance",
     ]);
     expect(Object.keys(PUBLIC_FINDING_FIELDS)).toEqual([
       "id",

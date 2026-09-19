@@ -3,6 +3,10 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import * as prettier from "prettier";
 import type { CheckRunContext, LegacyCheckResultAdapter } from "../adapter.js";
+import type {
+  CheckApplicability,
+  InspectionContext,
+} from "../adapter.js";
 import type { CheckResult, Finding } from "../../core/types.js";
 import type { ChangedFile } from "../../git/change-set.js";
 import { formattingFingerprint } from "./fingerprint.js";
@@ -28,10 +32,15 @@ import {
 import { requireProjectPrettierTrust } from "./project-trust.js";
 import {
   openProjectFormatter,
+  owningProjectRoot,
   ProjectPrettierFailureError,
   resolveProjectPrettierInstallation,
 } from "./project-engine.js";
 import type { ProjectFormatterSession } from "./project-engine.js";
+import type { FormattingProvenance } from "./project-types.js";
+import { DATA_CONFIG_FILE_NAMES } from "../../init/prettier-discovery.js";
+
+const MAX_INVENTORY_FILES = 20_000;
 
 function relevantFiles(context: CheckRunContext): string[] {
   return [...context.changeSet.files.values()]
@@ -60,6 +69,35 @@ async function allSupportedFiles(
         files.push(repositoryPath);
       }
     }
+  }
+  return files;
+}
+
+/**
+ * Bounded regular-file inventory independent of the managed parser allowlist.
+ * Project mode must let the selected formatter and plugins decide support,
+ * so the inventory only excludes generated lockfiles, symlinks, and files
+ * that cannot be read as bounded UTF-8 text.
+ */
+async function allInventoryFiles(
+  root: string,
+  directory = root,
+): Promise<string[]> {
+  const files: string[] = [];
+  if (files.length >= MAX_INVENTORY_FILES) return files;
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries.sort((left, right) =>
+    compareCodeUnits(left.name, right.name),
+  )) {
+    if (entry.name === "node_modules") continue;
+    const fullPath = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...(await allInventoryFiles(root, fullPath)));
+    } else if (entry.isFile()) {
+      const repositoryPath = relative(root, fullPath).split(sep).join("/");
+      if (!isGeneratedLockfile(repositoryPath)) files.push(repositoryPath);
+    }
+    if (files.length >= MAX_INVENTORY_FILES) return files;
   }
   return files;
 }
@@ -100,13 +138,13 @@ function finding(
   };
 }
 
-function skipped(): CheckResult {
+function skipped(reason: string): CheckResult {
   return {
     checkId: "formatting",
     status: "skipped",
     durationMs: 0,
     findings: [],
-    skipReason: "No supported target files",
+    skipReason: reason,
   };
 }
 
@@ -147,36 +185,33 @@ async function attribute(
   return attributed.map((range) => finding(file, range.start, range.end, engine));
 }
 
-function owningProjectRoot(context: CheckRunContext, file: string): string {
-  const candidates = context.targetInspection.workspaces
-    .filter(
-      (workspace) =>
-        workspace.relativeRoot === "." ||
-        file.startsWith(`${workspace.relativeRoot}/`),
-    )
-    .sort((left, right) => right.relativeRoot.length - left.relativeRoot.length);
-  return candidates[0]?.relativeRoot ?? ".";
-}
-
 async function runProjectFiles(
   context: CheckRunContext,
   files: readonly string[],
   findings: Finding[],
+  provenance: FormattingProvenance[],
+  ignored: { file: string; reason: string }[],
+  checked: Set<string>,
 ): Promise<CheckResult | undefined> {
   const grouped = new Map<string, string[]>();
   for (const file of files) {
-    const projectRoot = owningProjectRoot(context, file);
+    const projectRoot = owningProjectRoot(
+      context.targetInspection.workspaces,
+      file,
+    );
     const group = grouped.get(projectRoot) ?? [];
     group.push(file);
     grouped.set(projectRoot, group);
   }
   for (const [projectRoot, projectFiles] of grouped) {
+    // Invocation-only consent comes only from the trusted parent CLI flag;
+    // tracked configuration can never supply executable-code permission.
     let permit;
     try {
       permit = await requireProjectPrettierTrust(
         context.repositoryRoot,
         projectRoot,
-        false,
+        context.projectPrettierTrust === true,
       );
     } catch {
       return incompleteResult({
@@ -194,6 +229,7 @@ async function runProjectFiles(
       installation = await resolveProjectPrettierInstallation(
         context.repositoryRoot,
         projectRoot,
+        context.snapshots.targetDir,
       );
     } catch (error) {
       if (error instanceof ProjectPrettierFailureError) {
@@ -239,7 +275,13 @@ async function runProjectFiles(
         const source = await sourceForFile(context, file);
         if (source === undefined) continue;
         const result = await session.format(file, source);
-        if (result.kind === "ignored") continue;
+        if (result.kind === "ignored") {
+          // Ignored and unsupported files stay distinguishable from files that
+          // were actually formatted and passed.
+          ignored.push({ file, reason: result.reason });
+          continue;
+        }
+        checked.add(file);
         findings.push(
           ...(await attribute(context, file, result.text, source, "project")),
         );
@@ -270,8 +312,66 @@ async function runProjectFiles(
     } finally {
       await session.close().catch(() => undefined);
     }
+    provenance.push(
+      Object.freeze({
+        engine: "project",
+        version: installation.version,
+        projectRoot,
+        // Data-only inventory of the project's native configuration inside
+        // the selected snapshot; nothing is executed to collect this.
+        configFiles: Object.freeze(
+          await snapshotConfigFiles(
+            context.snapshots.targetDir,
+            projectRoot,
+          ).then((paths) => paths.sort(compareCodeUnits)),
+        ),
+      }),
+    );
   }
+  provenance.sort((left, right) =>
+    compareCodeUnits(left.projectRoot, right.projectRoot),
+  );
   return undefined;
+}
+
+function mayUseProjectEngine(
+  context: Pick<CheckRunContext, "config"> | InspectionContext,
+): boolean {
+  return (
+    context.config.checks.formatting.engine === "project" ||
+    context.config.overrides.some(
+      (override) => override.checks.formatting?.engine === "project",
+    )
+  );
+}
+
+/** Data-only config inventory of one project inside the selected snapshot. */
+async function snapshotConfigFiles(
+  snapshotRoot: string,
+  projectRoot: string,
+): Promise<string[]> {
+  const paths: string[] = [];
+  for (const name of DATA_CONFIG_FILE_NAMES) {
+    const relative = projectRoot === "." ? name : `${projectRoot}/${name}`;
+    try {
+      if ((await lstat(join(snapshotRoot, relative))).isFile()) {
+        paths.push(relative);
+      }
+    } catch {
+      /* Absent configuration files are simply not reported. */
+    }
+  }
+  const manifestRelative =
+    projectRoot === "." ? "package.json" : `${projectRoot}/package.json`;
+  try {
+    const manifest = JSON.parse(
+      await readFile(join(snapshotRoot, manifestRelative), "utf8"),
+    ) as { prettier?: unknown };
+    if (manifest.prettier !== undefined) paths.push(manifestRelative);
+  } catch {
+    /* No manifest prettier field. */
+  }
+  return paths;
 }
 
 // Legacy CheckResult compatibility bridge: managed and project engines both
@@ -284,27 +384,56 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
     return planPrettierFixes(context, findings);
   },
 
-  inspect: (context: import("../adapter.js").InspectionContext) =>
-    inspectManagedCheck("formatting", context),
+  inspect: async (
+    context: InspectionContext,
+  ): Promise<CheckApplicability> => {
+    // Project mode must let the selected formatter and its plugins decide
+    // support, so applicability accepts bounded changed files without the
+    // managed parser allowlist and without executing any configuration.
+    if (!mayUseProjectEngine(context)) {
+      return inspectManagedCheck("formatting", context);
+    }
+    const changed = [...context.changeSet.files.values()].filter(
+      (file) => file.status !== "deleted",
+    );
+    const bounded = changed.filter((file) => !isGeneratedLockfile(file.path));
+    if (context.config.checks.formatting.when === "always") {
+      return {
+        applies: true,
+        executionClass: "lightweight",
+        requiresBaseline: false,
+        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+      };
+    }
+    if (bounded.length === 0) {
+      return {
+        applies: false,
+        reason: "No supported changed files",
+      };
+    }
+    return {
+      applies: true,
+      executionClass: "lightweight",
+      requiresBaseline: false,
+      targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
+    };
+  },
 
   async runLegacy(context) {
     const rootEngine = context.config.checks.formatting.engine;
-    const hasProjectOverride = context.config.overrides.some(
-      (override) => override.checks.formatting?.engine === "project",
-    );
-    const mayUseProject = rootEngine === "project" || hasProjectOverride;
+    const mayUseProject = mayUseProjectEngine(context);
 
     let files: string[];
     if (context.config.checks.formatting.when === "always") {
-      files = context.config.checks.formatting.engine === "project"
-        ? [...context.changeSet.files.values()]
-            .filter((file) => file.status !== "deleted")
-            .map((file) => file.path)
-        : await allSupportedFiles(context.snapshots.targetDir);
-      if (context.config.checks.formatting.engine === "project") {
-        const inventory = await allSupportedFiles(context.snapshots.targetDir);
-        files = [...new Set([...files, ...inventory])];
+      if (mayUseProject) {
+        // The project engine decides support itself; the inventory is a
+        // bounded regular-file view independent of the managed allowlist.
+        files = await allInventoryFiles(context.snapshots.targetDir);
+        files = [...new Set([...files, ...capturedSourcePaths(context.snapshots.targetDir)])]
+          .filter((file) => !isGeneratedLockfile(file))
+          .sort(compareCodeUnits);
       } else {
+        files = await allSupportedFiles(context.snapshots.targetDir);
         // The selected view augments, never replaces, the complete live inventory.
         files = [
           ...new Set([
@@ -339,7 +468,7 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       (file) => !unsupported.has(file) && !isGeneratedLockfile(file),
     );
     if (files.length === 0) {
-      return skipped();
+      return skipped("No supported target files");
     }
 
     const findings: Finding[] = [];
@@ -392,9 +521,31 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       }
     }
 
+    const provenance: FormattingProvenance[] = [];
+    const ignored: { file: string; reason: string }[] = [];
+    const checked = new Set<string>();
     if (projectFiles.length > 0) {
-      const incomplete = await runProjectFiles(context, projectFiles, findings);
+      const incomplete = await runProjectFiles(
+        context,
+        projectFiles,
+        findings,
+        provenance,
+        ignored,
+        checked,
+      );
       if (incomplete !== undefined) return incomplete;
+    }
+
+    // An all-ignored run must not be presented as having checked those files.
+    if (
+      projectFiles.length > 0 &&
+      managedFiles.length === 0 &&
+      checked.size === 0 &&
+      ignored.length > 0
+    ) {
+      return skipped(
+        `All ${ignored.length} target file${ignored.length === 1 ? "" : "s"} were ignored or unsupported under the project formatter`,
+      );
     }
 
     return {
@@ -402,6 +553,9 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       status: "completed",
       durationMs: 0,
       findings,
+      ...(provenance.length > 0
+        ? { formattingProvenance: Object.freeze(provenance) }
+        : {}),
     };
   },
 };

@@ -68,6 +68,7 @@ export async function planPrettierFixes(
       const installation = await resolveProjectPrettierInstallation(
         context.repositoryRoot,
         projectRoot,
+        context.snapshots.targetDir,
       );
       projectSnapshotIdentity ??= await snapshotIdentity(
         context.snapshots.targetDir,

@@ -75,48 +75,53 @@ async function formatProjectWorkingFile(input: {
   readonly signal?: AbortSignal;
 }): Promise<string> {
   const git = new GitClient(input.repositoryRoot);
+  // The verified staged snapshot stays alive for the whole fix: the project
+  // formatter resolves its configuration, helpers, and plugins from this
+  // exact view, and only the explicit `source` bytes come from the current
+  // working file. A live unstaged configuration edit cannot change the
+  // applied bytes after the identity was checked.
   const snapshot = await buildSnapshotPair(
     input.repositoryRoot,
     git,
     input.signal,
   );
-  let currentIdentity: string;
   try {
-    currentIdentity = await snapshotIdentity(snapshot.targetDir);
+    const currentIdentity = await snapshotIdentity(snapshot.targetDir);
+    if (currentIdentity !== input.selection.snapshotIdentity) {
+      throw new FixPlanStaleError("The selected formatting snapshot changed.");
+    }
+    const installation = await resolveProjectPrettierInstallation(
+      input.repositoryRoot,
+      input.selection.projectRoot,
+      snapshot.targetDir,
+    );
+    if (installation.identity !== input.selection.installationIdentity) {
+      throw new FixPlanStaleError("The project Prettier installation changed.");
+    }
+    const permit = await requireProjectPrettierTrust(
+      input.repositoryRoot,
+      input.selection.projectRoot,
+      false,
+    );
+    const session = await openProjectFormatter({
+      checkoutRoot: await realpath(input.repositoryRoot),
+      snapshotRoot: snapshot.targetDir,
+      projectRoot: input.selection.projectRoot,
+      installation,
+      permit,
+      signal: input.signal ?? new AbortController().signal,
+    });
+    try {
+      const result = await session.format(input.file, input.source);
+      if (result.kind === "ignored") {
+        throw new FixPlanIgnoredError("The project formatter ignored the file.");
+      }
+      return result.text;
+    } finally {
+      await session.close().catch(() => undefined);
+    }
   } finally {
     await snapshot.cleanup().catch(() => undefined);
-  }
-  if (currentIdentity !== input.selection.snapshotIdentity) {
-    throw new FixPlanStaleError("The selected formatting snapshot changed.");
-  }
-  const installation = await resolveProjectPrettierInstallation(
-    input.repositoryRoot,
-    input.selection.projectRoot,
-  );
-  if (installation.identity !== input.selection.installationIdentity) {
-    throw new FixPlanStaleError("The project Prettier installation changed.");
-  }
-  const permit = await requireProjectPrettierTrust(
-    input.repositoryRoot,
-    input.selection.projectRoot,
-    false,
-  );
-  const session = await openProjectFormatter({
-    checkoutRoot: await realpath(input.repositoryRoot),
-    snapshotRoot: input.repositoryRoot,
-    projectRoot: input.selection.projectRoot,
-    installation,
-    permit,
-    signal: input.signal ?? new AbortController().signal,
-  });
-  try {
-    const result = await session.format(input.file, input.source);
-    if (result.kind === "ignored") {
-      throw new FixPlanIgnoredError("The project formatter ignored the file.");
-    }
-    return result.text;
-  } finally {
-    await session.close().catch(() => undefined);
   }
 }
 

@@ -136,6 +136,16 @@ function copyCheck(
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
+    ...(check.formattingProvenance === undefined ||
+      check.formattingProvenance.length === 0
+      ? {}
+      : {
+          formattingProvenance: Object.freeze(
+            [...check.formattingProvenance].map((entry) =>
+              Object.freeze({ ...entry }),
+            ),
+          ),
+        }),
   });
 }
 

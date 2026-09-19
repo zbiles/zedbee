@@ -85,6 +85,17 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
+    ...(check.formattingProvenance === undefined ||
+      check.formattingProvenance.length === 0
+      ? {}
+      : {
+          formattingProvenance: [...check.formattingProvenance].map((entry) => ({
+            engine: entry.engine,
+            version: entry.version,
+            projectRoot: entry.projectRoot,
+            configFiles: [...entry.configFiles],
+          })),
+        }),
   };
 }
 

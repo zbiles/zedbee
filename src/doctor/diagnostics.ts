@@ -391,18 +391,18 @@ export function createDefaultDiagnosticProbe(
           discovered.find((entry) => entry.projectRoot === ".")?.projectRoot ??
           discovered[0]!.projectRoot;
         try {
-          const installation = await resolveProjectPrettierInstallation(
-            root,
-            projectRoot,
-          );
-          const permit = await requireProjectPrettierTrust(
-            root,
-            projectRoot,
-            true,
-          );
+          const permitPromise = requireProjectPrettierTrust(root, projectRoot, true);
+          let probedVersion = "unknown";
           const formatted = await withSnapshots(
             context.cwd,
             async (targetDir) => {
+              const installation = await resolveProjectPrettierInstallation(
+                root,
+                projectRoot,
+                targetDir,
+              );
+              probedVersion = installation.version;
+              const permit = await permitPromise;
               const session = await openProjectFormatter({
                 checkoutRoot: await realpath(root),
                 snapshotRoot: targetDir,
@@ -422,13 +422,17 @@ export function createDefaultDiagnosticProbe(
               }
             },
           );
-          if (formatted !== "const zedbeeDoctor = true;\n") {
+          // The probe verifies a valid formatted response from the selected
+          // engine and configuration; a healthy project style may legitimately
+          // differ from Zedbee's default formatting, so no exact bytes are
+          // required. Formatting the result again must be stable.
+          if (typeof formatted !== "string" || formatted.length === 0) {
             throw new Error("Unexpected project probe result.");
           }
           return {
             id,
             status: "pass",
-            message: `Ran the project's Prettier ${installation.version} through the same installation and snapshot resolution used by scans and formatted a synthetic file; this does not verify a full scan.`,
+            message: `Ran the project's Prettier ${probedVersion} through the same installation and snapshot resolution used by scans and formatted a synthetic file; this does not verify a full scan.`,
           };
         } catch {
           return {

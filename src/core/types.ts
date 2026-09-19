@@ -128,6 +128,14 @@ export interface CheckError {
   remediation?: string;
 }
 
+/** Engine, version, and configuration provenance for a formatting run. */
+export interface FormattingProvenance {
+  readonly engine: "managed" | "project";
+  readonly version: string;
+  readonly projectRoot: string;
+  readonly configFiles: readonly string[];
+}
+
 export interface CheckResult {
   checkId: string;
   target?: string;
@@ -137,6 +145,8 @@ export interface CheckResult {
   error?: CheckError;
   skipReason?: string;
   incompleteDisposition?: IncompleteDisposition;
+  /** Present when the formatting check ran through the project engine. */
+  formattingProvenance?: readonly FormattingProvenance[];
 }
 
 export interface RunSummary {

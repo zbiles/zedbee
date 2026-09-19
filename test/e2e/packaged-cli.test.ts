@@ -1421,6 +1421,16 @@ describe("project Prettier integration", () => {
     const config = await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8");
     expect(config).toContain('"printWidth": 100');
     expect(config).toContain('"trailingComma": "es5"');
+    // Detection is reported in the machine-readable proposal without executing
+    // or silently importing anything during a default setup.
+    const proposal = JSON.parse(result.stdout);
+    expect(proposal.applied).toBe(true);
+    expect(proposal.proposal.formattingDetection).toEqual([
+      expect.objectContaining({
+        projectRoot: ".",
+        configPaths: [".prettierrc.json"],
+      }),
+    ]);
   });
 
   it("uses the trusted project engine in packaged init and scan", async () => {
@@ -1459,6 +1469,127 @@ describe("project Prettier integration", () => {
     const withoutService = await runZedbee(repository.root, "json", ["--no-service"]);
     expect(withService.exitCode, withService.stderr).toBe(0);
     expect(withoutService.exitCode, withoutService.stderr).toBe(0);
+    // The checks actually ran through the project engine: exit code zero alone
+    // would also pass if formatting had been skipped entirely.
+    for (const result of [withService, withoutService]) {
+      const report = JSON.parse(result.stdout) as {
+        readonly checks: readonly {
+          readonly checkId: string;
+          readonly status: string;
+          readonly findings: readonly unknown[];
+          readonly formattingProvenance?: readonly {
+            readonly engine: string;
+            readonly version: string;
+            readonly projectRoot: string;
+            readonly configFiles: readonly string[];
+          }[];
+        }[];
+      };
+      const formatting = report.checks.find(
+        (check) => check.checkId === "formatting",
+      );
+      expect(formatting?.status).toBe("completed");
+      expect(formatting?.findings).toEqual([]);
+      expect(formatting?.formattingProvenance).toEqual([
+        {
+          engine: "project",
+          version: "3.9.6",
+          projectRoot: ".",
+          configFiles: [".prettierrc.json"],
+        },
+      ]);
+    }
+  });
+
+  it("blocks a project-style regression the managed engine would have allowed", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write("value.ts", 'export const value = "double";\n');
+    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+
+    const init = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(init.exitCode, init.stderr).toBe(0);
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const scan = await runZedbee(repository.root, "json");
+    expect(scan.exitCode).toBe(1);
+    const report = JSON.parse(scan.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly findings: readonly { readonly location?: { readonly file: string } }[];
+        readonly formattingProvenance?: readonly { readonly engine: string }[];
+      }[];
+    };
+    const formatting = report.checks.find(
+      (check) => check.checkId === "formatting",
+    );
+    expect(formatting?.status).toBe("completed");
+    expect(formatting?.findings.map((finding) => finding.location?.file)).toEqual([
+      "value.ts",
+    ]);
+    expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
+  });
+
+  it("carries invocation-only trust into a fresh scan without init", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true\n}\n',
+    );
+    await repository.write("value.ts", 'export const value = "hello";\n');
+    await repository.git(["add", "--", "package.json", ".prettierrc.json", "value.ts"]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{\n  "schemaVersion": 1,\n  "profile": "recommended",\n  "checks": {\n    "formatting": {\n      "engine": "project"\n    }\n  }\n}\n',
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const untrusted = await runZedbee(repository.root, "json");
+    expect(untrusted.exitCode).toBe(2);
+    const untrustedReport = JSON.parse(untrusted.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly error?: { readonly code: string };
+      }[];
+    };
+    expect(
+      untrustedReport.checks.find((check) => check.checkId === "formatting"),
+    ).toMatchObject({
+      status: "incomplete",
+      error: { code: "PROJECT_PRETTIER_TRUST_REQUIRED" },
+    });
+
+    const trusted = await runZedbee(repository.root, "json", [
+      "--trust-project-prettier",
+    ]);
+    expect(trusted.exitCode, trusted.stderr).toBe(1);
+    const trustedReport = JSON.parse(trusted.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly formattingProvenance?: readonly { readonly engine: string }[];
+      }[];
+    };
+    const formatting = trustedReport.checks.find(
+      (check) => check.checkId === "formatting",
+    );
+    expect(formatting?.status).toBe("completed");
+    expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
   });
 
   it("refuses project formatting without trust non-interactively", async () => {

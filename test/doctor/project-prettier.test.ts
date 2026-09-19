@@ -67,6 +67,8 @@ describe("doctor project Prettier diagnosis", () => {
       join(repository.root, "node_modules", "prettier"),
       { recursive: true },
     );
+    // The declaration must be part of the staged snapshot the probe resolves.
+    await repository.git(["add", "--", "package.json"]);
 
     const diagnostic = await createDefaultDiagnosticProbe()(
       "project-prettier",

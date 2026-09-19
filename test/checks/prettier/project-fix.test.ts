@@ -60,6 +60,7 @@ async function projectSelection(repositoryRoot: string) {
     const installation = await resolveProjectPrettierInstallation(
       repositoryRoot,
       ".",
+      snapshot.targetDir,
     );
     return {
       engine: "project" as const,
