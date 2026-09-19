@@ -1,8 +1,11 @@
-import { lstat } from "node:fs/promises";
+import { cp, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createDefaultDiagnosticProbe } from "../../src/doctor/diagnostics.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+
+const repositoryPackageRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 async function markerExists(root: string, name: string): Promise<boolean> {
   try {
@@ -50,5 +53,32 @@ describe("doctor project Prettier diagnosis", () => {
 
     expect(diagnostic.status).toBe("pass");
     expect(diagnostic.message).toMatch(/No project Prettier setup/u);
+  });
+
+  it("runs the project formatter only with explicit trust", async () => {
+    const repository = await createGitRepository("zedbee-doctor-project-run-");
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await mkdir(join(repository.root, "node_modules"), { recursive: true });
+    await cp(
+      join(repositoryPackageRoot, "node_modules", "prettier"),
+      join(repository.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+
+    const diagnostic = await createDefaultDiagnosticProbe()(
+      "project-prettier",
+      {
+        cwd: repository.root,
+        environment: {},
+        projectPrettierTrust: true,
+      },
+    );
+
+    expect(diagnostic.status).toBe("pass");
+    expect(diagnostic.message).toMatch(/Ran the project's Prettier/u);
+    expect(diagnostic.message).toMatch(/does not verify a full scan/u);
   });
 });

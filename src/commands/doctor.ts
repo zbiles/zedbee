@@ -91,6 +91,9 @@ export async function executeDoctorCommand(
         ...(options.configPath === undefined
           ? {}
           : { configPath: options.configPath }),
+        ...(options.projectPrettierTrust === undefined
+          ? {}
+          : { projectPrettierTrust: options.projectPrettierTrust }),
       })),
     ]);
     const exitCode = diagnostics.some(({ status }) => status === "fail")

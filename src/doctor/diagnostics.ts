@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
@@ -26,6 +26,11 @@ import {
   NODE_ENGINE_RANGE,
 } from "../runtime/node-support.js";
 import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import {
+  openProjectFormatter,
+  resolveProjectPrettierInstallation,
+} from "../checks/prettier/project-engine.js";
+import { requireProjectPrettierTrust } from "../checks/prettier/project-trust.js";
 
 export const DOCTOR_DIAGNOSTIC_IDS = [
   "git",
@@ -56,6 +61,8 @@ export interface DiagnosticContext {
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly configPath?: string;
+  /** Explicit invocation-only consent for the project Prettier probe. */
+  readonly projectPrettierTrust?: boolean;
 }
 
 export type DiagnosticProbe = (
@@ -373,11 +380,66 @@ export function createDefaultDiagnosticProbe(
             return `${location}: ${entry.status}${entry.version === undefined ? "" : ` ${entry.version}`}`;
           })
           .join("; ");
-        return {
-          id,
-          status: "pass",
-          message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
-        };
+        if (context.projectPrettierTrust !== true) {
+          return {
+            id,
+            status: "pass",
+            message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
+          };
+        }
+        const projectRoot =
+          discovered.find((entry) => entry.projectRoot === ".")?.projectRoot ??
+          discovered[0]!.projectRoot;
+        try {
+          const installation = await resolveProjectPrettierInstallation(
+            root,
+            projectRoot,
+          );
+          const permit = await requireProjectPrettierTrust(
+            root,
+            projectRoot,
+            true,
+          );
+          const formatted = await withSnapshots(
+            context.cwd,
+            async (targetDir) => {
+              const session = await openProjectFormatter({
+                checkoutRoot: await realpath(root),
+                snapshotRoot: targetDir,
+                projectRoot,
+                installation,
+                permit,
+                signal: new AbortController().signal,
+              });
+              try {
+                const result = await session.format(
+                  "zedbee-doctor-probe.ts",
+                  "const zedbeeDoctor=true\n",
+                );
+                return result.kind === "formatted" ? result.text : undefined;
+              } finally {
+                await session.close().catch(() => undefined);
+              }
+            },
+          );
+          if (formatted !== "const zedbeeDoctor = true;\n") {
+            throw new Error("Unexpected project probe result.");
+          }
+          return {
+            id,
+            status: "pass",
+            message: `Ran the project's Prettier ${installation.version} through the same installation and snapshot resolution used by scans and formatted a synthetic file; this does not verify a full scan.`,
+          };
+        } catch {
+          return {
+            id,
+            status: "fail",
+            message:
+              "The trusted project Prettier probe could not format a synthetic file.",
+            remediation:
+              "Review the project Prettier installation, configuration, and plugins, then retry zedbee doctor.",
+          };
+        }
       }
       case "secretlint-readiness": {
         try {

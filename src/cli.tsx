@@ -53,6 +53,7 @@ interface CommanderDoctorOptions {
   format: "auto" | "text" | "json";
   config?: string;
   color: boolean;
+  trustProjectPrettier: boolean;
 }
 
 interface CommanderInitOptions {
@@ -446,6 +447,11 @@ export async function runCli(
         .default("auto"),
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
+    .option(
+      "--trust-project-prettier",
+      "allow the project Prettier probe to run the project's formatter for this invocation",
+      false,
+    )
     .option("--no-color", "disable color")
     .action(async (options: CommanderDoctorOptions) => {
       const result = await executeDoctorCommand(
@@ -457,6 +463,9 @@ export async function runCli(
           ...(options.config === undefined
             ? {}
             : { configPath: options.config }),
+          ...(options.trustProjectPrettier === true
+            ? { projectPrettierTrust: true }
+            : {}),
         },
         {
           stdoutIsTTY: process.stdout.isTTY === true,

@@ -95,6 +95,8 @@ During `zedbee init`, when an existing setup is found you can copy supported set
 
 Project execution is an explicit trust decision. Choosing it in `init` records consent in local Git configuration keyed to the checkout and project root; a fresh clone needs its own consent, and CI must pass `--trust-project-prettier` from a trusted workflow. That flag is invocation-only. `--yes` alone never grants it, and tracked repository configuration can never grant it. When the installation is missing, the version is unsupported, a plugin is missing, the configuration is invalid, or trust is absent, the formatting check is incomplete with a concrete remedy. Zedbee never silently falls back to managed formatting, and project-format results are not persisted in the observation cache. Managed behavior is unchanged when `engine` is omitted.
 
+`zedbee checks` shows the effective engine and, for project mode, the detected version. `zedbee doctor` inspects project setup as data only; pass `--trust-project-prettier` to run the same installation and snapshot probe used by scans.
+
 | Field                    |       Default | Accepted value                                 |
 | ------------------------ | ------------: | ---------------------------------------------- |
 | `printWidth`             |          `80` | Positive safe integer                          |
