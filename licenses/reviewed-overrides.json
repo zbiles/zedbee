@@ -429,6 +429,69 @@
       "textFile": "licenses/overrides/jscpd-5.0.15-LICENSE"
     },
     {
+      "name": "jscpd",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-darwin-arm64",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-darwin-x64",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-arm64-gnu",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-arm64-musl",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-x64-gnu",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-x64-musl",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-windows-arm64-msvc",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
+      "name": "jscpd-windows-x64-msvc",
+      "version": "5.2.1",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.2.1-LICENSE"
+    },
+    {
       "name": "tslib",
       "version": "2.8.1",
       "license": "0BSD",

@@ -5632,7 +5632,7 @@
     },
     {
       "name": "jscpd",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -5643,85 +5643,111 @@
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15"
+        "jscpd@5.2.1"
       ]
     },
     {
       "name": "jscpd-darwin-arm64",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-darwin-arm64@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-darwin-arm64@5.2.1"
       ]
     },
     {
       "name": "jscpd-darwin-x64",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-darwin-x64@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-darwin-x64@5.2.1"
       ]
     },
     {
       "name": "jscpd-linux-arm64-gnu",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-linux-arm64-gnu@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-linux-arm64-gnu@5.2.1"
+      ]
+    },
+    {
+      "name": "jscpd-linux-arm64-musl",
+      "version": "5.2.1",
+      "license": "MIT",
+      "repository": null,
+      "licenseFile": null,
+      "legalFiles": [],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.3",
+        "jscpd@5.2.1",
+        "jscpd-linux-arm64-musl@5.2.1"
       ]
     },
     {
       "name": "jscpd-linux-x64-gnu",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-linux-x64-gnu@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-linux-x64-gnu@5.2.1"
       ]
     },
     {
       "name": "jscpd-linux-x64-musl",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-linux-x64-musl@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-linux-x64-musl@5.2.1"
+      ]
+    },
+    {
+      "name": "jscpd-windows-arm64-msvc",
+      "version": "5.2.1",
+      "license": "MIT",
+      "repository": null,
+      "licenseFile": null,
+      "legalFiles": [],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.3",
+        "jscpd@5.2.1",
+        "jscpd-windows-arm64-msvc@5.2.1"
       ]
     },
     {
       "name": "jscpd-windows-x64-msvc",
-      "version": "5.0.15",
+      "version": "5.2.1",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.0.15",
-        "jscpd-windows-x64-msvc@5.0.15"
+        "jscpd@5.2.1",
+        "jscpd-windows-x64-msvc@5.2.1"
       ]
     },
     {
