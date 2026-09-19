@@ -7,6 +7,7 @@ import picomatch from "picomatch";
 import { isContainedPath } from "../../inspection/read-json.js";
 import type {
   ImportableNativeConfig,
+  ProjectFormatSupport,
   ProjectFormatResult,
   ProjectPrettierFailure,
   ProjectPrettierRequest,
@@ -251,11 +252,27 @@ async function resolveOptions(
   })) ?? {};
 }
 
-async function formatFile(
-  request: Extract<ProjectPrettierRequest, { operation: "format" }>,
-): Promise<ProjectFormatResult> {
+interface SupportedFile {
+  readonly kind: "supported";
+  readonly options: import("prettier").Options;
+}
+
+type ClassifiedFile = SupportedFile | Exclude<ProjectFormatSupport, { kind: "supported" }>;
+
+const classificationCache = new Map<string, SupportedFile>();
+const CLASSIFICATION_CACHE_MAX_ENTRIES = 128;
+
+function rememberClassification(file: string, result: SupportedFile): void {
+  if (classificationCache.size >= CLASSIFICATION_CACHE_MAX_ENTRIES) {
+    const oldest = classificationCache.keys().next().value as string | undefined;
+    if (oldest !== undefined) classificationCache.delete(oldest);
+  }
+  classificationCache.set(file, result);
+}
+
+async function classifyFile(file: string): Promise<ClassifiedFile> {
   const current = state!;
-  const absolute = resolve(current.treeRoot, request.file);
+  const absolute = resolve(current.treeRoot, file);
   if (!isContainedPath(current.treeRoot, absolute)) {
     return { kind: "ignored", reason: "unsupported" };
   }
@@ -273,8 +290,19 @@ async function formatFile(
   if (supported.inferredParser === null) {
     return { kind: "ignored", reason: "unsupported" };
   }
+  return { kind: "supported", options };
+}
+
+async function formatFile(
+  request: Extract<ProjectPrettierRequest, { operation: "format" }>,
+): Promise<ProjectFormatResult> {
+  const current = state!;
+  const cached = classificationCache.get(request.file);
+  classificationCache.delete(request.file);
+  const classified = cached ?? (await classifyFile(request.file));
+  if (classified.kind === "ignored") return classified;
   const text = await current.prettier.format(request.source, {
-    ...options,
+    ...classified.options,
     filepath: request.file,
   });
   return { kind: "formatted", text };
@@ -486,6 +514,22 @@ async function handle(
   request: ProjectPrettierRequest,
 ): Promise<ProjectPrettierReply> {
   try {
+    if (request.operation === "classify") {
+      const classified = await classifyFile(request.file);
+      if (classified.kind === "supported") {
+        rememberClassification(request.file, classified);
+        return {
+          id: request.id,
+          operation: "classify",
+          result: { kind: "supported" },
+        };
+      }
+      return {
+        id: request.id,
+        operation: "classify",
+        result: classified,
+      };
+    }
     if (request.operation === "format") {
       return {
         id: request.id,
@@ -519,7 +563,9 @@ async function handle(
         pluginMissing
           ? "A configured Prettier plugin could not be loaded."
           : "The project's Prettier could not format the requested file.",
-        request.operation === "format" ? request.file : undefined,
+        request.operation === "format" || request.operation === "classify"
+          ? request.file
+          : undefined,
       ),
     };
   }

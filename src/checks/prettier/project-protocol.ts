@@ -1,5 +1,6 @@
 import type {
   ImportableNativeConfig,
+  ProjectFormatSupport,
   ProjectFormatResult,
   ProjectPrettierFailure,
   ProjectPrettierReply,
@@ -25,7 +26,7 @@ const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
 ]);
 
 export const PROJECT_PROTOCOL_MAX_BYTES = 8 * 1024 * 1024;
-const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
+export const PROJECT_FORMAT_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -54,6 +55,16 @@ export function parseProjectRequest(value: unknown): ProjectPrettierRequest {
   if (!isRecord(value) || !validId(value.id)) {
     throw new TypeError("Invalid project formatter request");
   }
+  if (value.operation === "classify") {
+    if (
+      !exactKeys(value, ["id", "operation", "file"]) ||
+      typeof value.file !== "string"
+    ) {
+      throw new TypeError("Invalid project formatter request fields");
+    }
+    normalizeRepositoryRelativePath(value.file);
+    return { id: value.id, operation: "classify", file: value.file };
+  }
   if (value.operation === "format") {
     if (!exactKeys(value, ["id", "operation", "file", "source"])) {
       throw new TypeError("Invalid project formatter request fields");
@@ -62,7 +73,7 @@ export function parseProjectRequest(value: unknown): ProjectPrettierRequest {
       throw new TypeError("Invalid project formatter request");
     }
     normalizeRepositoryRelativePath(value.file);
-    if (byteLength(value.source) > MAX_SOURCE_BYTES) {
+    if (byteLength(value.source) > PROJECT_FORMAT_SOURCE_MAX_BYTES) {
       throw new TypeError("Project formatter source exceeds its limit");
     }
     return {
@@ -106,6 +117,34 @@ export function parseProjectRequest(value: unknown): ProjectPrettierRequest {
   throw new TypeError("Invalid project formatter operation");
 }
 
+function parseIgnoredResult(
+  value: Record<string, unknown>,
+): Extract<ProjectFormatSupport, { kind: "ignored" }> {
+  if (
+    !exactKeys(value, ["kind", "reason"]) ||
+    (value.reason !== "prettierignore" &&
+      value.reason !== "gitignore" &&
+      value.reason !== "unsupported")
+  ) {
+    throw new TypeError("Invalid ignored result");
+  }
+  return { kind: "ignored", reason: value.reason };
+}
+
+function parseSupportResult(value: unknown): ProjectFormatSupport {
+  if (!isRecord(value) || typeof value.kind !== "string") {
+    throw new TypeError("Invalid project format support result");
+  }
+  if (value.kind === "supported") {
+    if (!exactKeys(value, ["kind"])) {
+      throw new TypeError("Invalid supported result");
+    }
+    return { kind: "supported" };
+  }
+  if (value.kind === "ignored") return parseIgnoredResult(value);
+  throw new TypeError("Invalid project format support result");
+}
+
 function parseSettings(value: unknown, field: string): Partial<FormattingSettings> {
   const parsed = formattingSettingsSchema
     .partial()
@@ -145,15 +184,7 @@ function parseFormatResult(value: unknown): ProjectFormatResult {
     return { kind: "formatted", text: value.text };
   }
   if (value.kind === "ignored") {
-    if (
-      !exactKeys(value, ["kind", "reason"]) ||
-      (value.reason !== "prettierignore" &&
-        value.reason !== "gitignore" &&
-        value.reason !== "unsupported")
-    ) {
-      throw new TypeError("Invalid ignored result");
-    }
-    return { kind: "ignored", reason: value.reason };
+    return parseIgnoredResult(value);
   }
   throw new TypeError("Invalid project format result");
 }
@@ -247,6 +278,16 @@ export function parseProjectReply(
 ): ProjectPrettierReply {
   if (!isRecord(value) || value.id !== expectedId) {
     throw new TypeError("Project formatter reply does not match its request");
+  }
+  if (value.operation === "classify") {
+    if (!exactKeys(value, ["id", "operation", "result"])) {
+      throw new TypeError("Invalid project formatter reply fields");
+    }
+    return {
+      id: expectedId,
+      operation: "classify",
+      result: parseSupportResult(value.result),
+    };
   }
   if (value.operation === "format") {
     if (!exactKeys(value, ["id", "operation", "result"])) {

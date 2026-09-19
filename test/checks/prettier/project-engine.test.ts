@@ -34,6 +34,25 @@ export const printers = {
 `;
 
 describe("project Prettier engine", () => {
+  it("classifies supported and unsupported paths without source content", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(".prettierrc.json", "{}");
+    await fixture.write("value.ts", "export const value = 1;\n");
+    await fixture.write("asset.bin", "not source\n");
+    await fixture.stage(".prettierrc.json", "value.ts", "asset.bin");
+
+    const session = await fixture.open({ source: "index", trust: true });
+
+    await expect(session.classify("value.ts")).resolves.toEqual({
+      kind: "supported",
+    });
+    await expect(session.classify("asset.bin")).resolves.toEqual({
+      kind: "ignored",
+      reason: "unsupported",
+    });
+  });
+
   it("uses index config rather than an unstaged edit", async () => {
     const fixture = await createProjectPrettierFixture();
     onTestFinished(() => fixture.dispose());

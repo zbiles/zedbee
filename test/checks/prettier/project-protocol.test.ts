@@ -21,6 +21,41 @@ describe("project Prettier protocol", () => {
     });
   });
 
+  it("accepts a path-only support classification request and reply", () => {
+    expect(
+      parseProjectRequest({
+        id: 2,
+        operation: "classify",
+        file: "src/value.ts",
+      }),
+    ).toEqual({ id: 2, operation: "classify", file: "src/value.ts" });
+    expect(
+      parseProjectReply(
+        {
+          id: 2,
+          operation: "classify",
+          result: { kind: "supported" },
+        },
+        2,
+      ),
+    ).toEqual({
+      id: 2,
+      operation: "classify",
+      result: { kind: "supported" },
+    });
+  });
+
+  it("rejects source content on a classification request", () => {
+    expect(() =>
+      parseProjectRequest({
+        id: 2,
+        operation: "classify",
+        file: "src/value.ts",
+        source: "export const value = 1;",
+      }),
+    ).toThrow();
+  });
+
   it("rejects extra fields and non-integer ids", () => {
     expect(() =>
       parseProjectRequest({
