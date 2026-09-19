@@ -1,11 +1,28 @@
 import type {
+  ImportableNativeConfig,
   ProjectFormatResult,
   ProjectPrettierFailure,
   ProjectPrettierReply,
   ProjectPrettierRequest,
 } from "./project-types.js";
-import type { FormattingSettings } from "./settings.js";
+import {
+  formattingSettingsSchema,
+  type FormattingSettings,
+} from "./settings.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
+
+const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "PROJECT_PRETTIER_TRUST_REQUIRED",
+  "PROJECT_PRETTIER_INSTALL_MISSING",
+  "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
+  "PROJECT_PRETTIER_LAYOUT_UNSUPPORTED",
+  "PROJECT_PRETTIER_CONFIG_INVALID",
+  "PROJECT_PRETTIER_PLUGIN_MISSING",
+  "PROJECT_PRETTIER_WORKER_FAILED",
+  "PROJECT_PRETTIER_PROTOCOL_INVALID",
+  "PROJECT_PRETTIER_OUTPUT_LIMIT",
+  "PROJECT_PRETTIER_PLAN_STALE",
+]);
 
 export const PROJECT_PROTOCOL_MAX_BYTES = 8 * 1024 * 1024;
 const MAX_SOURCE_BYTES = 4 * 1024 * 1024;
@@ -72,9 +89,29 @@ export function parseProjectRequest(value: unknown): ProjectPrettierRequest {
   throw new TypeError("Invalid project formatter operation");
 }
 
-function parseSettings(value: unknown): Partial<FormattingSettings> {
-  if (!isRecord(value)) throw new TypeError("Invalid imported settings");
-  return value as Partial<FormattingSettings>;
+function parseSettings(value: unknown, field: string): Partial<FormattingSettings> {
+  const parsed = formattingSettingsSchema
+    .partial()
+    .strict()
+    .safeParse(value);
+  if (!parsed.success) {
+    throw new TypeError(`Invalid ${field} in the project formatter reply`);
+  }
+  return parsed.data as unknown as Partial<FormattingSettings>;
+}
+
+function parsePatternList(value: unknown, field: string): string | readonly string[] {
+  if (typeof value === "string" && value.length > 0) return value;
+  if (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (item) => typeof item === "string" && item.length > 0,
+    )
+  ) {
+    return Object.freeze([...value]);
+  }
+  throw new TypeError(`Invalid ${field} pattern in the project formatter reply`);
 }
 
 function parseFormatResult(value: unknown): ProjectFormatResult {
@@ -107,13 +144,20 @@ function parseFormatResult(value: unknown): ProjectFormatResult {
 function parseFailure(value: unknown): ProjectPrettierFailure {
   if (
     !isRecord(value) ||
+    !exactKeys(
+      value,
+      value.file === undefined
+        ? ["code", "message", "projectRoot"]
+        : ["code", "message", "projectRoot", "file"],
+    ) ||
     typeof value.code !== "string" ||
+    !KNOWN_FAILURE_CODES.has(value.code) ||
     typeof value.message !== "string" ||
-    typeof value.projectRoot !== "string"
+    value.message.length === 0 ||
+    value.message.length > 4096 ||
+    typeof value.projectRoot !== "string" ||
+    (value.file !== undefined && typeof value.file !== "string")
   ) {
-    throw new TypeError("Invalid project formatter failure");
-  }
-  if (value.file !== undefined && typeof value.file !== "string") {
     throw new TypeError("Invalid project formatter failure");
   }
   return {
@@ -122,6 +166,62 @@ function parseFailure(value: unknown): ProjectPrettierFailure {
     projectRoot: value.projectRoot,
     ...(value.file === undefined ? {} : { file: value.file }),
   };
+}
+
+function parseImportableConfig(
+  value: unknown,
+): ImportableNativeConfig {
+  if (!isRecord(value) || !exactKeys(value, ["settings", "overrides", "limitations"])) {
+    throw new TypeError("Invalid imported configuration reply");
+  }
+  const settings = parseSettings(value.settings, "imported settings");
+  if (!Array.isArray(value.overrides) || value.overrides.length > 256) {
+    throw new TypeError("Invalid imported configuration overrides");
+  }
+  const overrides = value.overrides.map((entry) => {
+    if (!isRecord(entry)) {
+      throw new TypeError("Invalid imported configuration override");
+    }
+    const keys = Object.keys(entry).filter((key) => key !== "excludeFiles");
+    if (
+      keys.length !== 2 ||
+      !keys.includes("files") ||
+      !keys.includes("settings")
+    ) {
+      throw new TypeError("Invalid imported configuration override fields");
+    }
+    const files = parsePatternList(entry.files, "override files");
+    const excludeFiles =
+      entry.excludeFiles === undefined
+        ? undefined
+        : parsePatternList(entry.excludeFiles, "override excludeFiles");
+    const overrideSettings = parseSettings(
+      entry.settings,
+      "override settings",
+    );
+    if (Object.keys(overrideSettings).length === 0) {
+      throw new TypeError("Imported configuration override has no settings");
+    }
+    return {
+      files,
+      ...(excludeFiles === undefined ? {} : { excludeFiles }),
+      settings: overrideSettings,
+    };
+  });
+  if (
+    !Array.isArray(value.limitations) ||
+    value.limitations.length > 64 ||
+    value.limitations.some(
+      (entry) => typeof entry !== "string" || entry.length === 0 || entry.length > 1024,
+    )
+  ) {
+    throw new TypeError("Invalid imported configuration limitations");
+  }
+  return Object.freeze({
+    settings,
+    overrides: Object.freeze(overrides),
+    limitations: Object.freeze([...value.limitations]),
+  });
 }
 
 export function parseProjectReply(
@@ -145,26 +245,13 @@ export function parseProjectReply(
     if (!exactKeys(value, ["id", "operation", "result"])) {
       throw new TypeError("Invalid project formatter reply fields");
     }
-    const result = value.result as Record<string, unknown>;
-    if (
-      !isRecord(result) ||
-      !exactKeys(result, ["settings", "overrides", "limitations"]) ||
-      !Array.isArray(result.overrides) ||
-      !Array.isArray(result.limitations)
-    ) {
-      throw new TypeError("Invalid imported configuration reply");
-    }
-    if (byteLength(JSON.stringify(result)) > MAX_CONFIG_BYTES * 4) {
+    if (byteLength(JSON.stringify(value.result)) > MAX_CONFIG_BYTES * 4) {
       throw new TypeError("Imported configuration exceeds its limit");
     }
     return {
       id: expectedId,
       operation: "importConfig",
-      result: {
-        settings: parseSettings(result.settings),
-        overrides: result.overrides as never,
-        limitations: result.limitations.map((entry) => String(entry)),
-      },
+      result: parseImportableConfig(value.result),
     };
   }
   if (value.operation === "error") {
