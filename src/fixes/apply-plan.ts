@@ -8,12 +8,21 @@ import {
   AnalysisSessionCleanupError,
   retainCleanupFailure,
 } from "../scan/analysis-failure.js";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { GitClient } from "../git/client.js";
+import { buildSnapshotPair } from "../git/snapshot.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import { formatWorkingSource } from "./prettier-provider.js";
+import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
+import {
+  openProjectFormatter,
+  resolveProjectPrettierInstallation,
+  snapshotIdentity,
+} from "../checks/prettier/project-engine.js";
+import { requireProjectPrettierTrust } from "../checks/prettier/project-trust.js";
 import {
   AnalyzerJobError,
   sanitizeAnalyzerDiagnostic,
@@ -48,6 +57,67 @@ export interface ApplyFixPlanDependencies {
 
 interface ExactEdit extends ExactFixEdit {
   readonly checkId: "lint" | "reactCorrectness";
+}
+
+class FixPlanStaleError extends Error {
+  readonly kind = "stale";
+}
+
+class FixPlanIgnoredError extends Error {
+  readonly kind = "ignored";
+}
+
+async function formatProjectWorkingFile(input: {
+  readonly repositoryRoot: string;
+  readonly file: string;
+  readonly source: string;
+  readonly selection: Extract<FormattingFixSelection, { engine: "project" }>;
+  readonly signal?: AbortSignal;
+}): Promise<string> {
+  const git = new GitClient(input.repositoryRoot);
+  const snapshot = await buildSnapshotPair(
+    input.repositoryRoot,
+    git,
+    input.signal,
+  );
+  let currentIdentity: string;
+  try {
+    currentIdentity = await snapshotIdentity(snapshot.targetDir);
+  } finally {
+    await snapshot.cleanup().catch(() => undefined);
+  }
+  if (currentIdentity !== input.selection.snapshotIdentity) {
+    throw new FixPlanStaleError("The selected formatting snapshot changed.");
+  }
+  const installation = await resolveProjectPrettierInstallation(
+    input.repositoryRoot,
+    input.selection.projectRoot,
+  );
+  if (installation.identity !== input.selection.installationIdentity) {
+    throw new FixPlanStaleError("The project Prettier installation changed.");
+  }
+  const permit = await requireProjectPrettierTrust(
+    input.repositoryRoot,
+    input.selection.projectRoot,
+    false,
+  );
+  const session = await openProjectFormatter({
+    checkoutRoot: await realpath(input.repositoryRoot),
+    snapshotRoot: input.repositoryRoot,
+    projectRoot: input.selection.projectRoot,
+    installation,
+    permit,
+    signal: input.signal ?? new AbortController().signal,
+  });
+  try {
+    const result = await session.format(input.file, input.source);
+    if (result.kind === "ignored") {
+      throw new FixPlanIgnoredError("The project formatter ignored the file.");
+    }
+    return result.text;
+  } finally {
+    await session.close().catch(() => undefined);
+  }
 }
 
 interface FileCandidates {
@@ -324,16 +394,28 @@ async function applyWithinSession(
     );
     if (formatCandidate?.kind === "format-file") {
       try {
-        next = await format(
-          {
+        if (formatCandidate.selection?.engine === "project") {
+          next = await formatProjectWorkingFile({
+            repositoryRoot: plan.repositoryRoot,
             file: group.file,
             source: next,
-            settings: formatCandidate.settings,
-          },
-          dependencies.signal === undefined
-            ? {}
-            : { signal: dependencies.signal },
-        );
+            selection: formatCandidate.selection,
+            ...(dependencies.signal === undefined
+              ? {}
+              : { signal: dependencies.signal }),
+          });
+        } else {
+          next = await format(
+            {
+              file: group.file,
+              source: next,
+              settings: formatCandidate.settings,
+            },
+            dependencies.signal === undefined
+              ? {}
+              : { signal: dependencies.signal },
+          );
+        }
       } catch (error) {
         dependencies.signal?.throwIfAborted();
         if (
@@ -342,16 +424,30 @@ async function applyWithinSession(
         )
           throw error;
         unchangedFiles.push(group.file);
-        issues.push(
-          issue(
-            "format",
-            group.file,
-            ids,
-            "Zedbee could not format the complete working file.",
-            "Fix the formatting error and build a fresh fix plan.",
-            error instanceof AnalyzerJobError ? error.diagnostic : undefined,
-          ),
-        );
+        if (error instanceof FixPlanStaleError) {
+          issues.push(
+            issue(
+              "stale",
+              group.file,
+              ids,
+              "The selected formatting engine or snapshot changed after the plan was built.",
+              "Build a fresh fix plan and re-approve the changes.",
+            ),
+          );
+        } else if (error instanceof FixPlanIgnoredError) {
+          continue;
+        } else {
+          issues.push(
+            issue(
+              "format",
+              group.file,
+              ids,
+              "Zedbee could not format the complete working file.",
+              "Fix the formatting error and build a fresh fix plan.",
+              error instanceof AnalyzerJobError ? error.diagnostic : undefined,
+            ),
+          );
+        }
         continue;
       }
     }

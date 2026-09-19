@@ -1,4 +1,5 @@
 import type { FormattingSettings } from "../checks/prettier/settings.js";
+import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
 
 export const FIXABLE_CHECK_IDS = Object.freeze([
   "formatting",
@@ -34,6 +35,8 @@ export interface FormatFileFixCandidate {
   readonly findingIds: readonly string[];
   readonly severities: readonly ("warning" | "error")[];
   readonly settings: Readonly<FormattingSettings>;
+  /** Present on freshly built plans; project selections reference engine identity, not functions. */
+  readonly selection?: FormattingFixSelection;
 }
 
 export type CheckFixCandidate = ExactFileFixCandidate | FormatFileFixCandidate;

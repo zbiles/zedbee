@@ -2,6 +2,7 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { displayLabel } from "../core/display-text.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
+import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
 import type {
   CheckFixCandidate,
   ExactFileFixCandidate,
@@ -205,6 +206,40 @@ function sanitizeSettings(value: unknown): Readonly<FormattingSettings> {
   });
 }
 
+function sanitizeSelection(value: unknown): FormattingFixSelection {
+  const input = record(value, "format selection");
+  const engine = ownData(input, "engine");
+  if (engine === "managed") {
+    return freeze({
+      engine: "managed",
+      settings: sanitizeSettings(ownData(input, "settings")),
+    });
+  }
+  if (engine === "project") {
+    const projectRoot = normalizeRepositoryRelativePath(
+      ownData(input, "projectRoot") as string,
+    );
+    const installationIdentity = ownData(input, "installationIdentity");
+    const snapshotIdentity = ownData(input, "snapshotIdentity");
+    const hashPattern = /^[0-9a-f]{64}$/u;
+    if (
+      typeof installationIdentity !== "string" ||
+      !hashPattern.test(installationIdentity) ||
+      typeof snapshotIdentity !== "string" ||
+      !hashPattern.test(snapshotIdentity)
+    ) {
+      throw new TypeError("Expected validated project formatter identities");
+    }
+    return freeze({
+      engine: "project",
+      projectRoot,
+      installationIdentity,
+      snapshotIdentity,
+    });
+  }
+  throw new TypeError("Expected a supported format selection engine");
+}
+
 function sanitizeFormatCandidate(
   input: CandidateRecord,
 ): FormatFileFixCandidate {
@@ -226,6 +261,8 @@ function sanitizeFormatCandidate(
     throw new TypeError("Expected matching format finding IDs and severities");
   }
   const settings = sanitizeSettings(ownData(input, "settings"));
+  const hasSelection =
+    Object.getOwnPropertyDescriptor(input, "selection") !== undefined;
   return freeze({
     kind: "format-file",
     checkId: "formatting",
@@ -233,6 +270,11 @@ function sanitizeFormatCandidate(
     findingIds,
     severities,
     settings,
+    ...(hasSelection
+      ? {
+          selection: sanitizeSelection(ownData(input, "selection")),
+        }
+      : {}),
   });
 }
 

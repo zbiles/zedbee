@@ -90,7 +90,7 @@ function finding(
 }
 
 describe("planPrettierFixes", () => {
-  it("excludes generated lockfiles while keeping ordinary JSON and YAML fix candidates", () => {
+  it("excludes generated lockfiles while keeping ordinary JSON and YAML fix candidates", async () => {
     const files = [
       "package-lock.json",
       "packages/app/package-lock.json",
@@ -109,7 +109,7 @@ describe("planPrettierFixes", () => {
       "config/lock-settings.yaml",
     ];
 
-    const candidates = planPrettierFixes(
+    const candidates = await planPrettierFixes(
       context(),
       files.map((file) => finding(file, file)),
     );
@@ -121,10 +121,10 @@ describe("planPrettierFixes", () => {
     ]);
   });
 
-  it("plans sorted correlated candidates from target-side managed settings", () => {
+  it("plans sorted correlated candidates from target-side managed settings", async () => {
     const run = context();
     const policyCalls: string[] = [];
-    const candidates = planPrettierFixes(
+    const candidates = await planPrettierFixes(
       {
         ...run,
         policyForFile(checkId, file, side) {
