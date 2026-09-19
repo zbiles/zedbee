@@ -6738,13 +6738,28 @@
       "version": "4.0.5",
       "license": "MIT",
       "repository": "micromatch/picomatch",
+      "licenseFile": "node_modules/dependency-cruiser/node_modules/picomatch/LICENSE",
+      "legalFiles": [
+        "node_modules/dependency-cruiser/node_modules/picomatch/LICENSE"
+      ],
+      "dependencyPath": [
+        "zedbee@0.1.0-beta.3",
+        "dependency-cruiser@18.2.0",
+        "picomatch@4.0.5"
+      ]
+    },
+    {
+      "name": "picomatch",
+      "version": "4.0.7",
+      "license": "MIT",
+      "repository": "micromatch/picomatch",
       "licenseFile": "node_modules/picomatch/LICENSE",
       "legalFiles": [
         "node_modules/picomatch/LICENSE"
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "picomatch@4.0.5"
+        "picomatch@4.0.7"
       ]
     },
     {
@@ -6868,7 +6883,7 @@
     },
     {
       "name": "react",
-      "version": "19.2.8",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -6881,7 +6896,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "react@19.2.8"
+        "react@19.3.0"
       ]
     },
     {
