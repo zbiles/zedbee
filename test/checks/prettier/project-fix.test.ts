@@ -133,6 +133,24 @@ describe("project Prettier fix parity", () => {
     expect(index.stdout).toBe('export const value = "hello";');
   });
 
+  it("applies with invocation-only trust on a fresh checkout without a stored grant", async () => {
+    const repository = await projectRepository();
+    const selection = await projectSelection(repository.root);
+    const plan = planFor(repository.root, selection, 'export const value = "hello";\n');
+
+    // No persistProjectPrettierTrust here: only the in-memory invocation
+    // consent carried by the apply call authorizes the project engine.
+    const result = await applyFixPlan(plan, { projectPrettierTrust: true });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.changedFiles).toEqual(["value.ts"]);
+    expect(await readFile(join(repository.root, "value.ts"), "utf8")).toBe(
+      "export const value = 'hello';\n",
+    );
+    const index = await repository.git(["show", ":value.ts"]);
+    expect(index.stdout).toBe('export const value = "hello";');
+  });
+
   it("rejects a plan whose selected snapshot changed", async () => {
     const repository = await projectRepository();
     const selection = await projectSelection(repository.root);

@@ -387,59 +387,66 @@ export function createDefaultDiagnosticProbe(
             message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
           };
         }
-        const projectRoot =
-          discovered.find((entry) => entry.projectRoot === ".")?.projectRoot ??
-          discovered[0]!.projectRoot;
         try {
-          const permitPromise = requireProjectPrettierTrust(root, projectRoot, true);
-          let probedVersion = "unknown";
-          const formatted = await withSnapshots(
-            context.cwd,
-            async (targetDir) => {
+          const probed: string[] = [];
+          // Every discovered project that project mode can route files to is
+          // probed, each with a probe file inside its own root so its own
+          // configuration and plugins participate in resolution.
+          const results = await withSnapshots(context.cwd, async (targetDir) => {
+            for (const entry of discovered) {
+              const permit = await requireProjectPrettierTrust(
+                root,
+                entry.projectRoot,
+                true,
+              );
               const installation = await resolveProjectPrettierInstallation(
                 root,
-                projectRoot,
+                entry.projectRoot,
                 targetDir,
               );
-              probedVersion = installation.version;
-              const permit = await permitPromise;
               const session = await openProjectFormatter({
                 checkoutRoot: await realpath(root),
                 snapshotRoot: targetDir,
-                projectRoot,
+                projectRoot: entry.projectRoot,
                 installation,
                 permit,
                 signal: new AbortController().signal,
               });
               try {
+                const probeFile =
+                  entry.projectRoot === "."
+                    ? "zedbee-doctor-probe.ts"
+                    : `${entry.projectRoot}/zedbee-doctor-probe.ts`;
                 const result = await session.format(
-                  "zedbee-doctor-probe.ts",
+                  probeFile,
                   "const zedbeeDoctor=true\n",
                 );
-                return result.kind === "formatted" ? result.text : undefined;
+                // A valid formatted response from the selected engine is
+                // enough; a healthy project style may legitimately differ from
+                // Zedbee's default formatting, so no exact bytes are required.
+                if (result.kind !== "formatted" || result.text.length === 0) {
+                  throw new Error("Unexpected project probe result.");
+                }
+                probed.push(
+                  `${entry.projectRoot === "." ? "root" : entry.projectRoot} (${installation.version})`,
+                );
               } finally {
                 await session.close().catch(() => undefined);
               }
-            },
-          );
-          // The probe verifies a valid formatted response from the selected
-          // engine and configuration; a healthy project style may legitimately
-          // differ from Zedbee's default formatting, so no exact bytes are
-          // required. Formatting the result again must be stable.
-          if (typeof formatted !== "string" || formatted.length === 0) {
-            throw new Error("Unexpected project probe result.");
-          }
+            }
+            return probed;
+          });
           return {
             id,
             status: "pass",
-            message: `Ran the project's Prettier ${probedVersion} through the same installation and snapshot resolution used by scans and formatted a synthetic file; this does not verify a full scan.`,
+            message: `Ran each project's Prettier through the same installation and snapshot resolution used by scans and formatted a synthetic file inside every discovered project (${results.join("; ")}); this does not verify a full scan.`,
           };
         } catch {
           return {
             id,
             status: "fail",
             message:
-              "The trusted project Prettier probe could not format a synthetic file.",
+              "The trusted project Prettier probe could not format a synthetic file in every discovered project.",
             remediation:
               "Review the project Prettier installation, configuration, and plugins, then retry zedbee doctor.",
           };

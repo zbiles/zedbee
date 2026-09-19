@@ -46,6 +46,11 @@ import type {
 export interface ApplyFixPlanDependencies {
   readonly executor?: AnalyzerExecutor;
   readonly signal?: AbortSignal;
+  /**
+   * Parent-owned invocation-only consent for project Prettier, carried in
+   * memory from the fix command; it is never serialized into the plan.
+   */
+  readonly projectPrettierTrust?: boolean;
   readWorkingFile?(repositoryRoot: string, file: string): Promise<string>;
   lstatWorkingFile?(
     repositoryRoot: string,
@@ -73,6 +78,8 @@ async function formatProjectWorkingFile(input: {
   readonly source: string;
   readonly selection: Extract<FormattingFixSelection, { engine: "project" }>;
   readonly signal?: AbortSignal;
+  /** Invocation-only consent from the trusted parent, in memory only. */
+  readonly projectPrettierTrust?: boolean;
 }): Promise<string> {
   const git = new GitClient(input.repositoryRoot);
   // The verified staged snapshot stays alive for the whole fix: the project
@@ -101,7 +108,7 @@ async function formatProjectWorkingFile(input: {
     const permit = await requireProjectPrettierTrust(
       input.repositoryRoot,
       input.selection.projectRoot,
-      false,
+      input.projectPrettierTrust === true,
     );
     const session = await openProjectFormatter({
       checkoutRoot: await realpath(input.repositoryRoot),
@@ -408,6 +415,9 @@ async function applyWithinSession(
             ...(dependencies.signal === undefined
               ? {}
               : { signal: dependencies.signal }),
+            ...(dependencies.projectPrettierTrust === true
+              ? { projectPrettierTrust: true }
+              : {}),
           });
         } else {
           next = await format(

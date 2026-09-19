@@ -199,6 +199,8 @@ Duplication analysis is workspace-wide because jscpd compares clone regions and 
 
 Run `zedbee checks` to inspect effective settings and configured overrides. Its output identifies whether each root value came from the selected profile or repository configuration and includes the primary managed engine summary; it is not an inventory of every supporting package version. `zedbee checks --format json` returns the complete deterministic settings metadata.
 
-## Managed-only configuration boundary
+## Configuration boundary
 
-Zedbee does not load a project's native analyzer config. It ignores native Prettier, ESLint, plugin, parser, and executable analyzer configuration in favor of its pinned engines and inert managed settings. Teams with native configs may see different Zedbee results because those files are not loaded. Adopt Zedbee by calibrating the supported `.zedbeerc.jsonc` settings and rule inventory, not by assuming identical results from an existing native tool invocation.
+By default Zedbee runs a managed boundary: it does not load a project's native analyzer config. It ignores native ESLint, plugin, parser, and executable analyzer configuration in favor of its pinned engines and inert managed settings, and native Prettier configuration is ignored unless the project formatting engine is explicitly trusted. Teams with native configs may see different Zedbee results because those files are not loaded. Adopt Zedbee by calibrating the supported `.zedbeerc.jsonc` settings and rule inventory, not by assuming identical results from an existing native tool invocation.
+
+The single exception is formatting: with `checks.formatting.engine` set to `"project"` plus an explicit trust decision, Zedbee runs the project's installed Prettier, its native configuration, and its plugins in a supervised worker. This exception never applies to ESLint, Secretlint, or any other managed analyzer. See [formatting engines](#formatting-engines).

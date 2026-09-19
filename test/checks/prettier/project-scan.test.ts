@@ -252,6 +252,77 @@ describe("project Prettier scan integration", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("routes each workspace through its own project formatter", async () => {
+    const repository = await createGitRepository("zedbee-project-scan-multi-");
+    await repository.write(
+      "package.json",
+      '{"name":"root","private":true,"workspaces":["web","app"]}',
+    );
+    await repository.write(
+      "web/package.json",
+      '{"name":"web","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("web/.prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      "app/package.json",
+      '{"name":"app","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.write("app/.prettierrc.json", '{"printWidth":20}');
+    await mkdir(join(repository.root, "node_modules"), { recursive: true });
+    await cp(
+      join(repositoryPackageRoot, "node_modules", "prettier"),
+      join(repository.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    await repository.git(["add", "--all"]);
+    const commit = await repository.git([
+      "commit",
+      "--message",
+      "base",
+      "--no-verify",
+    ]);
+    if (commit.exitCode !== 0) throw new Error(commit.stderr);
+    await repository.write("web/value.ts", 'export const value = "web";\n');
+    await repository.write(
+      "app/value.ts",
+      "export const value = sum(11111111, 22222222, 33333333);\n",
+    );
+    await repository.git(["add", "--", "web/value.ts", "app/value.ts"]);
+
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { engine: "managed" } },
+      overrides: [
+        { files: ["web/**"], checks: { formatting: { engine: "project" } } },
+        { files: ["app/**"], checks: { formatting: { engine: "project" } } },
+      ],
+    });
+    const result = await runScan(repository, {
+      config,
+      invocationTrust: true,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(result.formattingProvenance).toEqual([
+      {
+        engine: "project",
+        version: "3.9.6",
+        projectRoot: "app",
+        configFiles: ["app/.prettierrc.json"],
+      },
+      {
+        engine: "project",
+        version: "3.9.6",
+        projectRoot: "web",
+        configFiles: ["web/.prettierrc.json"],
+      },
+    ]);
+    const files = result.findings.map((finding) => finding.location?.file);
+    expect(files).toContain("web/value.ts");
+    expect(files).toContain("app/value.ts");
+  });
+
   it("re-resolves the configuration between scans without reusing prior results", async () => {
     const repository = await scanFixture();
     await repository.write("value.ts", 'export const value = "hello";\n');
