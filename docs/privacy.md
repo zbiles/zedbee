@@ -34,6 +34,15 @@ selected Prettier formatting intentionally processes the complete current
 working file, so it can reformat unstaged work. Review the working-tree diff
 before staging anything.
 
+When a project's formatting engine is trusted, that project's Prettier,
+configuration, and plugins run in a dedicated child process over a disposable
+mirror of the selected snapshot. The mirror and worker are owned by the scan or
+fix and are removed afterward; project-format results are not persisted in the
+observation cache. Trusted plugin and configuration code can still read files or
+use the network with the user's permissions, so consent is an ongoing decision.
+Configured connection tokens and `NODE_OPTIONS`/`NODE_PATH` are not inherited by
+the worker.
+
 ## Secrets
 
 Secrets are always redacted, including when source excerpts are enabled by repository policy or CLI override. Zedbee passes changed snapshot text directly to Secretlint's in-process API with its own fixed preset; it never loads `.secretlintrc` or executable project configuration. Secretlint results are immediately reduced to rule and location metadata. Raw secret text, match text, upstream messages, author data, and source lines never cross into Zedbee findings, events, text, JSON, source excerpts, or stable IDs. To distinguish a different secret replacing existing debt at the same rule and location, Zedbee computes a per-scan HMAC over the exact source range with a random key. The digest and key are ephemeral and are not rendered, cached, or persisted.

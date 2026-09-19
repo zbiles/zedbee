@@ -25,6 +25,7 @@ import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
 } from "../runtime/node-support.js";
+import { discoverProjectPrettier } from "../init/prettier-discovery.js";
 
 export const DOCTOR_DIAGNOSTIC_IDS = [
   "git",
@@ -33,6 +34,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "snapshot-creation",
   "background-service",
   "workspace-inspection",
+  "project-prettier",
   "secretlint-readiness",
   "lockfile-support",
   "osv-connectivity",
@@ -350,6 +352,31 @@ export function createDefaultDiagnosticProbe(
           id,
           status: "pass",
           message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}.`,
+        };
+      }
+      case "project-prettier": {
+        const root = await repositoryRoot(context.cwd);
+        const discovered = await discoverProjectPrettier(root).catch(
+          () => [] as const,
+        );
+        if (discovered.length === 0) {
+          return {
+            id,
+            status: "pass",
+            message:
+              "No project Prettier setup was detected; formatting uses the managed engine unless configured otherwise. No project configuration was executed.",
+          };
+        }
+        const summary = discovered
+          .map((entry) => {
+            const location = entry.projectRoot === "." ? "root" : entry.projectRoot;
+            return `${location}: ${entry.status}${entry.version === undefined ? "" : ` ${entry.version}`}`;
+          })
+          .join("; ");
+        return {
+          id,
+          status: "pass",
+          message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
         };
       }
       case "secretlint-readiness": {

@@ -495,9 +495,10 @@ describe("executeChecksCommand", () => {
         },
       ],
     });
-    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual(
-      formattingSettingLabels.map((label) => `settings.${label}`),
-    );
+    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual([
+      "engine",
+      ...formattingSettingLabels.map((label) => `settings.${label}`),
+    ]);
     expect(formatting?.automaticFix).toBe("zedbee fix formatting");
     const lint = result.checks.find(({ id }) => id === "lint");
     expect(Object.keys(lint?.configuration.values ?? {})).toEqual([
@@ -792,7 +793,7 @@ describe("executeChecksCommand", () => {
       "Automatic fix: zedbee fix formatting\u001b[39m\n\n\u001b[38;5;231mlint",
     );
     expect(first.stdout.join("")).toContain(
-      "Configuration: 13 profile values, 1 repository value",
+      "Configuration: 14 profile values, 1 repository value",
     );
     const output = first.stdout.join("");
     const settingPositions = formattingSettingLabels.map((label) =>

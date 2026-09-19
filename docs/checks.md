@@ -84,6 +84,17 @@ Formatting comparisons have a two-second limit per file. If a comparison takes l
 
 The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
 
+### Formatting engines
+
+`checks.formatting.engine` selects the formatting engine and defaults to `"managed"` when omitted. Existing configurations keep managed behavior.
+
+- `"managed"` uses Zedbee's bundled Prettier with the fourteen managed settings below.
+- `"project"` uses the selected project's installed Prettier (supported range `>=3.0.0 <4.0.0`), its native configuration, and its plugins. `settings` cannot be combined with `engine: "project"`.
+
+During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins, unsupported options, and native ignore files (`.prettierignore`/`.gitignore`) are not copied.
+
+Project execution is an explicit trust decision. Choosing it in `init` records consent in local Git configuration keyed to the checkout and project root; a fresh clone needs its own consent, and CI must pass `--trust-project-prettier` from a trusted workflow. That flag is invocation-only. `--yes` alone never grants it, and tracked repository configuration can never grant it. When the installation is missing, the version is unsupported, a plugin is missing, the configuration is invalid, or trust is absent, the formatting check is incomplete with a concrete remedy. Zedbee never silently falls back to managed formatting, and project-format results are not persisted in the observation cache. Managed behavior is unchanged when `engine` is omitted.
+
 | Field                    |       Default | Accepted value                                 |
 | ------------------------ | ------------: | ---------------------------------------------- |
 | `printWidth`             |          `80` | Positive safe integer                          |

@@ -23,6 +23,7 @@ import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
+import { discoverProjectPrettier } from "../init/prettier-discovery.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import {
   immutableConfigurationSnapshot,
@@ -485,6 +486,16 @@ export async function executeChecksCommand(
       repositoryRoot,
       config,
     );
+    const discoveredProjectPrettier =
+      config.checks.formatting.engine === "project"
+        ? await discoverProjectPrettier(repositoryRoot).catch(
+            () => [] as const,
+          )
+        : [];
+    const projectPrettier =
+      discoveredProjectPrettier.find(
+        (entry) => entry.projectRoot === ".",
+      ) ?? discoveredProjectPrettier[0];
     const checks = Object.freeze(
       CHECK_IDS.map((id): CheckDescription => {
         const runtime = applicability.get(id) ?? {
@@ -504,8 +515,19 @@ export async function executeChecksCommand(
           executionClass: runtime.executionClass,
           network:
             id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
-          engine: Object.freeze({ ...CATALOG[id].engine }),
-          limitation: CATALOG[id].limitation,
+          engine:
+            id === "formatting" && projectPrettier !== undefined
+              ? Object.freeze({
+                  name: "Project Prettier",
+                  version: projectPrettier.version ?? "missing",
+                  license: "project-installed",
+                })
+              : Object.freeze({ ...CATALOG[id].engine }),
+          limitation:
+            id === "formatting" &&
+            config.checks.formatting.engine === "project"
+              ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
+              : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined
             ? {}
             : { automaticFix: CATALOG[id].automaticFix }),
