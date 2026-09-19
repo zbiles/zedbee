@@ -6868,7 +6868,7 @@
     },
     {
       "name": "react",
-      "version": "19.2.8",
+      "version": "19.3.0",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -6881,7 +6881,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "react@19.2.8"
+        "react@19.3.0"
       ]
     },
     {
