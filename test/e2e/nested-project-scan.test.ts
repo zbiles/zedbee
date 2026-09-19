@@ -26,7 +26,7 @@ const targetSource = [
   "",
 ].join("\n");
 
-describe.sequential("nested independent project scans", () => {
+describe("nested independent project scans", { concurrent: false }, () => {
   it.each(["index", "base"] as const)(
     "%s runs checks for the changed package without linting an unrelated package config",
     async (mode) => {
