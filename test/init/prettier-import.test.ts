@@ -117,7 +117,7 @@ describe("previewPrettierSettingsImport", () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
       name: "app",
-      devDependencies: { prettier: "^3.0.0" },
+      devDependencies: { prettier: "3.9.6" },
     });
     await fixture.write(
       "prettier.config.mjs",
@@ -137,7 +137,7 @@ describe("previewPrettierSettingsImport", () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
       name: "app",
-      devDependencies: { prettier: "^3.0.0" },
+      devDependencies: { prettier: "3.9.6" },
     });
     await fixture.write(".prettierrc.cjs", "module.exports = { semi: false };\n");
     await fixture.write(
@@ -177,6 +177,39 @@ describe("previewPrettierSettingsImport", () => {
     ]);
   });
 
+  it("uses an exact declared version when the formatter is not installed", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "3.0.3" },
+    });
+    await fixture.write(".prettierrc.yaml", "semi: false\n");
+    await fixture.write(".prettierrc.yml", "singleQuote: true\n");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toMatchObject({ semi: false });
+    expect(preview.settings).not.toHaveProperty("singleQuote");
+    expect(preview.limitations).toEqual([]);
+  });
+
+  it("reports ambiguous precedence without an installed formatter", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: ">=3.0.0 <4.0.0" },
+    });
+    await fixture.write(".prettierrc.yaml", "semi: false\n");
+    await fixture.write(".prettierrc.yml", "singleQuote: true\n");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toEqual({});
+    expect(preview.limitations).toContainEqual(
+      expect.stringContaining("precedence"),
+    );
+  });
+
   it("selects package.yaml before executable configs when supported", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
@@ -199,6 +232,37 @@ describe("previewPrettierSettingsImport", () => {
 
     expect(preview.settings).toMatchObject({ semi: false });
     expect(preview.executableConfigs).toEqual([]);
+  });
+
+  it("reports a selected package.yaml shared configuration target", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "3.9.6" },
+    });
+    await mkdir(join(fixture.root, "node_modules"), { recursive: true });
+    await cp(
+      join(process.cwd(), "node_modules", "prettier"),
+      join(fixture.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    await fixture.write(
+      "package.yaml",
+      "prettier: '@org/prettier-config'\n",
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.sharedConfigs).toEqual([
+      {
+        projectRoot: ".",
+        configPath: "package.yaml",
+        specifier: "@org/prettier-config",
+      },
+    ]);
+    expect(preview.limitations).toContainEqual(
+      expect.stringContaining("package.yaml Prettier field"),
+    );
   });
 
   it("treats malformed configuration as a limitation, not a failure", async () => {

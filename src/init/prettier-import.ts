@@ -66,15 +66,16 @@ const MODERN_CONFIG_PRECEDENCE = [
   ".prettierrc.toml",
 ] as const;
 
-function configPrecedence(version: string | undefined): readonly string[] {
-  if (version === undefined || semver.gte(version, "3.5.0"))
-    return MODERN_CONFIG_PRECEDENCE;
+const PACKAGE_YAML_CONFIG_PRECEDENCE = [
+  "package.json",
+  "package.yaml",
+  ...LEGACY_CONFIG_PRECEDENCE.slice(1),
+] as const;
+
+function configPrecedence(version: string): readonly string[] {
+  if (semver.gte(version, "3.5.0")) return MODERN_CONFIG_PRECEDENCE;
   if (semver.gte(version, "3.3.0"))
-    return [
-      "package.json",
-      "package.yaml",
-      ...LEGACY_CONFIG_PRECEDENCE.slice(1),
-    ];
+    return PACKAGE_YAML_CONFIG_PRECEDENCE;
   return LEGACY_CONFIG_PRECEDENCE;
 }
 
@@ -91,6 +92,15 @@ export interface PrettierSettingsImportPreview {
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
   readonly limitations: readonly string[];
+  readonly executableConfigs: readonly {
+    readonly projectRoot: string;
+    readonly configPath: string;
+  }[];
+  readonly sharedConfigs: readonly {
+    readonly projectRoot: string;
+    readonly configPath: string;
+    readonly specifier: string;
+  }[];
 }
 
 interface ParsedConfigData {
@@ -101,6 +111,20 @@ interface ParsedConfigData {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function readPackagePrettierValue(
+  registry: SnapshotRegistry,
+  path: string,
+): Promise<unknown> {
+  const manifest = posix.basename(path) === "package.json"
+    ? await readJsonData(registry, path)
+    : parseYaml(
+        await readContainedFile(registry, path, {
+          maxBytes: CONFIG_MAX_BYTES,
+        }),
+      );
+  return isRecord(manifest) ? manifest.prettier : undefined;
 }
 
 async function readConfigValue(
@@ -259,6 +283,7 @@ function classifyConfigValue(
 async function selectedConfigPaths(
   registry: SnapshotRegistry,
   discovery: ProjectPrettierDiscovery,
+  limitations: string[],
 ): Promise<readonly string[]> {
   const available = new Set(discovery.configPaths);
   const directories = new Set(
@@ -273,28 +298,50 @@ async function selectedConfigPaths(
     const depth = left.split("/").length - right.split("/").length;
     return depth === 0 ? left.localeCompare(right) : depth;
   })) {
-    for (const name of configPrecedence(discovery.version)) {
+    const select = async (
+      precedence: readonly string[],
+    ): Promise<string | undefined> => {
+      for (const name of precedence) {
       const path = directory === "." ? name : posix.join(directory, name);
       if (name === "package.json" || name === "package.yaml") {
         if (name === "package.json" && directory !== discovery.projectRoot)
           continue;
         if (registry.resolve(path)?.targetKind === "file") {
-          const manifest =
-            name === "package.json"
-              ? await readJsonData(registry, path)
-              : parseYaml(await readContainedFile(registry, path, {
-                  maxBytes: CONFIG_MAX_BYTES,
-                }));
-          if (isRecord(manifest) && manifest.prettier !== undefined) {
-            selected.push(path);
-            break;
+          try {
+            if ((await readPackagePrettierValue(registry, path)) !== undefined)
+              return path;
+          } catch {
+            // Native search skips package manifests it cannot parse.
           }
         }
-      } else if (available.has(path)) {
-        selected.push(path);
-        break;
+      } else if (available.has(path)) return path;
       }
+      return undefined;
+    };
+    const exactDeclaredVersion = semver.valid(discovery.declaredRange ?? "");
+    const knownVersion = discovery.version ?? exactDeclaredVersion ?? undefined;
+    if (knownVersion !== undefined) {
+      const path = await select(configPrecedence(knownVersion));
+      if (path !== undefined) selected.push(path);
+      continue;
     }
+    const candidates = new Set(
+      (
+        await Promise.all([
+          select(LEGACY_CONFIG_PRECEDENCE),
+          select(PACKAGE_YAML_CONFIG_PRECEDENCE),
+          select(MODERN_CONFIG_PRECEDENCE),
+        ])
+      ).filter((path): path is string => path !== undefined),
+    );
+    if (candidates.size > 1) {
+      limitations.push(
+        `Prettier configuration precedence in ${directory} cannot be determined until the declared formatter version is installed.`,
+      );
+      continue;
+    }
+    const path = [...candidates][0];
+    if (path !== undefined) selected.push(path);
   }
   return Object.freeze(selected);
 }
@@ -321,15 +368,10 @@ async function loadProjectConfig(
   }
   let value: unknown;
   if (["package.json", "package.yaml"].includes(posix.basename(configPath))) {
-    const manifest = posix.basename(configPath) === "package.json"
-      ? await readJsonData(registry, configPath)
-      : parseYaml(await readContainedFile(registry, configPath, {
-          maxBytes: CONFIG_MAX_BYTES,
-        }));
-    value = isRecord(manifest) ? manifest.prettier : undefined;
+    value = await readPackagePrettierValue(registry, configPath);
     if (typeof value === "string") {
       limitations.push(
-        "The package.json prettier field references a shared configuration that cannot be copied as inert settings.",
+        `The ${posix.basename(configPath)} Prettier field in ${configPath} references a shared configuration that cannot be copied as inert settings.`,
       );
       return {
         settings: {},
@@ -406,7 +448,13 @@ export async function previewPrettierSettingsImport(
   try {
     canonicalRoot = await canonicalizeSnapshotRoot(repositoryRoot);
   } catch {
-    return { settings: {}, overrides: [], limitations: [] };
+    return {
+      settings: {},
+      overrides: [],
+      limitations: [],
+      executableConfigs: [],
+      sharedConfigs: [],
+    };
   }
   const registry = await captureSnapshotRegistry(canonicalRoot);
   const discoveries = await discoverProjectPrettier(repositoryRoot);
@@ -415,9 +463,39 @@ export async function previewPrettierSettingsImport(
   let settings: Partial<FormattingSettings> = {};
   const overrides: ImportedFormattingOverride[] = [];
   const configs = new Map<string, string>();
+  const executableConfigs: {
+    readonly projectRoot: string;
+    readonly configPath: string;
+  }[] = [];
+  const sharedConfigs: {
+    readonly projectRoot: string;
+    readonly configPath: string;
+    readonly specifier: string;
+  }[] = [];
   for (const discovery of discoveries) {
-    for (const path of await selectedConfigPaths(registry, discovery))
+    for (const path of await selectedConfigPaths(
+      registry,
+      discovery,
+      limitations,
+    )) {
       configs.set(posix.dirname(path), path);
+      if (EXECUTABLE_EXTENSIONS.has(posix.extname(path))) {
+        executableConfigs.push({
+          projectRoot: discovery.projectRoot,
+          configPath: path,
+        });
+      } else if (
+        ["package.json", "package.yaml"].includes(posix.basename(path))
+      ) {
+        const value = await readPackagePrettierValue(registry, path);
+        if (typeof value === "string")
+          sharedConfigs.push({
+            projectRoot: discovery.projectRoot,
+            configPath: path,
+            specifier: value,
+          });
+      }
+    }
     ignoreFileLimitations(registry, discovery.projectRoot, limitations);
   }
   const scopes = new Set(configs.keys());
@@ -483,5 +561,37 @@ export async function previewPrettierSettingsImport(
     settings,
     overrides: Object.freeze(overrides),
     limitations: Object.freeze([...new Set(limitations)]),
+    executableConfigs: Object.freeze(
+      executableConfigs
+        .filter(
+          (entry, index, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.projectRoot === entry.projectRoot &&
+                candidate.configPath === entry.configPath,
+            ) === index,
+        )
+        .sort(
+          (left, right) =>
+            left.projectRoot.localeCompare(right.projectRoot) ||
+            left.configPath.localeCompare(right.configPath),
+        ),
+    ),
+    sharedConfigs: Object.freeze(
+      sharedConfigs
+        .filter(
+          (entry, index, all) =>
+            all.findIndex(
+              (candidate) =>
+                candidate.projectRoot === entry.projectRoot &&
+                candidate.configPath === entry.configPath,
+            ) === index,
+        )
+        .sort(
+          (left, right) =>
+            left.projectRoot.localeCompare(right.projectRoot) ||
+            left.configPath.localeCompare(right.configPath),
+        ),
+    ),
   };
 }
