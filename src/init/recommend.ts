@@ -7,11 +7,119 @@ import { OSV_NETWORK_DISCLOSURE } from "./types.js";
 import type {
   CreateInitProposalOptions,
   InitFileChange,
+  InitFormattingChoice,
+  InitFormattingImport,
   InitHookActivation,
   InitOsvUnavailable,
   InitProposal,
   ResolvedHookChoice,
 } from "./types.js";
+
+function formattingPolicyValue(
+  choice: InitFormattingChoice,
+  imported: InitFormattingImport | undefined,
+  rootProject: boolean,
+  severity: "off" | "error",
+): unknown {
+  if (choice === "off") return "off";
+  if (choice === "project") {
+    return {
+      engine: rootProject ? "project" : "managed",
+      severity: "error",
+    };
+  }
+  if (choice === "copy") {
+    return {
+      severity: "error",
+      settings: imported?.settings ?? {},
+      generated: "prettier-copy",
+    };
+  }
+  return severity;
+}
+
+function importedOverrideEntries(
+  imported: InitFormattingImport | undefined,
+): readonly Record<string, unknown>[] {
+  if (imported === undefined) return [];
+  // Prettier's excludeFiles has AND-within-OR semantics that Zedbee's
+  // override globs cannot express; encoding it as a negated pattern would
+  // widen the override to nearly every path. The importer reports it as a
+  // copy limitation instead of silently changing its meaning.
+  return imported.overrides.map((override) => ({
+    files: [...override.files],
+    checks: { formatting: { settings: override.settings } },
+    generated: "prettier-copy",
+  }));
+}
+
+function engineOverrideEntries(
+  projectRoots: readonly string[],
+): readonly Record<string, unknown>[] {
+  return projectRoots.map((projectRoot) => ({
+    files: [`${projectRoot}/**`],
+    checks: { formatting: { engine: "project" } },
+    generated: "prettier-engine",
+  }));
+}
+
+/**
+ * Ownership is decided exclusively by the authorship marker Zedbee wrote;
+ * hand-authored entries that merely look similar are never touched.
+ */
+function isGeneratedOverrideEntry(entry: unknown): boolean {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    ((entry as Record<string, unknown>).generated === "prettier-copy" ||
+      (entry as Record<string, unknown>).generated === "prettier-engine")
+  );
+}
+
+/** An existing explicit engine or off choice survives repeat init untouched. */
+function existingFormattingChoice(before: string | null): InitFormattingChoice {
+  if (before === null) return "managed";
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(before, errors, { allowTrailingComma: true });
+  if (errors.length > 0 || typeof parsed !== "object" || parsed === null) {
+    return "managed";
+  }
+  const checks = (parsed as Record<string, unknown>).checks;
+  if (typeof checks !== "object" || checks === null) return "managed";
+  const formatting = (checks as Record<string, unknown>).formatting;
+  if (formatting === "off") return "off";
+  if (typeof formatting === "object" && formatting !== null) {
+    const record = formatting as Record<string, unknown>;
+    if (record.severity === "off") return "off";
+    if (record.generated === "prettier-copy") return "copy";
+    if (record.engine === "project") return "project";
+  }
+  const overrides = (parsed as Record<string, unknown>).overrides;
+  if (
+    Array.isArray(overrides) &&
+    overrides.some((entry) => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const record = entry as Record<string, unknown>;
+      if (record.generated !== "prettier-engine") return false;
+      const overrideChecks = record.checks;
+      if (typeof overrideChecks !== "object" || overrideChecks === null) {
+        return false;
+      }
+      const overrideFormatting = (
+        overrideChecks as Record<string, unknown>
+      ).formatting;
+      return (
+        typeof overrideFormatting === "object" &&
+        overrideFormatting !== null &&
+        (overrideFormatting as Record<string, unknown>).engine === "project"
+      );
+    })
+  ) {
+    return "project";
+  }
+  return "managed";
+}
+
 
 function defaultHookActivation(hook: ResolvedHookChoice): InitHookActivation {
   if (hook === "none") {
@@ -132,12 +240,22 @@ export function initFileChange(
   });
 }
 
+interface FormattingConfigInput {
+  readonly choice: InitFormattingChoice;
+  readonly imported?: InitFormattingImport;
+  /** Nested project roots that receive generated engine overrides. */
+  readonly projectRoots?: readonly string[];
+  /** Whether the repository root itself runs the project engine. */
+  readonly rootProject?: boolean;
+}
+
 function configContents(
   profile: CreateInitProposalOptions["profile"],
   before: string | null,
   checks: readonly CheckId[] | undefined,
   vulnerabilitiesEnabled: boolean,
   osvUnavailable: InitOsvUnavailable,
+  formatting: FormattingConfigInput | undefined,
 ): string {
   const configuredChecks =
     checks === undefined
@@ -158,12 +276,33 @@ function configContents(
       ? { vulnerabilities: { onUnavailable: osvUnavailable } }
       : undefined);
   if (before === null) {
+    const checksValue =
+      formatting === undefined
+        ? initialChecks
+        : {
+            ...(initialChecks ?? {}),
+            formatting: formattingPolicyValue(
+              formatting.choice,
+              formatting.imported,
+              formatting.rootProject ?? true,
+              "error",
+            ),
+          };
+    const overrideValues = [
+      ...importedOverrideEntries(formatting?.imported),
+      ...engineOverrideEntries(
+        formatting?.choice === "project"
+          ? (formatting?.projectRoots ?? [])
+          : [],
+      ),
+    ];
     return `${JSON.stringify(
       {
         $schema: "./node_modules/zedbee/schema/zedbee.schema.json",
         schemaVersion: 1,
         profile,
-        ...(initialChecks === undefined ? {} : { checks: initialChecks }),
+        ...(checksValue === undefined ? {} : { checks: checksValue }),
+        ...(overrideValues.length === 0 ? {} : { overrides: overrideValues }),
         reporting: {
           agentGuidance: RECOMMENDED_AGENT_GUIDANCE,
         },
@@ -228,8 +367,157 @@ function configContents(
       updated = applyEdits(updated, modify(updated, path, value, options));
     }
   }
+  if (formatting !== undefined) {
+    updated = applyFormattingChoice(
+      updated,
+      parsed,
+      {
+        choice: formatting.choice,
+        ...(formatting.imported === undefined
+          ? {}
+          : { imported: formatting.imported }),
+        projectRoots: formatting.projectRoots ?? [],
+        rootProject: formatting.rootProject ?? true,
+      },
+      options,
+    );
+  }
   return updated.endsWith("\n") ? updated : `${updated}\n`;
 }
+
+interface JsoncFormatOptions {
+  readonly formattingOptions: {
+    readonly insertSpaces: boolean;
+    readonly tabSize: number;
+    readonly eol: string;
+  };
+}
+
+function applyFormattingChoice(
+  updated: string,
+  parsed: unknown,
+  formatting: FormattingConfigInput & {
+    readonly projectRoots: readonly string[];
+    readonly rootProject: boolean;
+  },
+  options: JsoncFormatOptions,
+): string {
+  const root = parsed as Record<string, unknown>;
+  const checksValue = root.checks;
+  const checksObject =
+    typeof checksValue === "object" &&
+    checksValue !== null &&
+    !Array.isArray(checksValue)
+      ? (checksValue as Record<string, unknown>)
+      : {};
+  const existing = checksObject.formatting;
+  const existingObject =
+    typeof existing === "object" && existing !== null && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : undefined;
+  const existingSeverity =
+    existing === "off" || existing === "warn" || existing === "error"
+      ? existing
+      : existingObject?.severity === "off" ||
+          existingObject?.severity === "warn" ||
+          existingObject?.severity === "error"
+        ? existingObject.severity
+        : "error";
+  const existingWhen =
+    existingObject?.when === "always" || existingObject?.when === "relevant"
+      ? existingObject.when
+      : undefined;
+  // Ownership of the settings block is proven only by the authorship marker
+  // a previous setup wrote; hand-written settings are never destroyed.
+  const settingsOwnedBySetup =
+    existingObject?.generated === "prettier-copy";
+
+  let next = updated;
+  let generatedEntries: readonly Record<string, unknown>[];
+  if (formatting.choice === "managed") {
+    // "Use Zedbee defaults" restores the bundled default policy: settings
+    // Zedbee copied are removed, hand-written settings survive untouched.
+    const value =
+      settingsOwnedBySetup || existingObject === undefined
+        ? {
+            severity: existingSeverity,
+            engine: "managed",
+            ...(existingWhen === undefined ? {} : { when: existingWhen }),
+          }
+        : { ...existingObject, engine: "managed" };
+    next = applyEdits(
+      next,
+      modify(next, ["checks", "formatting"], value, options),
+    );
+    generatedEntries = [];
+  } else if (formatting.choice === "off") {
+    const value =
+      settingsOwnedBySetup || existingObject === undefined
+        ? existingWhen === undefined
+          ? "off"
+          : { severity: "off", when: existingWhen }
+        : { ...existingObject, severity: "off" };
+    next = applyEdits(
+      next,
+      modify(next, ["checks", "formatting"], value, options),
+    );
+    generatedEntries = [];
+  } else if (formatting.choice === "project") {
+    // Project mode cannot keep managed settings active anywhere they would
+    // combine with a project engine, so the settings block is reset.
+    next = applyEdits(
+      next,
+      modify(
+        next,
+        ["checks", "formatting"],
+        {
+          engine: formatting.rootProject ? "project" : "managed",
+          severity: existingSeverity,
+          ...(existingWhen === undefined ? {} : { when: existingWhen }),
+        },
+        options,
+      ),
+    );
+    generatedEntries = engineOverrideEntries(formatting.projectRoots);
+  } else {
+    next = applyEdits(
+      next,
+      modify(
+        next,
+        ["checks", "formatting"],
+        {
+          severity: existingSeverity,
+          ...(existingWhen === undefined ? {} : { when: existingWhen }),
+          settings: formatting.imported?.settings ?? {},
+          generated: "prettier-copy",
+        },
+        options,
+      ),
+    );
+    generatedEntries = importedOverrideEntries(formatting.imported);
+  }
+
+  // Repeat setup replaces exactly the entries Zedbee generated and preserves
+  // every unmarked, hand-authored override.
+  const existingOverrides = Array.isArray(root.overrides)
+    ? (root.overrides as readonly unknown[])
+    : [];
+  const userOverrides = existingOverrides.filter(
+    (entry) => !isGeneratedOverrideEntry(entry),
+  );
+  const finalOverrides = [...userOverrides, ...generatedEntries];
+  if (
+    existingOverrides.length !== finalOverrides.length ||
+    existingOverrides.length !== userOverrides.length
+  ) {
+    next = applyEdits(
+      next,
+      modify(next, ["overrides"], finalOverrides, options),
+    );
+  }
+  return next;
+}
+
 
 function existingVulnerabilitySeverity(
   before: string | null,
@@ -328,6 +616,25 @@ export function createInitProposal(
         : configuredVulnerabilitySeverity !== "off"
       : selectedChecks.includes("vulnerabilities"));
   const osvUnavailable = options.osvUnavailable ?? "block";
+  // Repeat init preserves an existing explicit engine choice unless the user
+  // selects a different one, so the preview never misstates current policy.
+  const formattingChoice: InitFormattingChoice =
+    options.formatting ?? existingFormattingChoice(before);
+  const formattingConfig: FormattingConfigInput | undefined =
+    options.formatting === undefined
+      ? undefined
+      : {
+          choice: options.formatting,
+          ...(options.formattingImport === undefined
+            ? {}
+            : { imported: options.formattingImport }),
+          ...(options.formatting === "project"
+            ? {
+                projectRoots: options.formattingProjectRoots ?? [],
+                rootProject: options.formattingRootProject ?? true,
+              }
+            : {}),
+        };
   const config = initFileChange(
     ".zedbeerc.jsonc",
     before,
@@ -337,6 +644,7 @@ export function createInitProposal(
       options.checks,
       vulnerabilitiesEnabled,
       osvUnavailable,
+      formattingConfig,
     ),
     0o644,
   );
@@ -382,7 +690,38 @@ export function createInitProposal(
       hookActivation.remediation !== undefined
         ? [hookActivation.remediation]
         : []),
+      ...(options.formattingImport?.limitations ?? []),
     ]),
+    formatting: formattingChoice,
+    ...(options.formattingImport === undefined
+      ? {}
+      : { formattingImport: options.formattingImport }),
+    ...(options.formattingDetection === undefined
+      ? {}
+      : {
+          formattingDetection: Object.freeze(
+            options.formattingDetection.map((entry) => Object.freeze({ ...entry })),
+          ),
+        }),
+    ...(formattingChoice === "project" &&
+    options.projectPrettierTrustRoots !== undefined &&
+    options.projectPrettierTrustRoots.length > 0
+      ? { projectPrettierTrustRoots: options.projectPrettierTrustRoots }
+      : {}),
+    ...(formattingChoice === "project" &&
+    options.projectPrettierTrustRoots !== undefined &&
+    options.projectPrettierTrustRoots.length > 0 &&
+    options.projectPrettierTrustConfirmed === true
+      ? { projectPrettierTrustConfirmed: true }
+      : {}),
+    ...((formattingChoice === "managed" || formattingChoice === "off") &&
+    options.projectPrettierRevokeRoots !== undefined &&
+    options.projectPrettierRevokeRoots.length > 0
+      ? { projectPrettierRevokeRoots: options.projectPrettierRevokeRoots }
+      : {}),
+    ...(options.executableEvaluatedConfig === undefined
+      ? {}
+      : { executableEvaluatedConfig: options.executableEvaluatedConfig }),
     files: Object.freeze(files),
   });
 }

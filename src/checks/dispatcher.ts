@@ -239,6 +239,9 @@ function snapshotOverride(
     configurationOrigins: snapshotConfigurationOrigins(
       override.configurationOrigins,
     ),
+    ...(override.generated === undefined
+      ? {}
+      : { generated: override.generated }),
   });
 }
 
@@ -489,6 +492,9 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
     signal: context.signal,
     policyForFile: context.policyForFile,
     filePolicyConfig: snapshotConfig(context.config),
+    ...(context.projectPrettierTrust === true
+      ? { projectPrettierTrust: true }
+      : {}),
   });
 }
 

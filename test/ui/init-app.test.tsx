@@ -11,6 +11,7 @@ import {
 } from "../../src/config/schema.js";
 import type {
   InitFileChange,
+  InitFormattingChoice,
   InitHookChoice,
   InitProposal,
 } from "../../src/init/types.js";
@@ -561,7 +562,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -651,7 +652,7 @@ describe("InitApp", () => {
     );
     const view = render(elementFor(DEFAULT_TEST_ROWS));
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await settleInput();
@@ -894,7 +895,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -920,7 +921,7 @@ describe("InitApp", () => {
     await waitForAssertion(() =>
       expect(reference.lastFrame()).toContain("↓ MORE BELOW"),
     );
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       reference.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -1047,7 +1048,7 @@ describe("InitApp", () => {
       />,
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await new Promise((resolve) => setImmediate(resolve));
@@ -1361,5 +1362,142 @@ describe("runInitPrompt mouse fallback", () => {
       vi.doUnmock("ink");
       vi.resetModules();
     }
+  });
+});
+
+describe("formatting engine choice", () => {
+  it("shows the four formatting choices and cycles them", async () => {
+    const detected: InitProposal = {
+      ...proposal,
+      formattingDetection: [
+        {
+          projectRoot: ".",
+          version: "3.9.6",
+          status: "available",
+          executableConfig: false,
+          configPaths: [".prettierrc.json"],
+        },
+      ],
+    };
+    const view = render(
+      <InitApp
+        proposal={detected}
+        proposalForSelection={() => detected}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("Detected Prettier 3.9.6"),
+    );
+    expect(view.lastFrame()).toContain("Copy my settings");
+    expect(view.lastFrame()).toContain("Use my project's Prettier");
+    expect(view.lastFrame()).toContain("Use Zedbee defaults");
+    expect(view.lastFrame()).toContain("Do not check formatting");
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("➜ Formatting"),
+    );
+    view.stdin.write("\u001b[C");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("[✽] Do not check formatting"),
+    );
+  });
+
+  it("offers only secondary choices when no setup was detected", async () => {
+    const view = render(
+      <InitApp
+        proposal={{ ...proposal, formattingDetection: [] }}
+        proposalForSelection={() => proposal}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("No project Prettier setup detected"),
+    );
+    expect(view.lastFrame()).toContain("Use Zedbee defaults");
+    expect(view.lastFrame()).toContain("Do not check formatting");
+    expect(view.lastFrame()).not.toContain("Copy my settings");
+    expect(view.lastFrame()).not.toContain("Use my project's Prettier");
+  });
+
+  it("requires separate executable-code trust confirmation before review", async () => {
+    const detected: InitProposal = {
+      ...proposal,
+      formattingDetection: [
+        {
+          projectRoot: ".",
+          version: "3.9.6",
+          status: "available",
+          executableConfig: false,
+          configPaths: [".prettierrc.json"],
+        },
+      ],
+    };
+    const selected = (
+      formatting: InitFormattingChoice | undefined,
+      projectTrust: boolean,
+    ): InitProposal => ({
+      ...detected,
+      ...(formatting === undefined ? {} : { formatting }),
+      projectPrettierTrustConfirmed: projectTrust,
+    });
+    const view = render(
+      <InitApp
+        proposal={detected}
+        proposalForSelection={(_profile, _checks, _osv, _hook, formatting, projectTrust) =>
+          selected(formatting, projectTrust === true)
+        }
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    for (let index = 0; index < CHECK_IDS.length + 3; index += 1) {
+      view.stdin.write("\u001b[B");
+    }
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("➜ Formatting"),
+    );
+    view.stdin.write("\u001b[D");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("[✽] Use my project's Prettier"),
+    );
+    expect(view.lastFrame()).toContain("executable code");
+    expect(view.lastFrame()).toContain(
+      "Press T to confirm executable-code trust before review.",
+    );
+
+    view.stdin.write("\r");
+    await settleInput();
+    expect(view.lastFrame()).not.toContain("APPLY CHANGES");
+
+    view.stdin.write("t");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "[✓] Executable-code trust confirmed",
+      ),
+    );
+
+    view.stdin.write("\r");
+    await waitForAssertion(() => {
+      expect(view.lastFrame()).toContain("REVIEW CHANGES");
+      expect(view.lastFrame()).toContain("APPLY CHANGES");
+    });
   });
 });

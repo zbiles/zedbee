@@ -67,6 +67,8 @@ export interface RunScanOptions {
   onEvent?: (event: ScanEvent) => void;
   dependencies?: RunScanDependencies;
   cache?: ObservationCache | false;
+  /** Invocation-only consent for project Prettier execution. */
+  projectPrettierTrust?: boolean;
 }
 
 const DEFAULT_DEPENDENCIES: RunScanDependencies = {
