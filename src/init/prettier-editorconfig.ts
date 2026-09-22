@@ -25,6 +25,42 @@ function scopedPattern(directory: string, pattern: string): string {
   return directory === "." ? relative : posix.join(directory, relative);
 }
 
+function simpleExtensions(pattern: string): ReadonlySet<string> | undefined {
+  const match = /^\*\.([A-Za-z0-9_-]+|\{[A-Za-z0-9_,-]+\})$/u.exec(pattern);
+  if (match?.[1] === undefined) return undefined;
+  const body = match[1].replace(/^\{|\}$/gu, "");
+  return new Set(body.split(","));
+}
+
+function scopedPatternsMayOverlap(left: string, right: string): boolean {
+  const leftExtensions = simpleExtensions(left);
+  const rightExtensions = simpleExtensions(right);
+  if (leftExtensions === undefined || rightExtensions === undefined) return true;
+  return [...leftExtensions].some((extension) =>
+    rightExtensions.has(extension),
+  );
+}
+
+function indentationDependsAcrossScopes(
+  universal: EditorProperties,
+  previous: EditorProperties,
+  current: EditorProperties,
+): boolean {
+  const layered = {
+    ...editorConfigOptions({ ...universal, ...previous }),
+    ...editorConfigOptions({ ...universal, ...current }),
+  };
+  const combined = editorConfigOptions({
+    ...universal,
+    ...previous,
+    ...current,
+  });
+  return (
+    layered.tabWidth !== combined.tabWidth ||
+    layered.useTabs !== combined.useTabs
+  );
+}
+
 export interface EditorConfigImport {
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
@@ -63,7 +99,7 @@ export async function editorConfigImport(
   const overrides: ImportedFormattingOverride[] = [];
   const universal: EditorProperties = {};
   const scopedProperties = new Map<string, EditorProperties>();
-  const scopedIndentationSections = new Set<string>();
+  const scopedIndentationPatterns = new Map<string, string>();
   let reportedScopedIndentationOverlap = false;
   let scoped = false;
   const scope = projectRoot === "." ? "**/*" : `${projectRoot}/**`;
@@ -90,7 +126,19 @@ export async function editorConfigImport(
         !all &&
         changesIndentation &&
         !reportedScopedIndentationOverlap &&
-        [...scopedIndentationSections].some((key) => key !== sectionKey)
+        [...scopedProperties].some(
+          ([key, previous]) =>
+            key !== sectionKey &&
+            scopedPatternsMayOverlap(
+              scopedIndentationPatterns.get(key) ?? "",
+              section.pattern,
+            ) &&
+            indentationDependsAcrossScopes(
+              universal,
+              previous,
+              section.properties,
+            ),
+        )
       ) {
         limitations.push(
           "Potentially overlapping scoped sections use dependent EditorConfig indentation properties; copy mode cannot preserve every overlap exactly.",
@@ -98,7 +146,7 @@ export async function editorConfigImport(
         reportedScopedIndentationOverlap = true;
       }
       if (!all && changesIndentation)
-        scopedIndentationSections.add(sectionKey);
+        scopedIndentationPatterns.set(sectionKey, section.pattern);
       if (
         !changesIndentation
       ) {

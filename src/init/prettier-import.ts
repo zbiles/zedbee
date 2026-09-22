@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import JSON5 from "json5";
 import { parse as parseToml } from "smol-toml";
 import { parse as parseYaml } from "yaml";
+import semver from "semver";
 import {
   DEFAULT_FORMATTING_SETTINGS,
   formattingSettingsSchema,
@@ -26,8 +27,25 @@ const SUPPORTED_OPTION_KEYS = new Set(Object.keys(DEFAULT_FORMATTING_SETTINGS));
 const SUPPORTED_SETTINGS_SCHEMA = formattingSettingsSchema.partial();
 
 /** Prettier configuration precedence; first existing file wins in each project. */
-const CONFIG_PRECEDENCE = [
+const LEGACY_CONFIG_PRECEDENCE = [
   "package.json",
+  ".prettierrc",
+  ".prettierrc.json",
+  ".prettierrc.yaml",
+  ".prettierrc.yml",
+  ".prettierrc.json5",
+  ".prettierrc.js",
+  ".prettierrc.mjs",
+  ".prettierrc.cjs",
+  "prettier.config.js",
+  "prettier.config.mjs",
+  "prettier.config.cjs",
+  ".prettierrc.toml",
+] as const;
+
+const MODERN_CONFIG_PRECEDENCE = [
+  "package.json",
+  "package.yaml",
   ".prettierrc",
   ".prettierrc.json",
   ".prettierrc.yml",
@@ -47,6 +65,18 @@ const CONFIG_PRECEDENCE = [
   "prettier.config.cts",
   ".prettierrc.toml",
 ] as const;
+
+function configPrecedence(version: string | undefined): readonly string[] {
+  if (version === undefined || semver.gte(version, "3.5.0"))
+    return MODERN_CONFIG_PRECEDENCE;
+  if (semver.gte(version, "3.3.0"))
+    return [
+      "package.json",
+      "package.yaml",
+      ...LEGACY_CONFIG_PRECEDENCE.slice(1),
+    ];
+  return LEGACY_CONFIG_PRECEDENCE;
+}
 
 const EXECUTABLE_EXTENSIONS = new Set([
   ".js",
@@ -243,12 +273,18 @@ async function selectedConfigPaths(
     const depth = left.split("/").length - right.split("/").length;
     return depth === 0 ? left.localeCompare(right) : depth;
   })) {
-    for (const name of CONFIG_PRECEDENCE) {
+    for (const name of configPrecedence(discovery.version)) {
       const path = directory === "." ? name : posix.join(directory, name);
-      if (name === "package.json") {
-        if (directory !== discovery.projectRoot) continue;
+      if (name === "package.json" || name === "package.yaml") {
+        if (name === "package.json" && directory !== discovery.projectRoot)
+          continue;
         if (registry.resolve(path)?.targetKind === "file") {
-          const manifest = await readJsonData(registry, path);
+          const manifest =
+            name === "package.json"
+              ? await readJsonData(registry, path)
+              : parseYaml(await readContainedFile(registry, path, {
+                  maxBytes: CONFIG_MAX_BYTES,
+                }));
           if (isRecord(manifest) && manifest.prettier !== undefined) {
             selected.push(path);
             break;
@@ -284,8 +320,12 @@ async function loadProjectConfig(
     return { settings: {}, overrides: [], limitations, configPath, configRoot };
   }
   let value: unknown;
-  if (posix.basename(configPath) === "package.json") {
-    const manifest = await readJsonData(registry, configPath);
+  if (["package.json", "package.yaml"].includes(posix.basename(configPath))) {
+    const manifest = posix.basename(configPath) === "package.json"
+      ? await readJsonData(registry, configPath)
+      : parseYaml(await readContainedFile(registry, configPath, {
+          maxBytes: CONFIG_MAX_BYTES,
+        }));
     value = isRecord(manifest) ? manifest.prettier : undefined;
     if (typeof value === "string") {
       limitations.push(

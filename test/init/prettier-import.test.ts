@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { cp, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createFilePolicyResolver } from "../../src/config/file-policy.js";
@@ -150,6 +150,55 @@ describe("previewPrettierSettingsImport", () => {
     expect(preview.executableConfigs).toEqual([
       { projectRoot: ".", configPath: "prettier.config.js" },
     ]);
+  });
+
+  it("uses Prettier 3.0 configuration precedence", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "3.0.3" },
+    });
+    await mkdir(join(fixture.root, "node_modules"), { recursive: true });
+    await cp(
+      join(process.cwd(), "node_modules", "prettier-3-0-3"),
+      join(fixture.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    await fixture.write(".prettierrc.cjs", "module.exports = { semi: false };\n");
+    await fixture.write(
+      "prettier.config.js",
+      "export default { singleQuote: true };\n",
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.executableConfigs).toEqual([
+      { projectRoot: ".", configPath: ".prettierrc.cjs" },
+    ]);
+  });
+
+  it("selects package.yaml before executable configs when supported", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "3.9.6" },
+    });
+    await mkdir(join(fixture.root, "node_modules"), { recursive: true });
+    await cp(
+      join(process.cwd(), "node_modules", "prettier"),
+      join(fixture.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    await fixture.write("package.yaml", "prettier:\n  semi: false\n");
+    await fixture.write(
+      "prettier.config.js",
+      "export default { singleQuote: true };\n",
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toMatchObject({ semi: false });
+    expect(preview.executableConfigs).toEqual([]);
   });
 
   it("treats malformed configuration as a limitation, not a failure", async () => {
@@ -548,6 +597,31 @@ describe("EditorConfig copy fidelity", () => {
     expect(imported.limitations).toContainEqual(
       expect.stringContaining("overlapping scoped sections"),
     );
+  });
+
+  it("does not report independent disjoint indentation scopes", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      [
+        "root = true",
+        "[*.ts]",
+        "indent_style = space",
+        "indent_size = 2",
+        "[*.js]",
+        "indent_style = space",
+        "indent_size = 4",
+        "",
+      ].join("\n"),
+    );
+
+    const imported = await previewPrettierSettingsImport(f.root);
+
+    expect(imported.limitations).toEqual([]);
+    expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
+    expect((await copiedSettings(f.root, "value.js")).tabWidth).toBe(4);
   });
 });
 

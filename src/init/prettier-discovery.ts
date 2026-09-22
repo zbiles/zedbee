@@ -1,10 +1,12 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import semver from "semver";
+import { parse as parseYaml } from "yaml";
 import { compareCodeUnits } from "../core/compare.js";
 import {
   canonicalizeSnapshotRoot,
   isContainedPath,
+  readContainedFile,
   readJsonData,
 } from "../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
@@ -17,6 +19,7 @@ const PRETTIER_PACKAGE_NAME = "prettier";
 const NODE_MODULES = "node_modules";
 const MANIFEST_MAX_BYTES = 1024 * 1024;
 const PRETTIER_MANIFEST_MAX_BYTES = 1024 * 1024;
+const CONFIG_MAX_BYTES = 1024 * 1024;
 
 export interface ProjectPrettierDiscovery {
   /** Normalized repository-relative project root; "." for the repository root. */
@@ -231,6 +234,26 @@ async function configPathsForProject(
         names.has(posix.basename(entry.repositoryPath)),
     )
     .map((entry) => entry.repositoryPath);
+  for (const entry of registry.entries()) {
+    if (
+      entry.targetKind !== "file" ||
+      posix.basename(entry.repositoryPath) !== "package.yaml" ||
+      !entry.repositoryPath.startsWith(prefix) ||
+      nestedRoots.some((root) => entry.repositoryPath.startsWith(root))
+    )
+      continue;
+    try {
+      const manifest = parseYaml(
+        await readContainedFile(registry, entry.repositoryPath, {
+          maxBytes: CONFIG_MAX_BYTES,
+        }),
+      ) as unknown;
+      if (manifestPrettierConfig(manifest) !== undefined)
+        paths.push(entry.repositoryPath);
+    } catch {
+      // Native Prettier skips package manifests it cannot parse while searching.
+    }
+  }
   return Object.freeze(paths.sort(compareCodeUnits));
 }
 
