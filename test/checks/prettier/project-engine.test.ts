@@ -277,6 +277,48 @@ describe("project Prettier engine", () => {
     ).resolves.toEqual({ kind: "formatted", text: "FIXTURE\n" });
   });
 
+  it("gives a nested-project plugin the mirrored source filepath", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      "web/package.json",
+      '{"name":"web","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await fixture.write(
+      "web/.prettierrc.json",
+      '{"plugins":["./plugin.mjs"]}',
+    );
+    await fixture.write(
+      "web/plugin.mjs",
+      [
+        'import { existsSync } from "node:fs";',
+        'import { dirname, join } from "node:path";',
+        'export const languages=[{name:"Fixture",parsers:["fixture"],extensions:[".fixturetxt"]}];',
+        'export const parsers={fixture:{parse:()=>({}),astFormat:"fixture",locStart:()=>0,locEnd:()=>0}};',
+        'export const printers={fixture:{print:(_path,options)=>existsSync(join(dirname(options.filepath),"sibling.txt"))?"FOUND\\n":"MISSING\\n"}};',
+      ].join("\n"),
+    );
+    await fixture.write("web/sibling.txt", "present\n");
+    await fixture.write("web/value.fixturetxt", "anything");
+    await fixture.stage(
+      "web/package.json",
+      "web/.prettierrc.json",
+      "web/plugin.mjs",
+      "web/sibling.txt",
+      "web/value.fixturetxt",
+    );
+
+    const session = await fixture.open({
+      source: "index",
+      trust: true,
+      projectRoot: "web",
+    });
+
+    await expect(
+      session.format("web/value.fixturetxt", "anything"),
+    ).resolves.toEqual({ kind: "formatted", text: "FOUND\n" });
+  });
+
   it("follows a pnpm-style installation link outside the repository", async () => {
     const fixture = await createProjectPrettierFixture();
     onTestFinished(() => fixture.dispose());

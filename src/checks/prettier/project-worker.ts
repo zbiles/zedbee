@@ -268,7 +268,7 @@ async function formatFile(
   if (classified.kind === "ignored") return classified;
   const text = await current.prettier.format(request.source, {
     ...classified.options,
-    filepath: request.file,
+    filepath: resolve(current.treeRoot, request.file),
   });
   return { kind: "formatted", text };
 }
