@@ -458,13 +458,8 @@ async function evaluateExecutableProjectConfig(
 function mergeEvaluatedExecutableImport(
   base: InitFormattingImport,
   evaluated: EvaluatedExecutableImport,
-  projectRoot: string,
 ): EvaluatedExecutableImport {
-  const configRoot = ["package.json", "package.yaml"].some((name) =>
-    evaluated.evaluatedConfig.path.endsWith(name),
-  )
-    ? projectRoot
-    : posix.dirname(evaluated.evaluatedConfig.path) || ".";
+  const configRoot = posix.dirname(evaluated.evaluatedConfig.path) || ".";
   const evaluatedPath = evaluated.evaluatedConfig.path;
   const evaluatedPackage = ["package.json", "package.yaml"].find((name) =>
     evaluatedPath.endsWith(name),
@@ -576,7 +571,6 @@ async function evaluateExecutableProjectConfigs(
     const merged = mergeEvaluatedExecutableImport(
       imported,
       evaluated,
-      projectRoot,
     );
     imported = merged.imported;
     evaluatedConfigs.push(merged.evaluatedConfig);

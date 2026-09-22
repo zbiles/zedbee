@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { parse as parseJsonc } from "jsonc-parser";
 import {
   executeInitCommand,
   type InitCommandDependencies,
@@ -1351,6 +1352,95 @@ describe("executeInitCommand", () => {
     );
     expect(config).toContain('"printWidth": 120');
     expect(config).toContain('"semi": false');
+  });
+
+  it("keeps a nested package.yaml shared configuration in its directory scope", async () => {
+    const repository = await createGitRepository(
+      "zedbee-init-nested-package-yaml-",
+    );
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0","@org/prettier-config":"^1.0.0"}}',
+    );
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      "src/package.yaml",
+      "prettier: '@org/prettier-config'\n",
+    );
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "src/package.yaml",
+    ]);
+    await mkdir(
+      join(repository.root, "node_modules", "@org", "prettier-config"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        repository.root,
+        "node_modules",
+        "@org",
+        "prettier-config",
+        "package.json",
+      ),
+      '{"name":"@org/prettier-config","version":"1.0.0","type":"module","main":"index.mjs"}',
+    );
+    await writeFile(
+      join(
+        repository.root,
+        "node_modules",
+        "@org",
+        "prettier-config",
+        "index.mjs",
+      ),
+      "export default { semi: false, tabWidth: 3 };\n",
+    );
+    await cp(
+      join(packageRoot(), "node_modules", "prettier"),
+      join(repository.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        trustProjectPrettier: true,
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode, io.stderr.join("")).toBe(0);
+    const generated = parseJsonc(
+      await readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8"),
+    ) as {
+      checks: { formatting: { settings: Record<string, unknown> } };
+      overrides: readonly {
+        files: readonly string[];
+        checks: { formatting: { settings: Record<string, unknown> } };
+      }[];
+    };
+    expect(generated.checks.formatting.settings).toMatchObject({
+      singleQuote: true,
+    });
+    const nested = generated.overrides.find((entry) =>
+      entry.files.includes("src/**"),
+    );
+    expect(nested?.checks.formatting.settings).toMatchObject({
+      semi: false,
+      tabWidth: 3,
+    });
   });
 
   it("refuses an apply whose evaluated configuration changed after the preview", async () => {
