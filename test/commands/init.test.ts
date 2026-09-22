@@ -953,6 +953,10 @@ describe("executeInitCommand", () => {
       "prettier.config.mjs",
       "export default { singleQuote: true, printWidth: 120 };\n",
     );
+    await repository.write(
+      ".editorconfig",
+      "root = true\n[*]\nindent_size = 4\n",
+    );
     const io = terminal(false);
 
     const exitCode = await executeInitCommand(
@@ -978,6 +982,7 @@ describe("executeInitCommand", () => {
     );
     expect(config).toContain('"printWidth": 120');
     expect(config).toContain('"singleQuote": true');
+    expect(config).toContain('"tabWidth": 4');
   });
 
   it("keeps nested data configuration when evaluating a root executable configuration", async () => {
