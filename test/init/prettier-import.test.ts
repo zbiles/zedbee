@@ -96,7 +96,7 @@ describe("previewPrettierSettingsImport", () => {
     expect(preview.overrides).toEqual([
       {
         files: ["**/*.md"],
-        excludeFiles: ["generated/*.md"],
+        excludeFiles: [],
         settings: { printWidth: 80 },
       },
     ]);
@@ -168,7 +168,10 @@ describe("previewPrettierSettingsImport", () => {
       name: "app",
       devDependencies: { prettier: "3.9.6" },
     });
-    await fixture.write(".prettierrc.cjs", "module.exports = { semi: false };\n");
+    await fixture.write(
+      ".prettierrc.cjs",
+      "module.exports = { semi: false };\n",
+    );
     await fixture.write(
       "prettier.config.js",
       "export default { singleQuote: true };\n",
@@ -193,7 +196,10 @@ describe("previewPrettierSettingsImport", () => {
       join(fixture.root, "node_modules", "prettier"),
       { recursive: true },
     );
-    await fixture.write(".prettierrc.cjs", "module.exports = { semi: false };\n");
+    await fixture.write(
+      ".prettierrc.cjs",
+      "module.exports = { semi: false };\n",
+    );
     await fixture.write(
       "prettier.config.js",
       "export default { singleQuote: true };\n",
@@ -291,10 +297,7 @@ describe("previewPrettierSettingsImport", () => {
       join(fixture.root, "node_modules", "prettier"),
       { recursive: true },
     );
-    await fixture.write(
-      "package.yaml",
-      "prettier: '@org/prettier-config'\n",
-    );
+    await fixture.write("package.yaml", "prettier: '@org/prettier-config'\n");
 
     const preview = await previewPrettierSettingsImport(fixture.root);
 
@@ -548,6 +551,7 @@ async function copiedSettings(root: string, file: string) {
     checks: { formatting: { settings: preview.settings } },
     overrides: preview.overrides.map((o) => ({
       files: [...o.files],
+      excludeFiles: [...(o.excludeFiles ?? [])],
       checks: { formatting: { settings: o.settings } },
     })),
   });
@@ -632,9 +636,11 @@ describe("EditorConfig copy fidelity", () => {
       ].join("\n"),
     );
     expect(
-      (await prettier.resolveConfig(join(f.root, "value.ts"), {
-        editorconfig: true,
-      }))?.tabWidth,
+      (
+        await prettier.resolveConfig(join(f.root, "value.ts"), {
+          editorconfig: true,
+        })
+      )?.tabWidth,
     ).toBe(2);
     expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
   });
@@ -701,9 +707,11 @@ describe("EditorConfig copy fidelity", () => {
       ].join("\n"),
     );
     expect(
-      (await prettier.resolveConfig(join(f.root, "src/value.ts"), {
-        editorconfig: true,
-      }))?.tabWidth,
+      (
+        await prettier.resolveConfig(join(f.root, "src/value.ts"), {
+          editorconfig: true,
+        })
+      )?.tabWidth,
     ).toBe(2);
 
     const imported = await previewPrettierSettingsImport(f.root);
@@ -834,3 +842,116 @@ it("does not broaden an override with malformed exclusions", async () => {
   expect(preview.overrides).toEqual([]);
   expect(preview.limitations.join("\n")).toMatch(/excludeFiles/u);
 });
+
+describe("native override copy matching", () => {
+  it.each([
+    { files: "**/*.ts", excludeFiles: "a.ts" },
+    { files: "*.ts", excludeFiles: "src/*.ts" },
+    { files: "*.ts", excludeFiles: "**/a.ts" },
+    { files: "*.ts", excludeFiles: "./a.ts" },
+    { files: "*.ts", excludeFiles: "./**/a.ts" },
+    { files: "*.ts", excludeFiles: "././a.ts" },
+    { files: "*.ts", excludeFiles: "././**/a.ts" },
+    { files: "*.ts", excludeFiles: "**/./a.ts" },
+    { files: "*.ts", excludeFiles: "./**/./a.ts" },
+    { files: ["*.ts", "src/**/*.ts"], excludeFiles: "./a.ts" },
+    { files: ["*.ts", "src/**/*.ts"], excludeFiles: "./**/a.ts" },
+    { files: ["*.ts", "src/**/*.ts"], excludeFiles: "./**/./a.ts" },
+    { files: "**/./*.ts", excludeFiles: [] },
+    { files: "**/*.ts", excludeFiles: "./**/./a.ts" },
+    { files: "*.ts", excludeFiles: "a.ts/**" },
+    { files: ["!*.ts", "src/*.ts"], excludeFiles: "a.js" },
+    { files: ["*.js", "src/**/*.ts"], excludeFiles: "a.ts" },
+    { files: "!*.ts", excludeFiles: [] },
+    { files: "!!*.ts", excludeFiles: [] },
+    { files: "!(*.ts)", excludeFiles: [] },
+    { files: "!src/*.ts", excludeFiles: "a.js" },
+  ])("preserves native include groups for %j", async (patterns) => {
+    for (const scope of ["", "nested/"]) {
+      const fixture = await createInspectionFixture();
+      await fixture.writeJson("package.json", { name: "app" });
+      await fixture.writeJson(`${scope}.prettierrc.json`, {
+        overrides: [{ ...patterns, options: { singleQuote: true } }],
+      });
+      for (const file of [
+        "a.ts",
+        "a.js",
+        "src/a.ts",
+        "src/a.js",
+        "src/b.ts",
+        "deep/a.js",
+      ]) {
+        const path = `${scope}${file}`;
+        const copied = await copiedSettings(fixture.root, path);
+        for (const moduleName of ["prettier", "prettier-3-0-3"]) {
+          const native = (await import(moduleName)) as typeof prettier;
+          const expected = await native.resolveConfig(join(fixture.root, path));
+          expect(copied.singleQuote, `${moduleName}: ${path}`).toBe(
+            expected?.singleQuote ?? false,
+          );
+        }
+      }
+      if (scope)
+        expect(
+          (await copiedSettings(fixture.root, "outside.js")).singleQuote,
+        ).toBe(false);
+    }
+  });
+
+  it("reports nonrepresentable negated exclusions instead of silently changing them", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.writeJson(".prettierrc.json", {
+      overrides: [
+        {
+          files: "**/*.ts",
+          excludeFiles: "!a.ts",
+          options: { singleQuote: true },
+        },
+      ],
+    });
+    const preview = await previewPrettierSettingsImport(fixture.root);
+    expect(preview.limitations.join("\n")).toMatch(/negated.*excludeFiles/i);
+  });
+});
+
+it("discloses basename exclusions with slash-containing alternatives", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "app" });
+  await fixture.writeJson(".prettierrc.json", {
+    overrides: [
+      {
+        files: "*.ts",
+        excludeFiles: "{src/,}a.ts",
+        options: { singleQuote: true },
+      },
+    ],
+  });
+  const preview = await previewPrettierSettingsImport(fixture.root);
+  expect(preview.limitations.join("\n")).toMatch(/basename.*excludeFiles/i);
+});
+
+it.each(["prettier", "prettier-3-0-3"])(
+  "discloses escaped config patterns intersecting EditorConfig scopes for %s",
+  async (moduleName) => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "app" });
+    await fixture.writeJson(".prettierrc.json", {
+      overrides: [{ files: "some\\ dir/*.ts", options: { singleQuote: true } }],
+    });
+    await fixture.write(
+      "some dir/.editorconfig",
+      "[*]\nmax_line_length = 120\n",
+    );
+    const native = (await import(moduleName)) as typeof prettier;
+    expect(
+      await native.resolveConfig(join(fixture.root, "some dir/a.ts"), {
+        editorconfig: true,
+      }),
+    ).toMatchObject({ singleQuote: true, printWidth: 120 });
+    const preview = await previewPrettierSettingsImport(fixture.root);
+    expect(preview.limitations.join("\n")).toMatch(
+      /cannot be copied into EditorConfig scope some dir exactly/,
+    );
+  },
+);
