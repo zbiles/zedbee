@@ -133,6 +133,25 @@ describe("previewPrettierSettingsImport", () => {
     expect(await markerExists(fixture.root, "MARKER_IMPORT")).toBe(false);
   });
 
+  it("uses Prettier's executable configuration precedence", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.write(".prettierrc.cjs", "module.exports = { semi: false };\n");
+    await fixture.write(
+      "prettier.config.js",
+      "export default { singleQuote: true };\n",
+    );
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.executableConfigs).toEqual([
+      { projectRoot: ".", configPath: "prettier.config.js" },
+    ]);
+  });
+
   it("treats malformed configuration as a limitation, not a failure", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });
@@ -456,6 +475,51 @@ describe("EditorConfig copy fidelity", () => {
       }))?.tabWidth,
     ).toBe(2);
     expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
+  });
+
+  it("lets a later universal section replace earlier scoped indentation", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      [
+        "root = true",
+        "[*.ts]",
+        "indent_style = space",
+        "indent_size = 2",
+        "[*]",
+        "indent_style = tab",
+        "tab_width = 8",
+        "[*.ts]",
+        "tab_width = 4",
+        "",
+      ].join("\n"),
+    );
+    const native = await prettier.resolveConfig(join(f.root, "value.ts"), {
+      editorconfig: true,
+    });
+    expect(native?.useTabs).toBe(true);
+    expect(native?.tabWidth).toBe(8);
+    const copied = await copiedSettings(f.root, "value.ts");
+    expect(copied.useTabs).toBe(true);
+    expect(copied.tabWidth).toBe(8);
+  });
+
+  it("inherits dependent indentation across ancestor EditorConfig files", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      "root = true\n[*.ts]\nindent_style = space\nindent_size = 2\n",
+    );
+    await f.write("src/.editorconfig", "[*.ts]\ntab_width = 8\n");
+    const native = await prettier.resolveConfig(join(f.root, "src/value.ts"), {
+      editorconfig: true,
+    });
+    expect(native?.tabWidth).toBe(2);
+    expect((await copiedSettings(f.root, "src/value.ts")).tabWidth).toBe(2);
   });
 
   it("reports dependent indentation that crosses overlapping scoped sections", async () => {

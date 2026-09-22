@@ -70,7 +70,9 @@ export async function editorConfigImport(
   for (const { directory, config } of [...parsed].reverse()) {
     for (const section of config.sections) {
       const all = section.pattern === "*";
-      const sectionKey = `${directory}\0${section.pattern}`;
+      const sectionKey = section.pattern.includes("/")
+        ? `${directory}\0${section.pattern}`
+        : section.pattern;
       const previousScoped = scopedProperties.get(sectionKey) ?? {};
       const properties = {
         ...universal,
@@ -130,7 +132,11 @@ export async function editorConfigImport(
         }
       }
       if (Object.keys(converted).length === 0) continue;
-      if (all) Object.assign(universal, section.properties);
+      if (all) {
+        for (const properties of scopedProperties.values())
+          for (const key of changed) delete properties[key];
+        Object.assign(universal, section.properties);
+      }
       if (all && !scoped) Object.assign(settings, converted);
       else {
         scoped = true;

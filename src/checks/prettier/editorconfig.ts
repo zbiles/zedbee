@@ -14,12 +14,18 @@ export function parseEditorConfig(contents: string): {
   let root = false;
   let current: EditorSection | undefined;
   const sections: EditorSection[] = [];
+  const sectionsByPattern = new Map<string, EditorSection>();
   for (const raw of contents.split(/\r\n|\n|\r/u)) {
     const line = raw.trim();
     if (!line || /^[#;]/u.test(line)) continue;
     if (line.startsWith("[") && line.endsWith("]")) {
-      current = { pattern: line.slice(1, -1), properties: {} };
-      sections.push(current);
+      const pattern = line.slice(1, -1);
+      current = sectionsByPattern.get(pattern);
+      if (current === undefined) {
+        current = { pattern, properties: {} };
+        sectionsByPattern.set(pattern, current);
+        sections.push(current);
+      }
       continue;
     }
     const index = line.indexOf("=");
