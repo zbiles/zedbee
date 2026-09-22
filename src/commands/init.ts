@@ -7,6 +7,7 @@ import {
   type DetectedHookIntegration,
 } from "../hooks/detect.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
+import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { createInitProposal } from "../init/recommend.js";
@@ -27,6 +28,7 @@ import type {
 import { applyInitProposal } from "../init/write-config.js";
 import { discoverProjectPrettier } from "../init/prettier-discovery.js";
 import { previewPrettierSettingsImport } from "../init/prettier-import.js";
+import { editorConfigImport } from "../init/prettier-editorconfig.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import {
   readProjectPrettierTrust,
@@ -437,12 +439,35 @@ async function evaluateExecutableProjectConfig(
       "configPath" in target
         ? posix.dirname(target.configPath) || "."
         : projectRoot;
+    const editorConfig = await editorConfigImport(
+      await captureSnapshotRegistry(await realpath(repositoryRoot)),
+      configRoot,
+    );
+    const overrides = normalizeEvaluatedOverrides(imported, configRoot);
+    const editorOverrides = editorConfig.overrides.map((override) =>
+      Object.freeze({
+        ...override,
+        settings: Object.freeze(
+          Object.fromEntries(
+            Object.entries(override.settings).filter(
+              ([key]) => !(key in imported.settings),
+            ),
+          ),
+        ) as Partial<ImportableNativeConfig["settings"]>,
+      }),
+    );
     const boundBytes = await readFile(join(repositoryRoot, boundPath), "utf8");
     return Object.freeze({
       imported: Object.freeze({
-        settings: imported.settings,
-        overrides: normalizeEvaluatedOverrides(imported, configRoot),
-        limitations: Object.freeze(limitations),
+        settings: Object.freeze({
+          ...editorConfig.settings,
+          ...imported.settings,
+        }),
+        overrides: Object.freeze([...editorOverrides, ...overrides]),
+        limitations: Object.freeze([
+          ...editorConfig.limitations,
+          ...limitations,
+        ]),
       }),
       evaluatedConfig: Object.freeze({
         path: boundPath,
