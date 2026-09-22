@@ -279,15 +279,10 @@ async function resolveFormattingSetup(
     discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
     discoveries[0]?.projectRoot ??
     ".";
+  const preview = await previewPrettierSettingsImport(repositoryRoot);
   const sharedConfigs = new Map(
-    await Promise.all(
-      discoveries.map(
-        async (entry) =>
-          [
-            entry.projectRoot,
-            await readSharedConfigSpecifier(repositoryRoot, entry.projectRoot),
-          ] as const,
-      ),
+    preview.sharedConfigs.map(
+      (entry) => [entry.projectRoot, entry.specifier] as const,
     ),
   );
   const detection = Object.freeze(
@@ -303,7 +298,6 @@ async function resolveFormattingSetup(
       });
     }),
   );
-  const preview = await previewPrettierSettingsImport(repositoryRoot);
   const limitations = [...preview.limitations];
   const executableTargets: ExecutableConfigTarget[] = [
     ...preview.executableConfigs.map(({ projectRoot, configPath }) => ({
@@ -311,14 +305,11 @@ async function resolveFormattingSetup(
       target: { configPath },
     })),
   ];
-  for (const [root, sharedConfig] of sharedConfigs) {
-    if (sharedConfig !== undefined) {
-      executableTargets.push({
-        projectRoot: root,
-        target: { sharedConfig },
-      });
-    }
-  }
+  for (const { projectRoot, configPath, specifier } of preview.sharedConfigs)
+    executableTargets.push({
+      projectRoot,
+      target: { sharedConfig: specifier, configPath },
+    });
   return Object.freeze({
     imported: Object.freeze({
       settings: preview.settings,
@@ -334,30 +325,6 @@ async function resolveFormattingSetup(
     storedTrustRoots: Object.freeze(storedTrustRoots),
     executableTargets: Object.freeze(executableTargets),
   });
-}
-
-/** Data-only read of a project's package.json#prettier shared-config string. */
-async function readSharedConfigSpecifier(
-  repositoryRoot: string,
-  projectRoot: string,
-): Promise<string | undefined> {
-  try {
-    const manifestPath = join(
-      repositoryRoot,
-      projectRoot === "." ? "" : projectRoot,
-      "package.json",
-    );
-    const metadata = await lstat(manifestPath);
-    if (!metadata.isFile() || metadata.size > 1024n * 1024n) return undefined;
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
-      prettier?: unknown;
-    };
-    return typeof manifest.prettier === "string"
-      ? manifest.prettier
-      : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 class ProjectPrettierTrustRequiredError extends Error {
@@ -416,7 +383,9 @@ interface EvaluatedExecutableImport {
 async function evaluateExecutableProjectConfig(
   repositoryRoot: string,
   projectRoot: string,
-  target: { readonly configPath: string } | { readonly sharedConfig: string },
+  target:
+    | { readonly configPath: string }
+    | { readonly sharedConfig: string; readonly configPath: string },
   signal: AbortSignal,
 ): Promise<EvaluatedExecutableImport> {
   const permit = await requireProjectPrettierTrust(
@@ -439,20 +408,12 @@ async function evaluateExecutableProjectConfig(
   });
   try {
     const imported =
-      "configPath" in target
-        ? await session.readConfigForImport(target.configPath)
-        : await session.readSharedConfigForImport(target.sharedConfig);
+      "sharedConfig" in target
+        ? await session.readSharedConfigForImport(target.sharedConfig)
+        : await session.readConfigForImport(target.configPath);
     const limitations = [...imported.limitations];
-    const boundPath =
-      "configPath" in target
-        ? target.configPath
-        : projectRoot === "."
-          ? "package.json"
-          : `${projectRoot}/package.json`;
-    const configRoot =
-      "configPath" in target
-        ? posix.dirname(target.configPath) || "."
-        : projectRoot;
+    const boundPath = target.configPath;
+    const configRoot = posix.dirname(boundPath) || ".";
     const editorConfig = await editorConfigImport(
       await captureSnapshotRegistry(await realpath(repositoryRoot)),
       configRoot,
@@ -499,12 +460,17 @@ function mergeEvaluatedExecutableImport(
   evaluated: EvaluatedExecutableImport,
   projectRoot: string,
 ): EvaluatedExecutableImport {
-  const configRoot = evaluated.evaluatedConfig.path.endsWith("package.json")
+  const configRoot = ["package.json", "package.yaml"].some((name) =>
+    evaluated.evaluatedConfig.path.endsWith(name),
+  )
     ? projectRoot
     : posix.dirname(evaluated.evaluatedConfig.path) || ".";
   const evaluatedPath = evaluated.evaluatedConfig.path;
-  const evaluatedLimitation = evaluatedPath.endsWith("package.json")
-    ? `The package.json Prettier field in ${evaluatedPath} references a shared configuration that cannot be copied as inert settings.`
+  const evaluatedPackage = ["package.json", "package.yaml"].find((name) =>
+    evaluatedPath.endsWith(name),
+  );
+  const evaluatedLimitation = evaluatedPackage !== undefined
+    ? `The ${evaluatedPackage} Prettier field in ${evaluatedPath} references a shared configuration that cannot be copied as inert settings.`
     : `The Prettier configuration ${evaluatedPath} is executable; its dynamic values cannot be copied as inert settings.`;
   const limitations = Object.freeze([
     ...base.limitations.filter(
@@ -583,7 +549,8 @@ function mergeEvaluatedExecutableImport(
 interface ExecutableConfigTarget {
   readonly projectRoot: string;
   readonly target:
-    { readonly configPath: string } | { readonly sharedConfig: string };
+    | { readonly configPath: string }
+    | { readonly sharedConfig: string; readonly configPath: string };
 }
 
 interface EvaluatedExecutableImports {

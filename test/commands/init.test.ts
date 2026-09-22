@@ -1284,13 +1284,17 @@ describe("executeInitCommand", () => {
     ).rejects.toThrow();
   });
 
-  it("evaluates a package-exported shared configuration through the installed dependency", async () => {
+  it("evaluates a package.yaml shared configuration through the installed dependency", async () => {
     const repository = await createGitRepository("zedbee-init-shared-eval-");
     await repository.write(
       "package.json",
-      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0","@org/prettier-config":"^1.0.0"},"prettier":"@org/prettier-config"}',
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0","@org/prettier-config":"^1.0.0"}}',
     );
-    await repository.git(["add", "--", "package.json"]);
+    await repository.write(
+      "package.yaml",
+      "prettier: '@org/prettier-config'\n",
+    );
+    await repository.git(["add", "--", "package.json", "package.yaml"]);
     await mkdir(
       join(repository.root, "node_modules", "@org", "prettier-config"),
       {
