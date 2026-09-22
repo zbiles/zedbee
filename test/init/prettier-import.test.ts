@@ -433,6 +433,30 @@ describe("EditorConfig copy fidelity", () => {
     );
     expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
   });
+
+  it("keeps dependent indentation properties across repeated scoped sections", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      [
+        "root = true",
+        "[*.ts]",
+        "indent_style = space",
+        "indent_size = 2",
+        "[*.ts]",
+        "tab_width = 8",
+        "",
+      ].join("\n"),
+    );
+    expect(
+      (await prettier.resolveConfig(join(f.root, "value.ts"), {
+        editorconfig: true,
+      }))?.tabWidth,
+    ).toBe(2);
+    expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
+  });
 });
 
 it("does not replay universal indentation after a scoped indentation override", async () => {

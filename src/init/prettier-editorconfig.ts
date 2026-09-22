@@ -62,12 +62,19 @@ export async function editorConfigImport(
   const settings: Partial<FormattingSettings> = {};
   const overrides: ImportedFormattingOverride[] = [];
   const universal: EditorProperties = {};
+  const scopedProperties = new Map<string, EditorProperties>();
   let scoped = false;
   const scope = projectRoot === "." ? "**/*" : `${projectRoot}/**`;
   for (const { directory, config } of [...parsed].reverse()) {
     for (const section of config.sections) {
       const all = section.pattern === "*";
-      const properties = { ...universal, ...section.properties };
+      const sectionKey = `${directory}\0${section.pattern}`;
+      const previousScoped = scopedProperties.get(sectionKey) ?? {};
+      const properties = {
+        ...universal,
+        ...previousScoped,
+        ...section.properties,
+      };
       const converted = editorConfigOptions(properties);
       const changed = new Set(Object.keys(section.properties));
       if (
@@ -109,6 +116,12 @@ export async function editorConfigImport(
       if (all && !scoped) Object.assign(settings, converted);
       else {
         scoped = true;
+        if (!all) {
+          scopedProperties.set(sectionKey, {
+            ...previousScoped,
+            ...section.properties,
+          });
+        }
         const original = scopedPattern(
           directory,
           section.pattern.replace(/^\//u, ""),
