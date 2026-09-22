@@ -7,7 +7,7 @@ import type {
 } from "./adapter.js";
 import type { WorkspaceInspection } from "../inspection/types.js";
 import { compareCodeUnits } from "../core/compare.js";
-import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
@@ -67,14 +67,23 @@ export async function inspectManagedCheck(
     requiresBaseline: checkId !== "formatting",
     targets,
   });
-  if (checkId === "formatting")
+  if (checkId === "formatting") {
+    const policyForFile = createFilePolicyResolver(
+      context.filePolicyConfig ?? context.config,
+      context.changeSet,
+    );
     return always ||
       files.some(
         (file) =>
-          file.status !== "deleted" && isSupportedPrettierPath(file.path),
+          file.status !== "deleted" &&
+          isFormattingCandidate(
+            file.path,
+            policyForFile("formatting", file.path, "target").engine,
+          ),
       )
       ? applicable([ROOT])
       : { applies: false, reason: "No supported changed files" };
+  }
   if (checkId === "secrets")
     return changed.size > 0
       ? applicable([ROOT])

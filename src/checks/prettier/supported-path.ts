@@ -42,3 +42,13 @@ export function isSupportedPrettierPath(file: string): boolean {
 export function isGeneratedLockfile(file: string): boolean {
   return GENERATED_LOCKFILES.has(basename(file.replaceAll("\\", "/")));
 }
+
+/** Project Prettier and its plugins decide parser support inside the worker. */
+export function isFormattingCandidate(
+  file: string,
+  engine: "managed" | "project",
+): boolean {
+  return engine === "project"
+    ? !isGeneratedLockfile(file)
+    : isSupportedPrettierPath(file);
+}

@@ -188,6 +188,46 @@ describe("project Prettier fix parity", () => {
   });
 });
 
+it("preserves preexisting partial staging through a production project-format fix", async () => {
+  const repository = await projectRepository();
+  await repository.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      checks: { formatting: { engine: "project" } },
+    }),
+  );
+  await repository.commitAll("project policy");
+  await repository.write("value.ts", 'export const value="staged";\n');
+  await repository.git(["add", "value.ts"]);
+  await repository.write(
+    "value.ts",
+    'export const value="staged";\nexport const local="unstaged";\n',
+  );
+  const beforeIndex = (await repository.git(["show", ":value.ts"])).stdout;
+  const plan = await buildFixPlan({
+    repositoryRoot: repository.root,
+    selectedChecks: ["formatting"],
+  });
+  expect(plan.publicPlan.files).toContainEqual(
+    expect.objectContaining({ path: "value.ts", hasUnstagedChanges: true }),
+  );
+  expect(plan.candidates).toContainEqual(
+    expect.objectContaining({
+      kind: "format-file",
+      selection: expect.objectContaining({ engine: "project" }),
+    }),
+  );
+  const result = await applyFixPlan(plan);
+  expect(result.changedFiles).toEqual(["value.ts"]);
+  expect(await repository.read("value.ts")).toBe(
+    "export const value = 'staged';\nexport const local = 'unstaged';\n",
+  );
+  expect((await repository.git(["show", ":value.ts"])).stdout).toBe(
+    beforeIndex,
+  );
+});
+
 it.each(["unchanged", "installation", "revoked", "working"] as const)(
   "revalidates the real scan-to-fix plan after %s inputs",
   async (change) => {

@@ -363,38 +363,8 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
     return planPrettierFixes(context, findings);
   },
 
-  inspect: async (context: InspectionContext): Promise<CheckApplicability> => {
-    // Project mode must let the selected formatter and its plugins decide
-    // support, so applicability accepts bounded changed files without the
-    // managed parser allowlist and without executing any configuration.
-    if (!mayUseProjectEngine(context)) {
-      return inspectManagedCheck("formatting", context);
-    }
-    const changed = [...context.changeSet.files.values()].filter(
-      (file) => file.status !== "deleted",
-    );
-    const bounded = changed.filter((file) => !isGeneratedLockfile(file.path));
-    if (context.config.checks.formatting.when === "always") {
-      return {
-        applies: true,
-        executionClass: "lightweight",
-        requiresBaseline: false,
-        targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-      };
-    }
-    if (bounded.length === 0) {
-      return {
-        applies: false,
-        reason: "No supported changed files",
-      };
-    }
-    return {
-      applies: true,
-      executionClass: "lightweight",
-      requiresBaseline: false,
-      targets: [{ id: ".", kind: "repository", relativeRoot: "." }],
-    };
-  },
+  inspect: (context: InspectionContext): Promise<CheckApplicability> =>
+    inspectManagedCheck("formatting", context),
 
   async runLegacy(context) {
     const rootEngine = context.config.checks.formatting.engine;
