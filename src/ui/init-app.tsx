@@ -96,7 +96,8 @@ const SECONDARY_FORMATTING_CHOICES: readonly InitFormattingChoice[] = [
 
 const FORMATTING_LABELS: Readonly<Record<InitFormattingChoice, string>> = {
   copy: "Copy my settings — one-time import into Zedbee's Prettier.",
-  project: "Use my project's Prettier — its version, configuration, and plugins.",
+  project:
+    "Use my project's Prettier — its version, configuration, and plugins.",
   managed: "Use Zedbee defaults — keep the bundled Prettier and settings.",
   off: "Do not check formatting — other Zedbee checks still run.",
 };
@@ -413,20 +414,26 @@ function reviewFocusIndex(proposal: InitProposal): number {
   return formattingFocusIndex(proposal) + 1;
 }
 
-function formattingDetectionLine(
-  detection: readonly {
-    readonly projectRoot: string;
-    readonly version?: string;
-    readonly status: string;
-    readonly executableConfig: boolean;
-  }[] | undefined,
-): string {
-  const first = detection?.[0];
-  if (first === undefined) {
-    return "No project Prettier setup detected; Zedbee keeps its managed formatter.";
+function formattingDetectionLines(
+  detection:
+    | readonly {
+        readonly projectRoot: string;
+        readonly version?: string;
+        readonly status: string;
+        readonly executableConfig: boolean;
+      }[]
+    | undefined,
+): readonly string[] {
+  if (detection === undefined || detection.length === 0) {
+    return [
+      "No project Prettier setup detected; Zedbee keeps its managed formatter.",
+    ];
   }
-  const location = first.projectRoot === "." ? "repository root" : first.projectRoot;
-  return `Detected Prettier ${first.version ?? "unknown version"} in ${location} (${first.status})${first.executableConfig ? " with an executable configuration" : ""}.`;
+  return detection.map((entry) => {
+    const location =
+      entry.projectRoot === "." ? "repository root" : entry.projectRoot;
+    return `Detected Prettier ${entry.version ?? "unknown version"} in ${location} (${entry.status})${entry.executableConfig ? " with an executable configuration" : ""}.`;
+  });
 }
 
 function FormattingChoice({
@@ -468,10 +475,16 @@ function FormattingChoice({
           {focused ? "➜ " : "  "}Formatting
         </Text>
       </Box>
-      <Box paddingX={4}>
-        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-          {formattingDetectionLine(detection)}
-        </Text>
+      <Box paddingX={4} flexDirection="column">
+        {formattingDetectionLines(detection).map((line) => (
+          <Text
+            key={line}
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.secondary)}
+          >
+            {line}
+          </Text>
+        ))}
       </Box>
       {choices.map((choice) => (
         <Box key={choice} paddingX={4}>
@@ -507,7 +520,11 @@ function FormattingChoice({
       {value === "copy" && limitations.length > 0 ? (
         <Box paddingX={4} flexDirection="column">
           {limitations.map((limitation) => (
-            <Text key={limitation} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            <Text
+              key={limitation}
+              wrap="wrap"
+              {...colorProp(color, ZEDBEE_THEME.warning)}
+            >
               Copy limitation: {limitation}
             </Text>
           ))}
@@ -517,7 +534,9 @@ function FormattingChoice({
         evaluated ? (
           <Box paddingX={4}>
             <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-              Executable configuration evaluated once through the project's Prettier; unsupported values stay listed as limitations.
+              Detected executable configurations evaluated once through their
+              owning project Prettier installations; unsupported values stay
+              listed as limitations.
             </Text>
           </Box>
         ) : (
@@ -530,8 +549,8 @@ function FormattingChoice({
             <Box paddingX={4}>
               <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
                 {trustConfirmed
-                  ? "Press E to evaluate the executable configuration once through the project's Prettier."
-                  : "Press T to confirm executable-code trust, then E to evaluate this configuration once."}
+                  ? "Press E to evaluate all detected executable configurations once through their owning project Prettier installations."
+                  : "Press T to confirm executable-code trust, then E to evaluate all detected executable configurations once."}
               </Text>
             </Box>
           </>
@@ -807,8 +826,7 @@ export function InitApp({
   >(undefined);
   const effectiveFormatting: InitFormattingChoice =
     formatting ?? proposal.formatting ?? "managed";
-  const formattingDetected =
-    (proposal.formattingDetection?.length ?? 0) > 0;
+  const formattingDetected = (proposal.formattingDetection?.length ?? 0) > 0;
   const canEvaluateExecutable = evaluateExecutableImport !== undefined;
   const executableEvaluationAvailable =
     canEvaluateExecutable && effectiveFormatting === "copy";
@@ -1011,9 +1029,7 @@ export function InitApp({
         const base = current ?? proposal.formatting ?? "managed";
         const index = visible.indexOf(base);
         const offset = key.leftArrow ? -1 : 1;
-        return visible[
-          (index + offset + visible.length) % visible.length
-        ]!;
+        return visible[(index + offset + visible.length) % visible.length]!;
       });
     } else if (input === " ") {
       if (
@@ -1079,7 +1095,9 @@ export function InitApp({
                 ? (reviewedProposal.formattingImport?.limitations ?? [])
                 : []
             }
-            trustConfirmed={projectTrust || proposal.projectPrettierTrustConfirmed === true}
+            trustConfirmed={
+              projectTrust || proposal.projectPrettierTrustConfirmed === true
+            }
             canEvaluateExecutable={canEvaluateExecutable}
             evaluatedExecutable={evaluatedImport !== undefined}
             width={panelWidth}

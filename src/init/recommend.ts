@@ -736,9 +736,13 @@ export function createInitProposal(
     options.projectPrettierRevokeRoots.length > 0
       ? { projectPrettierRevokeRoots: options.projectPrettierRevokeRoots }
       : {}),
-    ...(options.executableEvaluatedConfig === undefined
+    ...(options.executableEvaluatedConfigs === undefined
       ? {}
-      : { executableEvaluatedConfig: options.executableEvaluatedConfig }),
+      : {
+          executableEvaluatedConfigs: Object.freeze([
+            ...options.executableEvaluatedConfigs,
+          ]),
+        }),
     files: Object.freeze(files),
   });
 }

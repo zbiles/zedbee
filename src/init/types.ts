@@ -97,7 +97,7 @@ export interface InitProposal {
   readonly projectPrettierTrustConfirmed?: boolean;
   /** Roots whose local grants a managed/off switch withdraws. */
   readonly projectPrettierRevokeRoots?: readonly string[];
-  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
+  readonly executableEvaluatedConfigs?: readonly ExecutableEvaluatedConfig[];
   readonly files: readonly InitFileChange[];
 }
 
@@ -123,7 +123,7 @@ export interface CreateInitProposalOptions {
   readonly projectPrettierTrustRoots?: readonly string[];
   readonly projectPrettierTrustConfirmed?: boolean;
   readonly projectPrettierRevokeRoots?: readonly string[];
-  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
+  readonly executableEvaluatedConfigs?: readonly ExecutableEvaluatedConfig[];
 }
 
 export interface ApplyResult {

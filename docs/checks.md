@@ -91,7 +91,7 @@ The formatting check accepts all and only these fourteen Prettier fields. Values
 - `"managed"` uses Zedbee's bundled Prettier with the fourteen managed settings below.
 - `"project"` uses the selected project's installed Prettier (supported range `>=3.0.0 <4.0.0`), its native configuration, and its plugins. `settings` cannot be combined with `engine: "project"`.
 
-During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins and unsupported options are not copied. Project-root `.prettierignore` and `.gitignore` rules are copied as formatting-only path exclusions, preserving their order, negations, and directory-relative meaning. Subsequent scans use the saved rules; editing the original ignore file does not refresh the copy.
+During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins and unsupported options are not copied. With separate consent, copy mode evaluates every detected executable or package-exported shared configuration through its owning project's supervised Prettier worker, retains only representable settings, and binds the preview to every evaluated configuration file so a change in any scope invalidates the apply. Project-root `.prettierignore` and `.gitignore` rules are copied as formatting-only path exclusions, preserving their order, negations, and directory-relative meaning. Subsequent scans use the saved rules; editing the original ignore file does not refresh the copy.
 
 Native override `excludeFiles` patterns are copied with the override. These files keep their normal formatting settings; they are not skipped. EditorConfig-only setups and nested EditorConfig scopes are included; nonfinite values such as `max_line_length=off` are disclosed rather than silently converted.
 
@@ -101,7 +101,7 @@ Project execution is an explicit trust decision. Choosing it in `init` records c
 
 Do not grant project-Prettier trust automatically to unreviewed pull-request code. Native configuration and plugins are project code with the invoking user's permissions; the worker boundary supervises their lifetime but is not an operating-system sandbox. The selected Git snapshot supplies configuration files, relative helpers, ignore files, and source bytes, so an unstaged helper edit cannot alter an index scan.
 
-`zedbee checks` shows the effective engine and, for project mode, the detected version. `zedbee doctor` inspects project setup as data only; pass `--trust-project-prettier` to run the same installation and snapshot probe used by scans.
+`zedbee checks` shows the effective engine and, for project mode, every detected project root and version that can participate in the configured formatting policy. Mixed managed/project repositories receive a summary plus `effectiveEngines` entries in JSON; text and Ink output list the same scopes individually. `zedbee doctor` inspects project setup as data only; pass `--trust-project-prettier` to run the same installation and snapshot probe used by scans.
 
 | Field                    |       Default | Accepted value                                 |
 | ------------------------ | ------------: | ---------------------------------------------- |
@@ -146,20 +146,20 @@ Duplication uses these workspace-wide values:
         "no-console": "warn",
         "@typescript-eslint/no-unused-vars": [
           "error",
-          { "argsIgnorePattern": "^_" }
-        ]
-      }
+          { "argsIgnorePattern": "^_" },
+        ],
+      },
     },
     "reactCorrectness": {
       "rules": {
         "react/prop-types": "off",
-        "react-hooks/rules-of-hooks": "error"
-      }
+        "react-hooks/rules-of-hooks": "error",
+      },
     },
     "reactAccessibility": {
-      "rules": { "jsx-a11y/no-autofocus": "warn" }
-    }
-  }
+      "rules": { "jsx-a11y/no-autofocus": "warn" },
+    },
+  },
 }
 ```
 
@@ -199,30 +199,30 @@ File overrides are evaluated in array order independently for every repository-r
   "schemaVersion": 1,
   "checks": {
     "formatting": {
-      "settings": { "printWidth": 100, "singleAttributePerLine": true }
+      "settings": { "printWidth": 100, "singleAttributePerLine": true },
     },
     "cyclomaticComplexity": { "max": 20, "blockWorsening": true },
     "duplication": {
       "threshold": 5,
-      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" }
-    }
+      "settings": { "minLines": 5, "minTokens": 50, "mode": "mild" },
+    },
   },
   "overrides": [
     {
       "files": ["packages/**"],
       "checks": {
         "formatting": { "settings": { "printWidth": 90 } },
-        "cyclomaticComplexity": { "max": 18 }
-      }
+        "cyclomaticComplexity": { "max": 18 },
+      },
     },
     {
       "files": ["packages/legacy/**"],
       "checks": {
         "formatting": { "settings": { "printWidth": 120 } },
-        "cyclomaticComplexity": { "blockWorsening": false }
-      }
-    }
-  ]
+        "cyclomaticComplexity": { "blockWorsening": false },
+      },
+    },
+  ],
 }
 ```
 

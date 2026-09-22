@@ -283,23 +283,24 @@ export async function applyInitProposal(
     [];
   const trustSnapshots: ProjectPrettierTrustSnapshot[] = [];
   const revokeSnapshots: ProjectPrettierTrustSnapshot[] = [];
-  if (proposal.executableEvaluatedConfig !== undefined) {
+  if (proposal.executableEvaluatedConfigs !== undefined) {
     // A consented evaluation was bound to exact working-copy bytes; if the
     // native configuration changed since the preview, the imported values no
     // longer describe the project. This is checked before any write so the
     // failure surfaces its own message without touching the repository.
-    const evaluated = proposal.executableEvaluatedConfig;
-    const current = await readFile(join(root, evaluated.path), "utf8").catch(
-      () => undefined,
-    );
-    if (
-      current === undefined ||
-      createHash("sha256").update(current, "utf8").digest("hex") !==
-        evaluated.sha256
-    ) {
-      throw new Error(
-        "The project Prettier configuration changed after the preview; run zedbee init again.",
+    for (const evaluated of proposal.executableEvaluatedConfigs) {
+      const current = await readFile(join(root, evaluated.path), "utf8").catch(
+        () => undefined,
       );
+      if (
+        current === undefined ||
+        createHash("sha256").update(current, "utf8").digest("hex") !==
+          evaluated.sha256
+      ) {
+        throw new Error(
+          "The project Prettier configuration changed after the preview; run zedbee init again.",
+        );
+      }
     }
   }
   try {

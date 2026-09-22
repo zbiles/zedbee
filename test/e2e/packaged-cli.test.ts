@@ -1421,6 +1421,46 @@ async function repositoryWithProjectPrettier() {
 }
 
 describe("project Prettier integration", () => {
+  it("leaves policy and trust unchanged when packaged init is not confirmed", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{\n  "singleQuote": true\n}\n');
+    const configBefore = await repository.read(".zedbeerc.jsonc");
+    const statusBefore = await repository.git([
+      "status",
+      "--porcelain=v1",
+      "-z",
+    ]);
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--format",
+      "text",
+    ]);
+
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("Zedbee initialization preview.");
+    expect(result.stdout).toContain(
+      "No files were written without confirmation.",
+    );
+    expect(await repository.read(".zedbeerc.jsonc")).toBe(configBefore);
+    expect(await repository.git(["status", "--porcelain=v1", "-z"])).toEqual(
+      statusBefore,
+    );
+    const trust = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "^zedbee\\.projectPrettier",
+    ]);
+    expect(trust.exitCode).toBe(1);
+    expect(trust.stdout).toBe("");
+  });
+
   it("copies ignore rules and override exceptions into managed scans and fixes", async () => {
     const repository = await repositoryWithProjectPrettier();
     await repository.write(

@@ -38,6 +38,13 @@ export interface CheckDescription {
     readonly version: string;
     readonly license: string;
   };
+  readonly effectiveEngines?: readonly {
+    readonly kind: "managed" | "project";
+    readonly projectRoot: string;
+    readonly name: string;
+    readonly version: string;
+    readonly license: string;
+  }[];
   readonly limitation: string;
   readonly automaticFix?: string;
   readonly configuration: CheckConfigurationDescription;

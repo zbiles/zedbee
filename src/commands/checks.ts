@@ -452,6 +452,16 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
           "secondary",
           color,
         ),
+        ...(check.effectiveEngines !== undefined &&
+        check.effectiveEngines.length > 1
+          ? check.effectiveEngines.map((engine) =>
+              terminalText(
+                `  Engine scope ${engine.projectRoot}: ${engine.name} ${engine.version} (${engine.license})`,
+                "secondary",
+                color,
+              ),
+            )
+          : []),
         ...configurationLines
           .split("\n")
           .filter((line) => line.length > 0)
@@ -501,9 +511,54 @@ export async function executeChecksCommand(
           repositoryRoot,
         ).catch(() => [] as const)
       : [];
-    const projectPrettier =
-      discoveredProjectPrettier.find((entry) => entry.projectRoot === ".") ??
-      discoveredProjectPrettier[0];
+    const formattingUsesManaged =
+      config.checks.formatting.engine === "managed" ||
+      config.overrides.some(
+        (override) => override.checks.formatting?.engine === "managed",
+      );
+    const effectiveFormattingEngines = Object.freeze([
+      ...(formattingUsesManaged
+        ? [
+            Object.freeze({
+              kind: "managed" as const,
+              projectRoot: ".",
+              ...CATALOG.formatting.engine,
+            }),
+          ]
+        : []),
+      ...discoveredProjectPrettier.map((entry) =>
+        Object.freeze({
+          kind: "project" as const,
+          projectRoot: entry.projectRoot,
+          name: "Project Prettier",
+          version: entry.version ?? entry.status,
+          license: "project-installed",
+        }),
+      ),
+      ...(formattingUsesProject && discoveredProjectPrettier.length === 0
+        ? [
+            Object.freeze({
+              kind: "project" as const,
+              projectRoot: ".",
+              name: "Project Prettier",
+              version: "missing",
+              license: "project-installed",
+            }),
+          ]
+        : []),
+    ]);
+    const formattingEngine =
+      effectiveFormattingEngines.length === 1
+        ? Object.freeze({
+            name: effectiveFormattingEngines[0]!.name,
+            version: effectiveFormattingEngines[0]!.version,
+            license: effectiveFormattingEngines[0]!.license,
+          })
+        : Object.freeze({
+            name: "Mixed Prettier engines",
+            version: `${effectiveFormattingEngines.length} configurations`,
+            license: "mixed",
+          });
     const checks = Object.freeze(
       CHECK_IDS.map((id): CheckDescription => {
         const runtime = applicability.get(id) ?? {
@@ -524,13 +579,12 @@ export async function executeChecksCommand(
           network:
             id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
           engine:
-            id === "formatting" && projectPrettier !== undefined
-              ? Object.freeze({
-                  name: "Project Prettier",
-                  version: projectPrettier.version ?? "missing",
-                  license: "project-installed",
-                })
+            id === "formatting"
+              ? formattingEngine
               : Object.freeze({ ...CATALOG[id].engine }),
+          ...(id === "formatting"
+            ? { effectiveEngines: effectiveFormattingEngines }
+            : {}),
           limitation:
             id === "formatting" && formattingUsesProject
               ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."

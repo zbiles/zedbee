@@ -1044,6 +1044,164 @@ describe("executeInitCommand", () => {
     expect(config).toContain('"semi": false');
   });
 
+  it("evaluates every consented executable configuration scope", async () => {
+    const repository = await createGitRepository(
+      "zedbee-init-copy-exec-scopes-",
+    );
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "fixture",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { prettier: "^3.0.0" },
+      }),
+    );
+    await repository.write(
+      "packages/app/package.json",
+      JSON.stringify({
+        name: "app",
+        devDependencies: { prettier: "^3.0.0" },
+      }),
+    );
+    await repository.write(
+      "prettier.config.mjs",
+      "export default { singleQuote: true };\n",
+    );
+    await repository.write(
+      "packages/app/prettier.config.mjs",
+      "export default { semi: false, tabWidth: 3 };\n",
+    );
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      "packages/app/package.json",
+    ]);
+    await mkdir(join(repository.root, "node_modules"), { recursive: true });
+    await cp(
+      join(packageRoot(), "node_modules", "prettier"),
+      join(repository.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        trustProjectPrettier: true,
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode, io.stderr.join("")).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"singleQuote": true');
+    expect(config).toContain('"packages/app/**"');
+    expect(config).toContain('"semi": false');
+    expect(config).toContain('"tabWidth": 3');
+  });
+
+  it("evaluates a nested package-exported shared configuration in its scope", async () => {
+    const repository = await createGitRepository(
+      "zedbee-init-copy-shared-scope-",
+    );
+    await repository.write(
+      "package.json",
+      JSON.stringify({
+        name: "fixture",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { prettier: "^3.0.0" },
+      }),
+    );
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    await repository.write(
+      "packages/app/package.json",
+      JSON.stringify({
+        name: "app",
+        devDependencies: {
+          prettier: "^3.0.0",
+          "@org/prettier-config": "^1.0.0",
+        },
+        prettier: "@org/prettier-config",
+      }),
+    );
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      "packages/app/package.json",
+    ]);
+    await mkdir(
+      join(repository.root, "node_modules", "@org", "prettier-config"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        repository.root,
+        "node_modules",
+        "@org",
+        "prettier-config",
+        "package.json",
+      ),
+      '{"name":"@org/prettier-config","version":"1.0.0","type":"module","main":"index.mjs"}',
+    );
+    await writeFile(
+      join(
+        repository.root,
+        "node_modules",
+        "@org",
+        "prettier-config",
+        "index.mjs",
+      ),
+      "export default { printWidth: 110, semi: false };\n",
+    );
+    await cp(
+      join(packageRoot(), "node_modules", "prettier"),
+      join(repository.root, "node_modules", "prettier"),
+      { recursive: true },
+    );
+    const io = terminal(false);
+
+    const exitCode = await executeInitCommand(
+      {
+        cwd: repository.root,
+        profile: "recommended",
+        hook: "none",
+        formatting: "copy",
+        trustProjectPrettier: true,
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+      },
+      io,
+      dependencies(repository.root),
+    );
+
+    expect(exitCode, io.stderr.join("")).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"singleQuote": true');
+    expect(config).toContain('"packages/app/**"');
+    expect(config).toContain('"printWidth": 110');
+    expect(config).toContain('"semi": false');
+  });
+
   it("keeps the executable configuration as a copy limitation without consent", async () => {
     const repository = await createGitRepository("zedbee-init-copy-exec-no-");
     await repository.write(
@@ -1230,10 +1388,12 @@ describe("executeInitCommand", () => {
       networkChecks: [],
       limitations: [],
       formatting: "copy",
-      executableEvaluatedConfig: {
-        path: "prettier.config.mjs",
-        sha256: sha256(original),
-      },
+      executableEvaluatedConfigs: [
+        {
+          path: "prettier.config.mjs",
+          sha256: sha256(original),
+        },
+      ],
       files: [initFileChange(".zedbeerc.jsonc", null, after, 0o644)],
     };
 
@@ -1243,6 +1403,65 @@ describe("executeInitCommand", () => {
       "prettier.config.mjs",
       "export default { changed: true };\n",
     );
+    await expect(applyInitProposal(proposal)).rejects.toThrow(
+      /changed after the preview/u,
+    );
+    await expect(
+      readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8"),
+    ).rejects.toThrow();
+  });
+
+  it("refuses an apply when any evaluated configuration scope changes", async () => {
+    const repository = await createGitRepository(
+      "zedbee-init-stale-scoped-bytes-",
+    );
+    await repository.write("prettier.config.mjs", "export default {};\n");
+    await repository.write(
+      "packages/app/prettier.config.mjs",
+      "export default { semi: false };\n",
+    );
+    const sha256 = (value: string): string =>
+      createHash("sha256").update(value, "utf8").digest("hex");
+    const proposal = {
+      repositoryRoot: repository.root,
+      profile: "fast",
+      hook: "none",
+      hookActivation: {
+        status: "not-requested",
+        message: "No pre-commit integration was requested.",
+      },
+      detectedEnvironments: [],
+      recommendedChecks: [],
+      vulnerabilityScanningAvailable: false,
+      osvUnavailable: "block",
+      networkChecks: [],
+      limitations: [],
+      formatting: "copy",
+      executableEvaluatedConfigs: [
+        {
+          path: "prettier.config.mjs",
+          sha256: sha256("export default {};\n"),
+        },
+        {
+          path: "packages/app/prettier.config.mjs",
+          sha256: sha256("export default { semi: false };\n"),
+        },
+      ],
+      files: [
+        initFileChange(
+          ".zedbeerc.jsonc",
+          null,
+          '{"schemaVersion":1,"profile":"fast"}\n',
+          0o644,
+        ),
+      ],
+    } as unknown as InitProposal;
+
+    await repository.write(
+      "packages/app/prettier.config.mjs",
+      "export default { semi: true };\n",
+    );
+
     await expect(applyInitProposal(proposal)).rejects.toThrow(
       /changed after the preview/u,
     );
