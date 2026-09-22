@@ -259,6 +259,7 @@ interface FormattingSetup {
   readonly projectRoots: readonly string[];
   /** Roots that already hold a local executable-code grant. */
   readonly storedTrustRoots: readonly string[];
+  readonly executableTargets: readonly ExecutableConfigTarget[];
 }
 async function resolveFormattingSetup(
   repositoryRoot: string,
@@ -304,6 +305,20 @@ async function resolveFormattingSetup(
   );
   const preview = await previewPrettierSettingsImport(repositoryRoot);
   const limitations = [...preview.limitations];
+  const executableTargets: ExecutableConfigTarget[] = [
+    ...preview.executableConfigs.map(({ projectRoot, configPath }) => ({
+      projectRoot,
+      target: { configPath },
+    })),
+  ];
+  for (const [root, sharedConfig] of sharedConfigs) {
+    if (sharedConfig !== undefined) {
+      executableTargets.push({
+        projectRoot: root,
+        target: { sharedConfig },
+      });
+    }
+  }
   return Object.freeze({
     imported: Object.freeze({
       settings: preview.settings,
@@ -317,6 +332,7 @@ async function resolveFormattingSetup(
     projectRoot,
     projectRoots: Object.freeze(projectRoots),
     storedTrustRoots: Object.freeze(storedTrustRoots),
+    executableTargets: Object.freeze(executableTargets),
   });
 }
 
@@ -570,26 +586,6 @@ interface ExecutableConfigTarget {
     { readonly configPath: string } | { readonly sharedConfig: string };
 }
 
-function executableConfigTargets(
-  detection: readonly InitFormattingDetection[],
-): readonly ExecutableConfigTarget[] {
-  const targets: ExecutableConfigTarget[] = [];
-  for (const entry of detection) {
-    const configPath = entry.configPaths.find(
-      (path) => path !== "package.json",
-    );
-    if (entry.executableConfig && configPath !== undefined) {
-      targets.push({ projectRoot: entry.projectRoot, target: { configPath } });
-    } else if (entry.sharedConfig !== undefined) {
-      targets.push({
-        projectRoot: entry.projectRoot,
-        target: { sharedConfig: entry.sharedConfig },
-      });
-    }
-  }
-  return Object.freeze(targets);
-}
-
 interface EvaluatedExecutableImports {
   readonly imported: InitFormattingImport;
   readonly evaluatedConfigs: readonly ExecutableEvaluatedConfig[];
@@ -660,9 +656,7 @@ export async function executeInitCommand(
     // package; both executable file forms and shared packages get the same
     // separately consented one-time evaluation. Without consent, the copy
     // keeps its limitation.
-    const executableTargets = executableConfigTargets(
-      formattingSetup.detection,
-    );
+    const executableTargets = formattingSetup.executableTargets;
     const evaluatedExecutableImports =
       options.formatting === "copy" &&
       options.trustProjectPrettier &&
