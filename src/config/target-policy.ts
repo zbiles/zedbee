@@ -59,8 +59,7 @@ export function assertEffectiveFormattingPolicy(
   let explicitSettings = Object.entries(
     config.configurationOrigins.formatting,
   ).some(
-    ([key, origin]) =>
-      key.startsWith("settings.") && origin.kind !== "profile",
+    ([key, origin]) => key.startsWith("settings.") && origin.kind !== "profile",
   );
   for (const patch of patches) {
     if (patch.settings !== undefined) explicitSettings = true;
@@ -91,10 +90,17 @@ export function resolveTargetPolicy(
         "Vulnerability availability policy cannot be overridden by file scope",
       );
     }
-    const matches = override.files.some((pattern) => {
-      const isMatch = picomatch(pattern, { dot: true });
-      return candidates.some((candidate) => isMatch(candidate));
-    });
+    const includes = override.files.map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    );
+    const excludes = (override.excludeFiles ?? []).map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    );
+    const matches = candidates.some(
+      (candidate) =>
+        includes.some((match) => match(candidate)) &&
+        !excludes.some((match) => match(candidate)),
+    );
     if (matches) matched.push(patch);
   }
   for (const patch of matched) {

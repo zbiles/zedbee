@@ -18,9 +18,13 @@ A useful report identifies the affected Zedbee version or commit, platform, secu
 
 ## Security boundaries
 
-Zedbee treats repository content and analyzer output as untrusted. Ordinary scans analyze isolated snapshots of committed `HEAD` and the Git index; `scan --base <ref>` uses the unique merge base and committed `HEAD`. Selected source and scan configuration come from those snapshots, not later working-tree edits. Managed analyzers use inert configuration and library APIs where available; remaining managed subprocesses run without a shell. Zedbee does not execute project analyzer configuration, project commands, or package-manager lifecycle scripts.
+Zedbee treats repository content and analyzer output as untrusted. Ordinary scans analyze isolated snapshots of committed `HEAD` and the Git index; `scan --base <ref>` uses the unique merge base and committed `HEAD`. Selected source and scan configuration come from those snapshots, not later working-tree edits. Managed analyzers use inert configuration and library APIs where available; remaining managed subprocesses run without a shell. Except for the explicitly trusted project-Prettier mode below, Zedbee does not execute project analyzer configuration, project commands, or package-manager lifecycle scripts.
 
 Scan and fix analysis uses fresh sessions in supervised workers that may be reused by a private local service. This is process isolation, not an operating-system sandbox: the service and workers retain the invoking user's permissions. Session release clears source/project state; engines that require retirement exit before their snapshots can be removed.
+
+### Opt-in project Prettier execution
+
+Formatting can explicitly use a project's installed Prettier, its native configuration, and its plugins. This is the only path that evaluates project-provided JavaScript. It is off unless a user first chooses it in `init` (which records consent in local Git configuration) or passes `--trust-project-prettier` for one invocation; tracked repository configuration alone can never grant it. The trusted parent validates the installed package and spawns a dedicated, short-lived worker over a disposable mirror of the selected snapshot. This is process separation and environment hygiene, not a sandbox: trusted configuration and plugins can still read files and use the network with the user's permissions, so consent is an ongoing trust decision in that project's formatter.
 
 The selected-source boundary permits these additional local reads:
 
@@ -39,7 +43,8 @@ The following are security bugs and should be reported:
 - using unstaged or out-of-snapshot repository source as selected scan input, or escaping the documented dependency/fix read boundaries;
 - exposing detected secret content or raw analyzer reports, bypassing source-excerpt policy, or leaking unvalidated or unrelated absolute paths;
 - running an online check without its disclosure and configured network policy;
-- loading project Secretlint, ESLint, Prettier, or other executable analyzer configuration;
+- loading project Secretlint, ESLint, Prettier, or other executable analyzer configuration without the explicit project-Prettier trust described above;
+- executing project Prettier configuration or plugins without recorded local consent or an explicit `--trust-project-prettier` invocation, or reading consent from tracked repository configuration;
 - executing package-manager lifecycle scripts, project commands, or project analyzer configuration;
 - following a selected repository symlink outside the protected snapshot;
 - silently passing when a required check cannot complete.

@@ -1,3 +1,4 @@
+import type { PathExclusion } from "../config/schema.js";
 import { posix } from "node:path";
 import JSON5 from "json5";
 import { parse as parseToml } from "smol-toml";
@@ -8,7 +9,10 @@ import {
   formattingSettingsSchema,
   type FormattingSettings,
 } from "../checks/prettier/settings.js";
-import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
+import type {
+  ImportableNativeConfig,
+  ImportedFormattingOverride,
+} from "../checks/prettier/project-types.js";
 import type { SnapshotRegistry } from "../inspection/snapshot-registry.js";
 import {
   canonicalizeSnapshotRoot,
@@ -74,8 +78,7 @@ const PACKAGE_YAML_CONFIG_PRECEDENCE = [
 
 function configPrecedence(version: string): readonly string[] {
   if (semver.gte(version, "3.5.0")) return MODERN_CONFIG_PRECEDENCE;
-  if (semver.gte(version, "3.3.0"))
-    return PACKAGE_YAML_CONFIG_PRECEDENCE;
+  if (semver.gte(version, "3.3.0")) return PACKAGE_YAML_CONFIG_PRECEDENCE;
   return LEGACY_CONFIG_PRECEDENCE;
 }
 
@@ -89,6 +92,7 @@ const EXECUTABLE_EXTENSIONS = new Set([
 ]);
 
 export interface PrettierSettingsImportPreview {
+  readonly pathExclusions?: readonly PathExclusion[];
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
   readonly limitations: readonly string[];
@@ -117,13 +121,14 @@ async function readPackagePrettierValue(
   registry: SnapshotRegistry,
   path: string,
 ): Promise<unknown> {
-  const manifest = posix.basename(path) === "package.json"
-    ? await readJsonData(registry, path)
-    : parseYaml(
-        await readContainedFile(registry, path, {
-          maxBytes: CONFIG_MAX_BYTES,
-        }),
-      );
+  const manifest =
+    posix.basename(path) === "package.json"
+      ? await readJsonData(registry, path)
+      : parseYaml(
+          await readContainedFile(registry, path, {
+            maxBytes: CONFIG_MAX_BYTES,
+          }),
+        );
   return isRecord(manifest) ? manifest.prettier : undefined;
 }
 
@@ -157,11 +162,23 @@ function patternList(value: unknown): readonly string[] | undefined {
   return undefined;
 }
 
-function scopedPattern(prefix: string, pattern: string): string {
-  const relative = pattern.includes("/") ? pattern : `**/${pattern}`;
-  return prefix === "" || prefix === "."
-    ? relative
-    : posix.join(prefix, relative);
+function scopedPattern(
+  prefix: string,
+  pattern: string,
+  basename: boolean,
+): string {
+  const relative = basename
+    ? `**/${pattern}`
+    : pattern.replace(/^(?:\.\/)+/u, "");
+  // Glob syntax is not a filesystem path: internal /./ segments affect native
+  // matching and must survive rebasing into a nested configuration scope.
+  return prefix === "" || prefix === "." ? relative : `${prefix}/${relative}`;
+}
+
+function splitNegation(pattern: string): { pattern: string; negated: boolean } {
+  let count = 0;
+  while (pattern[count] === "!" && pattern[count + 1] !== "(") count++;
+  return { pattern: pattern.slice(count), negated: count % 2 === 1 };
 }
 
 function supportedSettings(
@@ -224,21 +241,84 @@ function parseOverrides(
       );
       continue;
     }
-    const excludeFiles = patternList(entry.excludeFiles) ?? [];
+    const parsedExclusions =
+      entry.excludeFiles === undefined ? [] : patternList(entry.excludeFiles);
+    if (
+      parsedExclusions === undefined ||
+      parsedExclusions.some((pattern) => pattern.trim().length === 0)
+    ) {
+      limitations.push(
+        "A Prettier override has invalid excludeFiles and was not copied.",
+      );
+      continue;
+    }
+    const excludeFiles = parsedExclusions;
     const settings = supportedSettings(
       entry.options,
       limitations,
       "Prettier override",
     );
-    overrides.push(
-      Object.freeze({
-        files: Object.freeze(files.map((file) => scopedPattern(prefix, file))),
-        excludeFiles: Object.freeze(
-          excludeFiles.map((file) => scopedPattern(prefix, file)),
-        ),
-        settings,
-      }),
-    );
+    // Native Prettier partitions includes by basename/path matching, and
+    // uses that same mode for every exclusion in the corresponding group.
+    // Negated exclusions require intersections unavailable in managed globs.
+    if (excludeFiles.some((pattern) => splitNegation(pattern).negated)) {
+      limitations.push(
+        "A Prettier override has negated excludeFiles that cannot be copied exactly.",
+      );
+      continue;
+    }
+    for (const basename of [true, false]) {
+      const group = files.filter(
+        (pattern) => !pattern.includes("/") === basename,
+      );
+      if (group.length === 0) continue;
+      const exclusions: string[] = [];
+      let representable = true;
+      for (const exclusion of excludeFiles) {
+        let pattern = splitNegation(exclusion).pattern;
+        if (basename) {
+          // A globstar can consume zero directories even when native matching
+          // receives just the basename. Literal directory segments cannot.
+          pattern = pattern
+            .replace(/^(?:\.\/)+/u, "")
+            .replace(/^(?:\*\*\/)+/u, "")
+            .replace(/(?:\/\*\*)+$/u, "");
+          if (pattern.includes("/")) {
+            if (/[{}()[\]]/u.test(pattern)) {
+              limitations.push(
+                "A Prettier override has basename excludeFiles with slash-containing alternatives that cannot be copied exactly.",
+              );
+              representable = false;
+            }
+            continue;
+          }
+        }
+        exclusions.push(scopedPattern(prefix, pattern, basename));
+      }
+      if (!representable) continue;
+      const positive: string[] = [];
+      for (const file of group) {
+        const parsed = splitNegation(file);
+        const pattern = scopedPattern(prefix, parsed.pattern, basename);
+        if (parsed.negated) {
+          overrides.push(
+            Object.freeze({
+              files: Object.freeze([scopedPattern(prefix, "**/*", false)]),
+              excludeFiles: Object.freeze([...exclusions, pattern]),
+              settings,
+            }),
+          );
+        } else positive.push(pattern);
+      }
+      if (positive.length > 0)
+        overrides.push(
+          Object.freeze({
+            files: Object.freeze(positive),
+            excludeFiles: Object.freeze(exclusions),
+            settings,
+          }),
+        );
+    }
   }
   return Object.freeze(overrides);
 }
@@ -302,19 +382,21 @@ async function selectedConfigPaths(
       precedence: readonly string[],
     ): Promise<string | undefined> => {
       for (const name of precedence) {
-      const path = directory === "." ? name : posix.join(directory, name);
-      if (name === "package.json" || name === "package.yaml") {
-        if (name === "package.json" && directory !== discovery.projectRoot)
-          continue;
-        if (registry.resolve(path)?.targetKind === "file") {
-          try {
-            if ((await readPackagePrettierValue(registry, path)) !== undefined)
-              return path;
-          } catch {
-            // Native search skips package manifests it cannot parse.
+        const path = directory === "." ? name : posix.join(directory, name);
+        if (name === "package.json" || name === "package.yaml") {
+          if (name === "package.json" && directory !== discovery.projectRoot)
+            continue;
+          if (registry.resolve(path)?.targetKind === "file") {
+            try {
+              if (
+                (await readPackagePrettierValue(registry, path)) !== undefined
+              )
+                return path;
+            } catch {
+              // Native search skips package manifests it cannot parse.
+            }
           }
-        }
-      } else if (available.has(path)) return path;
+        } else if (available.has(path)) return path;
       }
       return undefined;
     };
@@ -348,6 +430,7 @@ async function loadProjectConfig(
   registry: SnapshotRegistry,
   configPath: string,
   editorScope?: string,
+  evaluated?: ImportableNativeConfig,
 ): Promise<
   ParsedConfigData & {
     readonly configPath: string;
@@ -358,18 +441,32 @@ async function loadProjectConfig(
     posix.dirname(configPath) === "" ? "." : posix.dirname(configPath);
   const limitations: string[] = [];
   const executable = EXECUTABLE_EXTENSIONS.has(posix.extname(configPath));
-  if (executable) {
+  if (executable && evaluated === undefined) {
     limitations.push(
       `The Prettier configuration ${configPath} is executable; its dynamic values cannot be copied as inert settings.`,
     );
     return { settings: {}, overrides: [], limitations, configPath, configRoot };
   }
   let value: unknown;
-  if (["package.json", "package.yaml"].includes(posix.basename(configPath))) {
-    value = await readPackagePrettierValue(registry, configPath);
-    if (typeof value === "string") {
+  if (evaluated !== undefined) {
+    limitations.push(...evaluated.limitations);
+    value = {
+      ...evaluated.settings,
+      overrides: evaluated.overrides.map(({ settings, ...override }) => ({
+        ...override,
+        options: settings,
+      })),
+    };
+  } else {
+    try {
+      value = ["package.json", "package.yaml"].includes(
+        posix.basename(configPath),
+      )
+        ? await readPackagePrettierValue(registry, configPath)
+        : await readConfigValue(registry, configPath);
+    } catch {
       limitations.push(
-        `The ${posix.basename(configPath)} Prettier field in ${configPath} references a shared configuration that cannot be copied as inert settings.`,
+        `The Prettier configuration ${configPath} could not be parsed as data.`,
       );
       return {
         settings: {},
@@ -379,12 +476,14 @@ async function loadProjectConfig(
         configRoot,
       };
     }
-  } else {
-    try {
-      value = await readConfigValue(registry, configPath);
-    } catch {
+    if (typeof value === "string") {
+      const context = ["package.json", "package.yaml"].includes(
+        posix.basename(configPath),
+      )
+        ? `${posix.basename(configPath)} Prettier field in ${configPath}`
+        : `Prettier configuration ${configPath}`;
       limitations.push(
-        `The Prettier configuration ${configPath} could not be parsed as data.`,
+        `The ${context} references a shared configuration that cannot be copied as inert settings.`,
       );
       return {
         settings: {},
@@ -424,23 +523,44 @@ async function loadProjectConfig(
   };
 }
 
-function ignoreFileLimitations(
+async function importIgnoreFiles(
   registry: SnapshotRegistry,
   projectRoot: string,
   limitations: string[],
-): void {
+): Promise<readonly PathExclusion[]> {
+  const exclusions: PathExclusion[] = [];
   for (const name of [".prettierignore", ".gitignore"]) {
     const path = projectRoot === "." ? name : posix.join(projectRoot, name);
-    if (registry.resolve(path)?.targetKind === "file") {
+    if (registry.resolve(path)?.targetKind !== "file") continue;
+    try {
+      const contents = await readContainedFile(registry, path, {
+        maxBytes: 256 * 1024,
+      });
+      const files = contents.split(/\r\n|\n|\r/u);
+      if (files.length > 10000 || contents.includes("\0"))
+        throw new Error("Unsupported ignore file");
+      exclusions.push(
+        Object.freeze({
+          syntax: "gitignore",
+          basePath: projectRoot,
+          files: Object.freeze(files),
+          checks: Object.freeze(["formatting"] as const),
+          reason: `Copied from ${path}`.slice(0, 200),
+          generated: "prettier-copy",
+        }),
+      );
+    } catch {
       limitations.push(
-        `${path} is not copied; use project mode or existing formatting-only exclusions for ignored paths.`,
+        `${path} could not be copied within the ignore-file limits.`,
       );
     }
   }
+  return exclusions;
 }
 
 export async function previewPrettierSettingsImport(
   repositoryRoot: string,
+  evaluatedConfigs: ReadonlyMap<string, ImportableNativeConfig> = new Map(),
 ): Promise<PrettierSettingsImportPreview> {
   let canonicalRoot: string;
   try {
@@ -470,6 +590,7 @@ export async function previewPrettierSettingsImport(
     readonly configPath: string;
     readonly specifier: string;
   }[] = [];
+  const pathExclusions: PathExclusion[] = [];
   for (const discovery of discoveries) {
     for (const path of await selectedConfigPaths(
       registry,
@@ -482,20 +603,40 @@ export async function previewPrettierSettingsImport(
           projectRoot: discovery.projectRoot,
           configPath: path,
         });
-      } else if (
-        ["package.json", "package.yaml"].includes(posix.basename(path))
-      ) {
-        const value = await readPackagePrettierValue(registry, path);
-        if (typeof value === "string")
-          sharedConfigs.push({
-            projectRoot: discovery.projectRoot,
-            configPath: path,
-            specifier: value,
-          });
+      } else {
+        try {
+          const value = ["package.json", "package.yaml"].includes(
+            posix.basename(path),
+          )
+            ? await readPackagePrettierValue(registry, path)
+            : await readConfigValue(registry, path);
+          if (typeof value === "string")
+            sharedConfigs.push({
+              projectRoot: discovery.projectRoot,
+              configPath: path,
+              specifier: value,
+            });
+        } catch {
+          // loadProjectConfig reports unreadable data without evaluating it.
+        }
       }
     }
-    ignoreFileLimitations(registry, discovery.projectRoot, limitations);
   }
+  const ignoreRoots = new Set([
+    ".",
+    ...discoveries.map((entry) => entry.projectRoot),
+  ]);
+  for (const entry of registry.entries()) {
+    if (
+      posix.basename(entry.repositoryPath) === "package.json" &&
+      entry.targetKind === "file"
+    )
+      ignoreRoots.add(posix.dirname(entry.repositoryPath));
+  }
+  for (const root of [...ignoreRoots].sort())
+    pathExclusions.push(
+      ...(await importIgnoreFiles(registry, root, limitations)),
+    );
   const scopes = new Set(configs.keys());
   for (const entry of registry.entries()) {
     if (
@@ -522,7 +663,12 @@ export async function previewPrettierSettingsImport(
             overrides: editor!.overrides,
             limitations: editor!.limitations,
           }
-        : await loadProjectConfig(registry, path, scope);
+        : await loadProjectConfig(
+            registry,
+            path,
+            scope,
+            evaluatedConfigs.get(path),
+          );
     limitations.push(...loaded.limitations);
     if (scope === ".") settings = loaded.settings;
     else
@@ -543,6 +689,23 @@ export async function previewPrettierSettingsImport(
           files.push(pattern);
         else if (pattern.startsWith("**/")) files.push(`${scope}/${pattern}`);
         else {
+          const segments = pattern.split("/");
+          const wildcard = segments.findIndex(
+            (part) => part.includes("\\") || /[*?{}()[\]!]/u.test(part),
+          );
+          const staticRoot = segments
+            .slice(0, wildcard < 0 ? -1 : wildcard)
+            .join("/");
+          // A path group outside this EditorConfig subtree cannot match here.
+          // Keep reporting intersecting complex globs we cannot narrow exactly.
+          if (
+            staticRoot !== "" &&
+            staticRoot !== "." &&
+            scope !== staticRoot &&
+            !scope.startsWith(`${staticRoot}/`) &&
+            !staticRoot.startsWith(`${scope}/`)
+          )
+            continue;
           limitations.push(
             `Prettier pattern ${pattern} cannot be copied into EditorConfig scope ${scope} exactly.`,
           );
@@ -591,5 +754,8 @@ export async function previewPrettierSettingsImport(
             left.configPath.localeCompare(right.configPath),
         ),
     ),
+    ...(pathExclusions.length === 0
+      ? {}
+      : { pathExclusions: Object.freeze(pathExclusions) }),
   };
 }

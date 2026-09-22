@@ -418,6 +418,9 @@ function addFormattingForExactCandidates(
     }
     const policy = policyForFile("formatting", candidate.file, "target");
     if (policy.severity === "off") continue;
+    // Project-engine files are formatted by their own engine through the
+    // formatting finding path, never by bundling managed settings here.
+    if (policy.engine === "project") continue;
     const existing = byFile.get(candidate.file);
     const findingIds = [
       ...(existing?.findingIds ?? []),

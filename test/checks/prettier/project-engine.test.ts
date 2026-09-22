@@ -49,6 +49,7 @@ describe("project Prettier engine", () => {
 
     await expect(session.classify("value.ts")).resolves.toEqual({
       kind: "supported",
+      configFile: ".prettierrc.json",
     });
     await expect(session.classify("asset.bin")).resolves.toEqual({
       kind: "ignored",
@@ -72,6 +73,7 @@ describe("project Prettier engine", () => {
 
     await expect(session.classify("value.custom")).resolves.toEqual({
       kind: "supported",
+      configFile: ".prettierrc.json",
     });
     await expect(
       session.format("value.custom", "const value=1"),
@@ -114,6 +116,7 @@ describe("project Prettier engine", () => {
 
       await expect(session.classify("value.ts")).resolves.toEqual({
         kind: "supported",
+        configFile: ".prettierrc.json",
       });
       await expect(
         session.format("value.ts", 'export const value = "hello";'),
@@ -225,6 +228,46 @@ describe("project Prettier engine", () => {
       text: "export const value = 'hello';\n",
     });
   });
+
+  it.each([
+    {
+      label: "ESM",
+      config: "prettier.config.mjs",
+      helper: "format-options.mjs",
+      configSource:
+        "import options from './format-options.mjs';\nexport default options;\n",
+      initialHelper: "export default { singleQuote: true };\n",
+      changedHelper: "export default { singleQuote: false };\n",
+    },
+    {
+      label: "CJS",
+      config: "prettier.config.cjs",
+      helper: "format-options.cjs",
+      configSource: "module.exports = require('./format-options.cjs');\n",
+      initialHelper: "module.exports = { singleQuote: true };\n",
+      changedHelper: "module.exports = { singleQuote: false };\n",
+    },
+  ])(
+    "keeps unstaged $label helper edits outside the index snapshot",
+    async (entry) => {
+      const fixture = await createProjectPrettierFixture();
+      onTestFinished(() => fixture.dispose());
+      await fixture.write(entry.config, entry.configSource);
+      await fixture.write(entry.helper, entry.initialHelper);
+      await fixture.write("value.ts", 'export const value = "hello";\n');
+      await fixture.stage(entry.config, entry.helper, "value.ts");
+      await fixture.write(entry.helper, entry.changedHelper);
+
+      const session = await fixture.open({ source: "index", trust: true });
+
+      await expect(
+        session.format("value.ts", 'export const value = "hello";'),
+      ).resolves.toEqual({
+        kind: "formatted",
+        text: "export const value = 'hello';\n",
+      });
+    },
+  );
 
   it("does not substitute bundled formatting for a missing plugin", async () => {
     const fixture = await createProjectPrettierFixture();
@@ -657,6 +700,28 @@ describe("project Prettier engine", () => {
     expect(joined).toMatch(/accessor|non-data/u);
     expect(joined).toMatch(/"guarded"/u);
     expect(joined).toMatch(/"self"/u);
+  });
+
+  it("preserves executable override exclusions for copying", async () => {
+    const fixture = await createProjectPrettierFixture();
+    onTestFinished(() => fixture.dispose());
+    await fixture.write(
+      "prettier.config.mjs",
+      "export default { overrides: [{ files: '*.md', excludeFiles: 'generated/*.md', options: { printWidth: 80 } }] };\n",
+    );
+    await fixture.stage("prettier.config.mjs");
+
+    const session = await fixture.open({ source: "index", trust: true });
+    const imported = await session.readConfigForImport("prettier.config.mjs");
+
+    expect(imported.overrides).toEqual([
+      {
+        files: "*.md",
+        excludeFiles: "generated/*.md",
+        settings: { printWidth: 80 },
+      },
+    ]);
+    expect(imported.limitations).toEqual([]);
   });
 
   it("rejects the ready handshake promptly on abort after spawn", async () => {

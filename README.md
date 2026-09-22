@@ -46,7 +46,7 @@ Choose the `fast`, `recommended`, or `thorough` profile during setup. Use `.zedb
 
 You can give particular files different settings or exclude files and directories from named checks. Every exclusion needs a reason. See the [configuration reference](docs/cli-reference.md#configuration) for examples.
 
-Zedbee uses its own settings. It does not load your existing ESLint, Prettier, or other native analyzer configuration, so results may differ from those tools. Review the [supported customization options](docs/checks.md#managed-customization) when adopting it.
+By default Zedbee uses its own settings: it does not load your existing ESLint, Prettier, or other native analyzer configuration, so results may differ from those tools. Formatting is the one explicit exception — after a separately confirmed trust decision, project mode runs your project's installed Prettier, its native configuration, and its plugins. Review the [supported customization options](docs/checks.md#managed-customization) and [formatting engines](docs/checks.md#formatting-engines) when adopting it.
 
 Scans never change source files. The separate `zedbee fix` command rescans current staged code and previews supported fixes before asking for approval. It writes working files and never stages or commits. Formatting can affect an entire file, including unstaged edits. Read the [fix guide](docs/managed-fixes.md) before using it.
 

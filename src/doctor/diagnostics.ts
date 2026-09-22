@@ -1,4 +1,4 @@
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
@@ -25,6 +25,12 @@ import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
 } from "../runtime/node-support.js";
+import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import {
+  openProjectFormatter,
+  resolveProjectPrettierInstallation,
+} from "../checks/prettier/project-engine.js";
+import { requireProjectPrettierTrust } from "../checks/prettier/project-trust.js";
 
 export const DOCTOR_DIAGNOSTIC_IDS = [
   "git",
@@ -33,6 +39,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "snapshot-creation",
   "background-service",
   "workspace-inspection",
+  "project-prettier",
   "secretlint-readiness",
   "lockfile-support",
   "osv-connectivity",
@@ -54,6 +61,9 @@ export interface DiagnosticContext {
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly configPath?: string;
+  /** Explicit invocation-only consent for the project Prettier probe. */
+  readonly projectPrettierTrust?: boolean;
+  readonly signal?: AbortSignal;
 }
 
 export type DiagnosticProbe = (
@@ -267,7 +277,9 @@ export function createDefaultDiagnosticProbe(
               id: "config",
               status: "fail",
               message: error.message,
-              remediation: `Correct ${basename(error.configPath)} and run zedbee doctor again.`,
+              remediation: `Correct ${basename(
+                error.configPath,
+              )} and run zedbee doctor again.`,
             };
           }
           throw error;
@@ -349,8 +361,111 @@ export function createDefaultDiagnosticProbe(
         return {
           id,
           status: "pass",
-          message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}.`,
+          message: `Workspace inspection found ${count} workspace${
+            count === 1 ? "" : "s"
+          }.`,
         };
+      }
+      case "project-prettier": {
+        const root = await repositoryRoot(context.cwd);
+        const discovered = await discoverProjectPrettier(root).catch(
+          () => [] as const,
+        );
+        if (discovered.length === 0) {
+          return {
+            id,
+            status: "pass",
+            message:
+              "No project Prettier setup was detected; formatting uses the managed engine unless configured otherwise. No project configuration was executed.",
+          };
+        }
+        const summary = discovered
+          .map((entry) => {
+            const location =
+              entry.projectRoot === "." ? "root" : entry.projectRoot;
+            return `${location}: ${entry.status}${
+              entry.version === undefined ? "" : ` ${entry.version}`
+            }`;
+          })
+          .join("; ");
+        if (context.projectPrettierTrust !== true) {
+          return {
+            id,
+            status: "pass",
+            message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
+          };
+        }
+        try {
+          const probed: string[] = [];
+          // Every discovered project that project mode can route files to is
+          // probed, each with a probe file inside its own root so its own
+          // configuration and plugins participate in resolution.
+          const results = await withSnapshots(
+            context.cwd,
+            async (targetDir) => {
+              for (const entry of discovered) {
+                const permit = await requireProjectPrettierTrust(
+                  root,
+                  entry.projectRoot,
+                  true,
+                );
+                const installation = await resolveProjectPrettierInstallation(
+                  root,
+                  entry.projectRoot,
+                  targetDir,
+                );
+                const session = await openProjectFormatter({
+                  checkoutRoot: await realpath(root),
+                  snapshotRoot: targetDir,
+                  projectRoot: entry.projectRoot,
+                  installation,
+                  permit,
+                  signal: context.signal ?? new AbortController().signal,
+                });
+                try {
+                  const probeFile =
+                    entry.projectRoot === "."
+                      ? "zedbee-doctor-probe.ts"
+                      : `${entry.projectRoot}/zedbee-doctor-probe.ts`;
+                  const result = await session.format(
+                    probeFile,
+                    "const zedbeeDoctor=true\n",
+                  );
+                  // A valid formatted response from the selected engine is
+                  // enough; a healthy project style may legitimately differ from
+                  // Zedbee's default formatting, so no exact bytes are required.
+                  if (result.kind !== "formatted" || result.text.length === 0) {
+                    throw new Error("Unexpected project probe result.");
+                  }
+                  probed.push(
+                    `${
+                      entry.projectRoot === "." ? "root" : entry.projectRoot
+                    } (${installation.version})`,
+                  );
+                } finally {
+                  await session.close();
+                }
+              }
+              return probed;
+            },
+          );
+          return {
+            id,
+            status: "pass",
+            message: `Ran each project's Prettier through the same installation and snapshot resolution used by scans and formatted a synthetic file inside every discovered project (${results.join(
+              "; ",
+            )}); this does not verify a full scan.`,
+          };
+        } catch {
+          return {
+            id,
+            status: "fail",
+            message:
+              "The trusted project Prettier probe could not format a synthetic file in every discovered project.",
+            remediation:
+              "Review the project Prettier installation, configuration, and plugins, then retry zedbee doctor.",
+          };
+        }
       }
       case "secretlint-readiness": {
         try {
@@ -409,7 +524,9 @@ export function createDefaultDiagnosticProbe(
             return {
               id,
               status: "pass",
-              message: `Lockfile analysis supports ${lockfiles.join(", ")} (${count} resolved dependenc${count === 1 ? "y" : "ies"}).`,
+              message: `Lockfile analysis supports ${lockfiles.join(
+                ", ",
+              )} (${count} resolved dependenc${count === 1 ? "y" : "ies"}).`,
             };
           } catch (error) {
             if (error instanceof LockfileInventoryError) {
@@ -506,7 +623,11 @@ export function createDefaultDiagnosticProbe(
         return {
           id,
           status: "warning",
-          message: `Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent. OSV outages currently ${policy.onUnavailable === "warn" ? "warn and allow commits" : "block commits"}.`,
+          message: `Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent. OSV outages currently ${
+            policy.onUnavailable === "warn"
+              ? "warn and allow commits"
+              : "block commits"
+          }.`,
         };
       }
     }

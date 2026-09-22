@@ -378,7 +378,9 @@ describe("packaged Zedbee CLI", () => {
         "--input-type=module",
         "--eval",
         `
-      const { loadAnalyzerAdapter } = await import(${JSON.stringify(registry.href)});
+      const { loadAnalyzerAdapter } = await import(${JSON.stringify(
+        registry.href,
+      )});
       const ids = ["formatting", "lint", "types", "cyclomaticComplexity", "readabilityComplexity", "structuralSecurity", "secrets", "duplication", "dependencyArchitecture", "deadCode", "reactCorrectness", "reactAccessibility", "vulnerabilities"];
       console.log(JSON.stringify(await Promise.all(ids.map(async id => (await loadAnalyzerAdapter(id)).id))));
     `,
@@ -1376,5 +1378,514 @@ describe("packaged Zedbee CLI", () => {
       report.runs[0].invocations[0].toolExecutionNotifications[0]?.descriptor
         .id,
     ).toBe("CONFIG_INVALID");
+  });
+});
+
+async function repositoryWithProjectPrettier() {
+  const repository = await createInstalledRepository();
+  const nodeModules = join(repository.root, "node_modules");
+  await rm(nodeModules, { recursive: true, force: true });
+  await mkdir(nodeModules, { recursive: true });
+  const type = process.platform === "win32" ? "junction" : "dir";
+  await symlink(
+    join(installedNodeModules, "zedbee"),
+    join(nodeModules, "zedbee"),
+    type,
+  );
+  await symlink(
+    join(installedNodeModules, ".bin"),
+    join(nodeModules, ".bin"),
+    type,
+  );
+  await cp(
+    join(installedNodeModules, "prettier"),
+    join(nodeModules, "prettier"),
+    {
+      recursive: true,
+    },
+  );
+  await rm(join(repository.root, ".gitignore"), { force: true });
+  await repository.write(
+    "package.json",
+    `${JSON.stringify(
+      {
+        name: "project-prettier-fixture",
+        private: true,
+        devDependencies: { prettier: "^3.0.0", zedbee: "*" },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  return repository;
+}
+
+describe("project Prettier integration", () => {
+  it("leaves policy and trust unchanged when packaged init is not confirmed", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{\n  "singleQuote": true\n}\n');
+    const configBefore = await repository.read(".zedbeerc.jsonc");
+    const statusBefore = await repository.git([
+      "status",
+      "--porcelain=v1",
+      "-z",
+    ]);
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--format",
+      "text",
+    ]);
+
+    expect(result.exitCode, result.stdout + result.stderr).toBe(0);
+    expect(result.stdout).toContain("Zedbee initialization preview.");
+    expect(result.stdout).toContain(
+      "No files were written without confirmation.",
+    );
+    expect(await repository.read(".zedbeerc.jsonc")).toBe(configBefore);
+    expect(await repository.git(["status", "--porcelain=v1", "-z"])).toEqual(
+      statusBefore,
+    );
+    const trust = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "^zedbee\\.projectPrettier",
+    ]);
+    expect(trust.exitCode).toBe(1);
+    expect(trust.stdout).toBe("");
+  });
+
+  it("copies ignore rules and override exceptions into managed scans and fixes", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      JSON.stringify({
+        singleQuote: false,
+        overrides: [
+          {
+            files: "*.ts",
+            excludeFiles: "*default.ts",
+            options: { singleQuote: true },
+          },
+        ],
+      }),
+    );
+    await repository.write(".prettierignore", "skip*.ts\n!skip-keep.ts\n");
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "copy",
+      "--hook",
+      "none",
+      "--checks",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stdout + initialized.stderr).toBe(
+      0,
+    );
+    const config = await repository.read(".zedbeerc.jsonc");
+    expect(config).toContain('"excludeFiles"');
+    expect(config).toContain('"syntax": "gitignore"');
+    await repository.commitAll("copied formatting policy");
+    const sources = {
+      "included.ts": 'export const value = "value";\n',
+      "default.ts": "export const value = 'value';\n",
+      "skip-drop.ts": "not valid TypeScript !!",
+      "skip-keep.ts": 'export const value = "value";\n',
+    };
+    for (const [file, text] of Object.entries(sources))
+      await repository.write(file, text);
+    await repository.git(["add", "--", ...Object.keys(sources)]);
+    const index = (await repository.git(["write-tree"])).stdout;
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(1);
+    const report = JSON.parse(scanned.stdout);
+    const formatting = report.checks.find(
+      (check: { checkId: string }) => check.checkId === "formatting",
+    );
+    expect(formatting.status).toBe("completed");
+    expect(
+      formatting.findings
+        .map((finding: { location: { file: string } }) => finding.location.file)
+        .sort(),
+    ).toEqual(["default.ts", "included.ts", "skip-keep.ts"]);
+    expect(report.appliedPathExclusions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          syntax: "gitignore",
+          checks: ["formatting"],
+        }),
+      ]),
+    );
+    const applied = await runPackagedCli(repository.root, [
+      "fix",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(applied.exitCode, applied.stdout + applied.stderr).toBe(0);
+    expect(await repository.read("included.ts")).toBe(
+      "export const value = 'value';\n",
+    );
+    expect(await repository.read("default.ts")).toBe(
+      'export const value = "value";\n',
+    );
+    expect(await repository.read("skip-keep.ts")).toBe(
+      "export const value = 'value';\n",
+    );
+    expect(await repository.read("skip-drop.ts")).toBe(sources["skip-drop.ts"]);
+    expect((await repository.git(["write-tree"])).stdout).toBe(index);
+  });
+
+  it("applies a project formatting fix through the packaged command without changing the index", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{"singleQuote":true}');
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--checks",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await repository.commitAll("project formatting policy");
+    await repository.write("value.ts", 'export const value = "changed";\n');
+    await repository.git(["add", "--", "value.ts"]);
+    const beforeIndex = (await repository.git(["write-tree"])).stdout;
+    const applied = await runPackagedCli(repository.root, [
+      "fix",
+      "formatting",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(applied.exitCode, applied.stdout + applied.stderr).toBe(0);
+    expect(JSON.parse(applied.stdout)).toMatchObject({
+      applied: true,
+      result: { changedFiles: ["value.ts"], issues: [] },
+    });
+    expect(await repository.read("value.ts")).toBe(
+      "export const value = 'changed';\n",
+    );
+    expect((await repository.git(["write-tree"])).stdout).toBe(beforeIndex);
+  });
+
+  it("copies detected settings through packaged init", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{"printWidth":100,"trailingComma":"es5"}',
+    );
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "copy",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode, result.stderr).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"printWidth": 100');
+    expect(config).toContain('"trailingComma": "es5"');
+    // Detection is reported in the machine-readable proposal without executing
+    // or silently importing anything during a default setup.
+    const proposal = JSON.parse(result.stdout);
+    expect(proposal.applied).toBe(true);
+    expect(proposal.proposal.formattingDetection).toEqual([
+      expect.objectContaining({
+        projectRoot: ".",
+        configPaths: [".prettierrc.json"],
+      }),
+    ]);
+  });
+
+  it("uses the trusted project engine in packaged init and scan", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write("value.ts", "export const value = 'ok';\n");
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
+
+    const init = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(init.exitCode, init.stderr).toBe(0);
+    const config = await readFile(
+      join(repository.root, ".zedbeerc.jsonc"),
+      "utf8",
+    );
+    expect(config).toContain('"engine": "project"');
+    const trust = await repository.git([
+      "config",
+      "--local",
+      "--get-regexp",
+      "allowed",
+    ]);
+    expect(trust.stdout).toContain("v1");
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const withService = await runZedbee(repository.root, "json");
+    const withoutService = await runZedbee(repository.root, "json", [
+      "--no-service",
+    ]);
+    expect(withService.exitCode, withService.stderr).toBe(0);
+    expect(withoutService.exitCode, withoutService.stderr).toBe(0);
+    // The checks actually ran through the project engine: exit code zero alone
+    // would also pass if formatting had been skipped entirely.
+    for (const result of [withService, withoutService]) {
+      const report = JSON.parse(result.stdout) as {
+        readonly checks: readonly {
+          readonly checkId: string;
+          readonly status: string;
+          readonly findings: readonly unknown[];
+          readonly formattingProvenance?: readonly {
+            readonly engine: string;
+            readonly version: string;
+            readonly projectRoot: string;
+            readonly configFiles: readonly string[];
+          }[];
+        }[];
+      };
+      const formatting = report.checks.find(
+        (check) => check.checkId === "formatting",
+      );
+      expect(formatting?.status).toBe("completed");
+      expect(formatting?.findings).toEqual([]);
+      expect(formatting?.formattingProvenance).toEqual([
+        {
+          engine: "project",
+          version: "3.9.6",
+          projectRoot: ".",
+          configFiles: [".prettierrc.json"],
+        },
+      ]);
+    }
+  });
+
+  it("blocks a project-style regression the managed engine would have allowed", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write("value.ts", 'export const value = "double";\n');
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
+
+    const init = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(init.exitCode, init.stderr).toBe(0);
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const scan = await runZedbee(repository.root, "json");
+    expect(scan.exitCode).toBe(1);
+    const report = JSON.parse(scan.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly findings: readonly {
+          readonly location?: { readonly file: string };
+        }[];
+        readonly formattingProvenance?: readonly { readonly engine: string }[];
+      }[];
+    };
+    const formatting = report.checks.find(
+      (check) => check.checkId === "formatting",
+    );
+    expect(formatting?.status).toBe("completed");
+    expect(
+      formatting?.findings.map((finding) => finding.location?.file),
+    ).toEqual(["value.ts"]);
+    expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
+  });
+
+  it("carries invocation-only trust into a fresh scan without init", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(".prettierrc.json", '{\n  "singleQuote": true\n}\n');
+    await repository.write("value.ts", 'export const value = "hello";\n');
+    await repository.git([
+      "add",
+      "--",
+      "package.json",
+      ".prettierrc.json",
+      "value.ts",
+    ]);
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{\n  "schemaVersion": 1,\n  "profile": "recommended",\n  "checks": {\n    "formatting": {\n      "engine": "project"\n    }\n  }\n}\n',
+    );
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+
+    const untrusted = await runZedbee(repository.root, "json");
+    expect(untrusted.exitCode).toBe(2);
+    const untrustedReport = JSON.parse(untrusted.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly error?: { readonly code: string };
+      }[];
+    };
+    expect(
+      untrustedReport.checks.find((check) => check.checkId === "formatting"),
+    ).toMatchObject({
+      status: "incomplete",
+      error: { code: "PROJECT_PRETTIER_TRUST_REQUIRED" },
+    });
+
+    const trusted = await runZedbee(repository.root, "json", [
+      "--trust-project-prettier",
+    ]);
+    expect(trusted.exitCode, trusted.stderr).toBe(1);
+    const trustedReport = JSON.parse(trusted.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly formattingProvenance?: readonly { readonly engine: string }[];
+      }[];
+    };
+    const formatting = trustedReport.checks.find(
+      (check) => check.checkId === "formatting",
+    );
+    expect(formatting?.status).toBe("completed");
+    expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
+  });
+
+  it("refuses project formatting without trust non-interactively", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "singleQuote": true,\n  "trailingComma": "none"\n}\n',
+    );
+
+    const result = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--hook",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+
+    expect(result.exitCode).toBe(2);
+  });
+
+  it("commits generated tracked hooks with project formatting, lint, and dependency architecture", async () => {
+    const repository = await repositoryWithProjectPrettier();
+    await repository.write(
+      ".prettierrc.json",
+      '{\n  "trailingComma": "none"\n}\n',
+    );
+    await repository.write(
+      "src/index.ts",
+      `export const value = ${Date.now()};\n`,
+    );
+
+    const initialized = await runPackagedCli(repository.root, [
+      "init",
+      "--formatting",
+      "project",
+      "--trust-project-prettier",
+      "--hook",
+      "tracked",
+      "--checks",
+      "formatting,lint,dependencyArchitecture",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(initialized.exitCode, initialized.stderr).toBe(0);
+    await repository.git(["add", "--all"]);
+
+    const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
+    expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(0);
+    const report = JSON.parse(scanned.stdout) as {
+      readonly checks: readonly {
+        readonly checkId: string;
+        readonly status: string;
+        readonly findings: readonly unknown[];
+      }[];
+    };
+    for (const checkId of ["formatting", "lint", "dependencyArchitecture"]) {
+      expect(report.checks).toContainEqual(
+        expect.objectContaining({ checkId, status: "completed", findings: [] }),
+      );
+    }
+
+    const committed = await execa(
+      "git",
+      ["commit", "-m", "Set up trusted project formatting"],
+      {
+        cwd: repository.root,
+        env: {
+          CI: "",
+          HUSKY: "1",
+          NODE_OPTIONS: undefined,
+          NODE_PATH: undefined,
+          TMPDIR: temporaryReportRoot,
+          TMP: temporaryReportRoot,
+          TEMP: temporaryReportRoot,
+        },
+        reject: false,
+        stdin: "ignore",
+        ...cancellationOptions(),
+      },
+    );
+    expect(committed.exitCode, committed.stdout + committed.stderr).toBe(0);
   });
 });

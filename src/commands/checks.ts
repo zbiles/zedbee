@@ -23,6 +23,7 @@ import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
+import { discoverProjectPrettier } from "../init/prettier-discovery.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import {
   immutableConfigurationSnapshot,
@@ -80,6 +81,7 @@ export interface ChecksCommandDependencies {
     repositoryRoot: string,
     config: ResolvedConfig,
   ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>>;
+  discoverProjectPrettier?: typeof discoverProjectPrettier;
   renderDashboard?(
     checks: readonly CheckDescription[],
     options: { readonly width: number; readonly color: boolean },
@@ -400,6 +402,9 @@ function describeConfiguration(
         if (patch === undefined) return undefined;
         return Object.freeze({
           files: Object.freeze([...override.files]),
+          ...(override.excludeFiles === undefined
+            ? {}
+            : { excludeFiles: Object.freeze([...override.excludeFiles]) }),
           values: orderedRecord(
             patchValueEntries(checkId, patch).map(([key, value]) => [
               key,
@@ -413,6 +418,7 @@ function describeConfiguration(
           override,
         ): override is Readonly<{
           readonly files: readonly string[];
+          readonly excludeFiles?: readonly string[];
           readonly values: Readonly<Record<string, unknown>>;
         }> => override !== undefined,
       ),
@@ -446,6 +452,16 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
           "secondary",
           color,
         ),
+        ...(check.effectiveEngines !== undefined &&
+        check.effectiveEngines.length > 1
+          ? check.effectiveEngines.map((engine) =>
+              terminalText(
+                `  Engine scope ${engine.projectRoot}: ${engine.name} ${engine.version} (${engine.license})`,
+                "secondary",
+                color,
+              ),
+            )
+          : []),
         ...configurationLines
           .split("\n")
           .filter((line) => line.length > 0)
@@ -485,6 +501,64 @@ export async function executeChecksCommand(
       repositoryRoot,
       config,
     );
+    const formattingUsesProject =
+      config.checks.formatting.engine === "project" ||
+      config.overrides.some(
+        (override) => override.checks.formatting?.engine === "project",
+      );
+    const discoveredProjectPrettier = formattingUsesProject
+      ? await (dependencies.discoverProjectPrettier ?? discoverProjectPrettier)(
+          repositoryRoot,
+        ).catch(() => [] as const)
+      : [];
+    const formattingUsesManaged =
+      config.checks.formatting.engine === "managed" ||
+      config.overrides.some(
+        (override) => override.checks.formatting?.engine === "managed",
+      );
+    const effectiveFormattingEngines = Object.freeze([
+      ...(formattingUsesManaged
+        ? [
+            Object.freeze({
+              kind: "managed" as const,
+              projectRoot: ".",
+              ...CATALOG.formatting.engine,
+            }),
+          ]
+        : []),
+      ...discoveredProjectPrettier.map((entry) =>
+        Object.freeze({
+          kind: "project" as const,
+          projectRoot: entry.projectRoot,
+          name: "Project Prettier",
+          version: entry.version ?? entry.status,
+          license: "project-installed",
+        }),
+      ),
+      ...(formattingUsesProject && discoveredProjectPrettier.length === 0
+        ? [
+            Object.freeze({
+              kind: "project" as const,
+              projectRoot: ".",
+              name: "Project Prettier",
+              version: "missing",
+              license: "project-installed",
+            }),
+          ]
+        : []),
+    ]);
+    const formattingEngine =
+      effectiveFormattingEngines.length === 1
+        ? Object.freeze({
+            name: effectiveFormattingEngines[0]!.name,
+            version: effectiveFormattingEngines[0]!.version,
+            license: effectiveFormattingEngines[0]!.license,
+          })
+        : Object.freeze({
+            name: "Mixed Prettier engines",
+            version: `${effectiveFormattingEngines.length} configurations`,
+            license: "mixed",
+          });
     const checks = Object.freeze(
       CHECK_IDS.map((id): CheckDescription => {
         const runtime = applicability.get(id) ?? {
@@ -504,8 +578,17 @@ export async function executeChecksCommand(
           executionClass: runtime.executionClass,
           network:
             id !== "vulnerabilities" ? "none" : "online-package-metadata-only",
-          engine: Object.freeze({ ...CATALOG[id].engine }),
-          limitation: CATALOG[id].limitation,
+          engine:
+            id === "formatting"
+              ? formattingEngine
+              : Object.freeze({ ...CATALOG[id].engine }),
+          ...(id === "formatting"
+            ? { effectiveEngines: effectiveFormattingEngines }
+            : {}),
+          limitation:
+            id === "formatting" && formattingUsesProject
+              ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
+              : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined
             ? {}
             : { automaticFix: CATALOG[id].automaticFix }),

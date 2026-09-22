@@ -82,6 +82,8 @@ export interface FixCommandDependencies {
     options?: {
       readonly signal?: AbortSignal;
       readonly executor?: AnalyzerExecutor;
+      /** Invocation-only consent carried in memory, never the serialized plan. */
+      readonly projectPrettierTrust?: boolean;
     },
   ): Promise<FixResult>;
   /** Injected by the interactive UI task; the command remains safe until then. */
@@ -618,6 +620,9 @@ export async function executeFixCommand(
       dependencies.applyFixPlan(prepared, {
         executor,
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.projectPrettierTrust === true
+          ? { projectPrettierTrust: true }
+          : {}),
       }),
     );
     diagnosticEntries.push(...result.issues);

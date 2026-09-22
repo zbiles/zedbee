@@ -84,6 +84,25 @@ Formatting comparisons have a two-second limit per file. If a comparison takes l
 
 The formatting check accepts all and only these fourteen Prettier fields. Values not listed here, including `parser` and plugin settings, are rejected.
 
+### Formatting engines
+
+`checks.formatting.engine` selects the formatting engine and defaults to `"managed"` when omitted. Existing configurations keep managed behavior.
+
+- `"managed"` uses Zedbee's bundled Prettier with the fourteen managed settings below.
+- `"project"` uses the selected project's installed Prettier (supported range `>=3.0.0 <4.0.0`), its native configuration, and its plugins. `settings` cannot be combined with `engine: "project"`.
+
+During `zedbee init`, when an existing setup is found you can copy supported settings once into `.zedbeerc.jsonc` (`--formatting copy`), use the project's Prettier (`--formatting project`), keep Zedbee defaults (`--formatting managed`), or stop checking formatting (`--formatting off`). A copy is a one-time import; Zedbee does not synchronize it afterwards, and plugins and unsupported options are not copied. With separate consent, copy mode evaluates every selected executable or package-exported shared configuration through its owning project's supervised Prettier worker, retains only representable settings, and binds the preview to every evaluated configuration file so a change in any scope invalidates the apply. Project-root `.prettierignore` and `.gitignore` rules are copied as formatting-only path exclusions, preserving their order, negations, and directory-relative meaning. Subsequent scans use the saved rules; editing the original ignore file does not refresh the copy.
+
+Representable native override `excludeFiles` patterns are copied with the override, preserving native basename/path matching groups and negated include patterns. These files keep their normal formatting settings; they are not skipped. Pattern combinations that cannot be copied exactly, including negated `excludeFiles`, are shown as limitations; noninteractive copy makes no writes while limitations remain. EditorConfig-only setups and nested EditorConfig scopes are included; nonfinite values such as `max_line_length=off` are disclosed rather than silently converted.
+
+Project-format reports include `formattingCoverage` counts for `checkedFiles`, `ignoredFiles`, and `unsupportedFiles`. Ignored and unsupported files are not counted as checked. An entirely ignored/unsupported run is skipped.
+
+Project execution is an explicit trust decision. Choosing it in `init` records consent in local Git configuration keyed to the checkout and project root; a fresh clone needs its own consent, and CI must pass `--trust-project-prettier` from a trusted workflow. That flag is invocation-only. `--yes` alone never grants it, and tracked repository configuration can never grant it. When the installation is missing, the version is unsupported, a plugin is missing, the configuration is invalid, or trust is absent, the formatting check is incomplete with a concrete remedy. Zedbee never silently falls back to managed formatting, and project-format results are not persisted in the observation cache. Managed behavior is unchanged when `engine` is omitted.
+
+Do not grant project-Prettier trust automatically to unreviewed pull-request code. Native configuration and plugins are project code with the invoking user's permissions; the worker boundary supervises their lifetime but is not an operating-system sandbox. The selected Git snapshot supplies configuration files, relative helpers, ignore files, and source bytes, so an unstaged helper edit cannot alter an index scan.
+
+`zedbee checks` shows the effective engine and, for project mode, every detected project root and version that can participate in the configured formatting policy. Mixed managed/project repositories receive a summary plus `effectiveEngines` entries in JSON; text and Ink output list the same scopes individually. `zedbee doctor` inspects project setup as data only; pass `--trust-project-prettier` to run the same installation and snapshot probe used by scans.
+
 | Field                    |       Default | Accepted value                                 |
 | ------------------------ | ------------: | ---------------------------------------------- |
 | `printWidth`             |          `80` | Positive safe integer                          |
@@ -146,6 +165,33 @@ Duplication uses these workspace-wide values:
 
 ### Ordered file overrides
 
+There are two ways to exclude files:
+
+- Use `excludeFiles` inside an override to leave matching files on their normal settings. This works for every check supported in file overrides.
+- Use `pathExclusions` to skip named checks entirely for matching files. Other checks still run.
+
+```json
+{
+  "schemaVersion": 1,
+  "overrides": [
+    {
+      "files": ["src/**"],
+      "excludeFiles": ["src/generated/**"],
+      "checks": { "formatting": { "settings": { "tabWidth": 4 } } }
+    }
+  ],
+  "pathExclusions": [
+    {
+      "files": ["vendor/**"],
+      "checks": ["formatting"],
+      "reason": "Preserve vendor formatting"
+    }
+  ]
+}
+```
+
+Here, `src/generated/**` still gets checked with the normal formatting settings. `vendor/**` skips formatting. Excluding a file from one override does not stop a later override from matching it.
+
 File overrides are evaluated in array order independently for every repository-relative file. All matching entries contribute a patch; a later matching override takes precedence only for fields it supplies. Settings omitted by that later entry retain the result of the profile, repository check policy, and earlier matches.
 
 ```jsonc
@@ -186,6 +232,10 @@ Duplication analysis is workspace-wide because jscpd compares clone regions and 
 
 Run `zedbee checks` to inspect effective settings and configured overrides. Its output identifies whether each root value came from the selected profile or repository configuration and includes the primary managed engine summary; it is not an inventory of every supporting package version. `zedbee checks --format json` returns the complete deterministic settings metadata.
 
-## Managed-only configuration boundary
+## Configuration boundary
 
-Zedbee does not load a project's native analyzer config. It ignores native Prettier, ESLint, plugin, parser, and executable analyzer configuration in favor of its pinned engines and inert managed settings. Teams with native configs may see different Zedbee results because those files are not loaded. Adopt Zedbee by calibrating the supported `.zedbeerc.jsonc` settings and rule inventory, not by assuming identical results from an existing native tool invocation.
+By default Zedbee runs a managed boundary: it does not load a project's native analyzer config. It ignores native ESLint, plugin, parser, and executable analyzer configuration in favor of its pinned engines and inert managed settings, and native Prettier configuration is ignored unless the project formatting engine is explicitly trusted. Teams with native configs may see different Zedbee results because those files are not loaded. Adopt Zedbee by calibrating the supported `.zedbeerc.jsonc` settings and rule inventory, not by assuming identical results from an existing native tool invocation.
+
+The single exception is formatting: with `checks.formatting.engine` set to `"project"` plus an explicit trust decision, Zedbee runs the project's installed Prettier, its native configuration, and its plugins in a supervised worker. This exception never applies to ESLint, Secretlint, or any other managed analyzer. See [formatting engines](#formatting-engines).
+
+The generated `.husky/install.mjs` installer may import declared development dependencies. This exception does not exempt missing declarations, classify hook files as tests, or apply to other hook scripts.

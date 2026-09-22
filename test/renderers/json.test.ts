@@ -504,3 +504,22 @@ describe("renderJson", () => {
     });
   });
 });
+
+it("preserves validated formatting coverage in machine reports", () => {
+  const coverage = { checkedFiles: 1, ignoredFiles: 2, unsupportedFiles: 3 };
+  const check = sanitizeCheckResult({
+    checkId: "formatting",
+    status: "completed",
+    durationMs: 0,
+    findings: [],
+    formattingCoverage: coverage,
+  });
+  const report = JSON.parse(renderJson(createReport({ checks: [check] })));
+  expect(report.checks[0].formattingCoverage).toEqual(coverage);
+  expect(() =>
+    sanitizeCheckResult({
+      ...check,
+      formattingCoverage: { ...coverage, ignoredFiles: -1 },
+    }),
+  ).toThrow();
+});

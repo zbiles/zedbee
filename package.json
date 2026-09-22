@@ -107,6 +107,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "execa": "10.0.1",
     "husky": "9.1.7",
+    "ignore": "7.0.6",
     "ink": "7.1.1",
     "jscpd": "5.2.1",
     "json5": "2.2.3",

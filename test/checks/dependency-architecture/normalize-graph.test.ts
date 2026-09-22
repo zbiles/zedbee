@@ -121,3 +121,30 @@ describe("dependency graph normalization", () => {
     ).toEqual([]);
   });
 });
+
+it.each([
+  [".husky/install.mjs", true, undefined],
+  [".husky/install.mjs", false, DEPENDENCY_RULE_NAMES.missingDependency],
+  [".husky/custom.js", true, DEPENDENCY_RULE_NAMES.productionToDev],
+  [".husky/custom.js", false, DEPENDENCY_RULE_NAMES.missingDependency],
+])(
+  "keeps declaration checks for %s (declared=%s)",
+  (file, declared, expected) => {
+    const graph = result([]);
+    graph.modules = [
+      {
+        source: file,
+        dependencies: [{ module: "tool", dependencyTypes: ["npm-dev"] }],
+      },
+    ] as ICruiseResult["modules"];
+    const observations = normalizeDependencyViolations(
+      graph,
+      "/snapshot",
+      new Set([file]),
+      { production: new Set(), development: new Set(declared ? ["tool"] : []) },
+    );
+    expect(observations.map((entry) => entry.rule)).toEqual(
+      expected ? [expected] : [],
+    );
+  },
+);

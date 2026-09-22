@@ -47,7 +47,7 @@ export type ProjectFormatIgnored = {
 };
 
 export type ProjectFormatSupport =
-  | { readonly kind: "supported" }
+  | { readonly kind: "supported"; readonly configFile?: string }
   | ProjectFormatIgnored;
 
 export type ProjectFormatResult =

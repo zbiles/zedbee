@@ -8,7 +8,7 @@ Explicit base mode (`scan --base <ref>`) instead materializes the unique merge-b
 
 Snapshot paths are validated under a Zedbee-owned temporary directory, selected repository links may not escape it, and cleanup is attempted before the command returns once execution has stopped. Unproved execution cleanup retains snapshots and makes the scan incomplete. Cleanup failure may disclose one validated Zedbee temporary directory so the invoking human or agent can inspect exactly what remains; resolve the execution/cleanup problem before removing it. If Zedbee cannot safely validate the directory's identity, it reports no path and instead directs the operator to inspect the OS temporary directory for stale `zedbee-snapshot-*` directories. Correct permissions, locks, or filesystem problems before retrying: a persistent cause can make later cleanups fail and leave additional snapshots.
 
-Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, remediation, or executable project analyzer configuration.
+Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, or remediation. The sole executable project-configuration exception is explicitly trusted project Prettier mode, described below.
 
 TypeScript and typed lint can also capture supporting dependency inputs through constrained installed project `node_modules` and bundled TypeScript resolution boundaries. These are permitted local dependency reads outside the selected source snapshots. Captured content supports analysis in memory; only validated input fingerprints and normalized observations may enter the scan cache. Knip's captured inputs remain snapshot-only. Setup and diagnostics (`init` and `doctor`) may read working-copy configuration.
 
@@ -33,6 +33,15 @@ Exact lint and React edits are rejected when they overlap unstaged work;
 selected Prettier formatting intentionally processes the complete current
 working file, so it can reformat unstaged work. Review the working-tree diff
 before staging anything.
+
+When a project's formatting engine is trusted, that project's Prettier,
+configuration, and plugins run in a dedicated child process over a disposable
+mirror of the selected snapshot. The mirror and worker are owned by the scan or
+fix and are removed afterward; project-format results are not persisted in the
+observation cache. Trusted plugin and configuration code can still read files or
+use the network with the user's permissions, so consent is an ongoing decision.
+Configured connection tokens and `NODE_OPTIONS`/`NODE_PATH` are not inherited by
+the worker.
 
 ## Secrets
 

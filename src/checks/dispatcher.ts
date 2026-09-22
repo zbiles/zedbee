@@ -228,6 +228,9 @@ function snapshotOverride(
 ): ResolvedPolicyOverride {
   return Object.freeze({
     files: Object.freeze([...override.files]),
+    ...(override.excludeFiles === undefined
+      ? {}
+      : { excludeFiles: Object.freeze([...override.excludeFiles]) }),
     checks: Object.freeze(
       Object.fromEntries(
         Object.entries(override.checks).map(([id, patch]) => [
@@ -299,6 +302,20 @@ function snapshotInspection(
           sourceFiles: Object.freeze([...workspace.sourceFiles]),
           tsconfigPaths: Object.freeze([...workspace.tsconfigPaths]),
           environments: Object.freeze([...workspace.environments]),
+          ...(workspace.productionDependencies === undefined
+            ? {}
+            : {
+                productionDependencies: Object.freeze([
+                  ...workspace.productionDependencies,
+                ]),
+              }),
+          ...(workspace.developmentDependencies === undefined
+            ? {}
+            : {
+                developmentDependencies: Object.freeze([
+                  ...workspace.developmentDependencies,
+                ]),
+              }),
           dependencyDeclarations: Object.freeze(
             workspace.dependencyDeclarations.map((declaration) =>
               Object.freeze({

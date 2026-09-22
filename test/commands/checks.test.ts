@@ -1,3 +1,4 @@
+import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   executeChecksCommand,
@@ -495,9 +496,10 @@ describe("executeChecksCommand", () => {
         },
       ],
     });
-    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual(
-      formattingSettingLabels.map((label) => `settings.${label}`),
-    );
+    expect(Object.keys(formatting?.configuration.values ?? {})).toEqual([
+      "engine",
+      ...formattingSettingLabels.map((label) => `settings.${label}`),
+    ]);
     expect(formatting?.automaticFix).toBe("zedbee fix formatting");
     const lint = result.checks.find(({ id }) => id === "lint");
     expect(Object.keys(lint?.configuration.values ?? {})).toEqual([
@@ -647,6 +649,147 @@ describe("executeChecksCommand", () => {
     );
   });
 
+  it("describes a nested project engine under a managed root", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { engine: "managed" } },
+      overrides: [
+        {
+          files: ["packages/app/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    });
+
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: false },
+      io,
+      {
+        ...configuredDependencies(config),
+        discoverProjectPrettier: async () => [
+          {
+            projectRoot: "packages/app",
+            status: "available",
+            version: "3.9.6",
+            executableConfig: false,
+            configPaths: ["packages/app/.prettierrc.json"],
+          },
+        ],
+      },
+    );
+
+    expect(result.checks.find(({ id }) => id === "formatting")).toMatchObject({
+      engine: {
+        name: "Mixed Prettier engines",
+        version: "2 configurations",
+        license: "mixed",
+      },
+      effectiveEngines: [
+        {
+          kind: "managed",
+          projectRoot: ".",
+          name: "Prettier",
+          version: "3.9.6",
+          license: "MIT",
+        },
+        {
+          kind: "project",
+          projectRoot: "packages/app",
+          name: "Project Prettier",
+          version: "3.9.6",
+          license: "project-installed",
+        },
+      ],
+      limitation:
+        "Uses the project's installed Prettier, native configuration, and plugins under explicit trust.",
+    });
+  });
+
+  it("reports every effective formatting engine in a mixed-project repository", async () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: { formatting: { engine: "managed" } },
+      overrides: [
+        {
+          files: ["packages/app/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+        {
+          files: ["packages/docs/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    });
+
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "text", color: false },
+      io,
+      {
+        ...configuredDependencies(config),
+        discoverProjectPrettier: async () => [
+          {
+            projectRoot: "packages/app",
+            status: "available",
+            version: "3.9.6",
+            executableConfig: false,
+            configPaths: ["packages/app/.prettierrc.json"],
+          },
+          {
+            projectRoot: "packages/docs",
+            status: "available",
+            version: "3.0.3",
+            executableConfig: false,
+            configPaths: ["packages/docs/.prettierrc.json"],
+          },
+        ],
+      },
+    );
+
+    const formatting = result.checks.find(({ id }) => id === "formatting") as
+      | ((typeof result.checks)[number] & {
+          readonly effectiveEngines: readonly unknown[];
+        })
+      | undefined;
+    expect(formatting?.engine).toEqual({
+      name: "Mixed Prettier engines",
+      version: "3 configurations",
+      license: "mixed",
+    });
+    expect(formatting?.effectiveEngines).toEqual([
+      {
+        kind: "managed",
+        projectRoot: ".",
+        name: "Prettier",
+        version: "3.9.6",
+        license: "MIT",
+      },
+      {
+        kind: "project",
+        projectRoot: "packages/app",
+        name: "Project Prettier",
+        version: "3.9.6",
+        license: "project-installed",
+      },
+      {
+        kind: "project",
+        projectRoot: "packages/docs",
+        name: "Project Prettier",
+        version: "3.0.3",
+        license: "project-installed",
+      },
+    ]);
+    expect(io.stdout.join("")).toContain(
+      "Engine scope packages/app: Project Prettier 3.9.6",
+    );
+    expect(io.stdout.join("")).toContain(
+      "Engine scope packages/docs: Project Prettier 3.0.3",
+    );
+  });
+
   it("detaches and deep-freezes nested configuration values in descriptions", async () => {
     const repositoryOption = {
       selector: "CallExpression",
@@ -792,7 +935,7 @@ describe("executeChecksCommand", () => {
       "Automatic fix: zedbee fix formatting\u001b[39m\n\n\u001b[38;5;231mlint",
     );
     expect(first.stdout.join("")).toContain(
-      "Configuration: 13 profile values, 1 repository value",
+      "Configuration: 14 profile values, 1 repository value",
     );
     const output = first.stdout.join("");
     const settingPositions = formattingSettingLabels.map((label) =>
@@ -835,4 +978,12 @@ describe("executeChecksCommand", () => {
     ]);
     expect(JSON.stringify(failed)).not.toContain("/private/tmp/secret");
   });
+});
+
+it("shows override exceptions without implying excluded files are unchecked", () => {
+  expect(
+    configurationOverrideLine(["src/**"], { "settings.tabWidth": 4 }, [
+      "src/generated/**",
+    ]),
+  ).toBe("Override src/** except src/generated/**: settings.tabWidth: 4");
 });

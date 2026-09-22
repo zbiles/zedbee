@@ -33,13 +33,7 @@ export interface ProjectPrettierDiscovery {
   readonly status: "available" | "missing" | "unsupported";
 }
 
-const DATA_CONFIG_FILES = [
-  "prettier.config.js",
-  "prettier.config.mjs",
-  "prettier.config.cjs",
-  "prettier.config.ts",
-  "prettier.config.cts",
-  "prettier.config.mts",
+export const DATA_CONFIG_FILE_NAMES = [
   ".prettierrc",
   ".prettierrc.json",
   ".prettierrc.json5",
@@ -52,7 +46,17 @@ const DATA_CONFIG_FILES = [
   ".prettierrc.ts",
   ".prettierrc.cts",
   ".prettierrc.mts",
+  "prettier.config.js",
+  "prettier.config.mjs",
+  "prettier.config.cjs",
+  "prettier.config.ts",
+  "prettier.config.cts",
+  "prettier.config.mts",
 ] as const;
+
+const DATA_CONFIG_FILES: readonly string[] = [
+  ...DATA_CONFIG_FILE_NAMES,
+];
 
 const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
   ".js",

@@ -13,7 +13,7 @@ import type {
   WorkspaceInspection,
 } from "../inspection/types.js";
 import type { CheckTarget } from "./adapter.js";
-import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import { isFormattingCandidate } from "./prettier/supported-path.js";
 
 const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
@@ -103,7 +103,7 @@ function workspacePaths(
         workspace.manifestPath,
         ...workspace.sourceFiles,
         ...workspace.tsconfigPaths,
-      ].filter(isSupportedPrettierPath);
+      ];
     case "secrets":
     case "duplication":
       return [];
@@ -133,11 +133,7 @@ function actualRelevantPaths(
   if (checkId === "formatting" || checkId === "secrets") {
     paths.push(
       ...[...changeSet.files.values()]
-        .filter(
-          (file) =>
-            file.status !== "deleted" &&
-            (checkId === "secrets" || isSupportedPrettierPath(file.path)),
-        )
+        .filter((file) => file.status !== "deleted")
         .map(({ path }) => path),
     );
   }
@@ -167,6 +163,14 @@ export function shouldScheduleTarget(
   );
   return actualRelevantPaths(checkId, target, inspection, changeSet).some(
     (path) => {
+      if (
+        checkId === "formatting" &&
+        !isFormattingCandidate(
+          path,
+          policyForFile("formatting", path, "target").engine,
+        )
+      )
+        return false;
       const policy = policyForFile(checkId, path, "target");
       return (
         policy.severity !== "off" &&

@@ -328,7 +328,7 @@ describe("public documentation claims", () => {
       /rule options[^.]*analyzer and plugin versions pinned by the installed Zedbee release/i,
     );
     expect(publicDocs).toMatch(
-      /`zedbee checks`[^.]*primary managed engine summary/i,
+      /`zedbee checks`[^.]*detected project Prettier version[^.]*root policy[^.]*path override/i,
     );
     expect(publicDocs).not.toMatch(
       /versions printed by `zedbee checks`|versions appear in `zedbee checks` output/i,

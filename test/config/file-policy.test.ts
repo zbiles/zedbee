@@ -235,3 +235,121 @@ describe("createFilePolicyResolver", () => {
     ]);
   });
 });
+
+it("excludes only the matching override while explicit path exclusions skip the named check", () => {
+  const config = resolveConfig(
+    configFileSchema.parse({
+      schemaVersion: 1,
+      checks: { formatting: { settings: { tabWidth: 2 } } },
+      overrides: [
+        {
+          files: ["src/**"],
+          excludeFiles: ["src/generated/**", "**/*.test.ts"],
+          checks: {
+            formatting: { settings: { tabWidth: 4 } },
+            lint: { severity: "warn" },
+          },
+        },
+        {
+          files: ["src/generated/special.ts"],
+          checks: { formatting: { settings: { tabWidth: 8 } } },
+        },
+      ],
+      pathExclusions: [
+        {
+          files: ["src/vendor/**"],
+          checks: ["formatting"],
+          reason: "Vendor-owned formatting",
+        },
+      ],
+    }),
+  );
+  const resolve = createFilePolicyResolver(
+    config,
+    changeSet(
+      new Map([
+        [
+          "src/generated/renamed.ts",
+          {
+            path: "src/generated/renamed.ts",
+            previousPath: "src/old.ts",
+            status: "renamed",
+            addedRanges: [],
+          },
+        ],
+      ]),
+    ),
+  );
+  expect(resolve("formatting", "src/app.ts", "target").settings.tabWidth).toBe(
+    4,
+  );
+  expect(
+    resolve("formatting", "src/generated/app.ts", "target").settings.tabWidth,
+  ).toBe(2);
+  expect(
+    resolve("formatting", "src/app.test.ts", "target").settings.tabWidth,
+  ).toBe(2);
+  expect(
+    resolve("formatting", "src/generated/special.ts", "target").settings
+      .tabWidth,
+  ).toBe(8);
+  expect(
+    resolve("formatting", "src/old.ts", "baseline").settings.tabWidth,
+  ).toBe(2);
+  expect(resolve("formatting", "src/vendor/app.ts", "target").severity).toBe(
+    "off",
+  );
+  expect(
+    resolve("formatting", "src/generated/app.ts", "target").severity,
+  ).not.toBe("off");
+  expect(resolve("lint", "src/vendor/app.ts", "target").severity).toBe("warn");
+});
+
+it("preserves ordered gitignore rules, scoped roots, directory exclusion and case", () => {
+  const config = resolveConfig(
+    configFileSchema.parse({
+      schemaVersion: 1,
+      pathExclusions: [
+        {
+          syntax: "gitignore",
+          basePath: "packages/web",
+          files: [
+            "# comment",
+            "*.ts",
+            "!keep.ts",
+            "/root.js",
+            "build/",
+            "!build/keep.js",
+            "UPPER.js",
+            "\\#literal.js",
+          ],
+          checks: ["formatting"],
+          reason: "Imported formatter ignores",
+        },
+      ],
+    }),
+  );
+  const resolve = createFilePolicyResolver(config, changeSet());
+  for (const file of [
+    "packages/web/drop.ts",
+    "packages/web/nested/drop.ts",
+    "packages/web/root.js",
+    "packages/web/build/keep.js",
+    "packages/web/UPPER.js",
+    "packages/web/upper.js",
+    "packages/web/#literal.js",
+  ])
+    expect(resolve("formatting", file, "target").severity, file).toBe("off");
+  for (const file of [
+    "packages/web/keep.ts",
+    "packages/web/nested/keep.ts",
+    "packages/web/nested/root.js",
+    "other/drop.ts",
+  ])
+    expect(resolve("formatting", file, "target").severity, file).not.toBe(
+      "off",
+    );
+  expect(resolve("lint", "packages/web/drop.ts", "target").severity).not.toBe(
+    "off",
+  );
+});
