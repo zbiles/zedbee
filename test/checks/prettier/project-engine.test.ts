@@ -1,9 +1,9 @@
 import * as nativePrettier from "prettier";
-import { cp, lstat, mkdir, readFile, rm, symlink } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
@@ -98,6 +98,97 @@ describe("project Prettier engine", () => {
       text: "export const value = 'hello';\n",
     });
   });
+
+  it.each(["3.0.3", "3.9.6"])(
+    "preserves a symlinked snapshot config with Prettier %s",
+    async (prettierVersion) => {
+      const fixture = await createProjectPrettierFixture({ prettierVersion });
+      onTestFinished(() => fixture.dispose());
+      await fixture.write("config.json", '{"singleQuote":true}');
+      await symlink("config.json", join(fixture.root, ".prettierrc.json"));
+      await fixture.write("value.ts", 'export const value = "hello";\n');
+      await fixture.stage(".prettierrc.json", "config.json", "value.ts");
+      await fixture.write("config.json", '{"singleQuote":false}');
+
+      const session = await fixture.open({ source: "index", trust: true });
+
+      await expect(session.classify("value.ts")).resolves.toEqual({
+        kind: "supported",
+      });
+      await expect(
+        session.format("value.ts", 'export const value = "hello";'),
+      ).resolves.toEqual({
+        kind: "formatted",
+        text: "export const value = 'hello';\n",
+      });
+    },
+  );
+
+  it.each(["3.0.3", "3.9.6"])(
+    "preserves EditorConfig numeric ranges without a config with Prettier %s",
+    async (prettierVersion) => {
+      const fixture = await createProjectPrettierFixture({ prettierVersion });
+      onTestFinished(() => fixture.dispose());
+      await fixture.write(
+        ".editorconfig",
+        "root = true\n[file{1..12}.ts]\nquote_type = single\n",
+      );
+      await fixture.write("file10.ts", 'export const value = "hello";\n');
+      await fixture.write("file13.ts", 'export const value = "hello";\n');
+      await fixture.stage(".editorconfig", "file10.ts", "file13.ts");
+
+      const session = await fixture.open({ source: "index", trust: true });
+
+      await expect(session.classify("file10.ts")).resolves.toEqual({
+        kind: "supported",
+      });
+      await expect(
+        session.format("file10.ts", 'export const value = "hello";'),
+      ).resolves.toEqual({
+        kind: "formatted",
+        text: "export const value = 'hello';\n",
+      });
+      await expect(
+        session.format("file13.ts", 'export const value = "hello";'),
+      ).resolves.toEqual({
+        kind: "formatted",
+        text: 'export const value = "hello";\n',
+      });
+    },
+  );
+
+  it.each(["3.0.3", "3.9.6"])(
+    "bounds native EditorConfig lookup above the mirror with Prettier %s",
+    async (prettierVersion) => {
+      const fixture = await createProjectPrettierFixture({ prettierVersion });
+      onTestFinished(() => fixture.dispose());
+      const outer = await mkdtemp(join(tmpdir(), "zedbee-editorconfig-parent-"));
+      onTestFinished(() => rm(outer, { recursive: true, force: true }));
+      await writeFile(
+        join(outer, ".editorconfig"),
+        "root = true\n[*]\nquote_type = single\n",
+      );
+      await fixture.write(".editorconfig", "[*]\nindent_style = space\n");
+      await fixture.write("value.ts", 'export const value = "hello";\n');
+      await fixture.stage(".editorconfig", "value.ts");
+      // Place the owned mirror below an unrelated EditorConfig, without
+      // writing to a shared temporary-directory ancestor.
+      vi.stubEnv("TMPDIR", outer);
+      vi.stubEnv("TMP", outer);
+      vi.stubEnv("TEMP", outer);
+      try {
+        const session = await fixture.open({ source: "index", trust: true });
+        await expect(
+          session.format("value.ts", 'export const value = "hello";'),
+        ).resolves.toEqual({
+          kind: "formatted",
+          text: 'export const value = "hello";\n',
+        });
+      } finally {
+        vi.unstubAllEnvs();
+      }
+    },
+  );
 
   it("does not execute a config without consent", async () => {
     const fixture = await createProjectPrettierFixture();

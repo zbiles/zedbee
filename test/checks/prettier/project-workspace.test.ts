@@ -163,6 +163,44 @@ describe("project Prettier workspace", () => {
     ).rejects.toThrow(ProjectWorkspaceLayoutError);
   });
 
+  it("preserves contained chains of snapshot file links", async () => {
+    const { root } = await snapshotFixture();
+    await mkdir(join(root, "config"));
+    await writeFile(join(root, "config", "options.json"), '{"singleQuote":true}');
+    await symlink("config/options.json", join(root, "shared.json"));
+    await symlink("shared.json", join(root, ".prettierrc.json"));
+    const workspace = await createProjectWorkspace({
+      repositoryRoot: root,
+      snapshotRoot: root,
+      projectRoot: ".",
+    });
+    onTestFinished(() => workspace.dispose());
+
+    expect(await readFile(join(workspace.treeRoot, ".prettierrc.json"), "utf8"))
+      .toBe('{"singleQuote":true}');
+    await writeFile(join(root, "config", "options.json"), '{"singleQuote":false}');
+    expect(await readFile(join(workspace.treeRoot, ".prettierrc.json"), "utf8"))
+      .toBe('{"singleQuote":true}');
+  });
+
+  it.each(["absolute", "outside", "missing", "cycle", "directory"])(
+    "rejects %s snapshot links instead of silently losing configuration",
+    async (kind) => {
+      const { root } = await snapshotFixture();
+      const target = kind === "absolute" ? join(root, "package.json")
+        : kind === "outside" ? "../outside.json"
+        : kind === "cycle" ? ".prettierrc.json"
+        : kind === "directory" ? "src" : "missing.json";
+      await symlink(target, join(root, ".prettierrc.json"));
+
+      await expect(createProjectWorkspace({
+        repositoryRoot: root,
+        snapshotRoot: root,
+        projectRoot: ".",
+      })).rejects.toThrow(ProjectWorkspaceLayoutError);
+    },
+  );
+
   it("cleans only its own directory", async () => {
     const { root } = await snapshotFixture();
     const repositoryRoot = await mkdtemp(join(tmpdir(), "zedbee-workspace-repo2-"));

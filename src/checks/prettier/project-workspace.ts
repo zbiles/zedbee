@@ -4,6 +4,7 @@ import {
   mkdtemp,
   readdir,
   readFile,
+  readlink,
   realpath,
   rm,
   symlink,
@@ -73,6 +74,8 @@ async function copyRegularFiles(
   treeRoot: string,
   signal: AbortSignal,
 ): Promise<void> {
+  const copiedFiles = new Set<string>();
+  const links = new Map<string, string>();
   const walk = async (directory: string): Promise<void> => {
     if (signal.aborted) throw new Error("Workspace build aborted");
     const entries = await readdir(directory, { withFileTypes: true });
@@ -81,7 +84,10 @@ async function copyRegularFiles(
     )) {
       const absolute = join(directory, entry.name);
       const metadata = await lstat(absolute);
-      if (metadata.isSymbolicLink()) continue;
+      if (metadata.isSymbolicLink()) {
+        links.set(absolute, await readlink(absolute));
+        continue;
+      }
       if (metadata.isDirectory()) {
         if (entry.name === "node_modules") continue;
         await walk(absolute);
@@ -94,9 +100,36 @@ async function copyRegularFiles(
       const destination = join(treeRoot, ...path.split("/"));
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, await readFile(absolute), { mode: 0o600 });
+      copiedFiles.add(absolute);
     }
   };
   await walk(snapshotRoot);
+  // Resolve only names from the snapshot inventory. Never follow a link into
+  // the live checkout, installed dependencies, or another filesystem tree.
+  for (const path of links.keys()) {
+    let target = path;
+    const seen = new Set<string>();
+    while (links.has(target) && !seen.has(target)) {
+      seen.add(target);
+      const linkTarget = links.get(target)!;
+      if (isAbsolute(linkTarget)) break;
+      target = resolve(dirname(target), linkTarget);
+      if (!isContainedPath(snapshotRoot, target)) break;
+    }
+    if (!copiedFiles.has(target)) {
+      throw new ProjectWorkspaceLayoutError(
+        "A snapshot symlink cannot be reproduced as a contained file link; project formatting is incomplete.",
+      );
+    }
+    const destination = join(treeRoot, relative(snapshotRoot, path));
+    const mirroredTarget = join(treeRoot, relative(snapshotRoot, target));
+    await mkdir(dirname(destination), { recursive: true });
+    await symlink(
+      relative(dirname(destination), mirroredTarget),
+      destination,
+      "file",
+    );
+  }
 }
 
 /**
@@ -217,6 +250,11 @@ export async function createProjectWorkspace(
     await mkdir(treeRoot, { recursive: true });
     // Bound EditorConfig lookup above the mirror without touching the repository.
     await writeFile(join(root, ".editorconfig"), "root = true\n", {
+      mode: 0o600,
+    });
+    // An explicit empty config lets native Prettier read only EditorConfig
+    // when the snapshot has no Prettier config, without inventing provenance.
+    await writeFile(join(root, "empty-prettier-config.json"), "{}\n", {
       mode: 0o600,
     });
     await copyRegularFiles(input.snapshotRoot, treeRoot, signal);

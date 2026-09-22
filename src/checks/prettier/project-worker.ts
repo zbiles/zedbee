@@ -1,9 +1,7 @@
 import { existsSync } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import picomatch from "picomatch";
 import { isContainedPath } from "../../inspection/read-json.js";
 import type {
   ImportableNativeConfig,
@@ -18,12 +16,6 @@ import {
   formattingSettingsSchema,
   type FormattingSettings,
 } from "./settings.js";
-
-import {
-  parseEditorConfig,
-  editorConfigOptions as convertEditorConfig,
-  type EditorProperties,
-} from "./editorconfig.js";
 
 type PrettierModule = typeof import("prettier");
 
@@ -111,77 +103,6 @@ async function ignoreReason(
   return "prettierignore";
 }
 
-const EDITORCONFIG_MAX_BYTES = 256 * 1024;
-
-/**
- * Data-only EditorConfig values for one file, bounded to the mirror. Sections
- * match with EditorConfig glob semantics (`*` stays within a path segment,
- * `**` crosses, `{a,b}` alternates) against the path relative to each
- * configuration file; the nearest file wins per key, and within a file later
- * matching sections win, matching Prettier's EditorConfig behavior.
- */
-async function editorConfigOptions(
-  file: string,
-): Promise<Partial<FormattingSettings>> {
-  const treeRoot = state!.treeRoot;
-  const settings: EditorProperties = {};
-  const chain: string[] = [];
-  let directory = dirname(file);
-  while (isContainedPath(treeRoot, directory)) {
-    chain.unshift(directory);
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-  const collected: EditorProperties[] = [];
-  for (const entry of [...chain].reverse()) {
-    const configPath = join(entry, ".editorconfig");
-    if (!existsSync(configPath)) continue;
-    let contents: string;
-    try {
-      const metadata = await lstat(configPath);
-      if (
-        !metadata.isFile() ||
-        metadata.size > BigInt(EDITORCONFIG_MAX_BYTES)
-      ) {
-        continue;
-      }
-      contents = await readFile(configPath, "utf8");
-    } catch {
-      continue;
-    }
-    const parsed = parseEditorConfig(contents);
-    const applicable: EditorProperties = {};
-    const relativePath = relative(entry, file).split(sep).join("/");
-    const fileName = relativePath.split("/").at(-1) ?? relativePath;
-    for (const section of parsed.sections) {
-      // EditorConfig semantics: a pattern without a path separator matches
-      // the file name (so [*] and [*.ts] apply at any depth); a pattern with
-      // a separator matches the path relative to this configuration file.
-      const candidate = section.pattern.includes("/") ? relativePath : fileName;
-      let matches = false;
-      try {
-        matches = picomatch.isMatch(
-          candidate,
-          section.pattern.replace(/^\//u, ""),
-          {
-            dot: true,
-          },
-        );
-      } catch {
-        matches = false;
-      }
-      if (matches) Object.assign(applicable, section.properties);
-    }
-    collected.unshift(applicable);
-    if (parsed.root) break;
-  }
-  for (const entry of collected) {
-    Object.assign(settings, entry);
-  }
-  return convertEditorConfig(settings);
-}
-
 async function resolveOptions(
   file: string,
   prettier: PrettierModule,
@@ -189,9 +110,13 @@ async function resolveOptions(
 ): Promise<import("prettier").Options> {
   const configPath = await prettier.resolveConfigFile(file);
   if (configPath === null) {
-    // No Prettier configuration exists; EditorConfig still applies through a
-    // bounded data-only reader instead of an unbounded implicit search.
-    return (await editorConfigOptions(file)) as import("prettier").Options;
+    // Keep native EditorConfig matching, bounded by the owned parent root.
+    return (
+      (await prettier.resolveConfig(file, {
+        config: join(dirname(treeRoot), "empty-prettier-config.json"),
+        editorconfig: true,
+      })) ?? {}
+    );
   }
   if (!isContainedPath(treeRoot, configPath)) {
     // A resolved path outside the mirror must never be executed; reporting
