@@ -326,13 +326,11 @@ async function selectedConfigPaths(
       continue;
     }
     const candidates = new Set(
-      (
-        await Promise.all([
-          select(LEGACY_CONFIG_PRECEDENCE),
-          select(PACKAGE_YAML_CONFIG_PRECEDENCE),
-          select(MODERN_CONFIG_PRECEDENCE),
-        ])
-      ).filter((path): path is string => path !== undefined),
+      await Promise.all([
+        select(LEGACY_CONFIG_PRECEDENCE),
+        select(PACKAGE_YAML_CONFIG_PRECEDENCE),
+        select(MODERN_CONFIG_PRECEDENCE),
+      ]),
     );
     if (candidates.size > 1) {
       limitations.push(

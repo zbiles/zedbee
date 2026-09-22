@@ -210,6 +210,22 @@ describe("previewPrettierSettingsImport", () => {
     );
   });
 
+  it("reports version-dependent config availability without an installed formatter", async () => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "app",
+      devDependencies: { prettier: ">=3.0.0 <4.0.0" },
+    });
+    await fixture.write("package.yaml", "prettier:\n  semi: false\n");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.settings).toEqual({});
+    expect(preview.limitations).toContainEqual(
+      expect.stringContaining("precedence"),
+    );
+  });
+
   it("selects package.yaml before executable configs when supported", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
