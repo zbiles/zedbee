@@ -457,6 +457,34 @@ describe("EditorConfig copy fidelity", () => {
     ).toBe(2);
     expect((await copiedSettings(f.root, "value.ts")).tabWidth).toBe(2);
   });
+
+  it("reports dependent indentation that crosses overlapping scoped sections", async () => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { name: "app" });
+    await f.writeJson(".prettierrc.json", {});
+    await f.write(
+      ".editorconfig",
+      [
+        "root = true",
+        "[*.ts]",
+        "indent_style = space",
+        "indent_size = 2",
+        "[src/**]",
+        "tab_width = 8",
+        "",
+      ].join("\n"),
+    );
+    expect(
+      (await prettier.resolveConfig(join(f.root, "src/value.ts"), {
+        editorconfig: true,
+      }))?.tabWidth,
+    ).toBe(2);
+
+    const imported = await previewPrettierSettingsImport(f.root);
+    expect(imported.limitations).toContainEqual(
+      expect.stringContaining("overlapping scoped sections"),
+    );
+  });
 });
 
 it("does not replay universal indentation after a scoped indentation override", async () => {

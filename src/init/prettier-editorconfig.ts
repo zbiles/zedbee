@@ -63,6 +63,8 @@ export async function editorConfigImport(
   const overrides: ImportedFormattingOverride[] = [];
   const universal: EditorProperties = {};
   const scopedProperties = new Map<string, EditorProperties>();
+  const scopedIndentationSections = new Set<string>();
+  let reportedScopedIndentationOverlap = false;
   let scoped = false;
   const scope = projectRoot === "." ? "**/*" : `${projectRoot}/**`;
   for (const { directory, config } of [...parsed].reverse()) {
@@ -77,10 +79,26 @@ export async function editorConfigImport(
       };
       const converted = editorConfigOptions(properties);
       const changed = new Set(Object.keys(section.properties));
+      const changesIndentation = [
+        "indent_size",
+        "indent_style",
+        "tab_width",
+      ].some((key) => changed.has(key));
       if (
-        !["indent_size", "indent_style", "tab_width"].some((key) =>
-          changed.has(key),
-        )
+        !all &&
+        changesIndentation &&
+        !reportedScopedIndentationOverlap &&
+        [...scopedIndentationSections].some((key) => key !== sectionKey)
+      ) {
+        limitations.push(
+          "Potentially overlapping scoped sections use dependent EditorConfig indentation properties; copy mode cannot preserve every overlap exactly.",
+        );
+        reportedScopedIndentationOverlap = true;
+      }
+      if (!all && changesIndentation)
+        scopedIndentationSections.add(sectionKey);
+      if (
+        !changesIndentation
       ) {
         delete converted.tabWidth;
         delete converted.useTabs;
