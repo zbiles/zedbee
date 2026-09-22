@@ -97,11 +97,15 @@ export function resolveTargetPolicy(
     });
     if (matches) matched.push(patch);
   }
-  if (checkId === "formatting") {
-    assertEffectiveFormattingPolicy(config, matched);
-  }
   for (const patch of matched) {
-    policy = mergePolicyPatch(policy, patch);
+    if (checkId === "formatting") {
+      // A repository target can contain disjoint engine/settings scopes.
+      // Preserve root behavior here; validate and merge behavior per file.
+      const { engine: _engine, settings: _settings, ...targetPatch } = patch;
+      policy = mergePolicyPatch(policy, targetPatch);
+    } else {
+      policy = mergePolicyPatch(policy, patch);
+    }
   }
 
   return policy;

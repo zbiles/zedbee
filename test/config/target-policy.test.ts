@@ -28,6 +28,32 @@ const inspection: RepositoryInspection = {
 };
 
 describe("resolveTargetPolicy", () => {
+  it("keeps formatting behavior per file when a target spans disjoint engines", () => {
+    const config = resolveConfig({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["src/**"],
+          checks: { formatting: { settings: { semi: false } } },
+        },
+        {
+          files: ["apps/web/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    });
+    const policy = resolveTargetPolicy(
+      config,
+      "formatting",
+      { id: ".", kind: "repository", relativeRoot: "." },
+      inspection,
+    );
+    expect(policy).toMatchObject({
+      engine: "managed",
+      settings: { semi: true },
+    });
+  });
+
   it("inherits root policy and applies matching patches in declaration order", () => {
     const config = resolveConfig({
       schemaVersion: 1,
