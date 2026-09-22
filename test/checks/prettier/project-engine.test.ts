@@ -116,6 +116,7 @@ describe("project Prettier engine", () => {
 
       await expect(session.classify("value.ts")).resolves.toEqual({
         kind: "supported",
+        configFile: ".prettierrc.json",
       });
       await expect(
         session.format("value.ts", 'export const value = "hello";'),
