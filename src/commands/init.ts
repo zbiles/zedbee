@@ -1,16 +1,19 @@
-import { lstat, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { lstat, readFile, realpath } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { GitClient } from "../git/client.js";
 import {
   detectHookIntegration,
   type DetectedHookIntegration,
 } from "../hooks/detect.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
+import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
+  ExecutableEvaluatedConfig,
   InitFormattingChoice,
   InitFormattingDetection,
   InitFormattingImport,
@@ -18,12 +21,24 @@ import type {
   InitOsvUnavailable,
   InitProposal,
 } from "../init/types.js";
+import type {
+  ImportableNativeConfig,
+  ImportedFormattingOverride,
+} from "../checks/prettier/project-types.js";
 import { applyInitProposal } from "../init/write-config.js";
 import { discoverProjectPrettier } from "../init/prettier-discovery.js";
 import { previewPrettierSettingsImport } from "../init/prettier-import.js";
+import { editorConfigImport } from "../init/prettier-editorconfig.js";
+import { buildSnapshotPair } from "../git/snapshot.js";
 import {
   readProjectPrettierTrust,
+  requireProjectPrettierTrust,
 } from "../checks/prettier/project-trust.js";
+import {
+  openProjectFormatter,
+  resolveProjectPrettierInstallation,
+} from "../checks/prettier/project-engine.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
 import { CHECK_IDS, type CheckId, type ProfileId } from "../config/schema.js";
 
 export interface InitCommandOptions {
@@ -70,7 +85,9 @@ export interface InitCommandDependencies {
       hook?: InitHookChoice,
       formatting?: InitFormattingChoice,
       projectTrust?: boolean,
+      evaluatedImport?: InitFormattingImport,
     ) => InitProposal,
+    evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
   ): Promise<false | InitProposal>;
 }
 
@@ -80,9 +97,19 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
       .stdout;
   },
   inspect: inspectRepository,
-  async confirm(proposal, options, proposalForSelection) {
+  async confirm(
+    proposal,
+    options,
+    proposalForSelection,
+    evaluateExecutableImport,
+  ) {
     const { runInitPrompt } = await import("../ui/init-app.js");
-    return runInitPrompt(proposal, options, proposalForSelection);
+    return runInitPrompt(
+      proposal,
+      options,
+      proposalForSelection,
+      evaluateExecutableImport,
+    );
   },
 };
 
@@ -152,7 +179,11 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     `Formatting: ${proposal.formatting ?? "managed"}`,
     ...(proposal.formattingDetection ?? []).map(
       (entry) =>
-        `Prettier setup: ${entry.projectRoot === "." ? "repository root" : entry.projectRoot} — ${entry.status}${entry.version === undefined ? "" : ` (Prettier ${entry.version})`}${entry.executableConfig ? "; executable configuration" : ""}`,
+        `Prettier setup: ${
+          entry.projectRoot === "." ? "repository root" : entry.projectRoot
+        } — ${entry.status}${
+          entry.version === undefined ? "" : ` (Prettier ${entry.version})`
+        }${entry.executableConfig ? "; executable configuration" : ""}`,
     ),
     ...(proposal.formattingDetection !== undefined &&
     proposal.formattingDetection.length === 0
@@ -300,10 +331,12 @@ async function readSharedConfigSpecifier(
     );
     const metadata = await lstat(manifestPath);
     if (!metadata.isFile() || metadata.size > 1024n * 1024n) return undefined;
-    const manifest = JSON.parse(
-      await readFile(manifestPath, "utf8"),
-    ) as { prettier?: unknown };
-    return typeof manifest.prettier === "string" ? manifest.prettier : undefined;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+      prettier?: unknown;
+    };
+    return typeof manifest.prettier === "string"
+      ? manifest.prettier
+      : undefined;
   } catch {
     return undefined;
   }
@@ -313,11 +346,218 @@ class ProjectPrettierTrustRequiredError extends Error {
   readonly projectRoot: string;
   constructor(projectRoot: string) {
     super(
-      `Using the project's Prettier in ${projectRoot === "." ? "the repository root" : projectRoot} requires explicit trust. Re-run with --trust-project-prettier or interactively.`,
+      `Using the project's Prettier in ${
+        projectRoot === "." ? "the repository root" : projectRoot
+      } requires explicit trust. Re-run with --trust-project-prettier or interactively.`,
     );
     this.name = "ProjectPrettierTrustRequiredError";
     this.projectRoot = projectRoot;
   }
+}
+
+function normalizeEvaluatedOverrides(
+  imported: ImportableNativeConfig,
+  configRoot: string,
+): readonly ImportedFormattingOverride[] {
+  const scopePattern = (pattern: string): string => {
+    const relative = pattern.includes("/") ? pattern : `**/${pattern}`;
+    return configRoot === "." ? relative : posix.join(configRoot, relative);
+  };
+  const overrides: ImportedFormattingOverride[] = [];
+  for (const entry of imported.overrides) {
+    const files = typeof entry.files === "string" ? [entry.files] : entry.files;
+    const excludeFiles =
+      typeof entry.excludeFiles === "string"
+        ? [entry.excludeFiles]
+        : entry.excludeFiles ?? [];
+    overrides.push(
+      Object.freeze({
+        files: Object.freeze(files.map(scopePattern)),
+        excludeFiles: Object.freeze(excludeFiles.map(scopePattern)),
+        settings: entry.settings,
+      }),
+    );
+  }
+  return Object.freeze(overrides);
+}
+
+interface EvaluatedExecutableImport {
+  readonly imported: InitFormattingImport;
+  /** Exact working-copy bytes the evaluation was bound to. */
+  readonly evaluatedConfig: ExecutableEvaluatedConfig;
+}
+
+/**
+ * Separately consented one-time evaluation of an executable or shared Prettier
+ * configuration. Setup deliberately differs from scans: it evaluates the exact
+ * working-copy bytes the preview showed — not a rebuilt Git snapshot — through
+ * the same supervised project runner, and returns only supported plain values.
+ * Anything not representable is reported as a limitation. The evaluated bytes
+ * are recorded so apply can refuse if the configuration changed afterwards.
+ */
+async function evaluateExecutableProjectConfig(
+  repositoryRoot: string,
+  projectRoot: string,
+  target: { readonly configPath: string } | { readonly sharedConfig: string },
+): Promise<EvaluatedExecutableImport> {
+  const permit = await requireProjectPrettierTrust(
+    repositoryRoot,
+    projectRoot,
+    true,
+  );
+  const installation = await resolveProjectPrettierInstallation(
+    repositoryRoot,
+    projectRoot,
+    repositoryRoot,
+  );
+  const session = await openProjectFormatter({
+    checkoutRoot: await realpath(repositoryRoot),
+    snapshotRoot: repositoryRoot,
+    projectRoot,
+    installation,
+    permit,
+    signal: new AbortController().signal,
+  });
+  try {
+    const imported =
+      "configPath" in target
+        ? await session.readConfigForImport(target.configPath)
+        : await session.readSharedConfigForImport(target.sharedConfig);
+    const limitations = [...imported.limitations];
+    if (imported.overrides.some((entry) => entry.excludeFiles !== undefined)) {
+      limitations.push(
+        "Prettier excludeFiles cannot be copied exactly; imported overrides keep their files patterns without the exclusions.",
+      );
+    }
+    const boundPath =
+      "configPath" in target
+        ? target.configPath
+        : projectRoot === "."
+        ? "package.json"
+        : `${projectRoot}/package.json`;
+    const configRoot =
+      "configPath" in target
+        ? posix.dirname(target.configPath) || "."
+        : projectRoot;
+    const editorConfig = await editorConfigImport(
+      await captureSnapshotRegistry(await realpath(repositoryRoot)),
+      configRoot,
+    );
+    const overrides = normalizeEvaluatedOverrides(imported, configRoot);
+    const editorOverrides = editorConfig.overrides.map((override) =>
+      Object.freeze({
+        ...override,
+        settings: Object.freeze(
+          Object.fromEntries(
+            Object.entries(override.settings).filter(
+              ([key]) => !(key in imported.settings),
+            ),
+          ),
+        ) as Partial<ImportableNativeConfig["settings"]>,
+      }),
+    );
+    const boundBytes = await readFile(join(repositoryRoot, boundPath), "utf8");
+    return Object.freeze({
+      imported: Object.freeze({
+        settings: Object.freeze({
+          ...editorConfig.settings,
+          ...imported.settings,
+        }),
+        overrides: Object.freeze([...editorOverrides, ...overrides]),
+        limitations: Object.freeze([
+          ...editorConfig.limitations,
+          ...limitations,
+        ]),
+      }),
+      evaluatedConfig: Object.freeze({
+        path: boundPath,
+        sha256: createHash("sha256").update(boundBytes, "utf8").digest("hex"),
+      }),
+    });
+  } finally {
+    await session.close().catch(() => undefined);
+  }
+}
+
+/** Replaces only the evaluated scope and retains imports from other scopes. */
+function mergeEvaluatedExecutableImport(
+  base: InitFormattingImport,
+  evaluated: EvaluatedExecutableImport,
+  projectRoot: string,
+): EvaluatedExecutableImport {
+  const configRoot = evaluated.evaluatedConfig.path.endsWith("package.json")
+    ? projectRoot
+    : posix.dirname(evaluated.evaluatedConfig.path) || ".";
+  const evaluatedPath = evaluated.evaluatedConfig.path;
+  const evaluatedLimitation = evaluatedPath.endsWith("package.json")
+    ? `The package.json Prettier field in ${evaluatedPath} references a shared configuration that cannot be copied as inert settings.`
+    : `The Prettier configuration ${evaluatedPath} is executable; its dynamic values cannot be copied as inert settings.`;
+  const limitations = Object.freeze([
+    ...base.limitations.filter(
+      (limitation) => limitation !== evaluatedLimitation,
+    ),
+    ...evaluated.imported.limitations,
+  ]);
+  if (configRoot === ".") {
+    return Object.freeze({
+      evaluatedConfig: evaluated.evaluatedConfig,
+      imported: Object.freeze({
+        settings: evaluated.imported.settings,
+        overrides: Object.freeze([
+          ...evaluated.imported.overrides,
+          ...base.overrides,
+        ]),
+        limitations,
+      }),
+    });
+  }
+
+  const scope = `${configRoot}/**`;
+  let replaced = false;
+  const overrides: ImportedFormattingOverride[] = [];
+  for (const override of base.overrides) {
+    if (
+      !replaced &&
+      override.files.length === 1 &&
+      override.files[0] === scope
+    ) {
+      replaced = true;
+      overrides.push(
+        Object.freeze({
+          files: override.files,
+          excludeFiles: override.excludeFiles,
+          settings: Object.freeze({
+            ...DEFAULT_FORMATTING_SETTINGS,
+            ...evaluated.imported.settings,
+          }),
+        }),
+        ...evaluated.imported.overrides,
+      );
+    } else {
+      overrides.push(override);
+    }
+  }
+  if (!replaced) {
+    overrides.push(
+      Object.freeze({
+        files: Object.freeze([scope]),
+        excludeFiles: Object.freeze([]),
+        settings: Object.freeze({
+          ...DEFAULT_FORMATTING_SETTINGS,
+          ...evaluated.imported.settings,
+        }),
+      }),
+      ...evaluated.imported.overrides,
+    );
+  }
+  return Object.freeze({
+    evaluatedConfig: evaluated.evaluatedConfig,
+    imported: Object.freeze({
+      settings: base.settings,
+      overrides: Object.freeze(overrides),
+      limitations,
+    }),
+  });
 }
 
 export async function executeInitCommand(
@@ -350,14 +590,76 @@ export async function executeInitCommand(
         (root) => !formattingSetup.storedTrustRoots.includes(root),
       )
     ) {
-      throw new ProjectPrettierTrustRequiredError(
-        formattingSetup.projectRoot,
-      );
+      throw new ProjectPrettierTrustRequiredError(formattingSetup.projectRoot);
     }
+    const executableConfigPath = (
+      formattingSetup.detection.find(
+        (entry) =>
+          entry.projectRoot === formattingSetup.projectRoot &&
+          entry.executableConfig,
+      )?.configPaths ?? []
+    ).find((path) => path !== "package.json");
+    // Package.json#prettier string references name a shared configuration
+    // package; both executable file forms and shared packages get the same
+    // separately consented one-time evaluation. Without consent, the copy
+    // keeps its limitation.
+    const executableTarget =
+      executableConfigPath !== undefined
+        ? { configPath: executableConfigPath }
+        : formattingSetup.sharedConfig !== undefined
+        ? { sharedConfig: formattingSetup.sharedConfig }
+        : undefined;
+    const rawEvaluatedExecutableImport =
+      options.formatting === "copy" &&
+      options.trustProjectPrettier &&
+      executableTarget !== undefined
+        ? await evaluateExecutableProjectConfig(
+            repositoryRoot,
+            formattingSetup.projectRoot,
+            executableTarget,
+          )
+        : undefined;
+    const evaluatedExecutableImport =
+      rawEvaluatedExecutableImport === undefined
+        ? undefined
+        : mergeEvaluatedExecutableImport(
+            formattingSetup.imported,
+            rawEvaluatedExecutableImport,
+            formattingSetup.projectRoot,
+          );
+    const evaluateExecutableImport =
+      canPrompt && executableTarget !== undefined
+        ? async () => {
+            const evaluated = await evaluateExecutableProjectConfig(
+              repositoryRoot,
+              formattingSetup.projectRoot,
+              executableTarget,
+            );
+            return mergeEvaluatedExecutableImport(
+              formattingSetup.imported,
+              evaluated,
+              formattingSetup.projectRoot,
+            );
+          }
+        : undefined;
+    const effectiveCopyImport =
+      evaluatedExecutableImport?.imported ?? formattingSetup.imported;
+    const effectiveEvaluatedConfig = evaluatedExecutableImport?.evaluatedConfig;
+    // Interactive evaluation records the same byte binding when the UI's
+    // evaluated import is used, so apply rechecks what the user previewed.
+    let interactiveEvaluatedConfig: ExecutableEvaluatedConfig | undefined;
+    const evaluateExecutableImportForUi =
+      evaluateExecutableImport === undefined
+        ? undefined
+        : async () => {
+            const result = await evaluateExecutableImport();
+            interactiveEvaluatedConfig = result.evaluatedConfig;
+            return result.imported;
+          };
     if (
       options.formatting === "copy" &&
       !canPrompt &&
-      formattingSetup.imported.limitations.length > 0
+      effectiveCopyImport.limitations.length > 0
     ) {
       throw new Error(
         "The settings copy has unresolved limitations and cannot be applied noninteractively.",
@@ -373,7 +675,7 @@ export async function executeInitCommand(
         ? {}
         : { formatting: options.formatting }),
       ...(options.formatting === "copy"
-        ? { formattingImport: formattingSetup.imported }
+        ? { formattingImport: effectiveCopyImport }
         : {}),
       ...(options.formatting === "project"
         ? {
@@ -391,6 +693,9 @@ export async function executeInitCommand(
       formattingSetup.storedTrustRoots.length > 0
         ? { projectPrettierRevokeRoots: formattingSetup.storedTrustRoots }
         : {}),
+      ...(effectiveEvaluatedConfig === undefined
+        ? {}
+        : { executableEvaluatedConfig: effectiveEvaluatedConfig }),
     };
     const proposalBaseOptions = {
       repositoryRoot,
@@ -459,8 +764,11 @@ export async function executeInitCommand(
         checks: readonly CheckId[] | undefined,
         osvUnavailable: InitOsvUnavailable,
         selectedHook: InitHookChoice = selection,
-        selectedFormatting: InitFormattingChoice | undefined = options.formatting,
+        selectedFormatting:
+          | InitFormattingChoice
+          | undefined = options.formatting,
         selectedProjectTrust = false,
+        evaluatedImport: InitFormattingImport | undefined = undefined,
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
@@ -480,7 +788,10 @@ export async function executeInitCommand(
                 formattingDetection: formattingSetup.detection,
                 formatting: selectedFormatting,
                 ...(selectedFormatting === "copy"
-                  ? { formattingImport: formattingSetup.imported }
+                  ? {
+                      formattingImport:
+                        evaluatedImport ?? formattingSetup.imported,
+                    }
                   : {}),
                 ...(selectedFormatting === "project"
                   ? {
@@ -501,6 +812,12 @@ export async function executeInitCommand(
                   ? {
                       projectPrettierRevokeRoots:
                         formattingSetup.storedTrustRoots,
+                    }
+                  : {}),
+                ...(evaluatedImport !== undefined &&
+                interactiveEvaluatedConfig !== undefined
+                  ? {
+                      executableEvaluatedConfig: interactiveEvaluatedConfig,
                     }
                   : {}),
               };
@@ -539,6 +856,7 @@ export async function executeInitCommand(
           animations: options.animations && io.env.NO_COLOR === undefined,
         },
         proposalForSelection,
+        evaluateExecutableImportForUi,
       );
       if (decision !== false) {
         proposal = decision;

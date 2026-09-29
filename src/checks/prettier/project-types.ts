@@ -41,12 +41,18 @@ export interface ProjectPrettierFailure {
   readonly file?: string;
 }
 
+export type ProjectFormatIgnored = {
+  readonly kind: "ignored";
+  readonly reason: "prettierignore" | "gitignore" | "unsupported";
+};
+
+export type ProjectFormatSupport =
+  | { readonly kind: "supported" }
+  | ProjectFormatIgnored;
+
 export type ProjectFormatResult =
   | { readonly kind: "formatted"; readonly text: string }
-  | {
-      readonly kind: "ignored";
-      readonly reason: "prettierignore" | "gitignore" | "unsupported";
-    };
+  | ProjectFormatIgnored;
 
 export interface ImportableNativeConfig {
   readonly settings: Partial<FormattingSettings>;
@@ -61,6 +67,11 @@ export interface ImportableNativeConfig {
 export type ProjectPrettierRequest =
   | {
       readonly id: number;
+      readonly operation: "classify";
+      readonly file: string;
+    }
+  | {
+      readonly id: number;
       readonly operation: "format";
       readonly file: string;
       readonly source: string;
@@ -69,9 +80,20 @@ export type ProjectPrettierRequest =
       readonly id: number;
       readonly operation: "importConfig";
       readonly configFile: string;
+    }
+  | {
+      readonly id: number;
+      readonly operation: "importConfig";
+      /** Package-exported shared configuration specifier. */
+      readonly configPackage: string;
     };
 
 export type ProjectPrettierReply =
+  | {
+      readonly id: number;
+      readonly operation: "classify";
+      readonly result: ProjectFormatSupport;
+    }
   | {
       readonly id: number;
       readonly operation: "format";
