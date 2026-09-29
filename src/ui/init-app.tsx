@@ -19,6 +19,7 @@ import {
 import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitFileChange,
+  InitFormattingChoice,
   InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
@@ -47,11 +48,13 @@ import { colorProp, ZEDBEE_THEME } from "./theme.js";
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
   readonly terminalSize?: Readonly<{ columns: number; rows: number }>;
-  readonly proposalForSelection: (
+  readonly   proposalForSelection: (
     profile: ProfileId,
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
     hook?: InitHookChoice,
+    formatting?: InitFormattingChoice,
+    projectTrust?: boolean,
   ) => InitProposal;
   onDecision(decision: false | InitProposal): void;
   readonly onMouseCleanupReady?: (cleanup: () => void) => void;
@@ -71,6 +74,29 @@ const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
   lefthook: "Lefthook",
   "simple-git-hooks": "simple-git-hooks",
 };
+
+const FORMATTING_CHOICES: readonly InitFormattingChoice[] = [
+  "copy",
+  "project",
+  "managed",
+  "off",
+];
+
+// Without a detected project setup, only the secondary choices are offered.
+const SECONDARY_FORMATTING_CHOICES: readonly InitFormattingChoice[] = [
+  "managed",
+  "off",
+];
+
+const FORMATTING_LABELS: Readonly<Record<InitFormattingChoice, string>> = {
+  copy: "Copy my settings — one-time import into Zedbee's Prettier.",
+  project: "Use my project's Prettier — its version, configuration, and plugins.",
+  managed: "Use Zedbee defaults — keep the bundled Prettier and settings.",
+  off: "Do not check formatting — other Zedbee checks still run.",
+};
+
+export const PROJECT_PRETTIER_DISCLOSURE =
+  "The project formatter, its configuration, and its plugins are executable code. Trusting them covers every detected Prettier project's formatter in this checkout, including its future versions and edits.";
 
 const INIT_EVENT_MAX_FPS = 30;
 const CURSOR_HOME = "\u001b[H";
@@ -370,6 +396,117 @@ function hookFocusCount(proposal: InitProposal): number {
     : 1;
 }
 
+function formattingFocusIndex(proposal: InitProposal): number {
+  return (
+    setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
+    hookFocusCount(proposal)
+  );
+}
+
+function reviewFocusIndex(proposal: InitProposal): number {
+  return formattingFocusIndex(proposal) + 1;
+}
+
+function formattingDetectionLine(
+  detection: readonly {
+    readonly projectRoot: string;
+    readonly version?: string;
+    readonly status: string;
+    readonly executableConfig: boolean;
+  }[] | undefined,
+): string {
+  const first = detection?.[0];
+  if (first === undefined) {
+    return "No project Prettier setup detected; Zedbee keeps its managed formatter.";
+  }
+  const location = first.projectRoot === "." ? "repository root" : first.projectRoot;
+  return `Detected Prettier ${first.version ?? "unknown version"} in ${location} (${first.status})${first.executableConfig ? " with an executable configuration" : ""}.`;
+}
+
+function FormattingChoice({
+  value,
+  focused,
+  detection,
+  limitations,
+  trustConfirmed,
+  activeTargetRef,
+  color,
+}: {
+  readonly value: InitFormattingChoice;
+  readonly focused: boolean;
+  readonly detection:
+    | readonly {
+        readonly projectRoot: string;
+        readonly version?: string;
+        readonly status: string;
+        readonly executableConfig: boolean;
+      }[]
+    | undefined;
+  readonly limitations: readonly string[];
+  readonly trustConfirmed: boolean;
+  readonly activeTargetRef?: RefObject<DOMElement | null>;
+  readonly color: boolean;
+}) {
+  const choices =
+    (detection?.length ?? 0) > 0
+      ? FORMATTING_CHOICES
+      : SECONDARY_FORMATTING_CHOICES;
+  return (
+    <Box ref={focused ? activeTargetRef : undefined} flexDirection="column">
+      <Box paddingX={2}>
+        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {focused ? "➜ " : "  "}Formatting
+        </Text>
+      </Box>
+      <Box paddingX={4}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {formattingDetectionLine(detection)}
+        </Text>
+      </Box>
+      {choices.map((choice) => (
+        <Box key={choice} paddingX={4}>
+          <Text
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.secondary)}
+            bold={choice === value}
+          >
+            [{choice === value ? "✽" : " "}] {FORMATTING_LABELS[choice]}
+          </Text>
+        </Box>
+      ))}
+      {value === "project" ? (
+        <>
+          <Box paddingX={4}>
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+              {PROJECT_PRETTIER_DISCLOSURE}
+            </Text>
+          </Box>
+          <Box paddingX={4}>
+            <Text
+              wrap="wrap"
+              {...colorProp(color, ZEDBEE_THEME.secondary)}
+              bold={trustConfirmed}
+            >
+              {trustConfirmed
+                ? "[✓] Executable-code trust confirmed — press T to withdraw it."
+                : "[ ] Press T to confirm executable-code trust before review."}
+            </Text>
+          </Box>
+        </>
+      ) : null}
+      {value === "copy" && limitations.length > 0 ? (
+        <Box paddingX={4} flexDirection="column">
+          {limitations.map((limitation) => (
+            <Text key={limitation} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+              Copy limitation: {limitation}
+            </Text>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 function InitActionButton({
   label,
   focused,
@@ -445,6 +582,10 @@ function SetupPanel({
   baseProfile,
   selected,
   osvUnavailable,
+  formatting,
+  detection,
+  limitations,
+  trustConfirmed,
   width,
   activeTargetRef,
   color,
@@ -455,6 +596,10 @@ function SetupPanel({
   readonly baseProfile: ProfileId;
   readonly selected: ReadonlySet<CheckId>;
   readonly osvUnavailable: InitOsvUnavailable;
+  readonly formatting: InitFormattingChoice;
+  readonly detection: InitProposal["formattingDetection"];
+  readonly limitations: readonly string[];
+  readonly trustConfirmed: boolean;
   readonly width: number;
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
@@ -490,14 +635,20 @@ function SetupPanel({
           />
         </>
       ) : null}
+      <BrandedCommandPanelRule width={width} color={color} />
+      <FormattingChoice
+        value={formatting}
+        focused={focus === formattingFocusIndex(proposal)}
+        detection={detection}
+        limitations={limitations}
+        trustConfirmed={trustConfirmed}
+        activeTargetRef={activeTargetRef}
+        color={color}
+      />
       <Text> </Text>
       <InitActionButton
         label="REVIEW CHANGES"
-        focused={
-          focus ===
-          setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-            hookRows
-        }
+        focused={focus === reviewFocusIndex(proposal)}
         activeTargetRef={activeTargetRef}
         color={color}
       />
@@ -606,6 +757,18 @@ export function InitApp({
   const [osvUnavailable, setOsvUnavailable] = useState<InitOsvUnavailable>(
     proposal.osvUnavailable,
   );
+  const [formatting, setFormatting] = useState<
+    InitFormattingChoice | undefined
+  >(undefined);
+  const [projectTrust, setProjectTrust] = useState(false);
+  const effectiveFormatting: InitFormattingChoice =
+    formatting ?? proposal.formatting ?? "managed";
+  const formattingDetected =
+    (proposal.formattingDetection?.length ?? 0) > 0;
+  const projectTrustRequired =
+    effectiveFormatting === "project" &&
+    proposal.projectPrettierTrustConfirmed !== true &&
+    !projectTrust;
   const activeTargetRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
   const setupOffsetRef = useRef(setupOffset);
@@ -626,11 +789,15 @@ export function InitApp({
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
         hookSelection,
+        formatting,
+        projectTrust,
       ),
     [
       baseProfile,
       osvUnavailable,
       hookSelection,
+      formatting,
+      projectTrust,
       proposalForSelection,
       selected,
     ],
@@ -720,21 +887,21 @@ export function InitApp({
     }
 
     if (key.return) {
+      if (projectTrustRequired) {
+        // The executable-code disclosure must be confirmed separately.
+        return;
+      }
       setPhase("review");
+    } else if (normalized === "t" && effectiveFormatting === "project") {
+      setProjectTrust((value) => !value);
     } else if (normalized === "n" || key.escape) {
       onDecision(false);
       exit();
     } else if (key.upArrow) {
-      const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-        hookRows +
-        1;
+      const focusCount = reviewFocusIndex(reviewedProposal) + 1;
       setFocus((value) => (value - 1 + focusCount) % focusCount);
     } else if (key.downArrow) {
-      const focusCount =
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-        hookRows +
-        1;
+      const focusCount = reviewFocusIndex(reviewedProposal) + 1;
       setFocus((value) => (value + 1) % focusCount);
     } else if (
       hookRows > 0 &&
@@ -764,10 +931,27 @@ export function InitApp({
         undefined,
         osvUnavailable,
         hookSelection,
+        formatting,
+        projectTrust,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
       setSelected(new Set(nextProposal.recommendedChecks));
+    } else if (
+      focus === formattingFocusIndex(reviewedProposal) &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setFormatting((current) => {
+        const visible = formattingDetected
+          ? FORMATTING_CHOICES
+          : SECONDARY_FORMATTING_CHOICES;
+        const base = current ?? proposal.formatting ?? "managed";
+        const index = visible.indexOf(base);
+        const offset = key.leftArrow ? -1 : 1;
+        return visible[
+          (index + offset + visible.length) % visible.length
+        ]!;
+      });
     } else if (input === " ") {
       if (
         proposal.vulnerabilityScanningAvailable &&
@@ -783,11 +967,8 @@ export function InitApp({
         setOsvUnavailable("warn");
         return;
       }
-      if (
-        focus ===
-        setupReviewFocusIndex(proposal.vulnerabilityScanningAvailable) +
-          hookRows
-      ) {
+      if (focus === reviewFocusIndex(reviewedProposal)) {
+        if (projectTrustRequired) return;
         setPhase("review");
         return;
       }
@@ -828,6 +1009,14 @@ export function InitApp({
             baseProfile={baseProfile}
             selected={selected}
             osvUnavailable={osvUnavailable}
+            formatting={effectiveFormatting}
+            detection={proposal.formattingDetection}
+            limitations={
+              effectiveFormatting === "copy"
+                ? (reviewedProposal.formattingImport?.limitations ?? [])
+                : []
+            }
+            trustConfirmed={projectTrust || proposal.projectPrettierTrustConfirmed === true}
             width={panelWidth}
             activeTargetRef={activeTargetRef}
             color={color}
@@ -852,6 +1041,8 @@ export async function runInitPrompt(
     checks: readonly CheckId[] | undefined,
     osvUnavailable: InitOsvUnavailable,
     hook?: InitHookChoice,
+    formatting?: InitFormattingChoice,
+    projectTrust?: boolean,
   ) => InitProposal,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;

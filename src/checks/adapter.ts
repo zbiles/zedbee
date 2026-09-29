@@ -36,6 +36,12 @@ export interface InspectionContext {
   config: ResolvedConfig;
   /** Original root policy for per-file resolution before target scheduling. */
   readonly filePolicyConfig?: ResolvedConfig;
+  /**
+   * Invocation-only consent for project Prettier execution, supplied by the
+   * trusted parent from an explicit CLI flag. Tracked configuration can never
+   * set it.
+   */
+  readonly projectPrettierTrust?: boolean;
   baselineInspection: RepositoryInspection;
   targetInspection: RepositoryInspection;
 }

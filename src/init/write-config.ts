@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -13,6 +13,7 @@ import {
   basename,
   dirname,
   isAbsolute,
+  join,
   relative,
   resolve,
   sep,
@@ -20,6 +21,14 @@ import {
 import { GitClient } from "../git/client.js";
 import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
+import {
+  persistProjectPrettierTrust,
+  projectPrettierTrustKey,
+  readProjectPrettierTrust,
+  restoreProjectPrettierTrust,
+  revokeProjectPrettierTrust,
+  type ProjectPrettierTrustSnapshot,
+} from "../checks/prettier/project-trust.js";
 import { initContentHash } from "./recommend.js";
 import type {
   ApplyInitDependencies,
@@ -272,6 +281,8 @@ export async function applyInitProposal(
 
   const applied: Array<{ path: string; before: string | null; mode: number }> =
     [];
+  const trustSnapshots: ProjectPrettierTrustSnapshot[] = [];
+  const revokeSnapshots: ProjectPrettierTrustSnapshot[] = [];
   try {
     for (const [index, item] of validated.entries()) {
       await dependencies.beforeWrite?.(index, item.change);
@@ -295,9 +306,67 @@ export async function applyInitProposal(
         proposal.hooksPathChange.after,
       ]);
     }
+    if (proposal.executableEvaluatedConfig !== undefined) {
+      // A consented evaluation was bound to exact working-copy bytes; if the
+      // native configuration changed since the preview, the imported values
+      // no longer describe the project and the setup must restart.
+      const evaluated = proposal.executableEvaluatedConfig;
+      const current = await readFile(
+        join(root, evaluated.path),
+        "utf8",
+      ).catch(() => undefined);
+      if (
+        current === undefined ||
+        createHash("sha256").update(current, "utf8").digest("hex") !==
+          evaluated.sha256
+      ) {
+        throw new Error(
+          "The project Prettier configuration changed after the preview; run zedbee init again.",
+        );
+      }
+    }
+    if (
+      proposal.projectPrettierTrustRoots !== undefined &&
+      proposal.projectPrettierTrustRoots.length > 0
+    ) {
+      if (proposal.projectPrettierTrustConfirmed !== true) {
+        throw unsafeTarget();
+      }
+      for (const projectRoot of proposal.projectPrettierTrustRoots) {
+        trustSnapshots.push(
+          await persistProjectPrettierTrust(root, projectRoot),
+        );
+      }
+    }
+    if (
+      proposal.projectPrettierRevokeRoots !== undefined &&
+      proposal.projectPrettierRevokeRoots.length > 0
+    ) {
+      // Switching projects to managed/off withdraws their executable-code
+      // grants in the same transaction; a failure restores each previous value.
+      for (const projectRoot of proposal.projectPrettierRevokeRoots) {
+        const previous = await readProjectPrettierTrust(
+          root,
+          projectRoot,
+        ).catch(() => undefined);
+        if (previous !== undefined) {
+          revokeSnapshots.push({
+            key: projectPrettierTrustKey(root, projectRoot),
+            previous,
+          });
+          await revokeProjectPrettierTrust(root, projectRoot);
+        }
+      }
+    }
   } catch {
     try {
       await rollback(applied);
+      for (const snapshot of revokeSnapshots) {
+        await restoreProjectPrettierTrust(root, snapshot);
+      }
+      for (const snapshot of trustSnapshots) {
+        await restoreProjectPrettierTrust(root, snapshot);
+      }
     } catch {
       throw new Error(
         "Zedbee initialization failed and rollback was incomplete.",
