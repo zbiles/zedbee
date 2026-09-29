@@ -871,7 +871,7 @@
     },
     {
       "name": "@jridgewell/sourcemap-codec",
-      "version": "1.5.5",
+      "version": "1.6.0",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -888,7 +888,7 @@
         "@babel/core@7.29.7",
         "@babel/generator@7.29.8",
         "@jridgewell/gen-mapping@0.3.13",
-        "@jridgewell/sourcemap-codec@1.5.5"
+        "@jridgewell/sourcemap-codec@1.6.0"
       ]
     },
     {
