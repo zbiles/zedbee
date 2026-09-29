@@ -1,3 +1,5 @@
+import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
+import type { TelemetrySummary } from "../telemetry/client.js";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
@@ -38,6 +40,7 @@ export type { RequestedOutputFormat } from "../scan/reporting-options.js";
 export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
+  readonly telemetrySummary?: (value: TelemetrySummary) => void;
   service?: boolean;
   executor?: AnalyzerExecutor;
   cwd: string;
@@ -269,6 +272,18 @@ export async function executeScanCommand(
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
+      onConfigurationSummary(summary) {
+        try {
+          options.telemetrySummary?.({
+            profile: summary.profile,
+            enabled_check_ids: summary.enabledCheckIds.filter((id) =>
+              TELEMETRY_CHECK_IDS.includes(id),
+            ),
+          });
+        } catch {
+          // Metadata observers cannot change the scan result.
+        }
+      },
       onEvent(event) {
         // Event observers must never change the analyzer outcome.
         try {
@@ -378,6 +393,25 @@ export async function executeScanCommand(
           }),
         );
       }
+    }
+    try {
+      options.telemetrySummary?.({
+        empty_input: report.changedFileCount === 0,
+        check_ids: [
+          ...new Set(
+            report.checks
+              .filter((check) => check.status !== "skipped")
+              .map((check) => check.checkId),
+          ),
+        ].filter((id): id is import("../config/schema.js").CheckId =>
+          TELEMETRY_CHECK_IDS.includes(
+            id as import("../config/schema.js").CheckId,
+          ),
+        ),
+        finding_count: Math.min(1_000_000, report.summary.findings.length),
+      });
+    } catch {
+      /* Metadata observers cannot change the scan result. */
     }
     return report.exitCode;
   } catch (error) {

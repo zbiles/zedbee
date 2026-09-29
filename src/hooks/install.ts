@@ -87,7 +87,12 @@ export async function validateLocalHookMigration(root: string): Promise<void> {
     if (name.endsWith(".sample")) continue;
     const original = await hookFile(directory, name);
     if (original === undefined || (original.mode & 0o111) === 0) continue;
-    if (name !== "pre-commit" || original.contents !== updateRawGitHook(null)) {
+    // Recognize the exact stock template shipped before hook attribution too.
+    const stock = [
+      updateRawGitHook(null),
+      "#!/bin/sh\nnpx --no-install zedbee scan\n",
+    ];
+    if (name !== "pre-commit" || !stock.includes(original.contents)) {
       throw new Error(
         "Tracked setup cannot preserve custom local hook execution. Keep the local integration or migrate those hooks manually first.",
       );

@@ -17,6 +17,11 @@ npm install --save-dev zedbee@next
 npx zedbee init
 ```
 
+Usage metadata is collected by default, including in CI. No source code, paths,
+or report contents are sent. Set `ZEDBEE_TELEMETRY_DISABLED=1` before first use,
+or run `npx zedbee telemetry disable` to save an opt-out. See the
+[telemetry details](docs/privacy.md#usage-telemetry).
+
 The public beta is available under npm's `next` tag. Setup recommends checks for your project and previews a `.zedbeerc.jsonc` configuration file and pre-commit hook. It explains network use and asks before writing anything.
 
 Stage the configuration and the files you intend to commit, including the package manifest and lockfile changes from installation. Then run:
@@ -67,7 +72,7 @@ For coding agents and other tools, JSON is also available through `--format json
 
 ## Before you adopt it
 
-Source analysis runs locally. Dependency vulnerability checks send package names and versions to OSV, not source code. Interactive commands can also check npm for updates. The [privacy guide](docs/privacy.md) explains network use, temporary files, and report contents.
+Source analysis runs locally. Dependency vulnerability checks send package names and versions to OSV, not source code. Usage telemetry sends explicit command metadata through Cloudflare to PostHog unless disabled. Interactive commands can also check npm for updates. The [privacy guide](docs/privacy.md) explains network use, temporary files, and report contents.
 
 The security checks cover specific unsafe patterns. They cannot identify every vulnerability or determine whether an AI's implementation matches your intent. See [security coverage](docs/structural-security-coverage.md) and [supported projects and limitations](docs/support.md).
 

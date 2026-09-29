@@ -19,7 +19,7 @@ export function updateSimpleGitHooksManifest(before: string): string {
   const command = existing ?? "";
   if (!hasZedbeeScanCommand(command)) {
     hooks["pre-commit"] =
-      `${command}${command.length === 0 ? "" : "\n"}npx --no-install zedbee scan`;
+      `${command}${command.length === 0 ? "" : "\n"}npx --no-install zedbee scan --hook-invocation`;
   }
   manifest["simple-git-hooks"] = hooks;
   return `${JSON.stringify(manifest, null, 2)}\n`;

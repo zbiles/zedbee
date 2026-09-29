@@ -10,6 +10,22 @@ import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 describe("tracked hook installation", () => {
+  it.each([
+    "#!/bin/sh\nnpx --no-install zedbee scan\n",
+    "#!/bin/sh\nnpx --no-install zedbee scan --hook-invocation\n",
+  ])(
+    "migrates either stock raw hook without treating it as custom",
+    async (script) => {
+      const repo = await createGitRepository("zedbee-tracked-stock-");
+      await repo.write("package.json", '{"name":"fixture"}');
+      await repo.write(".git/hooks/pre-commit", script);
+      await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o755);
+      await expect(
+        detectHookIntegration(repo.root, "tracked"),
+      ).resolves.toMatchObject({ hook: "husky" });
+    },
+  );
+
   it("does not let clone activation disable a teammate's custom local hooks", async () => {
     const repo = await createGitRepository("zedbee-tracked-clone-local-");
     await repo.write(".husky/pre-commit", "#!/bin/sh\nexit 0\n");

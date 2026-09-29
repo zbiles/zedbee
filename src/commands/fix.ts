@@ -1,3 +1,4 @@
+import type { TelemetrySummary } from "../telemetry/client.js";
 import { isAbsolute, relative, resolve } from "node:path";
 import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
 import { applyFixPlan } from "../fixes/apply-plan.js";
@@ -39,6 +40,7 @@ const COMPACT_DETAIL_LIMIT = 25;
 const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
 
 export interface FixCommandOptions {
+  readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly service?: boolean;
   readonly executor?: AnalyzerExecutor;
   readonly cwd: string;
@@ -533,6 +535,15 @@ export async function executeFixCommand(
           : {}),
       }),
     );
+    const summarize = (value: TelemetrySummary) => {
+      try {
+        options.telemetrySummary?.(value);
+      } catch {}
+    };
+    summarize({
+      check_ids: [...prepared.publicPlan.selectedChecks],
+      skipped_count: Math.min(1_000_000, prepared.publicPlan.summary.skipped),
+    });
     const format = formatFor(options);
     diagnosticEntries.push(
       ...(prepared.publicPlan.checks ?? []).flatMap((check) => check.issues),
@@ -577,6 +588,7 @@ export async function executeFixCommand(
           : { reportPath: maintenance.reportPath }),
       });
       if (!confirmed) {
+        summarize({ outcome: "cancelled" });
         await closeExecutor();
         outputPlan(false);
         io.writeStdout(
@@ -625,6 +637,10 @@ export async function executeFixCommand(
           : {}),
       }),
     );
+    summarize({
+      outcome: "applied",
+      applied_count: Math.min(1_000_000, result.appliedFixes),
+    });
     diagnosticEntries.push(...result.issues);
     await closeExecutor();
     if (format === "json") {

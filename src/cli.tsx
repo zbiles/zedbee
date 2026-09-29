@@ -2,6 +2,13 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Argument, Command, CommanderError, Option } from "commander";
+import { startTelemetry, type CommandTelemetry } from "./telemetry/client.js";
+import {
+  TELEMETRY_COMMANDS,
+  type TelemetryCommand,
+  type TelemetryEvent,
+} from "./telemetry/schema.js";
+import { executeTelemetryCommand } from "./commands/telemetry.js";
 import { ZEDBEE_VERSION } from "./core/package-version.js";
 import { terminalColorEnabled } from "./renderers/terminal-style.js";
 import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
@@ -28,6 +35,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  hookInvocation?: boolean;
   service: boolean;
   diagnostics?: boolean;
   format: RequestedOutputFormat;
@@ -91,6 +99,7 @@ export function scanTimeoutOverrides(
 }
 
 export interface CliDependencies {
+  readonly startTelemetry?: typeof startTelemetry;
   readonly executeScanCommand?: typeof executeScanCommand;
   readonly executeFixCommand?: typeof executeFixCommand;
 }
@@ -105,11 +114,26 @@ export async function runCli(
     .showHelpAfterError()
     .exitOverride();
   let exitCode = 0;
+  let telemetry: CommandTelemetry | undefined;
+  let executionCompleted = false;
   let updateNotice: UpdateNotice | undefined;
   let updateColor = false;
   let updateIndented = false;
   program.hook("preAction", (_program, action) => {
     const options = action.opts();
+    if (
+      action.parent === program &&
+      TELEMETRY_COMMANDS.includes(action.name() as TelemetryCommand)
+    ) {
+      telemetry = (dependencies.startTelemetry ?? startTelemetry)({
+        command: action.name() as TelemetryCommand,
+        env: process.env,
+        scanMode: options.base === undefined ? "staged" : "base",
+        outputFormat: options.format as TelemetryEvent["output_format"],
+        hookInvocation: options.hookInvocation === true,
+      });
+    }
+    if (action.parent?.name() === "telemetry") return;
     updateIndented =
       action.name() === "scan" &&
       selectOutputFormat(
@@ -142,6 +166,34 @@ export async function runCli(
   const onSigterm = (): void => interrupt("SIGTERM");
   process.once("SIGINT", onSigint);
   process.once("SIGTERM", onSigterm);
+
+  const telemetryCommand = program
+    .command("telemetry")
+    .description("inspect or change optional usage telemetry");
+  for (const operation of ["status", "enable", "disable"] as const) {
+    telemetryCommand
+      .command(operation)
+      .addOption(
+        new Option("--format <format>", "output format")
+          .choices(["text", "json"])
+          .default("text"),
+      )
+      .action((options: { format: "text" | "json" }) => {
+        exitCode = executeTelemetryCommand(
+          operation,
+          process.env,
+          {
+            writeStdout: (value) => {
+              process.stdout.write(value);
+            },
+            writeStderr: (value) => {
+              process.stderr.write(value);
+            },
+          },
+          options.format,
+        );
+      });
+  }
 
   const service = program
     .command("service")
@@ -229,6 +281,7 @@ export async function runCli(
       exitCode = await executeInitCommand(
         {
           cwd: process.cwd(),
+          telemetrySummary: (value) => telemetry?.summary(value),
           profile: options.profile,
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
@@ -273,6 +326,12 @@ export async function runCli(
   program
     .command("scan")
     .description("scan the selected index or committed target")
+    .addOption(
+      new Option(
+        "--hook-invocation",
+        "mark a generated Git hook invocation",
+      ).hideHelp(),
+    )
     .option(
       "--base <ref>",
       "scan committed HEAD changes since the unique merge base with this ref",
@@ -315,6 +374,7 @@ export async function runCli(
       exitCode = await (dependencies.executeScanCommand ?? executeScanCommand)(
         {
           cwd: process.cwd(),
+          telemetrySummary: (value) => telemetry?.summary(value),
           format: options.format,
           service: options.service,
           color: options.color,
@@ -381,6 +441,7 @@ export async function runCli(
         exitCode = await (dependencies.executeFixCommand ?? executeFixCommand)(
           {
             cwd: process.cwd(),
+            telemetrySummary: (value) => telemetry?.summary(value),
             service: options.service,
             ...(check === undefined ? {} : { check }),
             yes: options.yes,
@@ -482,6 +543,7 @@ export async function runCli(
 
   try {
     await program.parseAsync([...argv]);
+    executionCompleted = true;
     if (interrupted === undefined && updateNotice !== undefined) {
       try {
         process.stdout.write(
@@ -496,6 +558,18 @@ export async function runCli(
       }
     }
   } finally {
+    try {
+      telemetry?.finish(
+        interrupted === undefined
+          ? executionCompleted
+            ? exitCode
+            : 2
+          : signalExitCode(interrupted),
+      );
+      await telemetry?.flush(interrupted !== undefined, controller.signal);
+    } catch {
+      /* Optional collection never replaces the command result. */
+    }
     process.off("SIGINT", onSigint);
     process.off("SIGTERM", onSigterm);
   }

@@ -6,6 +6,7 @@ Detailed setup, commands, settings, and troubleshooting for Zedbee.
 
 - [Setup](#install)
 - [Commands and local service](#commands)
+- [Usage telemetry](#usage-telemetry)
 - [Experimental programmatic API](#experimental-programmatic-api)
 - [Staged code and CI comparisons](#exact-selected-content)
 - [Configuration](#configuration)
@@ -59,6 +60,24 @@ npx zedbee init
 ```
 
 Nothing is written until the interactive confirmation. Automation can apply the same proposal with `--yes`; use `--format json` for a deterministic machine-readable preview/result.
+
+## Usage telemetry
+
+Usage metadata is enabled by default for local commands and CI. Disable it
+before first use with `ZEDBEE_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1`, or persist
+a preference with `zedbee telemetry disable`. `zedbee telemetry enable` restores
+the saved preference; environment disable overrides always win.
+
+`zedbee telemetry status` explains the effective setting without creating state.
+All three commands support `--format json` and are themselves untracked. The
+setting belongs to the OS user, not the repository, and survives npm upgrades.
+For disposable CI runners, set the disable variable at the pipeline level.
+
+CI usage is included and classified separately. Generic `CI` and GitHub/GitLab
+flags are recognized; custom runners may set `ZEDBEE_TELEMETRY_CONTEXT=ci`.
+See [privacy and data handling](privacy.md#usage-telemetry) for exact fields,
+retention, delivery limits and deletion requests. These settings do not change
+OSV scanning or update checks.
 
 ## Commands
 
@@ -338,7 +357,7 @@ can be bypassed by Git options; neither makes checks mandatory on a server.
 
 `zedbee init --hook auto` detects Husky, Lefthook, simple-git-hooks, or raw Git hooks. It preserves unrelated commands, shows exact before/after hashes and diffs, refuses symlink targets, writes atomically, and rolls back earlier writes if a later write fails. Linked worktrees resolve the real Git hook path instead of assuming `.git` is a directory.
 
-Generated hooks run `npx --no-install zedbee scan`. This prevents an unexpected network download during a commit, but it means Zedbee must remain installed in the project. Run `zedbee init` again to preview an idempotent update; an existing Zedbee invocation is not duplicated.
+Newly generated hooks run `npx --no-install zedbee scan --hook-invocation`. The marker distinguishes hook usage in telemetry; it does not change scan behavior. Existing unmarked invocations remain valid and are not rewritten just to add the marker. This prevents an unexpected network download during a commit, but it means Zedbee must remain installed in the project. Run `zedbee init` again to preview an idempotent update; an existing Zedbee invocation is not duplicated.
 
 ## Cache and performance
 

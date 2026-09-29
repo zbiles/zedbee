@@ -1,4 +1,4 @@
-const ZEDBEE_COMMAND = "npx --no-install zedbee scan";
+const ZEDBEE_COMMAND = "npx --no-install zedbee scan --hook-invocation";
 const ZEDBEE_SCAN_COMMAND =
   /(?:^|[\n;&|])\s*(?:npx(?:\s+--no-install)?\s+)?(?:\.\/node_modules\/\.bin\/)?zedbee\s+scan(?:\s|$)/u;
 
