@@ -1,3 +1,4 @@
+import type { TelemetrySummary } from "../telemetry/client.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
@@ -36,6 +37,7 @@ import {
 import { CHECK_IDS, type CheckId, type ProfileId } from "../config/schema.js";
 
 export interface InitCommandOptions {
+  readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly cwd: string;
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
@@ -741,6 +743,20 @@ export async function executeInitCommand(
       io.writeStdout(renderInteractiveResult(confirmed, proposal));
     } else {
       io.writeStdout(renderText(proposal, result.applied));
+    }
+    try {
+      options.telemetrySummary?.({
+        outcome: result.applied
+          ? "completed"
+          : promptedInteractively
+            ? "cancelled"
+            : "preview",
+        profile: proposal.profile,
+        hook: proposal.hook,
+        check_ids: [...proposal.recommendedChecks],
+      });
+    } catch {
+      /* Metadata observers cannot change setup. */
     }
     return 0;
   } catch (error) {

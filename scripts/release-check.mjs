@@ -195,7 +195,7 @@ function run(step, cwd, capture = false) {
     cwd,
     encoding: "utf8",
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit",
-    env: environment,
+    env: { ...environment, ZEDBEE_TELEMETRY_DISABLED: "1" },
   });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0) {

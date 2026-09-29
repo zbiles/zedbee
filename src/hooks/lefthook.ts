@@ -21,7 +21,7 @@ export function updateLefthookConfig(
   }
   document.setIn(
     ["pre-commit", "commands", "zedbee", "run"],
-    "npx --no-install zedbee scan",
+    "npx --no-install zedbee scan --hook-invocation",
   );
   return document.toString({ lineWidth: 0 });
 }

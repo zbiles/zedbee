@@ -61,7 +61,7 @@ async function verifySharedPackedInstall(
     ],
     {
       cwd: repositoryRoot,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", ZEDBEE_TELEMETRY_DISABLED: "1" },
       reject: false,
       stdin: "ignore",
     },

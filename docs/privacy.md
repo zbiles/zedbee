@@ -1,5 +1,81 @@
 # Privacy and Data Handling
 
+## Usage telemetry
+
+Zedbee CLI usage telemetry is **enabled by default**, including in CI. A notice
+appears on stderr before the first eligible operation. To disable collection
+before first use, set `ZEDBEE_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1`. You can also
+persist a local preference:
+
+```bash
+npx zedbee telemetry disable
+npx zedbee telemetry status
+npx zedbee telemetry enable
+```
+
+These management commands are not tracked. `status --format json` provides the
+effective setting, its reason, detected environment and any existing local ID.
+Environment disable overrides win over a saved enable preference. `init --yes`,
+package updates and reinstallations do not reset your saved opt-out. Removing
+your user state directory removes the preference. Repository configuration
+cannot enable telemetry for someone who disabled it.
+
+Only explicit metadata is sent to `https://telemetry.zedbee.dev/v1/events`, a
+Cloudflare collector forwarding approved events to hosted PostHog:
+
+- command/event names, random event/run IDs, UTC timestamp and duration;
+- Zedbee version, Node major version, OS family and CPU architecture;
+- detected CI provider, generated-hook marker, staged/base scan mode and output format;
+- scan outcome, whether input was empty, executed check IDs and finding count;
+- setup outcome/profile/hook type, or fix outcome and aggregate applied/skipped counts;
+- a random user-local installation ID for local commands, or an ephemeral random
+  command ID for CI. No persistent local ID is sent by detected CI invocations.
+
+Source code, paths, file hashes, reports, snippets, raw errors, secrets,
+dependency names, repository URLs/names, branch names, Git identities, hostnames
+and environment-variable contents are not collected. No npm-install script
+sends telemetry. Help, internal service/hook-management commands and the
+programmatic API do not initialize telemetry. Check IDs describe executed checks;
+setup profiles describe setup choices, not a reread of your repository policy.
+
+CI is detected from `CI`, `GITHUB_ACTIONS` and `GITLAB_CI`; custom runners can set
+`ZEDBEE_TELEMETRY_CONTEXT=ci`. Detection is best-effort. No terminal or redirected
+output alone does not imply CI. Set the disable override pipeline-wide when you
+do not want disposable runners to collect usage. CI activity is reported
+separately from local installation counts. Neither is an exact count of people.
+
+Local settings and the bounded event outbox are stored under
+`$XDG_STATE_HOME/zedbee/telemetry` when that variable is absolute, otherwise
+`~/.local/state/zedbee/telemetry`. The outbox holds at most 100 events / 256 KiB
+for up to seven days; expired events are discarded during subsequent activity
+and are not sent. Files request owner-only POSIX permissions; Windows relies
+on the user directory's access controls. Unreadable/corrupt preferences suppress
+collection. Lock contention, offline requests and collection failures never
+change command results. Local sending happens in a short-lived detached process;
+CI uses memory only and waits at most one additional second on normal exit.
+Interrupted commands do not wait for telemetry. JSON/SARIF stdout is unchanged.
+
+The collector does not forward your source IP or user-agent to PostHog and
+requests no geographic enrichment or person profiles. Cloudflare necessarily
+receives connection metadata and may use the IP briefly for abuse limiting.
+Random persistent identifiers are pseudonymous, not a guarantee of anonymity.
+The collector can discard events by metadata rules or quotas; it does not use
+those controls to collect additional categories of information.
+
+The initial deployment targets PostHog's free event-retention offering of one
+year; retention and provider deletion procedures must be verified before the
+telemetry-enabled release. Disabling clears queued local events but cannot
+recall requests already in flight or delete data previously received. For a
+request to remove local-ID-associated data, contact
+[security@zedbee.dev](mailto:security@zedbee.dev) privately with only the local
+telemetry ID shown by `zedbee telemetry status`. Do not send source, credentials
+or reports. Ephemeral CI IDs cannot be associated with a person for a targeted
+per-person deletion request. Provider backups follow the provider's deletion
+policy.
+
+Telemetry controls are separate from OSV vulnerability scanning and update
+notifications; disabling telemetry does not disable either of those features.
+
 ## Local snapshot processing
 
 Index mode materializes two temporary representations: committed `HEAD` and the exact staged Git index. It does not scan later unstaged working-tree edits. Source excerpts are read from that exact index snapshot, so an excerpt cannot be replaced by later working-tree content. An intent-to-add entry supplies no staged file content and is excluded as unstaged. Staged Git LFS pointers and submodule pointers cannot be inspected and make the scan incomplete. Binary assets remain allowed, but binary paths selected by enabled source, formatting, or vulnerability checks are incomplete rather than silently skipped. Every affected path is reported; intentional suppression is configurable with `pathExclusions`.

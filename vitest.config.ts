@@ -3,6 +3,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
+    env: { ZEDBEE_TELEMETRY_DISABLED: "1" },
     globalSetup: ["test/global-setup.ts"],
     setupFiles: ["test/setup.ts"],
     include: ["test/**/*.test.ts", "test/**/*.test.tsx"],
