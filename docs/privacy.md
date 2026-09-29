@@ -26,7 +26,8 @@ Cloudflare collector forwarding approved events to hosted PostHog:
 - command/event names, random event/run IDs, UTC timestamp and duration;
 - Zedbee version, Node major version, OS family and CPU architecture;
 - detected CI provider, generated-hook marker, staged/base scan mode and output format;
-- scan outcome, whether input was empty, executed check IDs and finding count;
+- scan outcome, whether input was empty, built-in profile/custom indicator,
+  configured enabled check IDs, executed check IDs and finding count;
 - setup outcome/profile/hook type, or fix outcome and aggregate applied/skipped counts;
 - a random user-local installation ID for local commands, or an ephemeral random
   command ID for CI. No persistent local ID is sent by detected CI invocations.
@@ -35,8 +36,16 @@ Source code, paths, file hashes, reports, snippets, raw errors, secrets,
 dependency names, repository URLs/names, branch names, Git identities, hostnames
 and environment-variable contents are not collected. No npm-install script
 sends telemetry. Help, internal service/hook-management commands and the
-programmatic API do not initialize telemetry. Check IDs describe executed checks;
-setup profiles describe setup choices, not a reread of your repository policy.
+programmatic API do not initialize telemetry. `check_ids` describes executed,
+non-skipped checks; `enabled_check_ids` describes checks enabled globally or by
+any configured file override, even on empty input or when checks are skipped.
+Scan profiles are `fast`, `recommended`, `thorough`, or `custom` when resolved
+check settings differ from the selected built-in profile, or file overrides or
+path exclusions customize the suite. Explicit settings matching built-in defaults
+retain that profile. This summary uses the policy already resolved from the
+Git index (staged scans) or target
+commit (base scans); no settings or paths are sent. It is omitted if configuration
+cannot be resolved. Setup profiles describe setup choices.
 
 CI is detected from `CI`, `GITHUB_ACTIONS` and `GITLAB_CI`; custom runners can set
 `ZEDBEE_TELEMETRY_CONTEXT=ci`. Detection is best-effort. No terminal or redirected
@@ -62,8 +71,9 @@ Random persistent identifiers are pseudonymous, not a guarantee of anonymity.
 The collector can discard events by metadata rules or quotas; it does not use
 those controls to collect additional categories of information.
 
-The initial deployment targets PostHog's free event-retention offering of one
-year; retention and provider deletion procedures must be verified before the
+The initial deployment uses PostHog Free, which provides a one-year event-query
+window. That window is not a guarantee of physical deletion after one year;
+account retention and event-deletion procedures must be verified before the
 telemetry-enabled release. Disabling clears queued local events but cannot
 recall requests already in flight or delete data previously received. For a
 request to remove local-ID-associated data, contact

@@ -272,6 +272,18 @@ export async function executeScanCommand(
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
+      onConfigurationSummary(summary) {
+        try {
+          options.telemetrySummary?.({
+            profile: summary.profile,
+            enabled_check_ids: summary.enabledCheckIds.filter((id) =>
+              TELEMETRY_CHECK_IDS.includes(id),
+            ),
+          });
+        } catch {
+          // Metadata observers cannot change the scan result.
+        }
+      },
       onEvent(event) {
         // Event observers must never change the analyzer outcome.
         try {

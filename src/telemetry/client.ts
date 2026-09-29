@@ -21,6 +21,7 @@ export type TelemetrySummary = Partial<
     TelemetryEvent,
     | "empty_input"
     | "check_ids"
+    | "enabled_check_ids"
     | "finding_count"
     | "applied_count"
     | "skipped_count"
@@ -157,6 +158,7 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
         for (const key of [
           "empty_input",
           "check_ids",
+          "enabled_check_ids",
           "finding_count",
           "applied_count",
           "skipped_count",
@@ -175,7 +177,7 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
       const cancelled = code === 130 || code === 143;
       const outcome = cancelled
         ? "cancelled"
-        : code === 2
+        : code === 2 || (command === "fix" && code === 1)
           ? "incomplete"
           : command === "scan"
             ? code === 1

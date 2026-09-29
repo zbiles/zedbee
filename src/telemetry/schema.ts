@@ -74,6 +74,11 @@ export const telemetryEventSchema = z
       .max(13)
       .refine((v) => new Set(v).size === v.length)
       .optional(),
+    enabled_check_ids: z
+      .array(z.enum(TELEMETRY_CHECK_IDS))
+      .max(13)
+      .refine((v) => new Set(v).size === v.length)
+      .optional(),
     finding_count: count.optional(),
     applied_count: count.optional(),
     skipped_count: count.optional(),
@@ -139,7 +144,8 @@ export const telemetryEventSchema = z
       event.command !== "scan" &&
       (event.scan_mode !== undefined ||
         event.empty_input !== undefined ||
-        event.finding_count !== undefined)
+        event.finding_count !== undefined ||
+        event.enabled_check_ids !== undefined)
     )
       invalid();
     if (

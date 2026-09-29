@@ -44,6 +44,41 @@ describe("telemetry contract", () => {
     }
     expect(TELEMETRY_CHECK_IDS).toEqual(CHECK_IDS);
   });
+  it("accepts separate configured and executed check IDs with a bounded scan profile", () => {
+    expect(
+      telemetryEventSchema.safeParse(
+        event({
+          event: "scan_finished",
+          outcome: "pass",
+          duration_ms: 1,
+          profile: "custom",
+          enabled_check_ids: ["lint", "types"],
+          check_ids: [],
+        }),
+      ).success,
+    ).toBe(true);
+    for (const enabled_check_ids of [["private-check"], ["lint", "lint"]]) {
+      expect(
+        telemetryEventSchema.safeParse(event({ enabled_check_ids })).success,
+      ).toBe(false);
+    }
+    expect(
+      telemetryEventSchema.safeParse(event({ profile: "private-profile" }))
+        .success,
+    ).toBe(false);
+    expect(
+      telemetryEventSchema.safeParse(
+        event({
+          event: "command_finished",
+          command: "doctor",
+          scan_mode: undefined,
+          outcome: "completed",
+          duration_ms: 1,
+          enabled_check_ids: ["lint"],
+        }),
+      ).success,
+    ).toBe(false);
+  });
   it("prevents CI from carrying persistent local identities", () => {
     const ci = event({
       environment: "ci",

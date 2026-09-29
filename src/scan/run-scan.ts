@@ -4,6 +4,10 @@ export { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
 import type { DispatchOptions } from "../checks/dispatcher.js";
 import type { ScanEvent } from "../checks/events.js";
 import type { ResolvedConfig } from "../config/schema.js";
+import {
+  summarizeConfiguration,
+  type ConfigurationSummary,
+} from "../config/summary.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { summarizeChecks } from "../core/summarize.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
@@ -65,6 +69,8 @@ export interface RunScanOptions {
   noTimeout?: boolean;
   signal?: AbortSignal;
   onEvent?: (event: ScanEvent) => void;
+  /** Observe the actual resolved index/target-commit policy without receiving settings. */
+  onConfigurationSummary?: (summary: ConfigurationSummary) => void;
   dependencies?: RunScanDependencies;
   cache?: ObservationCache | false;
   /** Invocation-only consent for project Prettier execution. */
@@ -137,6 +143,11 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       ...options,
       dependencies,
       onConfiguration(config) {
+        try {
+          options.onConfigurationSummary?.(summarizeConfiguration(config));
+        } catch {
+          // Optional metadata observers cannot change the scan outcome.
+        }
         includeSourceExcerpts = shouldIncludeSourceExcerpts(
           config.reporting.sourceExcerpts,
           options.reportingSurface,
