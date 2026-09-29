@@ -164,9 +164,12 @@ describe("project Prettier engine", () => {
     "bounds native EditorConfig lookup above the mirror with Prettier %s",
     async (prettierVersion) => {
       const fixture = await createProjectPrettierFixture({ prettierVersion });
-      onTestFinished(() => fixture.dispose());
       const outer = await mkdtemp(join(tmpdir(), "zedbee-editorconfig-parent-"));
-      onTestFinished(() => rm(outer, { recursive: true, force: true }));
+      onTestFinished(async () => {
+        // Windows cannot remove the mirror while the formatter uses it as cwd.
+        await fixture.dispose();
+        await rm(outer, { recursive: true, force: true });
+      });
       await writeFile(
         join(outer, ".editorconfig"),
         "root = true\n[*]\nquote_type = single\n",
