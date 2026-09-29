@@ -8506,7 +8506,7 @@
     },
     {
       "name": "yaml",
-      "version": "2.9.0",
+      "version": "2.9.1",
       "license": "ISC",
       "repository": "github:eemeli/yaml",
       "licenseFile": "node_modules/yaml/LICENSE",
@@ -8515,7 +8515,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "yaml@2.9.0"
+        "yaml@2.9.1"
       ]
     },
     {
