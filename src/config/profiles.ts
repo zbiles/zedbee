@@ -17,6 +17,7 @@ import { normalizeAgentGuidance } from "../reporting/agent-guidance.js";
 import {
   DEFAULT_FORMATTING_SETTINGS,
   formattingSettingsSchema,
+  type FormattingEngine,
   type FormattingSettings,
 } from "../checks/prettier/settings.js";
 import {
@@ -73,6 +74,7 @@ function baseChecks(profile: ProfileId): MutableCheckPolicies {
   return {
     formatting: {
       ...common("formatting"),
+      engine: "managed",
       settings: DEFAULT_FORMATTING_SETTINGS,
     },
     lint: {
@@ -133,6 +135,7 @@ function policyPatch(
     when?: CheckTiming;
     max?: number;
     threshold?: number;
+    engine?: FormattingEngine;
     settings?: ResolvedCheckPolicyPatch["settings"];
     rules?: ResolvedCheckPolicyPatch["rules"];
     blockWorsening?: boolean;
@@ -144,6 +147,7 @@ function policyPatch(
   if (objectInput.max !== undefined) patch.max = objectInput.max;
   if (objectInput.threshold !== undefined)
     patch.threshold = objectInput.threshold;
+  if (objectInput.engine !== undefined) patch.engine = objectInput.engine;
   if (objectInput.settings !== undefined) {
     patch.settings = Object.freeze({ ...objectInput.settings });
   }
@@ -193,10 +197,18 @@ function resolvePolicy(
     case "formatting": {
       const basePolicy = base as ResolvedCheckPolicies["formatting"];
       const settingsPatch = patch.settings as
-        Partial<FormattingSettings> | undefined;
+        | Partial<FormattingSettings>
+        | undefined;
+      const engine = patch.engine ?? basePolicy.engine;
+      if (engine === "project" && settingsPatch !== undefined) {
+        throw new TypeError(
+          'Managed formatting settings cannot be combined with engine "project".',
+        );
+      }
       return Object.freeze({
         ...basePolicy,
         ...patch,
+        engine,
         settings: freezeFormattingSettings({
           ...basePolicy.settings,
           ...settingsPatch,
@@ -238,6 +250,43 @@ function policyInput(
   return checks[checkId] as CheckPolicyInput | undefined;
 }
 
+function formattingInputFields(
+  input: CheckPolicyInput | undefined,
+): { engine?: FormattingEngine; settings?: unknown } | undefined {
+  return typeof input === "object" && input !== null
+    ? (input as { engine?: FormattingEngine; settings?: unknown })
+    : undefined;
+}
+
+function assertFormattingEngineConsistency(
+  file: ConfigFile | undefined,
+): void {
+  const root = formattingInputFields(file?.checks?.formatting);
+  const rootEngine = root?.engine ?? "managed";
+  const rootSettingsExplicit = root?.settings !== undefined;
+  for (const override of file?.overrides ?? []) {
+    const patch = formattingInputFields(override.checks.formatting);
+    if (patch === undefined) continue;
+    if (
+      patch.engine === "project" &&
+      (rootSettingsExplicit || patch.settings !== undefined)
+    ) {
+      throw new TypeError(
+        'Formatting engine "project" cannot inherit managed formatting settings; remove the managed settings first.',
+      );
+    }
+    if (
+      rootEngine === "project" &&
+      patch.settings !== undefined &&
+      patch.engine !== "managed"
+    ) {
+      throw new TypeError(
+        'Managed formatting settings cannot be added to a file scope while the formatting engine is "project".',
+      );
+    }
+  }
+}
+
 function emptyOrigins(): Record<CheckId, Record<string, SettingOrigin>> {
   return Object.fromEntries(
     CHECK_IDS.map((checkId) => [checkId, {}]),
@@ -276,6 +325,7 @@ function originForRepository(configPath: string | undefined): SettingOrigin {
 
 function defaultPolicyKeys(policy: ResolvedCheckPolicy): readonly string[] {
   const keys = ["severity", "when"];
+  if ("engine" in policy) keys.push("engine");
   if ("max" in policy) keys.push("max");
   if ("blockWorsening" in policy) keys.push("blockWorsening");
   if ("threshold" in policy) keys.push("threshold");
@@ -300,6 +350,8 @@ function recordPatchOrigins(
     recordOrigin(origins, checkId, "severity", origin);
   }
   if (patch.when !== undefined) recordOrigin(origins, checkId, "when", origin);
+  if (patch.engine !== undefined)
+    recordOrigin(origins, checkId, "engine", origin);
   if (patch.max !== undefined) recordOrigin(origins, checkId, "max", origin);
   if (patch.blockWorsening !== undefined) {
     recordOrigin(origins, checkId, "blockWorsening", origin);
@@ -374,6 +426,7 @@ export function resolveConfig(
   file: ConfigFile | undefined,
   configPath?: string,
 ): ResolvedConfig {
+  assertFormattingEngineConsistency(file);
   const profile = file?.profile ?? "recommended";
   const checks = baseChecks(profile);
   const mutableOrigins = emptyOrigins();

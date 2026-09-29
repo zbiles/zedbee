@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ManagedSettingsDefinition } from "../../config/settings-definition.js";
 
+export const FORMATTING_ENGINES = ["managed", "project"] as const;
+
+export type FormattingEngine = (typeof FORMATTING_ENGINES)[number];
+
 export const formattingSettingsSchema = z
   .object({
     printWidth: z.number().int().positive(),

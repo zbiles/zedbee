@@ -5,9 +5,13 @@ import type {
   CheckId,
   PathExclusion,
   ResolvedCheckPolicies,
+  ResolvedCheckPolicyPatch,
   ResolvedConfig,
 } from "./schema.js";
-import { mergePolicyPatch } from "./target-policy.js";
+import {
+  assertEffectiveFormattingPolicy,
+  mergePolicyPatch,
+} from "./target-policy.js";
 
 export type SnapshotSide = "baseline" | "target";
 
@@ -89,6 +93,7 @@ export function createFilePolicyResolver(
       ResolvedCheckPolicies[K]
     >;
 
+    const matched: ResolvedCheckPolicyPatch[] = [];
     for (const override of overrides) {
       const patch = override.checks[checkId];
       if (
@@ -97,6 +102,12 @@ export function createFilePolicyResolver(
       ) {
         continue;
       }
+      matched.push(patch);
+    }
+    if (checkId === "formatting") {
+      assertEffectiveFormattingPolicy(config, matched);
+    }
+    for (const patch of matched) {
       policy = mergePolicyPatch(policy, patch);
     }
 

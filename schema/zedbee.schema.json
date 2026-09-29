@@ -45,6 +45,12 @@
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
                 },
+                "engine": {
+                  "description": "Formatting engine: \"managed\" uses Zedbee's bundled Prettier with managed settings; \"project\" uses the selected project's installed Prettier, configuration, and plugins.",
+                  "default": "managed",
+                  "type": "string",
+                  "enum": ["managed", "project"]
+                },
                 "settings": {
                   "type": "object",
                   "properties": {
@@ -2371,6 +2377,12 @@
                         "enum": ["relevant", "always"],
                         "description": "Run only when staged changes are relevant, or run for every scan.",
                         "default": "relevant"
+                      },
+                      "engine": {
+                        "description": "Formatting engine: \"managed\" uses Zedbee's bundled Prettier with managed settings; \"project\" uses the selected project's installed Prettier, configuration, and plugins.",
+                        "default": "managed",
+                        "type": "string",
+                        "enum": ["managed", "project"]
                       },
                       "settings": {
                         "type": "object",

@@ -26,6 +26,7 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "error",
       when: "relevant",
+      engine: "managed",
       settings: {
         printWidth: 80,
         tabWidth: 2,
@@ -136,6 +137,7 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "warn",
       when: "always",
+      engine: "managed",
       settings: {
         printWidth: 80,
         tabWidth: 2,
@@ -176,6 +178,7 @@ describe("loadConfig", () => {
     expect(config.checks.formatting).toEqual({
       severity: "off",
       when: "relevant",
+      engine: "managed",
       settings: {
         printWidth: 80,
         tabWidth: 2,
