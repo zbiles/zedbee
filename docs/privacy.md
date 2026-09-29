@@ -65,7 +65,10 @@ CI uses memory only and waits at most one additional second on normal exit.
 Interrupted commands do not wait for telemetry. JSON/SARIF stdout is unchanged.
 
 The collector does not forward your source IP or user-agent to PostHog and
-requests no geographic enrichment or person profiles. Cloudflare necessarily
+requests no geographic enrichment. Local usage creates a PostHog person profile
+keyed by the random installation ID so its associated events can be deleted.
+No name or email address is collected or added to that profile. CI events do not
+create person profiles. Cloudflare necessarily
 receives connection metadata and may use the IP briefly for abuse limiting.
 Random persistent identifiers are pseudonymous, not a guarantee of anonymity.
 The collector can discard events by metadata rules or quotas; it does not use
@@ -78,8 +81,21 @@ telemetry-enabled release. Disabling clears queued local events but cannot
 recall requests already in flight or delete data previously received. For a
 request to remove local-ID-associated data, contact
 [security@zedbee.dev](mailto:security@zedbee.dev) privately with only the local
-telemetry ID shown by `zedbee telemetry status`. Do not send source, credentials
-or reports. Ephemeral CI IDs cannot be associated with a person for a targeted
+telemetry ID shown by `zedbee telemetry status`.
+
+Run these commands on the same computer and operating-system user account where
+you used Zedbee:
+
+```sh
+npx zedbee telemetry disable
+npx zedbee telemetry status
+```
+
+Send only the value labeled **Local telemetry ID**. Disabling telemetry preserves
+that ID and stops future collection; it does not delete previously received data.
+Repeat this for each computer or user account you used. If you removed the saved
+telemetry state, the old ID cannot be reconstructed. Do not send source,
+credentials or reports. Ephemeral CI IDs cannot be associated with a person for a targeted
 per-person deletion request. Provider backups follow the provider's deletion
 policy.
 
