@@ -871,7 +871,7 @@
     },
     {
       "name": "@jridgewell/sourcemap-codec",
-      "version": "1.5.5",
+      "version": "1.6.0",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -888,7 +888,7 @@
         "@babel/core@7.29.7",
         "@babel/generator@7.29.8",
         "@jridgewell/gen-mapping@0.3.13",
-        "@jridgewell/sourcemap-codec@1.5.5"
+        "@jridgewell/sourcemap-codec@1.6.0"
       ]
     },
     {
@@ -5631,7 +5631,7 @@
     },
     {
       "name": "jscpd",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": {
         "type": "git",
@@ -5642,111 +5642,111 @@
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1"
+        "jscpd@5.3.2"
       ]
     },
     {
       "name": "jscpd-darwin-arm64",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-darwin-arm64@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-darwin-arm64@5.3.2"
       ]
     },
     {
       "name": "jscpd-darwin-x64",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-darwin-x64@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-darwin-x64@5.3.2"
       ]
     },
     {
       "name": "jscpd-linux-arm64-gnu",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-linux-arm64-gnu@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-linux-arm64-gnu@5.3.2"
       ]
     },
     {
       "name": "jscpd-linux-arm64-musl",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-linux-arm64-musl@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-linux-arm64-musl@5.3.2"
       ]
     },
     {
       "name": "jscpd-linux-x64-gnu",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-linux-x64-gnu@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-linux-x64-gnu@5.3.2"
       ]
     },
     {
       "name": "jscpd-linux-x64-musl",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-linux-x64-musl@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-linux-x64-musl@5.3.2"
       ]
     },
     {
       "name": "jscpd-windows-arm64-msvc",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-windows-arm64-msvc@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-windows-arm64-msvc@5.3.2"
       ]
     },
     {
       "name": "jscpd-windows-x64-msvc",
-      "version": "5.2.1",
+      "version": "5.3.2",
       "license": "MIT",
       "repository": null,
       "licenseFile": null,
       "legalFiles": [],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "jscpd@5.2.1",
-        "jscpd-windows-x64-msvc@5.2.1"
+        "jscpd@5.3.2",
+        "jscpd-windows-x64-msvc@5.3.2"
       ]
     },
     {
@@ -6579,7 +6579,7 @@
     },
     {
       "name": "p-limit",
-      "version": "7.3.2",
+      "version": "7.3.3",
       "license": "MIT",
       "repository": "sindresorhus/p-limit",
       "licenseFile": "node_modules/p-limit/license",
@@ -6588,7 +6588,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.2"
+        "p-limit@7.3.3"
       ]
     },
     {
@@ -8503,7 +8503,7 @@
     },
     {
       "name": "yaml",
-      "version": "2.9.0",
+      "version": "2.9.1",
       "license": "ISC",
       "repository": "github:eemeli/yaml",
       "licenseFile": "node_modules/yaml/LICENSE",
@@ -8512,7 +8512,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "yaml@2.9.0"
+        "yaml@2.9.1"
       ]
     },
     {
@@ -8545,7 +8545,7 @@
       ],
       "dependencyPath": [
         "zedbee@0.1.0-beta.3",
-        "p-limit@7.3.2",
+        "p-limit@7.3.3",
         "yocto-queue@1.2.2"
       ]
     },

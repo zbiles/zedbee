@@ -451,7 +451,7 @@ describe("executeChecksCommand", () => {
           id: "duplication",
           engine: expect.objectContaining({
             name: "jscpd",
-            version: "5.2.1",
+            version: "5.3.2",
             license: "MIT",
           }),
         }),
