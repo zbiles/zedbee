@@ -3,6 +3,8 @@ import type {
   CheckError,
   CheckResult,
   Finding,
+  FormattingProvenance,
+  FormattingCoverage,
   IncompleteDisposition,
   SourceExcerpt,
   SourceLocation,
@@ -77,6 +79,8 @@ export const PUBLIC_CHECK_RESULT_FIELDS = {
   error: true,
   skipReason: true,
   incompleteDisposition: true,
+  formattingProvenance: true,
+  formattingCoverage: true,
 } as const satisfies Readonly<Record<keyof CheckResult, true>>;
 
 export const PUBLIC_FINDING_FIELDS = {
@@ -309,6 +313,75 @@ function sanitizeError(
   };
 }
 
+const PROVENANCE_ENGINES = new Set(["managed", "project"]);
+
+/** Provenance may never carry secrets, absolute paths, or engine internals. */
+function sanitizeFormattingProvenance(
+  value: unknown,
+): readonly FormattingProvenance[] {
+  if (!Array.isArray(value) || value.length === 0 || value.length > 64) {
+    throw new TypeError("Adapter returned invalid formatting provenance");
+  }
+  return Object.freeze(
+    value.map((entry) => {
+      if (typeof entry !== "object" || entry === null) {
+        throw new TypeError("Adapter returned invalid formatting provenance");
+      }
+      const record = entry as Record<string, unknown>;
+      if (
+        Object.keys(record).length !== 4 ||
+        !PROVENANCE_ENGINES.has(String(record.engine)) ||
+        typeof record.version !== "string" ||
+        record.version.length === 0 ||
+        record.version.length > 64 ||
+        !/^[0-9][0-9a-zA-Z.\-+]*$/u.test(record.version) ||
+        typeof record.projectRoot !== "string" ||
+        !Array.isArray(record.configFiles) ||
+        record.configFiles.length > 32 ||
+        record.configFiles.some(
+          (path) => typeof path !== "string" || path.length === 0,
+        )
+      ) {
+        throw new TypeError("Adapter returned invalid formatting provenance");
+      }
+      return Object.freeze({
+        engine: record.engine as FormattingProvenance["engine"],
+        version: record.version,
+        projectRoot:
+          record.projectRoot === "."
+            ? "."
+            : displayLabel(
+                normalizeRepositoryRelativePath(record.projectRoot),
+                "provenance project root",
+              ),
+        configFiles: Object.freeze(
+          record.configFiles.map((path) =>
+            displayLabel(
+              normalizeRepositoryRelativePath(String(path)),
+              "provenance config file",
+            ),
+          ),
+        ),
+      });
+    }),
+  );
+}
+
+export function sanitizeFormattingCoverage(
+  value: FormattingCoverage,
+): FormattingCoverage {
+  const count = (value: number): number => {
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new TypeError("Invalid formatting coverage count");
+    return value;
+  };
+  return Object.freeze({
+    checkedFiles: count(value.checkedFiles),
+    ignoredFiles: count(value.ignoredFiles),
+    unsupportedFiles: count(value.unsupportedFiles),
+  });
+}
+
 export function sanitizeCheckResult(
   result: CheckResult,
   overrides: CheckResultOverrides = {},
@@ -344,6 +417,20 @@ export function sanitizeCheckResult(
           }),
         }),
     ...(incompleteDisposition === undefined ? {} : { incompleteDisposition }),
+    ...(result.formattingCoverage === undefined
+      ? {}
+      : {
+          formattingCoverage: sanitizeFormattingCoverage(
+            result.formattingCoverage,
+          ),
+        }),
+    ...(result.formattingProvenance === undefined
+      ? {}
+      : {
+          formattingProvenance: sanitizeFormattingProvenance(
+            result.formattingProvenance,
+          ),
+        }),
   };
 }
 

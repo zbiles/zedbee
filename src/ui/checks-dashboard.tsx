@@ -63,6 +63,18 @@ function CheckEntry({
         Engine: {check.engine.name} {check.engine.version} (
         {check.engine.license})
       </Text>
+      {check.effectiveEngines !== undefined && check.effectiveEngines.length > 1
+        ? check.effectiveEngines.map((engine) => (
+            <Text
+              key={`${engine.kind}:${engine.projectRoot}`}
+              wrap="wrap"
+              {...colorProp(color, ZEDBEE_THEME.secondary)}
+            >
+              Engine scope {engine.projectRoot}: {engine.name} {engine.version}{" "}
+              ({engine.license})
+            </Text>
+          ))
+        : null}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         Targets: {targets} · Timing: {check.timing} · Cost:{" "}
         {check.executionClass}
@@ -112,7 +124,11 @@ function CheckEntry({
           wrap="wrap"
           {...colorProp(color, ZEDBEE_THEME.secondary)}
         >
-          {configurationOverrideLine(override.files, override.values)}
+          {configurationOverrideLine(
+            override.files,
+            override.values,
+            override.excludeFiles,
+          )}
         </Text>
       ))}
       {check.automaticFix === undefined ? null : (

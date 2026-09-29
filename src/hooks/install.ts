@@ -136,8 +136,9 @@ import { existsSync } from "node:fs";
 import process from "node:process";
 if (!process.env.CI && process.env.HUSKY !== "0" && existsSync(".git")) {
   let available = true;
-  try { import.meta.resolve("zedbee/hooks"); }
-  catch (error) {
+  try {
+    import.meta.resolve("zedbee/hooks");
+  } catch (error) {
     if (error.code === "ERR_MODULE_NOT_FOUND") available = false;
     else throw error;
   }

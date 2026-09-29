@@ -4,8 +4,9 @@ import type { ICruiseResult, IViolation } from "dependency-cruiser";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
-import { DEPENDENCY_RULE_NAMES } from "./rules.js";
+import { DEPENDENCY_RULE_NAMES, HOOK_INSTALLER_PATH } from "./rules.js";
 
+const HOOK_INSTALLER = new RegExp(HOOK_INSTALLER_PATH);
 const RULES = new Set<string>(Object.values(DEPENDENCY_RULE_NAMES));
 const TEST_PATH =
   /(^|\/)(?:test|tests|__tests__|spec)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
@@ -181,6 +182,7 @@ function declarationObservations(
       const production = declarations.production.has(dependencyName);
       const development = declarations.development.has(dependencyName);
       if (development && !production) {
+        if (HOOK_INSTALLER.test(from)) continue;
         observations.push(
           observation(
             DEPENDENCY_RULE_NAMES.productionToDev,

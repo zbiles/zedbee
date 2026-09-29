@@ -243,6 +243,25 @@ describe("parseFixCheck", () => {
 });
 
 describe("executeFixCommand", () => {
+  it("carries invocation-only project Prettier consent into plan and apply", async () => {
+    const terminal = io(false);
+    const deps = dependencies(applicablePlan());
+
+    await executeFixCommand(
+      { ...base, yes: true, projectPrettierTrust: true },
+      terminal,
+      deps,
+    );
+
+    expect(deps.buildFixPlan).toHaveBeenCalledWith(
+      expect.objectContaining({ projectPrettierTrust: true }),
+    );
+    expect(deps.applyFixPlan).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ projectPrettierTrust: true }),
+    );
+  });
+
   it("does not apply when analysis completes without a trustworthy fix", async () => {
     const terminal = io(true);
     const deps = dependencies(completedPlanWithoutFixes());

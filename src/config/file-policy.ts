@@ -1,3 +1,4 @@
+import ignore from "ignore";
 import picomatch from "picomatch";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import type { ChangeSet } from "../git/change-set.js";
@@ -77,11 +78,26 @@ export function createFilePolicyResolver(
   const overrides = config.overrides.map((override) => ({
     checks: override.checks,
     matches: toMatchers(override.files),
+    excludes: toMatchers(override.excludeFiles ?? []),
   }));
-  const pathExclusions = config.pathExclusions.map((exclusion) => ({
-    exclusion,
-    filesMatchers: toMatchers(exclusion.files),
-  }));
+  const pathExclusions = config.pathExclusions.map((exclusion) => {
+    if (exclusion.syntax === "gitignore") {
+      const rules = ignore().add([...exclusion.files]);
+      const prefix = exclusion.basePath === "." ? "" : `${exclusion.basePath}/`;
+      return {
+        exclusion,
+        matches: (path: string) =>
+          path.startsWith(prefix) &&
+          path.length > prefix.length &&
+          rules.ignores(path.slice(prefix.length)),
+      };
+    }
+    const patterns = toMatchers(exclusion.files);
+    return {
+      exclusion,
+      matches: (path: string) => patterns.some((match) => match(path)),
+    };
+  });
 
   const resolve = <K extends CheckId>(
     checkId: K,
@@ -98,7 +114,8 @@ export function createFilePolicyResolver(
       const patch = override.checks[checkId];
       if (
         patch === undefined ||
-        !override.matches.some((matches) => matches(targetPath))
+        !override.matches.some((matches) => matches(targetPath)) ||
+        override.excludes.some((matches) => matches(targetPath))
       ) {
         continue;
       }
@@ -114,7 +131,7 @@ export function createFilePolicyResolver(
     for (const exclusion of pathExclusions) {
       if (
         !exclusion.exclusion.checks.includes(checkId) ||
-        !exclusion.filesMatchers.some((matches) => matches(targetPath))
+        !exclusion.matches(targetPath)
       ) {
         continue;
       }
@@ -131,9 +148,7 @@ export function createFilePolicyResolver(
     const targetPath = normalizeTargetPath(renames, repositoryPath, side);
     return Object.freeze(
       pathExclusions
-        .filter(({ filesMatchers }) =>
-          filesMatchers.some((matches) => matches(targetPath)),
-        )
+        .filter(({ matches }) => matches(targetPath))
         .map(({ exclusion }) => exclusion),
     );
   };

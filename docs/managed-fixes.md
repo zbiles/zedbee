@@ -56,6 +56,14 @@ semantics: it formats the complete current working file, including unstaged
 work in that file. Select `lint` or `reactCorrectness` alone when whole-file
 formatting is not wanted.
 
+When formatting uses `engine: "project"`, the same working-file semantics apply
+but the bytes come from the selected project's installed Prettier, configuration,
+and plugins rather than the bundled engine. A fix plan records the engine, the
+validated installation identity, and the selected snapshot. Applying it
+rechecks local trust and those identities; if the installation or the selected
+staged snapshot changed, the plan is reported stale and the working file is left
+untouched. There is no managed fallback for a project-formatting failure.
+
 For a file that receives both kinds, exact fixes run before selected
 formatting. This preserves one deterministic order:
 

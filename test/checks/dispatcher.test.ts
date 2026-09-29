@@ -824,12 +824,25 @@ describe("dispatchChecks", () => {
       ...context.targetInspection,
       workspaces: context.targetInspection.workspaces.map((workspace) =>
         workspace.relativeRoot === "."
-          ? { ...workspace, sourceFiles: [authoritativeFile.path] }
+          ? {
+              ...workspace,
+              sourceFiles: [authoritativeFile.path],
+              productionDependencies: ["runtime"],
+              developmentDependencies: ["zedbee"],
+            }
           : workspace,
       ),
     };
     const mutationFailures: string[] = [];
     const mutate = (phase: string, adapterContext: CheckRunContext) => {
+      const workspace = adapterContext.targetInspection.workspaces.find(
+        (entry) => entry.relativeRoot === ".",
+      )!;
+      expect(workspace.productionDependencies).toEqual(["runtime"]);
+      expect(workspace.developmentDependencies).toEqual(["zedbee"]);
+      expect(Object.isFrozen(workspace.productionDependencies)).toBe(true);
+      expect(Object.isFrozen(workspace.developmentDependencies)).toBe(true);
+
       for (const [name, action] of [
         ["policy", () => (adapterContext.config.checks.lint.severity = "off")],
         [

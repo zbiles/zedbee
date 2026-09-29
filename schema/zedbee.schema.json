@@ -2357,6 +2357,37 @@
             },
             "description": "One or more repository-relative globs."
           },
+          "excludeFiles": {
+            "description": "Files that must not receive this override; normal checks still apply.",
+            "type": "array",
+            "items": {
+              "description": "Repository-relative forward-slash glob selecting files for this override.",
+              "type": "string",
+              "minLength": 1,
+              "allOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[^\\\\]*$"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!\\/)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?![A-Za-z]:)"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^(?!(?:\\.\\/)+$)"
+                }
+              ]
+            }
+          },
           "checks": {
             "type": "object",
             "properties": {
@@ -4638,87 +4669,150 @@
       "maxItems": 100,
       "type": "array",
       "items": {
-        "type": "object",
-        "properties": {
-          "files": {
-            "minItems": 1,
-            "maxItems": 32,
-            "type": "array",
-            "items": {
-              "description": "Repository-relative forward-slash glob selecting files to suppress.",
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 256,
-              "allOf": [
-                {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "files": {
+                "minItems": 1,
+                "maxItems": 32,
+                "type": "array",
+                "items": {
+                  "description": "Repository-relative forward-slash glob selecting files to suppress.",
                   "type": "string",
-                  "pattern": "^[^\\\\]*$"
+                  "minLength": 1,
+                  "maxLength": 256,
+                  "allOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[^\\\\]*$"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?!\\/)"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?![A-Za-z]:)"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?!(?:\\.\\/)+$)"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?!!)"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[^{}]*$"
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^(?!.*[@+*?!]\\()"
+                    }
+                  ]
                 },
-                {
+                "description": "One or more repository-relative globs for this exclusion entry."
+              },
+              "checks": {
+                "minItems": 1,
+                "maxItems": 13,
+                "type": "array",
+                "items": {
                   "type": "string",
-                  "pattern": "^(?!\\/)"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^(?![A-Za-z]:)"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^(?!.*(?:^|\\/)\\.\\.(?:\\/|$))"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^(?!(?:\\.\\/)+$)"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^(?!!)"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^[^{}]*$"
-                },
-                {
-                  "type": "string",
-                  "pattern": "^(?!.*[@+*?!]\\()"
+                  "enum": [
+                    "formatting",
+                    "lint",
+                    "types",
+                    "cyclomaticComplexity",
+                    "readabilityComplexity",
+                    "structuralSecurity",
+                    "secrets",
+                    "duplication",
+                    "dependencyArchitecture",
+                    "deadCode",
+                    "reactCorrectness",
+                    "reactAccessibility",
+                    "vulnerabilities"
+                  ]
                 }
-              ]
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$",
+                "description": "Why these paths are intentionally suppressed."
+              }
             },
-            "description": "One or more repository-relative globs for this exclusion entry."
+            "required": ["files", "checks", "reason"],
+            "additionalProperties": false
           },
-          "checks": {
-            "minItems": 1,
-            "maxItems": 13,
-            "type": "array",
-            "items": {
-              "type": "string",
-              "enum": [
-                "formatting",
-                "lint",
-                "types",
-                "cyclomaticComplexity",
-                "readabilityComplexity",
-                "structuralSecurity",
-                "secrets",
-                "duplication",
-                "dependencyArchitecture",
-                "deadCode",
-                "reactCorrectness",
-                "reactAccessibility",
-                "vulnerabilities"
-              ]
-            }
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 200,
-            "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$",
-            "description": "Why these paths are intentionally suppressed."
+          {
+            "type": "object",
+            "properties": {
+              "syntax": {
+                "type": "string",
+                "const": "gitignore"
+              },
+              "basePath": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096
+              },
+              "files": {
+                "maxItems": 10000,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 262144,
+                  "pattern": "^[^\\r\\n\\u0000]*$"
+                }
+              },
+              "checks": {
+                "minItems": 1,
+                "maxItems": 13,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "formatting",
+                    "lint",
+                    "types",
+                    "cyclomaticComplexity",
+                    "readabilityComplexity",
+                    "structuralSecurity",
+                    "secrets",
+                    "duplication",
+                    "dependencyArchitecture",
+                    "deadCode",
+                    "reactCorrectness",
+                    "reactAccessibility",
+                    "vulnerabilities"
+                  ]
+                }
+              },
+              "reason": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "pattern": "^(?!.*[\\p{Cc}\\p{Cf}\\u2028\\u2029]).*$",
+                "description": "Why these paths are intentionally suppressed."
+              },
+              "generated": {
+                "type": "string",
+                "const": "prettier-copy"
+              }
+            },
+            "required": ["syntax", "basePath", "files", "checks", "reason"],
+            "additionalProperties": false
           }
-        },
-        "required": ["files", "checks", "reason"],
-        "additionalProperties": false
+        ]
       },
       "default": []
     },

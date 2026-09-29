@@ -1433,6 +1433,48 @@ describe("formatting engine choice", () => {
     expect(view.lastFrame()).not.toContain("Use my project's Prettier");
   });
 
+  it("shows every detected project before formatting trust is confirmed", async () => {
+    const detected: InitProposal = {
+      ...proposal,
+      formattingDetection: [
+        {
+          projectRoot: ".",
+          version: "3.9.6",
+          status: "available",
+          executableConfig: true,
+          configPaths: ["prettier.config.mjs"],
+        },
+        {
+          projectRoot: "packages/app",
+          version: "3.0.3",
+          status: "available",
+          executableConfig: true,
+          configPaths: ["packages/app/prettier.config.cjs"],
+        },
+      ],
+    };
+    const view = render(
+      <InitApp
+        proposal={detected}
+        proposalForSelection={() => detected}
+        width={100}
+        terminalSize={{ columns: 100, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "Detected Prettier 3.9.6 in repository root",
+      ),
+    );
+    expect(view.lastFrame()).toContain(
+      "Detected Prettier 3.0.3 in packages/app",
+    );
+  });
+
   it("requires separate executable-code trust confirmation before review", async () => {
     const detected: InitProposal = {
       ...proposal,
@@ -1457,9 +1499,14 @@ describe("formatting engine choice", () => {
     const view = render(
       <InitApp
         proposal={detected}
-        proposalForSelection={(_profile, _checks, _osv, _hook, formatting, projectTrust) =>
-          selected(formatting, projectTrust === true)
-        }
+        proposalForSelection={(
+          _profile,
+          _checks,
+          _osv,
+          _hook,
+          formatting,
+          projectTrust,
+        ) => selected(formatting, projectTrust === true)}
         width={80}
         terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
@@ -1489,9 +1536,7 @@ describe("formatting engine choice", () => {
 
     view.stdin.write("t");
     await waitForAssertion(() =>
-      expect(view.lastFrame()).toContain(
-        "[✓] Executable-code trust confirmed",
-      ),
+      expect(view.lastFrame()).toContain("[✓] Executable-code trust confirmed"),
     );
 
     view.stdin.write("\r");

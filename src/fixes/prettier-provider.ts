@@ -3,6 +3,12 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import type { CheckRunContext } from "../checks/adapter.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
+import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
+import {
+  owningProjectRoot,
+  resolveProjectPrettierInstallation,
+  snapshotIdentity,
+} from "../checks/prettier/project-engine.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Finding } from "../core/types.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
@@ -21,13 +27,14 @@ function isFixableFormattingFinding(finding: Finding): finding is Finding & {
 
 /**
  * Plans whole-working-file formatting for the reported target findings only.
- * The candidate deliberately contains settings instead of a source snapshot:
- * applying it later formats the then-current working file.
+ * The candidate deliberately contains settings or a project engine reference
+ * instead of a source snapshot: applying it later formats the then-current
+ * working file.
  */
-export function planPrettierFixes(
+export async function planPrettierFixes(
   context: CheckRunContext,
   findings: readonly Finding[],
-): readonly FormatFileFixCandidate[] {
+): Promise<readonly FormatFileFixCandidate[]> {
   const findingsByFile = new Map<string, Finding[]>();
   for (const finding of findings) {
     if (!isFixableFormattingFinding(finding)) continue;
@@ -40,26 +47,54 @@ export function planPrettierFixes(
     }
   }
 
-  const candidates = [...findingsByFile.entries()]
-    .sort(([left], [right]) => compareCodeUnits(left, right))
-    .flatMap(([file, fileFindings]) => {
-      const policy = context.policyForFile("formatting", file, "target");
-      if (policy.severity === "off") return [];
-      if (prettierParserFor(file) === undefined) return [];
-      const sortedFindings = [...fileFindings].sort((left, right) =>
-        compareCodeUnits(left.id, right.id),
+  let projectSnapshotIdentity: string | undefined;
+  const candidates: FormatFileFixCandidate[] = [];
+  for (const [file, fileFindings] of [...findingsByFile.entries()].sort(
+    ([left], [right]) => compareCodeUnits(left, right),
+  )) {
+    const policy = context.policyForFile("formatting", file, "target");
+    if (policy.severity === "off") continue;
+    const isProject = policy.engine === "project";
+    if (!isProject && prettierParserFor(file) === undefined) continue;
+    let selection: FormattingFixSelection = {
+      engine: "managed",
+      settings: policy.settings,
+    };
+    if (isProject) {
+      const projectRoot = owningProjectRoot(
+        context.targetInspection.workspaces,
+        file,
       );
-      return [
-        {
-          kind: "format-file" as const,
-          checkId: "formatting" as const,
-          file,
-          findingIds: sortedFindings.map((finding) => finding.id),
-          severities: sortedFindings.map((finding) => finding.severity),
-          settings: policy.settings,
-        },
-      ];
+      const installation = await resolveProjectPrettierInstallation(
+        context.repositoryRoot,
+        projectRoot,
+        context.snapshots.targetDir,
+      );
+      projectSnapshotIdentity ??= await snapshotIdentity(
+        context.snapshots.targetDir,
+      );
+      selection = {
+        engine: "project",
+        projectRoot,
+        installationIdentity: installation.identity,
+        snapshotIdentity: projectSnapshotIdentity,
+      };
+    }
+    const sortedFindings = [...fileFindings].sort((left, right) =>
+      compareCodeUnits(left.id, right.id),
+    );
+    candidates.push({
+      kind: "format-file",
+      checkId: "formatting",
+      file,
+      findingIds: sortedFindings.map((finding) => finding.id),
+      severities: sortedFindings.map((finding) =>
+        finding.severity === "error" ? "error" : "warning",
+      ),
+      settings: policy.settings,
+      selection,
     });
+  }
   const sanitized = sanitizeFixCandidates(candidates, {
     checkId: "formatting",
     findingIds: candidates.flatMap((candidate) => candidate.findingIds),

@@ -38,9 +38,7 @@ function exactKeys(
   keys: readonly string[],
 ): boolean {
   const own = Object.keys(value);
-  return (
-    own.length === keys.length && own.every((key) => keys.includes(key))
-  );
+  return own.length === keys.length && own.every((key) => keys.includes(key));
 }
 
 function validId(value: unknown): value is number {
@@ -136,38 +134,49 @@ function parseSupportResult(value: unknown): ProjectFormatSupport {
     throw new TypeError("Invalid project format support result");
   }
   if (value.kind === "supported") {
-    if (!exactKeys(value, ["kind"])) {
+    if (
+      !exactKeys(value, ["kind"]) &&
+      !exactKeys(value, ["kind", "configFile"])
+    ) {
       throw new TypeError("Invalid supported result");
     }
-    return { kind: "supported" };
+    if (value.configFile === undefined) return { kind: "supported" };
+    if (typeof value.configFile !== "string") {
+      throw new TypeError("Invalid supported config path");
+    }
+    const configFile = normalizeRepositoryRelativePath(value.configFile);
+    return { kind: "supported", configFile };
   }
   if (value.kind === "ignored") return parseIgnoredResult(value);
   throw new TypeError("Invalid project format support result");
 }
 
-function parseSettings(value: unknown, field: string): Partial<FormattingSettings> {
-  const parsed = formattingSettingsSchema
-    .partial()
-    .strict()
-    .safeParse(value);
+function parseSettings(
+  value: unknown,
+  field: string,
+): Partial<FormattingSettings> {
+  const parsed = formattingSettingsSchema.partial().strict().safeParse(value);
   if (!parsed.success) {
     throw new TypeError(`Invalid ${field} in the project formatter reply`);
   }
   return parsed.data as unknown as Partial<FormattingSettings>;
 }
 
-function parsePatternList(value: unknown, field: string): string | readonly string[] {
+function parsePatternList(
+  value: unknown,
+  field: string,
+): string | readonly string[] {
   if (typeof value === "string" && value.length > 0) return value;
   if (
     Array.isArray(value) &&
     value.length > 0 &&
-    value.every(
-      (item) => typeof item === "string" && item.length > 0,
-    )
+    value.every((item) => typeof item === "string" && item.length > 0)
   ) {
     return Object.freeze([...value]);
   }
-  throw new TypeError(`Invalid ${field} pattern in the project formatter reply`);
+  throw new TypeError(
+    `Invalid ${field} pattern in the project formatter reply`,
+  );
 }
 
 function parseFormatResult(value: unknown): ProjectFormatResult {
@@ -216,10 +225,11 @@ function parseFailure(value: unknown): ProjectPrettierFailure {
   };
 }
 
-function parseImportableConfig(
-  value: unknown,
-): ImportableNativeConfig {
-  if (!isRecord(value) || !exactKeys(value, ["settings", "overrides", "limitations"])) {
+function parseImportableConfig(value: unknown): ImportableNativeConfig {
+  if (
+    !isRecord(value) ||
+    !exactKeys(value, ["settings", "overrides", "limitations"])
+  ) {
     throw new TypeError("Invalid imported configuration reply");
   }
   const settings = parseSettings(value.settings, "imported settings");
@@ -243,10 +253,7 @@ function parseImportableConfig(
       entry.excludeFiles === undefined
         ? undefined
         : parsePatternList(entry.excludeFiles, "override excludeFiles");
-    const overrideSettings = parseSettings(
-      entry.settings,
-      "override settings",
-    );
+    const overrideSettings = parseSettings(entry.settings, "override settings");
     if (Object.keys(overrideSettings).length === 0) {
       throw new TypeError("Imported configuration override has no settings");
     }
@@ -260,7 +267,8 @@ function parseImportableConfig(
     !Array.isArray(value.limitations) ||
     value.limitations.length > 64 ||
     value.limitations.some(
-      (entry) => typeof entry !== "string" || entry.length === 0 || entry.length > 1024,
+      (entry) =>
+        typeof entry !== "string" || entry.length === 0 || entry.length > 1024,
     )
   ) {
     throw new TypeError("Invalid imported configuration limitations");

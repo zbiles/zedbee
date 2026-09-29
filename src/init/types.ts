@@ -1,3 +1,4 @@
+import type { PathExclusion } from "../config/schema.js";
 import type { CheckId, ProfileId } from "../config/schema.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
 import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
@@ -6,6 +7,7 @@ import type { Environment } from "../inspection/types.js";
 export type InitFormattingChoice = "copy" | "project" | "managed" | "off";
 
 export interface InitFormattingImport {
+  readonly pathExclusions?: readonly PathExclusion[];
   readonly settings: Partial<FormattingSettings>;
   readonly overrides: readonly ImportedFormattingOverride[];
   readonly limitations: readonly string[];
@@ -95,7 +97,7 @@ export interface InitProposal {
   readonly projectPrettierTrustConfirmed?: boolean;
   /** Roots whose local grants a managed/off switch withdraws. */
   readonly projectPrettierRevokeRoots?: readonly string[];
-  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
+  readonly executableEvaluatedConfigs?: readonly ExecutableEvaluatedConfig[];
   readonly files: readonly InitFileChange[];
 }
 
@@ -121,7 +123,7 @@ export interface CreateInitProposalOptions {
   readonly projectPrettierTrustRoots?: readonly string[];
   readonly projectPrettierTrustConfirmed?: boolean;
   readonly projectPrettierRevokeRoots?: readonly string[];
-  readonly executableEvaluatedConfig?: ExecutableEvaluatedConfig;
+  readonly executableEvaluatedConfigs?: readonly ExecutableEvaluatedConfig[];
 }
 
 export interface ApplyResult {

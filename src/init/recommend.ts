@@ -42,12 +42,11 @@ function importedOverrideEntries(
   imported: InitFormattingImport | undefined,
 ): readonly Record<string, unknown>[] {
   if (imported === undefined) return [];
-  // Prettier's excludeFiles has AND-within-OR semantics that Zedbee's
-  // override globs cannot express; encoding it as a negated pattern would
-  // widen the override to nearly every path. The importer reports it as a
-  // copy limitation instead of silently changing its meaning.
   return imported.overrides.map((override) => ({
     files: [...override.files],
+    ...(override.excludeFiles.length === 0
+      ? {}
+      : { excludeFiles: [...override.excludeFiles] }),
     checks: { formatting: { settings: override.settings } },
     generated: "prettier-copy",
   }));
@@ -105,9 +104,8 @@ function existingFormattingChoice(before: string | null): InitFormattingChoice {
       if (typeof overrideChecks !== "object" || overrideChecks === null) {
         return false;
       }
-      const overrideFormatting = (
-        overrideChecks as Record<string, unknown>
-      ).formatting;
+      const overrideFormatting = (overrideChecks as Record<string, unknown>)
+        .formatting;
       return (
         typeof overrideFormatting === "object" &&
         overrideFormatting !== null &&
@@ -119,7 +117,6 @@ function existingFormattingChoice(before: string | null): InitFormattingChoice {
   }
   return "managed";
 }
-
 
 function defaultHookActivation(hook: ResolvedHookChoice): InitHookActivation {
   if (hook === "none") {
@@ -412,7 +409,9 @@ function applyFormattingChoice(
       : {};
   const existing = checksObject.formatting;
   const existingObject =
-    typeof existing === "object" && existing !== null && !Array.isArray(existing)
+    typeof existing === "object" &&
+    existing !== null &&
+    !Array.isArray(existing)
       ? (existing as Record<string, unknown>)
       : undefined;
   const existingSeverity =
@@ -429,8 +428,7 @@ function applyFormattingChoice(
       : undefined;
   // Ownership of the settings block is proven only by the authorship marker
   // a previous setup wrote; hand-written settings are never destroyed.
-  const settingsOwnedBySetup =
-    existingObject?.generated === "prettier-copy";
+  const settingsOwnedBySetup = existingObject?.generated === "prettier-copy";
 
   let next = updated;
   let generatedEntries: readonly Record<string, unknown>[];
@@ -505,6 +503,24 @@ function applyFormattingChoice(
   const userOverrides = existingOverrides.filter(
     (entry) => !isGeneratedOverrideEntry(entry),
   );
+  const existingExclusions = Array.isArray(root.pathExclusions)
+    ? root.pathExclusions
+    : [];
+  const userExclusions = existingExclusions.filter(
+    (entry) => !isGeneratedOverrideEntry(entry),
+  );
+  const finalExclusions = [
+    ...userExclusions,
+    ...(formatting.choice === "copy"
+      ? (formatting.imported?.pathExclusions ?? [])
+      : []),
+  ];
+  if (existingExclusions.length > 0 || finalExclusions.length > 0) {
+    next = applyEdits(
+      next,
+      modify(next, ["pathExclusions"], finalExclusions, options),
+    );
+  }
   const finalOverrides = [...userOverrides, ...generatedEntries];
   if (
     existingOverrides.length !== finalOverrides.length ||
@@ -517,7 +533,6 @@ function applyFormattingChoice(
   }
   return next;
 }
-
 
 function existingVulnerabilitySeverity(
   before: string | null,
@@ -700,7 +715,9 @@ export function createInitProposal(
       ? {}
       : {
           formattingDetection: Object.freeze(
-            options.formattingDetection.map((entry) => Object.freeze({ ...entry })),
+            options.formattingDetection.map((entry) =>
+              Object.freeze({ ...entry }),
+            ),
           ),
         }),
     ...(formattingChoice === "project" &&
@@ -719,9 +736,13 @@ export function createInitProposal(
     options.projectPrettierRevokeRoots.length > 0
       ? { projectPrettierRevokeRoots: options.projectPrettierRevokeRoots }
       : {}),
-    ...(options.executableEvaluatedConfig === undefined
+    ...(options.executableEvaluatedConfigs === undefined
       ? {}
-      : { executableEvaluatedConfig: options.executableEvaluatedConfig }),
+      : {
+          executableEvaluatedConfigs: Object.freeze([
+            ...options.executableEvaluatedConfigs,
+          ]),
+        }),
     files: Object.freeze(files),
   });
 }

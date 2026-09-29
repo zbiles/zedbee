@@ -178,3 +178,24 @@ describe("resolveTargetPolicy", () => {
     ).toBe("error");
   });
 });
+
+it("requires the same target candidate to match inclusion and escape exclusion", () => {
+  const config = resolveConfig({
+    schemaVersion: 1,
+    overrides: [
+      {
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/**"],
+        checks: { lint: { severity: "off" } },
+      },
+    ],
+  });
+  expect(
+    resolveTargetPolicy(
+      config,
+      "lint",
+      { id: "apps/web", kind: "workspace", relativeRoot: "apps/web" },
+      inspection,
+    ).severity,
+  ).toBe(config.checks.lint.severity);
+});

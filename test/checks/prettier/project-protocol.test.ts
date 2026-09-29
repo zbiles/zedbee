@@ -43,6 +43,23 @@ describe("project Prettier protocol", () => {
       operation: "classify",
       result: { kind: "supported" },
     });
+    expect(
+      parseProjectReply(
+        {
+          id: 2,
+          operation: "classify",
+          result: {
+            kind: "supported",
+            configFile: "src/.prettierrc.json",
+          },
+        },
+        2,
+      ),
+    ).toEqual({
+      id: 2,
+      operation: "classify",
+      result: { kind: "supported", configFile: "src/.prettierrc.json" },
+    });
   });
 
   it("rejects source content on a classification request", () => {
@@ -113,7 +130,11 @@ describe("project Prettier protocol", () => {
   it("rejects replies that do not match the outstanding id", () => {
     expect(() =>
       parseProjectReply(
-        { id: 4, operation: "format", result: { kind: "ignored", reason: "unsupported" } },
+        {
+          id: 4,
+          operation: "format",
+          result: { kind: "ignored", reason: "unsupported" },
+        },
         5,
       ),
     ).toThrow();
@@ -122,7 +143,11 @@ describe("project Prettier protocol", () => {
   it("rejects an unknown ignore reason", () => {
     expect(() =>
       parseProjectReply(
-        { id: 6, operation: "format", result: { kind: "ignored", reason: "mystery" } },
+        {
+          id: 6,
+          operation: "format",
+          result: { kind: "ignored", reason: "mystery" },
+        },
         6,
       ),
     ).toThrow();

@@ -197,8 +197,7 @@ function resolvePolicy(
     case "formatting": {
       const basePolicy = base as ResolvedCheckPolicies["formatting"];
       const settingsPatch = patch.settings as
-        | Partial<FormattingSettings>
-        | undefined;
+        Partial<FormattingSettings> | undefined;
       const engine = patch.engine ?? basePolicy.engine;
       if (engine === "project" && settingsPatch !== undefined) {
         throw new TypeError(
@@ -258,9 +257,7 @@ function formattingInputFields(
     : undefined;
 }
 
-function assertFormattingEngineConsistency(
-  file: ConfigFile | undefined,
-): void {
+function assertFormattingEngineConsistency(file: ConfigFile | undefined): void {
   const root = formattingInputFields(file?.checks?.formatting);
   const rootEngine = root?.engine ?? "managed";
   const rootSettingsExplicit = root?.settings !== undefined;
@@ -401,6 +398,9 @@ function resolveOverrides(
     }
     return {
       files: Object.freeze([...override.files]),
+      ...(override.excludeFiles === undefined
+        ? {}
+        : { excludeFiles: Object.freeze([...override.excludeFiles]) }),
       checks: Object.freeze(checks),
       configurationOrigins: freezeOrigins(configurationOrigins),
       ...(override.generated === undefined
@@ -415,6 +415,18 @@ function resolvePathExclusions(
 ): readonly PathExclusion[] {
   return (file?.pathExclusions ?? []).map((entry) => {
     const checks = Object.freeze([...entry.checks]);
+    if ("syntax" in entry && entry.syntax === "gitignore") {
+      return {
+        syntax: entry.syntax,
+        basePath: entry.basePath,
+        ...(entry.generated === undefined
+          ? {}
+          : { generated: entry.generated }),
+        files: Object.freeze([...entry.files]),
+        checks,
+        reason: entry.reason.trim(),
+      };
+    }
     return {
       files: Object.freeze(
         entry.files.map((pattern) => pattern.replace(/^(?:\.\/)+/, "")),
