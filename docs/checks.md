@@ -112,6 +112,8 @@ Duplication uses these workspace-wide values:
 | `minTokens` |     `50` | Positive safe integer             |
 | `mode`      | `"mild"` | `"strict"`, `"mild"`, or `"weak"` |
 
+The bundled jscpd 5.3.2 counts both endpoints of a cloned line range. Compared with jscpd 5.2.1, duplicated-line totals can increase by one line per clone, which can raise the reported percentage near a configured threshold.
+
 ### Bundled ESLint and React rules
 
 `lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and may change only with a Zedbee engine upgrade.
