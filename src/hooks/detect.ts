@@ -22,6 +22,7 @@ import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
 import { hasLefthookRunCommand } from "./state.js";
 import {
+  hasHookExecutePermission,
   hookFile,
   hooksPathValue,
   TRACKED_HOOK_NAMES,
@@ -183,7 +184,7 @@ async function huskyActivation(root: string): Promise<InitHookActivation> {
       path === undefined ? undefined : await existingAbsoluteFile(path);
     if (
       installed !== undefined &&
-      (installed.mode & 0o111) !== 0 &&
+      hasHookExecutePermission(installed.mode) &&
       (path === direct ||
         (path === dispatcher &&
           installed.contents.includes('/h"') &&
@@ -404,7 +405,7 @@ export async function detectHookIntegration(
     return Object.freeze({
       hook,
       activation:
-        file === undefined || (file.mode & 0o111) === 0
+        file === undefined || !hasHookExecutePermission(file.mode)
           ? {
               status: "pending" as const,
               message: "The configured hook needs executable permission.",

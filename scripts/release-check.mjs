@@ -244,9 +244,9 @@ function assertReleaseOnlyGates(cwd) {
     true,
   );
   if (status !== "") throw new Error("Verification failed at clean-status.");
-  if (process.env.ZEDBEE_CROSS_PLATFORM_CI_EVIDENCE !== "verified") {
+  if (process.env.ZEDBEE_CROSS_PLATFORM_EVIDENCE !== "verified") {
     throw new Error(
-      "Release blocked: successful Node 22/24 Ubuntu, macOS, and Windows release-check CI evidence is required.",
+      "Release blocked: recorded successful Node 22/24 Ubuntu, macOS, and Windows verification is required, from CI or local machines.",
     );
   }
 }

@@ -63,7 +63,7 @@ jobs:
       - name: Verify release metadata, SBOM, and clean state
         run: npm run release:check
         env:
-          ZEDBEE_CROSS_PLATFORM_CI_EVIDENCE: verified
+          ZEDBEE_CROSS_PLATFORM_EVIDENCE: verified
       - name: Prepare and smoke-test the exact npm tarball
         run: npm run artifact:prepare
       - name: Upload the tested npm tarball

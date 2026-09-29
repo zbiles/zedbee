@@ -1827,6 +1827,9 @@ describe("project Prettier integration", () => {
 
   it("commits generated tracked hooks with project formatting, lint, and dependency architecture", async () => {
     const repository = await repositoryWithProjectPrettier();
+    // Git traverses Windows junctions when staging; keep installed dependencies
+    // out of this project's commit on every platform.
+    await repository.write(".gitignore", "node_modules/\n");
     await repository.write(
       ".prettierrc.json",
       '{\n  "trailingComma": "none"\n}\n',

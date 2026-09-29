@@ -94,8 +94,11 @@ describe("tracked hook installation", () => {
         },
       }),
     );
-    await repo.write(".git/hooks/pre-commit", "#!/bin/sh\nexit 19\n");
-    await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o644);
+    // Only POSIX can disable a hook by clearing its executable bits.
+    if (process.platform !== "win32") {
+      await repo.write(".git/hooks/pre-commit", "#!/bin/sh\nexit 19\n");
+      await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o644);
+    }
     const integration = await detectHookIntegration(repo.root, "tracked");
     const proposal = createInitProposal(await inspectRepository(repo.root), {
       repositoryRoot: repo.root,
@@ -116,7 +119,10 @@ describe("tracked hook installation", () => {
     );
     await repo.write("node_modules/.bin/zedbee", "#!/bin/sh\nexit 23\n");
     await chmod(join(repo.root, "node_modules/.bin/zedbee"), 0o755);
-    expect((await repo.git(["hook", "run", "pre-commit"])).exitCode).toBe(23);
+    if (process.platform === "win32")
+      await repo.write("node_modules/.bin/zedbee.cmd", "@exit /b 23\r\n");
+    const invoked = await repo.git(["hook", "run", "pre-commit"]);
+    expect(invoked.exitCode, invoked.stderr).toBe(23);
     expect(
       (await detectHookIntegration(repo.root, "auto")).activation.status,
     ).toBe("active");
@@ -146,9 +152,10 @@ describe("tracked hook installation", () => {
     await installTrackedHooks(repo.root);
     await chmod(join(repo.root, ".husky/_/pre-commit"), 0o644);
     await installTrackedHooks(repo.root);
-    expect(
-      (await lstat(join(repo.root, ".husky/_/pre-commit"))).mode & 0o111,
-    ).not.toBe(0);
+    if (process.platform !== "win32")
+      expect(
+        (await lstat(join(repo.root, ".husky/_/pre-commit"))).mode & 0o111,
+      ).not.toBe(0);
     expect((await repo.git(["hook", "run", "pre-commit"])).exitCode).toBe(17);
     expect(await readFile(join(repo.root, ".husky/pre-commit"), "utf8")).toBe(
       "#!/bin/sh\nexit 17\n",

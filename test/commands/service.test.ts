@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
 import { expect, it } from "vitest";
+import { connectService } from "../../dist/service/client.js";
+import { serviceLocation } from "../../dist/service/identity.js";
+import { ServiceState } from "../../dist/service/state.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const cli = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
@@ -11,6 +14,7 @@ const cli = fileURLToPath(new URL("../../dist/cli.js", import.meta.url));
 it("manages a default reused CLI service without starting it during read-only status or local scans", async () => {
   const scratch = await realpath(await mkdtemp(join(tmpdir(), "zc-")));
   const repository = await createGitRepository("zedbee-cli-lifecycle-repo-");
+  let observer: Awaited<ReturnType<typeof connectService>> | undefined;
   const run = (args: string[]) =>
     execa(process.execPath, [cli, ...args], {
       cwd: repository.root,
@@ -84,6 +88,15 @@ it("manages a default reused CLI service without starting it during read-only st
       ).join("\n"),
     );
     await repository.git(["add", "--", "large.js"]);
+    // Keep an authenticated status connection open so starting a fresh CLI
+    // process cannot hide the entire session between observations on Windows.
+    const location = await serviceLocation();
+    const state = new ServiceState(
+      join(scratch, `zedbee-${location.key.slice(0, 24)}`),
+    );
+    const record = await state.read();
+    expect(record).toBeDefined();
+    observer = await connectService(state, record!);
     // Windows SIGTERM is forced termination. Also exercise lost-client recovery
     // on POSIX with SIGKILL, separately from the graceful SIGTERM contract.
     const signals: NodeJS.Signals[] =
@@ -112,9 +125,9 @@ it("manages a default reused CLI service without starting it during read-only st
       });
       let observedActive = false;
       while (!completed) {
-        const state = JSON.parse(
-          (await run(["service", "status", "--format", "json"])).stdout,
-        );
+        const state = (await observer.request("status")) as {
+          activeSessions: number;
+        };
         if (state.activeSessions > 0) {
           observedActive = true;
           expect(cancelled.kill(signal)).toBe(true);
@@ -122,7 +135,7 @@ it("manages a default reused CLI service without starting it during read-only st
         }
       }
       const interrupted = await cancelled;
-      expect(observedActive).toBe(true);
+      expect(observedActive, interrupted.stdout + interrupted.stderr).toBe(true);
       const graceful = process.platform !== "win32" && signal === "SIGTERM";
       if (graceful) {
         expect(interrupted.exitCode, interrupted.stderr).toBe(143);
@@ -160,6 +173,7 @@ it("manages a default reused CLI service without starting it during read-only st
       JSON.parse((await run(["service", "status", "--format", "json"])).stdout),
     ).toEqual({ state: "stopped" });
   } finally {
+    await observer?.close();
     const stopped = await run(["service", "stop", "--format", "json"]);
     if (stopped.exitCode === 0) await rm(scratch, { recursive: true });
   }

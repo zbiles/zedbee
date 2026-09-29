@@ -23,6 +23,11 @@ export const TRACKED_HOOK_NAMES = Object.freeze([
   "pre-auto-gc",
 ]);
 
+export function hasHookExecutePermission(mode: number): boolean {
+  // Git for Windows ignores X_OK; chmod cannot disable a regular hook there.
+  return process.platform === "win32" || (mode & 0o111) !== 0;
+}
+
 export async function hookFile(
   root: string,
   relativePath: string,
@@ -86,7 +91,8 @@ export async function validateLocalHookMigration(root: string): Promise<void> {
   for (const name of await readdir(directory)) {
     if (name.endsWith(".sample")) continue;
     const original = await hookFile(directory, name);
-    if (original === undefined || (original.mode & 0o111) === 0) continue;
+    if (original === undefined || !hasHookExecutePermission(original.mode))
+      continue;
     // Recognize the exact stock template shipped before hook attribution too.
     const stock = [
       updateRawGitHook(null),
