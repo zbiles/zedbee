@@ -3251,7 +3251,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @jridgewell/sourcemap-codec@1.5.5
+## @jridgewell/sourcemap-codec@1.6.0
 
 License: MIT
 
