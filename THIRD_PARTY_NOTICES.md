@@ -3251,7 +3251,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @jridgewell/sourcemap-codec@1.5.5
+## @jridgewell/sourcemap-codec@1.6.0
 
 License: MIT
 
@@ -13748,13 +13748,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## jscpd-darwin-arm64@5.2.1
+## jscpd-darwin-arm64@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13779,13 +13779,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-darwin-x64@5.2.1
+## jscpd-darwin-x64@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13810,13 +13810,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-arm64-gnu@5.2.1
+## jscpd-linux-arm64-gnu@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13841,13 +13841,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-arm64-musl@5.2.1
+## jscpd-linux-arm64-musl@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13872,13 +13872,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-gnu@5.2.1
+## jscpd-linux-x64-gnu@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13903,13 +13903,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-musl@5.2.1
+## jscpd-linux-x64-musl@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13934,13 +13934,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-windows-arm64-msvc@5.2.1
+## jscpd-windows-arm64-msvc@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13965,13 +13965,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-windows-x64-msvc@5.2.1
+## jscpd-windows-x64-msvc@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13996,13 +13996,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd@5.2.1
+## jscpd@5.3.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/7d6b4050e2104b46f18fb4a41c40520b216890e2/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.2.1-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
 
-### licenses/overrides/jscpd-5.2.1-LICENSE
+### licenses/overrides/jscpd-5.3.2-LICENSE
 
 The MIT License (MIT)
 
@@ -15420,7 +15420,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## p-limit@7.3.2
+## p-limit@7.3.3
 
 License: MIT
 
@@ -18277,7 +18277,7 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ---
 
-## yaml@2.9.0
+## yaml@2.9.1
 
 License: ISC
 
