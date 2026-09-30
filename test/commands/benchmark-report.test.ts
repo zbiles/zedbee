@@ -50,6 +50,8 @@ it("stores full-precision timings and environment in a single readable baseline"
     await writeBaselineReport(root, baseline);
     expect(await readdir(root)).toEqual(["README.md"]);
     const report = await readFile(join(root, "README.md"), "utf8");
+    expect(report).toContain("| Lint | 544.959 | 514.8498 |");
+    expect(report).not.toContain("<!--");
     expect(parseBaselineReport(report).fixtures).toEqual({
       small: { "adapter.lint.execute": { coldMs: 544.959, warmMs: 514.8498 } },
     });
@@ -61,16 +63,16 @@ it("stores full-precision timings and environment in a single readable baseline"
   }
 });
 
-it("reads edited timings independently of display labels and table alignment", () => {
+it("reads plain phase labels and edited timings regardless of table alignment", () => {
   const report = `## Results\r
 ### small fixture\r
 | Phase | First batch (ms) | Subsequent batch (ms) |\r
 | :--- | ---: | ---: |\r
-| Renamed lint label <!-- adapter.lint.execute -->    | 12.3456 | 0 |\r
+| Lint    | 12.3456 | 0 |\r
 ### monorepo fixture\r
 | Phase | First batch (ms) | Subsequent batch (ms) |\r
 | --- | ---: | ---: |\r
-| Inspection <!-- inspection --> | 7 | 8 |\r
+| Inspection | 7 | 8 |\r
 ## Notes\r
 Unrelated prose.\r
 `;
@@ -81,11 +83,11 @@ Unrelated prose.\r
 });
 
 it.each([
-  "| Lint <!-- adapter.lint.execute --> | NaN | 1 |",
-  "| Lint <!-- adapter.lint.execute --> | -1 | 1 |",
-  "| Lint <!-- adapter.lint.execute --> | | 1 |",
-  "| Lint | 1 | 1 |",
-  "| Lint <!-- adapter.lint.execute --> | 1 | 1 |\n| Lint <!-- adapter.lint.execute --> | 2 | 2 |",
+  "| Lint | NaN | 1 |",
+  "| Lint | -1 | 1 |",
+  "| Lint | | 1 |",
+  "| Unknown phase | 1 | 1 |",
+  "| Lint | 1 | 1 |\n| Lint | 2 | 2 |",
   "",
 ])("rejects invalid or ambiguous baseline rows: %s", (row) => {
   expect(() =>

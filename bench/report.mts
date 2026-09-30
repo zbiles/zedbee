@@ -70,15 +70,31 @@ function cell(value: string | number | null | undefined): string {
     .replace(/[\r\n]+/g, " ");
 }
 
+const phaseLabels: Record<string, string> = {
+  snapshot: "Snapshot cache-key hashing",
+  inspection: "Inspection",
+  "adapter.structuralSecurity.collect": "Structural security (collection)",
+  attribution: "Attribution",
+  rendering: "Rendering",
+  "adapter.formatting.execute": "Formatting",
+  "adapter.lint.execute": "Lint",
+  "adapter.types.execute": "Types",
+  "adapter.cyclomaticComplexity.execute": "Cyclomatic complexity",
+  "adapter.readabilityComplexity.execute": "Readability complexity",
+  "adapter.structuralSecurity.execute": "Structural security",
+  "adapter.secrets.execute": "Secrets",
+  "adapter.duplication.execute": "Duplication",
+  "adapter.dependencyArchitecture.execute": "Dependency architecture",
+  "adapter.deadCode.execute": "Dead code",
+  "adapter.reactCorrectness.execute": "React correctness",
+  "adapter.reactAccessibility.execute": "React accessibility",
+  "adapter.vulnerabilities.execute": "Vulnerabilities",
+};
+
 function phaseLabel(name: string): string {
-  if (name === "snapshot") return "Snapshot cache-key hashing";
-  const words = name
-    .replace(/^adapter\./, "")
-    .replace(/\.execute$/, "")
-    .replace(/\.collect$/, " (collection)")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .toLowerCase();
-  return words.charAt(0).toUpperCase() + words.slice(1);
+  if (!Object.hasOwn(phaseLabels, name))
+    throw new Error(`Unknown benchmark phase: ${name}`);
+  return phaseLabels[name]!;
 }
 
 export function renderBaselineReport(baseline: Baselines): string {
@@ -169,7 +185,7 @@ export function renderBaselineReport(baseline: Baselines): string {
       "| --- | ---: | ---: |",
       ...Object.entries(phases).map(
         ([name, value]) =>
-          `| ${cell(phaseLabel(name))} <!-- ${name} --> | ${value.coldMs} | ${value.warmMs} |`,
+          `| ${cell(phaseLabel(name))} | ${value.coldMs} | ${value.warmMs} |`,
       ),
       "",
     );
@@ -202,7 +218,7 @@ export function renderBaselineReport(baseline: Baselines): string {
     "",
     "That command updates `bench/README.md` with the measured timings and environment. Review and commit this file. Keep the machine otherwise idle and record whether a VM was used in the review. GitHub Actions runs also record the job, runner image, and run link when available.",
     "",
-    "Each phase label contains an HTML comment with its stable identifier. These comments are hidden in the rendered table; retain them when editing so the benchmark runner can match measurements to rows. Invalid or duplicate rows cause an error instead of silently changing the comparison.",
+    "The benchmark runner matches measurements using the phase labels in these tables. Unknown labels, invalid timings, or duplicate rows cause an error instead of silently changing the comparison.",
     "",
   );
   return lines.join("\n");
@@ -248,11 +264,15 @@ export function parseBaselineReport(
     )
       continue;
     const row =
-      /^\|[^|]*<!--\s*([a-zA-Z0-9.]+)\s*-->\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|$/.exec(
+      /^\|\s*([^|]+?)\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|$/.exec(
         line,
       );
     if (!row) invalid(`malformed timing row: ${line}`);
-    const [, name, cold, warm] = row!;
+    const [, label, cold, warm] = row!;
+    const name = Object.entries(phaseLabels).find(
+      ([, value]) => value === label,
+    )?.[0];
+    if (!name) invalid(`unknown phase label: ${label}`);
     const coldMs = Number(cold);
     const warmMs = Number(warm);
     if (!Number.isFinite(coldMs) || !Number.isFinite(warmMs))
