@@ -30,6 +30,7 @@ export function captureEnvironment(
   // Record only benchmark context, never the whole environment or a hostname.
   return {
     capturedAt: new Date().toISOString(),
+    machine: env.ZEDBEE_BENCHMARK_MACHINE ?? null,
     commit: git("rev-parse", "HEAD"),
     workingTreeDirty: status === null ? null : status.length > 0,
     node: process.version,
@@ -107,6 +108,9 @@ export function renderBaselineReport(baseline: Baselines): string {
         (environment ? (actions ? "GitHub Actions" : "Local run") : undefined),
     ],
     ["Measured at (UTC)", environment?.capturedAt],
+    ...(environment?.machine
+      ? [["Machine", environment.machine] as [string, string]]
+      : []),
     ["Source commit", environment?.commit],
     [
       "Uncommitted changes",
@@ -170,7 +174,7 @@ export function renderBaselineReport(baseline: Baselines): string {
     "| `windows-latest` | 4 CPUs | 16 GB | x64 |",
     "| `macos-latest` | 3 CPUs (Apple M1) | 7 GB | arm64 |",
     "",
-    "Source: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories). Private-repository allocations can differ. These are the documented runner classes; identifying the original baseline's specific job still requires its run record. Future measurements capture the actual runtime environment alongside these reference specifications.",
+    "Source: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories). Private-repository allocations can differ. This table is a reference for hosted runners. The measurement environment above identifies the system used for the results below.",
     "",
     "## Results",
     "",
@@ -195,7 +199,7 @@ export function renderBaselineReport(baseline: Baselines): string {
     "",
     phaseLimitations,
     "",
-    "The source revision matters as well as the machine: the harness and analyzer implementations can change between releases. The historical baseline predates environment capture; its presence in an old commit does not identify the exact revision used to measure it.",
+    "The source revision matters as well as the machine: the harness and analyzer implementations can change between releases. Compare the recorded revision and environment when interpreting results.",
     "",
     "The small fixture exercises individual analyzers. The monorepo fixture contains a root workspace and 12 package workspaces, and measures the supporting phases listed above.",
     "",
