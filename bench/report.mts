@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { cpus, release, totalmem, version } from "node:os";
 import { join } from "node:path";
 
@@ -98,7 +98,7 @@ function phaseLabel(name: string): string {
   return phaseLabels[name]!;
 }
 
-export function renderBaselineReport(baseline: Baselines): string {
+function environmentDetails(baseline: Baselines) {
   const environment = baseline.environment;
   const actions = environment?.githubActions;
   const details: [string, string | number | null | undefined][] = [
@@ -149,41 +149,127 @@ export function renderBaselineReport(baseline: Baselines): string {
       ["Runner image", actions.image],
       ["Runner image version", actions.imageVersion],
     );
+  return details;
+}
+
+export interface BenchmarkRun {
+  title: string;
+  details: Record<string, string>;
+  fixtures: Baselines["fixtures"];
+}
+
+const matchingFields = [
+  "Origin",
+  "Node.js",
+  "Platform / architecture",
+  "OS version / release",
+  "CPU",
+  "Logical CPUs",
+  "Memory visible to process (GiB)",
+  "Runner type",
+  "Runner label",
+  "Runner image",
+  "Runner image version",
+];
+
+function matchingRun(
+  runs: BenchmarkRun[],
+  environment: NonNullable<Baselines["environment"]>,
+) {
+  const current = Object.fromEntries(
+    environmentDetails({ schemaVersion: 1, environment, fixtures: {} }).map(
+      ([key, value]) => [key, cell(value)],
+    ),
+  );
+  return runs.findLast((run) =>
+    matchingFields.every((key) => {
+      const expected = current[key];
+      return expected === undefined
+        ? run.details[key] === undefined
+        : expected !== "Not recorded" && run.details[key] === expected;
+    }),
+  );
+}
+
+export function selectBaseline(
+  runs: BenchmarkRun[],
+  environment: NonNullable<Baselines["environment"]>,
+): BenchmarkRun {
+  const match = matchingRun(runs, environment);
+  if (!match)
+    throw new Error(
+      "No benchmark run with a matching environment. Use npm run benchmark:update to append an initial run for this environment; no regression comparison has passed.",
+    );
+  return match;
+}
+
+const historyIntroduction = `# Zedbee benchmark history
+
+This is the single record of benchmark results and the environments that produced them. Runs are retained in chronological order; updates append a dated entry instead of replacing earlier measurements.
+
+## Reading changes over time
+
+Each run has its own machine details and timing tables. A change table compares it with the previous entry having matching CPU, memory, OS, architecture, Node version, and hosted-runner details. Positive changes mean slower; negative changes mean faster. Different environments are separate series, so the original GitHub run and the Mac run are not evidence of a code speedup or slowdown.
+
+The original GitHub measurements have an unrecorded date and incomplete environment information. They remain visible as historical results and are not used for automatic regression comparisons.
+
+## Run and record
+
+Run \`npm run benchmark\` to compare against the latest entry with a matching recorded environment. With no matching entry, the command reports that a comparison is unavailable; it does not silently pass or compare with another machine.
+
+Run \`npm run benchmark:update\` to measure and append a new entry, then review and commit this file. Existing entries remain unchanged. The comparison fails when a phase is both more than 25% and more than 250 ms slower. Recording a new entry is not proof that a regression has been fixed; review the changes before accepting it as the next reference.
+
+## Measurement method
+
+Each timing is a median: three samples in the first batch, then five in the subsequent batch. ${phaseLimitations}
+
+The small fixture exercises individual analyzers. The monorepo fixture has a root workspace and 12 package workspaces. These synthetic measurements are not a promise of real-project scan speed. Run under similar load and record any relevant VM or machine changes. Source commits are recorded because the harness and analyzers can change too.
+
+## GitHub-hosted runner reference
+
+For public repositories, GitHub lists these standard runners (checked September 30, 2026):
+
+| Runner label | CPU allocation | Memory | Architecture |
+| --- | --- | --- | --- |
+| \`ubuntu-latest\` | 4 CPUs | 16 GB | x64 |
+| \`windows-latest\` | 4 CPUs | 16 GB | x64 |
+| \`macos-latest\` | 3 CPUs (Apple M1) | 7 GB | arm64 |
+
+Source: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories). Private-repository allocations can differ. This is reference information, not a reconstruction of the original run's unknown configuration.
+
+`;
+
+function deltaText(current: number, previous: number): string {
+  const delta = Math.round((current - previous) * 10_000) / 10_000;
+  const prefix = delta > 0 ? "+" : "";
+  return `${prefix}${delta} ms (${previous === 0 ? "previously 0" : `${prefix}${(((current - previous) / previous) * 100).toFixed(2)}%`})`;
+}
+
+export function renderBenchmarkRun(
+  baseline: Baselines,
+  previous?: BenchmarkRun,
+): string {
+  const environment = baseline.environment;
+  const title = environment
+    ? `${environment.capturedAt} — ${environment.githubActions ? "GitHub Actions" : (environment.machine ?? "Local")} / ${environment.cpuModels.join(", ")} / ${environment.memoryBytes / 1024 ** 3} GiB`
+    : "Historical GitHub Actions — measurement date unrecorded";
   const lines = [
-    "# Zedbee benchmark baselines",
+    `## Run: ${cell(title)}`,
     "",
-    "Recorded phase timings for development regression checks. Actual scan times depend on the project, enabled checks, and execution environment.",
-    "",
-    "This document is the single source of benchmark baselines. Automated comparisons read the full-precision timings directly from the tables below.",
-    "",
-    "## Measurement environment",
+    "### Measurement environment",
     "",
     "| Detail | Recorded value |",
     "| --- | --- |",
-    ...details.map(([label, value]) => `| ${label} | ${cell(value)} |`),
+    ...environmentDetails(baseline).map(
+      ([label, value]) => `| ${label} | ${cell(value)} |`,
+    ),
     "",
-    "CPU and memory describe what the process could see, including virtual hardware on hosted runners. Runner labels such as `ubuntu-latest` can change over time; use the recorded image version and run link when available.",
-    "",
-    "### GitHub-hosted runner specifications",
-    "",
-    "For the standard runner labels used by this project's workflows, GitHub publishes these specifications for public repositories (checked September 30, 2026):",
-    "",
-    "| Runner label | CPU allocation | Memory | Architecture |",
-    "| --- | --- | --- | --- |",
-    "| `ubuntu-latest` | 4 CPUs | 16 GB | x64 |",
-    "| `windows-latest` | 4 CPUs | 16 GB | x64 |",
-    "| `macos-latest` | 3 CPUs (Apple M1) | 7 GB | arm64 |",
-    "",
-    "Source: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories). Private-repository allocations can differ. This table is a reference for hosted runners. The measurement environment above identifies the system used for the results below.",
-    "",
-    "## Results",
-    "",
-    "Each value is a median: the first batch has three samples and the second has five. The column names describe sample order; they do not mean a fresh process followed by a warmed process.",
+    "### Results",
     "",
   ];
   for (const [fixture, phases] of Object.entries(baseline.fixtures)) {
     lines.push(
-      `### ${cell(fixture)} fixture`,
+      `#### ${cell(fixture)} fixture`,
       "",
       "| Phase | First batch (ms) | Subsequent batch (ms) |",
       "| --- | ---: | ---: |",
@@ -194,45 +280,108 @@ export function renderBaselineReport(baseline: Baselines): string {
       "",
     );
   }
-  lines.push(
-    "## Current benchmark method and limitations",
-    "",
-    phaseLimitations,
-    "",
-    "The source revision matters as well as the machine: the harness and analyzer implementations can change between releases. Compare the recorded revision and environment when interpreting results.",
-    "",
-    "The small fixture exercises individual analyzers. The monorepo fixture contains a root workspace and 12 package workspaces, and measures the supporting phases listed above.",
-    "",
-    "The existing comparison fails only when a phase is both more than 25% slower and more than 250 ms slower than its baseline. A failure across different machines or runtimes does not, by itself, establish a code regression. Compare revisions under the same conditions when investigating one.",
-    "",
-    "## Reproduce or update",
-    "",
-    "From a repository checkout with its supported Node.js version:",
-    "",
-    "```sh",
-    "npm ci --ignore-scripts",
-    "npm run benchmark",
-    "```",
-    "",
-    "To deliberately replace the baseline with new measurements and their environment:",
-    "",
-    "```sh",
-    "npm run benchmark:update",
-    "```",
-    "",
-    "That command updates `bench/README.md` with the measured timings and environment. Review and commit this file. Keep the machine otherwise idle and record whether a VM was used in the review. GitHub Actions runs also record the job, runner image, and run link when available.",
-    "",
-    "The benchmark runner matches measurements using the phase labels in these tables. Unknown labels, invalid timings, or duplicate rows cause an error instead of silently changing the comparison.",
-    "",
-  );
+  lines.push("### Change from previous matching environment", "");
+  if (!previous)
+    lines.push(
+      "No earlier run has matching recorded environment details. These measurements establish a starting point for this environment.",
+      "",
+    );
+  else {
+    lines.push(
+      `Compared with: ${cell(previous.title)}.`,
+      "",
+      "| Fixture / phase | First batch change | Subsequent batch change |",
+      "| --- | ---: | ---: |",
+    );
+    for (const [fixture, phases] of Object.entries(baseline.fixtures)) {
+      for (const [name, value] of Object.entries(phases)) {
+        const before = previous.fixtures[fixture]?.[name];
+        lines.push(
+          `| ${cell(fixture)} / ${cell(phaseLabel(name))} | ${before ? deltaText(value.coldMs, before.coldMs) : "New phase"} | ${before ? deltaText(value.warmMs, before.warmMs) : "New phase"} |`,
+        );
+      }
+    }
+    lines.push("");
+  }
   return lines.join("\n");
+}
+
+export function renderBaselineReport(baseline: Baselines): string {
+  return historyIntroduction + renderBenchmarkRun(baseline);
+}
+
+export function parseBenchmarkHistory(markdown: string): BenchmarkRun[] {
+  const sections = markdown
+    .replaceAll("\r\n", "\n")
+    .split(/^## Run: /m)
+    .slice(1);
+  if (!sections.length)
+    throw new Error("Invalid benchmark history: no recorded runs");
+  const titles = new Set<string>();
+  return sections.map((section) => {
+    const title = section.slice(0, section.indexOf("\n")).trim();
+    if (!title || titles.has(title))
+      throw new Error(
+        "Invalid benchmark history: duplicate or missing run title",
+      );
+    titles.add(title);
+    const details: Record<string, string> = Object.create(null);
+    const environment = section
+      .split("### Measurement environment\n")[1]
+      ?.split("### Results\n")[0];
+    if (!environment)
+      throw new Error("Invalid benchmark history: missing environment table");
+    for (const line of environment.split(/\r?\n/)) {
+      if (!line.trim().startsWith("|")) continue;
+      const cells = line
+        .trim()
+        .split(/(?<!\\)\|/)
+        .slice(1, -1)
+        .map((value) => value.trim());
+      if (cells.length !== 2)
+        throw new Error("Invalid benchmark history: malformed environment row");
+      const [key, value] = cells as [string, string];
+      if (key === "Detail" || /^:?-+:?$/.test(key)) continue;
+      if (Object.hasOwn(details, key))
+        throw new Error(
+          "Invalid benchmark history: duplicate environment detail",
+        );
+      details[key] = value;
+    }
+    const { fixtures } = parseBaselineReport(
+      section
+        .replace(/^#### /gm, "### ")
+        .replace(/^### Results\r?$/m, "## Results")
+        .replace(
+          /^### Change from previous matching environment\r?$/m,
+          "## Changes",
+        ),
+    );
+    return { title, details, fixtures };
+  });
 }
 
 export async function writeBaselineReport(
   directory: string,
   baseline: Baselines,
 ): Promise<void> {
-  await writeFile(join(directory, "README.md"), renderBaselineReport(baseline));
+  const path = join(directory, "README.md");
+  let existing: string;
+  try {
+    existing = await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await writeFile(path, renderBaselineReport(baseline));
+    return;
+  }
+  const runs = parseBenchmarkHistory(existing);
+  const previous = baseline.environment
+    ? matchingRun(runs, baseline.environment)
+    : undefined;
+  const entry = renderBenchmarkRun(baseline, previous);
+  // Validate the complete document before writing; never replace prior results.
+  parseBenchmarkHistory(existing + "\n" + entry);
+  await appendFile(path, "\n" + entry);
 }
 
 export function parseBaselineReport(

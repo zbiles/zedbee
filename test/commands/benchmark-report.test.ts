@@ -7,6 +7,8 @@ import {
   renderBaselineReport,
   parseBaselineReport,
   writeBaselineReport,
+  parseBenchmarkHistory,
+  selectBaseline,
 } from "../../bench/report.mjs";
 
 it("records the Actions run and runner image without copying unrelated environment data", () => {
@@ -52,7 +54,7 @@ it("stores full-precision timings and environment in a single readable baseline"
     const report = await readFile(join(root, "README.md"), "utf8");
     expect(report).toContain("| Lint | 544.959 | 514.8498 |");
     expect(report).not.toContain("<!--");
-    expect(parseBaselineReport(report).fixtures).toEqual({
+    expect(parseBenchmarkHistory(report)[0]?.fixtures).toEqual({
       small: { "adapter.lint.execute": { coldMs: 544.959, warmMs: 514.8498 } },
     });
     expect(report).toContain(process.version);
@@ -61,6 +63,85 @@ it("stores full-precision timings and environment in a single readable baseline"
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("appends dated runs, preserves earlier results, and compares only matching environments", async () => {
+  const root = await mkdtemp(join(tmpdir(), "zedbee-benchmark-history-"));
+  try {
+    const environment = {
+      ...captureEnvironment(process.cwd(), {}),
+      capturedAt: "2026-09-01T00:00:00Z",
+    };
+    const first = {
+      schemaVersion: 1 as const,
+      environment,
+      fixtures: {
+        small: { "adapter.lint.execute": { coldMs: 100, warmMs: 80 } },
+      },
+    };
+    await writeBaselineReport(root, first);
+    const original = await readFile(join(root, "README.md"), "utf8");
+    await writeBaselineReport(root, {
+      ...first,
+      environment: {
+        ...environment,
+        capturedAt: "2026-09-02T00:00:00Z",
+        cpuModels: ["Different CPU"],
+      },
+      fixtures: {
+        small: { "adapter.lint.execute": { coldMs: 20, warmMs: 10 } },
+      },
+    });
+    const second = {
+      ...first,
+      environment: { ...environment, capturedAt: "2026-09-03T00:00:00Z" },
+      fixtures: {
+        small: { "adapter.lint.execute": { coldMs: 125, warmMs: 60 } },
+      },
+    };
+    await writeBaselineReport(root, second);
+    const report = await readFile(join(root, "README.md"), "utf8");
+    expect(report.startsWith(original)).toBe(true);
+    const runs = parseBenchmarkHistory(report);
+    expect(runs).toHaveLength(3);
+    expect(runs[0]?.fixtures.small?.["adapter.lint.execute"]).toEqual({
+      coldMs: 100,
+      warmMs: 80,
+    });
+    expect(
+      selectBaseline(runs, environment).fixtures.small?.[
+        "adapter.lint.execute"
+      ],
+    ).toEqual({ coldMs: 125, warmMs: 60 });
+    expect(report).toContain("+25 ms (+25.00%)");
+    expect(report).toContain("-20 ms (-25.00%)");
+    expect(() =>
+      selectBaseline(runs, { ...environment, node: "v99.0.0" }),
+    ).toThrow(/matching environment/);
+    expect(await readdir(root)).toEqual(["README.md"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("retains historical measurements without guessing their environment", () => {
+  const history = parseBenchmarkHistory(
+    renderBaselineReport({
+      schemaVersion: 1,
+      provenance: "GitHub Actions; original environment not recorded",
+      fixtures: {
+        small: {
+          "adapter.lint.execute": { coldMs: 544.959, warmMs: 514.8498 },
+        },
+      },
+    }),
+  );
+  expect(history[0]?.fixtures.small?.["adapter.lint.execute"]?.coldMs).toBe(
+    544.959,
+  );
+  expect(() =>
+    selectBaseline(history, captureEnvironment(process.cwd(), {})),
+  ).toThrow(/matching environment/);
 });
 
 it("reads plain phase labels and edited timings regardless of table alignment", () => {

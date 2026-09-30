@@ -337,7 +337,8 @@ async function main(): Promise<void> {
     captureEnvironment,
     phaseLimitations,
     writeBaselineReport,
-    parseBaselineReport,
+    parseBenchmarkHistory,
+    selectBaseline,
   } = (await import(
     new URL("./report.mts", import.meta.url).href
   )) as typeof Reporting;
@@ -372,7 +373,7 @@ async function main(): Promise<void> {
 
     if (update) {
       await writeBaselineReport(here, measurements);
-      process.stdout.write("Benchmark baseline report updated.\n");
+      process.stdout.write("Benchmark run appended to history.\n");
       return;
     }
 
@@ -393,7 +394,10 @@ async function main(): Promise<void> {
       return;
     }
 
-    const baselines = parseBaselineReport(await readFile(baselinePath, "utf8"));
+    const baselines = selectBaseline(
+      parseBenchmarkHistory(await readFile(baselinePath, "utf8")),
+      measurements.environment!,
+    );
     const regressions: string[] = [];
     for (const [fixture, phases] of Object.entries(measurements.fixtures)) {
       for (const [phase, current] of Object.entries(phases)) {
@@ -412,7 +416,9 @@ async function main(): Promise<void> {
         }
       }
     }
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ...report, baselineRun: baselines.title }, null, 2)}\n`,
+    );
     if (regressions.length > 0) {
       throw new Error(`Benchmark regressions:\n${regressions.join("\n")}`);
     }
