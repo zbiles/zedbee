@@ -241,9 +241,11 @@ function SetupSummary({
         </Text>
       ) : null}
       {proposal.hookActivation.remediation === undefined ? null : (
-        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-          Next step: {proposal.hookActivation.remediation}
-        </Text>
+        <Box paddingLeft={2} marginY={1}>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            Next step: {proposal.hookActivation.remediation}
+          </Text>
+        </Box>
       )}
       {proposal.limitations
         .filter((message) => message.startsWith("Tracked setup is unavailable"))
@@ -256,9 +258,11 @@ function SetupSummary({
             {message}
           </Text>
         ))}
-      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        Detected: {proposal.detectedEnvironments.join(", ") || "none"}
-      </Text>
+      <Box paddingLeft={2}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Detected: {proposal.detectedEnvironments.join(", ") || "none"}
+        </Text>
+      </Box>
     </Box>
   );
 }

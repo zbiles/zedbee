@@ -46,6 +46,41 @@ const proposal: InitProposal = {
 const DEFAULT_TEST_ROWS = 120;
 
 describe("hook setup choices", () => {
+  it("aligns hook guidance and detected environments with the setup labels", async () => {
+    const selectable: InitProposal = {
+      ...proposal,
+      hook: "husky",
+      hookSelection: "tracked",
+      hookChoices: ["none", "tracked", "raw"],
+      hookActivation: {
+        status: "active",
+        message: "Tracked hook configured.",
+        remediation: "Commit the tracked .husky files.",
+      },
+    };
+    const view = render(
+      <InitApp
+        proposal={selectable}
+        proposalForSelection={() => selectable}
+        width={130}
+        terminalSize={{ columns: 130, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={vi.fn()}
+      />,
+    );
+    await settleInput();
+    const lines = view.lastFrame()!.split("\n");
+    const next = lines.findIndex((line) => line.includes("Next step:"));
+    const profile = lines.find((line) => line.includes("Profile:"))!;
+    const detected = lines.find((line) => line.includes("Detected:"))!;
+    expect(next).toBeGreaterThan(0);
+    expect(lines[next]!.indexOf("Next step:")).toBe(profile.indexOf("Profile:"));
+    expect(detected.indexOf("Detected:")).toBe(profile.indexOf("Profile:"));
+    expect(lines[next - 1]!.replace(/[│┃█]/gu, "").trim()).toBe("");
+    expect(lines[next + 1]!.replace(/[│┃█]/gu, "").trim()).toBe("");
+    view.unmount();
+  });
   it("lets users turn installation off and choose local instead of tracked", async () => {
     const onDecision = vi.fn();
     const selectable: InitProposal = {
