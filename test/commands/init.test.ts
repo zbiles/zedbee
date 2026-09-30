@@ -21,6 +21,7 @@ import {
   type InitCommandDependencies,
   type InitCommandIO,
 } from "../../src/commands/init.js";
+import { TelemetryStore } from "../../src/telemetry/state.js";
 import { applyInitProposal } from "../../src/init/write-config.js";
 import { initFileChange } from "../../src/init/recommend.js";
 import type { InitProposal } from "../../src/init/types.js";
@@ -78,6 +79,56 @@ function dependencies(root: string): InitCommandDependencies {
 }
 
 describe("executeInitCommand", () => {
+  it.each(["disable", "enable", "cancel", "environment", "failure"] as const)(
+    "persists setup usage tracking only after apply: %s",
+    async (mode) => {
+      const repository = await createGitRepository("zedbee-init-telemetry-");
+      await repository.write("package.json", '{"name":"fixture"}');
+      const stateRoot = await mkdtemp(
+        join(tmpdir(), "zedbee-init-preference-"),
+      );
+      roots.push(stateRoot);
+      const store = new TelemetryStore(join(stateRoot, "state"));
+      if (mode === "enable") store.setEnabled(false);
+      const deps = dependencies(repository.root);
+      deps.readTelemetryPreference = () => store.read()?.enabled !== false;
+      deps.saveTelemetryPreference = (_env, enabled) =>
+        store.setEnabled(enabled);
+      deps.confirm = async (proposal) => {
+        expect(proposal.telemetryEnabled).toBe(
+          mode !== "enable" && mode !== "environment",
+        );
+        expect(store.read()?.enabled).toBe(
+          mode === "enable" ? false : undefined,
+        );
+        if (mode === "cancel") return false;
+        if (mode === "failure")
+          await repository.write(".zedbeerc.jsonc", "changed after preview");
+        return { ...proposal, telemetryEnabled: mode === "enable" };
+      };
+      const io = terminal(true);
+      if (mode === "environment") io.env.ZEDBEE_TELEMETRY_DISABLED = "1";
+      const result = await executeInitCommand(
+        {
+          cwd: repository.root,
+          profile: "fast",
+          hook: "none",
+          yes: false,
+          format: "text",
+          color: false,
+          animations: false,
+        },
+        io,
+        deps,
+      );
+      expect(result).toBe(mode === "failure" ? 2 : 0);
+      expect(store.read()?.enabled).toBe(
+        mode === "enable" ? true : mode === "disable" ? false : undefined,
+      );
+      if (mode === "disable") expect(store.pending()).toEqual([]);
+    },
+  );
+
   it.each([
     ["auto", "raw"],
     ["tracked", "husky"],

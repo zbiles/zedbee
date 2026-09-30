@@ -241,9 +241,11 @@ function SetupSummary({
         </Text>
       ) : null}
       {proposal.hookActivation.remediation === undefined ? null : (
-        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-          Next step: {proposal.hookActivation.remediation}
-        </Text>
+        <Box paddingLeft={2} marginY={1}>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            Next step: {proposal.hookActivation.remediation}
+          </Text>
+        </Box>
       )}
       {proposal.limitations
         .filter((message) => message.startsWith("Tracked setup is unavailable"))
@@ -256,9 +258,11 @@ function SetupSummary({
             {message}
           </Text>
         ))}
-      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-        Detected: {proposal.detectedEnvironments.join(", ") || "none"}
-      </Text>
+      <Box paddingLeft={2}>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Detected: {proposal.detectedEnvironments.join(", ") || "none"}
+        </Text>
+      </Box>
     </Box>
   );
 }
@@ -410,8 +414,12 @@ function formattingFocusIndex(proposal: InitProposal): number {
   );
 }
 
-function reviewFocusIndex(proposal: InitProposal): number {
+function telemetryFocusIndex(proposal: InitProposal): number {
   return formattingFocusIndex(proposal) + 1;
+}
+
+function reviewFocusIndex(proposal: InitProposal): number {
+  return telemetryFocusIndex(proposal) + 1;
 }
 
 function formattingDetectionLines(
@@ -704,6 +712,30 @@ function SetupPanel({
         activeTargetRef={activeTargetRef}
         color={color}
       />
+      <BrandedCommandPanelRule width={width} color={color} />
+      <Box
+        flexDirection="column"
+        paddingX={2}
+        ref={
+          focus === telemetryFocusIndex(proposal) ? activeTargetRef : undefined
+        }
+      >
+        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {focus === telemetryFocusIndex(proposal) ? "➜ " : "  "}[
+          {proposal.telemetryEnabled !== false ? "✽" : " "}] Enable usage
+          tracking
+        </Text>
+        <Box paddingLeft={2} flexDirection="column">
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            Share anonymous usage data to help us improve Zedbee Swarm
+          </Text>
+          {proposal.telemetryDisabledByEnvironment ? (
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
+              Disabled by your environment settings.
+            </Text>
+          ) : null}
+        </Box>
+      </Box>
       <Text> </Text>
       <InitActionButton
         label="REVIEW CHANGES"
@@ -761,6 +793,13 @@ function ReviewPanel({
           ) : null}
         </Box>
       ))}
+      <Box paddingX={2} marginY={1}>
+        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Usage tracking:{" "}
+          {proposal.telemetryEnabled !== false ? "enabled" : "disabled"} (this
+          installation)
+        </Text>
+      </Box>
       <InitActionButton label="APPLY CHANGES" focused color={color} />
       {proposal.hooksPathChange === undefined ? null : (
         <Box paddingX={2}>
@@ -797,6 +836,10 @@ export function InitApp({
   const liveSize = useWindowSize();
   const columns = terminalSize?.columns ?? liveSize.columns ?? width;
   const rows = terminalSize?.rows ?? liveSize.rows ?? 24;
+  const [telemetryEnabled, setTelemetryEnabled] = useState(
+    proposal.telemetryDisabledByEnvironment !== true &&
+      proposal.telemetryEnabled !== false,
+  );
   const [phase, setPhase] = useState<"configure" | "review">("configure");
   const [focus, setFocus] = useState(0);
   const [setupOffset, setSetupOffset] = useState(0);
@@ -848,8 +891,8 @@ export function InitApp({
   const pendingSetupGeometryRef = useRef(false);
   setupOffsetRef.current = setupOffset;
   const reviewedProposal = useMemo(
-    () =>
-      proposalForSelection(
+    () => ({
+      ...proposalForSelection(
         baseProfile,
         Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
@@ -858,7 +901,13 @@ export function InitApp({
         projectTrust,
         evaluatedImport,
       ),
+      telemetryEnabled,
+      telemetryDisabledByEnvironment:
+        proposal.telemetryDisabledByEnvironment === true,
+    }),
     [
+      telemetryEnabled,
+      proposal.telemetryDisabledByEnvironment,
       baseProfile,
       osvUnavailable,
       hookSelection,
@@ -1031,6 +1080,12 @@ export function InitApp({
         const offset = key.leftArrow ? -1 : 1;
         return visible[(index + offset + visible.length) % visible.length]!;
       });
+    } else if (
+      focus === telemetryFocusIndex(reviewedProposal) &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      if (!proposal.telemetryDisabledByEnvironment)
+        setTelemetryEnabled((value) => !value);
     } else if (input === " ") {
       if (
         proposal.vulnerabilityScanningAvailable &&

@@ -45,7 +45,7 @@ describe("private telemetry state", () => {
     const { root, store } = fixture();
     expect(store.read()).toBeUndefined();
     expect(existsSync(join(root, "state"))).toBe(false);
-    const initial = store.initialize(() => {});
+    const initial = store.initialize();
     expect(initial.enabled).toBe(true);
     store.enqueue(sample());
     store.setEnabled(false);
@@ -58,25 +58,14 @@ describe("private telemetry state", () => {
     reopened.enqueue(sample());
     expect(reopened.read()?.events).toEqual([]);
   });
-  it("emits disclosure only once and never marks it shown if writing fails", () => {
+  it("keeps the installation identity stable when initialized again", () => {
     const { store } = fixture();
-    let notices = 0;
-    expect(() =>
-      store.initialize(() => {
-        throw new Error("closed stderr");
-      }),
-    ).toThrow();
-    store.initialize(() => {
-      notices++;
-    });
-    store.initialize(() => {
-      notices++;
-    });
-    expect(notices).toBe(1);
+    const first = store.initialize();
+    expect(store.initialize().installation_id).toBe(first.installation_id);
   });
   it("bounds the outbox and acknowledges only delivered IDs", () => {
     const { store } = fixture();
-    store.initialize(() => {});
+    store.initialize();
     for (let i = 0; i < 104; i++) store.enqueue(sample());
     const events = store.pending();
     expect(events).toHaveLength(100);
@@ -92,10 +81,10 @@ describe("private telemetry state", () => {
   });
   it("rejects corrupt preferences and symlinked state without overwriting targets", () => {
     const { root, store } = fixture();
-    store.initialize(() => {});
+    store.initialize();
     const path = join(root, "state", "state.json");
     writeFileSync(path, "broken");
-    expect(() => store.initialize(() => {})).toThrow();
+    expect(() => store.initialize()).toThrow();
     expect(readFileSync(path, "utf8")).toBe("broken");
     rmSync(path);
     const target = join(root, "target");
@@ -108,7 +97,7 @@ describe("private telemetry state", () => {
 
 it("never lets competing stale-lock recovery delete a new owner's lock", () => {
   const { root, store } = fixture();
-  store.initialize(() => {});
+  store.initialize();
   const path = join(root, "state", "state.lock");
   writeFileSync(path, "99999999", { mode: 0o600 });
   utimesSync(path, new Date(0), new Date(0));

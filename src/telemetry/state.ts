@@ -162,13 +162,11 @@ export class TelemetryStore {
       release();
     }
   }
-  initialize(notice: () => void): TelemetryState {
+  initialize(): TelemetryState {
     return this.update((state) => {
       if (!state.enabled) return;
-      if (state.notice_version !== 1) {
-        notice();
-        state.notice_version = 1;
-      }
+      // Retained for compatibility with existing on-disk state, not a UI notice.
+      state.notice_version = 1;
       state.installation_id ??= randomUUID();
     });
   }

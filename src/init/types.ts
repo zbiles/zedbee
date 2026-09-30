@@ -72,6 +72,9 @@ export interface InitFileChange {
 }
 
 export interface InitProposal {
+  /** Local installation preference, never written to repository configuration. */
+  readonly telemetryEnabled?: boolean;
+  readonly telemetryDisabledByEnvironment?: boolean;
   readonly repositoryRoot: string;
   readonly profile: ProfileId;
   readonly hook: ResolvedHookChoice;
