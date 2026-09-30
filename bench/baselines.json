@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "provenance": "GitHub Actions (maintainer-confirmed). These timings were included in the initial public commit 3b12487. The exact run, runner image, hardware, Node.js version, and measurement date were not recorded.",
   "fixtures": {
     "small": {
       "snapshot": {

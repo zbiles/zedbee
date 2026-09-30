@@ -44,6 +44,7 @@ jobs:
       - run: npm run verify
         env:
           ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
+          ZEDBEE_BENCHMARK_RUNNER: ${{ matrix.os }}
 
   publication-gate:
     timeout-minutes: 60
@@ -64,6 +65,7 @@ jobs:
         run: npm run release:check
         env:
           ZEDBEE_CROSS_PLATFORM_EVIDENCE: verified
+          ZEDBEE_BENCHMARK_RUNNER: ubuntu-latest
       - name: Prepare and smoke-test the exact npm tarball
         run: npm run artifact:prepare
       - name: Upload the tested npm tarball
