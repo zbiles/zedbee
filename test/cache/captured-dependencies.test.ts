@@ -252,10 +252,11 @@ describe("captured dependency view", () => {
     ).toBe(true);
   });
 
-  it("bypasses cache when a file changes during its descriptor read", async () => {
+  it("bypasses cache when modification time changes during its descriptor read", async () => {
     const live = await createInspectionFixture();
     await live.write("node_modules/x/index.d.ts", "export const x: number;");
     const path = join(live.root, "node_modules/x/index.d.ts");
+    const metadata = fs.statSync(path);
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const originalRead = fs.readSync;
     const read = vi
@@ -263,6 +264,9 @@ describe("captured dependency view", () => {
       .mockImplementation((...args: unknown[]) => {
         const result = Reflect.apply(originalRead, fs, args);
         fs.writeFileSync(path, "export const x: string;");
+        // Equal-length rewrites can share a timestamp on a fast filesystem.
+        // Explicitly exercise the modification-time change being detected.
+        fs.utimesSync(path, metadata.atime, new Date(metadata.mtimeMs + 1000));
         return result;
       });
     syncBuiltinESMExports();

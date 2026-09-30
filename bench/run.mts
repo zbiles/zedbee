@@ -17,6 +17,8 @@ import { createLocalAnalyzerExecutor } from "../dist/checks/runner/executor.js";
 import type { CheckId } from "../dist/config/schema.js";
 import type * as Lifecycle from "./lifecycle.mjs";
 import type * as PhaseSession from "./phase-session.mjs";
+import type * as Reporting from "./report.mjs";
+import type { Baselines } from "./report.mjs";
 
 type FixtureName = "small" | "monorepo";
 type Phase = () => Promise<void> | void;
@@ -26,13 +28,8 @@ interface Measurement {
   warmMs: number;
 }
 
-interface Baselines {
-  schemaVersion: 1;
-  fixtures: Record<string, Record<string, Measurement>>;
-}
-
 const here = dirname(fileURLToPath(import.meta.url));
-const baselinePath = resolve(here, "baselines.json");
+const baselinePath = resolve(here, "README.md");
 const update = process.argv.includes("--update");
 const smoke = process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
 const inProcessReference = process.argv.includes("--in-process-reference");
@@ -336,13 +333,26 @@ async function main(): Promise<void> {
     throw new Error(
       "Corrected in-process references never overwrite historical phase targets.",
     );
+  const {
+    captureEnvironment,
+    phaseLimitations,
+    writeBaselineReport,
+    parseBenchmarkHistory,
+    selectBaseline,
+  } = (await import(
+    new URL("./report.mts", import.meta.url).href
+  )) as typeof Reporting;
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-bench-"));
   const executor = createLocalAnalyzerExecutor();
   try {
     const { withPhaseSession } = (await import(
       new URL("./phase-session.mts", import.meta.url).href
     )) as typeof PhaseSession;
-    const measurements: Baselines = { schemaVersion: 1, fixtures: {} };
+    const measurements: Baselines = {
+      schemaVersion: 1,
+      environment: captureEnvironment(resolve(here, "..")),
+      fixtures: {},
+    };
     for (const fixture of ["small", "monorepo"] as const) {
       const measureFixture = async () => {
         const fixturePhases = await phases(fixture, scratch);
@@ -362,11 +372,8 @@ async function main(): Promise<void> {
     }
 
     if (update) {
-      await writeFile(
-        baselinePath,
-        `${JSON.stringify(measurements, null, 2)}\n`,
-      );
-      process.stdout.write("Benchmark baselines updated.\n");
+      await writeBaselineReport(here, measurements);
+      process.stdout.write("Benchmark run appended to history.\n");
       return;
     }
 
@@ -375,20 +382,22 @@ async function main(): Promise<void> {
       kind: inProcessReference
         ? "corrected-in-process-phase-reference"
         : "within-session-phase-comparison",
-      limitations:
-        (inProcessReference
-          ? "Phase samples call engines directly in the benchmark process. "
-          : "Repeated phase samples share one fixture-scoped analysis session; final session cleanup is outside phase timings. ") +
-        "These are not complete CLI timings. coldMs/warmMs are historical field names, not fresh/warm process guarantees. Historical Secretlint and OSV substitutions remain; the snapshot phase measures cache-key hashing, not Git materialization.",
+      limitations: inProcessReference
+        ? phaseLimitations.replace(
+            "Repeated phase samples share one fixture-scoped analysis session; final session cleanup is outside phase timings.",
+            "Phase samples call engines directly in the benchmark process.",
+          )
+        : phaseLimitations,
     };
     if (smoke || inProcessReference) {
       process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
       return;
     }
 
-    const baselines = JSON.parse(
-      await readFile(baselinePath, "utf8"),
-    ) as Baselines;
+    const baselines = selectBaseline(
+      parseBenchmarkHistory(await readFile(baselinePath, "utf8")),
+      measurements.environment!,
+    );
     const regressions: string[] = [];
     for (const [fixture, phases] of Object.entries(measurements.fixtures)) {
       for (const [phase, current] of Object.entries(phases)) {
@@ -407,7 +416,9 @@ async function main(): Promise<void> {
         }
       }
     }
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.stdout.write(
+      `${JSON.stringify({ ...report, baselineRun: baselines.title }, null, 2)}\n`,
+    );
     if (regressions.length > 0) {
       throw new Error(`Benchmark regressions:\n${regressions.join("\n")}`);
     }

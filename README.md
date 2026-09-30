@@ -83,6 +83,7 @@ The command line is the supported interface. The [programmatic API](docs/cli-ref
 Start with `npx zedbee doctor` if setup or a scan isn't working.
 
 - [CLI reference and troubleshooting](docs/cli-reference.md)
+- [Benchmark results and measurement environment](https://github.com/zbiles/zedbee/blob/main/bench/README.md)
 - [Website](https://zedbee.dev)
 - [Bug reports](https://github.com/zbiles/zedbee/issues)
 - [Report a security vulnerability privately](SECURITY.md)

@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
-import { runAnalyzerJob } from "../../../src/checks/runner/run-job.js";
-import { AnalyzerJobError } from "../../../src/checks/diagnostics.js";
-import { DEFAULT_FORMATTING_SETTINGS } from "../../../src/checks/prettier/settings.js";
+// Test the shipped process boundary without development-loader teardown changing
+// deliberate worker exit codes on Windows Node 24.
+import { runAnalyzerJob } from "../../../dist/checks/runner/run-job.js";
+import { AnalyzerJobError } from "../../../dist/checks/diagnostics.js";
+import { DEFAULT_FORMATTING_SETTINGS } from "../../../dist/checks/prettier/settings.js";
 
 const workerEntry = fileURLToPath(
   new URL("./fixtures/worker.mjs", import.meta.url),

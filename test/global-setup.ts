@@ -108,6 +108,7 @@ export default async function setup(project: TestProject) {
     process.platform === "win32" ||
     process.env.ZEDBEE_SHARED_PACKED_INSTALL_UNDER_TEST === "1";
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-test-setup-"));
+  let sharedInstallRoot: string | undefined;
   try {
     const gitTemplate = join(scratch, "git-template");
     await mkdir(gitTemplate);
@@ -173,6 +174,7 @@ export default async function setup(project: TestProject) {
       },
       (attempt) => verifySharedPackedInstall(attempt.installRoot, gitTemplate),
     );
+    sharedInstallRoot = installRoot;
     project.provide(
       "sharedPackedNodeModules",
       join(installRoot, "node_modules"),
@@ -187,5 +189,27 @@ export default async function setup(project: TestProject) {
     throw error;
   }
 
-  return () => rm(scratch, { recursive: true, force: true });
+  return async () => {
+    // Installed Git hooks can start the shared package's default service.
+    // Retire that fixture-owned service before Windows removes its working dir.
+    if (sharedInstallRoot !== undefined) {
+      const stopped = await execa(
+        process.execPath,
+        [
+          join(sharedInstallRoot, "node_modules", "zedbee", "dist", "cli.js"),
+          "service",
+          "stop",
+          "--format",
+          "json",
+        ],
+        { reject: false, stdin: "ignore" },
+      );
+      if (
+        stopped.exitCode !== 0 ||
+        JSON.parse(stopped.stdout).state !== "stopped"
+      )
+        throw new Error("Shared packed-package service cleanup failed.");
+    }
+    await rm(scratch, { recursive: true, force: true });
+  };
 }

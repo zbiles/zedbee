@@ -1,8 +1,6 @@
-import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import {
-  chmod,
   lstat,
   mkdtemp,
   mkdir,
@@ -32,6 +30,7 @@ const filesystemControl = vi.hoisted(() => ({
   lstatFailures: new Map<string, string>(),
   openFailures: new Map<string, string>(),
   unlinkFailures: new Map<string, string>(),
+  syncFailuresAfterUnlink: new Set<string>(),
   rejectNumericDirectoryOpen: false,
 }));
 
@@ -71,7 +70,10 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const code = filesystemControl.unlinkFailures.get(String(path));
       if (code)
         throw Object.assign(new Error("Injected unlink failure"), { code });
-      return original.unlink(path);
+      await original.unlink(path);
+      if (filesystemControl.syncFailuresAfterUnlink.delete(String(path))) {
+        filesystemControl.openFailures.set(dirname(String(path)), "EACCES");
+      }
     },
     async lstat(
       path: Parameters<typeof original.lstat>[0],
@@ -100,6 +102,7 @@ afterEach(() => {
   filesystemControl.lstatFailures.clear();
   filesystemControl.openFailures.clear();
   filesystemControl.unlinkFailures.clear();
+  filesystemControl.syncFailuresAfterUnlink.clear();
   filesystemControl.rejectNumericDirectoryOpen = false;
 });
 
@@ -113,12 +116,6 @@ async function fixture(): Promise<{
   const temporaryRoot = join(root, "injected-temporary-root");
   await Promise.all([mkdir(repositoryRoot), mkdir(temporaryRoot)]);
   return { repositoryRoot, temporaryRoot };
-}
-
-async function waitForRegularFile(path: string): Promise<void> {
-  await waitForAssertion(async () => {
-    expect((await lstat(path)).isFile()).toBe(true);
-  });
 }
 
 interface StoredState {
@@ -1121,32 +1118,28 @@ describe("temporary report store", () => {
       });
       const directory = dirname(initial.reportPath!);
       const lockPath = join(directory, LOCK_FILE_NAME);
-      const pending = store.maintain({
+      // Fail directory synchronization only after the real lock unlink. Polling
+      // for a short-lived lock can miss it entirely on a fast filesystem.
+      filesystemControl.syncFailuresAfterUnlink.add(lockPath);
+      const maintained = await store.maintain({
         repositoryRoot,
         maxAgeMs: 86_400_000,
-        json: `${"sync payload".repeat(500_000)}\n`,
+        json: "sync payload\n",
       });
-      await waitForRegularFile(lockPath);
-      await chmod(directory, 0o300);
-      try {
-        const maintained = await pending;
-        expect(maintained.warnings).toContainEqual(
-          expect.objectContaining({
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            message: expect.stringContaining(
-              "released lock directory could not be synchronized",
-            ),
-          }),
-        );
-        expect(
-          maintained.warnings
-            .filter((item) => item.message.includes("released lock"))
-            .every((item) => item.path === undefined),
-        ).toBe(true);
-        await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
-      } finally {
-        await chmod(directory, 0o700);
-      }
+      expect(maintained.warnings).toContainEqual(
+        expect.objectContaining({
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          message: expect.stringContaining(
+            "released lock directory could not be synchronized",
+          ),
+        }),
+      );
+      expect(
+        maintained.warnings
+          .filter((item) => item.message.includes("released lock"))
+          .every((item) => item.path === undefined),
+      ).toBe(true);
+      await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
     },
   );
 

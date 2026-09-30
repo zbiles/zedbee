@@ -12,6 +12,7 @@ import {
 } from "../../dist/service/client.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import { removeServiceFixture } from "./fixture-cleanup.js";
+import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 const roots: string[] = [];
 const clients: Array<() => Promise<void>> = [];
 async function acquire(config: Parameters<typeof acquireServiceExecutor>[0]) {
@@ -241,7 +242,16 @@ it.each([false, true])(
     }
     await session.close().catch(() => {});
     await executor.close().catch(() => {});
-    for (const pid of owned) expect(() => process.kill(pid, 0)).toThrow();
+    // POSIX cleanup proves the worker groups have stopped. The supervisor we
+    // killed independently can remain visible until the OS reaps its PID.
+    const killedPosixSupervisor =
+      process.platform === "win32" ? undefined : supervisor;
+    for (const pid of owned.filter((pid) => pid !== killedPosixSupervisor))
+      expect(() => process.kill(pid, 0), `worker ${pid}`).toThrow();
+    if (killedPosixSupervisor !== undefined)
+      await waitForAssertion(() =>
+        expect(() => process.kill(killedPosixSupervisor, 0)).toThrow(),
+      );
     const next = await acquire(config);
     try {
       const fresh = await next.openSession();

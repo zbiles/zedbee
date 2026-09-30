@@ -37,7 +37,7 @@ describe("discoverProjectPrettier", () => {
       executableConfig: false,
     });
     expect(discovered[0]?.configPaths).toEqual([".prettierrc.json"]);
-    expect(discovered[0]?.packageRoot).toContain("node_modules/prettier");
+    expect(discovered[0]?.packageRoot).toContain(join("node_modules", "prettier"));
   });
 
   it("resolves a nested project through a hoisted installation", async () => {
