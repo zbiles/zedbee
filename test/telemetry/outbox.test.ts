@@ -15,7 +15,7 @@ function fixture() {
   const root = mkdtempSync(join(tmpdir(), "telemetry-outbox-"));
   roots.push(root);
   const store = new TelemetryStore(join(root, "state"));
-  store.initialize(() => {});
+  store.initialize();
   return { store, root };
 }
 function event() {

@@ -100,6 +100,7 @@ export function scanTimeoutOverrides(
 
 export interface CliDependencies {
   readonly startTelemetry?: typeof startTelemetry;
+  readonly executeInitCommand?: typeof executeInitCommand;
   readonly executeScanCommand?: typeof executeScanCommand;
   readonly executeFixCommand?: typeof executeFixCommand;
 }
@@ -115,14 +116,18 @@ export async function runCli(
     .exitOverride();
   let exitCode = 0;
   let telemetry: CommandTelemetry | undefined;
+  let initStartedAt: number | undefined;
   let executionCompleted = false;
   let updateNotice: UpdateNotice | undefined;
   let updateColor = false;
   let updateIndented = false;
   program.hook("preAction", (_program, action) => {
     const options = action.opts();
+    if (action.parent === program && action.name() === "init")
+      initStartedAt = performance.now();
     if (
       action.parent === program &&
+      action.name() !== "init" &&
       TELEMETRY_COMMANDS.includes(action.name() as TelemetryCommand)
     ) {
       telemetry = (dependencies.startTelemetry ?? startTelemetry)({
@@ -278,10 +283,22 @@ export async function runCli(
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderInitOptions) => {
-      exitCode = await executeInitCommand(
+      exitCode = await (dependencies.executeInitCommand ?? executeInitCommand)(
         {
           cwd: process.cwd(),
-          telemetrySummary: (value) => telemetry?.summary(value),
+          telemetrySummary: (value) => {
+            // Setup must save the user's choice before telemetry creates state
+            // or queues any event. Cancelled/previewed setup collects nothing.
+            if (value.outcome !== "completed") return;
+            telemetry = (dependencies.startTelemetry ?? startTelemetry)({
+              command: "init",
+              env: process.env,
+              ...(initStartedAt === undefined
+                ? {}
+                : { startedAt: initStartedAt }),
+            });
+            telemetry.summary(value);
+          },
           profile: options.profile,
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
@@ -386,8 +403,8 @@ export async function runCli(
           ...(options.includeSource === true
             ? { sourceExcerpts: "include" as const }
             : options.source === false
-            ? { sourceExcerpts: "exclude" as const }
-            : {}),
+              ? { sourceExcerpts: "exclude" as const }
+              : {}),
           ...scanTimeoutOverrides(argv, options.timeout),
           ...(options.diagnostics === true ? { diagnostics: true } : {}),
           ...(options.trustProjectPrettier === true

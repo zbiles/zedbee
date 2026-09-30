@@ -46,6 +46,79 @@ const proposal: InitProposal = {
 const DEFAULT_TEST_ROWS = 120;
 
 describe("hook setup choices", () => {
+  it.each([false, true])(
+    "respects a saved opt-out and an environment override (%s)",
+    async (override) => {
+      const selected = {
+        ...proposal,
+        telemetryEnabled: false,
+        telemetryDisabledByEnvironment: override,
+      };
+      const view = render(
+        <InitApp
+          proposal={selected}
+          proposalForSelection={() => selected}
+          width={130}
+          terminalSize={{ columns: 130, rows: 120 }}
+          color={false}
+          animations={false}
+          onDecision={vi.fn()}
+        />,
+      );
+      await settleInput();
+      expect(view.lastFrame()).toContain("[ ] Enable usage tracking");
+      view.stdin.write("\u001b[A");
+      await settleInput();
+      view.stdin.write("\u001b[A");
+      await settleInput();
+      view.stdin.write(" ");
+      await settleInput();
+      expect(view.lastFrame()).toContain(
+        override ? "[ ] Enable usage tracking" : "[✽] Enable usage tracking",
+      );
+      view.unmount();
+    },
+  );
+  it("offers usage tracking at the end of setup and carries an opt-out into review", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        width={130}
+        terminalSize={{ columns: 130, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await settleInput();
+    expect(view.lastFrame()).toContain("[✽] Enable usage tracking");
+    expect(view.lastFrame()).toContain(
+      "Share anonymous usage data to help us improve Zedbee Swarm",
+    );
+    view.stdin.write("\u001b[A");
+    await settleInput();
+    view.stdin.write("\u001b[A");
+    await settleInput();
+    view.stdin.write(" ");
+    await settleInput();
+    expect(view.lastFrame()).toContain("[ ] Enable usage tracking");
+    view.stdin.write("\r");
+    await settleInput();
+    expect(view.lastFrame()).toContain("Usage tracking: disabled");
+    view.stdin.write("b");
+    await settleInput();
+    expect(view.lastFrame()).toContain("[ ] Enable usage tracking");
+    view.stdin.write("\r");
+    await settleInput();
+    view.stdin.write("y");
+    await settleInput();
+    expect(onDecision).toHaveBeenCalledWith(
+      expect.objectContaining({ telemetryEnabled: false }),
+    );
+    view.unmount();
+  });
   it("aligns hook guidance and detected environments with the setup labels", async () => {
     const selectable: InitProposal = {
       ...proposal,
@@ -75,7 +148,9 @@ describe("hook setup choices", () => {
     const profile = lines.find((line) => line.includes("Profile:"))!;
     const detected = lines.find((line) => line.includes("Detected:"))!;
     expect(next).toBeGreaterThan(0);
-    expect(lines[next]!.indexOf("Next step:")).toBe(profile.indexOf("Profile:"));
+    expect(lines[next]!.indexOf("Next step:")).toBe(
+      profile.indexOf("Profile:"),
+    );
     expect(detected.indexOf("Detected:")).toBe(profile.indexOf("Profile:"));
     expect(lines[next - 1]!.replace(/[│┃█]/gu, "").trim()).toBe("");
     expect(lines[next + 1]!.replace(/[│┃█]/gu, "").trim()).toBe("");
@@ -333,7 +408,7 @@ describe("InitApp", () => {
 
     await expectSequenceCount(view.frames, DISABLE_MOUSE, 1);
     expect(onDecision).toHaveBeenCalledOnce();
-    expect(onDecision).toHaveBeenCalledWith(proposal);
+    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining(proposal));
   });
 
   it("disables mouse reporting when setup is cancelled", async () => {
@@ -597,7 +672,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 5; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -687,7 +762,7 @@ describe("InitApp", () => {
     );
     const view = render(elementFor(DEFAULT_TEST_ROWS));
 
-    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 5; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await settleInput();
@@ -704,7 +779,7 @@ describe("InitApp", () => {
     view.stdin.write("b");
 
     await waitForAssertion(() => {
-      expect(view.lastFrame()).toContain("VULNERABILITY SERVICE OUTAGES");
+      expect(view.lastFrame()).toContain("Enable usage tracking");
       expect(view.lastFrame()).toContain("REVIEW CHANGES");
       expect(view.lastFrame()).not.toContain("APPLY CHANGES");
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
@@ -810,7 +885,9 @@ describe("InitApp", () => {
     );
     view.stdin.write(input);
     await waitForAssertion(() =>
-      expect(onDecision).toHaveBeenCalledWith(reviewProposal),
+      expect(onDecision).toHaveBeenCalledWith(
+        expect.objectContaining(reviewProposal),
+      ),
     );
   });
 
@@ -837,6 +914,7 @@ describe("InitApp", () => {
     await waitForAssertion(() =>
       expect(view.lastFrame()).toContain("↑ MORE ABOVE"),
     );
+    const scrolledReview = view.lastFrame();
     view.stdin.write("\u001b");
     await waitForAssertion(() => expect(view.lastFrame()).toContain("SETUP"));
     expect(onDecision).not.toHaveBeenCalled();
@@ -844,7 +922,7 @@ describe("InitApp", () => {
     view.stdin.write("\r");
     await waitForAssertion(() => {
       expect(view.lastFrame()).toContain("↑ MORE ABOVE");
-      expect(view.lastFrame()).toContain("APPLY CHANGES");
+      expect(view.lastFrame()).toBe(scrolledReview);
     });
     view.stdin.write("n");
     await waitForAssertion(() =>
@@ -930,7 +1008,7 @@ describe("InitApp", () => {
       expect(view.lastFrame()).toContain("↓ MORE BELOW"),
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 5; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -956,7 +1034,7 @@ describe("InitApp", () => {
     await waitForAssertion(() =>
       expect(reference.lastFrame()).toContain("↓ MORE BELOW"),
     );
-    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 5; index += 1) {
       reference.stdin.write("\u001b[B");
     }
     await waitForAssertion(() =>
@@ -1083,7 +1161,7 @@ describe("InitApp", () => {
       />,
     );
 
-    for (let index = 0; index < CHECK_IDS.length + 4; index += 1) {
+    for (let index = 0; index < CHECK_IDS.length + 5; index += 1) {
       view.stdin.write("\u001b[B");
     }
     await new Promise((resolve) => setImmediate(resolve));
@@ -1095,7 +1173,7 @@ describe("InitApp", () => {
 
     view.stdin.write(" ");
     await new Promise((resolve) => setImmediate(resolve));
-    expect(onDecision).toHaveBeenCalledWith(proposal);
+    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining(proposal));
   });
 
   it("reviews concise file explanations without rendering raw diffs", async () => {

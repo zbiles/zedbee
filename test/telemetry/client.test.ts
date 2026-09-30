@@ -16,6 +16,18 @@ afterEach(() => {
   roots.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true }));
 });
 describe("command telemetry", () => {
+  it("does not print a standalone disclosure before command output", () => {
+    const { store } = fixture();
+    const write = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      startTelemetry({ command: "doctor", env: {}, store, launch: () => {} });
+      expect(write).not.toHaveBeenCalled();
+    } finally {
+      write.mockRestore();
+    }
+  });
   it("does nothing when disabled, including state and sender creation", async () => {
     const { root, store } = fixture();
     let sends = 0;
@@ -23,9 +35,6 @@ describe("command telemetry", () => {
       command: "scan",
       env: { ZEDBEE_TELEMETRY_DISABLED: "1" },
       store,
-      notice: () => {
-        throw Error("unexpected");
-      },
       launch: () => {
         sends++;
       },
@@ -41,7 +50,6 @@ describe("command telemetry", () => {
       command: "scan",
       env: {},
       store,
-      notice: () => {},
       launch: () => {},
     });
     client.summary({
@@ -71,7 +79,6 @@ describe("command telemetry", () => {
       command: "scan" as const,
       env: { GITHUB_ACTIONS: "true" },
       store,
-      notice: () => {},
       send: async (events: readonly TelemetryEvent[]) => {
         sent.push(...events);
         return true;
@@ -102,7 +109,6 @@ describe("command telemetry", () => {
       command: "scan",
       env: { CI: "1" },
       store,
-      notice: () => {},
       send: async (_events, s) => {
         signal = s;
         return new Promise<boolean>(() => {});
@@ -123,7 +129,6 @@ describe("command telemetry", () => {
       command: "scan",
       env: { CI: "1" },
       store,
-      notice: () => {},
       send: async (_events, signal) => {
         transportSignal = signal;
         return new Promise<boolean>(() => {});
@@ -148,7 +153,6 @@ describe("command telemetry", () => {
       command: "scan",
       env: { CI: "1" },
       store,
-      notice: () => {},
       send: async (events) => {
         sent.push(...events);
         return true;

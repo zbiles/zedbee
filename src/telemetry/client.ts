@@ -14,8 +14,6 @@ import {
   type TelemetryCommand,
 } from "./schema.js";
 import { sendTelemetry, type TelemetrySend } from "./transport.js";
-export const TELEMETRY_NOTICE =
-  "Zedbee collects usage metadata by default (commands, timing and outcomes), including in CI. No source code, paths or report contents are sent. Disable: zedbee telemetry disable, or set ZEDBEE_TELEMETRY_DISABLED=1. Details: https://github.com/zbiles/zedbee/blob/main/docs/privacy.md#usage-telemetry\n";
 export type TelemetrySummary = Partial<
   Pick<
     TelemetryEvent,
@@ -51,13 +49,14 @@ export function launchTelemetrySender(env: TelemetryEnvironment): void {
   child.unref();
 }
 export interface StartTelemetryOptions {
+  /** Monotonic command start when collection is deferred until setup applies. */
+  startedAt?: number;
   command: TelemetryCommand;
   env: TelemetryEnvironment;
   scanMode?: "staged" | "base";
   outputFormat?: TelemetryEvent["output_format"];
   hookInvocation?: boolean;
   store?: TelemetryStore;
-  notice?: () => void;
   launch?: () => void;
   send?: TelemetrySend;
 }
@@ -77,19 +76,12 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
   const context = telemetryContext(env);
   let state = store.read();
   if (state?.enabled === false) return NOOP;
-  const notice =
-    options.notice ??
-    (() => {
-      process.stderr.write(TELEMETRY_NOTICE);
-    });
   const ci = context.environment === "ci";
-  if (ci) {
-    if (state?.notice_version !== 1) notice();
-  } else state = store.initialize(notice);
+  if (!ci) state = store.initialize();
   if (state?.enabled === false || (!ci && !state?.installation_id)) return NOOP;
   const controller = new AbortController();
   const send = options.send ?? sendTelemetry;
-  const started = performance.now();
+  const started = options.startedAt ?? performance.now();
   const base = {
     schema_version: 1 as const,
     run_id: randomUUID(),

@@ -2,9 +2,15 @@
 
 ## Usage telemetry
 
-Zedbee CLI usage telemetry is **enabled by default**, including in CI. A notice
-appears on stderr before the first eligible operation. To disable collection
-before first use, set `ZEDBEE_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1`. You can also
+Zedbee CLI usage telemetry is **enabled by default**, including in CI. Interactive
+`zedbee init` includes an **Enable usage tracking** checkbox near the end of setup:
+“Share anonymous usage data to help us improve Zedbee Swarm.” It starts checked
+unless you have already opted out. Applying setup saves the choice for this local
+installation; cancelling leaves it unchanged. Setup sends no event before the
+choice is saved. No standalone startup notice is printed.
+
+Environment opt-outs override the checkbox. Noninteractive `init --yes` preserves
+your existing preference. To disable collection before first use, set `ZEDBEE_TELEMETRY_DISABLED=1` or `DO_NOT_TRACK=1`. You can also
 persist a local preference:
 
 ```bash

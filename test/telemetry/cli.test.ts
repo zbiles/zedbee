@@ -15,6 +15,42 @@ afterEach(() => {
   roots.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true }));
 });
 describe("CLI telemetry integration", () => {
+  it.each(
+    (["completed", "cancelled", "preview"] as const).flatMap((outcome) =>
+      [false, true].map((enabled) => ({ outcome, enabled })),
+    ),
+  )(
+    "defers init telemetry until saved preferences for $outcome (enabled=$enabled)",
+    async ({ outcome, enabled }) => {
+      const root = mkdtempSync(join(tmpdir(), "telemetry-init-result-"));
+      roots.push(root);
+      const store = new TelemetryStore(join(root, "state"));
+      const start = vi.fn((options) =>
+        startTelemetry({ ...options, env: {}, store, launch: () => {} }),
+      );
+      const code = await runCli(["node", "zedbee", "init"], {
+        startTelemetry: start,
+        executeInitCommand: async (options) => {
+          expect(start).not.toHaveBeenCalled();
+          store.setEnabled(enabled);
+          options.telemetrySummary?.({ outcome });
+          return 0;
+        },
+      });
+      expect(code).toBe(0);
+      expect(start).toHaveBeenCalledTimes(outcome === "completed" ? 1 : 0);
+      expect(store.pending()).toHaveLength(
+        outcome === "completed" && enabled ? 1 : 0,
+      );
+      if (outcome === "completed" && enabled) {
+        expect(store.pending()[0]).toMatchObject({
+          event: "setup_finished",
+          outcome: "completed",
+        });
+        expect(start.mock.calls[0]?.[0].startedAt).toEqual(expect.any(Number));
+      }
+    },
+  );
   it.each([
     { code: 1, applied: 0, outcome: "incomplete" },
     { code: 1, applied: 2, outcome: "incomplete" },
@@ -35,7 +71,6 @@ describe("CLI telemetry integration", () => {
               ...options,
               env: {},
               store,
-              notice: () => {},
               launch: () => {},
             }),
           executeFixCommand: async (options) => {
@@ -69,7 +104,6 @@ describe("CLI telemetry integration", () => {
           ...options,
           env: { CI: "1" },
           store: new TelemetryStore(join(root, "state")),
-          notice: () => {},
           send: async (_events, value) => {
             signal = value;
             return new Promise<boolean>(() => {});
@@ -100,7 +134,6 @@ describe("CLI telemetry integration", () => {
               ...options,
               env: {},
               store,
-              notice: () => {},
               launch: () => {},
             }),
           executeScanCommand: async (options) => {
@@ -134,7 +167,6 @@ describe("CLI telemetry integration", () => {
         ...options,
         env: {},
         store,
-        notice: () => {},
         launch: () => {},
       });
     };

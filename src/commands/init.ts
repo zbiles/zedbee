@@ -1,3 +1,8 @@
+import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
+import {
+  telemetryDisabled,
+  type TelemetryEnvironment,
+} from "../telemetry/policy.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, realpath } from "node:fs/promises";
@@ -70,6 +75,8 @@ export interface InitPromptOptions {
 }
 
 export interface InitCommandDependencies {
+  readTelemetryPreference?(env: TelemetryEnvironment): boolean;
+  saveTelemetryPreference?(env: TelemetryEnvironment, enabled: boolean): void;
   resolveRepositoryRoot(cwd: string): Promise<string>;
   inspect(repositoryRoot: string): Promise<RepositoryInspection>;
   confirm(
@@ -89,6 +96,14 @@ export interface InitCommandDependencies {
 }
 
 const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
+  readTelemetryPreference(env) {
+    return (
+      new TelemetryStore(telemetryDirectory(env)).read()?.enabled !== false
+    );
+  },
+  saveTelemetryPreference(env, enabled) {
+    new TelemetryStore(telemetryDirectory(env)).setEnabled(enabled);
+  },
   async resolveRepositoryRoot(cwd) {
     return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
       .stdout;
@@ -589,6 +604,10 @@ export async function executeInitCommand(
       io.stdoutIsTTY
     ) {
       promptedInteractively = true;
+      const telemetryDisabledByEnvironment = telemetryDisabled(io.env);
+      const telemetryEnabled =
+        !telemetryDisabledByEnvironment &&
+        (dependencies.readTelemetryPreference?.(io.env) ?? true);
       const integrations = new Map<InitHookChoice, DetectedHookIntegration>([
         [hookIntegration.hook, hookIntegration],
       ]);
@@ -698,6 +717,8 @@ export async function executeInitCommand(
         });
         return Object.freeze({
           ...selectedProposal,
+          telemetryEnabled,
+          telemetryDisabledByEnvironment,
           limitations: [...selectedProposal.limitations, ...hookLimitations],
           hookSelection: selectedHook,
           ...(choices.length > 1 ? { hookChoices: choices } : {}),
@@ -726,6 +747,14 @@ export async function executeInitCommand(
     const result = confirmed
       ? await applyInitProposal(proposal)
       : { applied: false, files: [] as readonly string[], rolledBack: false };
+    if (
+      result.applied &&
+      promptedInteractively &&
+      proposal.telemetryEnabled !== undefined &&
+      !telemetryDisabled(io.env)
+    ) {
+      dependencies.saveTelemetryPreference?.(io.env, proposal.telemetryEnabled);
+    }
     if (options.format === "json") {
       io.writeStdout(
         `${JSON.stringify(
