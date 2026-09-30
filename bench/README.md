@@ -21,6 +21,18 @@ This document is the single source of benchmark baselines. Automated comparisons
 
 CPU and memory describe what the process could see, including virtual hardware on hosted runners. Runner labels such as `ubuntu-latest` can change over time; use the recorded image version and run link when available.
 
+### GitHub-hosted runner specifications
+
+For the standard runner labels used by this project's workflows, GitHub publishes these specifications for public repositories (checked September 30, 2026):
+
+| Runner label | CPU allocation | Memory | Architecture |
+| --- | --- | --- | --- |
+| `ubuntu-latest` | 4 CPUs | 16 GB | x64 |
+| `windows-latest` | 4 CPUs | 16 GB | x64 |
+| `macos-latest` | 3 CPUs (Apple M1) | 7 GB | arm64 |
+
+Source: [GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners#standard-github-hosted-runners-for-public-repositories). Private-repository allocations can differ. These are the documented runner classes; identifying the original baseline's specific job still requires its run record. Future measurements capture the actual runtime environment alongside these reference specifications.
+
 ## Results
 
 Each value is a median: the first batch has three samples and the second has five. The column names describe sample order; they do not mean a fresh process followed by a warmed process.
