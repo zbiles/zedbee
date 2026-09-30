@@ -63,7 +63,6 @@
   "scripts": {
     "benchmark": "npm run build && node --experimental-strip-types bench/run.mts",
     "benchmark:update": "npm run build && node --experimental-strip-types bench/run.mts --update",
-    "benchmark:report": "node --experimental-strip-types bench/report.mts",
     "build": "node scripts/clean-build-output.mjs && tsc -p tsconfig.build.json && node scripts/finalize-build-output.mjs",
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",

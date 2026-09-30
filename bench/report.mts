@@ -1,8 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { cpus, release, totalmem, version } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 export interface Baselines {
   schemaVersion: 1;
@@ -135,7 +134,7 @@ export function renderBaselineReport(baseline: Baselines): string {
     "",
     "Recorded phase timings for development regression checks. Actual scan times depend on the project, enabled checks, and execution environment.",
     "",
-    "This report is generated from [baselines.json](baselines.json). The JSON retains full precision for automated comparisons; tables round milliseconds to two decimal places.",
+    "This document is the single source of benchmark baselines. Automated comparisons read the full-precision timings directly from the tables below.",
     "",
     "## Measurement environment",
     "",
@@ -158,7 +157,7 @@ export function renderBaselineReport(baseline: Baselines): string {
       "| --- | ---: | ---: |",
       ...Object.entries(phases).map(
         ([name, value]) =>
-          `| ${cell(phaseLabel(name))} | ${value.coldMs.toFixed(2)} | ${value.warmMs.toFixed(2)} |`,
+          `| ${cell(phaseLabel(name))} <!-- ${name} --> | ${value.coldMs} | ${value.warmMs} |`,
       ),
       "",
     );
@@ -189,37 +188,69 @@ export function renderBaselineReport(baseline: Baselines): string {
     "npm run benchmark:update",
     "```",
     "",
-    "That command updates both `bench/baselines.json` and this report. Review and commit them together. Keep the machine otherwise idle and record whether a VM was used in the review. GitHub Actions runs also record the job, runner image, and run link when available.",
+    "That command updates `bench/README.md` with the measured timings and environment. Review and commit this file. Keep the machine otherwise idle and record whether a VM was used in the review. GitHub Actions runs also record the job, runner image, and run link when available.",
     "",
-    "To regenerate only this readable report without measuring or changing the baseline:",
-    "",
-    "```sh",
-    "npm run benchmark:report",
-    "```",
+    "Each phase label contains an HTML comment with its stable identifier. These comments are hidden in the rendered table; retain them when editing so the benchmark runner can match measurements to rows. Invalid or duplicate rows cause an error instead of silently changing the comparison.",
     "",
   );
   return lines.join("\n");
 }
 
-export async function writeBaselineFiles(
+export async function writeBaselineReport(
   directory: string,
   baseline: Baselines,
 ): Promise<void> {
-  await writeFile(
-    join(directory, "baselines.json"),
-    `${JSON.stringify(baseline, null, 2)}\n`,
-  );
   await writeFile(join(directory, "README.md"), renderBaselineReport(baseline));
 }
 
-if (
-  process.argv[1] &&
-  resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
-  const directory = dirname(fileURLToPath(import.meta.url));
-  const baseline = JSON.parse(
-    await readFile(join(directory, "baselines.json"), "utf8"),
-  ) as Baselines;
-  await writeFile(join(directory, "README.md"), renderBaselineReport(baseline));
-  process.stdout.write("Benchmark report updated; measurements unchanged.\n");
+export function parseBaselineReport(
+  markdown: string,
+): Pick<Baselines, "fixtures"> {
+  const fixtures: Baselines["fixtures"] = Object.create(null);
+  let inResults = false;
+  let phases: Baselines["fixtures"][string] | undefined;
+  const invalid = (detail: string): never => {
+    throw new Error(`Invalid benchmark baseline: ${detail}`);
+  };
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!inResults) {
+      if (line === "## Results") inResults = true;
+      continue;
+    }
+    if (line.startsWith("## ")) break;
+    const fixture = /^### ([a-zA-Z0-9-]+) fixture$/.exec(line)?.[1];
+    if (fixture) {
+      if (Object.hasOwn(fixtures, fixture))
+        invalid(`duplicate fixture ${fixture}`);
+      phases = Object.create(null) as Baselines["fixtures"][string];
+      fixtures[fixture] = phases;
+      continue;
+    }
+    if (!phases || !line) continue;
+    if (
+      /^\|\s*Phase\s*\|\s*First batch \(ms\)\s*\|\s*Subsequent batch \(ms\)\s*\|$/.test(
+        line,
+      ) ||
+      /^\|(?:\s*:?-{3,}:?\s*\|){3}$/.test(line)
+    )
+      continue;
+    const row =
+      /^\|[^|]*<!--\s*([a-zA-Z0-9.]+)\s*-->\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|\s*([0-9]+(?:\.[0-9]+)?)\s*\|$/.exec(
+        line,
+      );
+    if (!row) invalid(`malformed timing row: ${line}`);
+    const [, name, cold, warm] = row!;
+    const coldMs = Number(cold);
+    const warmMs = Number(warm);
+    if (!Number.isFinite(coldMs) || !Number.isFinite(warmMs))
+      invalid("non-finite timing");
+    if (Object.hasOwn(phases, name!)) invalid(`duplicate phase ${name}`);
+    phases[name!] = { coldMs, warmMs };
+  }
+  if (Object.keys(fixtures).length === 0) invalid("no fixture tables found");
+  for (const [fixture, timings] of Object.entries(fixtures)) {
+    if (Object.keys(timings).length === 0) invalid(`empty fixture ${fixture}`);
+  }
+  return { fixtures };
 }

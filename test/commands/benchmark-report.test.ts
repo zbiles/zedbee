@@ -1,11 +1,12 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import {
   captureEnvironment,
   renderBaselineReport,
-  writeBaselineFiles,
+  parseBaselineReport,
+  writeBaselineReport,
 } from "../../bench/report.mjs";
 
 it("records the Actions run and runner image without copying unrelated environment data", () => {
@@ -34,7 +35,7 @@ it("records the Actions run and runner image without copying unrelated environme
   expect(JSON.stringify(environment)).not.toContain("must-not-appear");
 });
 
-it("preserves measurement precision in JSON and writes a readable report from the same run", async () => {
+it("stores full-precision timings and environment in a single readable baseline", async () => {
   const root = await mkdtemp(join(tmpdir(), "zedbee-benchmark-report-"));
   try {
     const baseline = {
@@ -46,18 +47,50 @@ it("preserves measurement precision in JSON and writes a readable report from th
         },
       },
     };
-    await writeBaselineFiles(root, baseline);
-    expect(
-      JSON.parse(await readFile(join(root, "baselines.json"), "utf8")),
-    ).toEqual(baseline);
+    await writeBaselineReport(root, baseline);
+    expect(await readdir(root)).toEqual(["README.md"]);
     const report = await readFile(join(root, "README.md"), "utf8");
-    expect(report).toContain("| Lint | 544.96 | 514.85 |");
+    expect(parseBaselineReport(report).fixtures).toEqual({
+      small: { "adapter.lint.execute": { coldMs: 544.959, warmMs: 514.8498 } },
+    });
     expect(report).toContain(process.version);
     expect(report).toContain(baseline.environment.commit!);
     expect(baseline.environment.githubActions).toBeNull();
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+it("reads edited timings independently of display labels and table alignment", () => {
+  const report = `## Results\r
+### small fixture\r
+| Phase | First batch (ms) | Subsequent batch (ms) |\r
+| :--- | ---: | ---: |\r
+| Renamed lint label <!-- adapter.lint.execute -->    | 12.3456 | 0 |\r
+### monorepo fixture\r
+| Phase | First batch (ms) | Subsequent batch (ms) |\r
+| --- | ---: | ---: |\r
+| Inspection <!-- inspection --> | 7 | 8 |\r
+## Notes\r
+Unrelated prose.\r
+`;
+  expect(parseBaselineReport(report).fixtures).toEqual({
+    small: { "adapter.lint.execute": { coldMs: 12.3456, warmMs: 0 } },
+    monorepo: { inspection: { coldMs: 7, warmMs: 8 } },
+  });
+});
+
+it.each([
+  "| Lint <!-- adapter.lint.execute --> | NaN | 1 |",
+  "| Lint <!-- adapter.lint.execute --> | -1 | 1 |",
+  "| Lint <!-- adapter.lint.execute --> | | 1 |",
+  "| Lint | 1 | 1 |",
+  "| Lint <!-- adapter.lint.execute --> | 1 | 1 |\n| Lint <!-- adapter.lint.execute --> | 2 | 2 |",
+  "",
+])("rejects invalid or ambiguous baseline rows: %s", (row) => {
+  expect(() =>
+    parseBaselineReport(`## Results\n### small fixture\n${row}\n`),
+  ).toThrow();
 });
 
 it("does not attribute historical measurements to the computer rendering the report", () => {

@@ -29,7 +29,7 @@ interface Measurement {
 }
 
 const here = dirname(fileURLToPath(import.meta.url));
-const baselinePath = resolve(here, "baselines.json");
+const baselinePath = resolve(here, "README.md");
 const update = process.argv.includes("--update");
 const smoke = process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
 const inProcessReference = process.argv.includes("--in-process-reference");
@@ -333,10 +333,14 @@ async function main(): Promise<void> {
     throw new Error(
       "Corrected in-process references never overwrite historical phase targets.",
     );
-  const { captureEnvironment, phaseLimitations, writeBaselineFiles } =
-    (await import(
-      new URL("./report.mts", import.meta.url).href
-    )) as typeof Reporting;
+  const {
+    captureEnvironment,
+    phaseLimitations,
+    writeBaselineReport,
+    parseBaselineReport,
+  } = (await import(
+    new URL("./report.mts", import.meta.url).href
+  )) as typeof Reporting;
   const scratch = await mkdtemp(join(tmpdir(), "zedbee-bench-"));
   const executor = createLocalAnalyzerExecutor();
   try {
@@ -367,10 +371,8 @@ async function main(): Promise<void> {
     }
 
     if (update) {
-      await writeBaselineFiles(here, measurements);
-      process.stdout.write(
-        "Benchmark baselines and readable report updated.\n",
-      );
+      await writeBaselineReport(here, measurements);
+      process.stdout.write("Benchmark baseline report updated.\n");
       return;
     }
 
@@ -391,9 +393,7 @@ async function main(): Promise<void> {
       return;
     }
 
-    const baselines = JSON.parse(
-      await readFile(baselinePath, "utf8"),
-    ) as Baselines;
+    const baselines = parseBaselineReport(await readFile(baselinePath, "utf8"));
     const regressions: string[] = [];
     for (const [fixture, phases] of Object.entries(measurements.fixtures)) {
       for (const [phase, current] of Object.entries(phases)) {
