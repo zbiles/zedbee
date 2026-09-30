@@ -144,3 +144,86 @@ No earlier run has matching recorded environment details. These measurements est
 ### Change from previous matching environment
 
 No earlier run has matching recorded environment details. These measurements establish a starting point for this environment.
+
+## Run: 2026-09-30T20:32:25.190Z — MacBook / Apple M5 Max / 128 GiB
+
+### Measurement environment
+
+| Detail | Recorded value |
+| --- | --- |
+| Origin | Local run |
+| Measured at (UTC) | 2026-09-30T20:32:25.190Z |
+| Machine | MacBook |
+| Source commit | d268a90fd55834baacb352b0c5d1d4d0c1f06793 |
+| Uncommitted changes | No |
+| Node.js | v24.15.0 |
+| Platform / architecture | darwin / arm64 |
+| OS version / release | Darwin Kernel Version 25.3.0: Wed Jan 28 20:54:38 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6050 / 25.3.0 |
+| CPU | Apple M5 Max |
+| Logical CPUs | 18 |
+| Memory visible to process (GiB) | 128.00 |
+
+### Results
+
+#### small fixture
+
+| Phase | First batch (ms) | Subsequent batch (ms) |
+| --- | ---: | ---: |
+| Snapshot cache-key hashing | 1.0405 | 1.021 |
+| Inspection | 0.6716 | 0.6145 |
+| Structural security (collection) | 2.2079 | 2.041 |
+| Attribution | 0.0178 | 0.0093 |
+| Rendering | 0.0084 | 0.0056 |
+| Formatting | 2.8307 | 2.0808 |
+| Lint | 465.8773 | 479.009 |
+| Types | 455.8991 | 450.6692 |
+| Cyclomatic complexity | 1.9582 | 1.6353 |
+| Readability complexity | 1.5681 | 1.689 |
+| Structural security | 2.4142 | 2.2755 |
+| Secrets | 1.0803 | 0.9915 |
+| Duplication | 83.7376 | 65.2114 |
+| Dependency architecture | 13.2444 | 10.2828 |
+| Dead code | 304.9942 | 293.0109 |
+| React correctness | 9.3946 | 8.0042 |
+| React accessibility | 3.8919 | 3.2075 |
+| Vulnerabilities | 0.0092 | 0.0068 |
+
+#### monorepo fixture
+
+| Phase | First batch (ms) | Subsequent batch (ms) |
+| --- | ---: | ---: |
+| Snapshot cache-key hashing | 9.0416 | 9.0011 |
+| Inspection | 5.3825 | 5.3933 |
+| Structural security (collection) | 8.9623 | 8.9561 |
+| Attribution | 0.0388 | 0.0173 |
+| Rendering | 0.0079 | 0.0044 |
+
+### Change from previous matching environment
+
+Compared with: 2026-09-30T20:21:15.475Z — MacBook / Apple M5 Max / 128 GiB.
+
+| Fixture / phase | First batch change | Subsequent batch change |
+| --- | ---: | ---: |
+| small / Snapshot cache-key hashing | -0.13 ms (-11.11%) | -0.0771 ms (-7.02%) |
+| small / Inspection | +0.0451 ms (+7.20%) | -0.0856 ms (-12.23%) |
+| small / Structural security (collection) | -0.1471 ms (-6.25%) | -0.205 ms (-9.13%) |
+| small / Attribution | +0.0012 ms (+7.23%) | +0.0001 ms (+1.09%) |
+| small / Rendering | +0.0004 ms (+5.00%) | +0.0001 ms (+1.82%) |
+| small / Formatting | +0.2354 ms (+9.07%) | +0.3978 ms (+23.64%) |
+| small / Lint | +4.0611 ms (+0.88%) | +35.868 ms (+8.09%) |
+| small / Types | +16.5121 ms (+3.76%) | +6.5278 ms (+1.47%) |
+| small / Cyclomatic complexity | -0.1269 ms (-6.09%) | -0.1064 ms (-6.11%) |
+| small / Readability complexity | -0.117 ms (-6.94%) | +0.1326 ms (+8.52%) |
+| small / Structural security | -0.0636 ms (-2.57%) | +0.0117 ms (+0.52%) |
+| small / Secrets | -0.1144 ms (-9.58%) | -0.151 ms (-13.22%) |
+| small / Duplication | +18.0063 ms (+27.39%) | +2.4096 ms (+3.84%) |
+| small / Dependency architecture | +1.8626 ms (+16.36%) | +0.5753 ms (+5.93%) |
+| small / Dead code | -47.4353 ms (-13.46%) | +6.5292 ms (+2.28%) |
+| small / React correctness | -7.7974 ms (-45.35%) | +0.7177 ms (+9.85%) |
+| small / React accessibility | +0.5212 ms (+15.46%) | +0.0783 ms (+2.50%) |
+| small / Vulnerabilities | +0.0009 ms (+10.84%) | -0.0002 ms (-2.86%) |
+| monorepo / Snapshot cache-key hashing | -0.659 ms (-6.79%) | +0.3673 ms (+4.25%) |
+| monorepo / Inspection | -0.4574 ms (-7.83%) | -0.3464 ms (-6.04%) |
+| monorepo / Structural security (collection) | -0.3437 ms (-3.69%) | -0.3184 ms (-3.43%) |
+| monorepo / Attribution | +0.0023 ms (+6.30%) | +0.001 ms (+6.13%) |
+| monorepo / Rendering | 0 ms (0.00%) | +0.0004 ms (+10.00%) |
