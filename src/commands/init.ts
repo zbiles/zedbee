@@ -1,3 +1,5 @@
+import { HookInstallationError, resolveHookCommand } from "../hooks/command.js";
+import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
 import {
   telemetryDisabled,
@@ -67,6 +69,7 @@ export interface InitCommandIO {
 }
 
 export interface InitPromptOptions {
+  readonly projectPrettierTrustStored?: boolean;
   readonly width: number;
   readonly color: boolean;
   readonly animations: boolean;
@@ -75,6 +78,7 @@ export interface InitPromptOptions {
 }
 
 export interface InitCommandDependencies {
+  resolveHookCommand?(repositoryRoot: string): Promise<string>;
   readTelemetryPreference?(env: TelemetryEnvironment): boolean;
   saveTelemetryPreference?(env: TelemetryEnvironment, enabled: boolean): void;
   resolveRepositoryRoot(cwd: string): Promise<string>;
@@ -108,7 +112,10 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
     return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
       .stdout;
   },
-  inspect: inspectRepository,
+  inspect: async (root) =>
+    inspectRepository(root, {
+      registry: await captureWorkingTreeRegistry(root),
+    }),
   async confirm(
     proposal,
     options,
@@ -224,7 +231,9 @@ function renderText(proposal: InitProposal, applied: boolean): string {
 
 function renderInitFailure(error: unknown): string {
   const lines = ["Zedbee could not initialize this repository safely."];
-  if (
+  if (error instanceof HookInstallationError) {
+    lines.push(error.message);
+  } else if (
     error instanceof RepositoryInspectionError &&
     error.code === "UNSAFE_SNAPSHOT_PATH"
   ) {
@@ -472,12 +481,23 @@ export async function executeInitCommand(
       options.format === "text" &&
       io.stdinIsTTY &&
       io.stdoutIsTTY;
+    const hookCommand =
+      options.hook === "none"
+        ? undefined
+        : await (dependencies.resolveHookCommand ?? resolveHookCommand)(
+            repositoryRoot,
+          );
     const [inspection, hookIntegration, configBefore] = await Promise.all([
       dependencies.inspect(repositoryRoot),
-      detectHookIntegration(repositoryRoot, options.hook),
+      detectHookIntegration(repositoryRoot, options.hook, hookCommand),
       existingConfig(repositoryRoot),
     ]);
     const formattingSetup = await resolveFormattingSetup(repositoryRoot);
+    const allProjectsTrusted =
+      formattingSetup.projectRoots.length > 0 &&
+      formattingSetup.projectRoots.every((root) =>
+        formattingSetup.storedTrustRoots.includes(root),
+      );
     // Project mode enables every discovered project; a non-interactive run
     // needs invocation consent or an existing grant for each of them.
     if (
@@ -559,15 +579,16 @@ export async function executeInitCommand(
             formattingRootProject: formattingSetup.projectRoots.includes("."),
           }
         : {}),
-      ...(options.formatting === "project" && options.trustProjectPrettier
+      ...(options.formatting === "project" &&
+      (options.trustProjectPrettier || allProjectsTrusted)
         ? {
             projectPrettierTrustRoots: formattingSetup.projectRoots,
             projectPrettierTrustConfirmed: true,
           }
         : {}),
       ...((options.formatting === "managed" || options.formatting === "off") &&
-      formattingSetup.storedTrustRoots.length > 0
-        ? { projectPrettierRevokeRoots: formattingSetup.storedTrustRoots }
+      formattingSetup.projectRoots.length > 0
+        ? { projectPrettierRevokeRoots: formattingSetup.projectRoots }
         : {}),
       ...(effectiveEvaluatedConfigs === undefined
         ? {}
@@ -625,7 +646,7 @@ export async function executeInitCommand(
         try {
           integrations.set(
             "tracked",
-            await detectHookIntegration(repositoryRoot, "tracked"),
+            await detectHookIntegration(repositoryRoot, "tracked", hookCommand),
           );
           selection = "tracked";
           choices = ["none", "tracked", "raw"];
@@ -646,14 +667,14 @@ export async function executeInitCommand(
         selectedHook: InitHookChoice = selection,
         selectedFormatting:
           InitFormattingChoice | undefined = options.formatting,
-        selectedProjectTrust = false,
+        selectedProjectTrust = allProjectsTrusted,
         evaluatedImport: InitFormattingImport | undefined = undefined,
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
           throw new Error("Invalid hook selection.");
         // Prompt capability alone never authorizes executable code; only the
-        // separately confirmed disclosure (or the explicit CLI flag) does.
+        // saved grant, separately confirmed disclosure, or explicit CLI flag does.
         const trustGranted =
           selectedFormatting === "project" &&
           (options.trustProjectPrettier || selectedProjectTrust);
@@ -687,10 +708,9 @@ export async function executeInitCommand(
                   : {}),
                 ...((selectedFormatting === "managed" ||
                   selectedFormatting === "off") &&
-                formattingSetup.storedTrustRoots.length > 0
+                formattingSetup.projectRoots.length > 0
                   ? {
-                      projectPrettierRevokeRoots:
-                        formattingSetup.storedTrustRoots,
+                      projectPrettierRevokeRoots: formattingSetup.projectRoots,
                     }
                   : {}),
                 ...(evaluatedImport !== undefined &&
@@ -733,6 +753,7 @@ export async function executeInitCommand(
         proposal,
         {
           width: io.width,
+          ...(allProjectsTrusted ? { projectPrettierTrustStored: true } : {}),
           color,
           animations: options.animations && io.env.NO_COLOR === undefined,
         },

@@ -1,8 +1,13 @@
 import { parseDocument } from "yaml";
-import { hasZedbeeScanCommand } from "./husky.js";
+import {
+  hasZedbeeScanCommand,
+  replaceManagedZedbeeCommand,
+  ZEDBEE_COMMAND,
+} from "./husky.js";
 
 export function updateLefthookConfig(
   before: string | null | undefined,
+  command = ZEDBEE_COMMAND,
 ): string {
   const source = before ?? "";
   const document = parseDocument(source.length === 0 ? "{}\n" : source, {
@@ -17,12 +22,20 @@ export function updateLefthookConfig(
     };
   };
   if (hasZedbeeLefthookData(data)) {
-    return source;
+    let changed = false;
+    for (const [name, entry] of Object.entries(
+      data["pre-commit"]?.commands ?? {},
+    )) {
+      if (typeof entry.run !== "string") continue;
+      const updated = replaceManagedZedbeeCommand(entry.run, command);
+      if (updated !== entry.run) {
+        document.setIn(["pre-commit", "commands", name, "run"], updated);
+        changed = true;
+      }
+    }
+    return changed ? document.toString({ lineWidth: 0 }) : source;
   }
-  document.setIn(
-    ["pre-commit", "commands", "zedbee", "run"],
-    "npx --no-install zedbee scan --hook-invocation",
-  );
+  document.setIn(["pre-commit", "commands", "zedbee", "run"], command);
   return document.toString({ lineWidth: 0 });
 }
 

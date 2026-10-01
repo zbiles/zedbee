@@ -19,7 +19,7 @@ import {
   readContainedFile,
   readJsonData,
 } from "../inspection/read-json.js";
-import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
+import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import {
   discoverProjectPrettier,
   type ProjectPrettierDiscovery,
@@ -574,7 +574,7 @@ export async function previewPrettierSettingsImport(
       sharedConfigs: [],
     };
   }
-  const registry = await captureSnapshotRegistry(canonicalRoot);
+  const registry = await captureWorkingTreeRegistry(canonicalRoot);
   const discoveries = await discoverProjectPrettier(repositoryRoot);
 
   const limitations: string[] = [];

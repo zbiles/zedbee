@@ -1,11 +1,12 @@
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInitProposal } from "../../../src/init/recommend.js";
 import { applyInitProposal } from "../../../src/init/write-config.js";
-import { writeFile } from "node:fs/promises";
+import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   canonicalCheckoutRoot,
+  canonicalTrustRoot,
   persistProjectPrettierTrust,
   projectPrettierPermitAllows,
   projectPrettierTrustKey,
@@ -84,8 +85,10 @@ describe("project Prettier trust", () => {
 
   it("does not read global Git configuration as consent", async () => {
     const repo = await createGitRepository();
-    const checkoutRoot = await canonicalCheckoutRoot(repo.root);
-    const key = projectPrettierTrustKey(checkoutRoot, ".");
+    const key = projectPrettierTrustKey(
+      await canonicalTrustRoot(repo.root),
+      ".",
+    );
     const globalConfig = join(repo.root, "global.gitconfig");
     await writeFile(globalConfig, "", "utf8");
     await repo.git(["config", "--file", globalConfig, key, "v1"]);
@@ -104,8 +107,10 @@ describe("project Prettier trust", () => {
 
   it("does not follow local config includes for consent", async () => {
     const repo = await createGitRepository();
-    const checkoutRoot = await canonicalCheckoutRoot(repo.root);
-    const key = projectPrettierTrustKey(checkoutRoot, ".");
+    const key = projectPrettierTrustKey(
+      await canonicalTrustRoot(repo.root),
+      ".",
+    );
     const included = join(repo.root, "included.gitconfig");
     await writeFile(included, "", "utf8");
     await repo.git(["config", "--file", included, key, "v1"]);
@@ -138,29 +143,61 @@ describe("project Prettier trust", () => {
   });
 });
 
-it("does not share a local grant with a sibling worktree", async () => {
-  const repo = await createGitRepository();
-  await repo.write("package.json", '{"name":"fixture"}');
-  await repo.commitAll("fixture");
-  const sibling = join(repo.root, "sibling");
-  const added = await repo.git([
-    "worktree",
-    "add",
-    "--detach",
-    sibling,
-    "HEAD",
-  ]);
-  expect(added.exitCode, added.stderr).toBe(0);
-  await persistProjectPrettierTrust(repo.root, ".");
-  await expect(
-    requireProjectPrettierTrust(sibling, ".", false),
-  ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
-  await persistProjectPrettierTrust(sibling, ".");
-  await revokeProjectPrettierTrust(repo.root, ".");
-  await expect(
-    requireProjectPrettierTrust(sibling, ".", false),
-  ).resolves.toBeDefined();
-});
+it.each(["new", "legacy-main", "legacy-worktree"])(
+  "shares %s consent across branches and worktrees and revokes it everywhere",
+  async (grant) => {
+    const repo = await createGitRepository();
+    await repo.write("package.json", '{"name":"fixture"}');
+    await repo.commitAll("fixture");
+    const sibling = join(repo.root, "sibling");
+    const added = await repo.git([
+      "worktree",
+      "add",
+      "--detach",
+      sibling,
+      "HEAD",
+    ]);
+    expect(added.exitCode, added.stderr).toBe(0);
+    if (grant === "new") {
+      await persistProjectPrettierTrust(sibling, ".");
+    } else {
+      const checkout = await canonicalCheckoutRoot(
+        grant === "legacy-main" ? repo.root : sibling,
+      );
+      await repo.git([
+        "config",
+        "--local",
+        projectPrettierTrustKey(checkout, "."),
+        "v1",
+      ]);
+    }
+    await repo.git(["checkout", "-b", "another-branch"]);
+    await expect(
+      requireProjectPrettierTrust(repo.root, ".", false),
+    ).resolves.toBeDefined();
+    const permit = await requireProjectPrettierTrust(sibling, ".", false);
+    expect(
+      projectPrettierPermitAllows(
+        permit,
+        await canonicalCheckoutRoot(repo.root),
+        ".",
+      ),
+    ).toBe(false);
+    await expect(
+      requireProjectPrettierTrust(sibling, "other-project", false),
+    ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
+    const copied = await copyGitRepository(repo.root);
+    await expect(
+      requireProjectPrettierTrust(copied.root, ".", false),
+    ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
+    await revokeProjectPrettierTrust(sibling, ".");
+    for (const root of [repo.root, sibling]) {
+      await expect(
+        requireProjectPrettierTrust(root, ".", false),
+      ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
+    }
+  },
+);
 
 it.each([false, true])(
   "restores the prior grant after a later setup grant fails (existing=%s)",
@@ -185,3 +222,57 @@ it.each([false, true])(
     });
   },
 );
+
+it("restores shared and legacy grants when setup revocation rolls back", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"fixture"}');
+  await persistProjectPrettierTrust(repo.root, ".");
+  const legacyKey = projectPrettierTrustKey(
+    await canonicalCheckoutRoot(repo.root),
+    ".",
+  );
+  await repo.git(["config", "--local", legacyKey, "v1"]);
+  const before = await repo.git([
+    "config",
+    "--local",
+    "--get-regexp",
+    "allowed",
+  ]);
+  const proposal = createInitProposal(await inspectRepository(repo.root), {
+    repositoryRoot: repo.root,
+    profile: "recommended",
+    hook: "none",
+    formatting: "managed",
+    projectPrettierRevokeRoots: [".", "../invalid"],
+  });
+  await expect(applyInitProposal(proposal)).rejects.toThrow(/rolled back/);
+  expect(
+    (await repo.git(["config", "--local", "--get-regexp", "allowed"])).stdout,
+  ).toBe(before.stdout);
+  await expect(
+    requireProjectPrettierTrust(repo.root, ".", false),
+  ).resolves.toBeDefined();
+});
+
+it("does not revive legacy consent when an unavailable worktree returns after revocation", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"fixture"}');
+  await repo.commitAll("fixture");
+  const sibling = join(repo.root, "sibling");
+  const absent = join(repo.root, "absent");
+  expect(
+    (await repo.git(["worktree", "add", "--detach", sibling, "HEAD"])).exitCode,
+  ).toBe(0);
+  const key = projectPrettierTrustKey(
+    await canonicalCheckoutRoot(sibling),
+    ".",
+  );
+  await repo.git(["config", "--local", key, "v1"]);
+  await persistProjectPrettierTrust(repo.root, ".");
+  await rename(sibling, absent);
+  await revokeProjectPrettierTrust(repo.root, ".");
+  await rename(absent, sibling);
+  await expect(
+    requireProjectPrettierTrust(sibling, ".", false),
+  ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
+});

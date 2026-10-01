@@ -1588,6 +1588,36 @@ describe("formatting engine choice", () => {
     );
   });
 
+  it("allows review with saved trust and lets the user withdraw confirmation", async () => {
+    const trusted = { ...proposal, formatting: "project" as const };
+    const view = render(
+      <InitApp
+        proposal={trusted}
+        projectPrettierTrustStored={true}
+        proposalForSelection={() => trusted}
+        width={80}
+        terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await settleInput();
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("APPLY CHANGES"),
+    );
+    view.stdin.write("b");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).not.toContain("APPLY CHANGES"),
+    );
+    view.stdin.write("t");
+    await settleInput();
+    view.stdin.write("\r");
+    await settleInput();
+    expect(view.lastFrame()).not.toContain("APPLY CHANGES");
+  });
+
   it("requires separate executable-code trust confirmation before review", async () => {
     const detected: InitProposal = {
       ...proposal,

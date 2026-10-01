@@ -85,7 +85,10 @@ export async function trackedRuntimeChanges(
   );
 }
 
-export async function validateLocalHookMigration(root: string): Promise<void> {
+export async function validateLocalHookMigration(
+  root: string,
+  command?: string,
+): Promise<void> {
   const { rawGitHookPath } = await import("./detect.js");
   const directory = dirname(await rawGitHookPath(root));
   for (const name of await readdir(directory)) {
@@ -96,6 +99,7 @@ export async function validateLocalHookMigration(root: string): Promise<void> {
     // Recognize the exact stock template shipped before hook attribution too.
     const stock = [
       updateRawGitHook(null),
+      updateRawGitHook(null, command),
       "#!/bin/sh\nnpx --no-install zedbee scan\n",
     ];
     if (name !== "pre-commit" || !stock.includes(original.contents)) {

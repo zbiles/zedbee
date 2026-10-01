@@ -1,6 +1,9 @@
 import { updateHuskyHook } from "./husky.js";
 
-export function updateRawGitHook(before: string | null | undefined): string {
+export function updateRawGitHook(
+  before: string | null | undefined,
+  command?: string,
+): string {
   const firstLine = before?.split("\n", 1)[0] ?? "";
   if (
     firstLine.startsWith("#!") &&
@@ -12,5 +15,5 @@ export function updateRawGitHook(before: string | null | undefined): string {
       "Zedbee cannot safely edit a non-shell pre-commit hook. Add the Zedbee command through its existing integration.",
     );
   }
-  return updateHuskyHook(before);
+  return updateHuskyHook(before, command);
 }
