@@ -144,7 +144,7 @@ export function InstallProjectApp({
           </Box>
         )}
         {busy ? null : (
-          <Box marginTop={1}>
+          <Box marginTop={1} flexDirection="column">
             <InitActionButton label="CONTINUE" focused={false} color={color} />
           </Box>
         )}
