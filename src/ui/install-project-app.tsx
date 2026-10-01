@@ -7,7 +7,7 @@ import {
   BrandedCommandPanel,
   brandedCommandContentWidth,
 } from "./branded-command-frame.js";
-import { initRenderOptions } from "./init-app.js";
+import { InitActionButton, initRenderOptions } from "./init-app.js";
 import { PlainWordmark } from "./pixel-wordmark.js";
 import { TerminalViewport } from "./terminal-viewport.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
@@ -101,7 +101,7 @@ export function InstallProjectApp({
         });
     }
   });
-  const count = Math.max(2, rows - 29);
+  const count = Math.max(2, rows - 33);
   const start = Math.max(0, Math.min(selected, targets.length - count));
   const panel = (
     <BrandedCommandPanel
@@ -141,6 +141,11 @@ export function InstallProjectApp({
           <Box flexDirection="column" marginTop={1}>
             <Text>Could not prepare this project</Text>
             <Text>{error}</Text>
+          </Box>
+        )}
+        {busy ? null : (
+          <Box marginTop={1}>
+            <InitActionButton label="CONTINUE" focused={false} color={color} />
           </Box>
         )}
         <Box marginTop={1}>
