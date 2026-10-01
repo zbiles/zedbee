@@ -1,4 +1,8 @@
-import { HookInstallationError, resolveHookCommand } from "../hooks/command.js";
+import {
+  HookInstallationError,
+  resolveHookCommand,
+  resolveLocalSchemaReference,
+} from "../hooks/command.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
 import {
@@ -487,11 +491,13 @@ export async function executeInitCommand(
         : await (dependencies.resolveHookCommand ?? resolveHookCommand)(
             repositoryRoot,
           );
-    const [inspection, hookIntegration, configBefore] = await Promise.all([
-      dependencies.inspect(repositoryRoot),
-      detectHookIntegration(repositoryRoot, options.hook, hookCommand),
-      existingConfig(repositoryRoot),
-    ]);
+    const [inspection, hookIntegration, configBefore, schemaReference] =
+      await Promise.all([
+        dependencies.inspect(repositoryRoot),
+        detectHookIntegration(repositoryRoot, options.hook, hookCommand),
+        existingConfig(repositoryRoot),
+        resolveLocalSchemaReference(repositoryRoot),
+      ]);
     const formattingSetup = await resolveFormattingSetup(repositoryRoot);
     const allProjectsTrusted =
       formattingSetup.projectRoots.length > 0 &&
@@ -596,6 +602,7 @@ export async function executeInitCommand(
     };
     const proposalBaseOptions = {
       repositoryRoot,
+      ...(schemaReference === undefined ? {} : { schemaReference }),
       hook: hookIntegration.hook,
       configBefore,
       ...(hookIntegration.change === undefined

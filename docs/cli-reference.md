@@ -242,7 +242,7 @@ The configuration example is illustrative. `zedbee init` writes editable recomme
 
 `reporting.terminalFindingLimit` defaults to 25 findings for automatic terminal output and forced `--format ink`; set it to a positive integer or `"all"`. The limit applies to findings only, with blockers first. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths are never limited. Automatic scans always save a complete versioned JSON report, including passes with zero findings. `reporting.temporaryReportMaxAge` defaults to `"24h"`. Temporary reports become eligible for cleanup at the configured age and are removed during a subsequent Zedbee maintenance run. The operating system may remove them sooner. These handoffs are not archives.
 
-The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
+The versioned editor schema ships with the installed package at `schema/zedbee.schema.json`. `zedbee init` writes a relative reference to the local installation, including installations in subfolders, so validation does not depend on a website being available.
 
 ## Managed analyzer boundary
 

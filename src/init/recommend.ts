@@ -253,6 +253,7 @@ function configContents(
   vulnerabilitiesEnabled: boolean,
   osvUnavailable: InitOsvUnavailable,
   formatting: FormattingConfigInput | undefined,
+  schemaReference = "./node_modules/zedbee/schema/zedbee.schema.json",
 ): string {
   const configuredChecks =
     checks === undefined
@@ -295,7 +296,7 @@ function configContents(
     ];
     return `${JSON.stringify(
       {
-        $schema: "./node_modules/zedbee/schema/zedbee.schema.json",
+        $schema: schemaReference,
         schemaVersion: 1,
         profile,
         ...(checksValue === undefined ? {} : { checks: checksValue }),
@@ -326,12 +327,7 @@ function configContents(
   let updated = before;
   updated = applyEdits(
     updated,
-    modify(
-      updated,
-      ["$schema"],
-      "./node_modules/zedbee/schema/zedbee.schema.json",
-      options,
-    ),
+    modify(updated, ["$schema"], schemaReference, options),
   );
   updated = applyEdits(updated, modify(updated, ["schemaVersion"], 1, options));
   updated = applyEdits(updated, modify(updated, ["profile"], profile, options));
@@ -660,6 +656,7 @@ export function createInitProposal(
       vulnerabilitiesEnabled,
       osvUnavailable,
       formattingConfig,
+      options.schemaReference,
     ),
     0o644,
   );

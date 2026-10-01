@@ -105,6 +105,7 @@ export interface InitProposal {
 }
 
 export interface CreateInitProposalOptions {
+  readonly schemaReference?: string;
   readonly repositoryRoot: string;
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
