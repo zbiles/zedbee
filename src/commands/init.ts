@@ -4,6 +4,11 @@ import {
   resolveLocalSchemaReference,
 } from "../hooks/command.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
+import {
+  installProjectDependency,
+  projectInstallTargets,
+  type ProjectInstallTarget,
+} from "../init/install-project.js";
 import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
 import {
   telemetryDisabled,
@@ -82,6 +87,11 @@ export interface InitPromptOptions {
 }
 
 export interface InitCommandDependencies {
+  installProject?(
+    repositoryRoot: string,
+    targets: readonly ProjectInstallTarget[],
+    options: InitPromptOptions & { readonly signal?: AbortSignal },
+  ): Promise<boolean>;
   resolveHookCommand?(repositoryRoot: string): Promise<string>;
   readTelemetryPreference?(env: TelemetryEnvironment): boolean;
   saveTelemetryPreference?(env: TelemetryEnvironment, enabled: boolean): void;
@@ -104,6 +114,13 @@ export interface InitCommandDependencies {
 }
 
 const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
+  async installProject(repositoryRoot, targets, options) {
+    const { runProjectInstallPrompt } =
+      await import("../ui/install-project-app.js");
+    return runProjectInstallPrompt(targets, options, (target, signal) =>
+      installProjectDependency(repositoryRoot, target, signal),
+    );
+  },
   readTelemetryPreference(env) {
     return (
       new TelemetryStore(telemetryDirectory(env)).read()?.enabled !== false
@@ -485,12 +502,39 @@ export async function executeInitCommand(
       options.format === "text" &&
       io.stdinIsTTY &&
       io.stdoutIsTTY;
-    const hookCommand =
-      options.hook === "none"
-        ? undefined
-        : await (dependencies.resolveHookCommand ?? resolveHookCommand)(
-            repositoryRoot,
-          );
+    const resolveCommand =
+      dependencies.resolveHookCommand ?? resolveHookCommand;
+    let hookCommand: string | undefined;
+    if (options.hook !== "none") {
+      try {
+        hookCommand = await resolveCommand(repositoryRoot);
+      } catch (error) {
+        if (
+          !canPrompt ||
+          !(error instanceof HookInstallationError) ||
+          error.projectRoots.length === 0
+        )
+          throw error;
+        const targets = await projectInstallTargets(
+          repositoryRoot,
+          error.projectRoots,
+        );
+        if (targets.length === 0) throw error;
+        const installed = await (
+          dependencies.installProject ?? DEFAULT_DEPENDENCIES.installProject!
+        )(repositoryRoot, targets, {
+          width: io.width,
+          color: options.color && io.env.NO_COLOR === undefined,
+          animations: options.animations,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
+        });
+        if (!installed) {
+          io.writeStdout("Zedbee initialization cancelled.\n");
+          return 0;
+        }
+        hookCommand = await resolveCommand(repositoryRoot);
+      }
+    }
     const [inspection, hookIntegration, configBefore, schemaReference] =
       await Promise.all([
         dependencies.inspect(repositoryRoot),
@@ -729,6 +773,7 @@ export async function executeInitCommand(
               };
         const selectedProposal = createInitProposal(inspection, {
           repositoryRoot,
+          ...(schemaReference === undefined ? {} : { schemaReference }),
           configBefore,
           profile,
           osvUnavailable,

@@ -4,7 +4,14 @@ import { compareCodeUnits } from "../core/compare.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 
-export class HookInstallationError extends Error {}
+export class HookInstallationError extends Error {
+  constructor(
+    message: string,
+    readonly projectRoots: readonly string[] = [],
+  ) {
+    super(message);
+  }
+}
 
 function contained(root: string, path: string): boolean {
   const value = relative(root, path);
@@ -98,6 +105,7 @@ export async function resolveHookCommand(
         : `one of these project folders: ${candidates.map((project) => project.relativeRoot).join(", ")}`;
   throw new HookInstallationError(
     `No usable project installation of Zedbee was found. Install zedbee as a development dependency in ${location}, then rerun zedbee init. Use --hook none to configure checks without installing a hook.`,
+    candidates.map((project) => project.relativeRoot),
   );
 }
 
