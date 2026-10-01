@@ -221,7 +221,12 @@ function smokeReleaseArtifact(artifactPath, manifest) {
       join(fixture, ".git", "hooks", "pre-commit"),
       "utf8",
     );
-    if (!hook.includes("npx --no-install zedbee scan")) {
+    if (
+      !hook.includes(
+        "node './node_modules/zedbee/dist/cli.js' scan --hook-invocation",
+      ) ||
+      !hook.includes("git rev-parse --show-toplevel")
+    ) {
       throw new Error(
         "Installed CLI did not create the expected pre-commit hook.",
       );
@@ -241,11 +246,10 @@ function smokeReleaseArtifact(artifactPath, manifest) {
       cwd: fixture,
       label: "Base-mode fixture staging",
     });
-    run(
-      "git",
-      ["commit", "--no-gpg-sign", "-m", "base-mode fixture policy"],
-      { cwd: fixture, label: "Base-mode fixture commit" },
-    );
+    run("git", ["commit", "--no-gpg-sign", "-m", "base-mode fixture policy"], {
+      cwd: fixture,
+      label: "Base-mode fixture commit",
+    });
     const baseline = run("git", ["rev-parse", "HEAD"], {
       cwd: fixture,
       label: "Base-mode baseline resolution",

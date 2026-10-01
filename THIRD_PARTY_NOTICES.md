@@ -7956,7 +7956,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## brace-expansion@1.1.18
+## brace-expansion@1.1.21
 
 License: MIT
 
@@ -7985,7 +7985,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@1.1.18
+## brace-expansion@1.1.21
 
 License: MIT
 
@@ -8014,7 +8014,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@1.1.18
+## brace-expansion@1.1.21
 
 License: MIT
 
@@ -8043,7 +8043,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@1.1.18
+## brace-expansion@1.1.21
 
 License: MIT
 
@@ -8072,7 +8072,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@1.1.18
+## brace-expansion@1.1.21
 
 License: MIT
 
@@ -8101,7 +8101,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@5.0.9
+## brace-expansion@5.0.12
 
 License: MIT
 
