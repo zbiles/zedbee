@@ -2462,3 +2462,128 @@ it("refuses to generate a broken hook when Zedbee is not installed", async () =>
     code: "ENOENT",
   });
 });
+
+it.each(["install", "cancel"] as const)(
+  "interactive setup can %s at the missing-install selector",
+  async (choice) => {
+    const repo = await createGitRepository();
+    await repo.write(".gitignore", "node_modules/\n");
+    await repo.write("e2e/package.json", '{"name":"tests"}');
+    await repo.write("web/package.json", '{"name":"web"}');
+    const io = terminal(true);
+    let prompted = false;
+    let reviewed = false;
+    const deps: InitCommandDependencies = {
+      ...dependencies(repo.root),
+      resolveHookCommand,
+      async installProject(root, targets) {
+        prompted = true;
+        expect(root).toBe(repo.root);
+        expect(targets.map((target) => target.projectRoot)).toEqual([
+          "e2e",
+          "web",
+        ]);
+        if (choice === "cancel") return false;
+        await repo.write(
+          "web/package.json",
+          '{"devDependencies":{"zedbee":"*"}}',
+        );
+        await repo.write(
+          "web/node_modules/zedbee/package.json",
+          '{"name":"zedbee","bin":"dist/cli.js"}',
+        );
+        await repo.write("web/node_modules/zedbee/dist/cli.js", "");
+        await repo.write(
+          "web/node_modules/zedbee/schema/zedbee.schema.json",
+          "{}",
+        );
+        return true;
+      },
+      async confirm(proposal) {
+        reviewed = true;
+        return proposal;
+      },
+    };
+    expect(
+      await executeInitCommand(
+        {
+          cwd: repo.root,
+          profile: "fast",
+          hook: "raw",
+          yes: false,
+          format: "text",
+          color: false,
+          animations: false,
+        },
+        io,
+        deps,
+      ),
+      io.stderr.join(""),
+    ).toBe(0);
+    expect(prompted).toBe(true);
+    expect(reviewed).toBe(choice === "install");
+    if (choice === "install") {
+      expect(parseJsonc(await repo.read(".zedbeerc.jsonc")).$schema).toBe(
+        "./web/node_modules/zedbee/schema/zedbee.schema.json",
+      );
+      expect(await repo.read(".git/hooks/pre-commit")).toContain(
+        "./web/node_modules/zedbee/dist/cli.js",
+      );
+    } else {
+      expect(io.stdout.join("")).toContain("initialization cancelled");
+      await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+    expect(JSON.parse(await repo.read("e2e/package.json"))).toEqual({
+      name: "tests",
+    });
+  },
+);
+
+it.each(["raw", "none"] as const)(
+  "uses the nested installation's editor schema with a %s hook",
+  async (hook) => {
+    const repo = await createGitRepository();
+    await repo.write(".gitignore", "node_modules/\n");
+    await repo.write("e2e/package.json", '{"name":"tests"}');
+    await repo.write("web/package.json", '{"devDependencies":{"zedbee":"*"}}');
+    await repo.write(
+      "web/node_modules/zedbee/package.json",
+      '{"name":"zedbee","bin":{"zedbee":"dist/cli.js"}}',
+    );
+    await repo.write("web/node_modules/zedbee/dist/cli.js", "");
+    await repo.write("web/node_modules/zedbee/schema/zedbee.schema.json", "{}");
+    const io = terminal(false);
+    const options = {
+      cwd: repo.root,
+      profile: "fast" as const,
+      hook,
+      yes: true,
+      format: "json" as const,
+      color: false,
+      animations: false,
+    };
+    const deps = { ...dependencies(repo.root), resolveHookCommand };
+    expect(
+      await executeInitCommand(options, io, deps),
+      io.stderr.join(""),
+    ).toBe(0);
+    expect(parseJsonc(await repo.read(".zedbeerc.jsonc")).$schema).toBe(
+      "./web/node_modules/zedbee/schema/zedbee.schema.json",
+    );
+    await repo.write(
+      ".zedbeerc.jsonc",
+      '{\n// Keep this comment.\n"$schema":"./node_modules/zedbee/schema/zedbee.schema.json","schemaVersion":1,"profile":"fast"\n}\n',
+    );
+    expect(
+      await executeInitCommand(options, io, deps),
+      io.stderr.join(""),
+    ).toBe(0);
+    const config = await repo.read(".zedbeerc.jsonc");
+    expect(parseJsonc(config).$schema).toBe(
+      "./web/node_modules/zedbee/schema/zedbee.schema.json",
+    );
+    expect(config).toContain("// Keep this comment.");
+  },
+);

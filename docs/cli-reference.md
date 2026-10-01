@@ -242,7 +242,9 @@ The configuration example is illustrative. `zedbee init` writes editable recomme
 
 `reporting.terminalFindingLimit` defaults to 25 findings for automatic terminal output and forced `--format ink`; set it to a positive integer or `"all"`. The limit applies to findings only, with blockers first. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths are never limited. Automatic scans always save a complete versioned JSON report, including passes with zero findings. `reporting.temporaryReportMaxAge` defaults to `"24h"`. Temporary reports become eligible for cleanup at the configured age and are removed during a subsequent Zedbee maintenance run. The operating system may remove them sooner. These handoffs are not archives.
 
-The versioned editor schema ships at `node_modules/zedbee/schema/zedbee.schema.json`. `zedbee init` writes that local schema reference, so validation does not depend on a website being available.
+The versioned editor schema ships with the installed package at `schema/zedbee.schema.json`. `zedbee init` writes a relative reference to the local installation, including installations in subfolders, so validation does not depend on a website being available.
+
+When interactive setup needs a local Zedbee installation, it first shows a project-folder selector. Arrow keys select a folder; Enter prepares that project by adding Zedbee as a development dependency, then continues into setup and review automatically. Detected Prettier projects are labeled in the list. Failures remain in the selector for retry. Escape cancels; canceling preparation already in progress may leave package-manager changes. Non-interactive setup reports the available install locations without installing automatically.
 
 ## Managed analyzer boundary
 
@@ -359,7 +361,7 @@ can be bypassed by Git options; neither makes checks mandatory on a server.
 
 Setup locates an installed Zedbee declared by a project `package.json`, preferring the repository root when multiple installations exist. Generated hooks invoke that package's CLI directly through Node, for example `node './web/node_modules/zedbee/dist/cli.js' scan --hook-invocation`, inside a subshell at the Git root. This also handles existing hooks that change directory and Lefthook commands with a custom `root`, without changing the working directory of surrounding commands. The Zedbee invocation stays at the Git repository root, so an installation in `web/` does not require a root `package.json` or moving `.zedbeerc.jsonc`. This works with local hooks and existing hook integrations; creating a new tracked setup still requires a root manifest as described above.
 
-If no declared, usable installation exists, setup explains where to install Zedbee and writes no hook. `--hook none` remains available to configure checks only. Generated hooks never download packages. The `--hook-invocation` marker identifies hook usage in telemetry without changing scan behavior. Re-running setup refreshes generated commands without duplicating them and preserves custom hook commands. Existing lint, type, and secret commands are preserved too; disable overlapping Zedbee checks if those checks are already covered by your hook.
+If no declared, usable installation exists, interactive setup offers the folder selector above. Non-interactive setup explains where to install Zedbee and writes no hook. `--hook none` remains available to configure checks only. Generated hooks never download packages. The `--hook-invocation` marker identifies hook usage in telemetry without changing scan behavior. Re-running setup refreshes generated commands without duplicating them and preserves custom hook commands. Existing lint, type, and secret commands are preserved too; disable overlapping Zedbee checks if those checks are already covered by your hook.
 
 ## Cache and performance
 

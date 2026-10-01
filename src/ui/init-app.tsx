@@ -568,7 +568,7 @@ function FormattingChoice({
   );
 }
 
-function InitActionButton({
+export function InitActionButton({
   label,
   focused,
   activeTargetRef,

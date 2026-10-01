@@ -1157,6 +1157,13 @@ describe("packaged Zedbee CLI", () => {
     expect(await repository.read(".git/hooks/pre-commit")).toContain(
       "./web/node_modules/zedbee/dist/cli.js",
     );
+    const config = JSON.parse(await repository.read(".zedbeerc.jsonc"));
+    expect(config.$schema).toBe(
+      "./web/node_modules/zedbee/schema/zedbee.schema.json",
+    );
+    expect(
+      await readFile(join(repository.root, config.$schema), "utf8"),
+    ).toContain('"$schema"');
     await expect(repository.read("package.json")).rejects.toMatchObject({
       code: "ENOENT",
     });

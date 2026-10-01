@@ -6,7 +6,10 @@ import { chmod, realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
-import { resolveHookCommand } from "../../src/hooks/command.js";
+import {
+  resolveHookCommand,
+  resolveLocalSchemaReference,
+} from "../../src/hooks/command.js";
 import { detectHookIntegration } from "../../src/hooks/detect.js";
 import { updateRawGitHook } from "../../src/hooks/raw-git.js";
 
@@ -68,6 +71,15 @@ describe("installed hook command", () => {
     );
   });
 
+  it("lists every project folder when no project declares Zedbee", async () => {
+    const repository = await createGitRepository();
+    await repository.write("e2e/package.json", '{"name":"tests"}');
+    await repository.write("web/package.json", '{"name":"app"}');
+    await expect(resolveHookCommand(repository.root)).rejects.toThrow(
+      /one of these project folders: e2e, web/,
+    );
+  });
+
   it("does not select an installation in an ignored project", async () => {
     const repository = await createGitRepository();
     await repository.write(".gitignore", ".claude/\n");
@@ -90,6 +102,13 @@ describe("installed hook command", () => {
     );
     expect(await resolveHookCommand(repository.root)).toContain(
       "./node_modules/zedbee/dist/cli.cjs",
+    );
+    await repository.write(
+      "node_modules/zedbee/schema/zedbee.schema.json",
+      "{}",
+    );
+    expect(await resolveLocalSchemaReference(repository.root)).toBe(
+      "./node_modules/zedbee/schema/zedbee.schema.json",
     );
   });
 
