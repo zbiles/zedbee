@@ -103,7 +103,7 @@ const FORMATTING_LABELS: Readonly<Record<InitFormattingChoice, string>> = {
 };
 
 export const PROJECT_PRETTIER_DISCLOSURE =
-  "The project formatter, its configuration, and its plugins are executable code. Trusting them covers every detected Prettier project's formatter in this checkout, including its future versions and edits.";
+  "The project formatter, its configuration, and its plugins are executable code. Trusting them covers every detected Prettier project's formatter across this repository's branches and worktrees, including its future versions and edits.";
 
 const INIT_EVENT_MAX_FPS = 30;
 const CURSOR_HOME = "\u001b[H";
@@ -825,6 +825,7 @@ export function InitApp({
   proposal,
   proposalForSelection,
   evaluateExecutableImport,
+  projectPrettierTrustStored,
   width,
   terminalSize,
   color,
@@ -863,7 +864,10 @@ export function InitApp({
   const [formatting, setFormatting] = useState<
     InitFormattingChoice | undefined
   >(undefined);
-  const [projectTrust, setProjectTrust] = useState(false);
+  const [projectTrust, setProjectTrust] = useState(
+    projectPrettierTrustStored === true ||
+      proposal.projectPrettierTrustConfirmed === true,
+  );
   const [evaluatedImport, setEvaluatedImport] = useState<
     InitFormattingImport | undefined
   >(undefined);
@@ -874,9 +878,7 @@ export function InitApp({
   const executableEvaluationAvailable =
     canEvaluateExecutable && effectiveFormatting === "copy";
   const projectTrustRequired =
-    effectiveFormatting === "project" &&
-    proposal.projectPrettierTrustConfirmed !== true &&
-    !projectTrust;
+    effectiveFormatting === "project" && !projectTrust;
   const activeTargetRef = useRef<DOMElement>(null);
   const contentRef = useRef<DOMElement>(null);
   const setupOffsetRef = useRef(setupOffset);
@@ -1150,9 +1152,7 @@ export function InitApp({
                 ? (reviewedProposal.formattingImport?.limitations ?? [])
                 : []
             }
-            trustConfirmed={
-              projectTrust || proposal.projectPrettierTrustConfirmed === true
-            }
+            trustConfirmed={projectTrust}
             canEvaluateExecutable={canEvaluateExecutable}
             evaluatedExecutable={evaluatedImport !== undefined}
             width={panelWidth}

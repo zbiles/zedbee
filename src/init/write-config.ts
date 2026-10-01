@@ -23,8 +23,6 @@ import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
 import {
   persistProjectPrettierTrust,
-  projectPrettierTrustKey,
-  readProjectPrettierTrust,
   restoreProjectPrettierTrust,
   revokeProjectPrettierTrust,
   type ProjectPrettierTrustSnapshot,
@@ -346,17 +344,9 @@ export async function applyInitProposal(
       // Switching projects to managed/off withdraws their executable-code
       // grants in the same transaction; a failure restores each previous value.
       for (const projectRoot of proposal.projectPrettierRevokeRoots) {
-        const previous = await readProjectPrettierTrust(
-          root,
-          projectRoot,
-        ).catch(() => undefined);
-        if (previous !== undefined) {
-          revokeSnapshots.push({
-            key: projectPrettierTrustKey(root, projectRoot),
-            previous,
-          });
-          await revokeProjectPrettierTrust(root, projectRoot);
-        }
+        revokeSnapshots.push(
+          ...(await revokeProjectPrettierTrust(root, projectRoot)),
+        );
       }
     }
   } catch {

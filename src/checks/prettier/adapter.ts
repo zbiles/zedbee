@@ -209,7 +209,7 @@ async function runProjectFiles(
         durationMs: 0,
         code: "PROJECT_PRETTIER_TRUST_REQUIRED",
         message:
-          "Using this project's Prettier requires explicit trust for this checkout.",
+          "Using this project's Prettier requires explicit trust for this repository.",
         remediation:
           "Run zedbee init with project formatting, or pass --trust-project-prettier for this invocation.",
       });

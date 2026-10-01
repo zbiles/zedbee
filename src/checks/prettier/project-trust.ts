@@ -28,7 +28,7 @@ export class ProjectPrettierTrustError extends Error {
 
   constructor(projectRoot: string) {
     super(
-      "Using the project's Prettier requires explicit trust for this checkout. Re-run zedbee init or pass --trust-project-prettier for this invocation.",
+      "Using the project's Prettier requires explicit trust for this repository. Re-run zedbee init or pass --trust-project-prettier for this invocation.",
     );
     this.name = "ProjectPrettierTrustError";
     this.projectRoot = projectRoot;
@@ -63,13 +63,60 @@ export async function canonicalCheckoutRoot(
   return realpath(resolve(repositoryRoot));
 }
 
+/** Shared by all worktrees, but distinct for independent clones. */
+export async function canonicalTrustRoot(
+  repositoryRoot: string,
+): Promise<string> {
+  const result = await new GitClient(repositoryRoot).run([
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  return realpath(result.stdout);
+}
+
+/** Include old checkout-scoped grants without writing during inspection. */
+async function trustKeys(
+  repositoryRoot: string,
+  projectRoot: string,
+  revoking = false,
+): Promise<readonly string[]> {
+  const commonDirectory = await canonicalTrustRoot(repositoryRoot);
+  const shared = projectPrettierTrustKey(commonDirectory, projectRoot);
+  const worktrees = await new GitClient(repositoryRoot).run([
+    "worktree",
+    "list",
+    "--porcelain",
+    "-z",
+  ]);
+  const keys = [shared];
+  for (const field of worktrees.stdout.split("\0")) {
+    if (field.startsWith("worktree ")) {
+      const path = field.slice("worktree ".length);
+      // Revocation also removes grants for temporarily unavailable worktrees,
+      // so returning a checkout cannot resurrect withdrawn consent.
+      if (revoking) keys.push(projectPrettierTrustKey(path, projectRoot));
+      // Old keys used real paths. A removed worktree cannot supply consent.
+      const checkout = await realpath(path).catch(() => undefined);
+      if (
+        checkout !== undefined &&
+        (await canonicalTrustRoot(checkout).catch(() => undefined)) ===
+          commonDirectory
+      ) {
+        keys.push(projectPrettierTrustKey(checkout, projectRoot));
+      }
+    }
+  }
+  return [...new Set(keys)];
+}
+
 export function projectPrettierTrustKey(
-  checkoutRoot: string,
+  trustRoot: string,
   projectRoot: string,
 ): string {
   const normalized = normalizeProjectRoot(projectRoot);
   const digest = createHash("sha256")
-    .update(`${checkoutRoot}\0${normalized}`, "utf8")
+    .update(`${trustRoot}\0${normalized}`, "utf8")
     .digest("hex");
   return `${TRUST_KEY_PREFIX}-${digest}.allowed`;
 }
@@ -122,11 +169,11 @@ export async function readProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
 ): Promise<string | undefined> {
-  const checkoutRoot = await canonicalCheckoutRoot(repositoryRoot);
-  return readLocalValue(
-    repositoryRoot,
-    projectPrettierTrustKey(checkoutRoot, projectRoot),
-  );
+  for (const key of await trustKeys(repositoryRoot, projectRoot)) {
+    const value = await readLocalValue(repositoryRoot, key);
+    if (value === TRUST_VALUE) return value;
+  }
+  return undefined;
 }
 
 export interface ProjectPrettierTrustSnapshot {
@@ -142,8 +189,8 @@ export async function persistProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
 ): Promise<ProjectPrettierTrustSnapshot> {
-  const checkoutRoot = await canonicalCheckoutRoot(repositoryRoot);
-  const key = projectPrettierTrustKey(checkoutRoot, projectRoot);
+  const trustRoot = await canonicalTrustRoot(repositoryRoot);
+  const key = projectPrettierTrustKey(trustRoot, projectRoot);
   const previous = await readLocalValue(repositoryRoot, key);
   await new GitClient(repositoryRoot).run([
     "config",
@@ -178,15 +225,26 @@ export async function restoreProjectPrettierTrust(
 export async function revokeProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
-): Promise<void> {
-  const checkoutRoot = await canonicalCheckoutRoot(repositoryRoot);
-  const key = projectPrettierTrustKey(checkoutRoot, projectRoot);
-  await new GitClient(repositoryRoot).tryRun([
-    "config",
-    "--local",
-    "--unset",
-    key,
-  ]);
+): Promise<readonly ProjectPrettierTrustSnapshot[]> {
+  const snapshots: ProjectPrettierTrustSnapshot[] = [];
+  try {
+    for (const key of await trustKeys(repositoryRoot, projectRoot, true)) {
+      const previous = await readLocalValue(repositoryRoot, key);
+      if (previous === undefined) continue;
+      snapshots.push({ key, previous });
+      await new GitClient(repositoryRoot).run([
+        "config",
+        "--local",
+        "--unset",
+        key,
+      ]);
+    }
+  } catch (error) {
+    for (const snapshot of snapshots)
+      await restoreProjectPrettierTrust(repositoryRoot, snapshot);
+    throw error;
+  }
+  return snapshots;
 }
 
 export async function requireProjectPrettierTrust(
@@ -200,10 +258,7 @@ export async function requireProjectPrettierTrust(
     // Invocation-only consent; persistence belongs to init's apply path.
     return mintPermit(checkoutRoot, normalized);
   }
-  const stored = await readLocalValue(
-    repositoryRoot,
-    projectPrettierTrustKey(checkoutRoot, normalized),
-  );
+  const stored = await readProjectPrettierTrust(repositoryRoot, normalized);
   if (stored !== TRUST_VALUE) {
     throw new ProjectPrettierTrustError(normalized);
   }

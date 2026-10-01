@@ -1,3 +1,10 @@
+import { rename } from "node:fs/promises";
+import {
+  canonicalCheckoutRoot,
+  projectPrettierTrustKey,
+  requireProjectPrettierTrust,
+  persistProjectPrettierTrust,
+} from "../../src/checks/prettier/project-trust.js";
 import { createFilePolicyResolver } from "../../src/config/file-policy.js";
 import { configFileSchema } from "../../src/config/schema.js";
 import { resolveConfig } from "../../src/config/profiles.js";
@@ -687,6 +694,56 @@ describe("executeInitCommand", () => {
     ]);
     expect(stored.stdout).toContain("v1");
   });
+
+  it.each([undefined, "project"] as const)(
+    "honors saved trust in interactive setup (formatting=%s)",
+    async (formatting) => {
+      const repository = await createGitRepository();
+      await repository.write(
+        "package.json",
+        '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+      );
+      await persistProjectPrettierTrust(repository.root, ".");
+      const deps = dependencies(repository.root);
+      let prompted = false;
+      deps.confirm = async (_proposal, options, select) => {
+        prompted = true;
+        expect(options.projectPrettierTrustStored).toBe(true);
+        const selected = select(
+          "recommended",
+          undefined,
+          "block",
+          "none",
+          "project",
+        );
+        expect(selected.projectPrettierTrustConfirmed).toBe(true);
+        expect(
+          select("recommended", undefined, "block", "none", "project", false)
+            .projectPrettierTrustConfirmed,
+        ).not.toBe(true);
+        return selected;
+      };
+      const io = terminal(true);
+      expect(
+        await executeInitCommand(
+          {
+            cwd: repository.root,
+            profile: "recommended",
+            hook: "none",
+            ...(formatting ? { formatting } : {}),
+            yes: false,
+            format: "text",
+            color: false,
+            animations: false,
+          },
+          io,
+          deps,
+        ),
+        io.stderr.join(""),
+      ).toBe(0);
+      expect(prompted).toBe(true);
+    },
+  );
 
   it("copies detected settings non-interactively", async () => {
     const repository = await createGitRepository("zedbee-init-copy-");
@@ -2326,5 +2383,51 @@ it.each([".prettierrc.json", "prettier.config.mjs"])(
     await expect(
       readFile(join(repository.root, ".zedbeerc.jsonc"), "utf8"),
     ).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+it.each(["managed", "off"] as const)(
+  "%s setup revokes legacy consent from an unavailable worktree",
+  async (formatting) => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+    );
+    await repository.commitAll("fixture");
+    const sibling = join(repository.root, "sibling");
+    const absent = join(repository.root, "absent");
+    expect(
+      (await repository.git(["worktree", "add", "--detach", sibling, "HEAD"]))
+        .exitCode,
+    ).toBe(0);
+    const key = projectPrettierTrustKey(
+      await canonicalCheckoutRoot(sibling),
+      ".",
+    );
+    await repository.git(["config", "--local", key, "v1"]);
+    await rename(sibling, absent);
+    const io = terminal(false);
+    expect(
+      await executeInitCommand(
+        {
+          cwd: repository.root,
+          profile: "recommended",
+          hook: "none",
+          formatting,
+          yes: true,
+          format: "json",
+          color: false,
+          animations: false,
+        },
+        io,
+        dependencies(repository.root),
+      ),
+      io.stderr.join(""),
+    ).toBe(0);
+    await rename(absent, sibling);
+    await expect(
+      requireProjectPrettierTrust(sibling, ".", false),
+    ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
   },
 );
