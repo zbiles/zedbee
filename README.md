@@ -1,5 +1,7 @@
 # Zedbee
 
+![Zedbee Swarm app screenshot](https://www.zedbee.dev/images/zedbee-swarm.png)
+
 A trust gate for AI-assisted development.
 
 AI coding tools can write code faster than a team can review it. Zedbee checks JavaScript and TypeScript changes before they become commits, or in CI before a merge. It looks for security issues, exposed secrets, code quality problems, and more. Your team decides which findings block the work.
