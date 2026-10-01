@@ -1,3 +1,4 @@
+import { resolveHookCommand } from "../../src/hooks/command.js";
 import { rename } from "node:fs/promises";
 import {
   canonicalCheckoutRoot,
@@ -79,6 +80,8 @@ async function fixture(): Promise<string> {
 
 function dependencies(root: string): InitCommandDependencies {
   return {
+    resolveHookCommand: async () =>
+      "npx --no-install zedbee scan --hook-invocation",
     resolveRepositoryRoot: async () => root,
     inspect: inspectRepository,
     confirm: async () => false,
@@ -2431,3 +2434,31 @@ it.each(["managed", "off"] as const)(
     ).rejects.toMatchObject({ code: "PROJECT_PRETTIER_TRUST_REQUIRED" });
   },
 );
+
+it("refuses to generate a broken hook when Zedbee is not installed", async () => {
+  const repo = await createGitRepository();
+  await repo.write("web/package.json", '{"name":"web"}');
+  const io = terminal(false);
+  const deps = { ...dependencies(repo.root), resolveHookCommand };
+  const result = await executeInitCommand(
+    {
+      cwd: repo.root,
+      profile: "fast",
+      hook: "raw",
+      yes: true,
+      format: "text",
+      color: false,
+      animations: false,
+    },
+    io,
+    deps,
+  );
+  expect(result).toBe(2);
+  expect(io.stderr.join("")).toMatch(/Install zedbee.*web/);
+  await expect(repo.read(".git/hooks/pre-commit")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});

@@ -2,6 +2,7 @@ import { lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
+import { GitClient } from "../../src/git/client.js";
 import { discoverProjectPrettier } from "../../src/init/prettier-discovery.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 
@@ -15,6 +16,73 @@ async function markerExists(root: string, name: string): Promise<boolean> {
 }
 
 describe("discoverProjectPrettier", () => {
+  it("ignores checkout copies while finding an untracked web project without a root manifest", async () => {
+    const fixture = await createInspectionFixture();
+    await new GitClient(fixture.root).run(["init"]);
+    await fixture.write(".gitignore", ".claude/worktrees/\n");
+    await fixture.writeJson("web/package.json", {
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.writeJson(".claude/worktrees/old/web/package.json", {
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.write(".claude/worktrees/old/.prettierrc.json", "{}");
+
+    expect(
+      (await discoverProjectPrettier(fixture.root)).map(
+        (entry) => entry.projectRoot,
+      ),
+    ).toEqual(["web"]);
+  });
+
+  it("does not attach ignored config-only directories to a root project", async () => {
+    const fixture = await createInspectionFixture();
+    await new GitClient(fixture.root).run(["init"]);
+    await fixture.write(".gitignore", ".claude/worktrees/\n");
+    await fixture.writeJson("package.json", {
+      devDependencies: { prettier: "^3.0.0" },
+    });
+    await fixture.write(".prettierrc.json", "{}");
+    await fixture.write(
+      ".claude/worktrees/old/prettier.config.mjs",
+      "export default {};",
+    );
+
+    expect(
+      (await discoverProjectPrettier(fixture.root))[0]?.configPaths,
+    ).toEqual([".prettierrc.json"]);
+  });
+
+  it.each(["directory", "file"])(
+    "excludes nested repositories with a .git %s",
+    async (kind) => {
+      const fixture = await createInspectionFixture();
+      const git = new GitClient(fixture.root);
+      await git.run(["init"]);
+      await fixture.writeJson("web/package.json", {
+        devDependencies: { prettier: "^3.0.0" },
+      });
+      await fixture.writeJson("copies/old/package.json", {
+        devDependencies: { prettier: "^3.0.0" },
+      });
+      // Track the files first: repository boundaries apply even to tracked paths.
+      await git.run(["add", "."]);
+      if (kind === "directory")
+        await new GitClient(join(fixture.root, "copies/old")).run(["init"]);
+      else
+        await fixture.write(
+          "copies/old/.git",
+          "gitdir: /outside/old-worktree\n",
+        );
+
+      expect(
+        (await discoverProjectPrettier(fixture.root)).map(
+          (entry) => entry.projectRoot,
+        ),
+      ).toEqual(["web"]);
+    },
+  );
+
   it("finds a declared and installed project Prettier", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", {
@@ -37,7 +105,9 @@ describe("discoverProjectPrettier", () => {
       executableConfig: false,
     });
     expect(discovered[0]?.configPaths).toEqual([".prettierrc.json"]);
-    expect(discovered[0]?.packageRoot).toContain(join("node_modules", "prettier"));
+    expect(discovered[0]?.packageRoot).toContain(
+      join("node_modules", "prettier"),
+    );
   });
 
   it("resolves a nested project through a hoisted installation", async () => {
@@ -162,7 +232,10 @@ describe("discoverProjectPrettier", () => {
     });
     await fixture.write(".prettierrc.cts", "export default {}\n");
     await fixture.writeJson("packages/app/package.json", { name: "app" });
-    await fixture.write("packages/app/prettier.config.mts", "export default {}\n");
+    await fixture.write(
+      "packages/app/prettier.config.mts",
+      "export default {}\n",
+    );
 
     const discovered = await discoverProjectPrettier(fixture.root);
 
@@ -185,7 +258,10 @@ describe("discoverProjectPrettier", () => {
     const discovered = await discoverProjectPrettier(fixture.root);
 
     expect(discovered).toHaveLength(1);
-    expect(discovered[0]).toMatchObject({ projectRoot: ".", status: "missing" });
+    expect(discovered[0]).toMatchObject({
+      projectRoot: ".",
+      status: "missing",
+    });
     expect(discovered[0]?.version).toBeUndefined();
   });
 

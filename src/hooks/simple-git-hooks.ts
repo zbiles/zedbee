@@ -1,4 +1,8 @@
-import { hasZedbeeScanCommand } from "./husky.js";
+import {
+  hasZedbeeScanCommand,
+  replaceManagedZedbeeCommand,
+  ZEDBEE_COMMAND,
+} from "./husky.js";
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -7,7 +11,10 @@ function record(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function updateSimpleGitHooksManifest(before: string): string {
+export function updateSimpleGitHooksManifest(
+  before: string,
+  zedbeeCommand = ZEDBEE_COMMAND,
+): string {
   const manifest = record(JSON.parse(before) as unknown, "package.json");
   const hooksValue = manifest["simple-git-hooks"];
   const hooks =
@@ -16,10 +23,11 @@ export function updateSimpleGitHooksManifest(before: string): string {
   if (existing !== undefined && typeof existing !== "string") {
     throw new TypeError("Expected simple-git-hooks pre-commit to be a string.");
   }
-  const command = existing ?? "";
+  const command = replaceManagedZedbeeCommand(existing ?? "", zedbeeCommand);
+  if (existing !== undefined) hooks["pre-commit"] = command;
   if (!hasZedbeeScanCommand(command)) {
     hooks["pre-commit"] =
-      `${command}${command.length === 0 ? "" : "\n"}npx --no-install zedbee scan --hook-invocation`;
+      `${command}${command.length === 0 ? "" : "\n"}${zedbeeCommand}`;
   }
   manifest["simple-git-hooks"] = hooks;
   return `${JSON.stringify(manifest, null, 2)}\n`;

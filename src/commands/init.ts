@@ -1,3 +1,5 @@
+import { HookInstallationError, resolveHookCommand } from "../hooks/command.js";
+import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
 import {
   telemetryDisabled,
@@ -76,6 +78,7 @@ export interface InitPromptOptions {
 }
 
 export interface InitCommandDependencies {
+  resolveHookCommand?(repositoryRoot: string): Promise<string>;
   readTelemetryPreference?(env: TelemetryEnvironment): boolean;
   saveTelemetryPreference?(env: TelemetryEnvironment, enabled: boolean): void;
   resolveRepositoryRoot(cwd: string): Promise<string>;
@@ -109,7 +112,10 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
     return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
       .stdout;
   },
-  inspect: inspectRepository,
+  inspect: async (root) =>
+    inspectRepository(root, {
+      registry: await captureWorkingTreeRegistry(root),
+    }),
   async confirm(
     proposal,
     options,
@@ -225,7 +231,9 @@ function renderText(proposal: InitProposal, applied: boolean): string {
 
 function renderInitFailure(error: unknown): string {
   const lines = ["Zedbee could not initialize this repository safely."];
-  if (
+  if (error instanceof HookInstallationError) {
+    lines.push(error.message);
+  } else if (
     error instanceof RepositoryInspectionError &&
     error.code === "UNSAFE_SNAPSHOT_PATH"
   ) {
@@ -473,9 +481,15 @@ export async function executeInitCommand(
       options.format === "text" &&
       io.stdinIsTTY &&
       io.stdoutIsTTY;
+    const hookCommand =
+      options.hook === "none"
+        ? undefined
+        : await (dependencies.resolveHookCommand ?? resolveHookCommand)(
+            repositoryRoot,
+          );
     const [inspection, hookIntegration, configBefore] = await Promise.all([
       dependencies.inspect(repositoryRoot),
-      detectHookIntegration(repositoryRoot, options.hook),
+      detectHookIntegration(repositoryRoot, options.hook, hookCommand),
       existingConfig(repositoryRoot),
     ]);
     const formattingSetup = await resolveFormattingSetup(repositoryRoot);
@@ -632,7 +646,7 @@ export async function executeInitCommand(
         try {
           integrations.set(
             "tracked",
-            await detectHookIntegration(repositoryRoot, "tracked"),
+            await detectHookIntegration(repositoryRoot, "tracked", hookCommand),
           );
           selection = "tracked";
           choices = ["none", "tracked", "raw"];

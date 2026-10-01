@@ -186,11 +186,13 @@ function freezeWorkspace(workspace: WorkspaceInspection): WorkspaceInspection {
 export async function inspectRepository(
   snapshotRoot: string,
   dependencies: {
+    registry?: SnapshotRegistry;
     readHooks?(repositoryPath: string): ContainedFileReadHooks | undefined;
   } = {},
 ): Promise<RepositoryInspection> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
-  const registry = await captureSnapshotRegistry(canonicalRoot);
+  const registry =
+    dependencies.registry ?? (await captureSnapshotRegistry(canonicalRoot));
   const readHooks = dependencies.readHooks ?? (() => undefined);
   const workspaces = await discoverWorkspaces(registry, readHooks);
   const sourceFiles = discoverRepositoryFiles(registry, (path) =>

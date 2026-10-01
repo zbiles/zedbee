@@ -1,3 +1,4 @@
+import { GitClient } from "../../src/git/client.js";
 import { configFileSchema } from "../../src/config/schema.js";
 import { cp, lstat, mkdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -19,6 +20,32 @@ async function markerExists(root: string, name: string): Promise<boolean> {
 }
 
 describe("previewPrettierSettingsImport", () => {
+  it("imports only live repository settings and ignore rules despite ignored checkout symlinks", async () => {
+    const fixture = await createInspectionFixture();
+    const outside = await createInspectionFixture();
+    await new GitClient(fixture.root).run(["init"]);
+    await fixture.write(".gitignore", ".claude/worktrees/\n");
+    await fixture.writeJson("web/package.json", {
+      prettier: { printWidth: 100 },
+    });
+    await fixture.writeJson(".claude/worktrees/old/package.json", {
+      prettier: { printWidth: 150 },
+    });
+    await fixture.write(".claude/worktrees/old/.prettierignore", "src/\n");
+    await fixture.symlink(outside.root, ".claude/worktrees/old/external");
+
+    const preview = await previewPrettierSettingsImport(fixture.root);
+
+    expect(preview.overrides).toHaveLength(1);
+    expect(preview.overrides[0]).toMatchObject({
+      files: ["web/**"],
+      settings: { printWidth: 100 },
+    });
+    expect(preview.pathExclusions?.map((entry) => entry.basePath)).toEqual([
+      ".",
+    ]);
+  });
+
   it("copies supported literal settings from JSON", async () => {
     const fixture = await createInspectionFixture();
     await fixture.writeJson("package.json", { name: "app" });

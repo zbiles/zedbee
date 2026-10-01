@@ -9,7 +9,7 @@ import {
   readContainedFile,
   readJsonData,
 } from "../inspection/read-json.js";
-import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
+import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 import type { SnapshotRegistry } from "../inspection/snapshot-registry.js";
 
@@ -54,9 +54,7 @@ export const DATA_CONFIG_FILE_NAMES = [
   "prettier.config.mts",
 ] as const;
 
-const DATA_CONFIG_FILES: readonly string[] = [
-  ...DATA_CONFIG_FILE_NAMES,
-];
+const DATA_CONFIG_FILES: readonly string[] = [...DATA_CONFIG_FILE_NAMES];
 
 const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
   ".js",
@@ -69,7 +67,10 @@ const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
 
 export function isSupportedProjectPrettierVersion(version: string): boolean {
   const normalized = semver.valid(version);
-  return normalized !== null && semver.satisfies(normalized, SUPPORTED_PROJECT_PRETTIER_RANGE);
+  return (
+    normalized !== null &&
+    semver.satisfies(normalized, SUPPORTED_PROJECT_PRETTIER_RANGE)
+  );
 }
 
 /**
@@ -99,7 +100,10 @@ function executableConfigPath(path: string): boolean {
   return EXECUTABLE_CONFIG_EXTENSIONS.has(extension);
 }
 
-async function readBoundedFile(path: string, maxBytes: number): Promise<string> {
+async function readBoundedFile(
+  path: string,
+  maxBytes: number,
+): Promise<string> {
   const metadata = await lstat(path, { bigint: true });
   if (!metadata.isFile() || metadata.size > BigInt(maxBytes)) {
     throw new Error("File is not a bounded regular file");
@@ -303,15 +307,17 @@ async function discoveryForProject(
     configPaths.length > 0;
   if (!hasSetup) return undefined;
 
-  const usableInstallation = declaredRange === undefined ? undefined : installed;
-  const status: ProjectPrettierDiscovery["status"] = usableInstallation === undefined
-    ? "missing"
-    : isProjectPrettierVersionAccepted(
-        usableInstallation.version,
-        declaredRange,
-      )
-      ? "available"
-      : "unsupported";
+  const usableInstallation =
+    declaredRange === undefined ? undefined : installed;
+  const status: ProjectPrettierDiscovery["status"] =
+    usableInstallation === undefined
+      ? "missing"
+      : isProjectPrettierVersionAccepted(
+            usableInstallation.version,
+            declaredRange,
+          )
+        ? "available"
+        : "unsupported";
 
   return Object.freeze({
     projectRoot,
@@ -337,7 +343,7 @@ export async function discoverProjectPrettier(
   } catch {
     return Object.freeze([]);
   }
-  const registry = await captureSnapshotRegistry(canonicalRoot);
+  const registry = await captureWorkingTreeRegistry(canonicalRoot);
   const workspaces = await discoverWorkspaces(registry);
   const projectRoots = workspaces.map((workspace) => workspace.relativeRoot);
   const results: ProjectPrettierDiscovery[] = [];

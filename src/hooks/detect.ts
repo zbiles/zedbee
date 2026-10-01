@@ -16,7 +16,12 @@ import type {
   InitHookChoice,
   ResolvedHookChoice,
 } from "../init/types.js";
-import { hasZedbeeScanCommand, updateHuskyHook } from "./husky.js";
+import {
+  hasZedbeeScanCommand,
+  replaceManagedZedbeeCommand,
+  updateHuskyHook,
+  ZEDBEE_COMMAND,
+} from "./husky.js";
 import { updateLefthookConfig } from "./lefthook.js";
 import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
@@ -69,6 +74,7 @@ function pendingManager(hook: "lefthook" | "simple-git-hooks") {
 async function managerActivation(
   root: string,
   hook: "lefthook" | "simple-git-hooks",
+  command: string,
 ): Promise<InitHookActivation> {
   try {
     const installed = await existingAbsoluteFile(await rawGitHookPath(root));
@@ -76,7 +82,9 @@ async function managerActivation(
       installed !== undefined &&
       (hook === "lefthook"
         ? hasLefthookRunCommand(installed.contents)
-        : hasZedbeeScanCommand(installed.contents));
+        : hasZedbeeScanCommand(installed.contents) &&
+          replaceManagedZedbeeCommand(installed.contents, command) ===
+            installed.contents);
     if (active) {
       return Object.freeze({
         status: "active",
@@ -305,12 +313,13 @@ async function changedFile(
 export async function detectHookIntegration(
   repositoryRoot: string,
   requested: InitHookChoice,
+  command = ZEDBEE_COMMAND,
 ): Promise<DetectedHookIntegration> {
   repositoryRoot = await realpath(repositoryRoot);
   if (requested === "tracked") {
     const existing = await autoChoice(repositoryRoot);
     if (existing !== "raw" && existing !== "none")
-      return detectHookIntegration(repositoryRoot, existing);
+      return detectHookIntegration(repositoryRoot, existing, command);
     const beforePath = await hooksPathValue(repositoryRoot);
     if (beforePath !== null)
       throw new Error("Zedbee will not replace an existing hook integration.");
@@ -353,9 +362,14 @@ export async function detectHookIntegration(
         0o644,
       ),
     ];
-    await validateLocalHookMigration(repositoryRoot);
+    await validateLocalHookMigration(repositoryRoot, command);
     changes.push(
-      initFileChange(".husky/pre-commit", null, updateHuskyHook(null), 0o755),
+      initFileChange(
+        ".husky/pre-commit",
+        null,
+        updateHuskyHook(null, command),
+        0o755,
+      ),
     );
     changes.push(...(await trackedRuntimeChanges(repositoryRoot)));
     return Object.freeze({
@@ -389,7 +403,7 @@ export async function detectHookIntegration(
       change: await changedFile(
         repositoryRoot,
         ".husky/pre-commit",
-        updateHuskyHook,
+        (before) => updateHuskyHook(before, command),
         0o755,
       ),
     });
@@ -415,7 +429,7 @@ export async function detectHookIntegration(
       change: initFileChange(
         relativePath,
         file?.contents ?? null,
-        updateRawGitHook(file?.contents),
+        updateRawGitHook(file?.contents, command),
         file?.mode ?? 0o755,
         absolutePath,
       ),
@@ -427,11 +441,11 @@ export async function detectHookIntegration(
       : "lefthook.yml";
     return Object.freeze({
       hook,
-      activation: await managerActivation(repositoryRoot, hook),
+      activation: await managerActivation(repositoryRoot, hook, command),
       change: await changedFile(
         repositoryRoot,
         relativePath,
-        updateLefthookConfig,
+        (before) => updateLefthookConfig(before, command),
         0o644,
       ),
     });
@@ -443,11 +457,11 @@ export async function detectHookIntegration(
     }
     return Object.freeze({
       hook,
-      activation: await managerActivation(repositoryRoot, hook),
+      activation: await managerActivation(repositoryRoot, hook, command),
       change: initFileChange(
         "package.json",
         file.contents,
-        updateSimpleGitHooksManifest(file.contents),
+        updateSimpleGitHooksManifest(file.contents, command),
         file.mode,
       ),
     });
@@ -462,7 +476,7 @@ export async function detectHookIntegration(
       return initFileChange(
         ".git/hooks/pre-commit",
         before,
-        updateRawGitHook(before),
+        updateRawGitHook(before, command),
         file?.mode ?? 0o755,
         absolutePath,
       );

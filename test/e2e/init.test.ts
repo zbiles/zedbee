@@ -127,7 +127,7 @@ describe("packaged init command", () => {
     }
     expect(hook).toContain("printf 'existing hook\\n'");
     expect(hook).toContain("npm test");
-    expect(hook.match(/zedbee scan/gu) ?? []).toHaveLength(1);
+    expect(hook.match(/scan --hook-invocation/gu) ?? []).toHaveLength(1);
     if (process.platform !== "win32") {
       expect((await stat(hookPath)).mode & 0o777).toBe(0o751);
     }
@@ -178,7 +178,9 @@ describe("packaged init command", () => {
     expect(initialized.exitCode, initialized.stderr).toBe(0);
     expect(
       await readFile(join(repository.root, ".git/hooks/pre-commit"), "utf8"),
-    ).toContain("zedbee scan");
+    ).toContain(
+      "node './node_modules/zedbee/dist/cli.js' scan --hook-invocation",
+    );
 
     const diagnosed = await invoke(["doctor", "--format", "json"]);
     expect(diagnosed.exitCode, `${diagnosed.stderr}\n${diagnosed.stdout}`).toBe(

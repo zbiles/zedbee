@@ -700,7 +700,7 @@ export function createInitProposal(
     limitations: Object.freeze([
       "Recommendations are based on inspected manifests, source extensions, workspaces, and lockfiles; review the exact proposal before applying it.",
       "Initialization never installs packages or runs project lifecycle scripts.",
-      "Generated hooks use npx --no-install, so Zedbee must remain installed in the project.",
+      "Generated hooks use the project installation of Zedbee, which must remain installed. Existing hook commands are preserved; disable overlapping Zedbee checks if they are already handled by your hook.",
       ...(hookActivation.status === "pending" &&
       hookActivation.remediation !== undefined
         ? [hookActivation.remediation]

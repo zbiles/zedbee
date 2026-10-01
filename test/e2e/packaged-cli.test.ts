@@ -1094,6 +1094,11 @@ describe("packaged Zedbee CLI", () => {
 
   it("initializes a raw hook non-interactively from the installed package", async () => {
     const repository = await createInstalledRepository();
+    const manifest = JSON.parse(await repository.read("package.json"));
+    await repository.write(
+      "package.json",
+      JSON.stringify({ ...manifest, devDependencies: { zedbee: "*" } }),
+    );
     await rm(join(repository.root, ".zedbeerc.jsonc"));
 
     const result = await runPackagedCli(repository.root, [
@@ -1120,12 +1125,52 @@ describe("packaged Zedbee CLI", () => {
       '"profile": "fast"',
     );
     expect(await repository.read(".git/hooks/pre-commit")).toContain(
-      "npx --no-install zedbee scan",
+      "node './node_modules/zedbee/dist/cli.js' scan --hook-invocation",
     );
+  });
+
+  it("initializes and runs a hook with Zedbee installed only in web", async () => {
+    const repository = await createInstalledRepository();
+    await rm(join(repository.root, ".zedbeerc.jsonc"));
+    await rm(join(repository.root, "package.json"));
+    await rm(join(repository.root, "node_modules"));
+    await repository.write(
+      "web/package.json",
+      JSON.stringify({ name: "web", devDependencies: { zedbee: "*" } }),
+    );
+    await symlink(
+      installedNodeModules,
+      join(repository.root, "web/node_modules"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    const result = await runPackagedCli(join(repository.root, "web"), [
+      "init",
+      "--profile",
+      "fast",
+      "--hook",
+      "raw",
+      "--yes",
+      "--format",
+      "json",
+    ]);
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(await repository.read(".git/hooks/pre-commit")).toContain(
+      "./web/node_modules/zedbee/dist/cli.js",
+    );
+    await expect(repository.read("package.json")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const invoked = await repository.git(["hook", "run", "pre-commit"]);
+    expect(invoked.exitCode, invoked.stderr + invoked.stdout).toBe(0);
   });
 
   it("shares tracked hook setup, activates prepare, and passes its own setup commit", async () => {
     const repository = await createInstalledRepository();
+    const manifest = JSON.parse(await repository.read("package.json"));
+    await repository.write(
+      "package.json",
+      JSON.stringify({ ...manifest, devDependencies: { zedbee: "*" } }),
+    );
     await rm(join(repository.root, ".zedbeerc.jsonc"));
     const result = await runPackagedCli(repository.root, [
       "init",
@@ -1153,7 +1198,7 @@ describe("packaged Zedbee CLI", () => {
       (await repository.git(["config", "core.hooksPath"])).stdout.trim(),
     ).toBe(".husky/_");
     expect(await repository.read(".husky/pre-commit")).toContain(
-      "npx --no-install zedbee scan",
+      "node './node_modules/zedbee/dist/cli.js' scan --hook-invocation",
     );
     await repository.git(["add", "--all"]);
     const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
