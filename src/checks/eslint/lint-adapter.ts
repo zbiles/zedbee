@@ -19,6 +19,7 @@ import { convertEslintMessage } from "./convert-message.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { analyzerDiagnostic, type AnalyzerOperation } from "../diagnostics.js";
 import { createManagedEslint } from "./load-engine.js";
+import { eslintFailureDetails, ManagedEslintFailure } from "./failure.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
@@ -94,20 +95,46 @@ function typedFailure(options: {
   readonly projectPaths: readonly string[] | undefined;
   readonly reason: "parser" | "execution" | "invalid-response";
   readonly operation?: AnalyzerOperation;
+  readonly error?: unknown;
 }): CheckIncompleteError {
+  const failure =
+    options.reason !== "execution"
+      ? undefined
+      : options.error instanceof ManagedEslintFailure
+        ? options.error.details
+        : eslintFailureDetails(options.error);
+  const failedPath =
+    options.error instanceof ManagedEslintFailure &&
+    options.files.includes(options.error.path)
+      ? options.error.path
+      : undefined;
+  const files = failedPath === undefined ? options.files : [failedPath];
   const explanation =
     options.reason === "parser"
       ? "The TypeScript parser rejected a requested file without a source location."
       : options.reason === "invalid-response"
         ? "ESLint returned a file outside the requested batch."
-        : "ESLint failed while analyzing the requested batch.";
+        : failedPath === undefined
+          ? "ESLint failed while analyzing the requested batch; the failing file is unknown."
+          : "ESLint failed while analyzing the identified file; the remaining batch was not completed.";
+  const details =
+    failure === undefined
+      ? ""
+      : [
+          failure.type === undefined ? "" : ` Error type: ${failure.type}.`,
+          failure.ruleId === undefined
+            ? ""
+            : ` Managed rule: ${failure.ruleId}.`,
+          failure.reason === undefined
+            ? ""
+            : " Known engine error: Cannot read properties of undefined (reading 'some'). The promise rule received an unexpected TypeScript type shape.",
+        ].join("");
   return new CheckIncompleteError({
     code: "TYPED_LINT_ANALYSIS_FAILED",
-    message: `Typed lint could not complete for the ${snapshotLabel(options.side, options.ref)}. ${explanation}`,
-    remediation:
-      "Project coverage was prepared before this failure. Use the requested paths, loaded projects, snapshot identity, and analyzer diagnostic below to report a Zedbee typed-lint compatibility issue. For a commit comparison, inspect the configurations tracked in the baseline and target commits.",
-    paths: options.files,
-    ...(options.files.length === 1 ? { path: options.files[0]! } : {}),
+    message: `Typed lint could not complete for the ${snapshotLabel(options.side, options.ref)}. ${explanation}${details}`,
+    remediation: `${failure?.reason === undefined ? "" : "Reinstall an updated Zedbee package so its TypeScript analyzer dependencies are installed together, then retry. "}Project coverage was prepared before this failure. Use the requested paths, loaded projects, snapshot identity, and analyzer diagnostic to report a Zedbee typed-lint compatibility issue. For a commit comparison, inspect the configurations tracked in the baseline and target commits.`,
+    paths: files,
+    ...(files.length === 1 ? { path: files[0]! } : {}),
     ...(options.projectPaths === undefined
       ? {}
       : { projectPaths: options.projectPaths }),
@@ -120,6 +147,7 @@ function typedFailure(options: {
           : "execution",
       ),
       snapshot: options.side,
+      ...(failure === undefined ? {} : { failure }),
     },
   });
 }
@@ -329,6 +357,7 @@ async function collectSide(
             files: batch.files,
             projectPaths: prepared.projectPaths,
             reason: "execution",
+            error,
           });
         }
         throw new Error("Managed lint analysis failed.");
@@ -408,6 +437,7 @@ export function createLintAdapter(
                 files: batch.files,
                 projectPaths: prepared.projectPaths,
                 reason: "execution",
+                error,
                 operation: "planFixes",
               });
             }

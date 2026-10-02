@@ -20,6 +20,7 @@ import * as releaseCheck from "../../scripts/release-check.mjs";
 import {
   assertAllowedPackageFiles,
   assertPackMetadata,
+  BUNDLED_PACKAGE_NAMES,
 } from "../../scripts/check-package-contents.mjs";
 import {
   assertReleaseBaseScanReport,
@@ -375,7 +376,7 @@ describe("release verification contract", () => {
             {
               name: "zedbee",
               version: "0.1.0",
-              bundled: ["prettier"],
+              bundled: BUNDLED_PACKAGE_NAMES,
               files: [{ path: "dist/cli.js", mode: 0o644 }],
             },
           ]),

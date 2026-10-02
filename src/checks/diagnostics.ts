@@ -1,6 +1,10 @@
 import type { CheckId } from "../config/schema.js";
 import { managedCheckMetadata } from "./metadata.js";
 import { readInstalledPackageVersion } from "./engine-identity.js";
+import {
+  sanitizeEslintFailure,
+  type EslintFailureDetails,
+} from "./eslint/failure.js";
 
 export const ANALYZER_OPERATIONS = [
   "collect",
@@ -56,6 +60,7 @@ export interface AnalyzerDiagnostic {
   readonly engine: { readonly name: string; readonly version?: string };
   readonly exitCode?: number;
   readonly signal?: string;
+  readonly failure?: EslintFailureDetails;
 }
 
 /** Copy only known fields and values; never accept raw exception/stdio prose. */
@@ -78,7 +83,8 @@ export function sanitizeAnalyzerDiagnostic(
       (!Number.isSafeInteger(value.exitCode) ||
         value.exitCode < 0 ||
         value.exitCode > 0xffffffff)) ||
-    (value.signal !== undefined && !SIGNALS.has(value.signal))
+    (value.signal !== undefined && !SIGNALS.has(value.signal)) ||
+    (value.failure !== undefined && value.checkId !== "lint")
   )
     throw new TypeError("Invalid analyzer diagnostic");
   return Object.freeze({
@@ -94,6 +100,9 @@ export function sanitizeAnalyzerDiagnostic(
     ...(value.snapshot === undefined ? {} : { snapshot: value.snapshot }),
     ...(value.exitCode === undefined ? {} : { exitCode: value.exitCode }),
     ...(value.signal === undefined ? {} : { signal: value.signal }),
+    ...(value.failure === undefined
+      ? {}
+      : { failure: sanitizeEslintFailure(value.failure) }),
   });
 }
 

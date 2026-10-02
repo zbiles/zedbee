@@ -9,6 +9,13 @@ engine identity, and available snapshot or exit metadata. Categories distinguish
 startup, execution, cancellation, abnormal exit, invalid response, and cleanup
 failures. Ordinary output remains unchanged when the flag is absent.
 
+Typed-lint failure reports identify the failing repository-relative file when
+known, the exception type, and a validated managed rule ID when available. A
+recognized engine crash includes a fixed, source-free explanation of the actual
+error; arbitrary exception prose is never forwarded. These details also remain
+available in JSON with `--no-source`. When the failing file is unknown, the paths
+describe the requested batch, not files missing TypeScript project coverage.
+
 These diagnostics exclude source text, raw analyzer stdout/stderr, exception
 stacks, and absolute repository or temporary paths. Expected incomplete-input
 messages can still identify affected repository-relative files in the report.

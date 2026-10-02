@@ -1,7 +1,18 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import type { ESLint } from "eslint";
-import { describe, expect, it } from "vitest";
+import { fileURLToPath } from "node:url";
+import { ESLint } from "eslint";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createAnalysisReuseSession,
+  withAnalysisReuseSession,
+} from "../../../src/checks/analysis-reuse.js";
+import { ManagedEslintFailure } from "../../../src/checks/eslint/failure.js";
+import { serializeCheckContext } from "../../../src/checks/runner/context.js";
+import { createLocalAnalyzerExecutor } from "../../../src/checks/runner/executor.js";
+import { sanitizeCheckResult } from "../../../src/checks/sanitize-result.js";
+import { renderJson } from "../../../src/renderers/json.js";
+import { createReport } from "../../helpers/scan-report.js";
 import type {
   CheckRunContext,
   CheckTarget,
@@ -86,6 +97,162 @@ async function context(
 }
 
 describe("lintAdapter", () => {
+  it.each(["execution", "startup"] as const)(
+    "preserves %s diagnostics from a real worker through source-free JSON",
+    async (category) => {
+      const fixtures = await pair();
+      await fixtures.staged.writeJson(
+        "tsconfig.json",
+        category === "startup"
+          ? { extends: "./missing.json", include: ["src/**/*.ts"] }
+          : { include: ["src/**/*.ts"] },
+      );
+      await fixtures.staged.write("src/first.ts", "export const first = 1;\n");
+      await fixtures.staged.write(
+        "src/second.ts",
+        "export const second = 2;\n",
+      );
+      const run = await context(fixtures, changes([]));
+      const executor = createLocalAnalyzerExecutor({ concurrency: 1 });
+      const session = await executor.openSession();
+      try {
+        const error = (await session
+          .run(
+            {
+              version: 1,
+              checkId: "lint",
+              operation: "collect",
+              context: serializeCheckContext(run),
+            },
+            {
+              workerEntry: fileURLToPath(
+                new URL(
+                  "../runner/fixtures/lint-failure-worker.mjs",
+                  import.meta.url,
+                ),
+              ),
+            },
+          )
+          .catch((error: unknown) => error)) as CheckIncompleteError;
+        expect(error).toMatchObject({
+          code:
+            category === "startup"
+              ? "TYPED_LINT_SETUP_FAILED"
+              : "TYPED_LINT_ANALYSIS_FAILED",
+          diagnostic: { category, snapshot: "target" },
+        });
+        const check = sanitizeCheckResult({
+          checkId: "lint",
+          status: "incomplete",
+          findings: [],
+          durationMs: 0,
+          error: { ...error, message: error.message },
+        });
+        const json = renderJson(createReport({ checks: [check] }));
+        const serialized = JSON.parse(json).checks[0].error;
+        expect(serialized.diagnostic).toMatchObject({
+          category,
+          snapshot: "target",
+        });
+        if (category === "execution") {
+          expect(serialized.paths).toEqual(["src/second.ts"]);
+          expect(serialized.diagnostic.failure).toEqual({
+            type: "TypeError",
+            ruleId: "@typescript-eslint/no-misused-promises",
+            reason: "rule-execution-incompatible-types",
+          });
+          expect(serialized.message).toContain(
+            "Cannot read properties of undefined (reading 'some')",
+          );
+        }
+        expect(json).not.toMatch(
+          /fixture-secret-source-marker|\/private\/fixture|sourceExcerpt|123:45/,
+        );
+      } finally {
+        await session.close();
+        await executor.close();
+      }
+    },
+  );
+
+  it("identifies the failing lintText file and rule without copying raw exception data", async () => {
+    const fixtures = await pair();
+    await fixtures.staged.writeJson("tsconfig.json", {
+      include: ["src/**/*.ts"],
+    });
+    await fixtures.staged.write("src/first.ts", "export const first = 1;\n");
+    await fixtures.staged.write("src/second.ts", "export const second = 2;\n");
+    const run = await context(fixtures, changes([]));
+    const crash = Object.assign(
+      new TypeError(
+        "Cannot read properties of undefined (reading 'some')\nprivate source marker",
+      ),
+      {
+        ruleId: "@typescript-eslint/no-misused-promises",
+        filePath: "/private/secret.ts",
+        stack:
+          "TypeError: secret\n    at hasWellKnownSymbolWithVoidReturn (/private/node_modules/@typescript-eslint/eslint-plugin/dist/rules/no-misused-promises.js:123:45)",
+      },
+    );
+    const lintText = vi
+      .spyOn(ESLint.prototype, "lintText")
+      .mockImplementation(async (_source, options) => {
+        if (options?.filePath?.endsWith("second.ts")) throw crash;
+        return [];
+      });
+    const session = createAnalysisReuseSession();
+    try {
+      const error = await withAnalysisReuseSession(session, () =>
+        lintAdapter.collect(run),
+      ).catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "TYPED_LINT_ANALYSIS_FAILED",
+        path: "src/second.ts",
+        paths: ["src/second.ts"],
+        diagnostic: {
+          snapshot: "target",
+          failure: {
+            type: "TypeError",
+            ruleId: "@typescript-eslint/no-misused-promises",
+            reason: "rule-execution-incompatible-types",
+          },
+        },
+      });
+      expect((error as Error).message).toContain(
+        "@typescript-eslint/no-misused-promises",
+      );
+      expect((error as Error).message).toContain("TypeError");
+      expect(JSON.stringify(error)).not.toMatch(
+        /private|secret|source marker|123:45/,
+      );
+    } finally {
+      lintText.mockRestore();
+      await session.close();
+    }
+  });
+
+  it("retains batch context when a wrapped failure names a file outside the batch", async () => {
+    const fixtures = await pair();
+    await fixtures.staged.writeJson("tsconfig.json", {
+      include: ["src/**/*.ts"],
+    });
+    await fixtures.staged.write("src/first.ts", "export const first = 1;\n");
+    await fixtures.staged.write("src/second.ts", "export const second = 2;\n");
+    const run = await context(fixtures, changes([]));
+    const adapter = createLintAdapter(() => ({
+      async lintFiles() {
+        throw new ManagedEslintFailure(
+          "outside.ts",
+          Object.assign(new Error("secret"), { ruleId: "project/secret" }),
+        );
+      },
+    }));
+    const error = await adapter.collect(run).catch((error: unknown) => error);
+    expect(error).toMatchObject({ paths: ["src/first.ts", "src/second.ts"] });
+    expect((error as CheckIncompleteError).path).toBeUndefined();
+    expect(JSON.stringify(error)).not.toMatch(/outside|secret/);
+  });
+
   it("analyzes a Next-style project when generated type include directories are absent", async () => {
     const fixtures = await pair();
     for (const fixture of [fixtures.baseline, fixtures.staged]) {

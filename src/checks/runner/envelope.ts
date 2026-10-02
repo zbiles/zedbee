@@ -2,6 +2,7 @@ import {
   AnalyzerJobError,
   analyzerDiagnostic,
   ANALYZER_FAILURE_CATEGORIES,
+  sanitizeAnalyzerDiagnostic,
   type AnalyzerFailureCategory,
 } from "../diagnostics.js";
 import {
@@ -174,7 +175,19 @@ export function decodeWorkerResponse<R extends AnalyzerRequest>(
       "snapshot",
       "projectPaths",
       "disposition",
+      "diagnostic",
     ])
+  )
+    throw jobFailure(request, "invalid-response");
+  const supplied =
+    incomplete?.diagnostic === undefined
+      ? undefined
+      : sanitizeAnalyzerDiagnostic(incomplete.diagnostic);
+  if (
+    supplied !== undefined &&
+    (supplied.checkId !== request.checkId ||
+      supplied.operation !== request.operation ||
+      supplied.category !== value.category)
   )
     throw jobFailure(request, "invalid-response");
   const diagnostic = {
@@ -185,6 +198,10 @@ export function decodeWorkerResponse<R extends AnalyzerRequest>(
       value.exitCode as number | undefined,
       value.signal as string | undefined,
     ),
+    ...(supplied?.failure === undefined ? {} : { failure: supplied.failure }),
+    ...(supplied?.snapshot === undefined
+      ? {}
+      : { snapshot: supplied.snapshot }),
     ...(incomplete?.snapshot === undefined
       ? {}
       : {
