@@ -29,7 +29,9 @@ function shellQuote(value: string): string {
 async function installedCommand(
   repositoryRoot: string,
   projectRoot: string,
-): Promise<{ command: string; packageRoot: string } | undefined> {
+): Promise<
+  { command: string; packageRoot: string; cliPath: string } | undefined
+> {
   let directory = resolve(repositoryRoot, projectRoot);
   while (contained(repositoryRoot, directory)) {
     const packageRoot = join(directory, "node_modules", "zedbee");
@@ -55,6 +57,7 @@ async function installedCommand(
       return {
         command: `(cd "$(git rev-parse --show-toplevel)" && node ${shellQuote(repositoryPath)} scan --hook-invocation)`,
         packageRoot,
+        cliPath: repositoryPath,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") return undefined;
@@ -107,6 +110,20 @@ export async function resolveHookCommand(
     `No usable project installation of Zedbee was found. Install zedbee as a development dependency in ${location}, then rerun zedbee init. Use --hook none to configure checks without installing a hook.`,
     candidates.map((project) => project.relativeRoot),
   );
+}
+
+/** Same declared, validated installation and preference order used by hooks. */
+export async function resolveInstalledCliCommand(
+  repositoryRoot: string,
+): Promise<readonly string[] | undefined> {
+  const { root, declared } = await installationCandidates(repositoryRoot);
+  for (const project of declared) {
+    const installation = await installedCommand(root, project.relativeRoot);
+    if (installation !== undefined) {
+      return Object.freeze(["node", installation.cliPath]);
+    }
+  }
+  return undefined;
 }
 
 /** Resolve the schema beside the same declared installation used for hooks. */

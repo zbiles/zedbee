@@ -3,6 +3,7 @@ import type { ManagedAutomaticFix } from "../core/types.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { formatTemporaryReportMaxAge } from "./report-age.js";
 import { opaqueTemporaryReportPath } from "./report-path.js";
+import { fixCommandText } from "./fix-command.js";
 
 export interface NextStepsInput {
   readonly outcome: ScanReport["outcome"];
@@ -11,14 +12,18 @@ export interface NextStepsInput {
   readonly reportPath: string;
   readonly maximumAge: string;
   readonly automaticFixes?: readonly ManagedAutomaticFix[];
+  readonly installedCliCommand?: readonly string[];
 }
 
 export function managedFixGuidanceLines(
   automaticFixes: readonly ManagedAutomaticFix[],
+  installedCliCommand?: readonly string[],
 ): readonly string[] {
   const commands = [
     ...new Set(
-      automaticFixes.map((automaticFix) => automaticFix.command.join(" ")),
+      automaticFixes.map((automaticFix) =>
+        fixCommandText(automaticFix, installedCliCommand),
+      ),
     ),
   ].sort(compareCodeUnits);
   return Object.freeze(
@@ -52,7 +57,10 @@ function outcomeInstructions(
 
 export function nextStepsLines(input: NextStepsInput): readonly string[] {
   const age = formatTemporaryReportMaxAge(input.maximumAge);
-  const managedFixes = managedFixGuidanceLines(input.automaticFixes ?? []);
+  const managedFixes = managedFixGuidanceLines(
+    input.automaticFixes ?? [],
+    input.installedCliCommand,
+  );
   return Object.freeze([
     "NEXT STEPS",
     "",

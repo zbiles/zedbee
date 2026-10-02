@@ -1450,7 +1450,7 @@ async function repositoryWithProjectPrettier() {
     type,
   );
   await cp(
-    join(installedNodeModules, "prettier"),
+    join(installedNodeModules, "zedbee", "node_modules", "prettier"),
     join(nodeModules, "prettier"),
     {
       recursive: true,

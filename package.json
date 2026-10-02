@@ -87,6 +87,9 @@
     "ai-assisted-development"
   ],
   "license": "PolyForm-Small-Business-1.0.0",
+  "bundleDependencies": [
+    "prettier"
+  ],
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
     "@emnapi/core": "1.11.3",

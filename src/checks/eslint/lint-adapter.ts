@@ -17,6 +17,7 @@ import type {
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { convertEslintMessage } from "./convert-message.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
+import { analyzerDiagnostic, type AnalyzerOperation } from "../diagnostics.js";
 import { createManagedEslint } from "./load-engine.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
 import { createSnapshotProgram } from "../typescript/compiler-host.js";
@@ -44,6 +45,7 @@ interface PreparedLintSide {
   readonly groups: ReturnType<typeof groupFilesByRules>;
   readonly typedProject?: { readonly programs: readonly ts.Program[] };
   readonly coveredTypeScript?: ReadonlySet<string>;
+  readonly projectPaths?: readonly string[];
 }
 
 function lintBatches(
@@ -76,14 +78,49 @@ function workspaceFor(
   );
 }
 
-function typedFailure(path?: string): CheckIncompleteError {
+function snapshotLabel(side: SnapshotSide, ref?: string | null): string {
+  const label = side === "baseline" ? "baseline snapshot" : "target snapshot";
+  // Only trusted, resolved Git identities are useful here. Never echo arbitrary
+  // CLI references or exception prose into a diagnostic.
+  return typeof ref === "string" && /^(?:HEAD|[a-f0-9]{40,64})$/iu.test(ref)
+    ? `${label} (${ref})`
+    : label;
+}
+
+function typedFailure(options: {
+  readonly side: SnapshotSide;
+  readonly ref: string | null | undefined;
+  readonly files: readonly string[];
+  readonly projectPaths: readonly string[] | undefined;
+  readonly reason: "parser" | "execution" | "invalid-response";
+  readonly operation?: AnalyzerOperation;
+}): CheckIncompleteError {
+  const explanation =
+    options.reason === "parser"
+      ? "The TypeScript parser rejected a requested file without a source location."
+      : options.reason === "invalid-response"
+        ? "ESLint returned a file outside the requested batch."
+        : "ESLint failed while analyzing the requested batch.";
   return new CheckIncompleteError({
     code: "TYPED_LINT_ANALYSIS_FAILED",
-    message:
-      "Typed lint could not analyze every requested TypeScript file with the configured project.",
+    message: `Typed lint could not complete for the ${snapshotLabel(options.side, options.ref)}. ${explanation}`,
     remediation:
-      "For both the last commit and the staged snapshot, check that each TypeScript file selected for lint belongs to that snapshot's configured project. This includes unchanged files. If coverage is correct, report a Zedbee typed-lint compatibility issue.",
-    ...(path === undefined ? {} : { path }),
+      "Project coverage was prepared before this failure. Use the requested paths, loaded projects, snapshot identity, and analyzer diagnostic below to report a Zedbee typed-lint compatibility issue. For a commit comparison, inspect the configurations tracked in the baseline and target commits.",
+    paths: options.files,
+    ...(options.files.length === 1 ? { path: options.files[0]! } : {}),
+    ...(options.projectPaths === undefined
+      ? {}
+      : { projectPaths: options.projectPaths }),
+    diagnostic: {
+      ...analyzerDiagnostic(
+        "lint",
+        options.operation ?? "collect",
+        options.reason === "invalid-response"
+          ? "invalid-response"
+          : "execution",
+      ),
+      snapshot: options.side,
+    },
   });
 }
 
@@ -96,6 +133,8 @@ async function prepareSide(
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
   dependencies?: CapturedDependencies,
+  snapshotRef?: string | null,
+  operation: AnalyzerOperation = "collect",
 ): Promise<PreparedLintSide | undefined> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -178,15 +217,21 @@ async function prepareSide(
       groups,
       typedProject: { programs },
       coveredTypeScript: covered,
+      projectPaths: projects.map(({ configPath }) => configPath),
     };
   } catch (error) {
     if (error instanceof CheckIncompleteError) throw error;
     throw new CheckIncompleteError({
       code: "TYPED_LINT_SETUP_FAILED",
-      message:
-        "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
+      message: `Typed lint could not build a usable project from this workspace's TypeScript configuration for the ${snapshotLabel(side, snapshotRef)}.`,
       remediation:
-        "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
+        "Verify that the failing snapshot contains a tsconfig.json covering its requested TypeScript files and all referenced configurations, then retry. For a commit comparison, check the configurations tracked in that commit.",
+      paths: typescriptFiles,
+      projectPaths: workspace.tsconfigPaths,
+      diagnostic: {
+        ...analyzerDiagnostic("lint", operation, "startup"),
+        snapshot: side,
+      },
     });
   }
 }
@@ -201,6 +246,7 @@ async function collectSide(
   engineFactory: LintEslintEngineFactory,
   signal: AbortSignal,
   dependencies: CapturedDependencies,
+  snapshotRef?: string | null,
 ): Promise<readonly Observation[]> {
   const prepared = await prepareSide(
     snapshotRoot,
@@ -211,6 +257,7 @@ async function collectSide(
     policyForFile,
     signal,
     dependencies,
+    snapshotRef,
   );
   if (prepared === undefined) return Object.freeze([]);
   const observations: Observation[] = [];
@@ -239,8 +286,17 @@ async function collectSide(
           const path = relative(prepared.canonicalRoot, result.filePath)
             .split(sep)
             .join("/");
-          if (!allowed.has(path))
+          if (!allowed.has(path)) {
+            if (groupHasTypescript)
+              throw typedFailure({
+                side,
+                ref: snapshotRef,
+                files: batch.files,
+                projectPaths: prepared.projectPaths,
+                reason: "invalid-response",
+              });
             throw new TypeError("ESLint returned an unrequested file");
+          }
           if (
             TYPESCRIPT_SOURCE.test(path) &&
             result.messages.some(
@@ -249,7 +305,13 @@ async function collectSide(
                 (!Number.isSafeInteger(message.line) || message.line < 1),
             )
           ) {
-            throw typedFailure(path);
+            throw typedFailure({
+              side,
+              ref: snapshotRef,
+              files: [path],
+              projectPaths: prepared.projectPaths,
+              reason: "parser",
+            });
           }
           observations.push(
             ...result.messages.map((message) =>
@@ -261,9 +323,13 @@ async function collectSide(
         signal.throwIfAborted();
         if (error instanceof CheckIncompleteError) throw error;
         if (groupHasTypescript) {
-          throw typedFailure(
-            batch.files.length === 1 ? batch.files[0] : undefined,
-          );
+          throw typedFailure({
+            side,
+            ref: snapshotRef,
+            files: batch.files,
+            projectPaths: prepared.projectPaths,
+            reason: "execution",
+          });
         }
         throw new Error("Managed lint analysis failed.");
       }
@@ -297,6 +363,9 @@ export function createLintAdapter(
         "target",
         context.policyForFile,
         context.signal,
+        undefined,
+        context.snapshots.targetRef,
+        "planFixes",
       );
       if (prepared === undefined) return Object.freeze([]);
       const candidates = [];
@@ -333,9 +402,14 @@ export function createLintAdapter(
             context.signal.throwIfAborted();
             if (error instanceof CheckIncompleteError) throw error;
             if (groupHasTypescript) {
-              throw typedFailure(
-                batch.files.length === 1 ? batch.files[0] : undefined,
-              );
+              throw typedFailure({
+                side: "target",
+                ref: context.snapshots.targetRef,
+                files: batch.files,
+                projectPaths: prepared.projectPaths,
+                reason: "execution",
+                operation: "planFixes",
+              });
             }
             throw new Error("Managed lint fix planning failed.");
           }
@@ -359,6 +433,7 @@ export function createLintAdapter(
               engineFactory,
               context.signal,
               dependencies,
+              context.snapshots.baselineRef,
             ),
           () =>
             collectSide(
@@ -371,6 +446,7 @@ export function createLintAdapter(
               engineFactory,
               context.signal,
               dependencies,
+              context.snapshots.targetRef,
             ),
           context.signal,
           isAnalyzerWorker(),

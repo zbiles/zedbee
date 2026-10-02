@@ -5,8 +5,12 @@ import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
+import { fixCommandArguments } from "../reporting/fix-command.js";
 
-function serializeFinding(finding: Finding): Record<string, unknown> {
+function serializeFinding(
+  finding: Finding,
+  installedCliCommand?: readonly string[],
+): Record<string, unknown> {
   const sourceExcerpt =
     finding.sourceExcerpt === undefined
       ? undefined
@@ -33,7 +37,9 @@ function serializeFinding(finding: Finding): Record<string, unknown> {
       : {
           automaticFix: {
             available: true,
-            command: [...finding.automaticFix.command],
+            command: [
+              ...fixCommandArguments(finding.automaticFix, installedCliCommand),
+            ],
             scope: finding.automaticFix.scope,
             writes: finding.automaticFix.writes,
             stagesChanges: false,
@@ -48,7 +54,10 @@ function serializeFinding(finding: Finding): Record<string, unknown> {
   };
 }
 
-function serializeCheck(check: CheckResult): Record<string, unknown> {
+function serializeCheck(
+  check: CheckResult,
+  installedCliCommand?: readonly string[],
+): Record<string, unknown> {
   const error =
     check.error === undefined
       ? undefined
@@ -80,7 +89,9 @@ function serializeCheck(check: CheckResult): Record<string, unknown> {
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
     durationMs: check.durationMs,
-    findings: [...check.findings].sort(compareFindings).map(serializeFinding),
+    findings: [...check.findings]
+      .sort(compareFindings)
+      .map((finding) => serializeFinding(finding, installedCliCommand)),
     ...(error === undefined ? {} : { error }),
     ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
     ...(check.incompleteDisposition === undefined
@@ -150,7 +161,7 @@ export function renderJson(report: ScanReport): string {
           compareCodeUnits(left.checkId, right.checkId) ||
           compareCodeUnits(left.target ?? "", right.target ?? ""),
       )
-      .map(serializeCheck),
+      .map((check) => serializeCheck(check, report.installedCliCommand)),
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }

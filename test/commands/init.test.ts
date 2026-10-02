@@ -1,3 +1,4 @@
+import { format } from "prettier";
 import { resolveHookCommand } from "../../src/hooks/command.js";
 import { rename } from "node:fs/promises";
 import {
@@ -447,7 +448,42 @@ describe("executeInitCommand", () => {
     expect(written).toContain('"profile": "thorough"');
     expect(written).toContain('"lint": "error"');
     expect(written).toContain('"formatting": "off"');
-    expect(io.stdout.join("")).toBe("Zedbee initialized successfully\n");
+    expect(io.stdout.join("")).toBe(
+      "Zedbee initialized successfully\nStage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.\n",
+    );
+  });
+
+  it("preserves a selected repository formatting scope on repeat setup", async () => {
+    const root = await fixture();
+    await mkdir(join(root, "web"));
+    await writeFile(
+      join(root, "web", "package.json"),
+      '{"name":"web","prettier":{}}',
+    );
+    const options = {
+      cwd: root,
+      profile: "recommended" as const,
+      hook: "none" as const,
+      yes: true,
+      format: "text" as const,
+      color: false,
+      animations: false,
+    };
+    expect(
+      await executeInitCommand(
+        { ...options, formattingScope: "repository" },
+        terminal(),
+        dependencies(root),
+      ),
+    ).toBe(0);
+    expect(
+      await executeInitCommand(options, terminal(), dependencies(root)),
+    ).toBe(0);
+    const config = await readFile(join(root, ".zedbeerc.jsonc"), "utf8");
+    expect(parseJsonc(config).overrides ?? []).not.toContainEqual(
+      expect.objectContaining({ generated: "prettier-scope" }),
+    );
+    expect(config).toBe(await format(config, { parser: "json" }));
   });
 
   it("reports a concise cancellation after an interactive decision", async () => {
@@ -505,6 +541,7 @@ describe("executeInitCommand", () => {
     expect(io.stdout.join("")).toBe(
       [
         "Zedbee initialized successfully",
+        "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
         "Next step: After reviewing the project tooling, run lefthook install to activate the configured hook.",
         "",
       ].join("\n"),
@@ -1988,7 +2025,14 @@ describe("executeInitCommand", () => {
       join(repository.root, ".zedbeerc.jsonc"),
       "utf8",
     );
-    expect(config).toContain('"overrides": []');
+    expect(JSON.parse(config).overrides).toEqual([
+      {
+        files: ["**"],
+        excludeFiles: ["app/**", "web/**"],
+        checks: { formatting: "off" },
+        generated: "prettier-scope",
+      },
+    ]);
     expect(config).not.toContain("prettier-engine");
   });
 
