@@ -769,6 +769,9 @@ function SetupPanel({
           focus === telemetryFocusIndex(proposal) ? activeTargetRef : undefined
         }
       >
+        <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+          Tracking
+        </Text>
         <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
           {focus === telemetryFocusIndex(proposal) ? "➜ " : "  "}[
           {proposal.telemetryEnabled !== false ? "✽" : " "}] Enable usage
