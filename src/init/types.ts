@@ -4,6 +4,8 @@ import type { FormattingSettings } from "../checks/prettier/settings.js";
 import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
 import type { Environment } from "../inspection/types.js";
 
+export type InitFormattingScope = "projects" | "repository";
+
 export type InitFormattingChoice = "copy" | "project" | "managed" | "off";
 
 export interface InitFormattingImport {
@@ -92,6 +94,8 @@ export interface InitProposal {
   readonly networkChecks: readonly InitNetworkCheck[];
   readonly limitations: readonly string[];
   readonly formatting?: InitFormattingChoice;
+  readonly formattingScope?: InitFormattingScope;
+  readonly formattingScopeRoots?: readonly string[];
   readonly formattingImport?: InitFormattingImport;
   readonly formattingDetection?: readonly InitFormattingDetection[];
   /** Every discovered project root that project mode enables. */
@@ -118,6 +122,8 @@ export interface CreateInitProposalOptions {
     Readonly<{ before: string | null; after: ".husky/_" }> | undefined;
   readonly hookActivation?: InitHookActivation;
   readonly formatting?: InitFormattingChoice;
+  readonly formattingScope?: InitFormattingScope;
+  readonly formattingScopeRoots?: readonly string[];
   readonly formattingImport?: InitFormattingImport;
   readonly formattingDetection?: readonly InitFormattingDetection[];
   /** Nested project roots that receive generated engine overrides. */

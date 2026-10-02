@@ -26,11 +26,14 @@ import {
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
+import { parse as parseJsonc } from "jsonc-parser";
+import { formatInitProposal } from "../init/format-proposal.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
   CreateInitProposalOptions,
   ExecutableEvaluatedConfig,
   InitFormattingChoice,
+  InitFormattingScope,
   InitFormattingDetection,
   InitFormattingImport,
   InitHookChoice,
@@ -60,6 +63,7 @@ export interface InitCommandOptions {
   readonly checks?: readonly CheckId[];
   readonly osvUnavailable?: InitOsvUnavailable;
   readonly formatting?: InitFormattingChoice;
+  readonly formattingScope?: InitFormattingScope;
   readonly trustProjectPrettier?: boolean;
   readonly yes: boolean;
   readonly format: "text" | "json";
@@ -108,8 +112,10 @@ export interface InitCommandDependencies {
       formatting?: InitFormattingChoice,
       projectTrust?: boolean,
       evaluatedImport?: InitFormattingImport,
+      scope?: InitFormattingScope,
     ) => InitProposal,
     evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
+    prepareReview?: (proposal: InitProposal) => Promise<InitProposal>,
   ): Promise<false | InitProposal>;
 }
 
@@ -142,6 +148,7 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
     options,
     proposalForSelection,
     evaluateExecutableImport,
+    prepareReview,
   ) {
     const { runInitPrompt } = await import("../ui/init-app.js");
     return runInitPrompt(
@@ -149,6 +156,7 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
       options,
       proposalForSelection,
       evaluateExecutableImport,
+      prepareReview,
     );
   },
 };
@@ -178,6 +186,8 @@ function publicProposal(proposal: InitProposal) {
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
     formatting: proposal.formatting ?? "managed",
+    formattingScope: proposal.formattingScope ?? "repository",
+    formattingScopeRoots: proposal.formattingScopeRoots ?? [],
     ...(proposal.formattingDetection === undefined
       ? {}
       : { formattingDetection: proposal.formattingDetection }),
@@ -217,6 +227,7 @@ function renderText(proposal: InitProposal, applied: boolean): string {
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
     `Formatting: ${proposal.formatting ?? "managed"}`,
+    `Formatting scope: ${proposal.formattingScope === "projects" ? proposal.formattingScopeRoots?.join(", ") || "repository" : "whole repository"}`,
     ...(proposal.formattingDetection ?? []).map(
       (entry) =>
         `Prettier setup: ${
@@ -245,6 +256,11 @@ function renderText(proposal: InitProposal, applied: boolean): string {
   if (proposal.hooksPathChange !== undefined)
     lines.push(
       `Git configuration: core.hooksPath → ${proposal.hooksPathChange.after}`,
+    );
+  if (applied)
+    lines.push(
+      "",
+      "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
     );
   if (!applied) lines.push("", "No files were written without confirmation.");
   return `${lines.join("\n")}\n`;
@@ -284,7 +300,10 @@ function renderInteractiveResult(
   proposal: InitProposal,
 ): string {
   if (!confirmed) return "Zedbee initialization cancelled\n";
-  const lines = ["Zedbee initialized successfully"];
+  const lines = [
+    "Zedbee initialized successfully",
+    "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
+  ];
   if (proposal.hookActivation.remediation !== undefined) {
     lines.push(`Next step: ${proposal.hookActivation.remediation}`);
   }
@@ -614,7 +633,23 @@ export async function executeInitCommand(
     const enabledProjectRoots = formattingSetup.projectRoots.filter(
       (root) => root !== ".",
     );
+    const formattingScopeRoots = formattingSetup.projectRoots;
+    const formattingScope: InitFormattingScope =
+      options.formattingScope ??
+      (configBefore !== null
+        ? (
+            parseJsonc(configBefore).overrides as
+              Array<{ generated?: string }> | undefined
+          )?.some((entry) => entry.generated === "prettier-scope")
+          ? "projects"
+          : "repository"
+        : undefined) ??
+      (formattingScopeRoots.length > 0 && !formattingScopeRoots.includes(".")
+        ? "projects"
+        : "repository");
     const formattingProposalFields = {
+      formattingScope,
+      formattingScopeRoots,
       // Detection is always reported, even when nothing is imported/executed.
       formattingDetection: formattingSetup.detection,
       ...(options.formatting === undefined
@@ -665,7 +700,9 @@ export async function executeInitCommand(
         ? {}
         : { osvUnavailable: options.osvUnavailable }),
     };
-    let proposal = createInitProposal(inspection, proposalOptions);
+    let proposal = await formatInitProposal(
+      createInitProposal(inspection, proposalOptions),
+    );
     const color = options.color && io.env.NO_COLOR === undefined;
     let confirmed = options.yes;
     let promptedInteractively = false;
@@ -720,6 +757,7 @@ export async function executeInitCommand(
           InitFormattingChoice | undefined = options.formatting,
         selectedProjectTrust = allProjectsTrusted,
         evaluatedImport: InitFormattingImport | undefined = undefined,
+        selectedScope: InitFormattingScope = formattingScope,
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
@@ -782,6 +820,8 @@ export async function executeInitCommand(
           hookChanges: selectedIntegration.changes,
           hooksPathChange: selectedIntegration.hooksPathChange,
           ...formattingFields,
+          formattingScope: selectedScope,
+          formattingScopeRoots,
           ...(selectedIntegration.change === undefined
             ? {}
             : { hookChange: selectedIntegration.change }),
@@ -796,10 +836,12 @@ export async function executeInitCommand(
           ...(choices.length > 1 ? { hookChoices: choices } : {}),
         });
       };
-      proposal = proposalForSelection(
-        options.profile,
-        options.checks,
-        options.osvUnavailable ?? "block",
+      proposal = await formatInitProposal(
+        proposalForSelection(
+          options.profile,
+          options.checks,
+          options.osvUnavailable ?? "block",
+        ),
       );
       const decision = await dependencies.confirm(
         proposal,
@@ -811,9 +853,10 @@ export async function executeInitCommand(
         },
         proposalForSelection,
         evaluateExecutableImportForUi,
+        formatInitProposal,
       );
       if (decision !== false) {
-        proposal = decision;
+        proposal = await formatInitProposal(decision);
         confirmed = true;
       }
     }

@@ -38,6 +38,45 @@ const PUBLIC_DOCS = Object.freeze([
   "docs/support.md",
 ]);
 
+// The managed formatter is shipped inside Zedbee so npm cannot deduplicate it
+// into the consumer's formatter or replace the consumer's Prettier executable.
+// Keep this list explicit: bundling must not admit arbitrary node_modules files.
+const BUNDLED_PRETTIER_FILES = Object.freeze(
+  [
+    "LICENSE",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md",
+    "package.json",
+    "bin/prettier.cjs",
+    "index.cjs",
+    "index.d.ts",
+    "index.mjs",
+    "internal/experimental-cli-worker.mjs",
+    "internal/experimental-cli.mjs",
+    "internal/legacy-cli.mjs",
+    ...["doc", "standalone"].flatMap((name) =>
+      ["d.ts", "js", "mjs"].map((extension) => `${name}.${extension}`),
+    ),
+    ...[
+      "acorn",
+      "angular",
+      "babel",
+      "estree",
+      "flow",
+      "glimmer",
+      "graphql",
+      "html",
+      "markdown",
+      "meriyah",
+      "postcss",
+      "typescript",
+      "yaml",
+    ].flatMap((name) =>
+      ["d.ts", "js", "mjs"].map((extension) => `plugins/${name}.${extension}`),
+    ),
+  ].map((path) => `node_modules/prettier/${path}`),
+);
+
 const FIXED_PACKAGE_FILES = Object.freeze([
   "SECURITY.md",
   "DISCLOSURE",
@@ -56,6 +95,7 @@ const FIXED_PACKAGE_FILES = Object.freeze([
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
+  ...BUNDLED_PRETTIER_FILES,
   "SECURITY.md",
   "DISCLOSURE",
   "LICENSE",
@@ -111,6 +151,7 @@ function buildOutputPaths(sourcePaths) {
 
 export function assertAllowedPackageFiles(paths, options) {
   const allowed = new Set([
+    ...BUNDLED_PRETTIER_FILES,
     ...FIXED_PACKAGE_FILES,
     ...options.reviewedOverridePaths.map(normalizedPackagePath),
     ...buildOutputPaths(options.sourcePaths),
@@ -136,8 +177,14 @@ export function assertPackMetadata(packOutput, expectedVersion) {
   ) {
     throw new Error("Package identity does not match the release manifest.");
   }
-  if (!Array.isArray(record.bundled) || record.bundled.length > 0) {
-    throw new Error("Package must not contain bundled dependencies.");
+  if (
+    !Array.isArray(record.bundled) ||
+    record.bundled.length !== 1 ||
+    record.bundled[0] !== "prettier"
+  ) {
+    throw new Error(
+      "Package bundled dependencies must contain only managed Prettier.",
+    );
   }
   const cli = Array.isArray(record.files)
     ? record.files.find((file) => file?.path === "dist/cli.js")
@@ -257,6 +304,17 @@ function main() {
     const corePackage = JSON.parse(
       readFileSync(resolve(root, "package.json"), "utf8"),
     );
+    const managedPrettier = JSON.parse(
+      readFileSync(resolve(root, "node_modules/prettier/package.json"), "utf8"),
+    );
+    if (
+      managedPrettier.name !== "prettier" ||
+      managedPrettier.version !== corePackage.dependencies?.prettier
+    ) {
+      throw new Error(
+        "Bundled Prettier must match the pinned managed dependency.",
+      );
+    }
     assertPackMetadata(coreOutput, corePackage.version);
     if (corePackage.license !== "PolyForm-Small-Business-1.0.0") {
       throw new Error(

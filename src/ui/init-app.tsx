@@ -20,6 +20,7 @@ import type { InitPromptOptions } from "../commands/init.js";
 import type {
   InitFileChange,
   InitFormattingChoice,
+  InitFormattingScope,
   InitFormattingImport,
   InitHookChoice,
   InitOsvUnavailable,
@@ -57,12 +58,14 @@ export interface InitAppProps extends InitPromptOptions {
     formatting?: InitFormattingChoice,
     projectTrust?: boolean,
     evaluatedImport?: InitFormattingImport,
+    scope?: InitFormattingScope,
   ) => InitProposal;
   /** Present only when an executable configuration can be consented evaluated. */
   readonly evaluateExecutableImport?: () => Promise<
     InitFormattingImport | undefined
   >;
   onDecision(decision: false | InitProposal): void;
+  readonly prepareReview?: (proposal: InitProposal) => Promise<InitProposal>;
   readonly onMouseCleanupReady?: (cleanup: () => void) => void;
 }
 
@@ -414,8 +417,18 @@ function formattingFocusIndex(proposal: InitProposal): number {
   );
 }
 
+function hasFormattingScope(proposal: InitProposal): boolean {
+  return (
+    proposal.formattingScope !== undefined &&
+    (proposal.formattingScopeRoots?.length ?? 0) > 0 &&
+    !proposal.formattingScopeRoots?.includes(".")
+  );
+}
+
 function telemetryFocusIndex(proposal: InitProposal): number {
-  return formattingFocusIndex(proposal) + 1;
+  return (
+    formattingFocusIndex(proposal) + 1 + (hasFormattingScope(proposal) ? 1 : 0)
+  );
 }
 
 function reviewFocusIndex(proposal: InitProposal): number {
@@ -712,6 +725,32 @@ function SetupPanel({
         activeTargetRef={activeTargetRef}
         color={color}
       />
+      {hasFormattingScope(proposal) ? (
+        <Box
+          flexDirection="column"
+          paddingX={2}
+          ref={
+            focus === formattingFocusIndex(proposal) + 1
+              ? activeTargetRef
+              : undefined
+          }
+        >
+          <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {focus === formattingFocusIndex(proposal) + 1 ? "➜ " : "  "}
+            Formatting scope
+          </Text>
+          <Box paddingLeft={2} flexDirection="column">
+            <Text>
+              [{proposal.formattingScope === "projects" ? "✽" : " "}] Detected
+              project folders: {proposal.formattingScopeRoots?.join(", ")}
+            </Text>
+            <Text>
+              [{proposal.formattingScope === "repository" ? "✽" : " "}] Whole
+              repository (includes docs and other folders).
+            </Text>
+          </Box>
+        </Box>
+      ) : null}
       <BrandedCommandPanelRule width={width} color={color} />
       <Box
         flexDirection="column"
@@ -769,6 +808,16 @@ function ReviewPanel({
       <Box flexDirection="column" paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Review these changes before Zedbee saves them to your repository.
+        </Text>
+        <Text wrap="wrap">
+          Formatting scope:{" "}
+          {proposal.formattingScope === "projects"
+            ? proposal.formattingScopeRoots?.join(", ") || "whole repository"
+            : "whole repository"}
+        </Text>
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          Stage the configuration and other setup files after applying; checks
+          use staged configuration.
         </Text>
         <Text> </Text>
       </Box>
@@ -831,6 +880,7 @@ export function InitApp({
   color,
   onDecision,
   onMouseCleanupReady,
+  prepareReview,
 }: InitAppProps) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -843,6 +893,19 @@ export function InitApp({
   );
   const [phase, setPhase] = useState<"configure" | "review">("configure");
   const [focus, setFocus] = useState(0);
+  const [scope, setScope] = useState<InitFormattingScope>(
+    proposal.formattingScope ?? "repository",
+  );
+  const [preparedReview, setPreparedReview] = useState<InitProposal>();
+  const [preparingReview, setPreparingReview] = useState(false);
+  const [reviewError, setReviewError] = useState<string>();
+  const mounted = useRef(true);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
   const [setupOffset, setSetupOffset] = useState(0);
   const [reviewOffset, setReviewOffset] = useState(0);
   const [viewportMetrics, setViewportMetrics] =
@@ -892,7 +955,7 @@ export function InitApp({
   >(undefined);
   const pendingSetupGeometryRef = useRef(false);
   setupOffsetRef.current = setupOffset;
-  const reviewedProposal = useMemo(
+  const selectedProposal = useMemo(
     () => ({
       ...proposalForSelection(
         baseProfile,
@@ -902,6 +965,7 @@ export function InitApp({
         formatting,
         projectTrust,
         evaluatedImport,
+        scope,
       ),
       telemetryEnabled,
       telemetryDisabledByEnvironment:
@@ -918,8 +982,39 @@ export function InitApp({
       evaluatedImport,
       proposalForSelection,
       selected,
+      scope,
     ],
   );
+  const reviewedProposal =
+    phase === "review"
+      ? (preparedReview ?? selectedProposal)
+      : selectedProposal;
+  const beginReview = () => {
+    if (prepareReview === undefined) {
+      setPhase("review");
+      return;
+    }
+    setPreparingReview(true);
+    setReviewError(undefined);
+    void prepareReview(selectedProposal)
+      .then((value) => {
+        if (mounted.current) {
+          setPreparedReview(value);
+          setPhase("review");
+        }
+      })
+      .catch((cause: unknown) => {
+        if (mounted.current)
+          setReviewError(
+            cause instanceof Error
+              ? cause.message
+              : "Could not prepare setup review.",
+          );
+      })
+      .finally(() => {
+        if (mounted.current) setPreparingReview(false);
+      });
+  };
   const hookRows = hookFocusCount(reviewedProposal);
 
   useEffect(() => {
@@ -989,6 +1084,13 @@ export function InitApp({
       scrollBy(direction * pageScrollStep(viewportMetrics.visibleHeight));
       return;
     }
+    if (preparingReview) {
+      if (key.escape) {
+        onDecision(false);
+        exit();
+      }
+      return;
+    }
     if (phase === "review") {
       if (key.upArrow || key.downArrow) {
         scrollBy(key.downArrow ? 1 : -1);
@@ -1009,7 +1111,7 @@ export function InitApp({
         // The executable-code disclosure must be confirmed separately.
         return;
       }
-      setPhase("review");
+      beginReview();
     } else if (
       (normalized === "t" &&
         (effectiveFormatting === "project" || executableEvaluationAvailable)) ||
@@ -1065,6 +1167,7 @@ export function InitApp({
         formatting,
         projectTrust,
         evaluatedImport,
+        scope,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
@@ -1082,6 +1185,12 @@ export function InitApp({
         const offset = key.leftArrow ? -1 : 1;
         return visible[(index + offset + visible.length) % visible.length]!;
       });
+    } else if (
+      hasFormattingScope(reviewedProposal) &&
+      focus === formattingFocusIndex(reviewedProposal) + 1 &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setScope((value) => (value === "projects" ? "repository" : "projects"));
     } else if (
       focus === telemetryFocusIndex(reviewedProposal) &&
       (input === " " || key.leftArrow || key.rightArrow)
@@ -1105,7 +1214,7 @@ export function InitApp({
       }
       if (focus === reviewFocusIndex(reviewedProposal)) {
         if (projectTrustRequired) return;
-        setPhase("review");
+        beginReview();
         return;
       }
       const check = CHECK_IDS[focus - 1 - hookRows];
@@ -1137,6 +1246,8 @@ export function InitApp({
       onMetricsChange={setViewportMetrics}
     >
       <BrandedCommandFrame width={columns} color={color}>
+        {preparingReview ? <Text>Preparing review...</Text> : null}
+        {reviewError === undefined ? null : <Text>{reviewError}</Text>}
         {phase === "configure" ? (
           <SetupPanel
             proposal={reviewedProposal}
@@ -1182,8 +1293,10 @@ export async function runInitPrompt(
     formatting?: InitFormattingChoice,
     projectTrust?: boolean,
     evaluatedImport?: InitFormattingImport,
+    scope?: InitFormattingScope,
   ) => InitProposal,
   evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
+  prepareReview?: (proposal: InitProposal) => Promise<InitProposal>,
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
   let cleanupMouse = () => disableTerminalMouse(process.stdout);
@@ -1196,6 +1309,7 @@ export async function runInitPrompt(
           ? {}
           : { evaluateExecutableImport })}
         {...options}
+        {...(prepareReview === undefined ? {} : { prepareReview })}
         onDecision={(value) => {
           decision = value;
         }}

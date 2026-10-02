@@ -1,4 +1,5 @@
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
+import { fixCommandArguments } from "../reporting/fix-command.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { compareFindings } from "../core/summarize.js";
@@ -130,6 +131,7 @@ function createLocation(
 function createResult(
   finding: Finding,
   ruleIndexes: ReadonlyMap<string, number>,
+  installedCliCommand?: readonly string[],
 ): Record<string, unknown> {
   const id = ruleId(finding);
   const locations = createLocation(finding);
@@ -152,7 +154,9 @@ function createResult(
       ...(finding.automaticFix === undefined
         ? {}
         : {
-            "zedbee/automaticFixCommand": [...finding.automaticFix.command],
+            "zedbee/automaticFixCommand": [
+              ...fixCommandArguments(finding.automaticFix, installedCliCommand),
+            ],
             "zedbee/automaticFixScope": finding.automaticFix.scope,
             "zedbee/automaticFixWrites": finding.automaticFix.writes,
             "zedbee/automaticFixStagesChanges": false,
@@ -284,7 +288,9 @@ export function renderSarif(report: ScanReport): string {
             rules,
           },
         },
-        results: findings.map((finding) => createResult(finding, ruleIndexes)),
+        results: findings.map((finding) =>
+          createResult(finding, ruleIndexes, report.installedCliCommand),
+        ),
         invocations: [createInvocation(report, sanitized.checks)],
       },
     ],

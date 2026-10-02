@@ -344,8 +344,12 @@ function calloutLines(
   callouts: readonly ReportCalloutLine[],
   width: number,
   automaticFixes: readonly ManagedAutomaticFix[] = [],
+  installedCliCommand?: readonly string[],
 ): string[] {
-  const managedFixes = managedFixGuidanceLines(automaticFixes);
+  const managedFixes = managedFixGuidanceLines(
+    automaticFixes,
+    installedCliCommand,
+  );
   const hasCompleteReport = callouts.some(
     (line) => line.kind === "text" && line.value === "COMPLETE REPORT",
   );
@@ -367,11 +371,13 @@ function calloutLines(
 function completeManagedFixLines(
   findings: readonly Finding[],
   width: number,
+  installedCliCommand?: readonly string[],
 ): string[] {
   const managedFixes = managedFixGuidanceLines(
     findings.flatMap((finding) =>
       finding.automaticFix === undefined ? [] : [finding.automaticFix],
     ),
+    installedCliCommand,
   );
   return managedFixes.length === 0
     ? []
@@ -464,7 +470,12 @@ function automaticTextLines(
       wrapWords(line, width),
     ),
     "",
-    ...calloutLines(callouts.closing, width, sections.automaticFixes),
+    ...calloutLines(
+      callouts.closing,
+      width,
+      sections.automaticFixes,
+      report.installedCliCommand,
+    ),
   ];
 }
 
@@ -490,6 +501,9 @@ function guidanceLines(
       maximumAge: presentation.maximumAge,
       automaticFixes: buildScanResultSections(report, presentation)
         .automaticFixes,
+      ...(report.installedCliCommand === undefined
+        ? {}
+        : { installedCliCommand: report.installedCliCommand }),
     }).flatMap((line) =>
       line === ""
         ? [""]
@@ -551,7 +565,11 @@ export function renderText(
     ...incompleteSectionLines(sanitized.checks, width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
-    ...completeManagedFixLines(sanitized.summaryFindings, width),
+    ...completeManagedFixLines(
+      sanitized.summaryFindings,
+      width,
+      report.installedCliCommand,
+    ),
     ...guidanceLines(report, options.presentation, width),
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),

@@ -496,9 +496,6 @@ function applyFormattingChoice(
   const existingOverrides = Array.isArray(root.overrides)
     ? (root.overrides as readonly unknown[])
     : [];
-  const userOverrides = existingOverrides.filter(
-    (entry) => !isGeneratedOverrideEntry(entry),
-  );
   const existingExclusions = Array.isArray(root.pathExclusions)
     ? root.pathExclusions
     : [];
@@ -517,15 +514,16 @@ function applyFormattingChoice(
       modify(next, ["pathExclusions"], finalExclusions, options),
     );
   }
-  const finalOverrides = [...userOverrides, ...generatedEntries];
-  if (
-    existingOverrides.length !== finalOverrides.length ||
-    existingOverrides.length !== userOverrides.length
-  ) {
-    next = applyEdits(
-      next,
-      modify(next, ["overrides"], finalOverrides, options),
-    );
+  for (let index = existingOverrides.length - 1; index >= 0; index--) {
+    if (isGeneratedOverrideEntry(existingOverrides[index])) {
+      next = applyEdits(
+        next,
+        modify(next, ["overrides", index], undefined, options),
+      );
+    }
+  }
+  for (const entry of generatedEntries) {
+    next = applyEdits(next, modify(next, ["overrides", -1], entry, options));
   }
   return next;
 }
@@ -646,7 +644,7 @@ export function createInitProposal(
               }
             : {}),
         };
-  const config = initFileChange(
+  let config = initFileChange(
     ".zedbeerc.jsonc",
     before,
     configContents(
@@ -660,6 +658,53 @@ export function createInitProposal(
     ),
     0o644,
   );
+  if (options.formattingScope !== undefined) {
+    const source = parse(config.after) as Record<string, unknown>;
+    const existing = Array.isArray(source.overrides) ? source.overrides : [];
+    const editOptions = {
+      formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+    };
+    let after = config.after;
+    // Scope owns only its marked entries. Removing individual array elements
+    // preserves comments and bytes inside every handwritten override.
+    for (let index = existing.length - 1; index >= 0; index--) {
+      if (existing[index]?.generated === "prettier-scope") {
+        after = applyEdits(
+          after,
+          modify(after, ["overrides", index], undefined, editOptions),
+        );
+      }
+    }
+    const roots = options.formattingScopeRoots ?? [];
+    if (
+      options.formattingScope === "projects" &&
+      roots.length > 0 &&
+      !roots.includes(".")
+    ) {
+      after = applyEdits(
+        after,
+        modify(
+          after,
+          ["overrides", -1],
+          {
+            files: ["**"],
+            excludeFiles: roots.map((root) => `${root}/**`),
+            checks: { formatting: "off" },
+            generated: "prettier-scope",
+          },
+          editOptions,
+        ),
+      );
+    }
+    if (after !== config.after) {
+      config = initFileChange(
+        config.relativePath,
+        config.before,
+        after,
+        config.mode,
+      );
+    }
+  }
   const hook: ResolvedHookChoice =
     options.hook === "auto"
       ? "none"
@@ -696,7 +741,8 @@ export function createInitProposal(
         ]),
     limitations: Object.freeze([
       "Recommendations are based on inspected manifests, source extensions, workspaces, and lockfiles; review the exact proposal before applying it.",
-      "Initialization never installs packages or runs project lifecycle scripts.",
+      "Setup writes are reviewed before applying; selecting an installation folder first uses that project’s package manager.",
+      "Commit checks and zedbee checks read staged configuration. Stage .zedbeerc.jsonc and other generated setup files before checking or committing.",
       "Generated hooks use the project installation of Zedbee, which must remain installed. Existing hook commands are preserved; disable overlapping Zedbee checks if they are already handled by your hook.",
       ...(hookActivation.status === "pending" &&
       hookActivation.remediation !== undefined
@@ -705,6 +751,12 @@ export function createInitProposal(
       ...(options.formattingImport?.limitations ?? []),
     ]),
     formatting: formattingChoice,
+    ...(options.formattingScope === undefined
+      ? {}
+      : {
+          formattingScope: options.formattingScope,
+          formattingScopeRoots: options.formattingScopeRoots ?? [],
+        }),
     ...(options.formattingImport === undefined
       ? {}
       : { formattingImport: options.formattingImport }),

@@ -349,7 +349,7 @@ describe("release verification contract", () => {
     ).not.toThrow();
   });
 
-  it("rejects bundled dependencies and mismatched pack identity", () => {
+  it("rejects unapproved bundled dependencies and mismatched pack identity", () => {
     expect(() =>
       assertPackMetadata(
         JSON.stringify([
@@ -375,7 +375,7 @@ describe("release verification contract", () => {
             {
               name: "zedbee",
               version: "0.1.0",
-              bundled: [],
+              bundled: ["prettier"],
               files: [{ path: "dist/cli.js", mode: 0o644 }],
             },
           ]),

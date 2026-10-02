@@ -23,6 +23,7 @@ import type { CheckId, ProfileId } from "./config/schema.js";
 import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
 import type {
   InitFormattingChoice,
+  InitFormattingScope,
   InitHookChoice,
   InitOsvUnavailable,
 } from "./init/types.js";
@@ -70,6 +71,7 @@ interface CommanderInitOptions {
   checks?: readonly CheckId[];
   osvUnavailable: InitOsvUnavailable;
   formatting?: InitFormattingChoice;
+  formattingScope?: InitFormattingScope;
   trustProjectPrettier: boolean;
   yes: boolean;
   format: "text" | "json";
@@ -265,6 +267,12 @@ export async function runCli(
         "formatting engine: copy detected settings, use the project's Prettier, keep Zedbee defaults, or disable formatting",
       ).choices(["copy", "project", "managed", "off"]),
     )
+    .addOption(
+      new Option(
+        "--formatting-scope <scope>",
+        "format detected project folders or the whole repository",
+      ).choices(["projects", "repository"]),
+    )
     .option(
       "--trust-project-prettier",
       "allow this invocation to run the project's installed Prettier (never persisted by itself)",
@@ -306,6 +314,9 @@ export async function runCli(
           ...(options.formatting === undefined
             ? {}
             : { formatting: options.formatting }),
+          ...(options.formattingScope === undefined
+            ? {}
+            : { formattingScope: options.formattingScope }),
           trustProjectPrettier: options.trustProjectPrettier,
           yes: options.yes,
           format: options.format,

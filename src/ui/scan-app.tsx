@@ -101,7 +101,10 @@ function NextSteps({
     report,
     presentation,
   ).automaticFixes;
-  const managedFixes = managedFixGuidanceLines(automaticFixes);
+  const managedFixes = managedFixGuidanceLines(
+    automaticFixes,
+    report.installedCliCommand,
+  );
   if (!presentation.abbreviated) {
     if (managedFixes.length === 0) return null;
     return (
@@ -134,6 +137,9 @@ function NextSteps({
     reportPath: presentation.reportPath,
     maximumAge: presentation.maximumAge,
     automaticFixes,
+    ...(report.installedCliCommand === undefined
+      ? {}
+      : { installedCliCommand: report.installedCliCommand }),
   });
   return (
     <Box flexDirection="column" width={width} marginTop={1}>

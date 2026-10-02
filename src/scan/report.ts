@@ -22,6 +22,8 @@ export interface ScanReport {
   outcome: "pass" | "blocked" | "incomplete";
   exitCode: 0 | 1 | 2;
   repositoryRoot: string;
+  /** Host-resolved output guidance only; analyzer/cache commands stay canonical. */
+  readonly installedCliCommand?: readonly string[];
   readonly mode: ScanMode;
   readonly baseline: "HEAD" | string | null;
   readonly target: "index" | string | null;

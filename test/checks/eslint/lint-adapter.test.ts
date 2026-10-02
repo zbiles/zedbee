@@ -86,6 +86,159 @@ async function context(
 }
 
 describe("lintAdapter", () => {
+  it("analyzes a Next-style project when generated type include directories are absent", async () => {
+    const fixtures = await pair();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: {
+          strict: true,
+          jsx: "preserve",
+          moduleResolution: "Bundler",
+          module: "ESNext",
+        },
+        include: [
+          "**/*.ts",
+          "**/*.tsx",
+          "next-env.d.ts",
+          ".next/types/**/*.ts",
+          ".next/dev/types/**/*.ts",
+        ],
+        exclude: ["node_modules"],
+      });
+      await fixture.write("next-env.d.ts", "export {};\n");
+      await fixture.write("app/page.tsx", "export const title = 'Page';\n");
+    }
+    const run = await context(
+      fixtures,
+      changes([
+        {
+          path: "app/page.tsx",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
+    );
+    await expect(lintAdapter.collect(run)).resolves.toMatchObject({
+      baselineObservations: [],
+      targetObservations: [],
+    });
+  });
+
+  it.each(["baseline", "target"] as const)(
+    "reports safe historical %s snapshot and batch context when the typed engine throws",
+    async (side) => {
+      const fixtures = await pair();
+      for (const fixture of [fixtures.baseline, fixtures.staged]) {
+        await fixture.writeJson("tsconfig.json", { include: ["src/**/*.ts"] });
+        await fixture.write("src/first.ts", "export const first = 1;\n");
+        await fixture.write("src/second.ts", "export const second = 2;\n");
+      }
+      const base = await context(
+        fixtures,
+        changes([
+          {
+            path: "src/first.ts",
+            status: "modified",
+            addedRanges: [{ start: 1, end: 1 }],
+          },
+        ]),
+      );
+      const run = {
+        ...base,
+        snapshots: {
+          ...base.snapshots,
+          baselineRef: "a".repeat(40),
+          targetRef: "b".repeat(40),
+        },
+      };
+      const adapter = createLintAdapter((options) => ({
+        async lintFiles() {
+          if (
+            options.cwd ===
+            (side === "baseline"
+              ? run.baselineInspection.snapshotRoot
+              : run.targetInspection.snapshotRoot)
+          )
+            throw new Error("secret source snippet /private/path token=hidden");
+          return [];
+        },
+      }));
+      const error = await adapter
+        .collect(run)
+        .catch((failure: unknown) => failure);
+      expect(error).toMatchObject({
+        code: "TYPED_LINT_ANALYSIS_FAILED",
+        paths: ["src/first.ts", "src/second.ts"],
+        projectPaths: ["tsconfig.json"],
+        diagnostic: {
+          checkId: "lint",
+          operation: "collect",
+          category: "execution",
+          snapshot: side,
+          engine: { name: "eslint" },
+        },
+      });
+      expect((error as Error).message).toContain(`${side} snapshot`);
+      expect((error as Error).message).toContain(
+        (side === "baseline" ? "a" : "b").repeat(40),
+      );
+      expect((error as CheckIncompleteError).remediation).not.toMatch(
+        /last commit|staged/,
+      );
+      expect(JSON.stringify(error)).not.toMatch(
+        /secret source|private\/path|hidden/,
+      );
+    },
+  );
+
+  it("identifies a fatal typed parser rejection without exposing parser prose", async () => {
+    const fixtures = await pair();
+    for (const fixture of [fixtures.baseline, fixtures.staged]) {
+      await fixture.writeJson("tsconfig.json", { include: ["src/**/*.ts"] });
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+    }
+    const run = await context(
+      fixtures,
+      changes([
+        {
+          path: "src/value.ts",
+          status: "modified",
+          addedRanges: [{ start: 1, end: 1 }],
+        },
+      ]),
+    );
+    const adapter = createLintAdapter((options) => ({
+      async lintFiles(paths) {
+        const results = await createManagedEslint(options).lintFiles(paths);
+        return results.map((result) => ({
+          ...result,
+          messages: [
+            {
+              ruleId: null,
+              severity: 2 as const,
+              fatal: true,
+              line: 0,
+              column: 0,
+              message: "private source snippet",
+            },
+          ],
+        }));
+      },
+    }));
+    const error = await adapter
+      .collect(run)
+      .catch((failure: unknown) => failure);
+    expect(error).toMatchObject({
+      code: "TYPED_LINT_ANALYSIS_FAILED",
+      path: "src/value.ts",
+      paths: ["src/value.ts"],
+      projectPaths: ["tsconfig.json"],
+      diagnostic: { snapshot: "baseline", category: "execution" },
+    });
+    expect((error as Error).message).toContain("parser rejected");
+    expect(JSON.stringify(error)).not.toContain("private source snippet");
+  });
+
   it("loads separate TypeScript projects in one repository workspace", async () => {
     const fixtures = await pair();
     for (const fixture of [fixtures.baseline, fixtures.staged]) {
@@ -548,6 +701,13 @@ describe("lintAdapter", () => {
       name: "CheckIncompleteError",
       code: "TYPED_LINT_ANALYSIS_FAILED",
       path: "src/value.ts",
+      paths: ["src/value.ts"],
+      projectPaths: ["tsconfig.json"],
+      diagnostic: {
+        category: "invalid-response",
+        snapshot: "target",
+        operation: "collect",
+      },
     });
     expect(factoryCalls).toBe(2);
   });
@@ -571,10 +731,16 @@ describe("lintAdapter", () => {
     await expect(lintAdapter.collect(run)).rejects.toMatchObject({
       name: "CheckIncompleteError",
       code: "TYPED_LINT_SETUP_FAILED",
-      message:
-        "Typed lint could not build a usable project from this workspace's TypeScript configuration.",
+      message: expect.stringContaining("baseline snapshot (HEAD)"),
       remediation:
-        "Verify that a staged tsconfig.json covers the staged TypeScript files and that referenced configurations are present, then retry.",
+        "Verify that the failing snapshot contains a tsconfig.json covering its requested TypeScript files and all referenced configurations, then retry. For a commit comparison, check the configurations tracked in that commit.",
+      paths: ["src/value.ts"],
+      projectPaths: [],
+      diagnostic: {
+        category: "startup",
+        snapshot: "baseline",
+        operation: "collect",
+      },
     });
   });
 

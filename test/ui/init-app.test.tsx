@@ -1689,3 +1689,81 @@ describe("formatting engine choice", () => {
     });
   });
 });
+
+describe("formatting scope and prepared review", () => {
+  it("shows project scope and lets the user choose repository formatting", async () => {
+    const detected: InitProposal = {
+      ...proposal,
+      formattingScope: "projects",
+      formattingScopeRoots: ["web"],
+      formattingDetection: [
+        {
+          projectRoot: "web",
+          version: "3.8.1",
+          status: "available",
+          executableConfig: false,
+          configPaths: ["web/.prettierrc"],
+        },
+      ],
+    };
+    const select = vi.fn((..._args: unknown[]) => detected);
+    const view = render(
+      <InitApp
+        proposal={detected}
+        proposalForSelection={select}
+        width={100}
+        terminalSize={{ columns: 100, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("Formatting"),
+    );
+    expect(view.lastFrame()).toContain("Detected project folders: web");
+    for (
+      let i = 0;
+      i < CHECK_IDS.length + 8 &&
+      !view.lastFrame()?.includes("➜ Formatting scope");
+      i++
+    ) {
+      view.stdin.write("\u001b[B");
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+    expect(view.lastFrame()).toContain("➜ Formatting scope");
+    view.stdin.write("\u001b[C");
+    await waitForAssertion(() =>
+      expect(select.mock.calls.at(-1)?.[7]).toBe("repository"),
+    );
+    view.unmount();
+  });
+  it("prepares exact formatted content before review and applies those reviewed bytes", async () => {
+    const prepared: InitProposal = { ...proposal, files: [] };
+    const prepareReview = vi.fn(async () => prepared);
+    const decision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={proposal}
+        proposalForSelection={() => proposal}
+        prepareReview={prepareReview}
+        width={100}
+        terminalSize={{ columns: 100, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={decision}
+      />,
+    );
+    await waitForAssertion(() => expect(view.lastFrame()).toContain("SETUP"));
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("APPLY CHANGES"),
+    );
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(decision).toHaveBeenCalledWith(prepared),
+    );
+    expect(prepareReview).toHaveBeenCalledOnce();
+    view.unmount();
+  });
+});
