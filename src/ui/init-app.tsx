@@ -455,7 +455,7 @@ function formattingDetectionLines(
       entry.projectRoot === "." ? "repository root" : entry.projectRoot;
     const description =
       entry.status === "missing"
-        ? `Project Prettier is unavailable in ${location}`
+        ? `Prettier setup detected in ${location}, but no installation was found`
         : `Detected Prettier${entry.version === undefined ? "" : ` ${entry.version}`} in ${location} (${entry.status})`;
     return `${description}.${entry.executableConfig ? " Executable configuration detected." : ""}`;
   });
