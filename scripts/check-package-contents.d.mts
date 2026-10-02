@@ -18,3 +18,23 @@ export function assertPackMetadata(
 ): void;
 
 export function packageFilePaths(packOutput: string): readonly string[];
+
+export const BUNDLED_PACKAGE_NAMES: readonly string[];
+
+export function assertBundledDependencyLock(
+  manifest: {
+    readonly bundleDependencies?: readonly string[];
+    readonly dependencies?: Readonly<Record<string, string>>;
+  },
+  lockfile: {
+    readonly packages?: Readonly<
+      Record<
+        string,
+        {
+          readonly version?: string;
+          readonly integrity?: string;
+        }
+      >
+    >;
+  },
+): void;

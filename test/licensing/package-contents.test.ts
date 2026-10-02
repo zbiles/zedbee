@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const scriptPath = fileURLToPath(
@@ -6,8 +7,10 @@ const scriptPath = fileURLToPath(
 );
 
 describe("package contents", () => {
-  it("accepts the isolated managed formatter but rejects additional bundled packages", async () => {
-    const { assertPackMetadata } = await import(pathToFileURL(scriptPath).href);
+  it("accepts the isolated managed engines but rejects additional bundled packages", async () => {
+    const { assertPackMetadata, BUNDLED_PACKAGE_NAMES } = await import(
+      pathToFileURL(scriptPath).href
+    );
     const metadata = (bundled: string[]) =>
       JSON.stringify([
         {
@@ -18,13 +21,22 @@ describe("package contents", () => {
         },
       ]);
     expect(() =>
-      assertPackMetadata(metadata(["prettier"]), "0.1.0"),
+      assertPackMetadata(
+        metadata([...BUNDLED_PACKAGE_NAMES].reverse()),
+        "0.1.0",
+      ),
     ).not.toThrow();
     for (const bundled of [
       [],
       ["eslint"],
       ["prettier", "eslint"],
       ["prettier", "prettier"],
+      [...BUNDLED_PACKAGE_NAMES, "unapproved"],
+      [...BUNDLED_PACKAGE_NAMES, "typescript"],
+      BUNDLED_PACKAGE_NAMES.filter((name: string) => name !== "typescript"),
+      BUNDLED_PACKAGE_NAMES.filter(
+        (name: string) => name !== "dependency-cruiser",
+      ),
     ]) {
       expect(() => assertPackMetadata(metadata(bundled), "0.1.0")).toThrow(
         /bundled dependencies/u,
@@ -32,7 +44,7 @@ describe("package contents", () => {
     }
   });
 
-  it("allows only reviewed managed Prettier files in the nested bundle", async () => {
+  it("allows only exact reviewed managed engine files in the nested bundle", async () => {
     const { assertAllowedPackageFiles } = await import(
       pathToFileURL(scriptPath).href
     );
@@ -48,6 +60,10 @@ describe("package contents", () => {
           "node_modules/prettier/THIRD-PARTY-NOTICES.md",
           "node_modules/prettier/index.mjs",
           "node_modules/prettier/plugins/typescript.mjs",
+          "node_modules/typescript/lib/typescript.js",
+          "node_modules/dependency-cruiser/src/main/index.mjs",
+          "node_modules/typescript-eslint/dist/index.js",
+          "node_modules/@typescript-eslint/parser/dist/index.js",
         ],
         options,
       ),
@@ -57,11 +73,65 @@ describe("package contents", () => {
       "node_modules/prettier/plugins/unreviewed.mjs",
       "node_modules/prettier/node_modules/unapproved/index.js",
       "node_modules/eslint/package.json",
+      "node_modules/typescript/private-note.md",
+      "node_modules/dependency-cruiser/src/private-note.md",
+      "node_modules/@typescript-eslint/parser/dist/unreviewed.js",
+      "node_modules/typescript-eslint/node_modules/typescript/lib/typescript.js",
     ]) {
       expect(() => assertAllowedPackageFiles([unapproved], options)).toThrow(
         /unapproved files/u,
       );
     }
+  });
+
+  it("rejects stale bundle versions, integrity, and managed dependency pins", async () => {
+    const { assertBundledDependencyLock } = await import(
+      pathToFileURL(scriptPath).href
+    );
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    );
+    const lockfile = JSON.parse(
+      readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"),
+    );
+    expect(() => assertBundledDependencyLock(manifest, lockfile)).not.toThrow();
+    for (const update of [
+      { version: "0.0.0" },
+      { integrity: "sha512-unreviewed" },
+    ]) {
+      const modified = structuredClone(lockfile);
+      Object.assign(
+        modified.packages["node_modules/@typescript-eslint/parser"],
+        update,
+      );
+      expect(() => assertBundledDependencyLock(manifest, modified)).toThrow(
+        /inventory does not match/u,
+      );
+    }
+    expect(() =>
+      assertBundledDependencyLock(
+        {
+          ...manifest,
+          dependencies: { ...manifest.dependencies, typescript: "^6.0.3" },
+        },
+        lockfile,
+      ),
+    ).toThrow(/pinned managed dependency/u);
+    expect(() =>
+      assertBundledDependencyLock(
+        { ...manifest, bundleDependencies: ["prettier", "typescript"] },
+        lockfile,
+      ),
+    ).toThrow(/must bundle/u);
+    expect(() =>
+      assertBundledDependencyLock(
+        {
+          ...manifest,
+          bundleDependencies: [...manifest.bundleDependencies, "eslint"],
+        },
+        lockfile,
+      ),
+    ).toThrow(/must bundle/u);
   });
 
   it.each(["SECURITY.md", "DISCLOSURE"])(

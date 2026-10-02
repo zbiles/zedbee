@@ -195,7 +195,10 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
     let diagnostic: AnalyzerDiagnostic | undefined;
     let cause = error;
     for (let depth = 0; depth < 4 && cause instanceof Error; depth++) {
-      if (cause instanceof AnalyzerJobError) {
+      if (
+        cause instanceof AnalyzerJobError ||
+        cause instanceof CheckIncompleteError
+      ) {
         diagnostic = cause.diagnostic;
         break;
       }
@@ -209,6 +212,16 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
             code: error.code,
             message: error.message,
             remediation: error.remediation,
+            ...(error.diagnostic === undefined
+              ? {}
+              : {
+                  diagnostic: {
+                    ...error.diagnostic,
+                    ...(controller.signal.aborted
+                      ? { category: "cancellation" as const }
+                      : {}),
+                  },
+                }),
             ...(error.path === undefined ? {} : { path: error.path }),
             ...(error.paths === undefined ? {} : { paths: error.paths }),
             ...(error.snapshot === undefined

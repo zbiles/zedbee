@@ -38,44 +38,68 @@ const PUBLIC_DOCS = Object.freeze([
   "docs/support.md",
 ]);
 
-// The managed formatter is shipped inside Zedbee so npm cannot deduplicate it
-// into the consumer's formatter or replace the consumer's Prettier executable.
-// Keep this list explicit: bundling must not admit arbitrary node_modules files.
-const BUNDLED_PRETTIER_FILES = Object.freeze(
-  [
-    "LICENSE",
-    "README.md",
-    "THIRD-PARTY-NOTICES.md",
-    "package.json",
-    "bin/prettier.cjs",
-    "index.cjs",
-    "index.d.ts",
-    "index.mjs",
-    "internal/experimental-cli-worker.mjs",
-    "internal/experimental-cli.mjs",
-    "internal/legacy-cli.mjs",
-    ...["doc", "standalone"].flatMap((name) =>
-      ["d.ts", "js", "mjs"].map((extension) => `${name}.${extension}`),
-    ),
-    ...[
-      "acorn",
-      "angular",
-      "babel",
-      "estree",
-      "flow",
-      "glimmer",
-      "graphql",
-      "html",
-      "markdown",
-      "meriyah",
-      "postcss",
-      "typescript",
-      "yaml",
-    ].flatMap((name) =>
-      ["d.ts", "js", "mjs"].map((extension) => `plugins/${name}.${extension}`),
-    ),
-  ].map((path) => `node_modules/prettier/${path}`),
+// Keep an exact, reviewed inventory: managed engines and their transitive
+// dependencies must be isolated without admitting arbitrary node_modules files.
+// Regenerate explicitly with npm run bundles:generate after dependency updates.
+const bundledInventory = JSON.parse(
+  readFileSync(new URL("./bundled-dependencies.json", import.meta.url), "utf8"),
 );
+const MANAGED_BUNDLED_DEPENDENCIES = Object.freeze([
+  // Dependency Cruiser resolves its optional TypeScript engine from its own
+  // location, so it must live alongside the managed compiler too.
+  "dependency-cruiser",
+  "prettier",
+  "typescript",
+  "typescript-eslint",
+]);
+export const BUNDLED_PACKAGE_NAMES = Object.freeze(
+  // npm reports only packages at the top of the bundled node_modules tree.
+  bundledInventory.packages
+    .filter((entry) => entry.path === `node_modules/${entry.name}`)
+    .map((entry) => entry.name)
+    .sort(),
+);
+const BUNDLED_FILES = Object.freeze(
+  bundledInventory.packages.flatMap((entry) =>
+    entry.files.map((file) => `${entry.path}/${file}`),
+  ),
+);
+
+export function assertBundledDependencyLock(manifest, lockfile) {
+  if (
+    !Array.isArray(manifest.bundleDependencies) ||
+    JSON.stringify([...manifest.bundleDependencies].sort()) !==
+      JSON.stringify([...MANAGED_BUNDLED_DEPENDENCIES].sort())
+  ) {
+    throw new Error(
+      "Package must bundle the managed formatter and TypeScript analysis engines.",
+    );
+  }
+  for (const entry of bundledInventory.packages) {
+    const locked = lockfile.packages?.[entry.path];
+    if (
+      locked?.version !== entry.version ||
+      locked?.integrity !== entry.integrity
+    ) {
+      throw new Error(
+        `Bundled dependency inventory does not match the lockfile: ${entry.path}`,
+      );
+    }
+  }
+  for (const name of MANAGED_BUNDLED_DEPENDENCIES) {
+    const entry = bundledInventory.packages.find(
+      (entry) => entry.path === `node_modules/${name}`,
+    );
+    if (
+      entry === undefined ||
+      manifest.dependencies?.[name] !== entry.version
+    ) {
+      throw new Error(
+        `Bundled ${name} must match the pinned managed dependency.`,
+      );
+    }
+  }
+}
 
 const FIXED_PACKAGE_FILES = Object.freeze([
   "SECURITY.md",
@@ -95,7 +119,7 @@ const FIXED_PACKAGE_FILES = Object.freeze([
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
-  ...BUNDLED_PRETTIER_FILES,
+  ...BUNDLED_FILES,
   "SECURITY.md",
   "DISCLOSURE",
   "LICENSE",
@@ -151,7 +175,7 @@ function buildOutputPaths(sourcePaths) {
 
 export function assertAllowedPackageFiles(paths, options) {
   const allowed = new Set([
-    ...BUNDLED_PRETTIER_FILES,
+    ...BUNDLED_FILES,
     ...FIXED_PACKAGE_FILES,
     ...options.reviewedOverridePaths.map(normalizedPackagePath),
     ...buildOutputPaths(options.sourcePaths),
@@ -179,11 +203,11 @@ export function assertPackMetadata(packOutput, expectedVersion) {
   }
   if (
     !Array.isArray(record.bundled) ||
-    record.bundled.length !== 1 ||
-    record.bundled[0] !== "prettier"
+    JSON.stringify([...record.bundled].sort()) !==
+      JSON.stringify(BUNDLED_PACKAGE_NAMES)
   ) {
     throw new Error(
-      "Package bundled dependencies must contain only managed Prettier.",
+      "Package bundled dependencies must match the reviewed managed engine inventory.",
     );
   }
   const cli = Array.isArray(record.files)
@@ -304,16 +328,22 @@ function main() {
     const corePackage = JSON.parse(
       readFileSync(resolve(root, "package.json"), "utf8"),
     );
-    const managedPrettier = JSON.parse(
-      readFileSync(resolve(root, "node_modules/prettier/package.json"), "utf8"),
+    const lockfile = JSON.parse(
+      readFileSync(resolve(root, "package-lock.json"), "utf8"),
     );
-    if (
-      managedPrettier.name !== "prettier" ||
-      managedPrettier.version !== corePackage.dependencies?.prettier
-    ) {
-      throw new Error(
-        "Bundled Prettier must match the pinned managed dependency.",
+    assertBundledDependencyLock(corePackage, lockfile);
+    for (const entry of bundledInventory.packages) {
+      const installed = JSON.parse(
+        readFileSync(resolve(root, entry.path, "package.json"), "utf8"),
       );
+      if (
+        installed.name !== entry.name ||
+        installed.version !== entry.version
+      ) {
+        throw new Error(
+          `Bundled dependency does not match the reviewed inventory: ${entry.path}`,
+        );
+      }
     }
     assertPackMetadata(coreOutput, corePackage.version);
     if (corePackage.license !== "PolyForm-Small-Business-1.0.0") {

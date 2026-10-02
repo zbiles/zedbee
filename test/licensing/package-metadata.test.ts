@@ -26,7 +26,10 @@ describe("public package metadata", () => {
       text("package-lock.json").then(
         (contents) =>
           JSON.parse(contents) as {
-            packages?: { ""?: { engines?: { node?: string } } };
+            version?: string;
+            packages?: {
+              ""?: { version?: string; engines?: { node?: string } };
+            };
           },
       ),
       text("README.md"),
@@ -37,7 +40,6 @@ describe("public package metadata", () => {
     expect(packageJson.license).toBe("PolyForm-Small-Business-1.0.0");
     expect(packageJson).toMatchObject({
       name: "zedbee",
-      version: "0.1.0-beta.5",
       repository: {
         type: "git",
         url: "https://github.com/zbiles/zedbee.git",
@@ -51,6 +53,9 @@ describe("public package metadata", () => {
       },
       contentPolicy: { class: "dual-use" },
     });
+    expect(packageJson.version).toMatch(/^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u);
+    expect(packageLock.version).toBe(packageJson.version);
+    expect(packageLock.packages?.[""]?.version).toBe(packageJson.version);
     expect(packageJson.engines?.node).toBe(NODE_ENGINE_RANGE);
     expect(packageLock.packages?.[""]?.engines?.node).toBe(NODE_ENGINE_RANGE);
     expect(readme).toContain(

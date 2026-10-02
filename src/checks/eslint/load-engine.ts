@@ -2,6 +2,7 @@ import { ESLint } from "eslint";
 import { realpath, stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { managedConfig, type ManagedConfigOptions } from "./managed-config.js";
+import { ManagedEslintFailure } from "./failure.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   canonicalizeSnapshotRoot,
@@ -132,7 +133,7 @@ class ManagedEslint extends ESLint {
         results.push(...structuredClone(await pending));
       } catch (error) {
         if (key !== undefined) store?.delete(key);
-        throw error;
+        throw new ManagedEslintFailure(path, error);
       }
     }
     return results;

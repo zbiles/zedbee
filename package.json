@@ -63,7 +63,7 @@
   "scripts": {
     "benchmark": "npm run build && node --experimental-strip-types bench/run.mts",
     "benchmark:update": "npm run build && node --experimental-strip-types bench/run.mts --update",
-    "build": "node scripts/clean-build-output.mjs && tsc -p tsconfig.build.json && node scripts/finalize-build-output.mjs",
+    "build": "node scripts/clean-build-output.mjs && node node_modules/typescript/bin/tsc -p tsconfig.build.json && node scripts/finalize-build-output.mjs",
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
@@ -76,7 +76,8 @@
     "release:check": "node scripts/run-with-deadline.mjs scripts/release-check.mjs --release",
     "test": "npm run build && node scripts/run-with-deadline.mjs node_modules/vitest/vitest.mjs run",
     "test:watch": "npm run build && node scripts/run-with-deadline.mjs node_modules/vitest/vitest.mjs",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "bundles:generate": "node scripts/generate-bundled-dependencies.mjs"
   },
   "keywords": [
     "precommit",
@@ -88,7 +89,10 @@
   ],
   "license": "PolyForm-Small-Business-1.0.0",
   "bundleDependencies": [
-    "prettier"
+    "dependency-cruiser",
+    "prettier",
+    "typescript",
+    "typescript-eslint"
   ],
   "dependencies": {
     "@ast-grep/napi": "0.45.1",
@@ -140,6 +144,7 @@
     "prettier-3-0-3": "npm:prettier@3.0.3",
     "spdx-expression-parse": "5.0.0",
     "tsx": "4.23.13",
+    "typescript-5-9-3": "npm:typescript@5.9.3",
     "vitest": "5.0.1"
   }
 }
