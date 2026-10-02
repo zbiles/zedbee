@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { managedKnipEntry } from "./dead-code/managed-knip.js";
 import type { CacheableObservationCheckId } from "./metadata.js";
 import { isCacheableObservationCheck } from "./metadata.js";
 
@@ -102,6 +103,11 @@ function versionFromManifest(
 export function readInstalledPackageVersion(
   packageName: string,
 ): string | undefined {
+  if (packageName === "knip")
+    return versionFromManifest(
+      packageName,
+      fileURLToPath(new URL("../package.json", managedKnipEntry)),
+    );
   try {
     const direct = import.meta.resolve(`${packageName}/package.json`);
     const version = versionFromManifest(packageName, fileURLToPath(direct));

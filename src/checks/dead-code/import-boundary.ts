@@ -1,3 +1,4 @@
+import { managedKnipEntry } from "./managed-knip.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix } from "node:path";
@@ -170,7 +171,7 @@ export async function createKnipImportValidator(
 }> {
   // Reuse the pinned engine's spelling rules (loader prefixes, queries, fragments),
   // so validation sees the same source specifier as Knip. Never load project code.
-  const knipModule = fileURLToPath(import.meta.resolve("knip"));
+  const knipModule = fileURLToPath(managedKnipEntry);
   const module = (await import(
     pathToFileURL(join(dirname(knipModule), "util", "modules.js")).href
   )) as {

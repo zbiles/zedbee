@@ -13,6 +13,10 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { commandInvocation } from "./command-invocation.mjs";
 import { pathToFileURL } from "node:url";
+import {
+  assertVendoredDependencyLock,
+  VENDORED_FILES,
+} from "./vendored-dependencies.mjs";
 
 const reviewedOverrides = JSON.parse(
   readFileSync(
@@ -38,7 +42,7 @@ const PUBLIC_DOCS = Object.freeze([
   "docs/support.md",
 ]);
 
-// Keep an exact, reviewed inventory: managed engines and their transitive
+// Keep an exact, reviewed inventory: managed runtimes and their transitive
 // dependencies must be isolated without admitting arbitrary node_modules files.
 // Regenerate explicitly with npm run bundles:generate after dependency updates.
 const bundledInventory = JSON.parse(
@@ -48,9 +52,20 @@ const MANAGED_BUNDLED_DEPENDENCIES = Object.freeze([
   // Dependency Cruiser resolves its optional TypeScript engine from its own
   // location, so it must live alongside the managed compiler too.
   "dependency-cruiser",
+  "fdir",
+  "formatly",
+  "get-tsconfig",
+  // Keep Ink and its reconciler beside the private React runtime so their
+  // imports never resolve an app installation.
+  "ink",
+  "jiti",
   "prettier",
+  "react",
+  "strip-json-comments",
   "typescript",
   "typescript-eslint",
+  "unbash",
+  "zod",
 ]);
 export const BUNDLED_PACKAGE_NAMES = Object.freeze(
   // npm reports only packages at the top of the bundled node_modules tree.
@@ -72,7 +87,7 @@ export function assertBundledDependencyLock(manifest, lockfile) {
       JSON.stringify([...MANAGED_BUNDLED_DEPENDENCIES].sort())
   ) {
     throw new Error(
-      "Package must bundle the managed formatter and TypeScript analysis engines.",
+      "Package must bundle the managed engines and private application runtimes.",
     );
   }
   for (const entry of bundledInventory.packages) {
@@ -102,6 +117,7 @@ export function assertBundledDependencyLock(manifest, lockfile) {
 }
 
 const FIXED_PACKAGE_FILES = Object.freeze([
+  ...VENDORED_FILES,
   "SECURITY.md",
   "DISCLOSURE",
   "LICENSE",
@@ -119,6 +135,7 @@ const FIXED_PACKAGE_FILES = Object.freeze([
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
+  ...VENDORED_FILES,
   ...BUNDLED_FILES,
   "SECURITY.md",
   "DISCLOSURE",
@@ -298,6 +315,7 @@ function main() {
       const packed = spawnSync(invocation.executable, invocation.args, {
         cwd: root,
         encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, npm_config_cache: temporaryCache },
       });
@@ -332,6 +350,7 @@ function main() {
       readFileSync(resolve(root, "package-lock.json"), "utf8"),
     );
     assertBundledDependencyLock(corePackage, lockfile);
+    assertVendoredDependencyLock(corePackage, lockfile);
     for (const entry of bundledInventory.packages) {
       const installed = JSON.parse(
         readFileSync(resolve(root, entry.path, "package.json"), "utf8"),

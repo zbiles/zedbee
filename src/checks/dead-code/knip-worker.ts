@@ -1,3 +1,4 @@
+import { managedKnipEntry } from "./managed-knip.js";
 import nodeFs from "node:fs";
 import nodePromises from "node:fs/promises";
 import { createRequire, registerHooks } from "node:module";
@@ -91,11 +92,9 @@ async function run(job: KnipJob) {
     // These snapshot crawlers otherwise resolve /snapshot against the host's
     // current drive on Windows. Only their own path imports use virtual POSIX
     // semantics; trusted module loading and host capture retain native paths.
-    const knipRequire = createRequire(import.meta.resolve("knip"));
-    const manifestOwner = new URL(
-      "./manifest/helpers.js",
-      import.meta.resolve("knip"),
-    ).href;
+    const knipRequire = createRequire(managedKnipEntry);
+    const manifestOwner = new URL("./manifest/helpers.js", managedKnipEntry)
+      .href;
     const globRequire = createRequire(knipRequire.resolve("tinyglobby"));
     const virtualPathOwners = [
       knipRequire.resolve("tinyglobby"),
@@ -151,7 +150,7 @@ async function run(job: KnipJob) {
           : { format: "module", source: sources[url], shortCircuit: true };
       },
     });
-    const entry = fileURLToPath(import.meta.resolve("knip"));
+    const entry = fileURLToPath(managedKnipEntry);
     const { main } = await import(pathToFileURL(entry).href);
     const { createOptions } = await import(
       pathToFileURL(`${dirname(entry)}/util/create-options.js`).href

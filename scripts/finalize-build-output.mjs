@@ -7,8 +7,10 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, join } from "node:path";
+import { copyVendoredDependencies } from "./vendored-dependencies.mjs";
 
 const root = realpathSync(process.cwd());
+copyVendoredDependencies(root);
 const cli = join(root, "dist", "cli.js");
 const metadata = lstatSync(cli);
 
