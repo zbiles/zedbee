@@ -453,7 +453,11 @@ function formattingDetectionLines(
   return detection.map((entry) => {
     const location =
       entry.projectRoot === "." ? "repository root" : entry.projectRoot;
-    return `Detected Prettier ${entry.version ?? "unknown version"} in ${location} (${entry.status})${entry.executableConfig ? " with an executable configuration" : ""}.`;
+    const description =
+      entry.status === "missing"
+        ? `Prettier setup detected in ${location}; no usable project installation found`
+        : `Detected Prettier${entry.version === undefined ? "" : ` ${entry.version}`} in ${location} (${entry.status})`;
+    return `${description}.${entry.executableConfig ? " Executable configuration detected." : ""}`;
   });
 }
 
@@ -491,9 +495,14 @@ function FormattingChoice({
       : SECONDARY_FORMATTING_CHOICES;
   return (
     <Box ref={focused ? activeTargetRef : undefined} flexDirection="column">
-      <Box paddingX={2}>
-        <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
-          {focused ? "➜ " : "  "}Formatting
+      <Box paddingRight={2}>
+        <Box width={2}>
+          <Text {...colorProp(color, ZEDBEE_THEME.yellow)}>
+            {focused ? "➜ " : "  "}
+          </Text>
+        </Box>
+        <Text bold {...colorProp(color, ZEDBEE_THEME.primary)}>
+          Formatting
         </Text>
       </Box>
       <Box paddingX={4} flexDirection="column">
@@ -729,6 +738,7 @@ function SetupPanel({
         <Box
           flexDirection="column"
           paddingX={2}
+          marginTop={1}
           ref={
             focus === formattingFocusIndex(proposal) + 1
               ? activeTargetRef
