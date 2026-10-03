@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
 import type { InitFileChange, InitProposal } from "../init/types.js";
+import { mergeHookCommand, ZEDBEE_COMMAND } from "./husky.js";
 import { updateRawGitHook } from "./raw-git.js";
 
 export const TRACKED_HOOK_NAMES = Object.freeze([
@@ -87,7 +88,8 @@ export async function trackedRuntimeChanges(
 
 export async function validateLocalHookMigration(
   root: string,
-  command?: string,
+  command = ZEDBEE_COMMAND,
+  mergeCommand = mergeHookCommand(command),
 ): Promise<void> {
   const { rawGitHookPath } = await import("./detect.js");
   const directory = dirname(await rawGitHookPath(root));
@@ -97,12 +99,33 @@ export async function validateLocalHookMigration(
     if (original === undefined || !hasHookExecutePermission(original.mode))
       continue;
     // Recognize the exact stock template shipped before hook attribution too.
-    const stock = [
-      updateRawGitHook(null),
-      updateRawGitHook(null, command),
-      "#!/bin/sh\nnpx --no-install zedbee scan\n",
-    ];
-    if (name !== "pre-commit" || !stock.includes(original.contents)) {
+    const hookName =
+      name === "pre-commit" || name === "pre-merge-commit" ? name : undefined;
+    const stock =
+      hookName === undefined
+        ? []
+        : [
+            updateRawGitHook(
+              null,
+              hookName === "pre-commit"
+                ? ZEDBEE_COMMAND
+                : mergeHookCommand(ZEDBEE_COMMAND),
+              hookName,
+            ),
+            updateRawGitHook(
+              null,
+              hookName === "pre-commit" ? command : mergeCommand,
+              hookName,
+            ),
+            hookName === "pre-commit"
+              ? "#!/bin/sh\nnpx --no-install zedbee scan\n"
+              : "#!/bin/sh\nnpx --no-install zedbee scan --merge\n",
+          ];
+    const recognized = stock.flatMap((script) => [
+      script,
+      script.replaceAll(" || exit $?", ""),
+    ]);
+    if (!recognized.includes(original.contents)) {
       throw new Error(
         "Tracked setup cannot preserve custom local hook execution. Keep the local integration or migrate those hooks manually first.",
       );

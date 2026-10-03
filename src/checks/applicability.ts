@@ -135,6 +135,14 @@ export async function inspectManagedCheck(
     );
     const changedIncludingDeleted = new Set(files.map((file) => file.path));
     workspaces = [...candidates.values()]
+      // A removed workspace cannot create findings in the merged target.
+      .filter(
+        (workspace) =>
+          context.mergeComparison !== true ||
+          context.targetInspection.workspaces.some(
+            (target) => target.relativeRoot === workspace.relativeRoot,
+          ),
+      )
       .filter((workspace) =>
         always
           ? workspace.sourceFiles.some((path) => SOURCE.test(path))

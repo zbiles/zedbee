@@ -3,6 +3,8 @@ import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 
 export function scanSourceIdentityLine(report: ScanReport): string | undefined {
   const source = sanitizeScanSourceIdentity(report);
+  if (source.mergeParents !== undefined)
+    return `Staged merge · parents ${source.mergeParents.map((parent) => parent.slice(0, 12)).join(" + ")}`;
   if (source.mode !== "base" || source.requestedBase === undefined) {
     return undefined;
   }

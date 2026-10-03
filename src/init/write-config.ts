@@ -118,8 +118,14 @@ async function validatedRawGitPath(
   root: string,
   change: InitFileChange,
 ): Promise<string> {
+  const hookName =
+    change.relativePath === ".git/hooks/pre-commit"
+      ? "pre-commit"
+      : change.relativePath === ".git/hooks/pre-merge-commit"
+        ? "pre-merge-commit"
+        : undefined;
   if (
-    change.relativePath !== ".git/hooks/pre-commit" ||
+    hookName === undefined ||
     change.absolutePath === undefined ||
     !isAbsolute(change.absolutePath)
   ) {
@@ -127,7 +133,7 @@ async function validatedRawGitPath(
   }
   const git = new GitClient(root);
   const [hookOutput, commonOutput] = await Promise.all([
-    git.run(["rev-parse", "--git-path", "hooks/pre-commit"]),
+    git.run(["rev-parse", "--git-path", `hooks/${hookName}`]),
     git.run(["rev-parse", "--git-common-dir"]),
   ]);
   const hook = isAbsolute(hookOutput.stdout)
@@ -148,7 +154,7 @@ async function validatedRawGitPath(
   }
   const canonicalHook = resolve(await realpath(dirname(hook)), basename(hook));
   if (
-    canonicalHook !== resolve(hooksDirectory, "pre-commit") ||
+    canonicalHook !== resolve(hooksDirectory, hookName) ||
     canonicalHook !== change.absolutePath
   ) {
     throw unsafeTarget();
@@ -167,10 +173,16 @@ async function validateChange(
   const portable = normalizedPath(change.relativePath).replace(/^\.\//u, "");
   let path: string;
   if (change.absolutePath !== undefined) {
-    if (change.relativePath === ".git/hooks/pre-commit") {
+    if (
+      change.relativePath === ".git/hooks/pre-commit" ||
+      change.relativePath === ".git/hooks/pre-merge-commit"
+    ) {
       path = await validatedRawGitPath(root, change);
     } else {
-      const configured = await customGitHookPath(root);
+      const hookName = basename(change.relativePath);
+      if (hookName !== "pre-commit" && hookName !== "pre-merge-commit")
+        throw unsafeTarget();
+      const configured = await customGitHookPath(root, hookName);
       if (
         configured === undefined ||
         configured !== change.absolutePath ||

@@ -1,8 +1,11 @@
+import type { ScanHookName } from "./command.js";
 import { updateHuskyHook } from "./husky.js";
 
 export function updateRawGitHook(
   before: string | null | undefined,
   command?: string,
+  hookName: ScanHookName = "pre-commit",
+  preCommitPath = ".git/hooks/pre-commit",
 ): string {
   const firstLine = before?.split("\n", 1)[0] ?? "";
   if (
@@ -12,8 +15,8 @@ export function updateRawGitHook(
     )
   ) {
     throw new Error(
-      "Zedbee cannot safely edit a non-shell pre-commit hook. Add the Zedbee command through its existing integration.",
+      "Zedbee cannot safely edit a non-shell Git hook. Add the Zedbee command through its existing integration.",
     );
   }
-  return updateHuskyHook(before, command);
+  return updateHuskyHook(before, command, hookName, preCommitPath);
 }

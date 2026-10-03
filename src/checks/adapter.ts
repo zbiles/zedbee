@@ -31,6 +31,8 @@ export interface CheckObservationSet<TObservation = Observation> {
 }
 
 export interface InspectionContext {
+  /** A staged merge must retain target-only findings throughout each affected project. */
+  readonly mergeComparison?: boolean;
   repositoryRoot: string;
   changeSet: ChangeSet;
   config: ResolvedConfig;

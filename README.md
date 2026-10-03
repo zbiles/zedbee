@@ -24,7 +24,7 @@ or report contents are sent. Set `ZEDBEE_TELEMETRY_DISABLED=1` before first use,
 or run `npx zedbee telemetry disable` to save an opt-out. See the
 [telemetry details](docs/privacy.md#usage-telemetry).
 
-The public beta is available under npm's `next` tag. Setup recommends checks for your project and previews a `.zedbeerc.jsonc` configuration file and pre-commit hook. It explains network use and asks before writing anything.
+The public beta is available under npm's `next` tag. Setup recommends checks for your project and previews a `.zedbeerc.jsonc` configuration file plus pre-commit and pre-merge-commit hooks. It explains network use and asks before writing anything.
 
 Stage the configuration and the files you intend to commit, including the package manifest and lockfile changes from installation. Then run:
 
@@ -32,9 +32,9 @@ Stage the configuration and the files you intend to commit, including the packag
 npx zedbee scan
 ```
 
-Zedbee scans the version you staged, even if you have edited the file again since staging it. Nothing staged means nothing to scan. A newly created configuration must also be staged before a scan uses it.
+Zedbee scans the version you staged, even if you have edited the file again since staging it. Outside a merge, nothing staged means nothing to scan. During a merge, it compares the staged result against every parent and reports only findings new to all of them. A newly created configuration must also be staged before a scan uses it.
 
-With the hook installed, Zedbee runs when you commit. You can also run it manually at any time. Hooks are local and can be bypassed, so use CI with a required check if your team needs to enforce the gate before merging.
+With the hooks installed, Zedbee runs when you commit and before Git creates an automatic merge commit. Merge commits are checked against every parent; fast-forward merges create no commit and do not run these hooks. You can also run it manually at any time. Hooks are local and can be bypassed, so use CI with a required check if your team needs to enforce the gate before merging.
 
 ## What it checks
 

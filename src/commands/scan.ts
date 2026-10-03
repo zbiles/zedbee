@@ -41,6 +41,7 @@ export type { RequestedOutputFormat } from "../scan/reporting-options.js";
 export type OutputFormat = ReportingSurface;
 
 export interface ScanCommandOptions {
+  merge?: boolean;
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
   service?: boolean;
   executor?: AnalyzerExecutor;
@@ -261,6 +262,15 @@ export async function executeScanCommand(
     const scanOptions: RunScanOptions = {
       executor,
       repositoryRoot,
+      ...(options.baseRef === undefined || options.merge === true
+        ? {
+            merge:
+              options.merge === true
+                ? ("required" as const)
+                : ("auto" as const),
+            mergeEnvironment: io.env,
+          }
+        : {}),
       reportingSurface: format,
       ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
       ...(options.sourceExcerpts === undefined

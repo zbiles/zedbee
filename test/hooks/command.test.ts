@@ -197,6 +197,15 @@ it("requires simple-git-hooks activation after refreshing its installed command"
   expect(before.activation.status).toBe("pending");
   expect(before.activation.remediation).toContain("simple-git-hooks");
   await repository.write(".git/hooks/pre-commit", `#!/bin/sh\n${command}\n`);
+  const mergeCommand = await resolveHookCommand(
+    repository.root,
+    "pre-merge-commit",
+  );
+  await repository.write(
+    ".git/hooks/pre-merge-commit",
+    `#!/bin/sh\n${mergeCommand}\n`,
+  );
+  await chmod(join(repository.root, ".git/hooks/pre-merge-commit"), 0o755);
   const after = await detectHookIntegration(
     repository.root,
     "simple-git-hooks",

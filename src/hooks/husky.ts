@@ -1,13 +1,76 @@
-export const ZEDBEE_COMMAND = "npx --no-install zedbee scan --hook-invocation";
-const ZEDBEE_SCAN_COMMAND =
-  /(?:^|[\n;&|])\s*(?:npx(?:\s+--no-install)?\s+)?(?:\.\/node_modules\/\.bin\/)?zedbee\s+scan(?:\s|$)/u;
+import type { ScanHookName } from "./command.js";
 
-export function hasZedbeeScanCommand(source: string): boolean {
-  return (
-    ZEDBEE_SCAN_COMMAND.test(source) ||
-    /(?:^|[\n;&|])\s*node\s+['"][^\n]+\/node_modules\/zedbee\/[^\n]+['"]\s+scan(?:\s|$)/u.test(
-      source,
-    )
+const SCAN_FAILURE_GUARD = " || exit $?";
+
+export const ZEDBEE_COMMAND = "npx --no-install zedbee scan --hook-invocation";
+
+/** The resolved command is either a direct invocation or a Git-root subshell. */
+export function mergeHookCommand(command: string): string {
+  return command.endsWith(")")
+    ? `${command.slice(0, -1)} --merge)`
+    : `${command} --merge`;
+}
+
+export function hasZedbeeScanCommand(
+  source: string,
+  hookName?: ScanHookName,
+): boolean {
+  const invocations = [
+    /(?:^|[\n;&|])\s*(?:npx(?:\s+--no-install)?\s+)?(?:\.\/node_modules\/\.bin\/)?zedbee\s+scan(?=\s|$)([^\n;&|]*)/gu,
+    /(?:^|[\n;&|])\s*node\s+['"][^\n]+\/node_modules\/zedbee\/[^\n]+['"]\s+scan(?=\s|$)([^\n;&|]*)/gu,
+  ];
+  return invocations.some((pattern) =>
+    [...source.matchAll(pattern)].some((match) => {
+      const merge = /(?:^|\s)--merge(?:\s|\)|$)/u.test(match[1]!);
+      return (
+        hookName === undefined || merge === (hookName === "pre-merge-commit")
+      );
+    }),
+  );
+}
+
+/** Recognize executable delegation to the pre-commit hook we also update. */
+function preCommitDelegationPattern(preCommitPath: string): RegExp {
+  const path = preCommitPath.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const targets = [
+    `["']?(?:\\./)?${path}["']?`,
+    String.raw`"\$\(git rev-parse --git-path hooks/pre-commit\)"`,
+    String.raw`"\$\(dirname "\$0"\)/pre-commit"`,
+  ];
+  if (preCommitPath === ".git/hooks/pre-commit") {
+    targets.push(
+      String.raw`["']?\$(?:GIT_DIR|\{GIT_DIR\})/hooks/pre-commit["']?`,
+    );
+  }
+  return new RegExp(
+    `(^|[\\n;&|])(\\s*(?:(?:exec|sh|bash|dash|\\.)\\s+)?(?:${targets.join("|")})(?:[ \t]+[^#\\n;&|]*)?)(?=\\s|[#;&|]|$)`,
+    "gu",
+  );
+}
+
+export function delegatesToPreCommit(
+  source: string,
+  preCommitPath = ".husky/pre-commit",
+): boolean {
+  return preCommitDelegationPattern(preCommitPath).test(source);
+}
+
+function guardPreCommitDelegation(
+  source: string,
+  preCommitPath: string,
+): string {
+  return source.replace(
+    preCommitDelegationPattern(preCommitPath),
+    (match, _boundary: string, invocation: string, offset: number) => {
+      const remaining = source.slice(offset + match.length);
+      if (
+        invocation.trimStart().startsWith("exec ") ||
+        remaining.trim() === "" ||
+        remaining.trimStart().startsWith(SCAN_FAILURE_GUARD.trimStart())
+      )
+        return match;
+      return `${match.trimEnd()}${SCAN_FAILURE_GUARD}`;
+    },
   );
 }
 
@@ -15,31 +78,52 @@ export function hasZedbeeScanCommand(source: string): boolean {
 export function replaceManagedZedbeeCommand(
   source: string,
   command: string,
+  guardFailure = false,
 ): string {
-  if (command === ZEDBEE_COMMAND) return source;
   return source
     .split("\n")
-    .map((line) =>
-      line.trim() === ZEDBEE_COMMAND ||
-      line.trim() === "npx --no-install zedbee scan" ||
-      (line.startsWith("node '") &&
-        line.endsWith(" scan --hook-invocation") &&
-        hasZedbeeScanCommand(line)) ||
-      (line.startsWith('(cd "$(git rev-parse --show-toplevel)" && node \'') &&
-        line.endsWith(" scan --hook-invocation)") &&
-        hasZedbeeScanCommand(line))
-        ? command
-        : line,
-    )
+    .map((line) => {
+      const value = line.trim();
+      const guarded = value.endsWith(SCAN_FAILURE_GUARD);
+      const trimmed = guarded
+        ? value.slice(0, -SCAN_FAILURE_GUARD.length)
+        : value;
+      const plain =
+        /^npx --no-install zedbee scan(?: --hook-invocation)?(?: --merge)?$/u.test(
+          trimmed,
+        );
+      const installed =
+        (trimmed.startsWith("node '") &&
+          / scan --hook-invocation(?: --merge)?$/u.test(trimmed)) ||
+        (trimmed.startsWith(
+          '(cd "$(git rev-parse --show-toplevel)" && node \'',
+        ) &&
+          / scan --hook-invocation(?: --merge)?\)$/u.test(trimmed));
+      return plain || (installed && hasZedbeeScanCommand(trimmed))
+        ? `${command}${guardFailure || guarded ? SCAN_FAILURE_GUARD : ""}`
+        : line;
+    })
     .join("\n");
 }
 
 export function updateHuskyHook(
   before: string | null | undefined,
   command = ZEDBEE_COMMAND,
+  hookName: ScanHookName = "pre-commit",
+  preCommitPath = ".husky/pre-commit",
 ): string {
-  const source = replaceManagedZedbeeCommand(before ?? "#!/bin/sh\n", command);
-  if (hasZedbeeScanCommand(source)) return source;
+  const source = replaceManagedZedbeeCommand(
+    before ?? "#!/bin/sh\n",
+    command,
+    true,
+  );
+  if (hasZedbeeScanCommand(source, hookName)) return source;
+  if (
+    hookName === "pre-merge-commit" &&
+    delegatesToPreCommit(source, preCommitPath)
+  ) {
+    return guardPreCommitDelegation(source, preCommitPath);
+  }
   const hadFinalNewline = source.endsWith("\n");
   const lines = source.split("\n");
   if (hadFinalNewline) lines.pop();
@@ -48,6 +132,6 @@ export function updateHuskyHook(
   if (/^exit(?:\s|$)/u.test(lines[insertion - 1]?.trim() ?? "")) {
     insertion -= 1;
   }
-  lines.splice(insertion, 0, command);
+  lines.splice(insertion, 0, `${command}${SCAN_FAILURE_GUARD}`);
   return `${lines.join("\n")}\n`;
 }

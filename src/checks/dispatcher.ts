@@ -491,6 +491,7 @@ async function collectObservations(
 function adapterBaseContext(context: DispatchContext): DispatchContext {
   return Object.freeze({
     repositoryRoot: context.repositoryRoot,
+    ...(context.mergeComparison === true ? { mergeComparison: true } : {}),
     changeSet: snapshotChangeSet(context.changeSet),
     config: snapshotConfig(context.config),
     snapshots: Object.freeze({
@@ -530,6 +531,7 @@ function inspectionContext(
     filePolicyConfig: context.config,
     baselineInspection: context.baselineInspection,
     targetInspection: context.targetInspection,
+    ...(context.mergeComparison === true ? { mergeComparison: true } : {}),
   });
 }
 
