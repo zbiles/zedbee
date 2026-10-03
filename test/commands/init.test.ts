@@ -542,7 +542,7 @@ describe("executeInitCommand", () => {
       [
         "Zedbee initialized successfully",
         "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
-        "Next step: After reviewing the project tooling, run lefthook install to activate the configured hook.",
+        "Next step: After reviewing the project tooling, run lefthook install to activate both configured hooks.",
         "",
       ].join("\n"),
     );

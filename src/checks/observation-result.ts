@@ -1,3 +1,4 @@
+import { pairLocationObservations } from "../attribution/pair-locations.js";
 import {
   compareCodeUnits,
   compareObservationSets,
@@ -325,7 +326,7 @@ export async function observationCheckResult(
   context: CheckRunContext,
   requiresBaseline: boolean,
 ): Promise<CheckResult> {
-  const set = snapshotSet(rawSet, checkId, context.target, requiresBaseline);
+  let set = snapshotSet(rawSet, checkId, context.target, requiresBaseline);
   const hasMetrics = [...set.baseline, ...set.target].some(
     (observation) => observation.metric !== undefined,
   );
@@ -361,6 +362,49 @@ export async function observationCheckResult(
       context.targetInspection,
       targetRegistry,
     );
+  if (context.mergeComparison === true) {
+    const locationOnly = (observation: Observation) =>
+      observation.location !== undefined &&
+      observation.entity === undefined &&
+      observation.metric === undefined &&
+      observation.comparisonIdentity === undefined;
+    const before = set.baseline.filter(locationOnly);
+    const after = set.target.filter(locationOnly);
+    const sourceFiles = async (
+      observations: readonly Observation[],
+      registry: SnapshotRegistry | undefined,
+    ) => {
+      const files: Record<string, string> = {};
+      for (const observation of observations) {
+        const file = observation.location!.file;
+        if (files[file] === undefined) {
+          if (registry === undefined)
+            throw new Error("Merge diagnostic source was not validated.");
+          files[file] = await readContainedFile(registry, file);
+        }
+      }
+      return files;
+    };
+    const paired = pairLocationObservations(
+      {
+        observations: before,
+        files: await sourceFiles(before, baselineRegistry),
+      },
+      { observations: after, files: await sourceFiles(after, targetRegistry) },
+      context.changeSet,
+    );
+    set = {
+      ...set,
+      baseline: [
+        ...set.baseline.filter((observation) => !locationOnly(observation)),
+        ...paired.baselineObservations,
+      ],
+      target: [
+        ...set.target.filter((observation) => !locationOnly(observation)),
+        ...paired.targetObservations,
+      ],
+    };
+  }
   const entities = await changedEntities(context, set.target, targetRegistry);
   const compareAllObservations =
     checkId === "vulnerabilities" && metricPolicy === undefined;
@@ -380,7 +424,7 @@ export async function observationCheckResult(
       changedEntityIdentities: entities.map((entity) => entity.identity),
       repositoryDelta:
         context.target.kind === "repository" && !context.changeSet.isEmpty,
-      projectDelta: set.projectDelta,
+      projectDelta: context.mergeComparison === true || set.projectDelta,
       addedRanges: addedRanges(context),
       syntaxOwnership: true,
     },

@@ -193,7 +193,7 @@ describe("CLI telemetry integration", () => {
     expect(hook).toContain("scan --hook-invocation");
     expect(updateHuskyHook(hook)).toBe(hook);
     const legacy = "#!/bin/sh\nnpx --no-install zedbee scan\n";
-    expect(updateHuskyHook(legacy)).toBe(legacy);
+    expect(updateHuskyHook(legacy)).toBe(hook);
     const manifest = updateSimpleGitHooksManifest("{}");
     expect(manifest).toContain("scan --hook-invocation");
     expect(updateLefthookConfig(null)).toContain("scan --hook-invocation");

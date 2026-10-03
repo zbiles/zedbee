@@ -4,6 +4,8 @@ import { compareCodeUnits } from "../core/compare.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 
+export type ScanHookName = "pre-commit" | "pre-merge-commit";
+
 export class HookInstallationError extends Error {
   constructor(
     message: string,
@@ -29,6 +31,7 @@ function shellQuote(value: string): string {
 async function installedCommand(
   repositoryRoot: string,
   projectRoot: string,
+  hookName: ScanHookName = "pre-commit",
 ): Promise<
   { command: string; packageRoot: string; cliPath: string } | undefined
 > {
@@ -55,7 +58,7 @@ async function installedCommand(
       const repositoryPath = `./${relative(repositoryRoot, path).split(sep).join("/")}`;
       if (/[\r\n\0]/u.test(repositoryPath)) return undefined;
       return {
-        command: `(cd "$(git rev-parse --show-toplevel)" && node ${shellQuote(repositoryPath)} scan --hook-invocation)`,
+        command: `(cd "$(git rev-parse --show-toplevel)" && node ${shellQuote(repositoryPath)} scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`,
         packageRoot,
         cliPath: repositoryPath,
       };
@@ -90,11 +93,16 @@ async function installationCandidates(repositoryRoot: string) {
 
 export async function resolveHookCommand(
   repositoryRoot: string,
+  hookName: ScanHookName = "pre-commit",
 ): Promise<string> {
   const { root, projects, declared } =
     await installationCandidates(repositoryRoot);
   for (const project of declared) {
-    const installation = await installedCommand(root, project.relativeRoot);
+    const installation = await installedCommand(
+      root,
+      project.relativeRoot,
+      hookName,
+    );
     if (installation !== undefined) return installation.command;
   }
   const candidates = declared.length > 0 ? declared : projects;

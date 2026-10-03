@@ -36,6 +36,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  merge?: boolean;
   hookInvocation?: boolean;
   service: boolean;
   diagnostics?: boolean;
@@ -360,6 +361,12 @@ export async function runCli(
         "mark a generated Git hook invocation",
       ).hideHelp(),
     )
+    .addOption(
+      new Option(
+        "--merge",
+        "compare the staged merge against every parent",
+      ).conflicts("base"),
+    )
     .option(
       "--base <ref>",
       "scan committed HEAD changes since the unique merge base with this ref",
@@ -407,6 +414,7 @@ export async function runCli(
           service: options.service,
           color: options.color,
           animations: options.animations,
+          ...(options.merge === true ? { merge: true } : {}),
           ...(options.base === undefined ? {} : { baseRef: options.base }),
           ...(options.config === undefined
             ? {}

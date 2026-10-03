@@ -25,6 +25,7 @@ export interface ScanReport {
   /** Host-resolved output guidance only; analyzer/cache commands stay canonical. */
   readonly installedCliCommand?: readonly string[];
   readonly mode: ScanMode;
+  readonly mergeParents?: readonly string[];
   readonly baseline: "HEAD" | string | null;
   readonly target: "index" | string | null;
   readonly requestedBase?: string;

@@ -7,6 +7,7 @@ export interface ScanSourceIdentity {
   readonly baseline: "HEAD" | string | null;
   readonly target: "index" | string | null;
   readonly requestedBase?: string;
+  readonly mergeParents?: readonly string[];
 }
 
 export function sanitizeScanSourceIdentity(
@@ -28,5 +29,11 @@ export function sanitizeScanSourceIdentity(
         ? source.baseline
         : null,
     target: "index",
+    ...(Array.isArray(source.mergeParents) &&
+    source.mergeParents.length >= 2 &&
+    source.mergeParents.length <= 101 &&
+    source.mergeParents.every(isGitObjectId)
+      ? { mergeParents: Object.freeze([...source.mergeParents]) }
+      : {}),
   };
 }

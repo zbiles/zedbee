@@ -101,7 +101,11 @@ describe("packaged init command", () => {
     expect(second.exitCode, second.stderr).toBe(0);
     expect(JSON.parse(first.stdout)).toMatchObject({
       applied: true,
-      files: [".zedbeerc.jsonc", ".git/hooks/pre-commit"],
+      files: [
+        ".zedbeerc.jsonc",
+        ".git/hooks/pre-commit",
+        ".git/hooks/pre-merge-commit",
+      ],
       proposal: { profile: "thorough", hook: "raw" },
     });
     expect(first.stdout).not.toContain(repository.root);

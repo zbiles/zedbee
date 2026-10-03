@@ -83,7 +83,7 @@ OSV scanning or update checks.
 
 | Command                 | Purpose                                                                                                                                                      |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus an optional tracked or local pre-commit hook                                                          |
+| `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus optional tracked or local pre-commit and pre-merge-commit hooks                                       |
 | `zedbee hooks install`  | Activate the tracked hook files in this checkout after installation                                                                                          |
 | `zedbee scan`           | Scan the exact index target, or a committed target with `--base`, and return pass, blocked, or incomplete                                                    |
 | `zedbee fix`            | Rescan current staged code, preview managed formatting/lint/React fixes, and apply approved changes to working files only                                    |
@@ -94,7 +94,7 @@ OSV scanning or update checks.
 
 `scan --no-service` and `fix --no-service` use a local executor that closes with the command. Ordinary commands acquire the service only when analysis is needed; empty-index scans and help do not start it. The service stops after five minutes with no active sessions. `service status` and `service stop` support `--format json` for machine-readable state. A service failure makes analysis incomplete; it is never silently retried through another executor.
 
-`init` supports `--profile fast|recommended|thorough`, `--hook auto|tracked|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--formatting copy|project|managed|off`, `--trust-project-prettier`, `--yes`, and text/JSON output. Interactive setup exposes check toggles, the formatting choice, the OSV outage choice, and whether to install a hook. If no tracked hook setup is detected, choosing to install a hook also offers **Tracked—shared with teammates** or **Local—this checkout only**. Existing tracked setups are reused without that extra question. `scan`, `checks`, and `doctor` accept `--config <path>`.
+`init` supports `--profile fast|recommended|thorough`, `--hook auto|tracked|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--formatting copy|project|managed|off`, `--trust-project-prettier`, `--yes`, and text/JSON output. Interactive setup exposes check toggles, the formatting choice, the OSV outage choice, and whether to install pre-commit and pre-merge-commit hooks. If no tracked hook setup is detected, choosing to install hooks also offers **Tracked—shared with teammates** or **Local—this checkout only**. Existing tracked setups are reused without that extra question. `scan`, `checks`, and `doctor` accept `--config <path>`.
 
 Bare `zedbee fix` selects `formatting`, `lint`, and `reactCorrectness`; a named
 selector limits the plan to that supported check. Interactive terminals preview
@@ -147,10 +147,14 @@ An ordinary `zedbee scan` examines the Git index. A clean pull-request checkout 
 
 ```sh
 git fetch --no-tags origin main
-npx zedbee scan --base origin/main --format sarif > zedbee.sarif
+node ./node_modules/zedbee/dist/cli.js scan --base origin/main --format sarif > zedbee.sarif
 ```
 
-`--base <ref>` resolves the unique merge base of the locally available ref and committed `HEAD`, then scans only the committed changes from that merge base through `HEAD`. If the base branch advances after the feature branch splits, base-only commits are not treated as feature changes. The named ref and enough common history must already exist locally. Zedbee never fetches automatically; a shallow checkout without the required ancestry is incomplete and exits 2, so configure sufficient fetch depth or fetch more history before retrying.
+Invoke the installed CLI from the repository root after installing dependencies in its owning project folder. For a `web/` installation, replace the command's CLI path with `./web/node_modules/zedbee/dist/cli.js`. Add `--trust-project-prettier` when your reviewed CI workflow uses project formatting.
+
+`--base <ref>` resolves the unique merge base of the locally available ref and committed `HEAD`, then scans only the committed changes from that merge base through `HEAD`. If the base branch advances after the feature branch splits, base-only commits are not treated as feature changes. The named ref and enough common history must already exist locally. Zedbee never fetches automatically; a shallow checkout without the required ancestry is incomplete and exits 2. On GitHub Actions, configure `actions/checkout` with `fetch-depth: 0`; elsewhere, fetch enough history before retrying.
+
+During an in-progress merge, a bare `zedbee scan` compares one captured staged tree against every merge parent. The generated merge hook uses `zedbee scan --merge`, which requires valid parent metadata; it cannot be combined with `--base`. Automatic merge hooks use Git's incoming-parent environment because `MERGE_HEAD` is written later; manually completed merges use `MERGE_HEAD`. The report includes `mergeParents`, and only findings new against every parent block. Existing findings in either parent remain nonblocking, including diagnostics whose unchanged lines moved. A missing or incomplete parent comparison remains visible; it cannot be treated as a successful merge check. Unstaged edits cannot repair a staged merge finding.
 
 Base mode is immutable by design. Both snapshots and `.zedbeerc.jsonc` come from commits: the target policy is read from `HEAD`, while staged, unstaged, and untracked source edits are ignored. The command does not change `HEAD`, refs, the index, or the working tree. It cleans its temporary committed-tree snapshots after success, failure, timeout, or cancellation once execution cleanup is proved; otherwise it retains them and reports incomplete. `zedbee fix --base` does not exist because managed fixes write reviewed working files from the staged-index workflow; a committed CI comparison is an inspection target, not a mutable fix target.
 
@@ -339,12 +343,12 @@ Interrupted scans wait for execution cleanup before removing temporary snapshots
 
 ## Hooks
 
-Interactive setup asks whether to install a pre-commit hook. With no existing
-tracked setup, you can choose a tracked hook for the team or a local hook for
+Interactive setup uses one Yes/No choice: **Install pre-commit and pre-merge-commit hooks**. With no existing
+tracked setup, you can choose tracked hooks for the team or local hooks for
 this checkout. A new tracked setup adds hook files and an installer under
 `.husky/`, plus a `prepare` step in `package.json`. Existing `prepare` commands
 are preserved. Review and commit those changes; normal dependency installation
-then activates the hook for teammates. Installation with scripts disabled does
+then activates both hooks for teammates. Installation with scripts disabled does
 not activate hooks; run `npx --no-install zedbee hooks install` afterward if needed.
 The installer skips CI, `HUSKY=0`, and directories without Git metadata; the
 tracked prepare script also skips when Zedbee is absent in a production-only
@@ -353,19 +357,21 @@ install. Setup itself does not download dependencies or run project scripts.
 New tracked setup requires a root `package.json` and refuses to replace custom
 local hooks whose execution cannot be preserved. Interactive setup keeps Local
 and No available when tracked setup is unavailable. Automatic edits of non-shell
-pre-commit scripts are refused; integrate Zedbee through their existing tooling.
+Git hook scripts are refused; integrate Zedbee through their existing tooling.
 Noninteractive `--hook auto --yes` retains the detected integration or uses a
 local hook. Use `--hook tracked --yes` to explicitly request tracked setup.
 
-A local hook stays in Git's private checkout files. It is not shared by a
+Local hooks stay in Git's private checkout files. They are not shared by a
 commit, push, or clone, so each teammate must opt in separately. Either kind
 can be bypassed by Git options; neither makes checks mandatory on a server.
 
-`zedbee init --hook auto` detects Husky, Lefthook, simple-git-hooks, or raw Git hooks. It preserves unrelated commands, shows exact before/after hashes and diffs, refuses symlink targets, writes atomically, and rolls back earlier writes if a later write fails. Linked worktrees resolve the real Git hook path instead of assuming `.git` is a directory.
+`zedbee init --hook auto` detects Husky, Lefthook, simple-git-hooks, or raw Git hooks. It preserves unrelated commands, shows exact before/after hashes and diffs, refuses symlink targets, writes atomically, and rolls back earlier writes if a later write fails. Both hooks use the same detected integration. Linked worktrees resolve the real Git hook paths instead of assuming `.git` is a directory. Activation is reported as pending when either required manager dispatcher is missing, disabled, or stale.
 
 Setup locates an installed Zedbee declared by a project `package.json`, preferring the repository root when multiple installations exist. Generated hooks invoke that package's CLI directly through Node, for example `node './web/node_modules/zedbee/dist/cli.js' scan --hook-invocation`, inside a subshell at the Git root. This also handles existing hooks that change directory and Lefthook commands with a custom `root`, without changing the working directory of surrounding commands. The Zedbee invocation stays at the Git repository root, so an installation in `web/` does not require a root `package.json` or moving `.zedbeerc.jsonc`. This works with local hooks and existing hook integrations; creating a new tracked setup still requires a root manifest as described above.
 
-If no declared, usable installation exists, interactive setup offers the folder selector above. Non-interactive setup explains where to install Zedbee and writes no hook. `--hook none` remains available to configure checks only. Generated hooks never download packages. The `--hook-invocation` marker identifies hook usage in telemetry without changing scan behavior. Re-running setup refreshes generated commands without duplicating them and preserves custom hook commands. Existing lint, type, and secret commands are preserved too; disable overlapping Zedbee checks if those checks are already covered by your hook.
+If no declared, usable installation exists, interactive setup offers the folder selector above. Non-interactive setup explains where to install Zedbee and writes no hook. `--hook none` remains available to configure checks only. Generated hooks never download packages. The pre-commit command uses `scan --hook-invocation`; the pre-merge-commit command adds `--merge`. The `--hook-invocation` marker identifies hook usage in telemetry without changing scan behavior. Automatic and manually completed merge commits compare the selected content with every parent. Fast-forward merges create no merge commit and do not invoke either hook. An existing pre-merge-commit hook that delegates to the configured pre-commit hook keeps that delegation and runs one scan. Generated shell invocations stop immediately if the scan blocks or cannot complete, so a later command or `exit 0` cannot hide the failure. Re-running setup refreshes generated commands without duplicating them and preserves custom hook commands. Existing lint, type, and secret commands are preserved too; disable overlapping Zedbee checks if those checks are already covered by your hook.
+
+Ordinary `git rebase` and `git cherry-pick` operations do not run Zedbee's pre-commit or pre-merge-commit hooks. Use a committed branch scan after either operation, or require a CI check before merging. A later explicit `git commit`, including after a `git cherry-pick --no-commit`, still invokes the pre-commit hook.
 
 ## Cache and performance
 

@@ -1183,6 +1183,8 @@ describe("InitApp", () => {
         fileChange(".zedbeerc.jsonc", null),
         fileChange(".git/hooks/pre-commit", "existing hook"),
         fileChange(".husky/pre-commit", null),
+        fileChange(".git/hooks/pre-merge-commit", "existing merge hook"),
+        fileChange(".husky/pre-merge-commit", null),
         fileChange("lefthook.yml", "existing config"),
         fileChange("package.json", "existing manifest"),
         fileChange("custom.txt", null),
@@ -1208,6 +1210,8 @@ describe("InitApp", () => {
     expect(frame).toContain("Create Zedbee's repository configuration");
     expect(frame).toContain("Update the Git pre-commit hook");
     expect(frame).toContain("Create the tracked pre-commit hook");
+    expect(frame).toContain("Update the Git pre-merge-commit hook");
+    expect(frame).toContain("Create the tracked pre-merge-commit hook");
     expect(frame).toContain("Update the Lefthook configuration");
     expect(frame).toContain("Update package.json to configure hook setup");
     expect(frame).toContain(
@@ -1292,8 +1296,10 @@ describe("InitApp", () => {
     const initialFrame = lastVisibleFrame(view);
     expect(initialFrame).toContain("▀▀▀▀█ █▀▀▀▀");
     expect(initialFrame).toContain("SETUP");
-    expect(initialFrame).toContain("Install pre-commit hook: Yes");
-    expect(initialFrame).toContain("Method: Git pre-commit hook");
+    expect(initialFrame).toContain(
+      "Install pre-commit and pre-merge-commit hooks: Yes",
+    );
+    expect(initialFrame).toContain("Method: Git hooks");
     expect(initialFrame).toContain("CHECKS");
     expect(initialFrame).toContain("➜ Profile:");
     expect(initialFrame).toContain("[✽] formatting");

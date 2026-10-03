@@ -122,30 +122,30 @@ function defaultHookActivation(hook: ResolvedHookChoice): InitHookActivation {
   if (hook === "none") {
     return Object.freeze({
       status: "not-requested",
-      message: "No pre-commit integration was requested.",
+      message: "No commit hook integration was requested.",
     });
   }
   if (hook === "lefthook") {
     return Object.freeze({
       status: "pending",
       message:
-        "Lefthook configuration will invoke Zedbee, but the Git hook is not activated by initialization.",
+        "Lefthook configuration will invoke Zedbee, but the Git hooks are not activated by initialization.",
       remediation:
-        "After reviewing the project tooling, run lefthook install to activate the configured hook.",
+        "After reviewing the project tooling, run lefthook install to activate both configured hooks.",
     });
   }
   if (hook === "simple-git-hooks") {
     return Object.freeze({
       status: "pending",
       message:
-        "simple-git-hooks configuration will invoke Zedbee, but the Git hook is not activated by initialization.",
+        "simple-git-hooks configuration will invoke Zedbee, but the Git hooks are not activated by initialization.",
       remediation:
-        "After reviewing the project tooling, run npx --no-install simple-git-hooks to activate the configured hook.",
+        "After reviewing the project tooling, run npx --no-install simple-git-hooks to activate both configured hooks.",
     });
   }
   return Object.freeze({
     status: "active",
-    message: `The proposed ${hook} hook directly invokes Zedbee.`,
+    message: `The proposed ${hook} pre-commit and pre-merge-commit hooks invoke Zedbee.`,
   });
 }
 

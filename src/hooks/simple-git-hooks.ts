@@ -1,6 +1,7 @@
+import type { ScanHookName } from "./command.js";
 import {
   hasZedbeeScanCommand,
-  replaceManagedZedbeeCommand,
+  updateHuskyHook,
   ZEDBEE_COMMAND,
 } from "./husky.js";
 
@@ -14,30 +15,31 @@ function record(value: unknown, field: string): Record<string, unknown> {
 export function updateSimpleGitHooksManifest(
   before: string,
   zedbeeCommand = ZEDBEE_COMMAND,
+  hookName: ScanHookName = "pre-commit",
 ): string {
   const manifest = record(JSON.parse(before) as unknown, "package.json");
   const hooksValue = manifest["simple-git-hooks"];
   const hooks =
     hooksValue === undefined ? {} : record(hooksValue, "simple-git-hooks");
-  const existing = hooks["pre-commit"];
+  const existing = hooks[hookName];
   if (existing !== undefined && typeof existing !== "string") {
-    throw new TypeError("Expected simple-git-hooks pre-commit to be a string.");
+    throw new TypeError(
+      `Expected simple-git-hooks ${hookName} to be a string.`,
+    );
   }
-  const command = replaceManagedZedbeeCommand(existing ?? "", zedbeeCommand);
-  if (existing !== undefined) hooks["pre-commit"] = command;
-  if (!hasZedbeeScanCommand(command)) {
-    hooks["pre-commit"] =
-      `${command}${command.length === 0 ? "" : "\n"}${zedbeeCommand}`;
-  }
+  hooks[hookName] = updateHuskyHook(existing ?? "", zedbeeCommand, hookName);
   manifest["simple-git-hooks"] = hooks;
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
-export function hasZedbeeSimpleGitHooksConfig(source: string): boolean {
+export function hasZedbeeSimpleGitHooksConfig(
+  source: string,
+  hookName: ScanHookName = "pre-commit",
+): boolean {
   const manifest = record(JSON.parse(source) as unknown, "package.json");
   const hooksValue = manifest["simple-git-hooks"];
   if (hooksValue === undefined) return false;
   const hooks = record(hooksValue, "simple-git-hooks");
-  const command = hooks["pre-commit"];
-  return typeof command === "string" && hasZedbeeScanCommand(command);
+  const command = hooks[hookName];
+  return typeof command === "string" && hasZedbeeScanCommand(command, hookName);
 }

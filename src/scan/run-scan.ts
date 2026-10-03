@@ -1,3 +1,4 @@
+import { runMergeScan } from "./merge-scan.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 export { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
@@ -58,6 +59,9 @@ export interface RunScanDependencies extends AnalysisSessionDependencies {
 }
 
 export interface RunScanOptions {
+  /** Compare an in-progress merge against every parent; required is used by the merge hook. */
+  merge?: "auto" | "required";
+  mergeEnvironment?: Readonly<Record<string, string | undefined>>;
   /** Experimental: each scan owns a fresh session, never the supplied executor. */
   executor?: AnalyzerExecutor;
   repositoryRoot: string;
@@ -117,6 +121,10 @@ function dispatchOptions(
 
 export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
+  if (options.merge !== undefined) {
+    const merged = await runMergeScan(options, dependencies, runScan);
+    if (merged !== undefined) return deepFreeze(merged);
+  }
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   const networkDisclosures: NetworkDisclosure[] = [];

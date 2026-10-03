@@ -77,7 +77,7 @@ const PROFILE_EXPLANATIONS = {
 
 const HOOK_METHODS: Readonly<Record<ResolvedHookChoice, string>> = {
   none: "None",
-  raw: "Git pre-commit hook",
+  raw: "Git hooks",
   custom: "Existing tracked hook",
   husky: "Husky",
   lefthook: "Lefthook",
@@ -192,7 +192,7 @@ function SetupSummary({
           <Text>{hookFocus === 1 ? "➜ " : "  "}</Text>
         )}
         <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
-          Install pre-commit hook:{" "}
+          Install pre-commit and pre-merge-commit hooks:{" "}
         </Text>
         <Text
           bold
@@ -644,11 +644,15 @@ function initFileDescription(file: InitFileChange): string {
       return `${action} Zedbee's repository configuration with the selected profile, checks, and reporting settings.`;
     case ".git/hooks/pre-commit":
       return `${action} the Git pre-commit hook so Zedbee runs before each commit.`;
+    case ".git/hooks/pre-merge-commit":
+      return `${action} the Git pre-merge-commit hook so Zedbee checks changes from every parent before an automatic merge commit.`;
+    case ".husky/pre-merge-commit":
+      return `${action} the tracked pre-merge-commit hook so Zedbee checks changes from every parent before an automatic merge commit.`;
     case ".husky/pre-commit":
       return `${action} the tracked pre-commit hook so Zedbee runs before each commit.`;
     case "lefthook.yml":
     case "lefthook.yaml":
-      return `${action} the Lefthook configuration so Zedbee runs before each commit.`;
+      return `${action} the Lefthook configuration so Zedbee runs before commits and automatic merge commits.`;
     case "package.json":
       return `${action} package.json to configure hook setup while preserving existing scripts.`;
     case ".husky/install.mjs":

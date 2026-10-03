@@ -131,6 +131,9 @@ export function renderJson(report: ScanReport): string {
     mode: source.mode,
     baseline: source.baseline,
     target: source.target,
+    ...(source.mergeParents === undefined
+      ? {}
+      : { mergeParents: source.mergeParents }),
     ...(source.requestedBase === undefined
       ? {}
       : { requestedBase: source.requestedBase }),
