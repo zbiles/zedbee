@@ -99,16 +99,30 @@ describe("default managed execution descriptors", () => {
       },
       baselineInspection: {
         ...original.baselineInspection,
-        workspaces: [workspace("packages/old"), workspace("packages/deleted")],
+        workspaces: [
+          workspace("packages/old"),
+          {
+            ...workspace("packages/deleted"),
+            sourceFiles: [
+              "packages/deleted/value.tsx",
+              "packages/deleted/caller.tsx",
+            ],
+          },
+        ],
       },
       targetInspection: {
         ...original.targetInspection,
-        workspaces: [workspace("packages/new"), workspace("packages/deleted")],
+        workspaces: [
+          workspace("packages/new"),
+          {
+            ...workspace("packages/deleted"),
+            sourceFiles: ["packages/deleted/caller.tsx"],
+          },
+        ],
       },
     };
     for (const id of [
       "lint",
-      "types",
       "cyclomaticComplexity",
       "readabilityComplexity",
       "structuralSecurity",
@@ -129,6 +143,21 @@ describe("default managed execution descriptors", () => {
         ],
       });
     }
+    const types = createManagedAdapters().find(
+      (adapter) => adapter.id === "types",
+    )!;
+    expect(await types.inspect(input)).toMatchObject({
+      applies: true,
+      requiresBaseline: true,
+      targets: [
+        { id: "packages/new", kind: "workspace", relativeRoot: "packages/new" },
+        {
+          id: "packages/deleted",
+          kind: "workspace",
+          relativeRoot: "packages/deleted",
+        },
+      ],
+    });
     const deletedOnly = {
       ...input,
       changeSet: {
@@ -136,14 +165,14 @@ describe("default managed execution descriptors", () => {
         files: new Map([[files[1]!.path, files[1]!]]),
       },
     };
-    for (const id of ["formatting", "lint", "types", "secrets"]) {
+    for (const id of ["formatting", "lint", "secrets"]) {
       expect(
         await createManagedAdapters()
           .find((adapter) => adapter.id === id)!
           .inspect(deletedOnly),
       ).toMatchObject({ applies: false });
     }
-    for (const id of ["dependencyArchitecture", "deadCode"]) {
+    for (const id of ["types", "dependencyArchitecture", "deadCode"]) {
       expect(
         await createManagedAdapters()
           .find((adapter) => adapter.id === id)!

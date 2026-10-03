@@ -161,16 +161,32 @@ export async function inspectManagedCheck(
         workspace.sourceFiles.length > 0 &&
         (always || workspace.sourceFiles.some((path) => changed.has(path))),
     );
-  else if (checkId === "types")
+  else if (checkId === "types") {
+    const changedTypescript = new Set(
+      files
+        .flatMap((file) =>
+          file.previousPath === undefined
+            ? [file.path]
+            : [file.path, file.previousPath],
+        )
+        .filter((path) => TYPESCRIPT.test(path)),
+    );
+    const baselineSources = new Map(
+      context.baselineInspection.workspaces.map((workspace) => [
+        workspace.relativeRoot,
+        workspace.sourceFiles,
+      ]),
+    );
     workspaces = workspaces.filter(
       (workspace) =>
         workspace.sourceFiles.some((path) => TYPESCRIPT.test(path)) &&
         (always ||
-          workspace.sourceFiles.some(
-            (path) => TYPESCRIPT.test(path) && changed.has(path),
-          )),
+          [
+            ...workspace.sourceFiles,
+            ...(baselineSources.get(workspace.relativeRoot) ?? []),
+          ].some((path) => changedTypescript.has(path))),
     );
-  else {
+  } else {
     if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {
       const environments =
         checkId === "reactAccessibility"

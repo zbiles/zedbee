@@ -304,6 +304,111 @@ describe("TypeScript observation adapter", () => {
     ).toEqual([]);
   });
 
+  it.each([
+    {
+      name: "adding a required function parameter",
+      before: "export function advisoryLabel() { return 'label'; }\n",
+      after:
+        "export function advisoryLabel(required: string) { return required; }\n",
+      caller:
+        "import { advisoryLabel } from './summarize';\nexport const label = advisoryLabel();\n",
+      rule: "typescript/TS2554",
+      line: 2,
+      addedLines: true,
+    },
+    {
+      name: "adding a required type property",
+      before: "export interface Advisory { label: string }\n",
+      after: "export interface Advisory { label: string; rank: number }\n",
+      caller:
+        "import type { Advisory } from './summarize';\nexport const advisory: Advisory = { label: 'label' };\n",
+      rule: "typescript/TS2741",
+      line: 2,
+      addedLines: true,
+    },
+    {
+      name: "deleting an export without adding a line",
+      before:
+        "export const advisoryLabel = () => 'label';\nexport const remaining = 1;\n",
+      after: "export const remaining = 1;\n",
+      caller:
+        "import { advisoryLabel } from './summarize';\nexport const label = advisoryLabel();\n",
+      rule: "typescript/TS2305",
+      line: 1,
+      addedLines: false,
+    },
+    {
+      name: "deleting the imported file",
+      before: "export const advisoryLabel = () => 'label';\n",
+      after: undefined,
+      caller:
+        "import { advisoryLabel } from './summarize';\nexport const label = advisoryLabel();\n",
+      rule: "typescript/TS2307",
+      line: 1,
+      addedLines: false,
+    },
+  ])("reports errors in unchanged files after $name", async (scenario) => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*.ts", "src/**/*.tsx"],
+      });
+      await fixture.write("src/shape-evidence.tsx", scenario.caller);
+      await fixture.write("src/summarize.test.ts", scenario.caller);
+      await fixture.write(
+        "src/existing.ts",
+        'export const existing: number = "debt";\n',
+      );
+    }
+    await value.baseline.write("src/summarize.ts", scenario.before);
+    if (scenario.after !== undefined)
+      await value.staged.write("src/summarize.ts", scenario.after);
+    const changeSet: ChangeSet = {
+      files: new Map([
+        [
+          "src/summarize.ts",
+          {
+            path: "src/summarize.ts",
+            status: scenario.after === undefined ? "deleted" : "modified",
+            addedRanges: scenario.addedLines ? [{ start: 1, end: 1 }] : [],
+          },
+        ],
+      ]),
+      isEmpty: false,
+      containsAddedLine: (path, line) =>
+        scenario.addedLines && path === "src/summarize.ts" && line === 1,
+    };
+    const run = await context(value, changeSet);
+    expect(await typescriptAdapter.inspect(run)).toMatchObject({
+      applies: true,
+      targets: [target],
+    });
+    const collected = await typescriptAdapter.collect(run);
+    const result = await observationCheckResult("types", collected, run, true);
+
+    expect(
+      result.findings
+        .filter((finding) => finding.attribution.staged)
+        .map((finding) => ({
+          rule: finding.rule,
+          file: finding.location?.file,
+          line: finding.location?.startLine,
+        })),
+    ).toEqual([
+      {
+        rule: scenario.rule,
+        file: "src/shape-evidence.tsx",
+        line: scenario.line,
+      },
+      {
+        rule: scenario.rule,
+        file: "src/summarize.test.ts",
+        line: scenario.line,
+      },
+    ]);
+  });
+
   it("reports a changed diagnostic even when its TypeScript code and location match baseline debt", async () => {
     const value = await fixtures();
     for (const fixture of [value.baseline, value.staged]) {
