@@ -65,10 +65,14 @@ An ordinary scan checks staged changes, not the commits in a pull request. To co
 
 ```bash
 git fetch --no-tags origin main
-npx zedbee scan --base origin/main --format sarif > zedbee.sarif
+node ./node_modules/zedbee/dist/cli.js scan --base origin/main --format sarif > zedbee.sarif
 ```
 
-The checkout needs enough Git history to find where the branches split. A shallow checkout may need more history. This mode checks committed code and reads configuration from the checked-out commit.
+Run the installed CLI from the repository root. If Zedbee is installed in a subfolder such as `web/`, use `node ./web/node_modules/zedbee/dist/cli.js` instead, and install that folder's dependencies first. Project Prettier mode also requires `--trust-project-prettier` in CI.
+
+The checkout needs enough Git history to find where the branches split. On GitHub Actions, set `actions/checkout` to `fetch-depth: 0`. This mode checks committed code and reads configuration from the checked-out commit.
+
+The commit hooks do not cover ordinary `git rebase` or `git cherry-pick` operations. Run a committed branch scan after either operation, or use a required CI check to validate the resulting branch before merging.
 
 A scan returns `0` for no blocking findings, `1` for findings that block under your policy, or `2` when Zedbee cannot complete a required check. Treat an incomplete result as unknown, not a pass.
 
