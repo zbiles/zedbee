@@ -20,7 +20,7 @@ jobs:
         with:
           node-version: 24
       - run: node scripts/release-check.mjs --tag-check
-      - run: npm audit --package-lock-only --omit=dev --ignore-scripts --audit-level=high
+      - run: node scripts/audit-production-dependencies.mjs --package-lock-only
 
   cross-platform:
     needs: release-identity

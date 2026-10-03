@@ -1,3 +1,4 @@
+import { managedKnipEntry } from "./managed-knip.js";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compareCodeUnits } from "../../core/compare.js";
@@ -119,7 +120,7 @@ export interface ManagedKnipConfig {
 async function disabledPinnedPlugins(): Promise<
   Readonly<Record<string, false>>
 > {
-  const knipModule = fileURLToPath(import.meta.resolve("knip"));
+  const knipModule = fileURLToPath(managedKnipEntry);
   const pluginModule = (await import(
     pathToFileURL(join(dirname(knipModule), "types", "PluginNames.js")).href
   )) as { readonly pluginNames?: unknown };

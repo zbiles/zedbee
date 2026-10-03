@@ -62,7 +62,10 @@ const { buildProductionInventory, findProductionDependencies } = (await import(
       dependencyPath: string[];
     }>;
   }>;
-  findProductionDependencies(lockfile: Lockfile): Array<{
+  findProductionDependencies(
+    lockfile: Lockfile,
+    vendoredDependencies?: Record<string, string>,
+  ): Array<{
     packagePath: string;
     dependencyPath: string[];
   }>;
@@ -190,6 +193,52 @@ describe("evaluateLicense", () => {
 });
 
 describe("production dependency reachability", () => {
+  it("includes a vendored dev tool and its runtime dependencies in production notices", async () => {
+    const root = await createFixtureRoot();
+    await writeFile(
+      join(root, "package.json"),
+      JSON.stringify({ vendoredDependencies: { tool: "1.0.0" } }),
+    );
+    await writeLockfile(root, {
+      name: "fixture-root",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "fixture-root",
+          version: "1.0.0",
+          devDependencies: { tool: "1.0.0", tests: "1.0.0" },
+        },
+        "node_modules/tool": {
+          version: "1.0.0",
+          dev: true,
+          dependencies: { runtime: "2.0.0" },
+        },
+        "node_modules/runtime": { version: "2.0.0", dev: true },
+        "node_modules/tests": { version: "1.0.0", dev: true },
+      },
+    });
+    await writePackage(root, "node_modules/tool", {
+      name: "tool",
+      version: "1.0.0",
+      license: "MIT",
+    });
+    await writePackage(root, "node_modules/runtime", {
+      name: "runtime",
+      version: "2.0.0",
+      license: "MIT",
+    });
+    const inventory = await buildProductionInventory(root);
+    expect(inventory.packages.map(({ name }) => name)).toEqual([
+      "runtime",
+      "tool",
+    ]);
+    const notices = await generateThirdPartyNotices(root);
+    expect(notices).toContain("## tool@1.0.0");
+    expect(notices).toContain("## runtime@2.0.0");
+    expect(notices).not.toContain("## tests@");
+  });
+
   it("walks dependencies and optional dependencies but excludes dev-only packages", () => {
     const lockfile: Lockfile = {
       name: "fixture-root",

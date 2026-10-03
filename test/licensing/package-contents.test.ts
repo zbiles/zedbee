@@ -7,6 +7,40 @@ const scriptPath = fileURLToPath(
 );
 
 describe("package contents", () => {
+  it("requires the pinned vendor source and portable native dependency edges", async () => {
+    const { assertVendoredDependencyLock } = await import(
+      new URL("../../scripts/vendored-dependencies.mjs", import.meta.url).href
+    );
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
+    );
+    const lockfile = JSON.parse(
+      readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"),
+    );
+    expect(() =>
+      assertVendoredDependencyLock(manifest, lockfile),
+    ).not.toThrow();
+    for (const update of [
+      { dependencies: { ...manifest.dependencies, knip: "6.32.2" } },
+      {
+        dependencies: {
+          ...manifest.dependencies,
+          "strip-json-comments": "3.1.1",
+        },
+      },
+      { vendoredDependencies: {} },
+      { bundleDependencies: [...manifest.bundleDependencies, "oxc-parser"] },
+      { bundleDependencies: [...manifest.bundleDependencies, "oxc-resolver"] },
+    ])
+      expect(() =>
+        assertVendoredDependencyLock({ ...manifest, ...update }, lockfile),
+      ).toThrow();
+    const stale = structuredClone(lockfile);
+    stale.packages["node_modules/knip"].integrity = "sha512-unreviewed";
+    expect(() => assertVendoredDependencyLock(manifest, stale)).toThrow(
+      /pinned source/u,
+    );
+  });
   it("accepts the isolated managed engines but rejects additional bundled packages", async () => {
     const { assertPackMetadata, BUNDLED_PACKAGE_NAMES } = await import(
       pathToFileURL(scriptPath).href
@@ -64,6 +98,8 @@ describe("package contents", () => {
           "node_modules/dependency-cruiser/src/main/index.mjs",
           "node_modules/typescript-eslint/dist/index.js",
           "node_modules/@typescript-eslint/parser/dist/index.js",
+          "dist/vendor/knip/dist/index.js",
+          "dist/vendor/knip/LICENSE",
         ],
         options,
       ),
@@ -77,6 +113,8 @@ describe("package contents", () => {
       "node_modules/dependency-cruiser/src/private-note.md",
       "node_modules/@typescript-eslint/parser/dist/unreviewed.js",
       "node_modules/typescript-eslint/node_modules/typescript/lib/typescript.js",
+      "dist/vendor/knip/private-note.md",
+      "node_modules/oxc-parser/package.json",
     ]) {
       expect(() => assertAllowedPackageFiles([unapproved], options)).toThrow(
         /unapproved files/u,

@@ -53,13 +53,8 @@ export function verificationSteps(mode = "verify") {
       ? [
           {
             id: "dependency-audit",
-            command: "npm",
-            args: [
-              "audit",
-              "--omit=dev",
-              "--ignore-scripts",
-              "--audit-level=high",
-            ],
+            command: "node",
+            args: ["scripts/audit-production-dependencies.mjs"],
           },
           ...LOCAL_STEPS,
         ]

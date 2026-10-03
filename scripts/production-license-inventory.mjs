@@ -216,7 +216,10 @@ function resolveDependencyPackagePath(
   }
 }
 
-export function findProductionDependencies(lockfile) {
+export function findProductionDependencies(
+  lockfile,
+  vendoredDependencies = {},
+) {
   validateLockfile(lockfile);
   const packages = lockfile.packages;
   const rootPackage = packages?.[""];
@@ -225,7 +228,11 @@ export function findProductionDependencies(lockfile) {
     rootPackage.name ?? lockfile.name,
     rootPackage.version ?? lockfile.version,
   );
-  const queue = dependencyEntries(rootPackage).map((dependency) => ({
+  validateDependencyMap("", "vendoredDependencies", vendoredDependencies);
+  const queue = dependencyEntries({
+    ...rootPackage,
+    dependencies: { ...rootPackage.dependencies, ...vendoredDependencies },
+  }).map((dependency) => ({
     parentPackagePath: "",
     dependency,
     dependencyPath: [rootLabel],
@@ -365,7 +372,18 @@ async function readLockfile(root) {
 export async function buildProductionInventory(root) {
   const canonicalRoot = await realpath(root);
   const lockfile = await readLockfile(canonicalRoot);
-  const reachable = findProductionDependencies(lockfile);
+  // Vendored tools remain shipped production code even when their original
+  // npm package is needed only at build time.
+  const manifest = await readFile(join(canonicalRoot, "package.json"), "utf8")
+    .then(JSON.parse)
+    .catch((error) => {
+      if (error?.code === "ENOENT") return {};
+      throw error;
+    });
+  const reachable = findProductionDependencies(
+    lockfile,
+    manifest.vendoredDependencies,
+  );
   const inventoryPackages = [];
 
   for (const dependency of reachable) {

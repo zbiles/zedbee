@@ -17159,7 +17159,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 License: MIT
 
-### node_modules/strip-json-comments/license
+### node_modules/@eslint/eslintrc/node_modules/strip-json-comments/license
 
 MIT License
 
@@ -17176,7 +17176,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 License: MIT
 
-### node_modules/knip/node_modules/strip-json-comments/license
+### node_modules/strip-json-comments/license
 
 MIT License
 

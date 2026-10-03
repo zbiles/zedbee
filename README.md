@@ -45,6 +45,8 @@ With the hook installed, Zedbee runs when you commit. You can also run it manual
 
 Zedbee brings established tools together, including TypeScript, ESLint, Prettier, Secretlint, and Knip. You don't need to wire each one into a hook. Some checks inspect the whole project to understand a change, but Zedbee reports findings tied to the changes under review.
 
+Zedbee ships private copies of Prettier, TypeScript, typescript-eslint, React, and Zod. Its UI and Knip use those private runtimes, so installing Zedbee preserves your application's versions of these packages.
+
 Run `npx zedbee checks` to see which checks apply to your project and what they can and cannot detect. The [check guide](docs/checks.md) lists every check, its engine, and its limits.
 
 ## Set your team's rules

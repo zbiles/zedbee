@@ -332,6 +332,15 @@ describe("packaged Zedbee CLI", () => {
       findings.push(knip!.findings);
     }
     expect(findings[1]).toEqual(findings[0]);
+    expect(tarballFiles).toContain("dist/vendor/knip/dist/index.js");
+    expect(tarballFiles).toContain("dist/vendor/knip/LICENSE");
+    expect(
+      tarballFiles.some((path) =>
+        /^node_modules\/(?:oxc-parser|oxc-resolver|@oxc-parser\/|@oxc-resolver\/)/u.test(
+          path,
+        ),
+      ),
+    ).toBe(false);
     for (const entry of [
       "knip-worker.js",
       "executor.js",
