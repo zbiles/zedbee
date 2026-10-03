@@ -32,7 +32,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
-    revision: "captured-inputs-v1",
+    revision: "captured-inputs-v2-project-delta",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
