@@ -97,6 +97,12 @@ describe("managed check cache metadata", () => {
     ).toBe("jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2");
   });
 
+  it("invalidates TypeScript observations collected before project-wide attribution", () => {
+    expect(
+      createObservationCacheEngineIdentityResolver(() => "6.0.3")("types"),
+    ).toBe("typescript@6.0.3+captured-inputs-v2-project-delta");
+  });
+
   it("resolves installed identities for every snapshot-only check", () => {
     const snapshotOnly = Object.values(CHECK_METADATA)
       .filter(({ observationInputs }) => observationInputs === "snapshot-only")

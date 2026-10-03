@@ -226,6 +226,195 @@ describe("TypeScript observation adapter", () => {
     ]);
   });
 
+  it("attributes new errors on unchanged references after an exported declaration is renamed", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*.ts", "src/**/*.tsx"],
+      });
+      await fixture.write(
+        "src/summarize.ts",
+        "export const advisoryLabel = () => 'label';\n\nexport const label = advisoryLabel();\n",
+      );
+      await fixture.write(
+        "src/shape-evidence.tsx",
+        "import { advisoryLabel } from './summarize';\nexport const evidence = advisoryLabel();\n",
+      );
+      await fixture.write(
+        "src/summarize.test.ts",
+        "import { advisoryLabel } from './summarize';\nexport const testLabel = advisoryLabel();\n",
+      );
+      await fixture.write(
+        "src/existing.ts",
+        'export const existing: number = "debt";\n',
+      );
+    }
+    await value.staged.write(
+      "src/summarize.ts",
+      "export const advisoryLabelRenamed = () => 'label';\n\nexport const label = advisoryLabel();\n",
+    );
+    const run = await context(value, changes("src/summarize.ts", 1));
+    const collected = await typescriptAdapter.collect(run);
+
+    expect(collected.targetObservations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: "typescript/TS2304" }),
+        expect.objectContaining({ rule: "typescript/TS2305" }),
+      ]),
+    );
+    const result = await observationCheckResult("types", collected, run, true);
+    expect(
+      result.findings
+        .filter((finding) => finding.attribution.staged)
+        .map((finding) => ({
+          rule: finding.rule,
+          file: finding.location?.file,
+          line: finding.location?.startLine,
+        })),
+    ).toEqual([
+      { rule: "typescript/TS2305", file: "src/shape-evidence.tsx", line: 1 },
+      { rule: "typescript/TS2305", file: "src/summarize.test.ts", line: 1 },
+      { rule: "typescript/TS2304", file: "src/summarize.ts", line: 3 },
+    ]);
+  });
+
+  it("keeps baseline errors non-blocking when an unrelated insertion moves their lines", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*.ts"],
+      });
+    }
+    await value.baseline.write(
+      "src/value.ts",
+      'export const existing: number = "debt";\n',
+    );
+    await value.staged.write(
+      "src/value.ts",
+      'export const added = 1;\nexport const existing: number = "debt";\n',
+    );
+    const run = await context(value, changes("src/value.ts", 1));
+    const collected = await typescriptAdapter.collect(run);
+    const result = await observationCheckResult("types", collected, run, true);
+
+    expect(
+      result.findings.filter((finding) => finding.attribution.staged),
+    ).toEqual([]);
+  });
+
+  it("reports a changed diagnostic even when its TypeScript code and location match baseline debt", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*.ts"],
+      });
+    }
+    await value.baseline.write(
+      "src/value.ts",
+      'export const value: number = "debt";\n',
+    );
+    await value.staged.write(
+      "src/value.ts",
+      "export const value: number = false;\n",
+    );
+    const run = await context(value);
+    const collected = await typescriptAdapter.collect(run);
+    const result = await observationCheckResult("types", collected, run, true);
+
+    expect(
+      result.findings.filter((finding) => finding.attribution.staged),
+    ).toEqual([
+      expect.objectContaining({
+        rule: "typescript/TS2322",
+        message: "Type 'boolean' is not assignable to type 'number'.",
+      }),
+    ]);
+  });
+
+  it.each([
+    {
+      name: "a trailing comment",
+      before: 'export const existing: number = "debt";\n',
+      after: 'export const existing: number = "debt"; // comment\n',
+    },
+    {
+      name: "a final newline",
+      before: 'export const existing: number = "debt";',
+      after: 'export const existing: number = "debt";\n',
+    },
+  ])(
+    "keeps existing diagnostics non-blocking after adding $name",
+    async ({ before, after }) => {
+      const value = await fixtures();
+      for (const fixture of [value.baseline, value.staged]) {
+        await fixture.writeJson("tsconfig.json", {
+          compilerOptions: { strict: true },
+          include: ["src/**/*.ts"],
+        });
+      }
+      await value.baseline.write("src/value.ts", before);
+      await value.staged.write("src/value.ts", after);
+      const run = await context(value);
+      const result = await observationCheckResult(
+        "types",
+        await typescriptAdapter.collect(run),
+        run,
+        true,
+      );
+
+      expect(
+        result.findings.filter((finding) => finding.attribution.staged),
+      ).toEqual([]);
+    },
+  );
+
+  it("keeps existing diagnostics non-blocking after a pure file rename", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src/**/*.ts"],
+      });
+    }
+    await value.baseline.write(
+      "src/old.ts",
+      'export const existing: number = "debt";\n',
+    );
+    await value.staged.write(
+      "src/new.ts",
+      'export const existing: number = "debt";\n',
+    );
+    const changeSet: ChangeSet = {
+      files: new Map([
+        [
+          "src/new.ts",
+          {
+            path: "src/new.ts",
+            previousPath: "src/old.ts",
+            status: "renamed",
+            addedRanges: [],
+          },
+        ],
+      ]),
+      isEmpty: false,
+      containsAddedLine: () => false,
+    };
+    const run = await context(value, changeSet);
+    const result = await observationCheckResult(
+      "types",
+      await typescriptAdapter.collect(run),
+      run,
+      true,
+    );
+
+    expect(
+      result.findings.filter((finding) => finding.attribution.staged),
+    ).toEqual([]);
+  });
+
   it("reads local extends and project references as inert snapshot JSON and never emits", async () => {
     const value = await fixtures();
     for (const fixture of [value.baseline, value.staged]) {

@@ -33,6 +33,16 @@ Intent-to-add records supply no staged file content, so Zedbee excludes them as 
 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
 
+## TypeScript diagnostics
+
+The `types` check compares diagnostics across the analyzed project. A changed
+declaration can introduce errors at unchanged references in the same file or in
+other project files; those new diagnostics are reported even when their lines
+were not edited. Existing diagnostics remain non-blocking when their unchanged
+source lines move. A changed diagnostic message is compared separately from an
+existing diagnostic at the same location. This applies to both staged and
+`--base` scans.
+
 ## Profiles
 
 - `fast`: local formatting, lint, complexity, structural security, and applicable React checks.

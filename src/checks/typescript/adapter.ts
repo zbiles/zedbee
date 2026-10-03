@@ -19,6 +19,10 @@ import { loadSnapshotProgramInput } from "./config.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { captureAnalysisDependencies } from "./reuse-inputs.js";
+import {
+  pairTypescriptObservations,
+  type TypescriptSnapshotObservations,
+} from "./compare-diagnostics.js";
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
@@ -37,13 +41,13 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   dependencies: CapturedDependencies,
-): Promise<readonly Observation[]> {
+): Promise<TypescriptSnapshotObservations> {
   const workspace = workspaceFor(inspection, target);
   if (
     workspace === undefined ||
     !workspace.sourceFiles.some((path) => TYPESCRIPT_SOURCE.test(path))
   ) {
-    return Object.freeze([]);
+    return { observations: Object.freeze([]), files: {} };
   }
   const input = await loadSnapshotProgramInput(
     snapshotRoot,
@@ -68,7 +72,7 @@ async function collectSide(
         compareCodeUnits(left.identity, right.identity) ||
         compareCodeUnits(left.message, right.message),
     );
-  return Object.freeze(observations);
+  return { observations: Object.freeze(observations), files: input.files };
 }
 
 export const typescriptAdapter: ObservationCheckAdapter = {
@@ -81,32 +85,32 @@ export const typescriptAdapter: ObservationCheckAdapter = {
   async collect(context): Promise<CheckObservationSet> {
     try {
       const dependencies = captureAnalysisDependencies(context);
-      const [baselineObservations, targetObservations] =
-        await settleSnapshotSides(
-          () =>
-            collectSide(
-              context.snapshots.baselineDir,
-              context.repositoryRoot,
-              context.baselineInspection,
-              context.target,
-              dependencies,
-            ),
-          () =>
-            collectSide(
-              context.snapshots.targetDir,
-              context.repositoryRoot,
-              context.targetInspection,
-              context.target,
-              dependencies,
-            ),
-          context.signal,
-        );
+      const [baseline, target] = await settleSnapshotSides(
+        () =>
+          collectSide(
+            context.snapshots.baselineDir,
+            context.repositoryRoot,
+            context.baselineInspection,
+            context.target,
+            dependencies,
+          ),
+        () =>
+          collectSide(
+            context.snapshots.targetDir,
+            context.repositoryRoot,
+            context.targetInspection,
+            context.target,
+            dependencies,
+          ),
+        context.signal,
+      );
       const dependencyInputs = dependencies.manifest();
       return {
         checkId: "types",
         target: context.target,
-        baselineObservations,
-        targetObservations,
+        ...pairTypescriptObservations(baseline, target, context.changeSet),
+        // A declaration edit can break references on otherwise unchanged lines.
+        projectDelta: !context.changeSet.isEmpty,
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     } catch {
