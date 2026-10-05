@@ -288,7 +288,9 @@ function createFreshSnapshotProgram(
           ? ts.ScriptKind.TSX
           : /\.[cm]?js$/iu.test(path)
             ? ts.ScriptKind.JS
-            : ts.ScriptKind.TS,
+            : /\.json$/iu.test(path)
+              ? ts.ScriptKind.JSON
+              : ts.ScriptKind.TS,
       );
     },
     directoryExists: (path) => moduleHost.directoryExists?.(path) ?? false,
