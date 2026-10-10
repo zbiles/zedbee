@@ -38,18 +38,22 @@ export function normalizeOsvInventory(
       const fixed = fixedVersion(advisory, dependency);
       const score = maximumNumericSeverity(advisory);
       const reference = `https://osv.dev/${encodeURIComponent(advisory.id)}`;
+      const identity = JSON.stringify([
+        advisory.id,
+        dependency.ecosystem,
+        dependency.name,
+        dependency.version,
+        dependency.lockfilePath,
+        dependency.importer ?? null,
+        dependency.dependencyPath ?? null,
+      ]);
       observations.push({
         check: "vulnerabilities",
         rule: advisory.id,
-        identity: JSON.stringify([
-          advisory.id,
-          dependency.ecosystem,
-          dependency.name,
-          dependency.version,
-          dependency.lockfilePath,
-          dependency.importer ?? null,
-          dependency.dependencyPath ?? null,
-        ]),
+        identity,
+        // Lockfile coordinates are for display; entry movement is not a new
+        // advisory or dependency occurrence.
+        comparisonIdentity: identity,
         severity: "error",
         message: `${advisory.id} affects npm package ${dependency.name}@${dependency.version}${fixed === undefined ? "" : `; fixed in ${fixed}`} (${reference})`,
         location: {
