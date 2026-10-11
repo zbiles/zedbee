@@ -126,7 +126,7 @@
     "execa": "10.0.1",
     "fdir": "6.5.0",
     "formatly": "0.3.0",
-    "get-tsconfig": "4.14.1",
+    "get-tsconfig": "4.14.3",
     "husky": "9.1.7",
     "ignore": "7.0.6",
     "ink": "7.1.1",
