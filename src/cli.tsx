@@ -14,6 +14,7 @@ import { terminalColorEnabled } from "./renderers/terminal-style.js";
 import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
 import type { UpdateNotice } from "./updates/metadata.js";
 import { executeChecksCommand } from "./commands/checks.js";
+import { executeAgentCommand } from "./commands/agent.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeServiceCommand } from "./commands/service.js";
 import { executeFixCommand } from "./commands/fix.js";
@@ -106,6 +107,7 @@ export interface CliDependencies {
   readonly executeInitCommand?: typeof executeInitCommand;
   readonly executeScanCommand?: typeof executeScanCommand;
   readonly executeFixCommand?: typeof executeFixCommand;
+  readonly executeAgentCommand?: typeof executeAgentCommand;
 }
 
 export async function runCli(
@@ -141,7 +143,8 @@ export async function runCli(
         hookInvocation: options.hookInvocation === true,
       });
     }
-    if (action.parent?.name() === "telemetry") return;
+    if (action.parent?.name() === "telemetry" || action.name() === "agent")
+      return;
     updateIndented =
       action.name() === "scan" &&
       selectOutputFormat(
@@ -202,6 +205,38 @@ export async function runCli(
         );
       });
   }
+
+  program
+    .command("agent")
+    .description(
+      "print or install the agent scan, repair, and verification workflow",
+    )
+    .addOption(
+      new Option(
+        "--install <agent>",
+        "preview a repository skill installation",
+      ).choices(["codex", "claude"]),
+    )
+    .option(
+      "--yes",
+      "install the skill without overwriting an existing file",
+      false,
+    )
+    .action(async (options: { install?: "codex" | "claude"; yes: boolean }) => {
+      exitCode = await (
+        dependencies.executeAgentCommand ?? executeAgentCommand
+      )(
+        { cwd: process.cwd(), ...options },
+        {
+          writeStdout: (value) => {
+            process.stdout.write(value);
+          },
+          writeStderr: (value) => {
+            process.stderr.write(value);
+          },
+        },
+      );
+    });
 
   const service = program
     .command("service")
