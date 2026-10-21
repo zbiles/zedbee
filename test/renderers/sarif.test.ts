@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vitest";
+import * as ts from "typescript";
 import type { CheckExecutionResult } from "../../src/checks/adapter.js";
+import { convertTypescriptDiagnostic } from "../../src/checks/typescript/convert-diagnostic.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { ZEDBEE_VERSION } from "../../src/core/package-version.js";
-import type { IncompleteDisposition } from "../../src/core/types.js";
+import type {
+  IncompleteDisposition,
+  SourceExcerpt,
+} from "../../src/core/types.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { renderJson } from "../../src/renderers/json.js";
 import { renderSarif } from "../../src/renderers/sarif.js";
@@ -49,6 +54,171 @@ function reportFromIncompletePolicy(
 }
 
 describe("renderSarif", () => {
+  it("declares UTF-16 columns and preserves analyzer positions after a surrogate pair", () => {
+    const source = ts.createSourceFile(
+      "/snapshot/src/unicode.ts",
+      'const face = "😀"; wrong;',
+      ts.ScriptTarget.Latest,
+    );
+    const observation = convertTypescriptDiagnostic(
+      {
+        file: source,
+        start: 19,
+        length: 5,
+        category: ts.DiagnosticCategory.Error,
+        code: 2304,
+        messageText: "Cannot find name 'wrong'.",
+      },
+      "/snapshot",
+      "/repo",
+    )!;
+    const finding = createFinding(observation);
+    const document = JSON.parse(
+      renderSarif(
+        createReport({
+          summary: {
+            passed: 0,
+            warnings: 0,
+            failed: 1,
+            incomplete: 0,
+            findings: [finding],
+          },
+        }),
+      ),
+    );
+
+    expect(document.runs[0].columnKind).toBe("utf16CodeUnits");
+    expect(document.runs[0].results[0].locations[0].physicalLocation).toEqual({
+      artifactLocation: { uri: "src/unicode.ts" },
+      region: { startLine: 1, startColumn: 20, endLine: 1, endColumn: 25 },
+    });
+  });
+
+  it.each<{
+    name: string;
+    check?: string;
+    sourceExcerpt?: SourceExcerpt;
+    expectedExcerpt?: SourceExcerpt;
+  }>([
+    {
+      name: "an untruncated whole line",
+      sourceExcerpt: {
+        line: 4,
+        text: "const value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+      expectedExcerpt: {
+        line: 4,
+        text: "const value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+    },
+    {
+      name: "a truncated line",
+      sourceExcerpt: {
+        line: 4,
+        text: "const value = wrong;…",
+        redacted: false,
+        truncated: true,
+      },
+      expectedExcerpt: {
+        line: 4,
+        text: "const value = wrong;…",
+        redacted: false,
+        truncated: true,
+      },
+    },
+    {
+      name: "a display-sanitized tab",
+      sourceExcerpt: {
+        line: 4,
+        text: "\tconst value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+      expectedExcerpt: {
+        line: 4,
+        text: "  const value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+    },
+    {
+      name: "a display-sanitized control",
+      sourceExcerpt: {
+        line: 4,
+        text: "const\u0000value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+      expectedExcerpt: {
+        line: 4,
+        text: "const�value = wrong;",
+        redacted: false,
+        truncated: false,
+      },
+    },
+    {
+      name: "a redacted line",
+      sourceExcerpt: { line: 4, redacted: true, truncated: false },
+    },
+    {
+      name: "an excerpt on a secret finding",
+      check: "secrets",
+      sourceExcerpt: {
+        line: 4,
+        text: "const secret = hidden;",
+        redacted: false,
+        truncated: false,
+      },
+    },
+    { name: "no source excerpt" },
+  ])(
+    "does not treat $name as source for a narrow region",
+    ({ check, sourceExcerpt, expectedExcerpt }) => {
+      const finding = createFinding({
+        ...(check === undefined ? {} : { check }),
+        location: {
+          file: "src/value.ts",
+          startLine: 4,
+          startColumn: 15,
+          endLine: 4,
+          endColumn: 20,
+        },
+        ...(sourceExcerpt === undefined ? {} : { sourceExcerpt }),
+      });
+      const document = JSON.parse(
+        renderSarif(
+          createReport({
+            summary: {
+              passed: 0,
+              warnings: 0,
+              failed: 1,
+              incomplete: 0,
+              findings: [finding],
+            },
+          }),
+        ),
+      );
+      const result = document.runs[0].results[0];
+
+      expect(result.locations[0].physicalLocation).toEqual({
+        artifactLocation: { uri: "src/value.ts" },
+        region: { startLine: 4, startColumn: 15, endLine: 4, endColumn: 20 },
+      });
+      expect(result.properties.sourceExcerptTruncated).toBe(
+        expectedExcerpt?.truncated,
+      );
+      expect(result.properties["zedbee/sourceExcerpt"]).toEqual(
+        expectedExcerpt,
+      );
+      if (expectedExcerpt === undefined)
+        expect(JSON.stringify(result)).not.toContain("sourceExcerpt");
+    },
+  );
+
   it("exposes managed fix commands as result metadata without SARIF patches", () => {
     const finding = createFinding({
       check: "lint",
@@ -289,7 +459,6 @@ describe("renderSarif", () => {
               startColumn: 5,
               endLine: 14,
               endColumn: 9,
-              snippet: { text: "const answer: number = 'forty-two';" },
             },
           },
         },
@@ -302,6 +471,12 @@ describe("renderSarif", () => {
         evidence: ["target line 12", "target line 14"],
         remediation: "Assign a number instead.",
         sourceExcerptTruncated: true,
+        "zedbee/sourceExcerpt": {
+          line: 12,
+          text: "const answer: number = 'forty-two';",
+          redacted: false,
+          truncated: true,
+        },
       },
     });
     expect(Object.hasOwn(serializedError, "fixes")).toBe(false);
@@ -396,7 +571,7 @@ describe("renderSarif", () => {
     },
   );
 
-  it("preserves coherent multiline coordinates and a valid snippet", () => {
+  it("preserves multiline coordinates without claiming the first line is the entire region", () => {
     const finding = createFinding({
       location: {
         file: "src/multiline.ts",
@@ -425,21 +600,32 @@ describe("renderSarif", () => {
     const document = JSON.parse(renderSarif(report)) as {
       runs: Array<{
         results: Array<{
+          properties: Record<string, unknown>;
           locations: Array<{
-            physicalLocation: { region: Record<string, unknown> };
+            physicalLocation: Record<string, unknown>;
           }>;
         }>;
       }>;
     };
 
     expect(
-      document.runs[0]!.results[0]!.locations[0]!.physicalLocation.region,
+      document.runs[0]!.results[0]!.locations[0]!.physicalLocation,
     ).toEqual({
-      startLine: 12,
-      startColumn: 9,
-      endLine: 14,
-      endColumn: 3,
-      snippet: { text: "const value = beginCall(" },
+      artifactLocation: { uri: "src/multiline.ts" },
+      region: {
+        startLine: 12,
+        startColumn: 9,
+        endLine: 14,
+        endColumn: 3,
+      },
+    });
+    expect(
+      document.runs[0]!.results[0]!.properties["zedbee/sourceExcerpt"],
+    ).toEqual({
+      line: 12,
+      text: "const value = beginCall(",
+      redacted: false,
+      truncated: false,
     });
   });
 

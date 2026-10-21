@@ -174,6 +174,7 @@ function validateObservationPaths(
   target: CheckTarget,
   inspection: RepositoryInspection,
   registry: SnapshotRegistry,
+  renamedBaselinePaths?: ReadonlySet<string>,
 ): void {
   for (const observation of input) {
     const paths = [observation.location?.file, observation.entity?.file].filter(
@@ -185,7 +186,10 @@ function validateObservationPaths(
       }
       if (target.kind === "repository") continue;
       const owner = mostSpecificWorkspace(inspection, path);
-      if (owner?.relativeRoot !== target.relativeRoot) {
+      if (
+        owner?.relativeRoot !== target.relativeRoot &&
+        !renamedBaselinePaths?.has(path)
+      ) {
         throw new TypeError(
           `Observation path does not belong to its ${side} target`,
         );
@@ -353,6 +357,16 @@ export async function observationCheckResult(
       context.target,
       context.baselineInspection,
       baselineRegistry,
+      new Set(
+        [...context.changeSet.files.values()].flatMap((file) =>
+          file.status === "renamed" &&
+          file.previousPath !== undefined &&
+          mostSpecificWorkspace(context.targetInspection, file.path)
+            ?.relativeRoot === context.target.relativeRoot
+            ? [file.previousPath]
+            : [],
+        ),
+      ),
     );
   if (targetRegistry !== undefined)
     validateObservationPaths(

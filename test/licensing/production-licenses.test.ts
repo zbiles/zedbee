@@ -981,15 +981,10 @@ describe("package metadata", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("does not overwrite stale license artifacts during verification", async () => {
+  it("does not overwrite stale notices during verification", async () => {
     const root = await createFixtureRoot();
     await writeAllowedFixture(root);
-    await mkdir(join(root, "licenses"), { recursive: true });
     await writeFile(join(root, "THIRD_PARTY_NOTICES.md"), "stale notices\n");
-    await writeFile(
-      join(root, "licenses", "production-inventory.json"),
-      "stale inventory\n",
-    );
 
     const result = await runLicenseCheck(root);
 
@@ -998,12 +993,6 @@ describe("package metadata", () => {
     expect(await readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8")).toBe(
       "stale notices\n",
     );
-    expect(
-      await readFile(
-        join(root, "licenses", "production-inventory.json"),
-        "utf8",
-      ),
-    ).toBe("stale inventory\n");
   });
 
   it("rejects byte-different invalid UTF-8 without rewriting the artifact", async () => {
@@ -1033,24 +1022,28 @@ describe("package metadata", () => {
     expect(await readFile(noticesPath)).toEqual(invalidUtf8);
   });
 
-  it("generates deterministic artifacts explicitly before verification", async () => {
+  it("generates deterministic notices and verifies without a persisted inventory", async () => {
     const root = await createFixtureRoot();
     await writeAllowedFixture(root);
 
     const firstResult = await runLicenseGenerate(root);
     expect(firstResult.exitCode).toBe(0);
-    const first = await Promise.all([
-      readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8"),
+    const first = await readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8");
+    await expect(
       readFile(join(root, "licenses", "production-inventory.json"), "utf8"),
-    ]);
+    ).rejects.toMatchObject({ code: "ENOENT" });
     const secondResult = await runLicenseGenerate(root);
     expect(secondResult.exitCode).toBe(0);
-    const second = await Promise.all([
-      readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8"),
-      readFile(join(root, "licenses", "production-inventory.json"), "utf8"),
-    ]);
+    const second = await readFile(join(root, "THIRD_PARTY_NOTICES.md"), "utf8");
 
     expect(second).toEqual(first);
+    await expect(runLicenseCheck(root)).resolves.toMatchObject({ exitCode: 0 });
+
+    const lockfile = JSON.parse(
+      await readFile(join(root, "package-lock.json"), "utf8"),
+    ) as Lockfile;
+    lockfile.version = "2.0.0";
+    await writeLockfile(root, lockfile);
     await expect(runLicenseCheck(root)).resolves.toMatchObject({ exitCode: 0 });
   });
 

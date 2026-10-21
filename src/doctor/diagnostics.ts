@@ -43,7 +43,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "secretlint-readiness",
   "lockfile-support",
   "osv-connectivity",
-  "license-inventory",
+  "license-notices",
   "hook-state",
   "online-service-disclosure",
 ] as const;
@@ -212,19 +212,11 @@ async function withSnapshots<T>(
   }
 }
 
-async function inventoryIsValid(): Promise<boolean> {
-  const inventoryPath = fileURLToPath(
-    new URL("../../licenses/production-inventory.json", import.meta.url),
+async function noticesArePresent(): Promise<boolean> {
+  const noticesPath = fileURLToPath(
+    new URL("../../THIRD_PARTY_NOTICES.md", import.meta.url),
   );
-  const parsed = JSON.parse(await readFile(inventoryPath, "utf8")) as {
-    schemaVersion?: unknown;
-    packages?: unknown;
-  };
-  return (
-    parsed.schemaVersion === 1 &&
-    Array.isArray(parsed.packages) &&
-    parsed.packages.length > 0
-  );
+  return (await readFile(noticesPath, "utf8")).trim().length > 0;
 }
 
 export interface DefaultDiagnosticDependencies {
@@ -591,17 +583,17 @@ export function createDefaultDiagnosticProbe(
           };
         }
       }
-      case "license-inventory":
-        return (await inventoryIsValid())
+      case "license-notices":
+        return (await noticesArePresent())
           ? {
               id,
               status: "pass",
-              message: "The production license inventory is present and valid.",
+              message: "Third-party license notices are present.",
             }
           : {
               id,
               status: "fail",
-              message: "The production license inventory is invalid.",
+              message: "Third-party license notices are empty.",
               remediation: "Reinstall Zedbee from a verified package.",
             };
       case "hook-state": {

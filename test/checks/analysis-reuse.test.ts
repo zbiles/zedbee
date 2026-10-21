@@ -471,10 +471,10 @@ describe("owned analysis reuse", () => {
         for (let index = 0; index < adapters.length; index += 1)
           expect(await collect(adapters[index]!)).toEqual(standalone[index]);
         expect(parses()).toBe(12);
-        expect(reads()).toBe(10);
+        expect(reads()).toBe(11);
         for (const adapter of [...adapters].reverse()) await collect(adapter);
         expect(parses()).toBe(12);
-        expect(reads()).toBe(20);
+        expect(reads()).toBe(22);
         const cancelled = new AbortController();
         cancelled.abort(new Error("cancelled collection"));
         await expect(

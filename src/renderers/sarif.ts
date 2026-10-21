@@ -74,7 +74,6 @@ function positiveSafeInteger(value: number | undefined): number | undefined {
 
 function createRegion(
   location: SourceLocation,
-  finding: Finding,
 ): Record<string, unknown> | undefined {
   const startLine = positiveSafeInteger(location.startLine);
   if (startLine === undefined) return undefined;
@@ -97,18 +96,11 @@ function createRegion(
       candidateEndColumn >= startColumn)
       ? candidateEndColumn
       : undefined;
-  const excerpt = finding.sourceExcerpt;
-  const snippet =
-    excerpt !== undefined && !excerpt.redacted && excerpt.text !== undefined
-      ? { text: excerpt.text }
-      : undefined;
-
   return {
     startLine,
     ...(startColumn === undefined ? {} : { startColumn }),
     ...(endLine === undefined ? {} : { endLine }),
     ...(endColumn === undefined ? {} : { endColumn }),
-    ...(snippet === undefined ? {} : { snippet }),
   };
 }
 
@@ -117,7 +109,7 @@ function createLocation(
 ): Record<string, unknown>[] | undefined {
   const location = finding.location;
   if (location === undefined) return undefined;
-  const region = createRegion(location, finding);
+  const region = createRegion(location);
   return [
     {
       physicalLocation: {
@@ -162,7 +154,12 @@ function createResult(
             "zedbee/automaticFixStagesChanges": false,
           }),
       ...(finding.sourceExcerpt?.redacted === false
-        ? { sourceExcerptTruncated: finding.sourceExcerpt.truncated }
+        ? {
+            sourceExcerptTruncated: finding.sourceExcerpt.truncated,
+            // Excerpts are sanitized display lines, not the raw source range
+            // required by SARIF region.snippet (and may be truncated).
+            "zedbee/sourceExcerpt": { ...finding.sourceExcerpt },
+          }
         : {}),
     },
   };
@@ -283,6 +280,7 @@ export function renderSarif(report: ScanReport): string {
     version: "2.1.0",
     runs: [
       {
+        columnKind: "utf16CodeUnits",
         tool: {
           driver: {
             name: "Zedbee",

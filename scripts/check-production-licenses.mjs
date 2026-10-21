@@ -320,7 +320,6 @@ export async function buildProductionLicenseArtifacts(root) {
 
   return {
     inventory,
-    inventoryText: `${JSON.stringify(inventory, null, 2)}\n`,
     notices,
     denied,
   };
@@ -340,23 +339,14 @@ export async function checkProductionLicenses(root) {
   const artifacts = await buildProductionLicenseArtifacts(root);
   if (artifacts.denied.length > 0) return artifacts;
 
-  const inventoryPath = join(root, "licenses", "production-inventory.json");
   const noticesPath = join(root, "THIRD_PARTY_NOTICES.md");
-  const [committedInventory, committedNotices] = await Promise.all([
-    readReleaseArtifact(inventoryPath, "licenses/production-inventory.json"),
-    readReleaseArtifact(noticesPath, "THIRD_PARTY_NOTICES.md"),
-  ]);
-  const stale = [
-    ...(committedInventory.equals(Buffer.from(artifacts.inventoryText, "utf8"))
-      ? []
-      : ["licenses/production-inventory.json"]),
-    ...(committedNotices.equals(Buffer.from(artifacts.notices, "utf8"))
-      ? []
-      : ["THIRD_PARTY_NOTICES.md"]),
-  ];
-  if (stale.length > 0) {
+  const committedNotices = await readReleaseArtifact(
+    noticesPath,
+    "THIRD_PARTY_NOTICES.md",
+  );
+  if (!committedNotices.equals(Buffer.from(artifacts.notices, "utf8"))) {
     throw new Error(
-      `stale release safety artifacts: ${stale.join(", ")}; run npm run licenses:generate`,
+      "stale release safety artifact: THIRD_PARTY_NOTICES.md; run npm run licenses:generate",
     );
   }
   return artifacts;

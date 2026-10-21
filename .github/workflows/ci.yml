@@ -41,12 +41,14 @@ jobs:
       - name: Install dependencies without lifecycle scripts
         run: npm ci --ignore-scripts
 
-      - name: Run complete local verification
+      - name: Run correctness verification and benchmark smoke
         run: npm run verify
         env:
           ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
-          ZEDBEE_BENCHMARK_MODE: smoke
           ZEDBEE_BENCHMARK_RUNNER: ${{ matrix.os }}
+
+  performance:
+    uses: ./.github/workflows/performance-check.yml
 
   package-manager-fixtures:
     name: package fixture / ${{ matrix.manager }}
