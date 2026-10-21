@@ -16,13 +16,21 @@ async function run(cwd: string, install?: "codex" | "claude", yes = false) {
   );
   return { code, stdout: stdout.join(""), stderr: stderr.join("") };
 }
-const source = new URL("../../skills/zedbee/SKILL.md", import.meta.url);
+const source = new URL(
+  "../../plugins/swarm/skills/scan/SKILL.md",
+  import.meta.url,
+);
 
 describe("agent workflow", () => {
   it("prints the packaged source verbatim without requiring a repository", async () => {
     const result = await run("/no-such-repository");
     expect(result.code, result.stderr).toBe(0);
-    expect(result.stdout).toBe(await readFile(source, "utf8"));
+    expect(result.stdout).toBe(
+      (await readFile(source, "utf8")).replace(
+        /^name: scan$/mu,
+        "name: zedbee",
+      ),
+    );
   });
   it.each(["codex", "claude"] as const)(
     "previews and installs for %s from a nested directory without touching the index",
@@ -42,7 +50,10 @@ describe("agent workflow", () => {
       const result = await run(join(repo.root, "nested"), install, true);
       expect(result.code, result.stderr).toBe(0);
       expect(await readFile(destination, "utf8")).toBe(
-        await readFile(source, "utf8"),
+        (await readFile(source, "utf8")).replace(
+          /^name: scan$/mu,
+          "name: zedbee",
+        ),
       );
       expect((await repo.git(["write-tree"])).stdout).toBe(before.stdout);
       expect(await repo.read("staged.txt")).toBe("unstaged\n");
