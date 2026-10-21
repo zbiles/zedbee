@@ -1,5 +1,6 @@
 import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it, onTestFinished } from "vitest";
@@ -323,3 +324,155 @@ it
     await expect(stat(join(f.repository.root, "injected"))).rejects.toThrow();
   },
 );
+
+async function releaseFixture() {
+  const root = await mkdtemp(join(tmpdir(), "zedbee-action-release-"));
+  onTestFinished(() => rm(root, { recursive: true, force: true }));
+  const version = "0.1.0-beta.12";
+  const filename = "zedbee-0.1.0-beta.12.tgz";
+  const baseUrl =
+    "https://github.com/zbiles/zedbee/releases/download/v0.1.0-beta.12";
+  const tarball = Buffer.from(
+    "release artifact bytes preserved exactly\u0000\u00ff",
+  );
+  const digest = createHash("sha256").update(tarball).digest("hex");
+  const responses = new Map<string, () => Response>([
+    [`${baseUrl}/${filename}`, () => new Response(tarball)],
+    [`${baseUrl}/SHA256SUMS`, () => new Response(`${digest}  ${filename}\n`)],
+  ]);
+  const fetcher = async (url: string) =>
+    responses.get(url)?.() ?? new Response("missing", { status: 404 });
+  return {
+    root,
+    version,
+    filename,
+    baseUrl,
+    tarball,
+    digest,
+    responses,
+    fetcher,
+  };
+}
+
+it("downloads a canonical release artifact and verifies its digest before exposing the file", async () => {
+  const f = await releaseFixture();
+  const path = await runner.downloadRelease(f);
+  expect(await readFile(path)).toEqual(f.tarball);
+  expect(relative(f.root, path)).not.toMatch(/^\.\./);
+  if (process.platform !== "win32")
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+});
+
+it("rejects checksum mismatch and removes the unverified tarball", async () => {
+  const f = await releaseFixture();
+  f.responses.set(
+    `${f.baseUrl}/${f.filename}`,
+    () => new Response("tampered bytes"),
+  );
+  await expect(runner.downloadRelease(f)).rejects.toThrow(/checksum/i);
+  await expect(stat(join(f.root, f.filename))).rejects.toThrow();
+});
+
+it.each(["not a checksum", `${"0".repeat(64)}  unexpected.tgz\n`])(
+  "rejects unusable release checksums: %s",
+  async (checksums) => {
+    const f = await releaseFixture();
+    f.responses.set(`${f.baseUrl}/SHA256SUMS`, () => new Response(checksums));
+    await expect(runner.downloadRelease(f)).rejects.toThrow(/checksum/i);
+  },
+);
+
+it("rejects duplicate checksum entries even if one digest matches", async () => {
+  const f = await releaseFixture();
+  f.responses.set(
+    `${f.baseUrl}/SHA256SUMS`,
+    () =>
+      new Response(
+        `${f.digest}  ${f.filename}\n${"0".repeat(64)}  ${f.filename}\n`,
+      ),
+  );
+  await expect(runner.downloadRelease(f)).rejects.toThrow(/checksum/i);
+});
+
+it.each(["SHA256SUMS", "zedbee-0.1.0-beta.12.tgz"])(
+  "fails closed for unavailable release asset %s",
+  async (asset) => {
+    const f = await releaseFixture();
+    f.responses.delete(`${f.baseUrl}/${asset}`);
+    await expect(runner.downloadRelease(f)).rejects.toThrow(/download/i);
+  },
+);
+
+it("limits checksum download size while streaming", async () => {
+  const f = await releaseFixture();
+  f.responses.set(
+    `${f.baseUrl}/SHA256SUMS`,
+    () => new Response("x".repeat(65_537)),
+  );
+  await expect(runner.downloadRelease(f)).rejects.toThrow(/limit/i);
+});
+
+it("bounds downloads that never respond", async () => {
+  const f = await releaseFixture();
+  await expect(
+    runner.downloadRelease({
+      ...f,
+      timeoutMs: 10,
+      fetcher: () => new Promise(() => {}),
+    }),
+  ).rejects.toThrow(/timeout|abort/i);
+});
+
+it("fails closed on release download errors without exposing remote content", async () => {
+  const f = await fixture();
+  const result = await runner.runAction({
+    env: f.env,
+    fetcher: async () => {
+      throw new Error("REMOTE_SECRET_MARKER");
+    },
+  });
+  expect(result).toMatchObject({
+    exitCode: 2,
+    outcome: "incomplete",
+    reportPath: "",
+  });
+  const summary = await readFile(f.env.GITHUB_STEP_SUMMARY!, "utf8");
+  expect(summary).toContain("Installation failed");
+  expect(summary).not.toContain("REMOTE_SECRET_MARKER");
+});
+
+it("fails closed when the installer cannot start after a verified download", async () => {
+  const f = await fixture();
+  const release = await releaseFixture();
+  f.env.PATH = "";
+  f.env.Path = "";
+  const result = await runner.runAction({
+    env: f.env,
+    fetcher: release.fetcher,
+  });
+  expect(result).toMatchObject({
+    exitCode: 2,
+    outcome: "incomplete",
+    reportPath: "",
+  });
+  expect(await readFile(f.env.GITHUB_STEP_SUMMARY!, "utf8")).toContain(
+    "Installation failed",
+  );
+});
+
+it("enforces the tarball size cap even without a declared content length", async () => {
+  const f = await releaseFixture();
+  f.responses.set(`${f.baseUrl}/${f.filename}`, () => {
+    let chunks = 0;
+    return new Response(
+      new ReadableStream({
+        pull(controller) {
+          if (chunks++ < 65) controller.enqueue(new Uint8Array(1024 * 1024));
+          else controller.close();
+        },
+      }),
+    );
+  });
+  await expect(runner.downloadRelease(f)).rejects.toThrow(/limit/i);
+  await expect(stat(join(f.root, f.filename))).rejects.toThrow();
+});

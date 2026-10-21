@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   appendFile,
   chmod,
@@ -7,6 +8,7 @@ import {
   open,
   readFile,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -89,7 +91,100 @@ function run(command, args, options) {
   });
 }
 
-async function installPackage({ version, root, env }) {
+function abortable(promise, signal) {
+  return new Promise((resolveResult, reject) => {
+    const abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    Promise.resolve(promise)
+      .then(resolveResult, reject)
+      .finally(() => {
+        signal.removeEventListener("abort", abort);
+      });
+  });
+}
+
+async function download(url, limit, signal, fetcher, consume) {
+  const response = await abortable(
+    fetcher(url, { signal, redirect: "follow" }),
+    signal,
+  );
+  if (!response.ok || response.body === null)
+    throw new Error("Release download failed");
+  const declaredSize = response.headers.get("content-length");
+  if (declaredSize !== null && Number(declaredSize) > limit)
+    throw new Error("Release download size limit exceeded");
+  const reader = response.body.getReader();
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await abortable(reader.read(), signal);
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw new Error("Release download size limit exceeded");
+      await consume(value);
+    }
+  } catch (error) {
+    void reader.cancel().catch(() => {});
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** Fetch and verify canonical release bytes before the installer can consume them. */
+export async function downloadRelease({
+  version,
+  root,
+  fetcher = fetch,
+  timeoutMs = 60_000,
+}) {
+  if (!exactVersion(version)) throw new Error("Invalid release version");
+  if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000)
+    throw new Error("Invalid download timeout");
+  const filename = `zedbee-${version}.tgz`;
+  const baseUrl = `https://github.com/zbiles/zedbee/releases/download/v${encodeURIComponent(version)}`;
+  const signal = AbortSignal.timeout(timeoutMs);
+  const checksumParts = [];
+  await download(`${baseUrl}/SHA256SUMS`, 65_536, signal, fetcher, (part) => {
+    checksumParts.push(Buffer.from(part));
+  });
+  const checksums = Buffer.concat(checksumParts)
+    .toString("utf8")
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const entry = /^([a-fA-F0-9]{64}) [ *](.+)$/.exec(line);
+      return entry?.[2] === filename ? [entry[1].toLowerCase()] : [];
+    });
+  if (checksums.length !== 1)
+    throw new Error("Missing or ambiguous release checksum");
+  const tarballPath = join(root, filename);
+  const output = await open(tarballPath, "wx", 0o600);
+  let verified = false;
+  try {
+    const hash = createHash("sha256");
+    await download(
+      `${baseUrl}/${encodeURIComponent(filename)}`,
+      64 * 1024 * 1024,
+      signal,
+      fetcher,
+      async (part) => {
+        hash.update(part);
+        await output.writeFile(part);
+      },
+    );
+    if (hash.digest("hex") !== checksums[0])
+      throw new Error("Release checksum mismatch");
+    verified = true;
+  } finally {
+    await output.close();
+    if (!verified) await rm(tarballPath, { force: true });
+  }
+  return tarballPath;
+}
+
+async function installPackage({ version, root, env, fetcher }) {
+  const tarballPath = await downloadRelease({ version, root, fetcher });
   const prefix = join(root, "tool");
   await mkdir(prefix, { mode: 0o700 });
   await writeFile(
@@ -108,7 +203,7 @@ async function installPackage({ version, root, env }) {
       "--no-fund",
       "--package-lock=false",
       "--",
-      `zedbee@${version}`,
+      tarballPath,
     ],
     {
       cwd: prefix,
@@ -120,7 +215,13 @@ async function installPackage({ version, root, env }) {
     },
   );
   if (result.code !== 0) throw new Error("Installation failed");
-  return join(prefix, "node_modules", "zedbee", "dist", "cli.js");
+  const installed = join(prefix, "node_modules", "zedbee");
+  const manifest = JSON.parse(
+    await readFile(join(installed, "package.json"), "utf8"),
+  );
+  if (manifest.name !== "zedbee" || manifest.version !== version)
+    throw new Error("Installed release identity mismatch");
+  return join(installed, "dist", "cli.js");
 }
 
 function reportSummary(report, format, code) {
@@ -208,10 +309,11 @@ async function publish(result, env, detail) {
     );
 }
 
-/** Execute the real installed CLI. The installer is the external network boundary. */
+/** Execute the real CLI from an isolated, verified release installation. */
 export async function runAction({
   env = process.env,
   install = installPackage,
+  fetcher = fetch,
 } = {}) {
   let result = {
     reportPath: "",
@@ -229,7 +331,7 @@ export async function runAction({
     // GITHUB_OUTPUT uses one-line records; reject unusual runner directory names.
     if (/[\r\n]/.test(root)) throw new Error("Invalid runner directory");
     detail = "Installation failed. No complete scan report was produced.";
-    const cli = await install({ version: options.version, root, env });
+    const cli = await install({ version: options.version, root, env, fetcher });
     detail =
       "Scanner startup or execution failed. No complete scan report was produced.";
     const rawPath = join(root, "scanner-output.txt");

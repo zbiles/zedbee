@@ -2,7 +2,7 @@ name: Zedbee scan
 description: Scan committed pull request changes and preserve the complete report.
 inputs:
   version:
-    description: Exact Zedbee npm package version to install.
+    description: Exact Zedbee GitHub release version to install (without the v prefix).
     required: true
   base-ref:
     description: Git base ref; defaults to the pull request event base SHA.
