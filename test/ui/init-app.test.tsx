@@ -19,6 +19,7 @@ import {
   InitApp,
   initMaxFps,
   initRenderOptions,
+  type InitAppProps,
 } from "../../src/ui/init-app.js";
 import { pixelBeeWidth } from "../../src/ui/pixel-bee.js";
 import { pixelWordmarkWidth } from "../../src/ui/pixel-wordmark.js";
@@ -44,6 +45,265 @@ const proposal: InitProposal = {
 };
 
 const DEFAULT_TEST_ROWS = 120;
+
+describe("GitHub workflow setup choice", () => {
+  const workflowFile = fileChange(".github/workflows/zedbee.yml", null);
+  const available: InitProposal = {
+    ...proposal,
+    workflowAvailable: true,
+    workflow: "none",
+  };
+  const select: InitAppProps["proposalForSelection"] = (
+    profile,
+    checks,
+    osvUnavailable,
+    _hook,
+    _formatting,
+    _trust,
+    _evaluated,
+    _scope,
+    workflow = "none",
+  ) => ({
+    ...available,
+    profile,
+    recommendedChecks: checks ?? available.recommendedChecks,
+    osvUnavailable,
+    workflow,
+    files: workflow === "github" ? [workflowFile] : [],
+  });
+
+  it("defaults to no workflow and applies without adding a workflow file", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={available}
+        proposalForSelection={select}
+        width={130}
+        terminalSize={{ columns: 130, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await settleInput();
+    expect(view.lastFrame()).toContain("[ ] Add GitHub pull-request workflow");
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("GitHub pull-request workflow: none"),
+    );
+    expect(view.lastFrame()).not.toContain(".github/workflows/zedbee.yml");
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(
+        expect.objectContaining({ workflow: "none", files: [] }),
+      ),
+    );
+    view.unmount();
+  });
+
+  it("keeps the workflow through tracking, profile, checks, review, back, and apply", async () => {
+    const onDecision = vi.fn();
+    const view = render(
+      <InitApp
+        proposal={available}
+        proposalForSelection={select}
+        width={130}
+        terminalSize={{ columns: 130, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={onDecision}
+      />,
+    );
+    await settleInput();
+    for (let i = 0; i < 3; i += 1) {
+      view.stdin.write("\u001b[A");
+      await settleInput();
+    }
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "➜ [ ] Add GitHub pull-request workflow",
+      ),
+    );
+    view.stdin.write(" ");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "[✽] Add GitHub pull-request workflow",
+      ),
+    );
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write(" ");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("[ ] Enable usage tracking"),
+    );
+    view.stdin.write("\r");
+    await waitForAssertion(() => {
+      expect(view.lastFrame()).toContain("GitHub pull-request workflow: add");
+      expect(view.lastFrame()).toContain(".github/workflows/zedbee.yml");
+      expect(view.lastFrame()).toContain(
+        "Create the GitHub pull-request workflow",
+      );
+    });
+    expect(onDecision).not.toHaveBeenCalled();
+    view.stdin.write("b");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "[✽] Add GitHub pull-request workflow",
+      ),
+    );
+    view.stdin.write("\u001b[A");
+    await settleInput();
+    view.stdin.write("\u001b[D");
+    await settleInput();
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("GitHub pull-request workflow: none"),
+    );
+    expect(view.lastFrame()).not.toContain(".github/workflows/zedbee.yml");
+    view.stdin.write("b");
+    await settleInput();
+    view.stdin.write("\u001b[C");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(
+        "[✽] Add GitHub pull-request workflow",
+      ),
+    );
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write("\u001b[C");
+    await settleInput();
+    view.stdin.write("\u001b[B");
+    await settleInput();
+    view.stdin.write(" ");
+    await settleInput();
+    view.stdin.write("\r");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("APPLY CHANGES"),
+    );
+    view.stdin.write("y");
+    await waitForAssertion(() =>
+      expect(onDecision).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workflow: "github",
+          files: [workflowFile],
+          telemetryEnabled: false,
+          profile: "thorough",
+          recommendedChecks: ["lint", "types"],
+        }),
+      ),
+    );
+    view.unmount();
+  });
+
+  it.each(["configure", "review"])(
+    "cancels an initially selected workflow from %s without applying",
+    async (phase) => {
+      const onDecision = vi.fn();
+      const selected = { ...available, workflow: "github" as const };
+      const view = render(
+        <InitApp
+          proposal={selected}
+          proposalForSelection={select}
+          width={130}
+          terminalSize={{ columns: 130, rows: DEFAULT_TEST_ROWS }}
+          color={false}
+          animations={false}
+          onDecision={onDecision}
+        />,
+      );
+      await waitForAssertion(() =>
+        expect(view.lastFrame()).toContain(
+          "[✽] Add GitHub pull-request workflow",
+        ),
+      );
+      if (phase === "review") {
+        view.stdin.write("\r");
+        await waitForAssertion(() =>
+          expect(view.lastFrame()).toContain(".github/workflows/zedbee.yml"),
+        );
+      }
+      view.stdin.write("n");
+      await waitForAssertion(() =>
+        expect(onDecision).toHaveBeenCalledExactlyOnceWith(false),
+      );
+      view.unmount();
+    },
+  );
+
+  it("shows an unavailable workflow reason without adding a selectable choice", async () => {
+    const existing: InitProposal = {
+      ...available,
+      workflowAvailable: false,
+      workflowMessage:
+        "Existing .github/workflows/zedbee.yml will be preserved.",
+    };
+    const view = render(
+      <InitApp
+        proposal={existing}
+        proposalForSelection={() => existing}
+        width={130}
+        terminalSize={{ columns: 130, rows: DEFAULT_TEST_ROWS }}
+        color={false}
+        animations={false}
+        onDecision={vi.fn()}
+      />,
+    );
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain(existing.workflowMessage),
+    );
+    expect(view.lastFrame()).not.toContain("Add GitHub pull-request workflow");
+    view.stdin.write("\u001b[A");
+    await settleInput();
+    view.stdin.write("\u001b[A");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("➜ [✽] Enable usage tracking"),
+    );
+    view.unmount();
+  });
+
+  it.each([
+    { columns: 40, rows: 18 },
+    { columns: 60, rows: 24 },
+  ])(
+    "reveals the workflow choice in a $columns×$rows terminal",
+    async (size) => {
+      const view = render(
+        <InitApp
+          proposal={available}
+          proposalForSelection={select}
+          width={size.columns}
+          terminalSize={size}
+          color={false}
+          animations={false}
+          onDecision={vi.fn()}
+        />,
+      );
+      await settleInput();
+      for (let i = 0; i < 3; i += 1) {
+        view.stdin.write("\u001b[A");
+        await settleInput();
+      }
+      await waitForAssertion(() =>
+        expect(view.lastFrame()).toContain("➜ [ ] Add GitHub"),
+      );
+      view.stdin.write("\u001b[C");
+      await waitForAssertion(() =>
+        expect(view.lastFrame()).toContain("➜ [✽] Add GitHub"),
+      );
+      expect(renderedLines(view.lastFrame()!)).toHaveLength(size.rows);
+      expect(
+        Math.max(
+          ...renderedLines(view.lastFrame()!).map((line) => [...line].length),
+        ),
+      ).toBeLessThanOrEqual(size.columns);
+      view.unmount();
+    },
+  );
+});
 
 describe("hook setup choices", () => {
   it.each([false, true])(

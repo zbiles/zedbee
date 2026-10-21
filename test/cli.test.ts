@@ -52,3 +52,32 @@ describe("scanTimeoutOverrides", () => {
     ).toEqual({ timeout: "30s" });
   });
 });
+
+describe("init workflow options", () => {
+  it.each(["github", "none"] as const)(
+    "forwards --workflow %s to setup",
+    async (workflow) => {
+      let actual: string | undefined;
+      const code = await runCli(
+        [
+          "node",
+          "zedbee",
+          "init",
+          "--hook",
+          "none",
+          "--workflow",
+          workflow,
+          "--yes",
+        ],
+        {
+          executeInitCommand: async (options) => {
+            actual = options.workflow;
+            return 0;
+          },
+        },
+      );
+      expect(code).toBe(0);
+      expect(actual).toBe(workflow);
+    },
+  );
+});

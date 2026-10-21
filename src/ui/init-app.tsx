@@ -25,6 +25,7 @@ import type {
   InitHookChoice,
   InitOsvUnavailable,
   InitProposal,
+  InitWorkflowChoice,
   ResolvedHookChoice,
 } from "../init/types.js";
 import { OSV_NETWORK_DISCLOSURE } from "../init/types.js";
@@ -59,6 +60,7 @@ export interface InitAppProps extends InitPromptOptions {
     projectTrust?: boolean,
     evaluatedImport?: InitFormattingImport,
     scope?: InitFormattingScope,
+    workflow?: InitWorkflowChoice,
   ) => InitProposal;
   /** Present only when an executable configuration can be consented evaluated. */
   readonly evaluateExecutableImport?: () => Promise<
@@ -425,9 +427,15 @@ function hasFormattingScope(proposal: InitProposal): boolean {
   );
 }
 
-function telemetryFocusIndex(proposal: InitProposal): number {
+function workflowFocusIndex(proposal: InitProposal): number {
   return (
     formattingFocusIndex(proposal) + 1 + (hasFormattingScope(proposal) ? 1 : 0)
+  );
+}
+
+function telemetryFocusIndex(proposal: InitProposal): number {
+  return (
+    workflowFocusIndex(proposal) + (proposal.workflowAvailable === true ? 1 : 0)
   );
 }
 
@@ -642,6 +650,8 @@ function initFileDescription(file: InitFileChange): string {
   switch (file.relativePath) {
     case ".zedbeerc.jsonc":
       return `${action} Zedbee's repository configuration with the selected profile, checks, and reporting settings.`;
+    case ".github/workflows/zedbee.yml":
+      return `${action} the GitHub pull-request workflow to run Zedbee scans and upload their reports.`;
     case ".git/hooks/pre-commit":
       return `${action} the Git pre-commit hook so Zedbee runs before each commit.`;
     case ".git/hooks/pre-merge-commit":
@@ -765,6 +775,50 @@ function SetupPanel({
           </Box>
         </Box>
       ) : null}
+      {proposal.workflowAvailable === true ||
+      proposal.workflowMessage !== undefined ? (
+        <>
+          <BrandedCommandPanelRule width={width} color={color} />
+          <Box flexDirection="column" paddingX={2}>
+            {proposal.workflowAvailable === true ? (
+              <>
+                <Box
+                  ref={
+                    focus === workflowFocusIndex(proposal)
+                      ? activeTargetRef
+                      : undefined
+                  }
+                >
+                  <Text
+                    wrap="wrap"
+                    {...colorProp(color, ZEDBEE_THEME.secondary)}
+                  >
+                    {focus === workflowFocusIndex(proposal) ? "➜ " : "  "}[
+                    {proposal.workflow === "github" ? "✽" : " "}] Add GitHub
+                    pull-request workflow
+                  </Text>
+                </Box>
+                <Box paddingLeft={2}>
+                  <Text
+                    wrap="wrap"
+                    {...colorProp(color, ZEDBEE_THEME.secondary)}
+                  >
+                    Create .github/workflows/zedbee.yml to run pull-request
+                    scans and upload reports.
+                  </Text>
+                </Box>
+              </>
+            ) : null}
+            {proposal.workflowMessage === undefined ? null : (
+              <Box paddingLeft={2}>
+                <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+                  {proposal.workflowMessage}
+                </Text>
+              </Box>
+            )}
+          </Box>
+        </>
+      ) : null}
       <BrandedCommandPanelRule width={width} color={color} />
       <Box
         flexDirection="column"
@@ -832,6 +886,17 @@ function ReviewPanel({
             ? proposal.formattingScopeRoots?.join(", ") || "whole repository"
             : "whole repository"}
         </Text>
+        {proposal.workflowAvailable === true ? (
+          <Text wrap="wrap">
+            GitHub pull-request workflow:{" "}
+            {proposal.workflow === "github" ? "add" : "none"}
+          </Text>
+        ) : null}
+        {proposal.workflowMessage === undefined ? null : (
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {proposal.workflowMessage}
+          </Text>
+        )}
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Stage the configuration and other setup files after applying; checks
           use staged configuration.
@@ -913,6 +978,9 @@ export function InitApp({
   const [scope, setScope] = useState<InitFormattingScope>(
     proposal.formattingScope ?? "repository",
   );
+  const [workflow, setWorkflow] = useState<InitWorkflowChoice>(
+    proposal.workflow ?? "none",
+  );
   const [preparedReview, setPreparedReview] = useState<InitProposal>();
   const [preparingReview, setPreparingReview] = useState(false);
   const [reviewError, setReviewError] = useState<string>();
@@ -983,6 +1051,7 @@ export function InitApp({
         projectTrust,
         evaluatedImport,
         scope,
+        workflow,
       ),
       telemetryEnabled,
       telemetryDisabledByEnvironment:
@@ -1000,6 +1069,7 @@ export function InitApp({
       proposalForSelection,
       selected,
       scope,
+      workflow,
     ],
   );
   const reviewedProposal =
@@ -1185,6 +1255,7 @@ export function InitApp({
         projectTrust,
         evaluatedImport,
         scope,
+        workflow,
       );
       setBaseProfile(nextProfile);
       setCustomized(false);
@@ -1208,6 +1279,12 @@ export function InitApp({
       (input === " " || key.leftArrow || key.rightArrow)
     ) {
       setScope((value) => (value === "projects" ? "repository" : "projects"));
+    } else if (
+      reviewedProposal.workflowAvailable === true &&
+      focus === workflowFocusIndex(reviewedProposal) &&
+      (input === " " || key.leftArrow || key.rightArrow)
+    ) {
+      setWorkflow((value) => (value === "github" ? "none" : "github"));
     } else if (
       focus === telemetryFocusIndex(reviewedProposal) &&
       (input === " " || key.leftArrow || key.rightArrow)
@@ -1311,6 +1388,7 @@ export async function runInitPrompt(
     projectTrust?: boolean,
     evaluatedImport?: InitFormattingImport,
     scope?: InitFormattingScope,
+    workflow?: InitWorkflowChoice,
   ) => InitProposal,
   evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
   prepareReview?: (proposal: InitProposal) => Promise<InitProposal>,
