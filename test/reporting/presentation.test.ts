@@ -190,7 +190,7 @@ describe("prepareTerminalPresentation", () => {
 
     const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
     expect(request.json).toBe(renderJson(report));
-    expect(JSON.parse(request.json ?? "").checks[0].findings).toHaveLength(26);
+    expect(JSON.parse(request.json ?? "").findings).toHaveLength(26);
     expect(presentation.findings).toEqual(
       [...report.summary.findings].sort(compareFindings).slice(0, 3),
     );
@@ -247,9 +247,9 @@ describe("prepareTerminalPresentation", () => {
       presentation.findings.filter(({ severity }) => severity === "warning"),
     ).toHaveLength(15);
     const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
-    expect(JSON.parse(request.json ?? "").checks[0].findings).toHaveLength(30);
+    expect(JSON.parse(request.json ?? "").findings).toHaveLength(30);
     expect(
-      JSON.parse(request.json ?? "").checks[0].findings.map(
+      JSON.parse(request.json ?? "").findings.map(
         (finding: { id: string }) => finding.id,
       ),
     ).toEqual([...reportFindings].sort(compareFindings).map(({ id }) => id));
@@ -358,12 +358,11 @@ describe("prepareTerminalPresentation", () => {
 
     const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
     const stored = JSON.parse(request.json ?? "") as {
-      checks: { findings: { id: string; sourceExcerpt?: object }[] }[];
+      findings: { id: string; sourceExcerpt?: object }[];
     };
     expect(
-      stored.checks[0]?.findings.find(
-        (finding) => finding.id === "secret-finding",
-      )?.sourceExcerpt,
+      stored.findings.find((finding) => finding.id === "secret-finding")
+        ?.sourceExcerpt,
     ).toEqual({ line: 7, redacted: true, truncated: false });
   });
 

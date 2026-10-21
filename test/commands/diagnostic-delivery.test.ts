@@ -253,7 +253,7 @@ describe("safe diagnostic delivery", () => {
           scanDependencies(),
         ),
       ).toBe(2);
-      expect(JSON.parse(io.stdout.join("")).outcome).toBe("incomplete");
+      expect(JSON.parse(io.stdout.join("")).status).toBe("incomplete");
       const stderr = io.stderr.join("");
       if (diagnostics) {
         expect(stderr).toContain('"operation":"collect"');
@@ -440,6 +440,6 @@ describe("safe diagnostic delivery", () => {
         },
       ),
     ).toBe(1);
-    expect(JSON.parse(io.stdout.join("")).outcome).toBe("blocked");
+    expect(JSON.parse(io.stdout.join("")).status).toBe("blocked");
   });
 });

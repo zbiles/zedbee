@@ -90,8 +90,8 @@ describe("raw pre-commit hook", () => {
     expect(committed.exitCode, committed.stderr).toBe(0);
     expect(committed.stderr).toContain("GIT SOFT TIMEOUT");
     expect(JSON.parse(hookReport)).toMatchObject({
-      outcome: "pass",
-      exitCode: 0,
+      status: "pass",
+      exit: 0,
     });
   });
 

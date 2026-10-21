@@ -78,13 +78,19 @@ describe("controller-owned scan rendering", () => {
       );
       const delivered = JSON.parse(stdout.join(""));
       expect(exit).toBe(2);
-      expect(delivered.exitCode).toBe(2);
-      expect(delivered.outcome).toBe("incomplete");
+      expect(delivered.exit).toBe(2);
+      expect(delivered.status).toBe("incomplete");
       expect(delivered.summary).toMatchObject({ passed: 1, incomplete: 1 });
       expect(delivered.checks).toHaveLength(2);
-      expect(delivered.checks[0]).toEqual(completed.checks[0]);
+      expect(delivered.checks[0]).toEqual({
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 4,
+      });
+      expect(delivered.findings).toEqual([]);
       expect(delivered.checks[1].error.code).toBe("SNAPSHOT_CLEANUP_FAILED");
-      if (alreadyFailed) expect(delivered.checks[1]).toEqual(cleanup);
+      if (alreadyFailed)
+        expect(delivered.checks[1]).toMatchObject({ error: cleanup.error });
     },
   );
 
@@ -184,11 +190,11 @@ describe("controller-owned scan rendering", () => {
       expect(stdout.join("")).toContain("Type analysis could not finish.");
       if (format === "json") {
         const delivered = JSON.parse(stdout.join(""));
-        expect(delivered.outcome).toBe("incomplete");
-        expect(delivered.exitCode).toBe(2);
+        expect(delivered.status).toBe("incomplete");
+        expect(delivered.exit).toBe(2);
         expect(delivered.summary).toMatchObject({ failed: 1, incomplete: 2 });
         expect(delivered.checks).toHaveLength(3);
-        expect(delivered.checks[0].findings[0].message).toBe(
+        expect(delivered.findings[0].message).toBe(
           "Retained formatting finding.",
         );
         expect(delivered.checks[1].error.diagnostic).toEqual(diagnostic);

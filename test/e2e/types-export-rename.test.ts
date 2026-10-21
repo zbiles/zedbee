@@ -172,18 +172,23 @@ it("reports export, signature, type, and deletion breakages in unchanged TypeScr
         status: "completed",
       });
       expect(
-        types.findings.map(
-          (finding: {
-            rule: string;
-            location: { file: string; startLine: number };
-            attribution: { staged: boolean };
-          }) => ({
-            rule: finding.rule,
-            file: finding.location.file,
-            line: finding.location.startLine,
-            staged: finding.attribution.staged,
-          }),
-        ),
+        report.findings
+          .filter(
+            (finding: { check: string; target?: string }) =>
+              finding.check === "types" && finding.target === "web",
+          )
+          .map(
+            (finding: {
+              rule: string;
+              location: { file: string; startLine: number };
+              attribution: { staged: boolean };
+            }) => ({
+              rule: finding.rule,
+              file: finding.location.file,
+              line: finding.location.startLine,
+              staged: finding.attribution.staged,
+            }),
+          ),
       ).toEqual(expected);
     };
     const renamedFindings = [

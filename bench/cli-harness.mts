@@ -34,8 +34,8 @@ export async function runCompleteCli(options: {
     try {
       const report = JSON.parse(result.stdout);
       blockedScan =
-        report.outcome === "blocked" &&
-        report.exitCode === 1 &&
+        report.status === "blocked" &&
+        report.exit === 1 &&
         report.summary.incomplete === 0;
     } catch {
       /* Human output is not a benchmark result. */

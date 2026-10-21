@@ -107,13 +107,17 @@ it("runs staged and committed typed lint with a different consumer TypeScript ve
         { cwd: scratch, reject: false },
       );
       const report = JSON.parse(result.stdout);
-      expect(report.exitCode, result.stdout).toBe(1);
+      expect(report.exit, result.stdout).toBe(1);
       const lint = report.checks.find(
         (check: { checkId: string }) => check.checkId === "lint",
       );
       expect(lint, JSON.stringify(lint)).toBeDefined();
       expect(lint.status, JSON.stringify(lint.error)).not.toBe("incomplete");
-      expect(lint.findings).toEqual(
+      expect(
+        report.findings.filter(
+          (finding: { check: string }) => finding.check === "lint",
+        ),
+      ).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             rule: "@typescript-eslint/no-unsafe-assignment",

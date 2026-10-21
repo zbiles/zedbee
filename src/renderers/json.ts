@@ -54,10 +54,7 @@ function serializeFinding(
   };
 }
 
-function serializeCheck(
-  check: CheckResult,
-  installedCliCommand?: readonly string[],
-): Record<string, unknown> {
+function serializeCheck(check: CheckResult): Record<string, unknown> {
   const error =
     check.error === undefined
       ? undefined
@@ -89,9 +86,6 @@ function serializeCheck(
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
     durationMs: check.durationMs,
-    findings: [...check.findings]
-      .sort(compareFindings)
-      .map((finding) => serializeFinding(finding, installedCliCommand)),
     ...(error === undefined ? {} : { error }),
     ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
     ...(check.incompleteDisposition === undefined
@@ -123,10 +117,15 @@ function serializeCheck(
 export function renderJson(report: ScanReport): string {
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
+  const checks = [...sanitized.checks].sort(
+    (left, right) =>
+      compareCodeUnits(left.checkId, right.checkId) ||
+      compareCodeUnits(left.target ?? "", right.target ?? ""),
+  );
   const payload = {
     schemaVersion: report.schemaVersion,
-    outcome: report.outcome,
-    exitCode: report.exitCode,
+    status: report.outcome,
+    exit: report.exitCode,
     repositoryRoot: ".",
     mode: source.mode,
     baseline: source.baseline,
@@ -158,13 +157,13 @@ export function renderJson(report: ScanReport): string {
       failed: report.summary.failed,
       incomplete: report.summary.incomplete,
     },
-    checks: [...sanitized.checks]
-      .sort(
-        (left, right) =>
-          compareCodeUnits(left.checkId, right.checkId) ||
-          compareCodeUnits(left.target ?? "", right.target ?? ""),
-      )
-      .map((check) => serializeCheck(check, report.installedCliCommand)),
+    findings: checks.flatMap((check) =>
+      [...check.findings].sort(compareFindings).map((finding) => ({
+        ...serializeFinding(finding, report.installedCliCommand),
+        ...(check.target === undefined ? {} : { target: check.target }),
+      })),
+    ),
+    checks: checks.map(serializeCheck),
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }

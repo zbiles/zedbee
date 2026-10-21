@@ -316,20 +316,17 @@ describe("packaged Zedbee CLI", () => {
       const result = await runZedbee(repository.root);
       expect(result.exitCode, result.stderr || result.stdout).toBe(1);
       const report = JSON.parse(result.stdout) as {
-        checks: Array<{
-          checkId: string;
-          findings: Array<{ location?: { file: string } }>;
-        }>;
+        findings: Array<{ check: string; location?: { file: string } }>;
       };
-      const knip = report.checks.find(({ checkId }) => checkId === "deadCode");
-      expect(knip?.findings).toEqual(
+      const knip = report.findings.filter(({ check }) => check === "deadCode");
+      expect(knip).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             location: expect.objectContaining({ file: "src/lib.ts" }),
           }),
         ]),
       );
-      findings.push(knip!.findings);
+      findings.push(knip);
     }
     expect(findings[1]).toEqual(findings[0]);
     expect(tarballFiles).toContain("dist/vendor/knip/dist/index.js");
@@ -432,8 +429,8 @@ describe("packaged Zedbee CLI", () => {
     const result = await runZedbee(repository.root, "json", ["--diagnostics"]);
     expect(result.exitCode, `${result.stderr}\n${result.stdout}`).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      outcome: "blocked",
-      exitCode: 1,
+      status: "blocked",
+      exit: 1,
     });
     expect(result.stderr).toContain("ZEDBEE DIAGNOSTICS");
     expect(result.stderr).not.toContain(sourceMarker);
@@ -475,12 +472,9 @@ describe("packaged Zedbee CLI", () => {
       target: string | null;
       requestedBase?: string;
       changedFileCount: number | null;
-      outcome: string;
-      exitCode: number;
-      checks: Array<{
-        checkId: string;
-        findings: Array<{ location?: { file: string } }>;
-      }>;
+      status: string;
+      exit: number;
+      findings: Array<{ check: string; location?: { file: string } }>;
     };
 
     expect(result.exitCode, result.stderr).toBe(1);
@@ -490,18 +484,14 @@ describe("packaged Zedbee CLI", () => {
       target,
       requestedBase: baseline,
       changedFileCount: 1,
-      outcome: "blocked",
-      exitCode: 1,
+      status: "blocked",
+      exit: 1,
     });
-    expect(report.checks).toEqual(
+    expect(report.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          checkId: "formatting",
-          findings: expect.arrayContaining([
-            expect.objectContaining({
-              location: expect.objectContaining({ file: "src/branch.ts" }),
-            }),
-          ]),
+          check: "formatting",
+          location: expect.objectContaining({ file: "src/branch.ts" }),
         }),
       ]),
     );
@@ -759,9 +749,9 @@ describe("packaged Zedbee CLI", () => {
       /^\.\.(?:[/\\]|$)/u,
     );
     const report = JSON.parse(await readFile(reportPath, "utf8")) as {
-      readonly checks: readonly { readonly findings: readonly unknown[] }[];
+      readonly findings: readonly unknown[];
     };
-    expect(report.checks.flatMap((check) => check.findings)).toHaveLength(26);
+    expect(report.findings).toHaveLength(26);
     expect(result.stderr).toBe("");
   });
 
@@ -785,9 +775,9 @@ describe("packaged Zedbee CLI", () => {
       reportSection?.[1]?.replaceAll(/\s/gu, "") ?? "",
     ) as string;
     const report = JSON.parse(await readFile(reportPath, "utf8")) as {
-      readonly checks: readonly { readonly findings: readonly unknown[] }[];
+      readonly findings: readonly unknown[];
     };
-    expect(report.checks.flatMap((check) => check.findings)).toEqual([]);
+    expect(report.findings).toEqual([]);
     expect(result.stderr).toBe("");
   });
 
@@ -1223,7 +1213,6 @@ describe("packaged Zedbee CLI", () => {
       expect.objectContaining({
         checkId: "lint",
         status: "completed",
-        findings: [],
       }),
     );
     expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(0);
@@ -1293,8 +1282,9 @@ describe("packaged Zedbee CLI", () => {
     );
     expect(deadCode.status).toBe("completed");
     expect(
-      deadCode.findings.filter(
-        (finding: { rule: string }) => finding.rule === "devDependencies",
+      report.findings.filter(
+        (finding: { check: string; rule: string }) =>
+          finding.check === "deadCode" && finding.rule === "devDependencies",
       ),
     ).toHaveLength(1);
   });
@@ -1326,8 +1316,8 @@ describe("packaged Zedbee CLI", () => {
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       schemaVersion: 1,
-      outcome: "pass",
-      exitCode: 0,
+      status: "pass",
+      exit: 0,
       target: "index",
     });
     expect(after.stdout).toBe(before.stdout);
@@ -1341,19 +1331,19 @@ describe("packaged Zedbee CLI", () => {
 
     const result = await runZedbee(repository.root);
     const report = JSON.parse(result.stdout) as {
-      outcome: string;
-      checks: Array<{
-        checkId: string;
-        findings: Array<{ location: { file: string; startLine: number } }>;
+      status: string;
+      findings: Array<{
+        check: string;
+        location: { file: string; startLine: number };
       }>;
     };
 
     expect(result.exitCode).toBe(1);
-    expect(report.outcome).toBe("blocked");
-    const formatting = report.checks.find(
-      ({ checkId }) => checkId === "formatting",
+    expect(report.status).toBe("blocked");
+    const formatting = report.findings.find(
+      ({ check }) => check === "formatting",
     );
-    expect(formatting?.findings[0]?.location).toMatchObject({
+    expect(formatting?.location).toMatchObject({
       file: "value.ts",
       startLine: 1,
     });
@@ -1372,8 +1362,8 @@ describe("packaged Zedbee CLI", () => {
 
     expect(result.exitCode).toBe(1);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      outcome: "blocked",
-      exitCode: 1,
+      status: "blocked",
+      exit: 1,
     });
   });
 
@@ -1391,8 +1381,8 @@ describe("packaged Zedbee CLI", () => {
 
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
-      outcome: "pass",
-      exitCode: 0,
+      status: "pass",
+      exit: 0,
     });
   });
 
@@ -1575,7 +1565,8 @@ describe("project Prettier integration", () => {
     );
     expect(formatting.status).toBe("completed");
     expect(
-      formatting.findings
+      report.findings
+        .filter((finding: { check: string }) => finding.check === "formatting")
         .map((finding: { location: { file: string } }) => finding.location.file)
         .sort(),
     ).toEqual(["default.ts", "included.ts", "skip-keep.ts"]);
@@ -1735,10 +1726,10 @@ describe("project Prettier integration", () => {
     // would also pass if formatting had been skipped entirely.
     for (const result of [withService, withoutService]) {
       const report = JSON.parse(result.stdout) as {
+        readonly findings: readonly { readonly check: string }[];
         readonly checks: readonly {
           readonly checkId: string;
           readonly status: string;
-          readonly findings: readonly unknown[];
           readonly formattingProvenance?: readonly {
             readonly engine: string;
             readonly version: string;
@@ -1751,7 +1742,9 @@ describe("project Prettier integration", () => {
         (check) => check.checkId === "formatting",
       );
       expect(formatting?.status).toBe("completed");
-      expect(formatting?.findings).toEqual([]);
+      expect(
+        report.findings.filter((finding) => finding.check === "formatting"),
+      ).toEqual([]);
       expect(formatting?.formattingProvenance).toEqual([
         {
           engine: "project",
@@ -1795,12 +1788,13 @@ describe("project Prettier integration", () => {
     const scan = await runZedbee(repository.root, "json");
     expect(scan.exitCode).toBe(1);
     const report = JSON.parse(scan.stdout) as {
+      readonly findings: readonly {
+        readonly check: string;
+        readonly location?: { readonly file: string };
+      }[];
       readonly checks: readonly {
         readonly checkId: string;
         readonly status: string;
-        readonly findings: readonly {
-          readonly location?: { readonly file: string };
-        }[];
         readonly formattingProvenance?: readonly { readonly engine: string }[];
       }[];
     };
@@ -1809,7 +1803,9 @@ describe("project Prettier integration", () => {
     );
     expect(formatting?.status).toBe("completed");
     expect(
-      formatting?.findings.map((finding) => finding.location?.file),
+      report.findings
+        .filter((finding) => finding.check === "formatting")
+        .map((finding) => finding.location?.file),
     ).toEqual(["value.ts"]);
     expect(formatting?.formattingProvenance?.[0]?.engine).toBe("project");
   });
@@ -1919,15 +1915,16 @@ describe("project Prettier integration", () => {
     const scanned = await runZedbee(repository.root, "json", ["--no-service"]);
     expect(scanned.exitCode, scanned.stdout + scanned.stderr).toBe(0);
     const report = JSON.parse(scanned.stdout) as {
+      readonly findings: readonly unknown[];
       readonly checks: readonly {
         readonly checkId: string;
         readonly status: string;
-        readonly findings: readonly unknown[];
       }[];
     };
+    expect(report.findings).toEqual([]);
     for (const checkId of ["formatting", "lint", "dependencyArchitecture"]) {
       expect(report.checks).toContainEqual(
-        expect.objectContaining({ checkId, status: "completed", findings: [] }),
+        expect.objectContaining({ checkId, status: "completed" }),
       );
     }
 

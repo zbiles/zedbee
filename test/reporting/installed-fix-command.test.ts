@@ -57,7 +57,7 @@ describe("installed CLI fix guidance", () => {
       expect(text).toContain(`node ${quoted} fix formatting`);
       expect(text).not.toContain("npx --no-install zedbee fix formatting");
       const json = JSON.parse(renderJson(report));
-      expect(json.checks[0].findings[0].automaticFix.command).toEqual([
+      expect(json.findings[0].automaticFix.command).toEqual([
         "node",
         path,
         "fix",
@@ -126,8 +126,8 @@ describe("installed CLI fix guidance", () => {
       renderText(reportFor(prefix), { width: 240, color: false }),
     ).toContain("npx --no-install zedbee fix formatting");
     expect(
-      JSON.parse(renderJson(reportFor(prefix))).checks[0].findings[0]
-        .automaticFix.command,
+      JSON.parse(renderJson(reportFor(prefix))).findings[0].automaticFix
+        .command,
     ).toEqual(managedAutomaticFixFor("formatting")!.command);
   });
 
@@ -209,8 +209,8 @@ describe("installed CLI fix guidance", () => {
             throw new Error("unused");
           },
           async preparePresentation(prepared) {
-            completeReportCommand = JSON.parse(renderJson(prepared)).checks[0]
-              .findings[0].automaticFix.command;
+            completeReportCommand = JSON.parse(renderJson(prepared)).findings[0]
+              .automaticFix.command;
             return {
               automatic: false,
               reportStatus: "not-requested",
@@ -231,7 +231,7 @@ describe("installed CLI fix guidance", () => {
     ];
     expect(completeReportCommand).toEqual(expected);
     expect(
-      JSON.parse(output.join("")).checks[0].findings[0].automaticFix.command,
+      JSON.parse(output.join("")).findings[0].automaticFix.command,
     ).toEqual(expected);
     expect(report.checks[0]!.findings[0]!.automaticFix!.command[0]).toBe("npx");
   });

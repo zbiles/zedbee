@@ -9,6 +9,90 @@ import { EMPTY_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
 describe("renderJson", () => {
+  it("exports status, exit and complete sanitized findings with deterministic workspace context", () => {
+    const sourceFinding = createFinding({
+      id: "z-finding",
+      sourceExcerpt: {
+        line: 2,
+        text: "const value = 'before\u202eafter';",
+        redacted: false,
+        truncated: false,
+      },
+    });
+    const otherFinding = createFinding({ id: "a-finding" });
+    const checks = [
+      {
+        checkId: "formatting",
+        target: "packages/z",
+        status: "completed" as const,
+        durationMs: 4,
+        findings: [sourceFinding, otherFinding],
+      },
+      {
+        checkId: "formatting",
+        target: "packages/a",
+        status: "completed" as const,
+        durationMs: 2,
+        findings: [otherFinding],
+      },
+      {
+        checkId: "lint",
+        status: "skipped" as const,
+        durationMs: 0,
+        findings: [],
+        skipReason: "No matching files.",
+      },
+    ];
+    const report = createReport({ outcome: "blocked", exitCode: 1, checks });
+    const parsed = JSON.parse(renderJson(report));
+
+    expect(parsed).toMatchObject({
+      schemaVersion: 1,
+      status: "blocked",
+      exit: 1,
+    });
+    expect(parsed).not.toHaveProperty("outcome");
+    expect(parsed).not.toHaveProperty("exitCode");
+    expect(parsed.findings).toEqual([
+      { ...otherFinding, target: "packages/a" },
+      { ...otherFinding, target: "packages/z" },
+      {
+        ...sourceFinding,
+        target: "packages/z",
+        sourceExcerpt: {
+          ...sourceFinding.sourceExcerpt,
+          text: "const value = 'before�after';",
+        },
+      },
+    ]);
+    expect(parsed.checks).toEqual([
+      {
+        checkId: "formatting",
+        target: "packages/a",
+        status: "completed",
+        durationMs: 2,
+      },
+      {
+        checkId: "formatting",
+        target: "packages/z",
+        status: "completed",
+        durationMs: 4,
+      },
+      {
+        checkId: "lint",
+        status: "skipped",
+        durationMs: 0,
+        skipReason: "No matching files.",
+      },
+    ]);
+    expect(
+      renderJson(createReport({ ...report, checks: [...checks].reverse() })),
+    ).toBe(renderJson(report));
+    expect(
+      JSON.parse(renderJson(createReport({ checks: [] }))).findings,
+    ).toEqual([]);
+  });
+
   it("serializes source-free managed fix command metadata without changing schema version", () => {
     const finding = createFinding({
       check: "formatting",
@@ -42,11 +126,11 @@ describe("renderJson", () => {
       ),
     ) as {
       schemaVersion: number;
-      checks: Array<{ findings: Array<Record<string, unknown>> }>;
+      findings: Array<Record<string, unknown>>;
     };
 
     expect(parsed.schemaVersion).toBe(1);
-    expect(parsed.checks[0]?.findings[0]?.automaticFix).toEqual({
+    expect(parsed.findings[0]?.automaticFix).toEqual({
       available: true,
       command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
       scope: "working-file",
@@ -100,8 +184,8 @@ describe("renderJson", () => {
     expect(first).toBe(second);
     expect(first).toBe(`{
   "schemaVersion": 1,
-  "outcome": "blocked",
-  "exitCode": 1,
+  "status": "blocked",
+  "exit": 1,
   "repositoryRoot": ".",
   "mode": "index",
   "baseline": "HEAD",
@@ -116,35 +200,36 @@ describe("renderJson", () => {
     "failed": 1,
     "incomplete": 0
   },
+  "findings": [
+    {
+      "id": "finding-1",
+      "check": "formatting",
+      "rule": "prettier",
+      "severity": "error",
+      "message": "Staged code does not match the managed format.",
+      "location": {
+        "file": "src/value.ts",
+        "startLine": 2,
+        "endLine": 2
+      },
+      "remediation": "Format the staged lines, then stage the result.",
+      "attribution": {
+        "kind": "range-overlap",
+        "staged": true,
+        "evidence": [
+          "a-evidence",
+          "z-evidence"
+        ]
+      },
+      "target": "apps/web"
+    }
+  ],
   "checks": [
     {
       "checkId": "formatting",
       "target": "apps/web",
       "status": "completed",
-      "durationMs": 4,
-      "findings": [
-        {
-          "id": "finding-1",
-          "check": "formatting",
-          "rule": "prettier",
-          "severity": "error",
-          "message": "Staged code does not match the managed format.",
-          "location": {
-            "file": "src/value.ts",
-            "startLine": 2,
-            "endLine": 2
-          },
-          "remediation": "Format the staged lines, then stage the result.",
-          "attribution": {
-            "kind": "range-overlap",
-            "staged": true,
-            "evidence": [
-              "a-evidence",
-              "z-evidence"
-            ]
-          }
-        }
-      ]
+      "durationMs": 4
     }
   ]
 }
@@ -152,8 +237,8 @@ describe("renderJson", () => {
     expect(first).not.toContain("presentationPolicy");
     expect(Object.keys(parsed)).toEqual([
       "schemaVersion",
-      "outcome",
-      "exitCode",
+      "status",
+      "exit",
       "repositoryRoot",
       "mode",
       "baseline",
@@ -163,12 +248,13 @@ describe("renderJson", () => {
       "durationMs",
       "networkDisclosures",
       "summary",
+      "findings",
       "checks",
     ]);
     expect(parsed).toMatchObject({
       schemaVersion: 1,
-      outcome: "blocked",
-      exitCode: 1,
+      status: "blocked",
+      exit: 1,
       repositoryRoot: ".",
       mode: "index",
       baseline: "HEAD",
@@ -182,17 +268,12 @@ describe("renderJson", () => {
     expect(first).not.toContain("\u001b");
     expect(first).not.toContain("BEE-UTIFUL");
     expect(first).not.toContain("/repo");
-    expect(
-      (
-        parsed.checks as {
-          target?: string;
-          findings: { attribution: { evidence: string[] } }[];
-        }[]
-      )[0],
-    ).toMatchObject({
-      target: "apps/web",
-      findings: [{ attribution: { evidence: ["a-evidence", "z-evidence"] } }],
-    });
+    expect(parsed.findings).toMatchObject([
+      {
+        target: "apps/web",
+        attribution: { evidence: ["a-evidence", "z-evidence"] },
+      },
+    ]);
     expect(first.endsWith("\n")).toBe(true);
   });
 
@@ -213,8 +294,8 @@ describe("renderJson", () => {
 
     expect(Object.keys(parsed).slice(0, 11)).toEqual([
       "schemaVersion",
-      "outcome",
-      "exitCode",
+      "status",
+      "exit",
       "repositoryRoot",
       "mode",
       "baseline",
@@ -296,10 +377,8 @@ describe("renderJson", () => {
     });
 
     const parsed = JSON.parse(renderJson(report)) as {
-      checks: Array<{
-        error: Record<string, unknown>;
-        findings: Array<Record<string, unknown>>;
-      }>;
+      findings: Array<Record<string, unknown>>;
+      checks: Array<{ error: Record<string, unknown> }>;
     };
 
     expect(parsed.checks[0]?.error).toEqual({
@@ -312,7 +391,7 @@ describe("renderJson", () => {
       status: "incomplete",
       incompleteDisposition: "warn",
     });
-    expect(parsed.checks[0]?.findings).toEqual([
+    expect(parsed.findings).toEqual([
       expect.objectContaining({
         id: "finding-1",
         sourceExcerpt: {
@@ -332,18 +411,11 @@ describe("renderJson", () => {
       }),
     ]);
     expect(
-      Object.hasOwn(
-        parsed.checks[0]?.findings[1]?.sourceExcerpt as object,
-        "text",
-      ),
+      Object.hasOwn(parsed.findings[1]?.sourceExcerpt as object, "text"),
     ).toBe(false);
-    expect(JSON.stringify(parsed.checks[0]?.findings[1])).not.toContain(
-      '"text"',
-    );
+    expect(JSON.stringify(parsed.findings[1])).not.toContain('"text"');
     expect(Object.hasOwn(parsed.checks[0]!, "skipReason")).toBe(false);
-    expect(Object.hasOwn(parsed.checks[0]?.findings[1]!, "remediation")).toBe(
-      true,
-    );
+    expect(Object.hasOwn(parsed.findings[1]!, "remediation")).toBe(true);
   });
 
   it("omits every absent optional field and retains incomplete summary data", () => {
@@ -379,13 +451,13 @@ describe("renderJson", () => {
 
     const parsed = JSON.parse(renderJson(report)) as {
       summary: Record<string, unknown>;
+      findings: Array<Record<string, unknown>>;
       checks: Array<{
         skipReason?: string;
         error: Record<string, unknown>;
-        findings: Array<Record<string, unknown>>;
       }>;
     };
-    const serializedFinding = parsed.checks[0]!.findings[0]!;
+    const serializedFinding = parsed.findings[0]!;
 
     expect(parsed.summary.incomplete).toBe(1);
     expect(Object.hasOwn(parsed.checks[0]!, "skipReason")).toBe(false);
@@ -443,6 +515,7 @@ describe("renderJson", () => {
     });
 
     const parsed = JSON.parse(renderJson(report)) as {
+      findings: Array<{ sourceExcerpt: { text: string } }>;
       checks: Array<{
         error: {
           path: string;
@@ -450,7 +523,6 @@ describe("renderJson", () => {
           snapshot: string;
           projectPaths: string[];
         };
-        findings: Array<{ sourceExcerpt: { text: string } }>;
       }>;
     };
 
@@ -463,7 +535,7 @@ describe("renderJson", () => {
     expect(parsed.checks[0]?.error.projectPaths).toEqual([
       "configs/tsconfig.json",
     ]);
-    expect(parsed.checks[0]?.findings[0]?.sourceExcerpt.text).toBe(
+    expect(parsed.findings[0]?.sourceExcerpt.text).toBe(
       "  const BIDI_MARKER = 'before�after';�[31m",
     );
     expect(renderJson(report)).not.toContain("\u202e");
@@ -505,17 +577,32 @@ describe("renderJson", () => {
   });
 });
 
-it("preserves validated formatting coverage in machine reports", () => {
+it("preserves validated formatting coverage and provenance alongside flattened findings", () => {
   const coverage = { checkedFiles: 1, ignoredFiles: 2, unsupportedFiles: 3 };
+  const provenance = [
+    {
+      engine: "project" as const,
+      version: "3.9.6",
+      projectRoot: "apps/web",
+      configFiles: ["apps/web/.prettierrc.json"],
+    },
+  ];
   const check = sanitizeCheckResult({
     checkId: "formatting",
+    target: "apps/web",
     status: "completed",
     durationMs: 0,
-    findings: [],
+    findings: [createFinding()],
     formattingCoverage: coverage,
+    formattingProvenance: provenance,
   });
   const report = JSON.parse(renderJson(createReport({ checks: [check] })));
   expect(report.checks[0].formattingCoverage).toEqual(coverage);
+  expect(report.checks[0].formattingProvenance).toEqual(provenance);
+  expect(report.checks[0]).not.toHaveProperty("findings");
+  expect(report.findings).toEqual([
+    expect.objectContaining({ id: "finding-1", target: "apps/web" }),
+  ]);
   expect(() =>
     sanitizeCheckResult({
       ...check,

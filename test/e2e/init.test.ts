@@ -227,19 +227,20 @@ describe("packaged init command", () => {
     ]);
     expect(scanned.exitCode, `${scanned.stderr}\n${scanned.stdout}`).toBe(1);
     const report = JSON.parse(scanned.stdout) as {
-      outcome: string;
+      status: string;
+      findings: Array<{ check: string; rule: string }>;
       checks: Array<{
         checkId: string;
         status: string;
-        findings: Array<{ rule: string }>;
       }>;
     };
     const secrets = report.checks.find(({ checkId }) => checkId === "secrets");
-    expect(report.outcome).toBe("blocked");
+    expect(report.status).toBe("blocked");
     expect(secrets).toMatchObject({ status: "completed" });
     expect(
-      secrets?.findings.some(({ rule }) =>
-        rule.includes("secretlint-rule-github"),
+      report.findings.some(
+        ({ check, rule }) =>
+          check === "secrets" && rule.includes("secretlint-rule-github"),
       ),
     ).toBe(true);
     expect(scanned.stdout).not.toContain(canary);

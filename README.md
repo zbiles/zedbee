@@ -76,7 +76,7 @@ The commit hooks do not cover ordinary `git rebase` or `git cherry-pick` operati
 
 A scan returns `0` for no blocking findings, `1` for findings that block under your policy, or `2` when Zedbee cannot complete a required check. Treat an incomplete result as unknown, not a pass.
 
-For coding agents and other tools, JSON is also available through `--format json`. Both JSON and SARIF exports contain the complete report. See [CI setup details](docs/cli-reference.md#committed-branch-scans-in-ci) and the [reporting guide](docs/reporting.md).
+For coding agents and other tools, JSON is also available through `--format json`. Scan JSON exposes `status`, `exit`, and a complete top-level `findings` array; `checks` contains execution metadata and diagnostics. Both JSON and SARIF exports contain the complete report. See [CI setup details](docs/cli-reference.md#committed-branch-scans-in-ci) and the [reporting guide](docs/reporting.md).
 
 ## Before you adopt it
 

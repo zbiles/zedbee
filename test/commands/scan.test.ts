@@ -762,7 +762,7 @@ describe("executeScanCommand", () => {
       reportingSurface: "json",
       sourceExcerpts: "include",
     });
-    expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({ exitCode: 1 });
+    expect(JSON.parse(terminal.stdout.join(""))).toMatchObject({ exit: 1 });
   });
 
   it("renders SARIF without Ink and preserves the report exit code", async () => {

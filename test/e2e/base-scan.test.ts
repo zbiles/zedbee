@@ -63,18 +63,19 @@ interface BaseFixture {
 type GitRepositoryView = Pick<TestGitRepository, "root" | "git">;
 
 interface JsonReport {
-  readonly outcome: "pass" | "blocked" | "incomplete";
-  readonly exitCode: 0 | 1 | 2;
+  readonly status: "pass" | "blocked" | "incomplete";
+  readonly exit: 0 | 1 | 2;
   readonly mode: "index" | "base";
   readonly baseline: string | null;
   readonly target: string | null;
   readonly requestedBase?: string;
   readonly changedFileCount: number | null;
+  readonly findings: readonly {
+    readonly check: string;
+    readonly location?: { readonly file: string };
+  }[];
   readonly checks: readonly {
     readonly checkId: string;
-    readonly findings: readonly {
-      readonly location?: { readonly file: string };
-    }[];
     readonly error?: { readonly code: string };
   }[];
 }
@@ -220,23 +221,19 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(1);
     expect(report).toMatchObject({
-      outcome: "blocked",
-      exitCode: 1,
+      status: "blocked",
+      exit: 1,
       mode: "base",
       baseline,
       target,
       requestedBase: "main",
       changedFileCount: 1,
     });
-    expect(report.checks).toEqual(
+    expect(report.findings).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          checkId: "formatting",
-          findings: expect.arrayContaining([
-            expect.objectContaining({
-              location: expect.objectContaining({ file: "src/branch.ts" }),
-            }),
-          ]),
+          check: "formatting",
+          location: expect.objectContaining({ file: "src/branch.ts" }),
         }),
       ]),
     );
@@ -261,8 +258,8 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(2);
     expect(report).toMatchObject({
-      outcome: "incomplete",
-      exitCode: 2,
+      status: "incomplete",
+      exit: 2,
       mode: "base",
       baseline,
       target,
@@ -494,8 +491,8 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(0);
     expect(report).toMatchObject({
-      outcome: "pass",
-      exitCode: 0,
+      status: "pass",
+      exit: 0,
       mode: "index",
       baseline: "HEAD",
       target: "index",
@@ -540,7 +537,7 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(1);
     expect(report).toMatchObject({
-      outcome: "blocked",
+      status: "blocked",
       mode: "base",
       changedFileCount: 1,
     });
@@ -557,7 +554,7 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(1);
     expect(report).toMatchObject({
-      outcome: "blocked",
+      status: "blocked",
       mode: "base",
       baseline,
       target,
@@ -613,8 +610,8 @@ describe("committed base scans", () => {
 
     expect(result.exitCode, result.stderr).toBe(2);
     expect(report).toMatchObject({
-      outcome: "incomplete",
-      exitCode: 2,
+      status: "incomplete",
+      exit: 2,
       mode: "base",
       baseline: null,
       target: null,
@@ -686,8 +683,8 @@ describe("committed base scans", () => {
 
       expect(result.exitCode, result.stderr).toBe(2);
       expect(report).toMatchObject({
-        outcome: "incomplete",
-        exitCode: 2,
+        status: "incomplete",
+        exit: 2,
         mode: "base",
       });
       await expect(access(sentinel)).rejects.toThrow();
@@ -712,7 +709,7 @@ describe("committed base scans", () => {
       const report = JSON.parse(result.stdout) as JsonReport;
 
       expect(result.exitCode, result.stderr).toBe(2);
-      expect(report).toMatchObject({ outcome: "incomplete", exitCode: 2 });
+      expect(report).toMatchObject({ status: "incomplete", exit: 2 });
       expect(report.checks).toEqual([
         expect.objectContaining({
           error: expect.objectContaining({ code: "GIT_HARD_TIMEOUT" }),

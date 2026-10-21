@@ -425,14 +425,9 @@ describe("release verification contract", () => {
           target: "target-oid",
           requestedBase: "base-oid",
           changedFileCount: 1,
-          outcome: "blocked",
-          exitCode: 1,
-          checks: [
-            {
-              checkId: "formatting",
-              findings: [{ location: { file: "branch.ts" } }],
-            },
-          ],
+          status: "blocked",
+          exit: 1,
+          findings: [{ check: "formatting", location: { file: "branch.ts" } }],
         },
         { baseline: "base-oid", target: "target-oid" },
       ),
@@ -444,24 +439,14 @@ describe("release verification contract", () => {
       { target: "other-target" },
       { requestedBase: "other-base" },
       { changedFileCount: 0 },
-      { outcome: "pass" },
-      { exitCode: 0 },
-      { checks: [] },
+      { status: "pass" },
+      { exit: 0 },
+      { findings: [] },
       {
-        checks: [
-          {
-            checkId: "lint",
-            findings: [{ location: { file: "branch.ts" } }],
-          },
-        ],
+        findings: [{ check: "lint", location: { file: "branch.ts" } }],
       },
       {
-        checks: [
-          {
-            checkId: "formatting",
-            findings: [{ location: { file: "other.ts" } }],
-          },
-        ],
+        findings: [{ check: "formatting", location: { file: "other.ts" } }],
       },
     ]) {
       expect(() =>
@@ -472,13 +457,10 @@ describe("release verification contract", () => {
             target: "target-oid",
             requestedBase: "base-oid",
             changedFileCount: 1,
-            outcome: "blocked",
-            exitCode: 1,
-            checks: [
-              {
-                checkId: "formatting",
-                findings: [{ location: { file: "branch.ts" } }],
-              },
+            status: "blocked",
+            exit: 1,
+            findings: [
+              { check: "formatting", location: { file: "branch.ts" } },
             ],
             ...invalid,
           },

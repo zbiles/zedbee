@@ -39,14 +39,11 @@ export function assertReleaseBaseScanReport(report, expected) {
   const hasExpectedFinding =
     report !== null &&
     typeof report === "object" &&
-    Array.isArray(report.checks) &&
-    report.checks.some(
-      (check) =>
-        check?.checkId === "formatting" &&
-        Array.isArray(check.findings) &&
-        check.findings.some(
-          (finding) => finding?.location?.file === "branch.ts",
-        ),
+    Array.isArray(report.findings) &&
+    report.findings.some(
+      (finding) =>
+        finding?.check === "formatting" &&
+        finding?.location?.file === "branch.ts",
     );
   if (
     report === null ||
@@ -56,8 +53,8 @@ export function assertReleaseBaseScanReport(report, expected) {
     report.target !== expected.target ||
     report.requestedBase !== expected.baseline ||
     report.changedFileCount !== 1 ||
-    report.outcome !== "blocked" ||
-    report.exitCode !== 1 ||
+    report.status !== "blocked" ||
+    report.exit !== 1 ||
     !hasExpectedFinding
   ) {
     throw new Error(
@@ -312,7 +309,7 @@ function smokeReleaseArtifact(artifactPath, manifest) {
       ),
       "Installed CLI scan",
     );
-    if (report.outcome !== "pass" || report.exitCode !== 0) {
+    if (report.status !== "pass" || report.exit !== 0) {
       throw new Error("Installed CLI did not pass its staged smoke scan.");
     }
   } finally {

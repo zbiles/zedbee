@@ -15,6 +15,7 @@ let packDirectory: string;
 let tarballPath: string;
 
 interface JsonFinding {
+  check: string;
   rule: string;
   location?: { file: string; startLine?: number };
   attribution: { staged: boolean; evidence: readonly string[] };
@@ -23,13 +24,13 @@ interface JsonFinding {
 interface JsonCheck {
   checkId: string;
   status: string;
-  findings: JsonFinding[];
   skipReason?: string;
 }
 
 interface JsonReport {
-  outcome: string;
-  exitCode: number;
+  status: string;
+  exit: number;
+  findings: JsonFinding[];
   checks: JsonCheck[];
 }
 
@@ -111,6 +112,10 @@ async function runZedbee(repositoryRoot: string) {
   return { result, report: JSON.parse(result.stdout) as JsonReport };
 }
 
+function findings(report: JsonReport, id: string): JsonFinding[] {
+  return report.findings.filter((finding) => finding.check === id);
+}
+
 function check(report: JsonReport, id: string): JsonCheck {
   const value = report.checks.find(({ checkId }) => checkId === id);
   expect(value, `missing ${id} result`).toBeDefined();
@@ -166,9 +171,9 @@ describe("packaged managed local suite", { concurrent: false }, () => {
     expect(complexity.result.exitCode, JSON.stringify(complexity.report)).toBe(
       1,
     );
-    expect(complexity.report.outcome).toBe("blocked");
-    expect(check(complexity.report, "structuralSecurity").findings).toEqual([]);
-    expect(check(complexity.report, "lint").findings).toContainEqual(
+    expect(complexity.report.status).toBe("blocked");
+    expect(findings(complexity.report, "structuralSecurity")).toEqual([]);
+    expect(findings(complexity.report, "lint")).toContainEqual(
       expect.objectContaining({
         rule: "no-unused-vars",
         location: expect.objectContaining({
@@ -178,7 +183,7 @@ describe("packaged managed local suite", { concurrent: false }, () => {
       }),
     );
     for (const id of ["cyclomaticComplexity", "readabilityComplexity"]) {
-      expect(check(complexity.report, id).findings).toEqual([
+      expect(findings(complexity.report, id)).toEqual([
         expect.objectContaining({
           attribution: expect.objectContaining({
             staged: true,
@@ -200,7 +205,7 @@ describe("packaged managed local suite", { concurrent: false }, () => {
     await repository.git(["add", "--", "src/index.js"]);
     const structural = await runZedbee(repository.root);
     expect(structural.result.exitCode).toBe(1);
-    expect(check(structural.report, "structuralSecurity").findings).toEqual([
+    expect(findings(structural.report, "structuralSecurity")).toEqual([
       expect.objectContaining({
         rule: "direct-eval",
         location: expect.objectContaining({
@@ -237,7 +242,7 @@ describe("packaged managed local suite", { concurrent: false }, () => {
 
     const { result, report } = await runZedbee(repository.root);
     expect(result.exitCode, JSON.stringify(report)).toBe(1);
-    expect(check(report, "types").findings).toEqual([
+    expect(findings(report, "types")).toEqual([
       expect.objectContaining({
         rule: "typescript/TS2322",
         location: expect.objectContaining({
@@ -268,7 +273,7 @@ describe("packaged managed local suite", { concurrent: false }, () => {
     const { result, report } = await runZedbee(repository.root);
     expect(result.exitCode).toBe(1);
     expect(check(report, "reactCorrectness").status).toBe("completed");
-    expect(check(report, "reactAccessibility").findings).toContainEqual(
+    expect(findings(report, "reactAccessibility")).toContainEqual(
       expect.objectContaining({
         rule: "jsx-a11y/alt-text",
         location: expect.objectContaining({ file: "src/app.jsx" }),
@@ -299,13 +304,12 @@ describe("packaged managed local suite", { concurrent: false }, () => {
 
     const { result, report } = await runZedbee(repository.root);
     expect(result.exitCode).toBe(1);
-    expect(check(report, "reactCorrectness").findings).toContainEqual(
+    expect(findings(report, "reactCorrectness")).toContainEqual(
       expect.objectContaining({ rule: "react/jsx-key" }),
     );
     expect(check(report, "reactAccessibility")).toMatchObject({
       status: "skipped",
       skipReason: "No browser DOM renderer detected",
-      findings: [],
     });
   });
 });

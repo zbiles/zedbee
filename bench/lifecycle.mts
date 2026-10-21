@@ -3,15 +3,27 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLocalAnalyzerExecutor, runScan } from "../dist/index.js";
 import { acquireServiceExecutor, stopService } from "../dist/service/client.js";
-import type { ScanReport } from "../dist/scan/report.js";
+import type { CheckResult } from "../dist/core/types.js";
 import type * as Harness from "./cli-harness.mjs";
 
 const { runCompleteCli } = (await import(
   new URL("./cli-harness.mts", import.meta.url).href
 )) as typeof Harness;
 
-function diagnostics(report: ScanReport) {
-  if (report.summary.incomplete > 0 || report.exitCode === 2)
+interface BenchmarkScanReport {
+  readonly exit: number;
+  readonly summary: { readonly incomplete: number };
+  readonly checks: readonly Pick<
+    CheckResult,
+    "checkId" | "target" | "status" | "durationMs"
+  >[];
+}
+
+function diagnostics(
+  report: Pick<BenchmarkScanReport, "summary" | "checks">,
+  exit: number,
+) {
+  if (report.summary.incomplete > 0 || exit === 2)
     throw new Error(
       "Incomplete scans cannot supply a lifecycle benchmark sample.",
     );
@@ -58,10 +70,10 @@ export async function runLifecycleBenchmark(
         ...(local ? ["--no-service"] : []),
       ],
     });
-    const report = JSON.parse(result.stdout) as ScanReport;
+    const report = JSON.parse(result.stdout) as BenchmarkScanReport;
     return {
       durationMs: result.durationMs,
-      checks: diagnostics(report),
+      checks: diagnostics(report, report.exit),
       commandDiagnostics: result.stderr,
     };
   };
@@ -115,7 +127,7 @@ export async function runLifecycleBenchmark(
         });
         apiSamples.push({
           durationMs: performance.now() - start,
-          checks: diagnostics(report),
+          checks: diagnostics(report, report.exitCode),
         });
       }
     } finally {

@@ -78,6 +78,8 @@ npx zedbee scan --format sarif > zedbee.sarif
 
 These explicit formats create no sidecar or automatic temporary report. Text is stable human-readable output, JSON is Zedbee's versioned machine contract, and SARIF is the enterprise interchange format. Redirect explicit JSON or SARIF when durable output is required. Coding tools that receive a complete-report path must process it and respect exit code 2 as incomplete required analysis; they must not treat a preview or an incomplete scan as clean.
 
+Scan JSON uses `schemaVersion: 1`, `status` (`"pass"`, `"blocked"`, or `"incomplete"`), and `exit` (`0`, `1`, or `2`). The top-level `findings` array contains every complete sanitized finding, ordered by check ID, workspace target, and canonical finding order. Each finding retains its ID, check, rule, severity, message, attribution, and available location, remediation, automatic-fix metadata, and permitted source excerpt. A finding includes `target` when its check belongs to a workspace target. `checks` retains execution status, duration, target, and optional diagnostics or skip details; findings appear only in the top-level array. Automatic temporary reports use this same JSON shape.
+
 For a clean CI checkout, fetch the intended base ref and export an explicit committed comparison:
 
 ```sh
