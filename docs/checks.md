@@ -35,6 +35,11 @@ Complete JSON, text, and SARIF exports report every attributed finding. Automati
 
 ## TypeScript diagnostics
 
+For any nonempty delta, `types` conservatively checks every discovered workspace
+containing TypeScript sources, because configuration, JSON imports, and
+cross-workspace references can affect unchanged consumers. Existing baseline
+diagnostics remain non-blocking. Other analyzers retain their own scope rules.
+
 The `types` check compares diagnostics across the analyzed project. A changed
 declaration can introduce errors at unchanged references in the same file or in
 other project files; those new diagnostics are reported even when their lines

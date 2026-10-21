@@ -68,7 +68,7 @@ function context(): CheckRunContext {
 }
 
 describe("default managed execution descriptors", () => {
-  it("selects the renamed target workspace and skips deleted files for source-only checks", async () => {
+  it("keeps source-only checks scoped while selecting all type projects for renamed and deleted deltas", async () => {
     const original = context();
     const workspace = (root: string): WorkspaceInspection => ({
       relativeRoot: root,
@@ -172,7 +172,19 @@ describe("default managed execution descriptors", () => {
           .inspect(deletedOnly),
       ).toMatchObject({ applies: false });
     }
-    for (const id of ["types", "dependencyArchitecture", "deadCode"]) {
+    expect(await types.inspect(deletedOnly)).toMatchObject({
+      applies: true,
+      requiresBaseline: true,
+      targets: [
+        { id: "packages/new", kind: "workspace", relativeRoot: "packages/new" },
+        {
+          id: "packages/deleted",
+          kind: "workspace",
+          relativeRoot: "packages/deleted",
+        },
+      ],
+    });
+    for (const id of ["dependencyArchitecture", "deadCode"]) {
       expect(
         await createManagedAdapters()
           .find((adapter) => adapter.id === id)!

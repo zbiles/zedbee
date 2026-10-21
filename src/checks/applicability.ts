@@ -170,29 +170,13 @@ export async function inspectManagedCheck(
         (always || workspace.sourceFiles.some((path) => changed.has(path))),
     );
   else if (checkId === "types") {
-    const changedTypescript = new Set(
-      files
-        .flatMap((file) =>
-          file.previousPath === undefined
-            ? [file.path]
-            : [file.path, file.previousPath],
-        )
-        .filter((path) => TYPESCRIPT.test(path)),
-    );
-    const baselineSources = new Map(
-      context.baselineInspection.workspaces.map((workspace) => [
-        workspace.relativeRoot,
-        workspace.sourceFiles,
-      ]),
-    );
+    // Config graphs, JSON imports and cross-workspace references can change
+    // diagnostics without editing a workspace's own TypeScript sources. Until
+    // a complete compiler-input graph exists, every delta may affect them.
     workspaces = workspaces.filter(
       (workspace) =>
         workspace.sourceFiles.some((path) => TYPESCRIPT.test(path)) &&
-        (always ||
-          [
-            ...workspace.sourceFiles,
-            ...(baselineSources.get(workspace.relativeRoot) ?? []),
-          ].some((path) => changedTypescript.has(path))),
+        (always || !context.changeSet.isEmpty),
     );
   } else {
     if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {

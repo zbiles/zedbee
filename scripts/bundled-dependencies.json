@@ -1509,7 +1509,6 @@
       "version": "2.0.1",
       "integrity": "sha512-RRECPsj7iu/xb5oKYcsFHSppFNnsj/52OVTRKb4zP5onXwVF3zVmmToNcOfGC+CRDpfK/U584fMg38ZHCaElKQ==",
       "files": [
-        "CHANGELOG.md",
         "LICENSE",
         "README.md",
         "conversions.js",
@@ -1962,7 +1961,6 @@
       "version": "1.50.0",
       "integrity": "sha512-OyZKhUVvEep9ITEiwHn8GKnMRQIVqoSIX7WnRbkWgJkllCujilqP2rD0u979tkl8wqyc8ICwlc1UBVv/Sl1G6w==",
       "files": [
-        "CHANGELOG.md",
         "LICENSE",
         "README.md",
         "array.d.ts",
@@ -5911,10 +5909,6 @@
         "server.js",
         "set.d.ts",
         "set.js",
-        "src/compat/_internal/Equals.d.ts",
-        "src/compat/_internal/IsWritable.d.ts",
-        "src/compat/_internal/MutableList.d.ts",
-        "src/compat/_internal/RejectReadonly.d.ts",
         "string.d.ts",
         "string.js",
         "types.d.ts",
@@ -6905,7 +6899,6 @@
       "version": "0.8.0",
       "integrity": "sha512-/vxpCXddiX8NGfGO/mTafwjq4aFa/71pvamip0++IQk3zG8cbCj0fifNPrjjF1XMXUne91jL9OoxmdykoEtifQ==",
       "files": [
-        "CHANGELOG.md",
         "LICENSE",
         "README.md",
         "index.js",

@@ -171,50 +171,64 @@ function createFreshSnapshotProgram(
     incremental: false,
     composite: false,
   };
-  delete options.tsBuildInfoFile;
   const typescriptLibraryRoot = dirname(ts.getDefaultLibFilePath(options));
   const dependencyFileAllowed = (candidate: string): boolean =>
     dependencies.fileExists(candidate);
-  if (options.typeRoots !== undefined) {
-    options.typeRoots = options.typeRoots.map((typeRoot) => {
-      const path = repositoryPath(snapshotRoot, typeRoot);
-      // Custom declarations remain in the snapshot; only installed type roots
-      // use the project's dependency directory.
-      return path?.split("/").includes("node_modules")
-        ? resolve(repositoryRoot, path)
-        : typeRoot;
-    });
-  } else {
-    const projectDirectory = dirname(
-      typeof options.configFilePath === "string"
-        ? options.configFilePath
-        : resolve(snapshotRoot, input.rootNames[0] ?? "index.ts"),
-    );
-    const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
-    let directory = resolve(repositoryRoot, projectPath);
-    options.typeRoots = [];
-    while (contained(repositoryRoot, directory)) {
-      options.typeRoots.push(resolve(directory, "node_modules/@types"));
-      if (directory === repositoryRoot) break;
-      directory = dirname(directory);
-    }
-    if (options.types === undefined)
-      options.types = [
-        ...new Set(
-          options.typeRoots.flatMap((typeRoot) =>
-            dependencies
-              .directoryEntries(typeRoot)
-              .filter(
-                (entry) =>
-                  entry.type === "directory" && !entry.name.startsWith("."),
-              )
-              .map((entry) => entry.name),
+  const prepareProjectOptions = (
+    projectOptions: ts.CompilerOptions,
+    projectRootNames: readonly string[],
+    discoverTypes = false,
+  ): ts.CompilerOptions => {
+    const prepared: ts.CompilerOptions = {
+      ...projectOptions,
+      noEmit: true,
+      incremental: false,
+      composite: false,
+    };
+    delete prepared.tsBuildInfoFile;
+    if (prepared.typeRoots !== undefined) {
+      prepared.typeRoots = prepared.typeRoots.map((typeRoot) => {
+        const path = repositoryPath(snapshotRoot, typeRoot);
+        // Custom declarations remain in the snapshot; only installed type roots
+        // use the project's dependency directory.
+        return path?.split("/").includes("node_modules")
+          ? resolve(repositoryRoot, path)
+          : typeRoot;
+      });
+    } else {
+      const projectDirectory = dirname(
+        typeof prepared.configFilePath === "string"
+          ? prepared.configFilePath
+          : resolve(snapshotRoot, projectRootNames[0] ?? "index.ts"),
+      );
+      const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
+      let directory = resolve(repositoryRoot, projectPath);
+      prepared.typeRoots = [];
+      while (contained(repositoryRoot, directory)) {
+        prepared.typeRoots.push(resolve(directory, "node_modules/@types"));
+        if (directory === repositoryRoot) break;
+        directory = dirname(directory);
+      }
+      // Preserve the entry project's implicit type discovery. Referenced
+      // projects retain their compiler's default when types is omitted.
+      if (discoverTypes && prepared.types === undefined)
+        prepared.types = [
+          ...new Set(
+            prepared.typeRoots.flatMap((typeRoot) =>
+              dependencies
+                .directoryEntries(typeRoot)
+                .filter(
+                  (entry) =>
+                    entry.type === "directory" && !entry.name.startsWith("."),
+                )
+                .map((entry) => entry.name),
+            ),
           ),
-        ),
-      ].sort();
-  }
+        ].sort();
+    }
+    return prepared;
+  };
 
-  const defaultHost = ts.createCompilerHost(options, true);
   const moduleHost: ts.ModuleResolutionHost = {
     fileExists: (path) => {
       const absolute = resolve(path);
@@ -258,102 +272,117 @@ function createFreshSnapshotProgram(
     realpath: (path) => resolve(path),
   };
 
-  const host: ts.CompilerHost = {
-    ...defaultHost,
-    getCurrentDirectory: () => snapshotRoot,
-    fileExists: moduleHost.fileExists,
-    readFile(path) {
-      const absolute = resolve(path);
-      const local = files.get(absolute);
-      if (local !== undefined) {
-        const relativePath = repositoryPath(snapshotRoot, absolute);
-        if (relativePath !== undefined) localReads.add(relativePath);
-        return local;
-      }
-      if (dependencyFileAllowed(absolute)) {
-        packageReads.add(absolute);
-        return dependencies.readFile(absolute);
-      }
-      return undefined;
-    },
-    getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile) {
-      const source = host.readFile(path);
-      if (source === undefined) return undefined;
-      return ts.createSourceFile(
-        path,
-        source,
-        languageVersion,
-        true,
-        /\.tsx$/iu.test(path)
-          ? ts.ScriptKind.TSX
-          : /\.[cm]?js$/iu.test(path)
-            ? ts.ScriptKind.JS
-            : /\.json$/iu.test(path)
-              ? ts.ScriptKind.JSON
-              : ts.ScriptKind.TS,
-      );
-    },
-    directoryExists: (path) => moduleHost.directoryExists?.(path) ?? false,
-    getDirectories: (path) => moduleHost.getDirectories?.(path) ?? [],
-    realpath: (path) => moduleHost.realpath?.(path) ?? path,
-    readDirectory(rootDir, extensions, excludes, includes, depth) {
-      const root = resolve(rootDir);
-      const includeMatchers = (includes.length > 0 ? includes : ["**/*"]).map(
-        (pattern) => picomatch(pattern, { dot: true }),
-      );
-      const excludeMatchers = (excludes ?? []).map((pattern) =>
-        picomatch(pattern, { dot: true }),
-      );
-      return [...files.keys()].filter((path) => {
-        const fromRoot = normalized(relative(root, path));
-        if (
-          fromRoot === ".." ||
-          fromRoot.startsWith("../") ||
-          (depth !== undefined && fromRoot.split("/").length - 1 > depth) ||
-          !extensions.some((extension) => path.endsWith(extension))
-        ) {
-          return false;
+  const createHost = (projectOptions: ts.CompilerOptions): ts.CompilerHost => {
+    const defaultHost = ts.createCompilerHost(projectOptions, true);
+    const host: ts.CompilerHost = {
+      ...defaultHost,
+      getCurrentDirectory: () => snapshotRoot,
+      fileExists: moduleHost.fileExists,
+      readFile(path) {
+        const absolute = resolve(path);
+        const local = files.get(absolute);
+        if (local !== undefined) {
+          const relativePath = repositoryPath(snapshotRoot, absolute);
+          if (relativePath !== undefined) localReads.add(relativePath);
+          return local;
         }
-        return (
-          includeMatchers.some((match) => match(fromRoot)) &&
-          !excludeMatchers.some((match) => match(fromRoot))
-        );
-      });
-    },
-    writeFile(path) {
-      writes.push(path);
-    },
-    resolveModuleNames(moduleNames, containingFile) {
-      return moduleNames.map((specifier) => {
-        const localResolution = ts.resolveModuleName(
-          specifier,
-          containingFile,
-          options,
-          files.has(resolve(containingFile)) ? snapshotModuleHost : moduleHost,
-        ).resolvedModule;
-        if (localResolution !== undefined) return localResolution;
-        if (!isBareSpecifier(specifier)) return undefined;
-        const relativeContaining =
-          repositoryPath(snapshotRoot, containingFile) ?? "src/index.ts";
-        const syntheticContaining = resolve(
-          repositoryRoot,
-          ...relativeContaining.split("/"),
-        );
-        const resolved = ts.resolveModuleName(
-          specifier,
-          syntheticContaining,
-          options,
-          moduleHost,
-        ).resolvedModule;
-        if (
-          resolved === undefined ||
-          !dependencies.packageFileExists(resolve(resolved.resolvedFileName))
-        ) {
-          return undefined;
+        if (dependencyFileAllowed(absolute)) {
+          packageReads.add(absolute);
+          return dependencies.readFile(absolute);
         }
-        return resolved;
-      });
-    },
+        return undefined;
+      },
+      getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile) {
+        const source = host.readFile(path);
+        if (source === undefined) return undefined;
+        return ts.createSourceFile(path, source, languageVersion, true);
+      },
+      directoryExists: (path) => moduleHost.directoryExists?.(path) ?? false,
+      getDirectories: (path) => moduleHost.getDirectories?.(path) ?? [],
+      realpath: (path) => moduleHost.realpath?.(path) ?? path,
+      readDirectory(rootDir, extensions, excludes, includes, depth) {
+        const root = resolve(rootDir);
+        const includeMatchers = (includes.length > 0 ? includes : ["**/*"]).map(
+          (pattern) => picomatch(pattern, { dot: true }),
+        );
+        const excludeMatchers = (excludes ?? []).map((pattern) =>
+          picomatch(pattern, { dot: true }),
+        );
+        return [...files.keys()].filter((path) => {
+          const fromRoot = normalized(relative(root, path));
+          if (
+            fromRoot === ".." ||
+            fromRoot.startsWith("../") ||
+            (depth !== undefined && fromRoot.split("/").length - 1 > depth) ||
+            !extensions.some((extension) => path.endsWith(extension))
+          ) {
+            return false;
+          }
+          return (
+            includeMatchers.some((match) => match(fromRoot)) &&
+            !excludeMatchers.some((match) => match(fromRoot))
+          );
+        });
+      },
+      writeFile(path) {
+        writes.push(path);
+      },
+      resolveModuleNameLiterals(
+        moduleLiterals,
+        containingFile,
+        redirectedReference,
+        resolutionOptions,
+        containingSourceFile,
+      ) {
+        return moduleLiterals.map((literal) => {
+          const specifier = literal.text;
+          const mode = ts.getModeForUsageLocation(
+            containingSourceFile,
+            literal,
+            resolutionOptions,
+          );
+          const localResolution = ts.resolveModuleName(
+            specifier,
+            containingFile,
+            resolutionOptions,
+            files.has(resolve(containingFile))
+              ? snapshotModuleHost
+              : moduleHost,
+            undefined,
+            redirectedReference,
+            mode,
+          );
+          if (localResolution.resolvedModule !== undefined)
+            return localResolution;
+          if (!isBareSpecifier(specifier)) return localResolution;
+          const relativeContaining =
+            repositoryPath(snapshotRoot, containingFile) ?? "src/index.ts";
+          const syntheticContaining = resolve(
+            repositoryRoot,
+            ...relativeContaining.split("/"),
+          );
+          const resolved = ts.resolveModuleName(
+            specifier,
+            syntheticContaining,
+            resolutionOptions,
+            moduleHost,
+            undefined,
+            redirectedReference,
+            mode,
+          );
+          if (
+            resolved.resolvedModule === undefined ||
+            !dependencies.packageFileExists(
+              resolve(resolved.resolvedModule.resolvedFileName),
+            )
+          ) {
+            return { resolvedModule: undefined };
+          }
+          return resolved;
+        });
+      },
+    };
+    return host;
   };
 
   const rootNames = input.rootNames.map((path) => {
@@ -373,10 +402,11 @@ function createFreshSnapshotProgram(
     }
     return absolute;
   });
+  const preparedOptions = prepareProjectOptions(options, rootNames, true);
   const program = ts.createProgram({
     rootNames,
-    options,
-    host,
+    options: preparedOptions,
+    host: createHost(preparedOptions),
     ...(input.projectReferences === undefined
       ? {}
       : { projectReferences: [...input.projectReferences] }),
@@ -392,17 +422,14 @@ function createFreshSnapshotProgram(
       const configPath = reference.sourceFile.fileName;
       if (visitedReferences.has(configPath)) continue;
       visitedReferences.add(configPath);
-      const referencedOptions: ts.CompilerOptions = {
-        ...reference.commandLine.options,
-        noEmit: true,
-        incremental: false,
-        composite: false,
-      };
-      delete referencedOptions.tsBuildInfoFile;
+      const referencedOptions = prepareProjectOptions(
+        reference.commandLine.options,
+        reference.commandLine.fileNames,
+      );
       const referencedProgram = ts.createProgram({
         rootNames: reference.commandLine.fileNames,
         options: referencedOptions,
-        host,
+        host: createHost(referencedOptions),
         ...(reference.commandLine.projectReferences === undefined
           ? {}
           : { projectReferences: reference.commandLine.projectReferences }),

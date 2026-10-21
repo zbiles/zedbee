@@ -28,7 +28,7 @@ const targetSource = [
 
 describe("nested independent project scans", { concurrent: false }, () => {
   it.each(["index", "base"] as const)(
-    "%s runs checks for the changed package without linting an unrelated package config",
+    "%s checks all TypeScript workspaces while keeping other analyzers scoped to the changed package",
     async (mode) => {
       const repository = await createGitRepository("zedbee-nested-scan-");
       await repository.write(
@@ -112,7 +112,6 @@ describe("nested independent project scans", { concurrent: false }, () => {
       ).toEqual([]);
       for (const checkId of [
         "lint",
-        "types",
         "reactCorrectness",
         "reactAccessibility",
         "cyclomaticComplexity",
@@ -126,6 +125,17 @@ describe("nested independent project scans", { concurrent: false }, () => {
           expect.objectContaining({ status: "completed", target: "web" }),
         ]);
       }
+      expect(
+        report.checks.filter(({ checkId }) => checkId === "types"),
+        "types must analyze both TypeScript workspaces and suppress unrelated baseline findings",
+      ).toEqual([
+        expect.objectContaining({
+          status: "completed",
+          target: "extension",
+          findings: [],
+        }),
+        expect.objectContaining({ status: "completed", target: "web" }),
+      ]);
       for (const rule of [
         "direct-eval",
         "cyclomatic-complexity",
@@ -146,9 +156,19 @@ describe("nested independent project scans", { concurrent: false }, () => {
           attribution: expect.objectContaining({ staged: true }),
         }),
       );
-      expect(report.checks.some(({ target }) => target === "extension")).toBe(
-        false,
-      );
+      expect(
+        report.checks.some(
+          ({ checkId, target }) =>
+            checkId !== "types" && target === "extension",
+        ),
+      ).toBe(false);
+      expect(
+        report.checks
+          .flatMap(({ findings }) => findings)
+          .some(
+            ({ location }) => location?.file === "extension/vitest.config.ts",
+          ),
+      ).toBe(false);
     },
   );
 });

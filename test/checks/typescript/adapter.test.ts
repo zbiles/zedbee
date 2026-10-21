@@ -76,6 +76,36 @@ async function context(
 }
 
 describe("TypeScript observation adapter", () => {
+  it("skips an empty relevant delta but honors always scheduling", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged, value.live]) {
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+    }
+    const run = await context(value, {
+      files: new Map(),
+      isEmpty: true,
+      containsAddedLine: () => false,
+    });
+    expect(await typescriptAdapter.inspect(run)).toMatchObject({
+      applies: false,
+    });
+    const always = {
+      ...run,
+      config: {
+        ...run.config,
+        checks: {
+          ...run.config.checks,
+          types: { ...run.config.checks.types, when: "always" as const },
+        },
+      },
+    };
+    expect(await typescriptAdapter.inspect(always)).toMatchObject({
+      applies: true,
+      requiresBaseline: true,
+      targets: [{ id: ".", kind: "workspace", relativeRoot: "." }],
+    });
+  });
+
   it("reports the staged type error even when the live working-tree file is clean", async () => {
     const observations = await analyzeTypescriptSnapshots({
       baseline: { "src/value.ts": "export const value: number = 1;" },
