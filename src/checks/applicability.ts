@@ -11,6 +11,10 @@ import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  compilerInputsMayHaveChanged,
+  hasTypeScriptInputs,
+} from "./compiler-inputs.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
@@ -167,16 +171,15 @@ export async function inspectManagedCheck(
     workspaces = workspaces.filter(
       (workspace) =>
         workspace.sourceFiles.length > 0 &&
-        (always || workspace.sourceFiles.some((path) => changed.has(path))),
+        (always ||
+          compilerInputsMayHaveChanged(workspace, context.changeSet) ||
+          workspace.sourceFiles.some((path) => changed.has(path))),
     );
   else if (checkId === "types") {
-    // Config graphs, JSON imports and cross-workspace references can change
-    // diagnostics without editing a workspace's own TypeScript sources. Until
-    // a complete compiler-input graph exists, every delta may affect them.
     workspaces = workspaces.filter(
       (workspace) =>
-        workspace.sourceFiles.some((path) => TYPESCRIPT.test(path)) &&
-        (always || !context.changeSet.isEmpty),
+        hasTypeScriptInputs(workspace) &&
+        (always || compilerInputsMayHaveChanged(workspace, context.changeSet)),
     );
   } else {
     if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {

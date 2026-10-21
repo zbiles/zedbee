@@ -9,9 +9,14 @@ import {
   retainCleanupFailure,
 } from "../scan/analysis-failure.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { GitClient } from "../git/client.js";
-import { buildSnapshotPair } from "../git/snapshot.js";
+import {
+  buildSnapshotPair,
+  SnapshotConstructionCleanupError,
+  type SnapshotPair,
+} from "../git/snapshot.js";
+import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
@@ -21,6 +26,7 @@ import {
   openProjectFormatter,
   resolveProjectPrettierInstallation,
   snapshotIdentity,
+  type ProjectFormatterSession,
 } from "../checks/prettier/project-engine.js";
 import { requireProjectPrettierTrust } from "../checks/prettier/project-trust.js";
 import {
@@ -72,45 +78,139 @@ class FixPlanIgnoredError extends Error {
   readonly kind = "ignored";
 }
 
-async function formatProjectWorkingFile(input: {
-  readonly repositoryRoot: string;
-  readonly file: string;
-  readonly source: string;
-  readonly selection: Extract<FormattingFixSelection, { engine: "project" }>;
-  readonly signal?: AbortSignal;
-  /** Invocation-only consent from the trusted parent, in memory only. */
-  readonly projectPrettierTrust?: boolean;
-}): Promise<string> {
-  const git = new GitClient(input.repositoryRoot);
-  // The verified staged snapshot stays alive for the whole fix: the project
-  // formatter resolves its configuration, helpers, and plugins from this
-  // exact view, and only the explicit `source` bytes come from the current
-  // working file. A live unstaged configuration edit cannot change the
-  // applied bytes after the identity was checked.
-  const snapshot = await buildSnapshotPair(
+/** Cleanup failure carries source-free apply progress to command callers. */
+export class FixApplyCleanupError extends AnalysisSessionCleanupError {
+  readonly result?: FixResult;
+
+  constructor(temporaryPath?: string, result?: FixResult, primary?: unknown) {
+    super(
+      temporaryPath,
+      primary === undefined
+        ? undefined
+        : {
+            cause: primary,
+            primaryFailure: {
+              code: "FIX_APPLY_FAILED",
+              message: "Zedbee could not complete the managed fix.",
+              remediation:
+                "Review any applied changes before building a fresh fix plan.",
+            },
+          },
+    );
+    this.name = "FixApplyCleanupError";
+    if (result !== undefined) this.result = result;
+  }
+}
+
+/** One staged view and formatter per project, owned until all apply workers settle. */
+class ProjectFixFormattingOwner {
+  snapshot?: SnapshotPair;
+  identity?: string;
+  readonly sessions = new Map<string, ProjectFormatterSession>();
+  cleanupFailed = false;
+  temporaryPath: string | undefined;
+  primaryFailure?: unknown;
+  cleanupCause?: unknown;
+
+  async stagedSnapshot(repositoryRoot: string, signal?: AbortSignal) {
+    if (this.cleanupFailed && this.snapshot === undefined)
+      throw this.primaryFailure;
+    if (this.snapshot === undefined) {
+      try {
+        this.snapshot = await buildSnapshotPair(
+          repositoryRoot,
+          new GitClient(repositoryRoot),
+          signal,
+        );
+        this.temporaryPath = dirname(this.snapshot.targetDir);
+      } catch (error) {
+        if (error instanceof SnapshotConstructionCleanupError) {
+          this.cleanupFailed = true;
+          this.temporaryPath = error.temporaryPath;
+          this.primaryFailure ??= error.constructionError;
+          throw error.constructionError;
+        }
+        throw error;
+      }
+    }
+    this.identity ??= await snapshotIdentity(this.snapshot.targetDir);
+    return this.snapshot;
+  }
+
+  async closeFormatters(): Promise<boolean> {
+    let closed = true;
+    for (const session of this.sessions.values()) {
+      try {
+        await session.close();
+      } catch (error) {
+        closed = false;
+        this.cleanupFailed = true;
+        this.cleanupCause ??= error;
+      }
+    }
+    return closed;
+  }
+
+  async cleanupSnapshot(workersClosed: boolean): Promise<void> {
+    if (this.snapshot === undefined) return;
+    if (!workersClosed) {
+      this.cleanupFailed = true;
+      return;
+    }
+    try {
+      await this.snapshot.cleanup();
+    } catch (error) {
+      this.cleanupFailed = true;
+      this.cleanupCause ??= error;
+    }
+  }
+
+  reportablePath(): string | undefined {
+    try {
+      return validateReportableSnapshotPath(this.temporaryPath ?? "");
+    } catch {
+      return undefined;
+    }
+  }
+}
+
+async function formatProjectWorkingFile(
+  input: {
+    readonly repositoryRoot: string;
+    readonly file: string;
+    readonly source: string;
+    readonly selection: Extract<FormattingFixSelection, { engine: "project" }>;
+    readonly signal?: AbortSignal;
+    /** Invocation-only consent from the trusted parent, in memory only. */
+    readonly projectPrettierTrust?: boolean;
+  },
+  owner: ProjectFixFormattingOwner,
+): Promise<string> {
+  // Configuration, helpers, and plugins stay pinned to this staged view;
+  // only the explicit source bytes come from the current working file.
+  const snapshot = await owner.stagedSnapshot(
     input.repositoryRoot,
-    git,
     input.signal,
   );
-  try {
-    const currentIdentity = await snapshotIdentity(snapshot.targetDir);
-    if (currentIdentity !== input.selection.snapshotIdentity) {
-      throw new FixPlanStaleError("The selected formatting snapshot changed.");
-    }
-    const installation = await resolveProjectPrettierInstallation(
-      input.repositoryRoot,
-      input.selection.projectRoot,
-      snapshot.targetDir,
-    );
-    if (installation.identity !== input.selection.installationIdentity) {
-      throw new FixPlanStaleError("The project Prettier installation changed.");
-    }
-    const permit = await requireProjectPrettierTrust(
-      input.repositoryRoot,
-      input.selection.projectRoot,
-      input.projectPrettierTrust === true,
-    );
-    const session = await openProjectFormatter({
+  if (owner.identity !== input.selection.snapshotIdentity) {
+    throw new FixPlanStaleError("The selected formatting snapshot changed.");
+  }
+  const installation = await resolveProjectPrettierInstallation(
+    input.repositoryRoot,
+    input.selection.projectRoot,
+    snapshot.targetDir,
+  );
+  if (installation.identity !== input.selection.installationIdentity) {
+    throw new FixPlanStaleError("The project Prettier installation changed.");
+  }
+  const permit = await requireProjectPrettierTrust(
+    input.repositoryRoot,
+    input.selection.projectRoot,
+    input.projectPrettierTrust === true,
+  );
+  let session = owner.sessions.get(input.selection.projectRoot);
+  if (session === undefined) {
+    session = await openProjectFormatter({
       checkoutRoot: await realpath(input.repositoryRoot),
       snapshotRoot: snapshot.targetDir,
       projectRoot: input.selection.projectRoot,
@@ -118,20 +218,13 @@ async function formatProjectWorkingFile(input: {
       permit,
       signal: input.signal ?? new AbortController().signal,
     });
-    try {
-      const result = await session.format(input.file, input.source);
-      if (result.kind === "ignored") {
-        throw new FixPlanIgnoredError(
-          "The project formatter ignored the file.",
-        );
-      }
-      return result.text;
-    } finally {
-      await session.close();
-    }
-  } finally {
-    await snapshot.cleanup().catch(() => undefined);
+    owner.sessions.set(input.selection.projectRoot, session);
   }
+  const result = await session.format(input.file, input.source);
+  if (result.kind === "ignored") {
+    throw new FixPlanIgnoredError("The project formatter ignored the file.");
+  }
+  return result.text;
 }
 
 interface FileCandidates {
@@ -246,54 +339,108 @@ async function currentIdentity(
   return { device: state.dev, inode: state.ino };
 }
 
+interface ApplyFixProgress {
+  readonly changedFiles: string[];
+  readonly unchangedFiles: string[];
+  readonly issues: FixIssue[];
+  appliedFixes: number;
+}
+
+function completedFixResult(
+  progress: ApplyFixProgress,
+  interrupted = false,
+): FixResult {
+  return deepFreeze({
+    exitCode:
+      progress.issues.length === 0 && !interrupted
+        ? (0 as const)
+        : (1 as const),
+    appliedFixes: progress.appliedFixes,
+    changedFiles: [...progress.changedFiles].sort(compareCodeUnits),
+    unchangedFiles: [...progress.unchangedFiles].sort(compareCodeUnits),
+    issues: [...progress.issues].sort(
+      (left, right) =>
+        compareCodeUnits(left.file, right.file) ||
+        compareCodeUnits(left.kind, right.kind),
+    ),
+  });
+}
+
 export async function applyFixPlan(
   plan: PreparedFixPlan,
   dependencies: ApplyFixPlanDependencies = {},
 ): Promise<FixResult> {
   dependencies.signal?.throwIfAborted();
   const executor = dependencies.executor ?? createLocalAnalyzerExecutor();
+  const formatting = new ProjectFixFormattingOwner();
+  const progress: ApplyFixProgress = {
+    changedFiles: [],
+    unchangedFiles: [],
+    issues: [],
+    appliedFixes: 0,
+  };
   let session: Awaited<ReturnType<AnalyzerExecutor["openSession"]>> | undefined;
   let primary: unknown;
+  let failed = false;
+  let result: FixResult | undefined;
+  let workersClosed = false;
+  let workerCleanupFailure: unknown;
   try {
     session = await executor.openSession();
-    return await withAnalyzerExecutionSession(session, () =>
-      applyWithinSession(plan, dependencies),
+    result = await withAnalyzerExecutionSession(session, () =>
+      applyWithinSession(plan, dependencies, formatting, progress),
     );
   } catch (error) {
     primary = error;
-    throw error;
+    failed = true;
   } finally {
-    let cleanupFailed = false;
+    workersClosed = await formatting.closeFormatters();
     try {
       await session?.close();
-    } catch {
-      cleanupFailed = true;
+    } catch (error) {
+      workersClosed = false;
+      workerCleanupFailure ??= error;
     }
     if (dependencies.executor === undefined) {
       try {
         await executor.close();
-      } catch {
-        cleanupFailed = true;
+      } catch (error) {
+        workersClosed = false;
+        workerCleanupFailure ??= error;
       }
     }
-    if (cleanupFailed) {
-      const cleanup = new AnalysisSessionCleanupError();
-      throw primary === undefined
-        ? cleanup
-        : retainCleanupFailure(primary, cleanup);
-    }
+    await formatting.cleanupSnapshot(workersClosed);
   }
+  // Cancellation can arrive while cleanup is settling. Keep its identity and
+  // attach the safe cleanup diagnosis without losing a completed write result.
+  if (!failed && dependencies.signal?.aborted) {
+    primary = dependencies.signal.reason;
+    failed = true;
+  }
+  if (formatting.cleanupFailed || !workersClosed) {
+    const cleanup = new FixApplyCleanupError(
+      formatting.reportablePath(),
+      result ?? completedFixResult(progress, failed),
+      failed
+        ? primary
+        : (formatting.primaryFailure ??
+            formatting.cleanupCause ??
+            workerCleanupFailure),
+    );
+    throw failed ? retainCleanupFailure(primary, cleanup) : cleanup;
+  }
+  if (failed) throw primary;
+  return result!;
 }
 
 async function applyWithinSession(
   plan: PreparedFixPlan,
   dependencies: ApplyFixPlanDependencies,
+  formatting: ProjectFixFormattingOwner,
+  progress: ApplyFixProgress,
 ): Promise<FixResult> {
   dependencies.signal?.throwIfAborted();
-  const changedFiles: string[] = [];
-  const unchangedFiles: string[] = [];
-  const issues: FixIssue[] = [];
-  let appliedFixes = 0;
+  const { changedFiles, unchangedFiles, issues } = progress;
   for (const item of plan.publicPlan.items) {
     if (item.status !== "skipped") continue;
     issues.push(
@@ -409,18 +556,21 @@ async function applyWithinSession(
     if (formatCandidate?.kind === "format-file") {
       try {
         if (formatCandidate.selection?.engine === "project") {
-          next = await formatProjectWorkingFile({
-            repositoryRoot: plan.repositoryRoot,
-            file: group.file,
-            source: next,
-            selection: formatCandidate.selection,
-            ...(dependencies.signal === undefined
-              ? {}
-              : { signal: dependencies.signal }),
-            ...(dependencies.projectPrettierTrust === true
-              ? { projectPrettierTrust: true }
-              : {}),
-          });
+          next = await formatProjectWorkingFile(
+            {
+              repositoryRoot: plan.repositoryRoot,
+              file: group.file,
+              source: next,
+              selection: formatCandidate.selection,
+              ...(dependencies.signal === undefined
+                ? {}
+                : { signal: dependencies.signal }),
+              ...(dependencies.projectPrettierTrust === true
+                ? { projectPrettierTrust: true }
+                : {}),
+            },
+            formatting,
+          );
         } else {
           next = await format(
             {
@@ -434,6 +584,7 @@ async function applyWithinSession(
           );
         }
       } catch (error) {
+        formatting.primaryFailure ??= error;
         dependencies.signal?.throwIfAborted();
         if (
           error instanceof AnalyzerJobError &&
@@ -482,12 +633,12 @@ async function applyWithinSession(
         expectedSha256: digest(working),
       });
       changedFiles.push(group.file);
-      appliedFixes +=
+      progress.appliedFixes +=
         exact.edits.length + (formatCandidate === undefined ? 0 : 1);
     } catch (error) {
       if (error instanceof CommittedWriteError) {
         changedFiles.push(group.file);
-        appliedFixes +=
+        progress.appliedFixes +=
           exact.edits.length + (formatCandidate === undefined ? 0 : 1);
         issues.push(
           issue(
@@ -514,15 +665,5 @@ async function applyWithinSession(
   }
 
   dependencies.signal?.throwIfAborted();
-  return deepFreeze({
-    exitCode: issues.length === 0 ? (0 as const) : (1 as const),
-    appliedFixes,
-    changedFiles: changedFiles.sort(compareCodeUnits),
-    unchangedFiles: unchangedFiles.sort(compareCodeUnits),
-    issues: issues.sort(
-      (left, right) =>
-        compareCodeUnits(left.file, right.file) ||
-        compareCodeUnits(left.kind, right.kind),
-    ),
-  });
+  return completedFixResult(progress);
 }

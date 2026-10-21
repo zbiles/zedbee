@@ -137,7 +137,7 @@ describe("lintAdapter", () => {
         expect(error).toMatchObject({
           code:
             category === "startup"
-              ? "TYPED_LINT_SETUP_FAILED"
+              ? "TYPESCRIPT_CONFIG_TS5083"
               : "TYPED_LINT_ANALYSIS_FAILED",
           diagnostic: { category, snapshot: "target" },
         });
@@ -897,12 +897,13 @@ describe("lintAdapter", () => {
 
     await expect(lintAdapter.collect(run)).rejects.toMatchObject({
       name: "CheckIncompleteError",
-      code: "TYPED_LINT_SETUP_FAILED",
-      message: expect.stringContaining("baseline snapshot (HEAD)"),
+      code: "TYPESCRIPT_CONFIG_TS5083",
+      path: "tsconfig.json",
+      snapshot: "last-commit",
+      message: expect.stringContaining("TS5083"),
       remediation:
-        "Verify that the failing snapshot contains a tsconfig.json covering its requested TypeScript files and all referenced configurations, then retry. For a commit comparison, check the configurations tracked in that commit.",
-      paths: ["src/value.ts"],
-      projectPaths: [],
+        "Correct the identified configuration and its contained extends or project references in the failing snapshot, then retry.",
+      projectPaths: ["tsconfig.json"],
       diagnostic: {
         category: "startup",
         snapshot: "baseline",
@@ -1235,7 +1236,7 @@ describe("lintAdapter", () => {
         include: ["src/**/*.ts"],
       }),
     ],
-  ])("fails closed when typed lint has %s config", async (_label, tsconfig) => {
+  ])("fails closed when typed lint has %s config", async (label, tsconfig) => {
     const fixtures = await pair();
     await fixtures.staged.write(
       "src/value.ts",
@@ -1256,7 +1257,12 @@ describe("lintAdapter", () => {
 
     await expect(lintAdapter.collect(run)).rejects.toMatchObject({
       name: "CheckIncompleteError",
-      code: "TYPED_LINT_SETUP_FAILED",
+      code:
+        label === "missing"
+          ? "TYPESCRIPT_CONFIG_TS5083"
+          : "TYPESCRIPT_CONFIG_INVALID",
+      path: "tsconfig.json",
+      snapshot: "staged",
     });
   });
 
@@ -1280,7 +1286,9 @@ describe("lintAdapter", () => {
 
     await expect(lintAdapter.collect(run)).rejects.toMatchObject({
       name: "CheckIncompleteError",
-      code: "TYPED_LINT_SETUP_FAILED",
+      code: "TYPED_LINT_PROJECT_MISMATCH",
+      paths: ["src/value.ts"],
+      projectPaths: ["tsconfig.json"],
     });
   });
 

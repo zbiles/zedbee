@@ -68,7 +68,7 @@ function context(): CheckRunContext {
 }
 
 describe("default managed execution descriptors", () => {
-  it("keeps source-only checks scoped while selecting all type projects for renamed and deleted deltas", async () => {
+  it("keeps source-only checks scoped while selecting compiler consumers for renamed and deleted deltas", async () => {
     const original = context();
     const workspace = (root: string): WorkspaceInspection => ({
       relativeRoot: root,
@@ -122,7 +122,6 @@ describe("default managed execution descriptors", () => {
       },
     };
     for (const id of [
-      "lint",
       "cyclomaticComplexity",
       "readabilityComplexity",
       "structuralSecurity",
@@ -143,21 +142,6 @@ describe("default managed execution descriptors", () => {
         ],
       });
     }
-    const types = createManagedAdapters().find(
-      (adapter) => adapter.id === "types",
-    )!;
-    expect(await types.inspect(input)).toMatchObject({
-      applies: true,
-      requiresBaseline: true,
-      targets: [
-        { id: "packages/new", kind: "workspace", relativeRoot: "packages/new" },
-        {
-          id: "packages/deleted",
-          kind: "workspace",
-          relativeRoot: "packages/deleted",
-        },
-      ],
-    });
     const deletedOnly = {
       ...input,
       changeSet: {
@@ -165,25 +149,50 @@ describe("default managed execution descriptors", () => {
         files: new Map([[files[1]!.path, files[1]!]]),
       },
     };
-    for (const id of ["formatting", "lint", "secrets"]) {
+    for (const id of ["formatting", "secrets"]) {
       expect(
         await createManagedAdapters()
           .find((adapter) => adapter.id === id)!
           .inspect(deletedOnly),
       ).toMatchObject({ applies: false });
     }
-    expect(await types.inspect(deletedOnly)).toMatchObject({
-      applies: true,
-      requiresBaseline: true,
-      targets: [
-        { id: "packages/new", kind: "workspace", relativeRoot: "packages/new" },
-        {
-          id: "packages/deleted",
-          kind: "workspace",
-          relativeRoot: "packages/deleted",
-        },
-      ],
-    });
+    for (const id of ["types", "lint"]) {
+      const adapter = createManagedAdapters().find(
+        (candidate) => candidate.id === id,
+      )!;
+      expect(await adapter.inspect(input)).toMatchObject({
+        applies: true,
+        requiresBaseline: true,
+        targets: [
+          {
+            id: "packages/new",
+            kind: "workspace",
+            relativeRoot: "packages/new",
+          },
+          {
+            id: "packages/deleted",
+            kind: "workspace",
+            relativeRoot: "packages/deleted",
+          },
+        ],
+      });
+      expect(await adapter.inspect(deletedOnly)).toMatchObject({
+        applies: true,
+        requiresBaseline: true,
+        targets: [
+          {
+            id: "packages/new",
+            kind: "workspace",
+            relativeRoot: "packages/new",
+          },
+          {
+            id: "packages/deleted",
+            kind: "workspace",
+            relativeRoot: "packages/deleted",
+          },
+        ],
+      });
+    }
     for (const id of ["dependencyArchitecture", "deadCode"]) {
       expect(
         await createManagedAdapters()

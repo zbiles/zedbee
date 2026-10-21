@@ -46,10 +46,14 @@ jobs:
           ZEDBEE_PACKAGE_MANAGER_UNDER_TEST: npm
           ZEDBEE_BENCHMARK_RUNNER: ${{ matrix.os }}
 
+  performance:
+    needs: release-identity
+    uses: ./.github/workflows/performance-check.yml
+
   publication-gate:
     timeout-minutes: 60
     name: Publication metadata and artifact gate
-    needs: cross-platform
+    needs: [cross-platform, performance]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -65,6 +69,7 @@ jobs:
         run: npm run release:check
         env:
           ZEDBEE_CROSS_PLATFORM_EVIDENCE: verified
+          ZEDBEE_PERFORMANCE_EVIDENCE: ${{ needs.performance.outputs.evidence }}
           ZEDBEE_BENCHMARK_RUNNER: ubuntu-latest
       - name: Prepare and smoke-test the exact npm tarball
         run: npm run artifact:prepare

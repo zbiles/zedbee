@@ -123,7 +123,7 @@ describe("release verification contract", () => {
       {
         id: "benchmark",
         command: "node",
-        args: ["--experimental-strip-types", "bench/run.mts"],
+        args: ["--experimental-strip-types", "bench/run.mts", "--smoke"],
       },
       {
         id: "package",

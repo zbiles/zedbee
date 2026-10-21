@@ -1,5 +1,7 @@
 import { inspectManagedCheck } from "../applicability.js";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { collectRenamedBaselines } from "../renamed-baselines.js";
+import { hasTypeScriptInputs } from "../compiler-inputs.js";
+import { resolve } from "node:path";
 import * as ts from "typescript";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { compareCodeUnits } from "../../core/compare.js";
@@ -15,7 +17,15 @@ import type {
   WorkspaceInspection,
 } from "../../inspection/types.js";
 import { createSnapshotProgram } from "./compiler-host.js";
-import { loadSnapshotProgramInput } from "./config.js";
+import {
+  configurationIncompleteError,
+  loadSnapshotProjectSet,
+} from "./projects.js";
+import { CheckIncompleteError } from "../incomplete-error.js";
+import type {
+  FilePolicyResolver,
+  SnapshotSide,
+} from "../../config/file-policy.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { captureAnalysisDependencies } from "./reuse-inputs.js";
@@ -41,38 +51,76 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   dependencies: CapturedDependencies,
+  side: SnapshotSide,
+  policyForFile: FilePolicyResolver,
+  signal: AbortSignal,
+  requestedPaths?: ReadonlySet<string>,
 ): Promise<TypescriptSnapshotObservations> {
   const workspace = workspaceFor(inspection, target);
-  if (
-    workspace === undefined ||
-    !workspace.sourceFiles.some((path) => TYPESCRIPT_SOURCE.test(path))
-  ) {
+  if (workspace === undefined || !hasTypeScriptInputs(workspace)) {
     return { observations: Object.freeze([]), files: {} };
   }
-  const input = await loadSnapshotProgramInput(
-    snapshotRoot,
-    repositoryRoot,
-    workspace,
+  signal.throwIfAborted();
+  const requested = workspace.sourceFiles.filter(
+    (path) =>
+      (requestedPaths === undefined || requestedPaths.has(path)) &&
+      TYPESCRIPT_SOURCE.test(path) &&
+      policyForFile("types", path, side).severity !== "off",
   );
-  const { programs } = createSnapshotProgram({ ...input, dependencies });
+  if (requested.length === 0)
+    return { observations: Object.freeze([]), files: {} };
+  let projectSet;
+  try {
+    projectSet = await loadSnapshotProjectSet(
+      snapshotRoot,
+      repositoryRoot,
+      workspace,
+      dependencies,
+    );
+  } catch (error) {
+    throw configurationIncompleteError(error, "types", side) ?? error;
+  }
+  signal.throwIfAborted();
+  const { programs, covered, projectPaths, files, canonicalRoot } = projectSet;
+  const uncovered = requested
+    .filter((path) => !covered.has(path))
+    .sort(compareCodeUnits);
+  if (uncovered.length > 0)
+    throw new CheckIncompleteError({
+      code: "TYPESCRIPT_PROJECT_MISMATCH",
+      message:
+        "TypeScript analysis could not cover requested files with the loaded TypeScript projects.",
+      remediation:
+        'Add the requested files to "files" or "include" in the appropriate contained TypeScript configuration, or disable the types check for files intentionally outside a project.',
+      path: uncovered[0]!,
+      paths: uncovered,
+      projectPaths,
+      snapshot: side === "baseline" ? "last-commit" : "staged",
+    });
   const observations = programs
     .flatMap((program) => ts.getPreEmitDiagnostics(program))
     .map((diagnostic) =>
       convertTypescriptDiagnostic(
         diagnostic,
-        resolve(input.snapshotRoot ?? snapshotRoot),
+        resolve(canonicalRoot),
         resolve(repositoryRoot),
       ),
     )
     .filter(
       (observation): observation is Observation => observation !== undefined,
     )
+    .filter(
+      (observation) =>
+        requestedPaths === undefined ||
+        (observation.location !== undefined &&
+          requestedPaths.has(observation.location.file)),
+    )
     .sort(
       (left, right) =>
         compareCodeUnits(left.identity, right.identity) ||
         compareCodeUnits(left.message, right.message),
     );
-  return { observations: Object.freeze(observations), files: input.files };
+  return { observations: Object.freeze(observations), files };
 }
 
 export const typescriptAdapter: ObservationCheckAdapter = {
@@ -87,12 +135,18 @@ export const typescriptAdapter: ObservationCheckAdapter = {
       const dependencies = captureAnalysisDependencies(context);
       const [baseline, target] = await settleSnapshotSides(
         () =>
-          collectSide(
-            context.snapshots.baselineDir,
-            context.repositoryRoot,
-            context.baselineInspection,
-            context.target,
-            dependencies,
+          collectRenamedBaselines(context, (baselineTarget, paths) =>
+            collectSide(
+              context.snapshots.baselineDir,
+              context.repositoryRoot,
+              context.baselineInspection,
+              baselineTarget,
+              dependencies,
+              "baseline",
+              context.policyForFile,
+              context.signal,
+              paths,
+            ),
           ),
         () =>
           collectSide(
@@ -101,6 +155,9 @@ export const typescriptAdapter: ObservationCheckAdapter = {
             context.targetInspection,
             context.target,
             dependencies,
+            "target",
+            context.policyForFile,
+            context.signal,
           ),
         context.signal,
       );
@@ -113,7 +170,9 @@ export const typescriptAdapter: ObservationCheckAdapter = {
         projectDelta: !context.changeSet.isEmpty,
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
-    } catch {
+    } catch (error) {
+      context.signal.throwIfAborted();
+      if (error instanceof CheckIncompleteError) throw error;
       throw new Error("TypeScript analysis failed.");
     }
   },

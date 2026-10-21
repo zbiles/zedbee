@@ -14,6 +14,7 @@ import type {
 } from "../inspection/types.js";
 import type { CheckTarget } from "./adapter.js";
 import { isFormattingCandidate } from "./prettier/supported-path.js";
+import { compilerInputsMayHaveChanged } from "./compiler-inputs.js";
 
 const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
@@ -161,6 +162,11 @@ export function shouldScheduleTarget(
       .filter(({ status }) => status !== "deleted")
       .map(({ path }) => normalizeRepositoryRelativePath(path)),
   );
+  const compilerInputChange =
+    checkId === "lint" &&
+    targetWorkspaces(target, inspection).some((workspace) =>
+      compilerInputsMayHaveChanged(workspace, changeSet),
+    );
   return actualRelevantPaths(checkId, target, inspection, changeSet).some(
     (path) => {
       if (
@@ -174,7 +180,9 @@ export function shouldScheduleTarget(
       const policy = policyForFile(checkId, path, "target");
       return (
         policy.severity !== "off" &&
-        (policy.when === "always" || changed.has(path))
+        (policy.when === "always" ||
+          changed.has(path) ||
+          (compilerInputChange && TYPESCRIPT_SOURCE.test(path)))
       );
     },
   );
