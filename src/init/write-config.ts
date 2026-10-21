@@ -36,6 +36,7 @@ import type {
 } from "./types.js";
 
 const EXACT_TARGETS = new Set([
+  ".github/workflows/zedbee.yml",
   ".zedbeerc.jsonc",
   "lefthook.yml",
   "lefthook.yaml",

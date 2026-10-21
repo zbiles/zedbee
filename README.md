@@ -70,6 +70,8 @@ node ./node_modules/zedbee/dist/cli.js scan --base origin/main --format sarif > 
 
 Run the installed CLI from the repository root. If Zedbee is installed in a subfolder such as `web/`, use `node ./web/node_modules/zedbee/dist/cli.js` instead, and install that folder's dependencies first. Project Prettier mode also requires `--trust-project-prettier` in CI.
 
+To create a GitHub PR workflow, select **Add GitHub pull-request workflow** during `zedbee init`, or run `zedbee init --workflow github --yes`. Setup previews the file, preserves an existing workflow, and uses the maintained Zedbee Action. See [workflow setup](docs/cli-reference.md#github-pull-request-workflow-setup).
+
 The checkout needs enough Git history to find where the branches split. On GitHub Actions, set `actions/checkout` to `fetch-depth: 0`. This mode checks committed code and reads configuration from the checked-out commit.
 
 The commit hooks do not cover ordinary `git rebase` or `git cherry-pick` operations. Run a committed branch scan after either operation, or use a required CI check to validate the resulting branch before merging.

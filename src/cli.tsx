@@ -73,6 +73,7 @@ interface CommanderInitOptions {
   osvUnavailable: InitOsvUnavailable;
   formatting?: InitFormattingChoice;
   formattingScope?: InitFormattingScope;
+  workflow?: "github" | "none";
   trustProjectPrettier: boolean;
   yes: boolean;
   format: "text" | "json";
@@ -229,7 +230,15 @@ export async function runCli(
 
   program
     .command("init")
-    .description("preview and safely initialize Zedbee policy and hooks")
+    .description(
+      "preview and safely initialize Zedbee policy, hooks, and GitHub workflow",
+    )
+    .addOption(
+      new Option(
+        "--workflow <workflow>",
+        "offer GitHub pull-request checks or leave workflows unchanged",
+      ).choices(["github", "none"]),
+    )
     .addOption(
       new Option("--profile <profile>", "initial check profile")
         .choices(["fast", "recommended", "thorough"])
@@ -309,6 +318,9 @@ export async function runCli(
             telemetry.summary(value);
           },
           profile: options.profile,
+          ...(options.workflow === undefined
+            ? {}
+            : { workflow: options.workflow }),
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
           osvUnavailable: options.osvUnavailable,

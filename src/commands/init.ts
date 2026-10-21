@@ -27,6 +27,10 @@ import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { parse as parseJsonc } from "jsonc-parser";
+import {
+  GithubWorkflowSetupError,
+  prepareGithubWorkflow,
+} from "../init/github-workflow.js";
 import { formatInitProposal } from "../init/format-proposal.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
@@ -37,6 +41,7 @@ import type {
   InitFormattingDetection,
   InitFormattingImport,
   InitHookChoice,
+  InitWorkflowChoice,
   InitOsvUnavailable,
   InitProposal,
 } from "../init/types.js";
@@ -61,6 +66,7 @@ export interface InitCommandOptions {
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
+  readonly workflow?: InitWorkflowChoice;
   readonly osvUnavailable?: InitOsvUnavailable;
   readonly formatting?: InitFormattingChoice;
   readonly formattingScope?: InitFormattingScope;
@@ -113,6 +119,7 @@ export interface InitCommandDependencies {
       projectTrust?: boolean,
       evaluatedImport?: InitFormattingImport,
       scope?: InitFormattingScope,
+      workflow?: InitWorkflowChoice,
     ) => InitProposal,
     evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
     prepareReview?: (proposal: InitProposal) => Promise<InitProposal>,
@@ -178,6 +185,11 @@ async function existingConfig(repositoryRoot: string): Promise<string | null> {
 function publicProposal(proposal: InitProposal) {
   return {
     profile: proposal.profile,
+    workflow: proposal.workflow ?? "none",
+    workflowAvailable: proposal.workflowAvailable ?? false,
+    ...(proposal.workflowMessage === undefined
+      ? {}
+      : { workflowMessage: proposal.workflowMessage }),
     hook: proposal.hook,
     hookActivation: proposal.hookActivation,
     ...(proposal.hooksPathChange === undefined
@@ -223,6 +235,10 @@ function renderText(proposal: InitProposal, applied: boolean): string {
       : "Zedbee initialization preview.",
     `Profile: ${proposal.profile}`,
     `Hook: ${proposal.hook}`,
+    `GitHub workflow: ${proposal.workflow === "github" ? "requested" : "not requested"}`,
+    ...(proposal.workflowMessage === undefined
+      ? []
+      : [proposal.workflowMessage]),
     `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
@@ -268,7 +284,9 @@ function renderText(proposal: InitProposal, applied: boolean): string {
 
 function renderInitFailure(error: unknown): string {
   const lines = ["Zedbee could not initialize this repository safely."];
-  if (error instanceof HookInstallationError) {
+  if (error instanceof GithubWorkflowSetupError) {
+    lines.push(`Reason: ${error.message}`);
+  } else if (error instanceof HookInstallationError) {
     lines.push(error.message);
   } else if (
     error instanceof RepositoryInspectionError &&
@@ -561,6 +579,18 @@ export async function executeInitCommand(
         existingConfig(repositoryRoot),
         resolveLocalSchemaReference(repositoryRoot),
       ]);
+    const workflowPreparation =
+      canPrompt || options.workflow === "github"
+        ? await prepareGithubWorkflow(repositoryRoot, inspection)
+        : undefined;
+    if (
+      options.workflow === "github" &&
+      (workflowPreparation?.status === "unsafe" ||
+        workflowPreparation?.status === "unsupported")
+    )
+      throw new GithubWorkflowSetupError(
+        workflowPreparation?.message ?? "GitHub workflow setup is unavailable.",
+      );
     const formattingSetup = await resolveFormattingSetup(repositoryRoot);
     const allProjectsTrusted =
       formattingSetup.projectRoots.length > 0 &&
@@ -679,8 +709,19 @@ export async function executeInitCommand(
         ? {}
         : { executableEvaluatedConfigs: effectiveEvaluatedConfigs }),
     };
+    const workflowProposalFields = {
+      workflow: options.workflow ?? ("none" as InitWorkflowChoice),
+      workflowAvailable: workflowPreparation?.status === "available",
+      ...(workflowPreparation?.message === undefined
+        ? {}
+        : { workflowMessage: workflowPreparation.message }),
+      ...(workflowPreparation?.change === undefined
+        ? {}
+        : { workflowChange: workflowPreparation.change }),
+    };
     const proposalBaseOptions = {
       repositoryRoot,
+      ...workflowProposalFields,
       ...(schemaReference === undefined ? {} : { schemaReference }),
       hook: hookIntegration.hook,
       configBefore,
@@ -758,6 +799,7 @@ export async function executeInitCommand(
         selectedProjectTrust = allProjectsTrusted,
         evaluatedImport: InitFormattingImport | undefined = undefined,
         selectedScope: InitFormattingScope = formattingScope,
+        selectedWorkflow: InitWorkflowChoice = options.workflow ?? "none",
       ): InitProposal => {
         const selectedIntegration = integrations.get(selectedHook);
         if (selectedIntegration === undefined)
@@ -810,6 +852,8 @@ export async function executeInitCommand(
                   : {}),
               };
         const selectedProposal = createInitProposal(inspection, {
+          ...workflowProposalFields,
+          workflow: selectedWorkflow,
           repositoryRoot,
           ...(schemaReference === undefined ? {} : { schemaReference }),
           configBefore,
