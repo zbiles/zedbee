@@ -52,7 +52,6 @@
     "docs/structural-security-coverage.md",
     "docs/support.md",
     "schema",
-    "licenses/production-inventory.json",
     "licenses/reviewed-overrides.json",
     "licenses/reviewed-obligations.json",
     "licenses/overrides"

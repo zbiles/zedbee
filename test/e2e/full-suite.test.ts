@@ -313,6 +313,7 @@ describe("release verification contract", () => {
     "src/internal.ts",
     "dist/unexpected-private-note.md",
     "dist/unexpected.js",
+    "licenses/production-inventory.json",
   ])("rejects an unapproved package path: %s", (unapproved) => {
     expect(() =>
       assertAllowedPackageFiles(["package.json", unapproved], {
@@ -333,7 +334,6 @@ describe("release verification contract", () => {
           "docs/support.md",
           "docs/reporting.md",
           "schema/zedbee.schema.json",
-          "licenses/production-inventory.json",
           "licenses/reviewed-overrides.json",
           "licenses/reviewed-obligations.json",
           "licenses/overrides/example-LICENSE",
