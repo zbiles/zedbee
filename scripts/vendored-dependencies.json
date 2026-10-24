@@ -4021,6 +4021,44 @@
           "sha256": "c9c2064a4cc8e5982bbabb330816defbf6835b55febbc468a87224b5213fbdee"
         }
       ]
+    },
+    {
+      "name": "get-tsconfig",
+      "version": "4.14.1",
+      "integrity": "sha512-Dz/6HxkrxgNehhxLVeyv8sad9UzF2xBVeaKBQNDfJ5XiSXmp2gTR0eO0RWiT2NCKS5aGP9jjkOMggTN90qU50A==",
+      "source": "node_modules/knip/node_modules/get-tsconfig",
+      "destination": "dist/vendor/knip/node_modules/get-tsconfig",
+      "owner": "knip",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "10c904a49af44409b073532e45a53fd4df19bdf26eaf9afc7917258c2b354382"
+        },
+        {
+          "path": "README.md",
+          "sha256": "0735cbc7ad6193a7c3c2737819be4f4b96107fa28c63aecb5e8372040858a000"
+        },
+        {
+          "path": "dist/index.cjs",
+          "sha256": "703096500efe95590168b531c708b2a3c49eb1a62cea772376f61c86864fd9a2"
+        },
+        {
+          "path": "dist/index.d.cts",
+          "sha256": "d8af17cb4c5babfc822cb6dade139c25957f9f3881e9df5d0d68c1f9be3f6eaa"
+        },
+        {
+          "path": "dist/index.d.mts",
+          "sha256": "d8af17cb4c5babfc822cb6dade139c25957f9f3881e9df5d0d68c1f9be3f6eaa"
+        },
+        {
+          "path": "dist/index.mjs",
+          "sha256": "cf9a81d6870a7a36a9ef33f2b56efc6be31b2dbe86daf8e33aae2ab2edc16d25"
+        },
+        {
+          "path": "package.json",
+          "sha256": "229d7bd16ef9b22cc5278f1f3496b833297b3af7fdb3dc873227c5bd8927827f"
+        }
+      ]
     }
   ]
 }

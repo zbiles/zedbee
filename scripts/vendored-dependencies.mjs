@@ -15,6 +15,9 @@ export const vendoredInventory = JSON.parse(
     "utf8",
   ),
 );
+const bundledInventory = JSON.parse(
+  readFileSync(new URL("./bundled-dependencies.json", import.meta.url), "utf8"),
+);
 export const VENDORED_FILES = Object.freeze(
   vendoredInventory.packages.flatMap((entry) =>
     entry.files.map((file) => `${entry.destination}/${file.path}`),
@@ -88,7 +91,20 @@ export function assertVendoredDependencyLock(
               (child) => child.owner === entry.name && child.name === name,
             )
           : undefined;
-      const version = privateHelper?.version ?? manifest.dependencies?.[name];
+      let version = privateHelper?.version ?? manifest.dependencies?.[name];
+      if (version === undefined && entry.owner !== undefined) {
+        const packagePath = `node_modules/${name}`;
+        const reviewed = bundledInventory.packages.find(
+          (candidate) => candidate.path === packagePath,
+        );
+        const shared = lockfile.packages[packagePath];
+        if (
+          reviewed !== undefined &&
+          shared?.version === reviewed.version &&
+          shared?.integrity === reviewed.integrity
+        )
+          version = shared.version;
+      }
       if (typeof version !== "string" || !satisfies(version, range))
         throw new Error(
           `Vendored ${entry.name} needs a pinned runtime dependency: ${name}`,

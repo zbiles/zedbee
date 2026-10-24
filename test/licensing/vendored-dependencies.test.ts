@@ -191,3 +191,39 @@ it("generates a reviewed private helper from the installed dependency resolution
     ),
   ).toBe("private-old");
 });
+
+it("requires a private helper's shared runtime to match the reviewed bundle", async () => {
+  const { manifest, lockfile, inventory } = await fixture();
+  const actualLock = JSON.parse(
+    await readFile(new URL("../../package-lock.json", import.meta.url), "utf8"),
+  );
+  const shared = actualLock.packages["node_modules/resolve-pkg-maps"];
+  const lock = lockfile as unknown as {
+    packages: Record<string, Record<string, unknown>>;
+  };
+  lock.packages["node_modules/resolve-pkg-maps"] = structuredClone(shared);
+  lock.packages["node_modules/tool/node_modules/helper"]!.dependencies = {
+    "resolve-pkg-maps": "^1.0.0",
+  };
+  const { assertVendoredDependencyLock } = await import(
+    script("vendored-dependencies")
+  );
+  expect(() =>
+    assertVendoredDependencyLock(manifest, lockfile, inventory),
+  ).not.toThrow();
+  for (const update of [
+    { version: "999.0.0" },
+    { integrity: "sha512-unreviewed" },
+  ]) {
+    const changed = structuredClone(lockfile);
+    Object.assign(
+      (changed as unknown as { packages: Record<string, unknown> }).packages[
+        "node_modules/resolve-pkg-maps"
+      ]!,
+      update,
+    );
+    expect(() =>
+      assertVendoredDependencyLock(manifest, changed, inventory),
+    ).toThrow(/pinned runtime/u);
+  }
+});

@@ -124,7 +124,8 @@ it.each([".", "web"])(
       const probe = `
       import assert from 'node:assert/strict';
       import { createRequire } from 'node:module';
-      import { join } from 'node:path';
+      import { dirname, join } from 'node:path';
+      import { readFileSync } from 'node:fs';
       import { pathToFileURL } from 'node:url';
       import { PassThrough } from 'node:stream';
       const app = createRequire(join(process.cwd(), 'package.json'));
@@ -147,6 +148,10 @@ it.each([".", "web"])(
       const knipRequire = createRequire(managedKnipEntry);
       await import(pathToFileURL(knipRequire.resolve('oxc-parser')));
       assert.equal(knipRequire.resolve('zod'), own.resolve('zod'));
+      const helperVersion = entry => JSON.parse(readFileSync(join(dirname(entry), '..', 'package.json'), 'utf8')).version;
+      assert.equal(helperVersion(knipRequire.resolve('get-tsconfig')), '4.14.1');
+      assert.equal(helperVersion(own.resolve('get-tsconfig')), ${JSON.stringify(zedbee.dependencies["get-tsconfig"])});
+      assert.notEqual(knipRequire.resolve('get-tsconfig'), own.resolve('get-tsconfig'));
       const { render, Text } = await import(pathToFileURL(inkPath));
       const output = new PassThrough();
       let text = '';
