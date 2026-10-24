@@ -716,9 +716,19 @@ export function createInitProposal(
     config,
     ...(options.hookChange === undefined ? [] : [options.hookChange]),
     ...(options.hookChanges ?? []),
+    ...(options.workflow === "github" && options.workflowChange !== undefined
+      ? [options.workflowChange]
+      : []),
   ];
   return Object.freeze({
     repositoryRoot: options.repositoryRoot,
+    ...(options.workflow === undefined ? {} : { workflow: options.workflow }),
+    ...(options.workflowAvailable === undefined
+      ? {}
+      : { workflowAvailable: options.workflowAvailable }),
+    ...(options.workflowMessage === undefined
+      ? {}
+      : { workflowMessage: options.workflowMessage }),
     profile: options.profile,
     hook,
     hookActivation,

@@ -1,11 +1,12 @@
 import type { TelemetrySummary } from "../telemetry/client.js";
 import { isAbsolute, relative, resolve } from "node:path";
 import { buildFixPlan, renderFixPlanJson } from "../fixes/build-plan.js";
-import { applyFixPlan } from "../fixes/apply-plan.js";
+import { applyFixPlan, FixApplyCleanupError } from "../fixes/apply-plan.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
-import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
+import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
+import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import {
   writeCommandDiagnostics,
   SNAPSHOT_CLEANUP_WARNING,
@@ -267,14 +268,61 @@ function renderPlanText(
   return `${lines.join("\n")}\n`;
 }
 
-function publicPlan(plan: FixPlan, applied: boolean, result?: FixResult) {
+interface CleanupFailureDetails {
+  readonly code: "SNAPSHOT_CLEANUP_FAILED";
+  readonly message: string;
+  readonly remediation: string;
+  readonly path?: string;
+}
+
+function cleanupDiagnosis(
+  error: unknown,
+): AnalysisSessionCleanupError | undefined {
+  if (error instanceof AnalysisSessionCleanupError) return error;
+  if (!(error instanceof Error)) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(error, "cleanupFailure");
+  return descriptor !== undefined &&
+    "value" in descriptor &&
+    descriptor.value instanceof AnalysisSessionCleanupError
+    ? descriptor.value
+    : undefined;
+}
+
+function cleanupFailureDetails(
+  error: AnalysisSessionCleanupError,
+): CleanupFailureDetails {
+  let path: string | undefined;
+  try {
+    path = validateReportableSnapshotPath(error.temporaryPath ?? "");
+    opaqueTemporaryReportPath(path);
+  } catch {
+    path = undefined;
+  }
+  return {
+    code: "SNAPSHOT_CLEANUP_FAILED",
+    message: "Zedbee could not remove its temporary snapshot.",
+    remediation:
+      path === undefined
+        ? "Inspect temporary-directory permissions and review applied changes before retrying."
+        : "Review applied changes, then remove the retained temporary snapshot after confirming Zedbee has stopped.",
+    ...(path === undefined ? {} : { path }),
+  };
+}
+
+function publicPlan(
+  plan: FixPlan,
+  applied: boolean,
+  result?: FixResult,
+  cleanupFailure?: CleanupFailureDetails,
+) {
   const rendered = JSON.parse(renderFixPlanJson(plan)) as FixPlan;
   return {
     applied,
     schemaVersion: rendered.schemaVersion,
     target: rendered.target,
     selectedChecks: [...rendered.selectedChecks],
-    exitCode: rendered.exitCode,
+    exitCode: cleanupFailure === undefined ? rendered.exitCode : 2,
+    ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
     ...(rendered.checks === undefined
       ? {}
       : {
@@ -504,9 +552,16 @@ export async function executeFixCommand(
   const stages: DiagnosticTimings = {};
   const diagnosticEntries: DiagnosticEntry[] = [];
   let cleanupFailed = false;
+  let applying: PreparedFixPlan | undefined;
+  let appliedResult: FixResult | undefined;
   const executor = options.executor ?? createCommandExecutor(options.service);
   const closeExecutor = () =>
     options.executor === undefined ? executor.close() : Promise.resolve();
+  const summarize = (value: TelemetrySummary) => {
+    try {
+      options.telemetrySummary?.(value);
+    } catch {}
+  };
   try {
     options.signal?.throwIfAborted();
     const repositoryRoot = await timeCommandStage(stages, "repository", () =>
@@ -535,11 +590,6 @@ export async function executeFixCommand(
           : {}),
       }),
     );
-    const summarize = (value: TelemetrySummary) => {
-      try {
-        options.telemetrySummary?.(value);
-      } catch {}
-    };
     summarize({
       check_ids: [...prepared.publicPlan.selectedChecks],
       skipped_count: Math.min(1_000_000, prepared.publicPlan.summary.skipped),
@@ -628,6 +678,7 @@ export async function executeFixCommand(
     }
 
     options.signal?.throwIfAborted();
+    applying = prepared;
     const result = await timeCommandStage(stages, "apply", () =>
       dependencies.applyFixPlan(prepared, {
         executor,
@@ -637,6 +688,7 @@ export async function executeFixCommand(
           : {}),
       }),
     );
+    appliedResult = result;
     summarize({
       outcome: "applied",
       applied_count: Math.min(1_000_000, result.appliedFixes),
@@ -682,8 +734,43 @@ export async function executeFixCommand(
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
   } catch (error) {
-    cleanupFailed = hasAnalysisCleanupFailure(error);
-    if (cleanupFailed) io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+    const cleanup = cleanupDiagnosis(error);
+    cleanupFailed = cleanup !== undefined;
+    const details =
+      cleanup === undefined ? undefined : cleanupFailureDetails(cleanup);
+    const retainedResult =
+      cleanup instanceof FixApplyCleanupError ? cleanup.result : appliedResult;
+    if (
+      applying !== undefined &&
+      cleanup !== undefined &&
+      retainedResult !== undefined
+    ) {
+      summarize({
+        applied_count: Math.min(1_000_000, retainedResult.appliedFixes),
+      });
+      if (appliedResult === undefined)
+        diagnosticEntries.push(...retainedResult.issues);
+      if (formatFor(options) === "json") {
+        io.writeStdout(
+          `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details), null, 2)}\n`,
+        );
+      } else {
+        io.writeStdout(
+          renderResultText(
+            applying.publicPlan,
+            retainedResult,
+            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+          ),
+        );
+      }
+    }
+    if (cleanupFailed) {
+      io.writeStderr(SNAPSHOT_CLEANUP_WARNING);
+      if (details?.path !== undefined)
+        io.writeStderr(`Path: ${opaqueTemporaryReportPath(details.path)}\n`);
+      if (details !== undefined)
+        io.writeStderr(`Remediation: ${details.remediation}\n`);
+    }
     if (options.signal?.aborted === true) {
       io.writeStderr("Zedbee fix was interrupted.\n");
     } else {

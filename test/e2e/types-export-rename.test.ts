@@ -165,8 +165,20 @@ it("reports export, signature, type, and deletion breakages in unchanged TypeScr
       const typeChecks = report.checks.filter(
         (check: { checkId: string }) => check.checkId === "types",
       );
-      expect(typeChecks, result.stdout).toHaveLength(1);
-      const types = typeChecks[0];
+      expect(typeChecks, result.stdout).toHaveLength(2);
+      expect(
+        typeChecks.find(
+          (check: { target: string }) => check.target === "extension",
+        ),
+        result.stdout,
+      ).toMatchObject({
+        target: "extension",
+        status: "completed",
+        findings: [],
+      });
+      const types = typeChecks.find(
+        (check: { target: string }) => check.target === "web",
+      );
       expect(types, result.stdout).toMatchObject({
         target: "web",
         status: "completed",

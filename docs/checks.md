@@ -15,7 +15,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | ------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `formatting`             | Prettier formatting                                         | Transforms staged target files and intersects formatting changes with added lines                                              | Managed fixing formats the complete current working file, including unstaged work                                |
 | `lint`                   | ESLint, typescript-eslint, and managed correctness rules    | Compares workspace diagnostics and attributes locations/entities                                                               | Does not load project ESLint plugins or executable config                                                        |
-| `types`                  | TypeScript diagnostics                                      | Compares isolated baseline/target programs for each workspace                                                                  | TypeScript source requires a contained staged `tsconfig.json`                                                    |
+| `types`                  | TypeScript diagnostics                                      | Compares isolated baseline/target programs for each workspace                                                                  | TypeScript source must be covered by a contained snapshot project                                                |
 | `cyclomaticComplexity`   | Branch-path complexity                                      | Compares changed syntax entities against `max` and worsening policy                                                            | Thresholds require team calibration                                                                              |
 | `readabilityComplexity`  | Zedbee's original nesting/readability metric                | Compares changed syntax entities against `max` and worsening policy                                                            | It is not Sonar Cognitive Complexity and scores are not interchangeable                                          |
 | `structuralSecurity`     | Managed ast-grep rules for high-confidence local patterns   | Compares rule/location observations in JavaScript and TypeScript source                                                        | Narrower than Semgrep; no general taint, dataflow, reachability, interfile, or live registry coverage            |
@@ -34,6 +34,24 @@ Intent-to-add records supply no staged file content, so Zedbee excludes them as 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
 
 ## TypeScript diagnostics
+
+For any nonempty delta, `types` and typed `lint` conservatively check every
+discovered workspace containing TypeScript sources, because configuration, JSON
+imports, and cross-workspace dependencies can affect unchanged consumers. Both
+checks compare findings across the project, including unchanged files. Existing
+baseline findings remain non-blocking when unchanged source moves or is renamed.
+File policies still control which lint findings are enabled. Other analyzers
+retain their own scope rules.
+
+Types and typed lint share project discovery and validated compiler inputs within
+an analysis session. They load contained snapshot projects, including sibling
+configurations and project references. An option-only configuration used through
+`extends` is a helper. Canonical `tsconfig.json`, configurations declaring their
+own source selectors or project references, and explicitly referenced
+configurations retain their project role. TypeScript source outside every loaded
+project makes `types` incomplete rather than silently passing. Configuration failures report the
+safe repository-relative configuration path, TypeScript diagnostic code when
+available, and affected snapshot; raw compiler messages are not exported.
 
 The `types` check compares diagnostics across the analyzed project. A changed
 declaration can introduce errors at unchanged references in the same file or in

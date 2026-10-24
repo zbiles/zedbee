@@ -1,0 +1,55 @@
+name: Performance comparison
+
+on:
+  workflow_call:
+    outputs:
+      evidence:
+        description: Successful same-job base-versus-head phase comparison
+        value: ${{ jobs.performance.outputs.evidence }}
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    name: Base versus head / Ubuntu / Node 24
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      evidence: ${{ steps.compare.outputs.evidence }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Select the previous reachable release, or first parent before an initial release
+        run: |
+          base=$(node --experimental-strip-types bench/compare.mts --select-base)
+          git worktree add --detach "$RUNNER_TEMP/zedbee-performance-base" "$base"
+      - name: Build both revisions with their own locked dependencies
+        run: |
+          npm ci --ignore-scripts --prefix "$RUNNER_TEMP/zedbee-performance-base"
+          npm run build --prefix "$RUNNER_TEMP/zedbee-performance-base"
+          npm ci --ignore-scripts
+          npm run build
+      - name: Measure both revisions on this runner and compare common phases
+        id: compare
+        run: |
+          node --experimental-strip-types bench/compare.mts --base-root "$RUNNER_TEMP/zedbee-performance-base" --output "$RUNNER_TEMP/performance-comparison.json"
+          echo "evidence=verified" >> "$GITHUB_OUTPUT"
+        env:
+          ZEDBEE_TELEMETRY_DISABLED: "1"
+          ZEDBEE_BENCHMARK_RUNNER: ubuntu-latest
+      - name: Retain comparison and original measurements
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: performance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/performance-comparison*.json
+          if-no-files-found: warn
+      - name: Remove the baseline checkout
+        if: always()
+        run: git worktree remove --force "$RUNNER_TEMP/zedbee-performance-base"

@@ -15,6 +15,7 @@ const RELEASE_VERSION =
 
 const LOCAL_STEPS = Object.freeze([
   { id: "build", command: "npm", args: ["run", "build"] },
+  { id: "plugin", command: "npm", args: ["run", "plugin:check"] },
   { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
   {
     id: "tests",
@@ -30,7 +31,7 @@ const LOCAL_STEPS = Object.freeze([
   {
     id: "benchmark",
     command: "node",
-    args: ["--experimental-strip-types", "bench/run.mts"],
+    args: ["--experimental-strip-types", "bench/run.mts", "--smoke"],
   },
   {
     id: "package",
@@ -219,7 +220,16 @@ function gitRemotes(cwd) {
   });
 }
 
+export function assertPerformanceEvidence(env = process.env) {
+  if (env.ZEDBEE_PERFORMANCE_EVIDENCE !== "verified") {
+    throw new Error(
+      "Release blocked: successful same-job base-versus-head performance comparison is required; benchmark smoke measurements are not regression evidence.",
+    );
+  }
+}
+
 function assertReleaseOnlyGates(cwd) {
+  assertPerformanceEvidence();
   const sbom = run(
     {
       id: "sbom",
@@ -255,6 +265,9 @@ export function runVerification(mode, cwd = process.cwd()) {
     const readiness = releaseReadiness(packageJson, gitRemotes(cwd));
     if (!readiness.ready) throw new Error(readiness.message);
   }
+  process.stdout.write(
+    "Benchmark smoke measures phases only; performance regression comparison is a separate gate.\n",
+  );
   for (const step of verificationSteps(mode)) run(step, cwd);
   if (mode === "release") assertReleaseOnlyGates(cwd);
 }

@@ -1,7 +1,9 @@
 import { buildFixPlan } from "../../../src/fixes/build-plan.js";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { cp, mkdir, readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../../src/git/client.js";
@@ -18,6 +20,8 @@ import {
 } from "../../../src/checks/prettier/project-trust.js";
 import type { PreparedFixPlan } from "../../../src/fixes/types.js";
 import { createGitRepository } from "../../helpers/git-repository.js";
+import { writeWorkingFile } from "../../../src/fixes/write-working-file.js";
+import { AnalysisSessionCleanupError } from "../../../src/scan/analysis-failure.js";
 
 const repositoryPackageRoot = fileURLToPath(
   new URL("../../../", import.meta.url),
@@ -123,6 +127,298 @@ function planFor(
 }
 
 describe("project Prettier fix parity", () => {
+  it("reports a retained snapshot after cleanup denial without losing committed fixes", async () => {
+    const repository = await projectRepository();
+    const source = 'export const value = "hello";\n';
+    const selection = await projectSelection(repository.root);
+    const plan = planFor(repository.root, selection, source);
+    const originalRemove = fs.rm;
+    const retained: string[] = [];
+    fs.rm = async (path, options) => {
+      if (basename(String(path)).startsWith("zedbee-snapshot-")) {
+        retained.push(String(path));
+        throw Object.assign(new Error("private injected cleanup denial"), {
+          code: "EACCES",
+        });
+      }
+      return originalRemove(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      const failure = await applyFixPlan(plan).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AnalysisSessionCleanupError);
+      expect(failure).toHaveProperty("temporaryPath", retained[0]);
+      expect(failure).toHaveProperty("cause.code", "EACCES");
+      expect(failure).toHaveProperty("result.changedFiles", ["value.ts"]);
+      expect(failure).toHaveProperty("result.appliedFixes", 1);
+      expect(await repository.read("value.ts")).toBe(
+        "export const value = 'hello';\n",
+      );
+      expect(
+        await readFile(join(retained[0]!, "target/value.ts"), "utf8"),
+      ).toBe(source);
+      expect(JSON.stringify(failure)).not.toContain("private injected");
+    } finally {
+      fs.rm = originalRemove;
+      syncBuiltinESMExports();
+      for (const path of retained)
+        await originalRemove(path, { recursive: true, force: true });
+    }
+  });
+  it("retains the formatter failure alongside an actionable cleanup failure", async () => {
+    const repository = await projectRepository();
+    const selection = await projectSelection(repository.root);
+    const source = "export const = ;\n";
+    await repository.write("value.ts", source);
+    const originalRemove = fs.rm;
+    const retained: string[] = [];
+    fs.rm = async (path, options) => {
+      if (basename(String(path)).startsWith("zedbee-snapshot-")) {
+        retained.push(String(path));
+        throw Object.assign(new Error("private cleanup denial"), {
+          code: "EACCES",
+        });
+      }
+      return originalRemove(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      const failure = await applyFixPlan(
+        planFor(repository.root, selection, source),
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AnalysisSessionCleanupError);
+      expect(failure).toHaveProperty(
+        "cause.code",
+        "PROJECT_PRETTIER_WORKER_FAILED",
+      );
+      expect(failure).toHaveProperty("result.issues.0.kind", "format");
+      expect(failure).toHaveProperty("result.changedFiles", []);
+      expect(failure).toHaveProperty("temporaryPath", retained[0]);
+      expect(await repository.read("value.ts")).toBe(source);
+      expect(JSON.stringify(failure)).not.toContain("private cleanup");
+    } finally {
+      fs.rm = originalRemove;
+      syncBuiltinESMExports();
+      for (const path of retained)
+        await originalRemove(path, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    new Error("private cancellation"),
+    Object.freeze(new Error("private frozen cancellation")),
+    "private primitive cancellation",
+  ])(
+    "preserves cancellation identity or cause and earlier committed fixes when cleanup fails",
+    async (reason) => {
+      const repository = await projectRepository();
+      const source = 'export const value = "hello";\n';
+      await repository.write("z-second.ts", source);
+      await repository.git(["add", "--", "z-second.ts"]);
+      const selection = await projectSelection(repository.root);
+      const base = planFor(repository.root, selection, source);
+      const plan: PreparedFixPlan = {
+        ...base,
+        candidates: [
+          ...base.candidates,
+          { ...base.candidates[0]!, file: "z-second.ts" },
+        ],
+        workingFiles: new Map([
+          ...base.workingFiles,
+          [
+            "z-second.ts",
+            { ...base.workingFiles.get("value.ts")!, path: "z-second.ts" },
+          ],
+        ]),
+      };
+      const controller = new AbortController();
+      const originalRemove = fs.rm;
+      const retained: string[] = [];
+      fs.rm = async (path, options) => {
+        if (basename(String(path)).startsWith("zedbee-snapshot-")) {
+          retained.push(String(path));
+          throw Object.assign(new Error("private cleanup denial"), {
+            code: "EACCES",
+          });
+        }
+        return originalRemove(path, options);
+      };
+      syncBuiltinESMExports();
+      try {
+        const failure = await applyFixPlan(plan, {
+          signal: controller.signal,
+          async writeWorkingFile(request) {
+            await writeWorkingFile(request);
+            controller.abort(reason);
+          },
+        }).catch((error: unknown) => error);
+        const extensible =
+          reason instanceof Error && Object.isExtensible(reason);
+        if (extensible) expect(failure).toBe(reason);
+        else expect(failure).toHaveProperty("cause", reason);
+        const cleanup = extensible
+          ? Object.getOwnPropertyDescriptor(failure, "cleanupFailure")?.value
+          : failure;
+        expect(cleanup).toBeInstanceOf(AnalysisSessionCleanupError);
+        expect(cleanup).toHaveProperty("temporaryPath", retained[0]);
+        expect(cleanup).toHaveProperty("result.changedFiles", ["value.ts"]);
+        expect(cleanup).toHaveProperty("result.appliedFixes", 1);
+        expect(cleanup).toHaveProperty("result.exitCode", 1);
+        expect(await repository.read("value.ts")).toBe(
+          "export const value = 'hello';\n",
+        );
+        expect(await repository.read("z-second.ts")).toBe(source);
+        expect(JSON.stringify(failure)).not.toContain(
+          reason instanceof Error ? reason.message : reason,
+        );
+      } finally {
+        fs.rm = originalRemove;
+        syncBuiltinESMExports();
+        for (const path of retained)
+          await originalRemove(path, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("retains the snapshot when real formatter workspace cleanup fails", async () => {
+    const repository = await projectRepository();
+    const source = 'export const value = "hello";\n';
+    const selection = await projectSelection(repository.root);
+    const originalRemove = fs.rm;
+    const retained: string[] = [];
+    let snapshotRemovalAttempted = false;
+    fs.rm = async (path, options) => {
+      if (basename(String(path)).startsWith("zedbee-snapshot-"))
+        snapshotRemovalAttempted = true;
+      if (basename(String(path)).startsWith("zedbee-project-workspace-")) {
+        retained.push(String(path));
+        throw Object.assign(new Error("private worker workspace denial"), {
+          code: "EACCES",
+        });
+      }
+      return originalRemove(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      const failure = await applyFixPlan(
+        planFor(repository.root, selection, source),
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AnalysisSessionCleanupError);
+      expect(snapshotRemovalAttempted).toBe(false);
+      expect(failure).toHaveProperty("result.changedFiles", ["value.ts"]);
+      const path = (failure as AnalysisSessionCleanupError).temporaryPath!;
+      retained.push(path);
+      expect(await readFile(join(path, "target/value.ts"), "utf8")).toBe(
+        source,
+      );
+      expect(JSON.stringify(failure)).not.toContain("private worker");
+    } finally {
+      fs.rm = originalRemove;
+      syncBuiltinESMExports();
+      for (const path of retained)
+        await originalRemove(path, { recursive: true, force: true });
+    }
+  });
+
+  it("does not hide snapshot construction cleanup denial as an ordinary format issue", async () => {
+    const repository = await projectRepository();
+    const source = 'export const value = "hello";\n';
+    const selection = await projectSelection(repository.root);
+    const originalRemove = fs.rm;
+    const originalMkdir = fs.mkdir;
+    const retained: string[] = [];
+    fs.mkdir = (async (path, options) => {
+      if (
+        basename(String(path)) === "target" &&
+        String(path).includes("zedbee-snapshot-")
+      ) {
+        throw Object.assign(new Error("private construction denial"), {
+          code: "EACCES",
+        });
+      }
+      return originalMkdir(path, options);
+    }) as typeof fs.mkdir;
+    fs.rm = async (path, options) => {
+      if (basename(String(path)).startsWith("zedbee-snapshot-")) {
+        retained.push(String(path));
+        throw Object.assign(new Error("private cleanup denial"), {
+          code: "EACCES",
+        });
+      }
+      return originalRemove(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      const failure = await applyFixPlan(
+        planFor(repository.root, selection, source),
+      ).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(AnalysisSessionCleanupError);
+      expect(failure).toHaveProperty("temporaryPath", retained[0]);
+      expect(failure).toHaveProperty(
+        "cause.code",
+        "SNAPSHOT_CONSTRUCTION_FAILED",
+      );
+      expect(failure).toHaveProperty("result.issues.0.kind", "format");
+      expect(await repository.read("value.ts")).toBe(source);
+      expect(JSON.stringify(failure)).not.toContain("private construction");
+    } finally {
+      fs.rm = originalRemove;
+      fs.mkdir = originalMkdir;
+      syncBuiltinESMExports();
+      for (const path of retained)
+        await originalRemove(path, { recursive: true, force: true });
+    }
+  });
+
+  it("shares one staged snapshot and project formatter across files in an apply session", async () => {
+    const repository = await projectRepository();
+    const source = 'export const value = "hello";\n';
+    await repository.write("z-second.ts", source);
+    await repository.git(["add", "--", "z-second.ts"]);
+    const selection = await projectSelection(repository.root);
+    const base = planFor(repository.root, selection, source);
+    const plan: PreparedFixPlan = {
+      ...base,
+      candidates: [
+        ...base.candidates,
+        { ...base.candidates[0]!, file: "z-second.ts" },
+      ],
+      workingFiles: new Map([
+        ...base.workingFiles,
+        [
+          "z-second.ts",
+          { ...base.workingFiles.get("value.ts")!, path: "z-second.ts" },
+        ],
+      ]),
+    };
+    const originalRemove = fs.rm;
+    let snapshotsRemoved = 0;
+    let workspacesRemoved = 0;
+    fs.rm = async (path, options) => {
+      if (basename(String(path)).startsWith("zedbee-snapshot-"))
+        snapshotsRemoved++;
+      if (basename(String(path)).startsWith("zedbee-project-workspace-"))
+        workspacesRemoved++;
+      return originalRemove(path, options);
+    };
+    syncBuiltinESMExports();
+    try {
+      const result = await applyFixPlan(plan);
+      expect(result.changedFiles).toEqual(["value.ts", "z-second.ts"]);
+      expect(await repository.read("value.ts")).toBe(
+        "export const value = 'hello';\n",
+      );
+      expect(await repository.read("z-second.ts")).toBe(
+        "export const value = 'hello';\n",
+      );
+      expect(snapshotsRemoved).toBe(1);
+      expect(workspacesRemoved).toBe(1);
+    } finally {
+      fs.rm = originalRemove;
+      syncBuiltinESMExports();
+    }
+  });
+
   it("formats the working file with the project engine and preserves the index", async () => {
     const repository = await projectRepository();
     const selection = await projectSelection(repository.root);

@@ -68,6 +68,19 @@ function doctorOptions(
 }
 
 describe("doctor diagnostics", () => {
+  it("finds the shipped third-party notices without a persisted license inventory", async () => {
+    const diagnostic = await defaultDiagnosticProbe("license-notices", {
+      cwd: "/unused",
+      environment: {},
+    });
+
+    expect(diagnostic).toEqual({
+      id: "license-notices",
+      status: "pass",
+      message: "Third-party license notices are present.",
+    });
+  });
+
   it("uses Node-native security and connectivity diagnostics only", () => {
     expect(DOCTOR_DIAGNOSTIC_IDS).toEqual(
       expect.arrayContaining([

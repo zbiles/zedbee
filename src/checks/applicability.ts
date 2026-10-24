@@ -11,6 +11,10 @@ import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  compilerInputsMayHaveChanged,
+  hasTypeScriptInputs,
+} from "./compiler-inputs.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
@@ -167,32 +171,15 @@ export async function inspectManagedCheck(
     workspaces = workspaces.filter(
       (workspace) =>
         workspace.sourceFiles.length > 0 &&
-        (always || workspace.sourceFiles.some((path) => changed.has(path))),
+        (always ||
+          compilerInputsMayHaveChanged(workspace, context.changeSet) ||
+          workspace.sourceFiles.some((path) => changed.has(path))),
     );
   else if (checkId === "types") {
-    const changedTypescript = new Set(
-      files
-        .flatMap((file) =>
-          file.previousPath === undefined
-            ? [file.path]
-            : [file.path, file.previousPath],
-        )
-        .filter((path) => TYPESCRIPT.test(path)),
-    );
-    const baselineSources = new Map(
-      context.baselineInspection.workspaces.map((workspace) => [
-        workspace.relativeRoot,
-        workspace.sourceFiles,
-      ]),
-    );
     workspaces = workspaces.filter(
       (workspace) =>
-        workspace.sourceFiles.some((path) => TYPESCRIPT.test(path)) &&
-        (always ||
-          [
-            ...workspace.sourceFiles,
-            ...(baselineSources.get(workspace.relativeRoot) ?? []),
-          ].some((path) => changedTypescript.has(path))),
+        hasTypeScriptInputs(workspace) &&
+        (always || compilerInputsMayHaveChanged(workspace, context.changeSet)),
     );
   } else {
     if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {

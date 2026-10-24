@@ -11,6 +11,7 @@ const temporaryRoot = mkdtempSync(join(tmpdir(), "zedbee-bundled-inventory-"));
 try {
   const invocation = commandInvocation("npm", [
     "pack",
+    root,
     "--ignore-scripts",
     "--json",
     "--cache",

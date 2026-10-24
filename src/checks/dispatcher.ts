@@ -434,6 +434,22 @@ async function collectObservations(
         relevantConfig: {
           schemaVersion: runContext.config.schemaVersion,
           behavior,
+          // Collection pairs observations and computes projectDelta from the
+          // change metadata, including mode-only edits absent from file bytes.
+          changeSet: {
+            isEmpty: runContext.changeSet.isEmpty,
+            files: [...runContext.changeSet.files.values()]
+              .sort((left, right) => compareCodeUnits(left.path, right.path))
+              .map((file) => ({
+                path: file.path,
+                previousPath: file.previousPath,
+                status: file.status,
+                addedRanges: [...file.addedRanges].sort(
+                  (left, right) =>
+                    left.start - right.start || left.end - right.end,
+                ),
+              })),
+          },
           baseline: cacheInspection(
             runContext.baselineInspection,
             runContext.target,

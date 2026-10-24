@@ -76,6 +76,188 @@ async function context(
 }
 
 describe("TypeScript observation adapter", () => {
+  it("checks a sibling tools project using its own compiler options", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", {
+        compilerOptions: { strict: true },
+        include: ["src"],
+      });
+      await fixture.writeJson("tsconfig.tools.json", {
+        compilerOptions: { strict: true },
+        include: ["tools"],
+      });
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+      await fixture.write(
+        "tools/build.ts",
+        "export const build: number = 1;\n",
+      );
+    }
+    await value.staged.write(
+      "tools/build.ts",
+      'export const build: number = "wrong";\n',
+    );
+    const collected = await typescriptAdapter.collect(
+      await context(value, changes("tools/build.ts")),
+    );
+    expect(collected.targetObservations).toContainEqual(
+      expect.objectContaining({
+        rule: "typescript/TS2322",
+        location: expect.objectContaining({ file: "tools/build.ts" }),
+      }),
+    );
+  });
+
+  it("does not promote an inherited base config into a source project", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.base.json", {
+        compilerOptions: { strict: true },
+      });
+      await fixture.writeJson("tsconfig.json", {
+        extends: "./tsconfig.base.json",
+        include: ["src"],
+      });
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+      await fixture.write(
+        "tools/build.ts",
+        "export const build: number = 1;\n",
+      );
+    }
+    await expect(
+      typescriptAdapter.collect(
+        await context(value, changes("tools/build.ts")),
+      ),
+    ).rejects.toMatchObject({
+      code: "TYPESCRIPT_PROJECT_MISMATCH",
+      paths: ["tools/build.ts"],
+      projectPaths: ["tsconfig.json"],
+    });
+  });
+
+  it("reports requested files excluded by every project as incomplete", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged]) {
+      await fixture.writeJson("tsconfig.json", { files: [], references: [] });
+      await fixture.write(
+        "src/value.ts",
+        'export const value: number = "wrong";\n',
+      );
+    }
+    await expect(
+      typescriptAdapter.collect(await context(value)),
+    ).rejects.toMatchObject({
+      name: "CheckIncompleteError",
+      code: "TYPESCRIPT_PROJECT_MISMATCH",
+      paths: ["src/value.ts"],
+      snapshot: "last-commit",
+      projectPaths: ["tsconfig.json"],
+    });
+  });
+
+  it.each([
+    {
+      config: {
+        compilerOptions: { privateSourceSecret: true },
+        include: ["src"],
+      },
+      code: "TS5023",
+    },
+    {
+      config: { extends: "./privateSourceSecret.json", include: ["src"] },
+      code: "TS5083",
+    },
+  ])(
+    "preserves safe config diagnostics for $code on the failing snapshot",
+    async ({ config, code }) => {
+      const value = await fixtures();
+      for (const fixture of [value.baseline, value.staged]) {
+        await fixture.writeJson("tsconfig.json", { include: ["src"] });
+        await fixture.write("src/value.ts", "export const value = 1;\n");
+      }
+      await value.staged.writeJson("tsconfig.json", config);
+      const error = await typescriptAdapter
+        .collect(await context(value))
+        .catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        name: "CheckIncompleteError",
+        code: `TYPESCRIPT_CONFIG_${code}`,
+        path: "tsconfig.json",
+        snapshot: "staged",
+        diagnostic: {
+          checkId: "types",
+          snapshot: "target",
+          category: "startup",
+        },
+      });
+      expect(JSON.stringify(error)).not.toContain("privateSourceSecret");
+      expect(JSON.stringify(error)).not.toContain(value.staged.root);
+    },
+  );
+
+  it.each(["extends", "references"] as const)(
+    "identifies a failing nested %s configuration without source prose",
+    async (kind) => {
+      const value = await fixtures();
+      for (const fixture of [value.baseline, value.staged]) {
+        await fixture.writeJson("tsconfig.json", {
+          include: ["src"],
+          ...(kind === "extends"
+            ? { extends: "./config/project.json" }
+            : { references: [{ path: "./config/project.json" }] }),
+        });
+        await fixture.writeJson("config/project.json", {
+          compilerOptions: { composite: true },
+          include: ["../src"],
+        });
+        await fixture.write("src/value.ts", "export const value = 1;\n");
+      }
+      await value.staged.writeJson("config/project.json", {
+        compilerOptions: { privateOptionSecret: true, composite: true },
+        include: ["../src"],
+      });
+      const error = await typescriptAdapter
+        .collect(await context(value))
+        .catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "TYPESCRIPT_CONFIG_TS5023",
+        path: "config/project.json",
+        snapshot: "staged",
+      });
+      expect(JSON.stringify(error)).not.toContain("privateOptionSecret");
+    },
+  );
+
+  it("skips an empty relevant delta but honors always scheduling", async () => {
+    const value = await fixtures();
+    for (const fixture of [value.baseline, value.staged, value.live]) {
+      await fixture.write("src/value.ts", "export const value = 1;\n");
+    }
+    const run = await context(value, {
+      files: new Map(),
+      isEmpty: true,
+      containsAddedLine: () => false,
+    });
+    expect(await typescriptAdapter.inspect(run)).toMatchObject({
+      applies: false,
+    });
+    const always = {
+      ...run,
+      config: {
+        ...run.config,
+        checks: {
+          ...run.config.checks,
+          types: { ...run.config.checks.types, when: "always" as const },
+        },
+      },
+    };
+    expect(await typescriptAdapter.inspect(always)).toMatchObject({
+      applies: true,
+      requiresBaseline: true,
+      targets: [{ id: ".", kind: "workspace", relativeRoot: "." }],
+    });
+  });
+
   it("reports the staged type error even when the live working-tree file is clean", async () => {
     const observations = await analyzeTypescriptSnapshots({
       baseline: { "src/value.ts": "export const value: number = 1;" },

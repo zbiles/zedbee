@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { execa } from "execa";
+import { FixApplyCleanupError } from "../../src/fixes/apply-plan.js";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { retainCleanupFailure } from "../../src/scan/analysis-failure.js";
+import { AnalysisSessionCleanupError } from "../../src/scan/analysis-failure.js";
+import * as commandExecutor from "../../src/commands/executor.js";
 import {
   executeFixCommand,
   parseFixCheck,
@@ -243,6 +250,193 @@ describe("parseFixCheck", () => {
 });
 
 describe("executeFixCommand", () => {
+  it("retains applied progress when the command-owned executor cannot close", async () => {
+    const executor = vi
+      .spyOn(commandExecutor, "createCommandExecutor")
+      .mockReturnValue({
+        async openSession() {
+          throw new Error("unused");
+        },
+        async close() {
+          throw new AnalysisSessionCleanupError();
+        },
+      });
+    const deps = dependencies();
+    deps.applyFixPlan = async () => ({
+      exitCode: 0,
+      appliedFixes: 1,
+      changedFiles: ["src/value.ts"],
+      unchangedFiles: [],
+      issues: [],
+    });
+    const output = io();
+    try {
+      expect(
+        await executeFixCommand(
+          {
+            cwd: "/repo",
+            yes: true,
+            format: "json",
+            color: false,
+            animations: false,
+          },
+          output,
+          deps,
+        ),
+      ).toBe(2);
+      expect(JSON.parse(output.stdout.join(""))).toMatchObject({
+        exitCode: 2,
+        result: { changedFiles: ["src/value.ts"], appliedFixes: 1 },
+        cleanupFailure: { code: "SNAPSHOT_CLEANUP_FAILED" },
+      });
+      expect(
+        output.stderr.join("").match(/SNAPSHOT CLEANUP FAILED/gu),
+      ).toHaveLength(1);
+    } finally {
+      executor.mockRestore();
+    }
+  });
+  it.each(["json", "text"] as const)(
+    "exposes a validated retained snapshot path in %s output",
+    async (format) => {
+      const temporaryPath = await mkdtemp(
+        join(tmpdir(), "zedbee-snapshot-command-"),
+      );
+      const canonicalPath = await realpath(temporaryPath);
+      try {
+        const deps = dependencies();
+        const reason = new Error("private cancellation reason");
+        const controller = new AbortController();
+        deps.applyFixPlan = async () => {
+          controller.abort(reason);
+          throw retainCleanupFailure(
+            reason,
+            new FixApplyCleanupError(
+              temporaryPath,
+              {
+                exitCode: 0,
+                appliedFixes: 1,
+                changedFiles: ["src/value.ts"],
+                unchangedFiles: [],
+                issues: [],
+              },
+              reason,
+            ),
+          );
+        };
+        const output = io();
+        expect(
+          await executeFixCommand(
+            {
+              cwd: "/repo",
+              yes: true,
+              format,
+              color: false,
+              animations: false,
+              signal: controller.signal,
+            },
+            output,
+            deps,
+          ),
+        ).toBe(2);
+        expect(output.stderr.join("")).toContain(JSON.stringify(canonicalPath));
+        expect(output.stderr.join("")).toContain("interrupted");
+        expect(output.stdout.join("") + output.stderr.join("")).not.toContain(
+          "private cancellation",
+        );
+        if (format === "json") {
+          const result = JSON.parse(output.stdout.join(""));
+          expect(result.exitCode).toBe(2);
+          expect(result.cleanupFailure.path).toBe(canonicalPath);
+          expect(result.result.changedFiles).toEqual(["src/value.ts"]);
+        } else expect(output.stdout.join("")).toContain("Applied fixes: 1");
+      } finally {
+        await rm(temporaryPath, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("omits an unvalidated cleanup path from command output", async () => {
+    const deps = dependencies();
+    deps.applyFixPlan = async () => {
+      throw new FixApplyCleanupError(
+        "/private-not-a-managed-snapshot/private-source",
+        {
+          exitCode: 0,
+          appliedFixes: 0,
+          changedFiles: [],
+          unchangedFiles: [],
+          issues: [],
+        },
+      );
+    };
+    const output = io();
+    expect(
+      await executeFixCommand(
+        {
+          cwd: "/repo",
+          yes: true,
+          format: "json",
+          color: false,
+          animations: false,
+        },
+        output,
+        deps,
+      ),
+    ).toBe(2);
+    expect(
+      JSON.parse(output.stdout.join("")).cleanupFailure,
+    ).not.toHaveProperty("path");
+    expect(output.stdout.join("") + output.stderr.join("")).not.toContain(
+      "private-source",
+    );
+  });
+  it("reports completed fixes and a nonzero JSON outcome when apply cleanup fails", async () => {
+    const deps = dependencies();
+    deps.applyFixPlan = async () => {
+      throw new FixApplyCleanupError(undefined, {
+        exitCode: 1,
+        appliedFixes: 1,
+        changedFiles: ["src/value.ts"],
+        unchangedFiles: ["src/bad.ts"],
+        issues: [
+          {
+            kind: "format",
+            file: "src/bad.ts",
+            checkIds: ["formatting"],
+            message: "Could not format file.",
+            remediation: "Review the formatting error.",
+          },
+        ],
+      });
+    };
+    const output = io();
+    const summary: Record<string, unknown> = {};
+    const exit = await executeFixCommand(
+      {
+        cwd: "/repo",
+        yes: true,
+        format: "json",
+        color: false,
+        animations: false,
+        telemetrySummary(value) {
+          Object.assign(summary, value);
+        },
+      },
+      output,
+      deps,
+    );
+    expect(exit).toBe(2);
+    const result = JSON.parse(output.stdout.join(""));
+    expect(result.exitCode).toBe(2);
+    expect(result.applied).toBe(true);
+    expect(result.result.changedFiles).toEqual(["src/value.ts"]);
+    expect(result.result.issues[0].kind).toBe("format");
+    expect(result.cleanupFailure.code).toBe("SNAPSHOT_CLEANUP_FAILED");
+    expect(output.stderr.join("")).toContain("SNAPSHOT CLEANUP FAILED");
+    expect(summary.applied_count).toBe(1);
+    expect(summary).not.toHaveProperty("outcome");
+  });
   it("carries invocation-only project Prettier consent into plan and apply", async () => {
     const terminal = io(false);
     const deps = dependencies(applicablePlan());

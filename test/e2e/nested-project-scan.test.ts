@@ -28,7 +28,7 @@ const targetSource = [
 
 describe("nested independent project scans", { concurrent: false }, () => {
   it.each(["index", "base"] as const)(
-    "%s runs checks for the changed package without linting an unrelated package config",
+    "%s checks types and typed lint across workspaces while keeping other analyzers scoped to the changed package",
     async (mode) => {
       const repository = await createGitRepository("zedbee-nested-scan-");
       await repository.write(
@@ -82,6 +82,13 @@ describe("nested independent project scans", { concurrent: false }, () => {
         "export const enabled = true;\n",
       );
       await repository.write(
+        "extension/tsconfig.tools.json",
+        JSON.stringify({
+          compilerOptions: { target: "ES2022", strict: true },
+          include: ["vitest.config.ts"],
+        }),
+      );
+      await repository.write(
         "extension/vitest.config.ts",
         'import { defineConfig } from "vitest/config";\nexport default defineConfig({});\n',
       );
@@ -111,8 +118,6 @@ describe("nested independent project scans", { concurrent: false }, () => {
         report.checks.filter(({ status }) => status === "incomplete"),
       ).toEqual([]);
       for (const checkId of [
-        "lint",
-        "types",
         "reactCorrectness",
         "reactAccessibility",
         "cyclomaticComplexity",
@@ -126,6 +131,18 @@ describe("nested independent project scans", { concurrent: false }, () => {
           expect.objectContaining({ status: "completed", target: "web" }),
         ]);
       }
+      for (const compilerCheck of ["types", "lint"])
+        expect(
+          report.checks.filter(({ checkId }) => checkId === compilerCheck),
+          `${compilerCheck} must analyze both TypeScript workspaces and suppress unrelated baseline findings`,
+        ).toEqual([
+          expect.objectContaining({
+            status: "completed",
+            target: "extension",
+            findings: [],
+          }),
+          expect.objectContaining({ status: "completed", target: "web" }),
+        ]);
       for (const rule of [
         "direct-eval",
         "cyclomatic-complexity",
@@ -146,9 +163,19 @@ describe("nested independent project scans", { concurrent: false }, () => {
           attribution: expect.objectContaining({ staged: true }),
         }),
       );
-      expect(report.checks.some(({ target }) => target === "extension")).toBe(
-        false,
-      );
+      expect(
+        report.checks.some(
+          ({ checkId, target }) =>
+            checkId !== "types" && checkId !== "lint" && target === "extension",
+        ),
+      ).toBe(false);
+      expect(
+        report.checks
+          .flatMap(({ findings }) => findings)
+          .some(
+            ({ location }) => location?.file === "extension/vitest.config.ts",
+          ),
+      ).toBe(false);
     },
   );
 });

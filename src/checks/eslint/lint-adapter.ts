@@ -1,4 +1,6 @@
 import { inspectManagedCheck } from "../applicability.js";
+import { collectRenamedBaselines } from "../renamed-baselines.js";
+import { compilerInputsMayHaveChanged } from "../compiler-inputs.js";
 import { relative, sep } from "node:path";
 import type * as ts from "typescript";
 import type { ESLint } from "eslint";
@@ -14,17 +16,27 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
-import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
+import {
+  canonicalizeSnapshotRoot,
+  readContainedFile,
+} from "../../inspection/read-json.js";
+import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  pairLocationObservations,
+  type SnapshotLocationObservations,
+} from "../../attribution/pair-locations.js";
 import { convertEslintMessage } from "./convert-message.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { analyzerDiagnostic, type AnalyzerOperation } from "../diagnostics.js";
 import { createManagedEslint } from "./load-engine.js";
 import { eslintFailureDetails, ManagedEslintFailure } from "./failure.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
-import { createSnapshotProgram } from "../typescript/compiler-host.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { captureAnalysisDependencies } from "../typescript/reuse-inputs.js";
-import { loadSnapshotProgramProjects } from "../typescript/config.js";
+import {
+  configurationIncompleteError,
+  loadSnapshotProjectSet,
+} from "../typescript/projects.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { isAnalyzerWorker } from "../runner/context.js";
 import type {
@@ -43,6 +55,7 @@ type LintEslintEngineFactory = (
 
 interface PreparedLintSide {
   readonly canonicalRoot: string;
+  readonly files?: Readonly<Record<string, string>>;
   readonly groups: ReturnType<typeof groupFilesByRules>;
   readonly typedProject?: { readonly programs: readonly ts.Program[] };
   readonly coveredTypeScript?: ReadonlySet<string>;
@@ -163,6 +176,7 @@ async function prepareSide(
   dependencies?: CapturedDependencies,
   snapshotRef?: string | null,
   operation: AnalyzerOperation = "collect",
+  requestedPaths?: ReadonlySet<string>,
 ): Promise<PreparedLintSide | undefined> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -172,6 +186,7 @@ async function prepareSide(
   const workspace = workspaceFor(inspection, target);
   if (workspace === undefined) return undefined;
   const files = workspace.sourceFiles
+    .filter((path) => requestedPaths === undefined || requestedPaths.has(path))
     .filter(
       (path) => JAVASCRIPT_SOURCE.test(path) || TYPESCRIPT_SOURCE.test(path),
     )
@@ -199,27 +214,18 @@ async function prepareSide(
   }
 
   try {
-    const projects = await loadSnapshotProgramProjects(
+    const {
+      programs,
+      covered,
+      projectPaths,
+      files: projectFiles,
+    } = await loadSnapshotProjectSet(
       canonicalRoot,
       repositoryRoot,
       workspace,
+      dependencies,
     );
-    const programs = projects.flatMap(
-      ({ input }) =>
-        createSnapshotProgram({
-          ...input,
-          ...(dependencies === undefined ? {} : { dependencies }),
-        }).programs,
-    );
-    const covered = new Set(
-      programs.flatMap((program) =>
-        program
-          .getSourceFiles()
-          .map((source) =>
-            relative(canonicalRoot, source.fileName).split(sep).join("/"),
-          ),
-      ),
-    );
+    signal.throwIfAborted();
     const uncovered = typescriptFiles
       .filter((path) => !covered.has(path))
       .sort(compareCodeUnits);
@@ -237,7 +243,7 @@ async function prepareSide(
         path: blocking[0]!,
         paths: blocking,
         snapshot: side === "baseline" ? "last-commit" : "staged",
-        projectPaths: projects.map(({ configPath }) => configPath),
+        projectPaths,
       });
     }
     return {
@@ -245,10 +251,18 @@ async function prepareSide(
       groups,
       typedProject: { programs },
       coveredTypeScript: covered,
-      projectPaths: projects.map(({ configPath }) => configPath),
+      projectPaths,
+      files: projectFiles,
     };
   } catch (error) {
     if (error instanceof CheckIncompleteError) throw error;
+    const configurationError = configurationIncompleteError(
+      error,
+      "lint",
+      side,
+      operation,
+    );
+    if (configurationError !== undefined) throw configurationError;
     throw new CheckIncompleteError({
       code: "TYPED_LINT_SETUP_FAILED",
       message: `Typed lint could not build a usable project from this workspace's TypeScript configuration for the ${snapshotLabel(side, snapshotRef)}.`,
@@ -275,7 +289,8 @@ async function collectSide(
   signal: AbortSignal,
   dependencies: CapturedDependencies,
   snapshotRef?: string | null,
-): Promise<readonly Observation[]> {
+  requestedPaths?: ReadonlySet<string>,
+): Promise<SnapshotLocationObservations> {
   const prepared = await prepareSide(
     snapshotRoot,
     repositoryRoot,
@@ -286,8 +301,11 @@ async function collectSide(
     signal,
     dependencies,
     snapshotRef,
+    "collect",
+    requestedPaths,
   );
-  if (prepared === undefined) return Object.freeze([]);
+  if (prepared === undefined)
+    return { observations: Object.freeze([]), files: {} };
   const observations: Observation[] = [];
   for (const group of prepared.groups) {
     signal.throwIfAborted();
@@ -364,13 +382,29 @@ async function collectSide(
       }
     }
   }
-  return Object.freeze(
-    observations.sort(
-      (left, right) =>
-        compareCodeUnits(left.identity, right.identity) ||
-        compareCodeUnits(left.message, right.message),
+  const files: Record<string, string> = {};
+  let registry: Awaited<ReturnType<typeof captureSnapshotRegistry>> | undefined;
+  for (const observation of observations) {
+    const path = observation.location?.file;
+    if (path === undefined || files[path] !== undefined) continue;
+    signal.throwIfAborted();
+    files[path] =
+      prepared.files?.[path] ??
+      (await readContainedFile(
+        (registry ??= await captureSnapshotRegistry(prepared.canonicalRoot)),
+        path,
+      ));
+  }
+  return {
+    observations: Object.freeze(
+      observations.sort(
+        (left, right) =>
+          compareCodeUnits(left.identity, right.identity) ||
+          compareCodeUnits(left.message, right.message),
+      ),
     ),
-  );
+    files,
+  };
 }
 
 export function createLintAdapter(
@@ -450,43 +484,48 @@ export function createLintAdapter(
 
     async collect(context): Promise<CheckObservationSet> {
       const dependencies = captureAnalysisDependencies(context);
-      const [baselineObservations, targetObservations] =
-        await settleSnapshotSides(
-          () =>
+      const [baseline, target] = await settleSnapshotSides(
+        () =>
+          collectRenamedBaselines(context, (baselineTarget, paths) =>
             collectSide(
               context.snapshots.baselineDir,
               context.repositoryRoot,
               context.baselineInspection,
-              context.target,
+              baselineTarget,
               "baseline",
               context.policyForFile,
               engineFactory,
               context.signal,
               dependencies,
               context.snapshots.baselineRef,
+              paths,
             ),
-          () =>
-            collectSide(
-              context.snapshots.targetDir,
-              context.repositoryRoot,
-              context.targetInspection,
-              context.target,
-              "target",
-              context.policyForFile,
-              engineFactory,
-              context.signal,
-              dependencies,
-              context.snapshots.targetRef,
-            ),
-          context.signal,
-          isAnalyzerWorker(),
-        );
+          ),
+        () =>
+          collectSide(
+            context.snapshots.targetDir,
+            context.repositoryRoot,
+            context.targetInspection,
+            context.target,
+            "target",
+            context.policyForFile,
+            engineFactory,
+            context.signal,
+            dependencies,
+            context.snapshots.targetRef,
+          ),
+        context.signal,
+        isAnalyzerWorker(),
+      );
       const dependencyInputs = dependencies.manifest();
+      const workspace = workspaceFor(context.targetInspection, context.target);
       return {
         checkId: "lint",
         target: context.target,
-        baselineObservations,
-        targetObservations,
+        ...pairLocationObservations(baseline, target, context.changeSet),
+        projectDelta:
+          workspace !== undefined &&
+          compilerInputsMayHaveChanged(workspace, context.changeSet),
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     },

@@ -1,6 +1,6 @@
 # Dependency license obligations
 
-Zedbee's release license inventory is exact-version and fail-closed. Most
+Zedbee's release license check uses exact versions and fails closed. Most
 dependencies use permissive licenses. Two production dependencies require
 additional reviewed notices:
 
