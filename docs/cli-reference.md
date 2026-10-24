@@ -274,6 +274,28 @@ Setup formats `.zedbeerc.jsonc` before showing the review. When root project for
 
 When Prettier projects are detected only in subfolders, setup defaults formatting to those folders. The interactive formatting-scope control can instead select the whole repository, including docs and other folders. `--formatting-scope projects|repository` makes the same choice in non-interactive setup. Other checks keep their configured scope.
 
+## Agent workflow
+
+`zedbee agent` prints the packaged scan, repair, and verification skill as Markdown without scanning, editing files, or requiring a Git repository. Give that output to any coding agent, or install it for automatic skill discovery:
+
+```sh
+# Preview the destination without writing
+zedbee agent --install codex
+zedbee agent --install claude
+
+# Install the selected repository skill
+zedbee agent --install codex --yes
+zedbee agent --install claude --yes
+```
+
+Codex uses `.agents/skills/zedbee/SKILL.md`; Claude Code uses `.claude/skills/zedbee/SKILL.md`. Installation resolves the Git repository root even when invoked from a subfolder, refuses symlink destinations, and leaves the Git index unchanged. An identical existing skill succeeds without writing; a different existing file is preserved with status 1. Review any customized or older skill before replacing it. Status 0 means instructions printed, installation previewed, or the requested skill is installed; status 2 means setup failed. Installation never runs repairs.
+
+Invoke `$zedbee` in Codex or `/zedbee` in Claude Code with the development task. If a running agent has not discovered the newly installed skill, start a new session or give it `zedbee agent` output. Repository skill locations follow the [Codex skill documentation](https://developers.openai.com/codex/skills/) and [Claude Code skill documentation](https://code.claude.com/docs/en/skills).
+
+The [packaged skill](../skills/zedbee/SKILL.md) is the maintained workflow. It directs the agent to inspect existing work, select the intended staged or committed comparison, read every finding and incomplete check, explain findings, make only authorized repairs, run relevant tests, and rescan the updated proposal. It adds no AI service or credentials. Model decisions and edits belong to the invoking agent and remain subject to its normal permissions and repository instructions.
+
+Normal `scan` reads the index; `scan --base` reads committed HEAD. A working-tree repair alone does not change either target. The workflow requires the agent to preserve partial staging, update only authorized target content, and disclose any outstanding verification when staging or committing is outside its authorization. Whole-file formatting and partial fix failures require particular care. Existing scan/fix contracts and telemetry preferences are unchanged.
+
 ## Managed analyzer boundary
 
 Zedbee bundles its own Prettier installation so installing Zedbee preserves the project’s Prettier version and command. Zedbee ships and pins Prettier 3.9.6, ESLint 9.39.5, typescript-eslint 8.67.0, TypeScript 6.0.3, Secretlint 13.0.5, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-jsx-a11y 6.10.2, ast-grep 0.45.1, jscpd 5.3.2, Dependency Cruiser 18.2.0, and Knip 6.32.2. It supplies its own inert analyzer configuration and never loads project ESLint, Secretlint, Babel, parser, plugin, or executable analyzer configuration; project Prettier runs only when a project formatting engine is explicitly trusted, as described in the [check guide](checks.md#formatting-engines). Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release. Only bundled rules can be configured; custom plugins cannot be loaded. TypeScript configuration is parsed as selected snapshot data, not executed; installed declaration packages may be resolved through the constrained project `node_modules` boundary. Typed lint loads every contained `tsconfig*.json` in an inspected workspace and uses each project for the files it covers. By default, a TypeScript file outside every loaded project makes typed lint incomplete. This avoids validating changed target code under unrelated compiler settings. Typed-lint failures include safe file paths, loaded TypeScript project paths, and the baseline or target snapshot identity in their diagnostics; engine failures remain distinct from project-coverage failures.

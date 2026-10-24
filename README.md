@@ -80,6 +80,12 @@ A scan returns `0` for no blocking findings, `1` for findings that block under y
 
 For coding agents and other tools, JSON is also available through `--format json`. Both JSON and SARIF exports contain the complete report. See [CI setup details](docs/cli-reference.md#committed-branch-scans-in-ci) and the [reporting guide](docs/reporting.md).
 
+## Use Swarm with a coding agent
+
+Run `zedbee agent` to read the scan, repair, and verification workflow. To make it available as a repository skill, preview `zedbee agent --install codex` or `zedbee agent --install claude`, then add `--yes` to install. Existing skill files are preserved. Invoke `$zedbee` in Codex or `/zedbee` in Claude Code; other agents can read the output of `zedbee agent` directly.
+
+The workflow guides the agent through the complete report, authorized repairs, relevant tests, and a rescan of the updated staged or committed proposal. It preserves unrelated work and reports incomplete analysis explicitly. See [agent workflow setup](docs/cli-reference.md#agent-workflow).
+
 ## Before you adopt it
 
 Source analysis runs locally. Dependency vulnerability checks send package names and versions to OSV, not source code. Usage telemetry sends explicit command metadata through Cloudflare to PostHog unless disabled. Interactive commands can also check npm for updates. The [privacy guide](docs/privacy.md) explains network use, temporary files, and report contents.
