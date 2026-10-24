@@ -21,25 +21,74 @@ export const VENDORED_FILES = Object.freeze(
   ),
 );
 
-export function assertVendoredDependencyLock(manifest, lockfile) {
+function safePackageName(name) {
+  return (
+    typeof name === "string" &&
+    /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/iu.test(name)
+  );
+}
+
+export function assertVendoredDependencyLock(
+  manifest,
+  lockfile,
+  inventory = vendoredInventory,
+) {
+  const roots = inventory.packages.filter((entry) => entry.owner === undefined);
+  const identities = new Set();
+  for (const entry of inventory.packages) {
+    const owner =
+      entry.owner === undefined
+        ? undefined
+        : roots.find((root) => root.name === entry.owner);
+    if (
+      !safePackageName(entry.name) ||
+      (entry.owner !== undefined && owner === undefined) ||
+      entry.source !==
+        (owner === undefined
+          ? `node_modules/${entry.name}`
+          : `${owner.source}/node_modules/${entry.name}`) ||
+      entry.destination !==
+        (owner === undefined
+          ? `dist/vendor/${entry.name}`
+          : `${owner.destination}/node_modules/${entry.name}`) ||
+      identities.has(entry.destination)
+    )
+      throw new Error("Invalid vendored package path or owner.");
+    identities.add(entry.destination);
+  }
   const pins = Object.fromEntries(
-    vendoredInventory.packages.map((entry) => [entry.name, entry.version]),
+    roots.map((entry) => [entry.name, entry.version]),
   );
   if (JSON.stringify(manifest.vendoredDependencies) !== JSON.stringify(pins))
     throw new Error("Vendored dependencies must match the reviewed inventory.");
-  for (const entry of vendoredInventory.packages) {
+  for (const entry of inventory.packages) {
     const locked = lockfile.packages?.[entry.source];
     if (
-      manifest.devDependencies?.[entry.name] !== entry.version ||
-      manifest.dependencies?.[entry.name] !== undefined ||
+      (entry.owner === undefined &&
+        (manifest.devDependencies?.[entry.name] !== entry.version ||
+          manifest.dependencies?.[entry.name] !== undefined)) ||
       locked?.version !== entry.version ||
       locked?.integrity !== entry.integrity
     )
       throw new Error(
         `Vendored dependency does not match its pinned source: ${entry.name}`,
       );
+    if (entry.owner !== undefined) {
+      const owner = roots.find((root) => root.name === entry.owner);
+      const range = lockfile.packages[owner.source]?.dependencies?.[entry.name];
+      if (typeof range !== "string" || !satisfies(entry.version, range))
+        throw new Error(
+          `Private helper does not satisfy vendored ${entry.owner}: ${entry.name}`,
+        );
+    }
     for (const [name, range] of Object.entries(locked.dependencies ?? {})) {
-      const version = manifest.dependencies?.[name];
+      const privateHelper =
+        entry.owner === undefined
+          ? inventory.packages.find(
+              (child) => child.owner === entry.name && child.name === name,
+            )
+          : undefined;
+      const version = privateHelper?.version ?? manifest.dependencies?.[name];
       if (typeof version !== "string" || !satisfies(version, range))
         throw new Error(
           `Vendored ${entry.name} needs a pinned runtime dependency: ${name}`,
@@ -52,18 +101,13 @@ export function assertVendoredDependencyLock(manifest, lockfile) {
       throw new Error(`Native dependency must not be bundled: ${name}`);
 }
 
-export function copyVendoredDependencies(root) {
+export function copyVendoredDependencies(root, inventory = vendoredInventory) {
   const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const lockfile = JSON.parse(
     readFileSync(join(root, "package-lock.json"), "utf8"),
   );
-  assertVendoredDependencyLock(manifest, lockfile);
-  for (const entry of vendoredInventory.packages) {
-    if (
-      entry.source !== `node_modules/${entry.name}` ||
-      entry.destination !== `dist/vendor/${entry.name}`
-    )
-      throw new Error("Invalid vendored package path.");
+  assertVendoredDependencyLock(manifest, lockfile, inventory);
+  for (const entry of inventory.packages) {
     for (const file of entry.files) {
       if (
         file.path.includes("\\") ||
