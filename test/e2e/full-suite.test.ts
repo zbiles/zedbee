@@ -108,6 +108,7 @@ describe("release verification contract", () => {
   it("builds once before running every release-safety gate", () => {
     expect(verificationSteps("verify")).toEqual([
       { id: "build", command: "npm", args: ["run", "build"] },
+      { id: "plugin", command: "npm", args: ["run", "plugin:check"] },
       { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
       {
         id: "tests",
@@ -123,7 +124,7 @@ describe("release verification contract", () => {
       {
         id: "benchmark",
         command: "node",
-        args: ["--experimental-strip-types", "bench/run.mts"],
+        args: ["--experimental-strip-types", "bench/run.mts", "--smoke"],
       },
       {
         id: "package",
@@ -163,6 +164,7 @@ describe("release verification contract", () => {
           build: "node build.mjs",
           typecheck: `node ${JSON.stringify(compiler)} --noEmit`,
           "licenses:check": "node scripts/check-package-contents.mjs",
+          "plugin:check": "node scripts/check-package-contents.mjs",
         },
       }),
     );
@@ -313,6 +315,7 @@ describe("release verification contract", () => {
     "src/internal.ts",
     "dist/unexpected-private-note.md",
     "dist/unexpected.js",
+    "licenses/production-inventory.json",
   ])("rejects an unapproved package path: %s", (unapproved) => {
     expect(() =>
       assertAllowedPackageFiles(["package.json", unapproved], {
@@ -333,7 +336,6 @@ describe("release verification contract", () => {
           "docs/support.md",
           "docs/reporting.md",
           "schema/zedbee.schema.json",
-          "licenses/production-inventory.json",
           "licenses/reviewed-overrides.json",
           "licenses/reviewed-obligations.json",
           "licenses/overrides/example-LICENSE",

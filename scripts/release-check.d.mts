@@ -22,3 +22,5 @@ export function releaseReadiness(
 ): Readonly<{ ready: true }> | Readonly<{ ready: false; message: string }>;
 
 export function runVerification(mode: VerificationMode, cwd?: string): void;
+
+export function assertPerformanceEvidence(env?: NodeJS.ProcessEnv): void;

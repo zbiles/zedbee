@@ -94,7 +94,7 @@ OSV scanning or update checks.
 
 `scan --no-service` and `fix --no-service` use a local executor that closes with the command. Ordinary commands acquire the service only when analysis is needed; empty-index scans and help do not start it. The service stops after five minutes with no active sessions. `service status` and `service stop` support `--format json` for machine-readable state. A service failure makes analysis incomplete; it is never silently retried through another executor.
 
-`init` supports `--profile fast|recommended|thorough`, `--hook auto|tracked|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--formatting copy|project|managed|off`, `--trust-project-prettier`, `--yes`, and text/JSON output. Interactive setup exposes check toggles, the formatting choice, the OSV outage choice, and whether to install pre-commit and pre-merge-commit hooks. If no tracked hook setup is detected, choosing to install hooks also offers **Tracked—shared with teammates** or **Local—this checkout only**. Existing tracked setups are reused without that extra question. `scan`, `checks`, and `doctor` accept `--config <path>`.
+`init` supports `--profile fast|recommended|thorough`, `--hook auto|tracked|husky|lefthook|simple-git-hooks|raw|none`, `--checks <comma-separated IDs>`, `--osv-unavailable block|warn`, `--formatting copy|project|managed|off`, `--trust-project-prettier`, `--workflow github|none`, `--yes`, and text/JSON output. Interactive setup exposes check toggles, the formatting choice, the OSV outage choice, whether to install pre-commit and pre-merge-commit hooks, and an optional GitHub pull-request workflow. If no tracked hook setup is detected, choosing to install hooks also offers **Tracked—shared with teammates** or **Local—this checkout only**. Existing tracked setups are reused without that extra question. `scan`, `checks`, and `doctor` accept `--config <path>`.
 
 Bare `zedbee fix` selects `formatting`, `lint`, and `reactCorrectness`; a named
 selector limits the plan to that supported check. Interactive terminals preview
@@ -153,6 +153,26 @@ node ./node_modules/zedbee/dist/cli.js scan --base origin/main --format sarif > 
 Invoke the installed CLI from the repository root after installing dependencies in its owning project folder. For a `web/` installation, replace the command's CLI path with `./web/node_modules/zedbee/dist/cli.js`. Add `--trust-project-prettier` when your reviewed CI workflow uses project formatting.
 
 `--base <ref>` resolves the unique merge base of the locally available ref and committed `HEAD`, then scans only the committed changes from that merge base through `HEAD`. If the base branch advances after the feature branch splits, base-only commits are not treated as feature changes. The named ref and enough common history must already exist locally. Zedbee never fetches automatically; a shallow checkout without the required ancestry is incomplete and exits 2. On GitHub Actions, configure `actions/checkout` with `fetch-depth: 0`; elsewhere, fetch enough history before retrying.
+
+### GitHub pull-request workflow setup
+
+Interactive `zedbee init` offers **Add GitHub pull-request workflow**, initially off. Selecting it includes `.github/workflows/zedbee.yml` in the file review and the same transactional apply as configuration and hooks. Agents and automation can request it explicitly:
+
+```bash
+zedbee init --workflow github --yes
+```
+
+Omit `--yes` to preview the changes. `--workflow none` leaves workflows unchanged. Existing `zedbee.yml` or `zedbee.yaml` files are preserved; setup never replaces a maintained workflow. Commit the generated file to enable it in GitHub. To require its **Zedbee** check before merging, select that check in the repository's branch protection or ruleset settings.
+
+The workflow checks out the PR's committed head with complete history and uses the PR base SHA for `--base` comparison. It runs on Ubuntu with Node 24, a read-only repository token, and no persisted checkout credentials. Project dependencies are installed in their detected lockfile folders; declared workspace members share their owner's installation, while independent nested projects install separately. npm, pnpm, Yarn, and Bun lockfiles use frozen/immutable installation. Projects without a lockfile receive a normal install. Package-manager versions come from `packageManager` when declared; defaults are the Node-provided npm, pnpm 10.18.0, Yarn Classic 1.22.22, and Bun 1.2.23. Modern Yarn requires an exact declaration and uses a `node_modules` layout for analyzer resolution.
+
+The generated file references an immutable commit of the maintained Action in the existing Zedbee repository. The Action installs the generating CLI's exact GitHub release version in a separate temporary tool folder, runs one committed scan with source excerpts disabled, writes a summary, and uploads the complete SARIF report even when findings block or analysis is incomplete. Exit 0 passes, 1 blocks on findings, and 2 fails for incomplete analysis. Uploading the report cannot turn a failed scan into a pass. Normal telemetry preferences and environment opt-outs still apply.
+
+Dependency lifecycle scripts are disabled in the starter workflow; review and customize installation/build steps when a project needs them. Project formatting requires an explicit `trust-project-prettier: 'true'` Action input in a reviewed trusted workflow. Local formatter consent does not grant execution permission to CI. The workflow and Action respect the committed `.zedbeerc.jsonc`; no second set of check rules is generated.
+
+The Action can also be called from an existing workflow. Its inputs are `version` (required exact GitHub release version), `base-ref` (defaults to the PR event's base SHA), `report-format` (`sarif` or `json`, default `sarif`), and `trust-project-prettier` (default `false`). Outputs are `report-path`, `exit-code`, and `outcome`. Call it after checkout/history, Node setup, and project dependency installation. See the [Action guide](https://github.com/zbiles/zedbee/tree/main/.github/actions/scan).
+
+### Merge comparisons
 
 During an in-progress merge, a bare `zedbee scan` compares one captured staged tree against every merge parent. The generated merge hook uses `zedbee scan --merge`, which requires valid parent metadata; it cannot be combined with `--base`. Automatic merge hooks use Git's incoming-parent environment because `MERGE_HEAD` is written later; manually completed merges use `MERGE_HEAD`. The report includes `mergeParents`, and only findings new against every parent block. Existing findings in either parent remain nonblocking, including diagnostics whose unchanged lines moved. A missing or incomplete parent comparison remains visible; it cannot be treated as a successful merge check. Unstaged edits cannot repair a staged merge finding.
 
@@ -253,6 +273,28 @@ When interactive setup needs a local Zedbee installation, it first shows a proje
 Setup formats `.zedbeerc.jsonc` before showing the review. When root project formatting is selected, setup gives this generated configuration a managed formatting override so its first commit uses the formatter that wrote it; project source retains native formatting. After applying setup, stage the configuration and the other generated files before running `zedbee checks` or committing: those commands read the staged snapshot. A scan with `--base` reads configuration from the selected commits, so staging a new configuration does not change an earlier committed scan.
 
 When Prettier projects are detected only in subfolders, setup defaults formatting to those folders. The interactive formatting-scope control can instead select the whole repository, including docs and other folders. `--formatting-scope projects|repository` makes the same choice in non-interactive setup. Other checks keep their configured scope.
+
+## Agent workflow
+
+`zedbee agent` prints the packaged scan, repair, and verification skill as Markdown without scanning, editing files, or requiring a Git repository. Give that output to any coding agent, or install it for automatic skill discovery:
+
+```sh
+# Preview the destination without writing
+zedbee agent --install codex
+zedbee agent --install claude
+
+# Install the selected repository skill
+zedbee agent --install codex --yes
+zedbee agent --install claude --yes
+```
+
+Codex uses `.agents/skills/zedbee/SKILL.md`; Claude Code uses `.claude/skills/zedbee/SKILL.md`. Installation resolves the Git repository root even when invoked from a subfolder, refuses symlink destinations, and leaves the Git index unchanged. An identical existing skill succeeds without writing; a different existing file is preserved with status 1. Review any customized or older skill before replacing it. Status 0 means instructions printed, installation previewed, or the requested skill is installed; status 2 means setup failed. Installation never runs repairs.
+
+Invoke `$zedbee` in Codex or `/zedbee` in Claude Code with the development task. If a running agent has not discovered the newly installed skill, start a new session or give it `zedbee agent` output. Repository skill locations follow the [Codex skill documentation](https://developers.openai.com/codex/skills/) and [Claude Code skill documentation](https://code.claude.com/docs/en/skills).
+
+The [packaged skill](../plugins/swarm/skills/scan/SKILL.md) is the maintained workflow. It directs the agent to inspect existing work, select the intended staged or committed comparison, read every finding and incomplete check, explain findings, make only authorized repairs, run relevant tests, and rescan the updated proposal. It adds no AI service or credentials. Model decisions and edits belong to the invoking agent and remain subject to its normal permissions and repository instructions.
+
+Normal `scan` reads the index; `scan --base` reads committed HEAD. A working-tree repair alone does not change either target. The workflow requires the agent to preserve partial staging, update only authorized target content, and disclose any outstanding verification when staging or committing is outside its authorization. Whole-file formatting and partial fix failures require particular care. Existing scan/fix contracts and telemetry preferences are unchanged.
 
 ## Managed analyzer boundary
 

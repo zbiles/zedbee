@@ -19,8 +19,8 @@ The project owner will confirm whether separate terms are needed and explain the
 Third-party npm packages keep their own licenses. In particular:
 
 - Secretlint 13.0.5 and its recommended preset are installed as npm dependencies under MIT terms.
-- The lockfile parsers and other analyzer dependencies retain the exact licenses recorded in `licenses/production-inventory.json` and `THIRD_PARTY_NOTICES.md`.
+- The lockfile parsers and other analyzer dependencies retain the exact licenses recorded in `THIRD_PARTY_NOTICES.md`.
 
-Zedbee does not redistribute Gitleaks or OSV-Scanner executables. The bounded OSV API client is Zedbee's own code and is covered by Zedbee's PolyForm Small Business terms; the remote OSV service is contacted but not distributed. The core package ships its reviewed production dependency inventory and third-party notices.
+Zedbee does not redistribute Gitleaks or OSV-Scanner executables. The bounded OSV API client is Zedbee's own code and is covered by Zedbee's PolyForm Small Business terms; the remote OSV service is contacted but not distributed. The core package ships third-party notices and reviewed license obligations.
 
 Zedbee's production dependency gate rejects unknown or unapproved license expressions. It accepts reviewed permissive terms and reviewed exceptions, including MPL-2.0 for the unmodified axe-core dependency. Those exceptions retain their separate obligations; see [dependency license obligations](dependency-license-obligations.md). This engineering control reduces accidental license drift but is not a legal opinion.

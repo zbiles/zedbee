@@ -31,7 +31,9 @@ interface Measurement {
 const here = dirname(fileURLToPath(import.meta.url));
 const baselinePath = resolve(here, "README.md");
 const update = process.argv.includes("--update");
-const smoke = process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
+const smoke =
+  process.argv.includes("--smoke") ||
+  process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
 const inProcessReference = process.argv.includes("--in-process-reference");
 
 function median(values: readonly number[]): number {
@@ -390,7 +392,9 @@ async function main(): Promise<void> {
         : phaseLimitations,
     };
     if (smoke || inProcessReference) {
-      process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+      process.stdout.write(
+        `${JSON.stringify({ ...report, comparison: { status: "not-run", reason: "Measurement only; no regression comparison has passed." } }, null, 2)}\n`,
+      );
       return;
     }
 

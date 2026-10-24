@@ -97,10 +97,15 @@ describe("managed check cache metadata", () => {
     ).toBe("jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2");
   });
 
-  it("invalidates TypeScript observations collected before project-wide attribution", () => {
+  it("versions compiler project coverage and paired typed-lint attribution", () => {
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("types"),
-    ).toBe("typescript@6.0.3+captured-inputs-v2-project-delta");
+    ).toBe("typescript@6.0.3+captured-inputs-v3-project-coverage");
+    expect(
+      createObservationCacheEngineIdentityResolver(() => "6.0.3")("lint"),
+    ).toBe(
+      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v2-paired-project-delta",
+    );
   });
 
   it("resolves installed identities for every snapshot-only check", () => {

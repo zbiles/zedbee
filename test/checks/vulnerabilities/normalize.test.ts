@@ -46,6 +46,8 @@ describe("normalizeOsvInventory", () => {
         rule: "GHSA-35jh-r3h4-6jhm",
         identity:
           '["GHSA-35jh-r3h4-6jhm","npm","lodash","4.17.20","packages/web/package-lock.json","packages/web",["web","lodash"]]',
+        comparisonIdentity:
+          '["GHSA-35jh-r3h4-6jhm","npm","lodash","4.17.20","packages/web/package-lock.json","packages/web",["web","lodash"]]',
         severity: "error",
         message:
           "GHSA-35jh-r3h4-6jhm affects npm package lodash@4.17.20; fixed in 4.17.21 (https://osv.dev/GHSA-35jh-r3h4-6jhm)",

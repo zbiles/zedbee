@@ -1,5 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { buildProductionLicenseArtifacts } from "./check-production-licenses.mjs";
 
@@ -7,9 +7,6 @@ export async function generateProductionLicenseArtifacts(root) {
   const artifacts = await buildProductionLicenseArtifacts(root);
   if (artifacts.denied.length > 0) return artifacts;
 
-  const inventoryPath = join(root, "licenses", "production-inventory.json");
-  await mkdir(dirname(inventoryPath), { recursive: true });
-  await writeFile(inventoryPath, artifacts.inventoryText);
   await writeFile(join(root, "THIRD_PARTY_NOTICES.md"), artifacts.notices);
   return artifacts;
 }

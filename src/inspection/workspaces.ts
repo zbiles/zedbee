@@ -168,10 +168,11 @@ function normalizeWorkspacePattern(pattern: string): string {
   return negated ? `!${normalized}` : normalized;
 }
 
-function matchesWorkspacePattern(
+export function matchesWorkspacePattern(
   path: string,
   patterns: readonly string[],
 ): boolean {
+  patterns = patterns.map(normalizeWorkspacePattern);
   const positivePatterns = patterns.filter(
     (pattern) => !pattern.startsWith("!"),
   );
@@ -228,7 +229,7 @@ function discoverSelectedWorkspaceManifests(
   return [...manifests];
 }
 
-async function readPnpmWorkspacePatterns(
+export async function readPnpmWorkspacePatterns(
   registry: SnapshotRegistry,
   readHooks: ReadHooksResolver,
   relativeRoot = ".",
