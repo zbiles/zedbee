@@ -353,3 +353,41 @@ it("preserves ordered gitignore rules, scoped roots, directory exclusion and cas
     "off",
   );
 });
+
+it.each([
+  { pattern: "\\d.ts", excluded: "d.ts", included: "7.ts" },
+  { pattern: "[[:digit:]].ts", excluded: "3.ts", included: "a.ts" },
+  { pattern: "f*o/*/*", excluded: "foo/b/c", included: "f/b/c" },
+  { pattern: "a*bc*d", excluded: "axbbcbcd", included: "axxxd" },
+])(
+  "applies Git-compatible exclusion $pattern within its selected scope",
+  ({ pattern, excluded, included }) => {
+    const config = resolveConfig(
+      configFileSchema.parse({
+        schemaVersion: 1,
+        pathExclusions: [
+          {
+            syntax: "gitignore",
+            basePath: "packages/web",
+            files: [pattern],
+            checks: ["formatting"],
+            reason: "Imported formatter ignores",
+          },
+        ],
+      }),
+    );
+    const resolve = createFilePolicyResolver(config, changeSet());
+    expect(
+      resolve("formatting", `packages/web/${excluded}`, "target").severity,
+    ).toBe("off");
+    expect(
+      resolve("formatting", `packages/web/${included}`, "target").severity,
+    ).not.toBe("off");
+    expect(
+      resolve("formatting", `packages/other/${excluded}`, "target").severity,
+    ).not.toBe("off");
+    expect(
+      resolve("lint", `packages/web/${excluded}`, "target").severity,
+    ).not.toBe("off");
+  },
+);

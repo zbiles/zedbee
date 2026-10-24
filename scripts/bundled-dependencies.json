@@ -1829,6 +1829,20 @@
       ]
     },
     {
+      "path": "node_modules/dependency-cruiser/node_modules/ignore",
+      "name": "ignore",
+      "version": "7.0.6",
+      "integrity": "sha512-BAg6QkE8W+TuQLrrw0Ugr7HegXduRuuj8/ti2kSOc+jz1dmx8/WNcjr6XGnq5YpDWxFwwaavqD0+jIUOKelTsw==",
+      "files": [
+        "LICENSE-MIT",
+        "README.md",
+        "index.d.ts",
+        "index.js",
+        "legacy.js",
+        "package.json"
+      ]
+    },
+    {
       "path": "node_modules/dependency-cruiser/node_modules/picomatch",
       "name": "picomatch",
       "version": "4.0.5",
@@ -6119,8 +6133,8 @@
     {
       "path": "node_modules/ignore",
       "name": "ignore",
-      "version": "7.0.6",
-      "integrity": "sha512-BAg6QkE8W+TuQLrrw0Ugr7HegXduRuuj8/ti2kSOc+jz1dmx8/WNcjr6XGnq5YpDWxFwwaavqD0+jIUOKelTsw==",
+      "version": "7.0.11",
+      "integrity": "sha512-YChdK5txDjwGUvgR7oCJcLGkwi3LDh8Zx8tS7ndYciLEg/oOCL26VUBSUEtgS7EjiybcBqFxh5j0rAdDX7/bbg==",
       "files": [
         "LICENSE-MIT",
         "README.md",
