@@ -6045,8 +6045,8 @@
     {
       "path": "node_modules/get-tsconfig",
       "name": "get-tsconfig",
-      "version": "4.14.1",
-      "integrity": "sha512-Dz/6HxkrxgNehhxLVeyv8sad9UzF2xBVeaKBQNDfJ5XiSXmp2gTR0eO0RWiT2NCKS5aGP9jjkOMggTN90qU50A==",
+      "version": "4.14.3",
+      "integrity": "sha512-++QEw4DIY7WGoukz+/+A/8dGYPT9l9yIadnmSgZ8Rjr3YVSVDipQSO9CdnJo9ePqFqUUqh+wk9uIaoiAwsiPkA==",
       "files": [
         "LICENSE",
         "README.md",
