@@ -268,6 +268,9 @@
                     "@typescript-eslint/no-for-in-array": {
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
+                    "@typescript-eslint/no-generated-empty-object-type": {
+                      "$ref": "#/definitions/managedEslintRuleConfiguration"
+                    },
                     "@typescript-eslint/no-implied-eval": {
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
@@ -383,6 +386,9 @@
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
                     "@typescript-eslint/no-unsafe-declaration-merging": {
+                      "$ref": "#/definitions/managedEslintRuleConfiguration"
+                    },
+                    "@typescript-eslint/no-unsafe-enum-assignment": {
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
                     "@typescript-eslint/no-unsafe-enum-comparison": {
@@ -2636,6 +2642,9 @@
                           "@typescript-eslint/no-for-in-array": {
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
+                          "@typescript-eslint/no-generated-empty-object-type": {
+                            "$ref": "#/definitions/managedEslintRuleConfiguration"
+                          },
                           "@typescript-eslint/no-implied-eval": {
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
@@ -2751,6 +2760,9 @@
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
                           "@typescript-eslint/no-unsafe-declaration-merging": {
+                            "$ref": "#/definitions/managedEslintRuleConfiguration"
+                          },
+                          "@typescript-eslint/no-unsafe-enum-assignment": {
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
                           "@typescript-eslint/no-unsafe-enum-comparison": {
