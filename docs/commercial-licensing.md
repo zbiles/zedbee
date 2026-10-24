@@ -18,7 +18,7 @@ The project owner will confirm whether separate terms are needed and explain the
 
 Third-party npm packages keep their own licenses. In particular:
 
-- Secretlint 13.0.5 and its recommended preset are installed as npm dependencies under MIT terms.
+- Secretlint 13.0.6 and its recommended preset (13.0.5) are installed as npm dependencies under MIT terms.
 - The lockfile parsers and other analyzer dependencies retain the exact licenses recorded in `THIRD_PARTY_NOTICES.md`.
 
 Zedbee does not redistribute Gitleaks or OSV-Scanner executables. The bounded OSV API client is Zedbee's own code and is covered by Zedbee's PolyForm Small Business terms; the remote OSV service is contacted but not distributed. The core package ships third-party notices and reviewed license obligations.
