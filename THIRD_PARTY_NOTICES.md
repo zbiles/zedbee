@@ -5423,7 +5423,7 @@ License: MIT
     SOFTWARE
 ---
 
-## @typescript-eslint/eslint-plugin@8.67.0
+## @typescript-eslint/eslint-plugin@8.72.0
 
 License: MIT
 
@@ -5452,7 +5452,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/parser@8.67.0
+## @typescript-eslint/parser@8.72.0
 
 License: MIT
 
@@ -5481,7 +5481,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/project-service@8.67.0
+## @typescript-eslint/project-service@8.72.0
 
 License: MIT
 
@@ -5510,7 +5510,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/scope-manager@8.67.0
+## @typescript-eslint/scope-manager@8.72.0
 
 License: MIT
 
@@ -5539,7 +5539,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/tsconfig-utils@8.67.0
+## @typescript-eslint/tsconfig-utils@8.72.0
 
 License: MIT
 
@@ -5568,7 +5568,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/type-utils@8.67.0
+## @typescript-eslint/type-utils@8.72.0
 
 License: MIT
 
@@ -5597,7 +5597,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/types@8.67.0
+## @typescript-eslint/types@8.72.0
 
 License: MIT
 
@@ -5626,7 +5626,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/typescript-estree@8.67.0
+## @typescript-eslint/typescript-estree@8.72.0
 
 License: MIT
 
@@ -5655,7 +5655,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/utils@8.67.0
+## @typescript-eslint/utils@8.72.0
 
 License: MIT
 
@@ -5684,7 +5684,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/visitor-keys@8.67.0
+## @typescript-eslint/visitor-keys@8.72.0
 
 License: MIT
 
@@ -17776,7 +17776,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## typescript-eslint@8.67.0
+## typescript-eslint@8.72.0
 
 License: MIT
 

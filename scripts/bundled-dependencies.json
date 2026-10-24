@@ -89,8 +89,8 @@
     {
       "path": "node_modules/@typescript-eslint/eslint-plugin",
       "name": "@typescript-eslint/eslint-plugin",
-      "version": "8.67.0",
-      "integrity": "sha512-Un7Heoyj65NREbKAyIrFxeM143NZpExWmy1Nep4DLeQOeLlTeumPjoNKnBrU5D5moWXbPJgRa5Uwcdu0faVNGQ==",
+      "version": "8.72.0",
+      "integrity": "sha512-aysKgysPX9XOv/dk95UkvUDe++Q3n3dJPG9CEWT3RUccxfkPJ+Qn6nhKPDhZXU6Ofo9kgwGWwKyQCnZIXTgngg==",
       "files": [
         "LICENSE",
         "README.md",
@@ -256,6 +256,8 @@
         "dist/rules/no-floating-promises.js",
         "dist/rules/no-for-in-array.d.ts",
         "dist/rules/no-for-in-array.js",
+        "dist/rules/no-generated-empty-object-type.d.ts",
+        "dist/rules/no-generated-empty-object-type.js",
         "dist/rules/no-implied-eval.d.ts",
         "dist/rules/no-implied-eval.js",
         "dist/rules/no-import-type-side-effects.d.ts",
@@ -334,6 +336,8 @@
         "dist/rules/no-unsafe-call.js",
         "dist/rules/no-unsafe-declaration-merging.d.ts",
         "dist/rules/no-unsafe-declaration-merging.js",
+        "dist/rules/no-unsafe-enum-assignment.d.ts",
+        "dist/rules/no-unsafe-enum-assignment.js",
         "dist/rules/no-unsafe-enum-comparison.d.ts",
         "dist/rules/no-unsafe-enum-comparison.js",
         "dist/rules/no-unsafe-function-type.d.ts",
@@ -450,6 +454,8 @@
         "dist/rules/unified-signatures.js",
         "dist/rules/use-unknown-in-catch-callback-variable.d.ts",
         "dist/rules/use-unknown-in-catch-callback-variable.js",
+        "dist/util/FunctionSignature.d.ts",
+        "dist/util/FunctionSignature.js",
         "dist/util/assertionFunctionUtils.d.ts",
         "dist/util/assertionFunctionUtils.js",
         "dist/util/astUtils.d.ts",
@@ -470,6 +476,8 @@
         "dist/util/escapeRegExp.js",
         "dist/util/explicitReturnTypeUtils.d.ts",
         "dist/util/explicitReturnTypeUtils.js",
+        "dist/util/getAwaitTokenRemovalRange.d.ts",
+        "dist/util/getAwaitTokenRemovalRange.js",
         "dist/util/getBaseTypesOfClassMember.d.ts",
         "dist/util/getBaseTypesOfClassMember.js",
         "dist/util/getConstraintInfo.d.ts",
@@ -520,12 +528,20 @@
         "dist/util/isNullLiteral.js",
         "dist/util/isPromiseAggregatorMethod.d.ts",
         "dist/util/isPromiseAggregatorMethod.js",
+        "dist/util/isStartOfArrowFunctionBodyNeedingParentheses.d.ts",
+        "dist/util/isStartOfArrowFunctionBodyNeedingParentheses.js",
         "dist/util/isStartOfExpressionStatement.d.ts",
         "dist/util/isStartOfExpressionStatement.js",
+        "dist/util/isStartOfExpressionStatementNeedingParentheses.d.ts",
+        "dist/util/isStartOfExpressionStatementNeedingParentheses.js",
         "dist/util/isTypeImport.d.ts",
         "dist/util/isTypeImport.js",
+        "dist/util/isTypeOnlyReference.d.ts",
+        "dist/util/isTypeOnlyReference.js",
         "dist/util/isUndefinedIdentifier.d.ts",
         "dist/util/isUndefinedIdentifier.js",
+        "dist/util/lazyRules.d.ts",
+        "dist/util/lazyRules.js",
         "dist/util/misc.d.ts",
         "dist/util/misc.js",
         "dist/util/needsPrecedingSemiColon.d.ts",
@@ -561,8 +577,8 @@
     {
       "path": "node_modules/@typescript-eslint/parser",
       "name": "@typescript-eslint/parser",
-      "version": "8.67.0",
-      "integrity": "sha512-fUBfTuuEulWqX6V8+O3PtScV01tzYYRUDTAirHFKoRAt7nOzoGiPt0M/bB47wWNy0coOOcgEwAMUtBpykMxl6w==",
+      "version": "8.72.0",
+      "integrity": "sha512-0O+x3ynciD6zuXb1CKSu165haQV6ey53DKhHHUnujP7U+XlltJG+/keT0Xhd1HXCze+IHf7Tvt39ovyepX/LNw==",
       "files": [
         "LICENSE",
         "README.md",
@@ -576,8 +592,8 @@
     {
       "path": "node_modules/@typescript-eslint/project-service",
       "name": "@typescript-eslint/project-service",
-      "version": "8.67.0",
-      "integrity": "sha512-cvE8c7ulYeXN9fYuszhCeCsbzyVEXuhrRCybnBre7TUmqb5nRmBfQAwCj0O3WJFDeyAZt4VYv51vMCC9LHSdYw==",
+      "version": "8.72.0",
+      "integrity": "sha512-bzHngBbmIgzj6TsTjVUCntGx6FFLgE7mPjpO0PzHycOaZHXqS43XnrkFIHRS16LLr/xO6FHSXG3GJFo/F4bSBQ==",
       "files": [
         "LICENSE",
         "README.md",
@@ -587,14 +603,16 @@
         "dist/getParsedConfigFileFromTSServer.js",
         "dist/index.d.ts",
         "dist/index.js",
+        "dist/throttleOpenedFileCleanup.d.ts",
+        "dist/throttleOpenedFileCleanup.js",
         "package.json"
       ]
     },
     {
       "path": "node_modules/@typescript-eslint/scope-manager",
       "name": "@typescript-eslint/scope-manager",
-      "version": "8.67.0",
-      "integrity": "sha512-EgvsleTwS4E+WzzSvem8fAUubLwatMNF1B5hHSLQxcvs7q2dtRhGyujHwLJSYlG41niJ7GP24Aha2+0mb1b2kg==",
+      "version": "8.72.0",
+      "integrity": "sha512-JewPyJOYcXBSAS7PIgufscHOwZqhTGyBRiQJhhuDln66tMchxvvt7nJ90JKKIoOelmdHA3kAQbm9cEUHc4JSEA==",
       "files": [
         "LICENSE",
         "README.md",
@@ -960,8 +978,8 @@
     {
       "path": "node_modules/@typescript-eslint/tsconfig-utils",
       "name": "@typescript-eslint/tsconfig-utils",
-      "version": "8.67.0",
-      "integrity": "sha512-vV+LUSv5njUWsknE71fqKTlXUva+R76SaeORd6Zojcunk/6DvKFXONU3BrAs2H49mbygUXt6gbYunzwqNwlhdg==",
+      "version": "8.72.0",
+      "integrity": "sha512-0vbxCf7xLVPSjcOdm6eQbgViH8EDJ8xnl1laLT9yoqSz2YmcSfSg5Vdl0JUvZf6rcuJ0ZivJIuMD4edTg8obaA==",
       "files": [
         "LICENSE",
         "README.md",
@@ -977,8 +995,8 @@
     {
       "path": "node_modules/@typescript-eslint/type-utils",
       "name": "@typescript-eslint/type-utils",
-      "version": "8.67.0",
-      "integrity": "sha512-aVWDXbRmdXO9siTfX4ditQI1T9+zVcNazT48EJCD0v40/9RIFoUgZ05CmGEq9H2gixRpjUn/iplwvlcvutJW/Q==",
+      "version": "8.72.0",
+      "integrity": "sha512-gEXxmmbSTSOVTC37IYYvremOM31v+UN2W772bJxmVYPhAOPSUxtacyb7wkm1EhkYKU6KzFJsdU44DCV4to0LWw==",
       "files": [
         "LICENSE",
         "README.md",
@@ -1020,6 +1038,8 @@
         "dist/typeFlagUtils.js",
         "dist/typeOrValueSpecifiers/specifierNameMatches.d.ts",
         "dist/typeOrValueSpecifiers/specifierNameMatches.js",
+        "dist/typeOrValueSpecifiers/specifierSourceMatches.d.ts",
+        "dist/typeOrValueSpecifiers/specifierSourceMatches.js",
         "dist/typeOrValueSpecifiers/typeDeclaredInFile.d.ts",
         "dist/typeOrValueSpecifiers/typeDeclaredInFile.js",
         "dist/typeOrValueSpecifiers/typeDeclaredInLib.d.ts",
@@ -1032,8 +1052,8 @@
     {
       "path": "node_modules/@typescript-eslint/types",
       "name": "@typescript-eslint/types",
-      "version": "8.67.0",
-      "integrity": "sha512-sBtgslww8nsMYUjhdPBiSyUqSzT8uR6g93A2QXnQC8+cGdjz0CyaOdqHDRJb1AtORbZCNUJBBeFA/tNR2uQmww==",
+      "version": "8.72.0",
+      "integrity": "sha512-Adfoy59kxNEjT5E5fnyrp7GpHYuWs8ONbdohu4ez6IU46qDq8LltG90tLmkucZB2uhYL8mqBjtXqGd8yhfjXqQ==",
       "files": [
         "LICENSE",
         "README.md",
@@ -1053,8 +1073,8 @@
     {
       "path": "node_modules/@typescript-eslint/typescript-estree",
       "name": "@typescript-eslint/typescript-estree",
-      "version": "8.67.0",
-      "integrity": "sha512-EKQBCE9yNlRJYm7jdTW5AhDacDUmSwQb0FAJAmK2EKYrNXIsa2vxcSZx6PvJ/dEdI6lS+Y9W+EXckLj0iPFGcw==",
+      "version": "8.72.0",
+      "integrity": "sha512-gwLfFgWcw15tN2KXDCJvxEOQjPn+P3j/n3eSqkZ5sX4VpW9Cosodr+tWwBZRvJT3TcKx6HnPRGZMCNAiP1Xhug==",
       "files": [
         "LICENSE",
         "README.md",
@@ -1152,8 +1172,8 @@
     {
       "path": "node_modules/@typescript-eslint/utils",
       "name": "@typescript-eslint/utils",
-      "version": "8.67.0",
-      "integrity": "sha512-U9D1FdwEWBwok3hxxSdhclMb0twvt9QnjIQ0VfQ1AiX2epnpSgv2ubVDsayOFyY8K6FX+AQ7E0FKWVG3iKsj1A==",
+      "version": "8.72.0",
+      "integrity": "sha512-0up3oArJZBYnzOaEXKo8DmI43QvMZyPoFEt9LWzRJcyl/RcJjfKKPebknN1VbTgXBf3M/KggUh5uUMdURLnseg==",
       "files": [
         "LICENSE",
         "README.md",
@@ -1241,8 +1261,8 @@
     {
       "path": "node_modules/@typescript-eslint/visitor-keys",
       "name": "@typescript-eslint/visitor-keys",
-      "version": "8.67.0",
-      "integrity": "sha512-fkv8dHRDqfGtTHuJeebdrQ7cX6Ad4WAS00rgHh9UGvMycF1mjBfsxry1XsLIFhWZ6Judlh6UdzK+TYlbpCXgnA==",
+      "version": "8.72.0",
+      "integrity": "sha512-E2mroviasaWecDzTGiGMtuEguuLVOeRggnrIn93CJuxYJzQBHbyymlT08aVQydbBal5538o+JkBKXh2sRuCyIA==",
       "files": [
         "LICENSE",
         "README.md",
@@ -7968,8 +7988,8 @@
     {
       "path": "node_modules/typescript-eslint",
       "name": "typescript-eslint",
-      "version": "8.67.0",
-      "integrity": "sha512-S2udFs8tCKEKffuJ4TB1idGUZiXdCPGi3IPBGWXarbLQ5UPXORV8QEVzJ4gCRduURMb5EkpNCdjbk0eDIuI8Yg==",
+      "version": "8.72.0",
+      "integrity": "sha512-r26Fkc8As+mZvqp7SLsMmNFyYUup/6CjK7/eHBHmhOw6GH6n6YFxHVFrG0jN1c5CMpDzelLPxvgeCOzx7BjN+A==",
       "files": [
         "LICENSE",
         "README.md",

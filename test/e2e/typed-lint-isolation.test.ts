@@ -39,6 +39,9 @@ it("runs staged and committed typed lint with a different consumer TypeScript ve
     const olderTypescript = await pack(
       join(root, "node_modules/typescript-5-9-3"),
     );
+    const release = JSON.parse(
+      await readFile(join(root, "package.json"), "utf8"),
+    );
     await writeFile(
       join(web, "package.json"),
       JSON.stringify({
@@ -46,7 +49,7 @@ it("runs staged and committed typed lint with a different consumer TypeScript ve
         private: true,
         devDependencies: {
           typescript: `file:${olderTypescript}`,
-          "typescript-eslint": "8.67.0",
+          "typescript-eslint": release.dependencies["typescript-eslint"],
         },
       }),
     );
