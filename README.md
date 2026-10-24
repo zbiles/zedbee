@@ -70,6 +70,8 @@ node ./node_modules/zedbee/dist/cli.js scan --base origin/main --format sarif > 
 
 Run the installed CLI from the repository root. If Zedbee is installed in a subfolder such as `web/`, use `node ./web/node_modules/zedbee/dist/cli.js` instead, and install that folder's dependencies first. Project Prettier mode also requires `--trust-project-prettier` in CI.
 
+To create a GitHub PR workflow, select **Add GitHub pull-request workflow** during `zedbee init`, or run `zedbee init --workflow github --yes`. Setup previews the file, preserves an existing workflow, and uses the maintained Zedbee Action. See [workflow setup](docs/cli-reference.md#github-pull-request-workflow-setup).
+
 The checkout needs enough Git history to find where the branches split. On GitHub Actions, set `actions/checkout` to `fetch-depth: 0`. This mode checks committed code and reads configuration from the checked-out commit.
 
 The commit hooks do not cover ordinary `git rebase` or `git cherry-pick` operations. Run a committed branch scan after either operation, or use a required CI check to validate the resulting branch before merging.
@@ -77,6 +79,12 @@ The commit hooks do not cover ordinary `git rebase` or `git cherry-pick` operati
 A scan returns `0` for no blocking findings, `1` for findings that block under your policy, or `2` when Zedbee cannot complete a required check. Treat an incomplete result as unknown, not a pass.
 
 For coding agents and other tools, JSON is also available through `--format json`. Both JSON and SARIF exports contain the complete report. See [CI setup details](docs/cli-reference.md#committed-branch-scans-in-ci) and the [reporting guide](docs/reporting.md).
+
+## Use Swarm with a coding agent
+
+Run `zedbee agent` to read the scan, repair, and verification workflow. To make it available as a repository skill, preview `zedbee agent --install codex` or `zedbee agent --install claude`, then add `--yes` to install. Existing skill files are preserved. Invoke `$zedbee` in Codex or `/zedbee` in Claude Code; other agents can read the output of `zedbee agent` directly.
+
+The workflow guides the agent through the complete report, authorized repairs, relevant tests, and a rescan of the updated staged or committed proposal. It preserves unrelated work and reports incomplete analysis explicitly. See [agent workflow setup](docs/cli-reference.md#agent-workflow).
 
 ## Before you adopt it
 

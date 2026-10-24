@@ -62,7 +62,10 @@ and plugins rather than the bundled engine. A fix plan records the engine, the
 validated installation identity, and the selected snapshot. Applying it
 rechecks local trust and those identities; if the installation or the selected
 staged snapshot changed, the plan is reported stale and the working file is left
-untouched. There is no managed fallback for a project-formatting failure.
+untouched. There is no managed fallback for a project-formatting failure. One
+pinned staged snapshot and one formatter session per project are shared for the
+apply. Formatter and analyzer workers stop before their source snapshots are
+removed.
 
 For a file that receives both kinds, exact fixes run before selected
 formatting. This preserves one deterministic order:
@@ -170,6 +173,12 @@ not roll back a different safe file. Files are validated and replaced
 independently.
 Inspect every reported issue before retrying.
 
+A snapshot cleanup or worker shutdown failure exits 2 even when working files
+were already changed. Text and JSON retain source-free applied progress and
+identify the safe temporary path requiring cleanup. If worker shutdown cannot be
+confirmed, Zedbee retains the snapshot rather than removing files a worker may
+still use. Inspect the reported progress and path before retrying.
+
 A durability warning can mean the working file was replaced but Zedbee could
 not confirm directory durability. That is partial progress with a nonzero exit;
 do not retry automatically. Inspect the file and filesystem first.
@@ -186,7 +195,7 @@ all remains exit 2 and is never applied.
 | -----: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 |    `0` | Preview/cancellation made no writes, or every selected provider and approved file operation completed without an issue                                                       |
 |    `1` | Some safe work may have completed, but at least one provider was incomplete or a conflict, stale file, formatting failure, write failure, or durability warning was reported |
-|    `2` | Zedbee could not build a trustworthy complete plan; no plan was applied                                                                                                      |
+|    `2` | Zedbee could not build a trustworthy complete plan, or worker/snapshot cleanup failed; inspect any retained applied progress                                                 |
 
 ## Review, stage, and rescan
 

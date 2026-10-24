@@ -1,0 +1,55 @@
+name: Zedbee scan
+description: Scan committed pull request changes and preserve the complete report.
+inputs:
+  version:
+    description: Exact Zedbee GitHub release version to install (without the v prefix).
+    required: true
+  base-ref:
+    description: Git base ref; defaults to the pull request event base SHA.
+    required: false
+    default: ""
+  report-format:
+    description: Complete report format (sarif or json).
+    required: false
+    default: sarif
+  trust-project-prettier:
+    description: Explicitly allow execution of the installed project Prettier.
+    required: false
+    default: "false"
+outputs:
+  report-path:
+    description: Private absolute path of the complete report or raw startup output.
+    value: ${{ steps.scan.outputs.report-path }}
+  exit-code:
+    description: Scanner exit status (0 pass, 1 blocked, 2 incomplete).
+    value: ${{ steps.scan.outputs.exit-code }}
+  outcome:
+    description: Scan outcome (pass, blocked, or incomplete).
+    value: ${{ steps.scan.outputs.outcome }}
+runs:
+  using: composite
+  steps:
+    - name: Scan committed changes
+      id: scan
+      continue-on-error: true
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BASE_REF: ${{ inputs.base-ref }}
+        INPUT_REPORT_FORMAT: ${{ inputs.report-format }}
+        INPUT_TRUST_PROJECT_PRETTIER: ${{ inputs.trust-project-prettier }}
+      run: node "$GITHUB_ACTION_PATH/run.mjs"
+    - name: Preserve complete Zedbee report
+      if: ${{ always() && steps.scan.outputs.report-path != '' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: zedbee-report-${{ github.job }}-${{ github.run_attempt }}
+        path: ${{ steps.scan.outputs.report-path }}
+        if-no-files-found: error
+    - name: Preserve scanner exit status
+      if: ${{ always() }}
+      shell: bash
+      env:
+        ZEDBEE_SCAN_EXIT_CODE: ${{ steps.scan.outputs.exit-code }}
+      run: |
+        node -e 'const code = process.env.ZEDBEE_SCAN_EXIT_CODE; process.exit(code === "0" ? 0 : code === "1" ? 1 : 2)'

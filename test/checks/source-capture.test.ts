@@ -294,13 +294,13 @@ describe("explicit immutable source input capture", () => {
     expect(independent.formatting.map(({ rule }) => rule)).toEqual([
       "prettier",
     ]);
-    expect(reads()).toBe(7);
+    expect(reads()).toBe(8);
     const selections = [baseline, target].map((fixture) => ({
       snapshotRoot: fixture.root,
       paths: [path],
     }));
     const captured = (await captureAnalysisSources(selections))!;
-    expect(reads()).toBe(9);
+    expect(reads()).toBe(10);
     await target.write(path, safe);
     try {
       await withAnalysisSourceCapture(captured, async () => {
@@ -308,7 +308,7 @@ describe("explicit immutable source input capture", () => {
         expect(await collect()).toEqual(independent);
         await unlink(join(target.root, path));
         expect(await collect()).toEqual(independent);
-        expect(reads()).toBe(9);
+        expect(reads()).toBe(10);
         const cancelled = { ...context, signal: AbortSignal.abort() };
         await expect(lintAdapter.collect(cancelled)).rejects.toThrow();
         await expect(
@@ -330,7 +330,7 @@ describe("explicit immutable source input capture", () => {
           secrets: [],
           formatting: [],
         });
-        expect(reads()).toBe(11);
+        expect(reads()).toBe(12);
       });
     } finally {
       await fresh.close();

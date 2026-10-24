@@ -43,7 +43,7 @@ it.each([".", "web"])(
       const fixtures = [
         ["react", "react-19-2-0", "^19.2.0"],
         ["react-dom", "react-dom-19-2-0", "^19.2.0"],
-        ["zod", "zod-4-1-12", "^4.1.12"],
+        ["zod", "zod-4-6-6", "^4.6.6"],
         ["scheduler", "scheduler", "^0.27.0"],
       ] as const;
       const packed = await Promise.all(
@@ -80,7 +80,7 @@ it.each([".", "web"])(
       const appVersions = {
         react: "19.2.0",
         "react-dom": "19.2.0",
-        zod: "4.1.12",
+        zod: "4.6.6",
       };
       for (const [name, version] of Object.entries(appVersions))
         expect(lock.packages[`node_modules/${name}`].version).toBe(version);

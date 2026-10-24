@@ -14,6 +14,12 @@ Run `npm run benchmark` to compare against the latest entry with a matching reco
 
 Run `npm run benchmark:update` to measure and append a new entry, then review and commit this file. Existing entries remain unchanged. The comparison fails when a phase is both more than 25% and more than 250 ms slower. Recording a new entry is not proof that a regression has been fixed; review the changes before accepting it as the next reference.
 
+## Correctness and release gates
+
+`npm run verify` measures benchmark phases in explicit smoke mode. Smoke reports that no regression comparison ran, so correctness verification works without an archived baseline for the current operating system or runner.
+
+CI and release workflows separately measure the previous reachable release and the current revision sequentially on the same runner and Node version, each built with its own locked dependencies. Before an initial release, the first parent is used. Comparable common phases use the same 25% and 250 ms thresholds; missing or incompatible measurements cannot pass. New or removed phases are reported as unavailable. Raw measurements and the comparison are retained as workflow artifacts. Release publication requires successful performance and cross-platform verification jobs.
+
 ## Measurement method
 
 Each timing is a median: three samples in the first batch, then five in the subsequent batch. Repeated phase samples share one fixture-scoped analysis session; final session cleanup is outside phase timings. These are not complete CLI timings. coldMs/warmMs are historical field names, not fresh/warm process guarantees. Historical Secretlint and OSV substitutions remain; the snapshot phase measures cache-key hashing, not Git materialization.

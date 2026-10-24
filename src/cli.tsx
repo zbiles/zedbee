@@ -14,6 +14,7 @@ import { terminalColorEnabled } from "./renderers/terminal-style.js";
 import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
 import type { UpdateNotice } from "./updates/metadata.js";
 import { executeChecksCommand } from "./commands/checks.js";
+import { executeAgentCommand } from "./commands/agent.js";
 import { executeDoctorCommand } from "./commands/doctor.js";
 import { executeServiceCommand } from "./commands/service.js";
 import { executeFixCommand } from "./commands/fix.js";
@@ -73,6 +74,7 @@ interface CommanderInitOptions {
   osvUnavailable: InitOsvUnavailable;
   formatting?: InitFormattingChoice;
   formattingScope?: InitFormattingScope;
+  workflow?: "github" | "none";
   trustProjectPrettier: boolean;
   yes: boolean;
   format: "text" | "json";
@@ -106,6 +108,7 @@ export interface CliDependencies {
   readonly executeInitCommand?: typeof executeInitCommand;
   readonly executeScanCommand?: typeof executeScanCommand;
   readonly executeFixCommand?: typeof executeFixCommand;
+  readonly executeAgentCommand?: typeof executeAgentCommand;
 }
 
 export async function runCli(
@@ -141,7 +144,8 @@ export async function runCli(
         hookInvocation: options.hookInvocation === true,
       });
     }
-    if (action.parent?.name() === "telemetry") return;
+    if (action.parent?.name() === "telemetry" || action.name() === "agent")
+      return;
     updateIndented =
       action.name() === "scan" &&
       selectOutputFormat(
@@ -203,6 +207,38 @@ export async function runCli(
       });
   }
 
+  program
+    .command("agent")
+    .description(
+      "print or install the agent scan, repair, and verification workflow",
+    )
+    .addOption(
+      new Option(
+        "--install <agent>",
+        "preview a repository skill installation",
+      ).choices(["codex", "claude"]),
+    )
+    .option(
+      "--yes",
+      "install the skill without overwriting an existing file",
+      false,
+    )
+    .action(async (options: { install?: "codex" | "claude"; yes: boolean }) => {
+      exitCode = await (
+        dependencies.executeAgentCommand ?? executeAgentCommand
+      )(
+        { cwd: process.cwd(), ...options },
+        {
+          writeStdout: (value) => {
+            process.stdout.write(value);
+          },
+          writeStderr: (value) => {
+            process.stderr.write(value);
+          },
+        },
+      );
+    });
+
   const service = program
     .command("service")
     .description("inspect or stop the local analyzer service");
@@ -229,7 +265,15 @@ export async function runCli(
 
   program
     .command("init")
-    .description("preview and safely initialize Zedbee policy and hooks")
+    .description(
+      "preview and safely initialize Zedbee policy, hooks, and GitHub workflow",
+    )
+    .addOption(
+      new Option(
+        "--workflow <workflow>",
+        "offer GitHub pull-request checks or leave workflows unchanged",
+      ).choices(["github", "none"]),
+    )
     .addOption(
       new Option("--profile <profile>", "initial check profile")
         .choices(["fast", "recommended", "thorough"])
@@ -309,6 +353,9 @@ export async function runCli(
             telemetry.summary(value);
           },
           profile: options.profile,
+          ...(options.workflow === undefined
+            ? {}
+            : { workflow: options.workflow }),
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
           osvUnavailable: options.osvUnavailable,
