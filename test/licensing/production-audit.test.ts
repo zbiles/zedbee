@@ -38,3 +38,41 @@ it("audits vendored tools and their runtime closure without admitting test-only 
   expect(audit.lockfile.packages["node_modules/tests"].dev).toBe(true);
   expect({ manifest, lockfile }).toEqual(original);
 });
+
+it("keeps an owner's private pinned helper in production audits", async () => {
+  const { productionAuditInputs } = await import(
+    new URL("../../scripts/audit-production-dependencies.mjs", import.meta.url)
+      .href
+  );
+  const manifest = {
+    name: "fixture",
+    version: "1.0.0",
+    dependencies: { helper: "2.0.0" },
+    devDependencies: { tool: "1.0.0", tests: "1.0.0" },
+    vendoredDependencies: { tool: "1.0.0" },
+  };
+  const lockfile = {
+    name: "fixture",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    packages: {
+      "": manifest,
+      "node_modules/helper": { version: "2.0.0" },
+      "node_modules/tool": {
+        version: "1.0.0",
+        dev: true,
+        dependencies: { helper: "1.0.0" },
+      },
+      "node_modules/tool/node_modules/helper": { version: "1.0.0", dev: true },
+      "node_modules/tests": { version: "1.0.0", dev: true },
+    },
+  };
+  const audit = productionAuditInputs(manifest, lockfile);
+  expect(
+    audit.lockfile.packages["node_modules/tool/node_modules/helper"].dev,
+  ).toBeUndefined();
+  expect(audit.lockfile.packages["node_modules/tests"].dev).toBe(true);
+  expect(lockfile.packages["node_modules/tool/node_modules/helper"].dev).toBe(
+    true,
+  );
+});
