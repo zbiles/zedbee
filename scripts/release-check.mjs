@@ -15,6 +15,7 @@ const RELEASE_VERSION =
 
 const LOCAL_STEPS = Object.freeze([
   { id: "build", command: "npm", args: ["run", "build"] },
+  { id: "plugin", command: "npm", args: ["run", "plugin:check"] },
   { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
   {
     id: "tests",

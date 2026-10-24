@@ -1,5 +1,5 @@
 ---
-name: zedbee
+name: scan
 description: Use Zedbee Swarm to inspect a proposed JavaScript or TypeScript change, explain the complete scan report, repair authorized findings, and verify the updated proposal.
 ---
 

@@ -108,6 +108,7 @@ describe("release verification contract", () => {
   it("builds once before running every release-safety gate", () => {
     expect(verificationSteps("verify")).toEqual([
       { id: "build", command: "npm", args: ["run", "build"] },
+      { id: "plugin", command: "npm", args: ["run", "plugin:check"] },
       { id: "typecheck", command: "npm", args: ["run", "typecheck"] },
       {
         id: "tests",
@@ -163,6 +164,7 @@ describe("release verification contract", () => {
           build: "node build.mjs",
           typecheck: `node ${JSON.stringify(compiler)} --noEmit`,
           "licenses:check": "node scripts/check-package-contents.mjs",
+          "plugin:check": "node scripts/check-package-contents.mjs",
         },
       }),
     );

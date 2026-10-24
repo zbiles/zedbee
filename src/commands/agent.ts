@@ -36,10 +36,12 @@ export async function executeAgentCommand(
 ): Promise<0 | 1 | 2> {
   try {
     // The source and compiled module have the same depth in the package.
-    const contents = await readFile(
-      new URL("../../skills/zedbee/SKILL.md", import.meta.url),
+    const workflow = await readFile(
+      new URL("../../plugins/swarm/skills/scan/SKILL.md", import.meta.url),
       "utf8",
     );
+    // Keep the standalone skill name while sharing the plugin's maintained workflow.
+    const contents = workflow.replace(/^name: scan$/mu, "name: zedbee");
     if (options.install === undefined) {
       io.writeStdout(contents);
       return 0;

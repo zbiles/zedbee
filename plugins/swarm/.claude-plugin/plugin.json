@@ -1,0 +1,25 @@
+{
+  "name": "swarm",
+  "version": "0.1.0",
+  "description": "Set up Zedbee Swarm, scan proposed JavaScript and TypeScript changes, repair authorized findings, and diagnose incomplete checks.",
+  "author": {
+    "name": "Zedbee",
+    "url": "https://zedbee.dev"
+  },
+  "homepage": "https://zedbee.dev",
+  "repository": "https://github.com/zbiles/zedbee",
+  "license": "PolyForm-Small-Business-1.0.0",
+  "keywords": [
+    "swarm",
+    "zedbee",
+    "code-review",
+    "javascript",
+    "typescript"
+  ],
+  "displayName": "Swarm",
+  "icon": "./assets/icon.svg",
+  "documentationUrl": "https://zedbee.dev/docs",
+  "supportUrl": "https://github.com/zbiles/zedbee/issues",
+  "privacyPolicyUrl": "https://github.com/zbiles/zedbee/blob/main/docs/privacy.md",
+  "termsOfServiceUrl": "https://github.com/zbiles/zedbee/blob/main/LICENSE"
+}
