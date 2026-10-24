@@ -4,6 +4,8 @@ import type { FormattingSettings } from "../checks/prettier/settings.js";
 import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
 import type { Environment } from "../inspection/types.js";
 
+export type InitWorkflowChoice = "github" | "none";
+
 export type InitFormattingScope = "projects" | "repository";
 
 export type InitFormattingChoice = "copy" | "project" | "managed" | "off";
@@ -74,6 +76,9 @@ export interface InitFileChange {
 }
 
 export interface InitProposal {
+  readonly workflow?: InitWorkflowChoice;
+  readonly workflowAvailable?: boolean;
+  readonly workflowMessage?: string;
   /** Local installation preference, never written to repository configuration. */
   readonly telemetryEnabled?: boolean;
   readonly telemetryDisabledByEnvironment?: boolean;
@@ -109,6 +114,10 @@ export interface InitProposal {
 }
 
 export interface CreateInitProposalOptions {
+  readonly workflow?: InitWorkflowChoice;
+  readonly workflowAvailable?: boolean;
+  readonly workflowMessage?: string;
+  readonly workflowChange?: InitFileChange;
   readonly schemaReference?: string;
   readonly repositoryRoot: string;
   readonly profile: ProfileId;
