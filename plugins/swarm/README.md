@@ -6,17 +6,19 @@ and verify the updated proposal while preserving unrelated work.
 
 ## Workflows
 
-- **setup** locates the CLI, guides approved installation when missing, and reviews
-  repository policy and optional Git hooks.
-- **scan** checks the intended staged or committed proposal and explains every
-  actionable finding and incomplete check.
-- **fix** previews and applies authorized repairs, runs relevant tests, and verifies
-  the updated target.
+- **swarm** offers CLI installation and hook/CI setup when missing, then scans
+  the intended staged or committed proposal and explains the complete report.
+- **fix** applies only Swarm's built-in formatting, lint and React correctness
+  autofixes, and reports what remains.
 - **doctor** diagnoses installation, policy, dependencies and incomplete analysis.
 
-In Claude Code, use `/swarm:setup`, `/swarm:scan`, `/swarm:fix`, or
-`/swarm:doctor`. In Codex, select the corresponding skill from the installed
-**Swarm** plugin or ask it to use Swarm for the task. Workflows can also be selected
+Use `/swarm` as the main entry point. `/swarm --agent-fix` opts into built-in
+autofixes followed by agent-assisted repairs and verification; `--agent-fix` is a
+skill argument, not a Zedbee CLI flag. Ordinary scans do not modify code.
+`/swarm:fix` and `/swarm:doctor` provide built-in autofixes and diagnostics.
+Claude also exposes `/swarm:swarm`; the short `/swarm` alias works unless another
+command occupies that name. In Codex, select the corresponding skill from the
+installed **Swarm** plugin or ask it to use Swarm for the task. Workflows can be selected
 when relevant to the task; they never grant additional write or execution rights.
 
 This package is prepared for the official OpenAI and Anthropic directories.
@@ -29,9 +31,11 @@ for package validation and submission details.
 
 Use a local coding environment with Git and Node.js ^22.17.0 or >=24.2.0, plus
 the project's package manager. The agent runs Zedbee through the local CLI.
-When the project has no installation, setup can download the pinned official
-GitHub release, verify its SHA-256 and add it as a development dependency with
-existing authorization. The helper only downloads; the agent reviews installation
+When the project has no installation, setup can download the pinned official npm
+release, verify its SHA-256, and install the exact registry version as a development
+dependency with existing authorization. The package manager's lockfile integrity
+must match the verified artifact before execution. The helper only downloads;
+the agent reviews installation
 and configuration changes. No analyzer, dependency or Git hook is installed merely
 by opening a skill.
 
@@ -40,6 +44,11 @@ workflow versions and CLI release versions are independent. Existing project
 installations are used as-is; unsupported options must be checked against that
 CLI's help. Generated GitHub workflow support is available only in CLI versions
 that expose `init --workflow`.
+
+Setup offers pre-commit hooks, GitHub CI, or both, reusing existing integrations.
+After setup those checks run without an agent or plugin session. Setup does not
+stage or commit changes. Failed installation must preserve changes that existed
+before setup; never discard files using a Git checkout or reset as rollback.
 
 ## Data and permissions
 
@@ -57,7 +66,7 @@ first use with an environment opt-out, or use `zedbee telemetry disable`.
 
 Enabled vulnerability checks send dependency names, exact versions and ecosystems
 to `api.osv.dev`. Interactive CLI commands can check npm for updates. Missing-CLI
-setup downloads from the official GitHub release and installation retrieves
+setup verifies a release from `registry.npmjs.org` and installation retrieves
 required packages from the configured package registry. The invoking agent's
 provider and permissions determine how it handles repository content. Read the
 [CLI privacy policy](https://github.com/zbiles/zedbee/blob/main/docs/privacy.md)

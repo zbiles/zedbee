@@ -52,7 +52,7 @@
     "docs/structural-security-coverage.md",
     "docs/support.md",
     "schema",
-    "plugins/swarm/skills/scan/SKILL.md",
+    "plugins/swarm/references/scan.md",
     "plugins/swarm/README.md",
     "plugins/swarm/LICENSE",
     "licenses/reviewed-overrides.json",

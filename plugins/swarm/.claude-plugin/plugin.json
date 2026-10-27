@@ -1,7 +1,7 @@
 {
   "name": "swarm",
-  "version": "0.1.0",
-  "description": "Set up Zedbee Swarm, scan proposed JavaScript and TypeScript changes, repair authorized findings, and diagnose incomplete checks.",
+  "version": "0.1.1",
+  "description": "Install and configure Zedbee Swarm hooks and CI, scan proposed changes, apply built-in autofixes, and diagnose problems. Opt into agent-assisted repairs with --agent-fix.",
   "author": {
     "name": "Zedbee",
     "url": "https://zedbee.dev"

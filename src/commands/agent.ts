@@ -37,7 +37,7 @@ export async function executeAgentCommand(
   try {
     // The source and compiled module have the same depth in the package.
     const workflow = await readFile(
-      new URL("../../plugins/swarm/skills/scan/SKILL.md", import.meta.url),
+      new URL("../../plugins/swarm/references/scan.md", import.meta.url),
       "utf8",
     );
     // Keep the standalone skill name while sharing the plugin's maintained workflow.
