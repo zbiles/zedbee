@@ -46,7 +46,8 @@ that expose `init --workflow`.
 
 Setup offers pre-commit hooks, GitHub CI, or both, reusing existing integrations.
 Missing-installation onboarding presents numbered choices for check profile,
-manual/hooks/CI/both, and telemetry. Reply with three numbers, such as `2, 4, 2`
+manual/hooks/CI/both, and whether to share anonymous usage data to help improve
+Zedbee Swarm (Yes/No). Reply with three numbers, such as `2, 4, 2`
 for Recommended checks, hooks + CI, and telemetry off, or `0` to cancel. Those
 choices authorize setup without a second generic confirmation. An empty index
 does not prevent installation or hook/CI setup.

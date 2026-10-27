@@ -35,14 +35,14 @@ before showing it. The example is for a fresh GitHub repository:
 > 3. GitHub CI — check committed pull-request changes against the PR's target branch.
 > 4. Hooks + CI — both local feedback and pull-request checks (recommended).
 >
-> **CLI usage telemetry** — optional command metadata; no source code, file paths, reports, secrets, or dependency names.
-> 1. Keep the current preference (on by default for a new installation).
-> 2. Off.
-> 3. On.
+> **Help improve Swarm**
+> Would you like to share anonymous usage data to help us improve Zedbee Swarm?
+> 1. Yes.
+> 2. No.
 >
-> Reply with three numbers: **checks, when to run, telemetry**.
+> Reply with three numbers: **checks, when to run, sharing usage data**.
 > For example, **2, 4, 2** installs Swarm with Recommended checks, hooks + CI, and
-> telemetry off. **0** cancels. Choosing a setup authorizes installation and those
+> no usage-data sharing. **0** cancels. Choosing a setup authorizes installation and those
 > configuration changes; nothing is staged or committed.
 
 Adapt the introduction to the detected manager and dependency owner, such as pnpm
@@ -63,9 +63,12 @@ pre-push. Hook and CI execution does not require an agent session.
   selecting manual is not authorization to delete an existing integration. If
   integrations exist, label that option "No additional automation" and disclose
   which existing hooks/CI will remain active.
-- Show an existing telemetry preference when known. "Keep" preserves it; for a
-  fresh installation it keeps the disclosed default. Environment opt-outs remain
-  effective: if they force telemetry off, mark On unavailable and explain once.
+- Match the CLI's simple invitation to share anonymous usage data; keep technical
+  telemetry details in the README rather than expanding this menu question.
+  Map **1. Yes** to enabled and **2. No** to disabled. Preserve an existing
+  preference unless the user explicitly chooses a different one. Environment
+  opt-outs remain effective: if they force telemetry off, mark Yes unavailable
+  and explain once.
 - Respect choices or installation authorization already given in the conversation.
   Ask only about missing choices, with numbered options. Do not replay the whole
   menu or require a second generic "go ahead" after complete choices.
@@ -91,8 +94,8 @@ prompts still apply.
 Pass the selected profile and run integration to supported `init` options. Honor
 telemetry Off before the first CLI invocation: set an environment opt-out for
 initial commands and persist the preference through `zedbee telemetry disable`.
-Keep never changes an existing preference; On never overrides an environment
-opt-out. Persist an explicit On selection with `zedbee telemetry enable` only
+An explicit request to keep the current preference never changes it; Yes never
+overrides an environment opt-out. Persist an explicit Yes selection with `zedbee telemetry enable` only
 when no environment opt-out forces it off. Do not silently install hooks or CI
 when the user chose manual.
 
