@@ -14,8 +14,8 @@ Read repository instructions, Git status, staged and unstaged diffs, and
 status, conflict, trust, and verification rules. Its manual repair instructions
 apply only to the separate agent-assisted mode, not this skill.
 
-If the CLI is missing, offer [installation/setup](../../references/setup.md) and
-wait unless already authorized. If no staged proposal exists, explain that
+If the CLI is missing, use [guided setup](../../references/onboarding.md) and
+wait for choices unless already supplied. If no staged proposal exists, explain that
 managed fixes analyze staged code. Never stage files just to produce a fix plan.
 An undeclared node_modules copy left after a failed install needs the same setup
 offer and verification; do not execute it as an existing installation.

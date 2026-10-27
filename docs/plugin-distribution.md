@@ -61,7 +61,9 @@ package; they do not establish a public listing. See the
 [local catalog format](https://developers.openai.com/plugins/build/plugins).
 
 Use a project without Zedbee to verify the installation offer, then authorize
-setup with hooks/CI. Check the exact version and matching lockfile integrity.
+setup through its numbered profile, run integration, and telemetry choices.
+Verify `0` cancels and partial replies ask only for missing choices. A clean
+working tree must still get the setup menu. Check the exact version and matching lockfile integrity.
 Delete the helper's private download and verify `npm ci --ignore-scripts` or
 `pnpm install --frozen-lockfile --ignore-scripts` from a fresh store. Repeat with
 an existing installation and pre-existing manifest edits. Scan a staged violation,

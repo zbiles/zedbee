@@ -22,6 +22,7 @@ export const PLUGIN_FILES = Object.freeze([
   "README.md",
   "assets/icon.svg",
   "references/cli-release.json",
+  "references/onboarding.md",
   "references/setup.md",
   "references/scan.md",
   "scripts/download-cli.mjs",

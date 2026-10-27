@@ -10,7 +10,8 @@ project's installed CLI, including subfolder installations, and check its versio
 If only an undeclared node_modules copy remains after a failed installation,
 diagnose the inconsistent manifest/lockfile state without running that copy.
 If the CLI is missing, explain that diagnosis and offer
-[setup](../../references/setup.md); proceed only when installation is authorized.
+[guided setup](../../references/onboarding.md); proceed only when the choices
+are authorized.
 
 Use read-only diagnostics first:
 

@@ -20,16 +20,17 @@ with its lockfile/resolved package. An orphaned node_modules copy left by a fail
 install is not a usable installation: report it and offer to reconcile the
 dependency through setup before execution.
 
-If the CLI is missing, offer to install and configure it. Describe the intended
-dependency, manifest, lockfile, configuration, hook and CI changes. Run
-[the setup workflow](../../references/setup.md) only within authorization already
-given; otherwise wait for the installation decision. Do not treat plugin
-installation or a request to scan as blanket permission to modify the repository.
-Offer Swarm's supported pre-commit and pre-merge-commit hook integration; do not
-invent a pre-push integration.
+If the CLI is missing or unusable, read and present
+[the guided setup menu](../../references/onboarding.md). Lead with the installation
+offer and numbered choices for checks, run integration and telemetry. Do not
+substitute a diagnostic report or an open-ended "Want me to proceed?". A clean
+working tree or empty index is not a setup blocker. Wait for the user's choices,
+then run [the setup workflow](../../references/setup.md) within that authorization.
+Do not treat plugin installation or a scan request as permission to install.
 
 If the CLI exists but repository setup is incomplete, offer to complete the
-missing integration. Do not reinstall it or replace existing policy. A request
+missing integration using the same guided choices, preserving existing policy
+and choices already given. Do not reinstall it or replace existing policy. A request
 to set up Swarm should follow the setup workflow and verify hook/CI activation;
 it does not require a source scan unless requested. Once setup is complete,
 hooks and CI run independently of this plugin and the invoking agent.

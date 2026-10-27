@@ -80,7 +80,7 @@ describe("official Swarm plugin package", () => {
     expect(metadata.extensions["com.openai"].onboardingSkill).toBe(
       "./skills/scan/SKILL.md",
     );
-    for (const reference of ["setup.md", "scan.md"])
+    for (const reference of ["onboarding.md", "setup.md", "scan.md"])
       expect(
         await readFile(join(unpacked, "references", reference), "utf8"),
       ).not.toBe("");

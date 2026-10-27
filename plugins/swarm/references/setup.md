@@ -17,7 +17,9 @@ installation to reconcile that state instead of executing the orphaned copy.
 
 ## Install a missing CLI
 
-Offer installation if it is not already authorized, then run the packaged helper:
+Collect [the guided setup choices](onboarding.md) if installation/configuration
+choices are still missing. A complete reply authorizes those changes; do not ask
+for another generic confirmation. Once authorized, run the packaged helper:
 
 ```sh
 node <plugin-root>/scripts/download-cli.mjs
@@ -70,9 +72,10 @@ zedbee init --hook none --format json
 ```
 
 Read the complete proposal. Reuse existing policy and hook managers; explain the
-specific configuration, dependency, hook, and CI changes before applying. Offer
-pre-commit, GitHub CI, or both according to the request and repository. Recommend
-both for a GitHub repository, preserving an existing workflow where appropriate.
+specific configuration, dependency, hook, and CI changes before applying the
+already selected scope. Use the chosen profile and manual/hooks/CI/both selection;
+do not restart the questionnaire or install an unselected integration. Preserve
+an existing workflow where appropriate.
 Hook setup covers pre-commit and pre-merge-commit; it does not add a pre-push hook.
 Use the installed CLI's supported hook choices and `--workflow github` when
 available. The current pinned npm release supports workflow generation; existing

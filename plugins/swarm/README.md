@@ -45,6 +45,11 @@ CLI's help. Generated GitHub workflow support is available only in CLI versions
 that expose `init --workflow`.
 
 Setup offers pre-commit hooks, GitHub CI, or both, reusing existing integrations.
+Missing-installation onboarding presents numbered choices for check profile,
+manual/hooks/CI/both, and telemetry. Reply with three numbers, such as `2, 4, 2`
+for Recommended checks, hooks + CI, and telemetry off, or `0` to cancel. Those
+choices authorize setup without a second generic confirmation. An empty index
+does not prevent installation or hook/CI setup.
 After setup those checks run without an agent or plugin session. Setup does not
 stage or commit changes. Failed installation must preserve changes that existed
 before setup; never discard files using a Git checkout or reset as rollback.
