@@ -10,8 +10,8 @@ Return the opening question and menu directly, following the template below.
 Do not add an inspection inventory, a failed-scan explanation, or an extra recap
 around it. Inspection informs the options rather than becoming another report.
 For an orphaned copy, add only that an incomplete installation needs repair. For
-an installed CLI, replace the opening with **"Zedbee Swarm is installed, but
-repository setup is incomplete. How would you like it configured?"** Mention a
+an installed CLI, replace the opening with **"Zedbee Swarm is installed.
+Let's finish setting it up."** Mention a
 prerequisite only when it actually prevents installation.
 
 Then explain the choices below. Use a native selection tool if the host provides
@@ -21,33 +21,32 @@ before showing it. The example is for a fresh GitHub repository:
 
 > Zedbee Swarm isn't installed. Would you like me to install it?
 >
-> I'll add Swarm as a development dependency using your project's package manager
-> and create its check configuration. Choose how you'd like it to work:
+> Choose how to set up Swarm:
 >
 > **Checks**
-> 1. Fast — formatting, lint, complexity, local security patterns, and applicable React checks.
-> 2. Recommended — Fast plus TypeScript and secret detection.
-> 3. Thorough — all checks, including duplication, dependency architecture, dead code, and dependency vulnerabilities. Vulnerability checks send dependency names and versions to OSV.
+> 1. Fast — quick checks for common code problems.
+> 2. Recommended — extra checks for errors and exposed passwords or keys.
+> 3. Thorough — all checks, including unused code and unsafe packages. Checks package names and versions with OSV, an online security database.
 >
-> **When to run**
-> 1. Manual — staged changes by default, or committed changes with an explicit base; don't add hooks or CI.
-> 2. Git hooks — check staged changes before commits and merge commits.
-> 3. GitHub CI — check committed pull-request changes against the PR's target branch.
-> 4. Hooks + CI — both local feedback and pull-request checks (recommended).
+> **When should Swarm run?**
+> 1. When I ask — no automatic checks.
+> 2. Before commits — automatically check changes before each commit.
+> 3. On GitHub — automatically check pull requests.
+> 4. Both — before commits and on GitHub (recommended).
 >
 > **Help improve Swarm**
 > Would you like to share anonymous usage data to help us improve Zedbee Swarm?
 > 1. Yes.
 > 2. No.
 >
-> Reply with three numbers: **checks, when to run, sharing usage data**.
-> For example, **2, 4, 2** installs Swarm with Recommended checks, hooks + CI, and
-> no usage-data sharing. **0** cancels. Choosing a setup authorizes installation and those
-> configuration changes; nothing is staged or committed.
+> Reply with three numbers, such as **2, 4, 2** for Recommended checks, both
+> automatic options, and no usage sharing. Or reply **0** to cancel.
+> I'll install Swarm using your choices. Your changes won't be committed.
 
-Adapt the introduction to the detected manager and dependency owner, such as pnpm
-at the workspace root. Keep explanations short and understandable without CLI
-knowledge. Neither staged nor committed scans inspect later working edits. Do not
+Keep the short introduction as written. Save package-manager commands, dependency
+locations, file paths and scan-target details for the setup review or a relevant
+follow-up; do not expand the menu with them. Use everyday language rather than
+analyzer names or Git jargon. Neither staged nor committed scans inspect later working edits. Do not
 make the user choose a scan target just to install Swarm. Hooks mean pre-commit
 and pre-merge-commit, not
 pre-push. Hook and CI execution does not require an agent session.
@@ -61,7 +60,7 @@ pre-push. Hook and CI execution does not require an agent session.
   group and summarize that policy. Preserve it unless a different profile is
   explicitly chosen. Preserve existing hook/workflow commands in every mode;
   selecting manual is not authorization to delete an existing integration. If
-  integrations exist, label that option "No additional automation" and disclose
+  integrations exist, label that option "Keep existing automatic checks" and disclose
   which existing hooks/CI will remain active.
 - Match the CLI's simple invitation to share anonymous usage data; keep technical
   telemetry details in the README rather than expanding this menu question.
