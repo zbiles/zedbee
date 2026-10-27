@@ -75,10 +75,10 @@ describe("official Swarm plugin package", () => {
     expect(await readdir(join(unpacked, "skills"))).toEqual([
       "doctor",
       "fix",
-      "swarm",
+      "scan",
     ]);
     expect(metadata.extensions["com.openai"].onboardingSkill).toBe(
-      "./skills/swarm/SKILL.md",
+      "./skills/scan/SKILL.md",
     );
     for (const reference of ["setup.md", "scan.md"])
       expect(

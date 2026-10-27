@@ -1,7 +1,7 @@
 # Swarm plugin distribution
 
 Swarm's agent plugin is prepared for the official OpenAI and Anthropic plugin
-directories. It provides swarm, fix and doctor skills. The main skill handles
+directories. It provides scan, fix and doctor skills. The main skill handles
 installation/setup and scanning; `--agent-fix` opts into agent repairs. A built package or
 GitHub branch is not a marketplace listing. Users can search for and install
 **Swarm** in those directories only after the publisher submits it, each platform
@@ -15,7 +15,7 @@ metadata source. The Claude manifest and plugin license are generated mirrors;
 scan workflow and retains the standalone skill name `zedbee`. Plugin versions are
 independent of the CLI release pinned for missing-installation setup.
 
-Only `skills/swarm`, `skills/fix`, and `skills/doctor` are user-facing skills.
+Only `skills/scan`, `skills/fix`, and `skills/doctor` are user-facing skills.
 Setup and the complete scan/repair workflow live in packaged references. The
 standalone CLI reads the same scan reference, so both distributions share it.
 
@@ -53,8 +53,8 @@ From a disposable Git project, load the extracted plugin in Claude Code:
 claude --plugin-dir /absolute/path/to/extracted/swarm
 ```
 
-Check `/plugin` for load errors, then test `/swarm` (or `/swarm:swarm` if the short
-name conflicts), `/swarm:fix`, `/swarm --agent-fix`, and `/swarm:doctor`.
+Check `/plugin` for load errors, then test `/swarm:scan`, `/swarm:fix`,
+`/swarm:scan --agent-fix`, and `/swarm:doctor`.
 For Codex, use a local test catalog pointing at the extracted folder, install the
 plugin from that catalog, and start a fresh conversation. Local catalogs test the
 package; they do not establish a public listing. See the

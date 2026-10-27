@@ -6,19 +6,18 @@ and verify the updated proposal while preserving unrelated work.
 
 ## Workflows
 
-- **swarm** offers CLI installation and hook/CI setup when missing, then scans
+- **scan** offers CLI installation and hook/CI setup when missing, then scans
   the intended staged or committed proposal and explains the complete report.
 - **fix** applies only Swarm's built-in formatting, lint and React correctness
   autofixes, and reports what remains.
 - **doctor** diagnoses installation, policy, dependencies and incomplete analysis.
 
-Use `/swarm` as the main entry point. `/swarm --agent-fix` opts into built-in
+Use `/swarm:scan` as the main entry point. `/swarm:scan --agent-fix` opts into built-in
 autofixes followed by agent-assisted repairs and verification; `--agent-fix` is a
 skill argument, not a Zedbee CLI flag. Ordinary scans do not modify code.
 `/swarm:fix` and `/swarm:doctor` provide built-in autofixes and diagnostics.
-Claude also exposes `/swarm:swarm`; the short `/swarm` alias works unless another
-command occupies that name. In Codex, select the corresponding skill from the
-installed **Swarm** plugin or ask it to use Swarm for the task. Workflows can be selected
+In Codex, select the corresponding skill from the installed **Swarm** plugin or
+ask it to use Swarm for the task. Workflows can be selected
 when relevant to the task; they never grant additional write or execution rights.
 
 This package is prepared for the official OpenAI and Anthropic directories.

@@ -6,7 +6,7 @@ description: Apply Zedbee Swarm's built-in formatting, lint, and React correctne
 # Swarm built-in autofixes
 
 Use only the installed Zedbee CLI's managed fixes. This command does not authorize
-agent-authored source repairs. Offer `/swarm --agent-fix` for findings requiring
+agent-authored source repairs. Offer `/swarm:scan --agent-fix` for findings requiring
 agent edits, but wait for that authorization before performing them.
 
 Read repository instructions, Git status, staged and unstaged diffs, and

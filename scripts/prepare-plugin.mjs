@@ -25,7 +25,7 @@ export const PLUGIN_FILES = Object.freeze([
   "references/setup.md",
   "references/scan.md",
   "scripts/download-cli.mjs",
-  ...["swarm", "fix", "doctor"].map((name) => `skills/${name}/SKILL.md`),
+  ...["scan", "fix", "doctor"].map((name) => `skills/${name}/SKILL.md`),
 ]);
 export function claudeManifest(manifest) {
   const { extensions, $schema, ...identity } = manifest;
@@ -98,7 +98,7 @@ export async function checkPlugin(root = ROOT, { write = false } = {}) {
   }
   if (
     manifest.extensions["com.openai"].onboardingSkill !==
-    "./skills/swarm/SKILL.md"
+    "./skills/scan/SKILL.md"
   )
     throw new Error("Invalid plugin onboarding skill.");
   const generated = {

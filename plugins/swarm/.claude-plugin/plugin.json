@@ -1,6 +1,6 @@
 {
   "name": "swarm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Install and configure Zedbee Swarm hooks and CI, scan proposed changes, apply built-in autofixes, and diagnose problems. Opt into agent-assisted repairs with --agent-fix.",
   "author": {
     "name": "Zedbee",
