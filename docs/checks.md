@@ -15,7 +15,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | ------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `formatting`             | Prettier formatting                                         | Transforms staged target files and intersects formatting changes with added lines                                              | Managed fixing formats the complete current working file, including unstaged work                                |
 | `lint`                   | ESLint, typescript-eslint, and managed correctness rules    | Compares workspace diagnostics and attributes locations/entities                                                               | Does not load project ESLint plugins or executable config                                                        |
-| `types`                  | TypeScript diagnostics                                      | Compares isolated baseline/target programs for each workspace                                                                  | TypeScript source must be covered by a contained snapshot project                                                |
+| `types`                  | TypeScript diagnostics                                      | Compares isolated baseline/target programs for each workspace                                                                  | Changed source and source losing coverage require a contained snapshot project                                   |
 | `cyclomaticComplexity`   | Branch-path complexity                                      | Compares changed syntax entities against `max` and worsening policy                                                            | Thresholds require team calibration                                                                              |
 | `readabilityComplexity`  | Zedbee's original nesting/readability metric                | Compares changed syntax entities against `max` and worsening policy                                                            | It is not Sonar Cognitive Complexity and scores are not interchangeable                                          |
 | `structuralSecurity`     | Managed ast-grep rules for high-confidence local patterns   | Compares rule/location observations in JavaScript and TypeScript source                                                        | Narrower than Semgrep; no general taint, dataflow, reachability, interfile, or live registry coverage            |
@@ -48,8 +48,12 @@ an analysis session. They load contained snapshot projects, including sibling
 configurations and project references. An option-only configuration used through
 `extends` is a helper. Canonical `tsconfig.json`, configurations declaring their
 own source selectors or project references, and explicitly referenced
-configurations retain their project role. TypeScript source outside every loaded
-project makes `types` incomplete rather than silently passing. Configuration failures report the
+configurations retain their project role. In the default `when: "relevant"` mode,
+project coverage is required for changed TypeScript files and files that lose
+their baseline coverage. Unchanged files already outside every loaded project
+are skipped, so an existing coverage gap in an untouched project does not block
+an unrelated commit. `when: "always"` requires coverage for every enabled file.
+Configuration failures report the
 safe repository-relative configuration path, TypeScript diagnostic code when
 available, and affected snapshot; raw compiler messages are not exported.
 
@@ -170,7 +174,7 @@ The bundled jscpd 5.3.2 counts both endpoints of a cloned line range. Compared w
 
 `lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and may change only with a Zedbee engine upgrade.
 
-`lint.typeInformation` accepts `"required"` or `"when-available"` and defaults to `"required"`. Typed lint loads every contained TypeScript project in a workspace. A file covered by any loaded project receives type-aware rules. An uncovered file blocks typed lint under `"required"`. Under an explicit `"when-available"` file policy, it receives the bundled basic TypeScript rules without rules that require project type information. This setting is file-scoped and can be limited with an override such as `{ "files": ["tools/*.ts"], "checks": { "lint": { "typeInformation": "when-available" } } }`.
+`lint.typeInformation` accepts `"required"` or `"when-available"` and defaults to `"required"`. Typed lint loads every contained TypeScript project in a workspace. A file covered by any loaded project receives type-aware rules. Under `"required"`, an uncovered file blocks typed lint if it changed, lost its baseline coverage, or has `when: "always"`; unchanged existing coverage gaps are skipped. Under an explicit `"when-available"` file policy, it receives the bundled basic TypeScript rules without rules that require project type information. This setting is file-scoped and can be limited with an override such as `{ "files": ["tools/*.ts"], "checks": { "lint": { "typeInformation": "when-available" } } }`.
 
 ```jsonc
 {

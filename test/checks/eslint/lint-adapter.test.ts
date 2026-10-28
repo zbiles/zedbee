@@ -1335,7 +1335,7 @@ describe("lintAdapter", () => {
       message:
         "Zedbee found TypeScript files that are not included in any loaded TypeScript project. Typed lint stopped because unrelated project settings could produce inaccurate results.",
       path: "docs/config.mts",
-      paths: ["docs/config.mts", "docs/theme.ts"],
+      paths: ["docs/config.mts"],
       snapshot: "last-commit",
       projectPaths: ["tools/tsconfig.json"],
       remediation:

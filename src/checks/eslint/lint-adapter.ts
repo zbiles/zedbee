@@ -31,12 +31,11 @@ import { analyzerDiagnostic, type AnalyzerOperation } from "../diagnostics.js";
 import { createManagedEslint } from "./load-engine.js";
 import { eslintFailureDetails, ManagedEslintFailure } from "./failure.js";
 import { planManagedEslintFixes } from "../../fixes/eslint-provider.js";
-import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { captureAnalysisDependencies } from "../typescript/reuse-inputs.js";
 import {
-  configurationIncompleteError,
-  loadSnapshotProjectSet,
-} from "../typescript/projects.js";
+  createSnapshotProjectCoverage,
+  type SnapshotProjectCoverage,
+} from "../typescript/project-coverage.js";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
 import { isAnalyzerWorker } from "../runner/context.js";
 import type {
@@ -167,13 +166,12 @@ function typedFailure(options: {
 
 async function prepareSide(
   snapshotRoot: string,
-  repositoryRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
-  dependencies?: CapturedDependencies,
+  coverage: SnapshotProjectCoverage,
   snapshotRef?: string | null,
   operation: AnalyzerOperation = "collect",
   requestedPaths?: ReadonlySet<string>,
@@ -219,19 +217,18 @@ async function prepareSide(
       covered,
       projectPaths,
       files: projectFiles,
-    } = await loadSnapshotProjectSet(
-      canonicalRoot,
-      repositoryRoot,
-      workspace,
-      dependencies,
-    );
+    } = await coverage.load(workspace, side);
     signal.throwIfAborted();
     const uncovered = typescriptFiles
       .filter((path) => !covered.has(path))
       .sort(compareCodeUnits);
-    const blocking = uncovered.filter(
-      (path) =>
-        policyForFile("lint", path, side).typeInformation === "required",
+    const blocking = await coverage.required(
+      uncovered.filter(
+        (path) =>
+          policyForFile("lint", path, side).typeInformation === "required",
+      ),
+      workspace,
+      side,
     );
     if (blocking.length > 0) {
       throw new CheckIncompleteError({
@@ -248,7 +245,17 @@ async function prepareSide(
     }
     return {
       canonicalRoot,
-      groups,
+      groups: groups
+        .map((group) => ({
+          ...group,
+          files: group.files.filter(
+            (path) =>
+              !uncovered.includes(path) ||
+              policyForFile("lint", path, side).typeInformation ===
+                "when-available",
+          ),
+        }))
+        .filter((group) => group.files.length > 0),
       typedProject: { programs },
       coveredTypeScript: covered,
       projectPaths,
@@ -256,13 +263,6 @@ async function prepareSide(
     };
   } catch (error) {
     if (error instanceof CheckIncompleteError) throw error;
-    const configurationError = configurationIncompleteError(
-      error,
-      "lint",
-      side,
-      operation,
-    );
-    if (configurationError !== undefined) throw configurationError;
     throw new CheckIncompleteError({
       code: "TYPED_LINT_SETUP_FAILED",
       message: `Typed lint could not build a usable project from this workspace's TypeScript configuration for the ${snapshotLabel(side, snapshotRef)}.`,
@@ -280,26 +280,24 @@ async function prepareSide(
 
 async function collectSide(
   snapshotRoot: string,
-  repositoryRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   engineFactory: LintEslintEngineFactory,
   signal: AbortSignal,
-  dependencies: CapturedDependencies,
+  coverage: SnapshotProjectCoverage,
   snapshotRef?: string | null,
   requestedPaths?: ReadonlySet<string>,
 ): Promise<SnapshotLocationObservations> {
   const prepared = await prepareSide(
     snapshotRoot,
-    repositoryRoot,
     inspection,
     target,
     side,
     policyForFile,
     signal,
-    dependencies,
+    coverage,
     snapshotRef,
     "collect",
     requestedPaths,
@@ -420,13 +418,12 @@ export function createLintAdapter(
     async planFixes(context, findings) {
       const prepared = await prepareSide(
         context.snapshots.targetDir,
-        context.repositoryRoot,
         context.targetInspection,
         context.target,
         "target",
         context.policyForFile,
         context.signal,
-        undefined,
+        createSnapshotProjectCoverage(context, "lint", undefined, "planFixes"),
         context.snapshots.targetRef,
         "planFixes",
       );
@@ -484,19 +481,23 @@ export function createLintAdapter(
 
     async collect(context): Promise<CheckObservationSet> {
       const dependencies = captureAnalysisDependencies(context);
+      const coverage = createSnapshotProjectCoverage(
+        context,
+        "lint",
+        dependencies,
+      );
       const [baseline, target] = await settleSnapshotSides(
         () =>
           collectRenamedBaselines(context, (baselineTarget, paths) =>
             collectSide(
               context.snapshots.baselineDir,
-              context.repositoryRoot,
               context.baselineInspection,
               baselineTarget,
               "baseline",
               context.policyForFile,
               engineFactory,
               context.signal,
-              dependencies,
+              coverage,
               context.snapshots.baselineRef,
               paths,
             ),
@@ -504,14 +505,13 @@ export function createLintAdapter(
         () =>
           collectSide(
             context.snapshots.targetDir,
-            context.repositoryRoot,
             context.targetInspection,
             context.target,
             "target",
             context.policyForFile,
             engineFactory,
             context.signal,
-            dependencies,
+            coverage,
             context.snapshots.targetRef,
           ),
         context.signal,
