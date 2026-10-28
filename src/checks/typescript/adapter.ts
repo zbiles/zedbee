@@ -8,7 +8,6 @@ import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import type {
   CheckObservationSet,
-  CheckRunContext,
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
@@ -18,16 +17,15 @@ import type {
 } from "../../inspection/types.js";
 import { createSnapshotProgram } from "./compiler-host.js";
 import {
-  configurationIncompleteError,
-  loadSnapshotProjectSet,
-} from "./projects.js";
+  createSnapshotProjectCoverage,
+  type SnapshotProjectCoverage,
+} from "./project-coverage.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
 } from "../../config/file-policy.js";
 import { convertTypescriptDiagnostic } from "./convert-diagnostic.js";
-import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { captureAnalysisDependencies } from "./reuse-inputs.js";
 import {
   pairTypescriptObservations,
@@ -46,11 +44,10 @@ function workspaceFor(
 }
 
 async function collectSide(
-  snapshotRoot: string,
   repositoryRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
-  dependencies: CapturedDependencies,
+  coverage: SnapshotProjectCoverage,
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
@@ -69,22 +66,14 @@ async function collectSide(
   );
   if (requested.length === 0)
     return { observations: Object.freeze([]), files: {} };
-  let projectSet;
-  try {
-    projectSet = await loadSnapshotProjectSet(
-      snapshotRoot,
-      repositoryRoot,
-      workspace,
-      dependencies,
-    );
-  } catch (error) {
-    throw configurationIncompleteError(error, "types", side) ?? error;
-  }
+  const projectSet = await coverage.load(workspace, side);
   signal.throwIfAborted();
   const { programs, covered, projectPaths, files, canonicalRoot } = projectSet;
-  const uncovered = requested
-    .filter((path) => !covered.has(path))
-    .sort(compareCodeUnits);
+  const uncovered = await coverage.required(
+    requested.filter((path) => !covered.has(path)).sort(compareCodeUnits),
+    workspace,
+    side,
+  );
   if (uncovered.length > 0)
     throw new CheckIncompleteError({
       code: "TYPESCRIPT_PROJECT_MISMATCH",
@@ -133,15 +122,19 @@ export const typescriptAdapter: ObservationCheckAdapter = {
   async collect(context): Promise<CheckObservationSet> {
     try {
       const dependencies = captureAnalysisDependencies(context);
+      const coverage = createSnapshotProjectCoverage(
+        context,
+        "types",
+        dependencies,
+      );
       const [baseline, target] = await settleSnapshotSides(
         () =>
           collectRenamedBaselines(context, (baselineTarget, paths) =>
             collectSide(
-              context.snapshots.baselineDir,
               context.repositoryRoot,
               context.baselineInspection,
               baselineTarget,
-              dependencies,
+              coverage,
               "baseline",
               context.policyForFile,
               context.signal,
@@ -150,11 +143,10 @@ export const typescriptAdapter: ObservationCheckAdapter = {
           ),
         () =>
           collectSide(
-            context.snapshots.targetDir,
             context.repositoryRoot,
             context.targetInspection,
             context.target,
-            dependencies,
+            coverage,
             "target",
             context.policyForFile,
             context.signal,
