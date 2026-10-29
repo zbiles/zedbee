@@ -156,6 +156,9 @@ async function snapshotIdentity(
 ): Promise<readonly SnapshotInputIdentity[]> {
   const canonicalRoot = await realpath(root);
   const registry = await captureSnapshotRegistry(canonicalRoot);
+  // An incomplete inventory cannot establish the existing full-snapshot key.
+  for (const failure of registry.unavailableSymlinks?.values() ?? [])
+    throw failure;
   const entries = [...registry.entries()].sort((left, right) =>
     compareCodeUnits(left.repositoryPath, right.repositoryPath),
   );

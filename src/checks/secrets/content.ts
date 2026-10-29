@@ -51,6 +51,16 @@ export interface SecretSourcePair {
   readonly target?: SecretTextSource;
 }
 
+function unsafeSecretFile(path: string): SecretContentError {
+  return new SecretContentError({
+    code: "SECRET_FILE_UNSAFE",
+    message: "Secret analysis only scans regular files in the selected target.",
+    path,
+    remediation:
+      "Provide a regular file at this path or remove it from the selected target, then retry.",
+  });
+}
+
 async function readTextSource(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -63,7 +73,12 @@ async function readTextSource(
     .some((part) =>
       (IGNORED_DIRECTORY_NAMES as readonly string[]).includes(part),
     );
-  const entry = excluded ? undefined : registry.resolve(repositoryPath);
+  let entry;
+  try {
+    entry = excluded ? undefined : registry.resolve(repositoryPath);
+  } catch {
+    throw unsafeSecretFile(repositoryPath);
+  }
   if (entry === undefined) {
     if (!required) return undefined;
     throw new SecretContentError({
@@ -75,14 +90,7 @@ async function readTextSource(
     });
   }
   if (entry.kind === "symlink" || entry.targetKind !== "file") {
-    throw new SecretContentError({
-      code: "SECRET_FILE_UNSAFE",
-      message:
-        "Secret analysis only scans regular files in the selected target.",
-      path: repositoryPath,
-      remediation:
-        "Provide a regular file at this path or remove it from the selected target, then retry.",
-    });
+    throw unsafeSecretFile(repositoryPath);
   }
   let content: string;
   try {

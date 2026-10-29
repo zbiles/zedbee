@@ -1,3 +1,5 @@
+import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import { RepositoryInspectionError } from "../inspection/types.js";
 import { ConfigError } from "../config/load-config.js";
 import {
   BaseComparisonError,
@@ -190,6 +192,30 @@ export function phaseFailure(
   phase: ActiveScanPhase,
   mode: ScanMode,
 ): ScanFailureInput {
+  if (
+    (phase === "baseline-inspection" || phase === "target-inspection") &&
+    error instanceof RepositoryInspectionError &&
+    error.path !== undefined &&
+    (error.reason === "unresolved-symlink" ||
+      error.reason === "external-symlink")
+  ) {
+    try {
+      const path = normalizeRepositoryRelativePath(error.path);
+      const failure = sourcePhaseFailure(phase, mode);
+      return {
+        ...failure,
+        path,
+        message:
+          error.reason === "external-symlink"
+            ? `${failure.message} A required symbolic link points outside the snapshot.`
+            : `${failure.message} A required symbolic link has no resolvable target in the snapshot.`,
+        remediation:
+          "Provide a regular file or a link to a tracked target inside the repository at this path, or remove the link from the selected change, then retry.",
+      };
+    } catch {
+      return sourcePhaseFailure(phase, mode);
+    }
+  }
   if (error instanceof BaseComparisonError) {
     return BASE_COMPARISON_FAILURES[error.code];
   }

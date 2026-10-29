@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+import { join } from "node:path";
 import type {
   CheckRunContext,
   CheckTarget,
@@ -591,5 +594,64 @@ describe("dependencyArchitectureAdapter", () => {
         signal: controller.signal,
       }),
     ).rejects.toThrow("Dependency architecture analysis failed.");
+  });
+});
+
+describe("native dependency analyzer link boundary", () => {
+  it("rejects unavailable links before native resolution can read an external directory", async () => {
+    const fixture = await createInspectionFixture();
+    const outside = await createInspectionFixture();
+    await fixture.writeJson("web/package.json", { name: "web" });
+    await fixture.write(
+      "web/main.js",
+      "import { value } from '../runtime/private.js'; export { value };\n",
+    );
+    await outside.write(
+      "private.js",
+      "export const value = 'private external contents';\n",
+    );
+    await fixture.symlink(outside.root, "runtime");
+    const inspection = await inspectRepository(fixture.root);
+    const original = await cycleContext();
+    const context: CheckRunContext = {
+      ...original,
+      snapshots: {
+        ...original.snapshots,
+        baselineDir: fixture.root,
+        targetDir: fixture.root,
+      },
+      baselineInspection: inspection,
+      targetInspection: inspection,
+      target: { id: "web", kind: "workspace", relativeRoot: "web" },
+      changeSet: changes("web/main.js"),
+    };
+    const outsideReads: string[] = [];
+    const readFileSync = fs.readFileSync;
+    const spy = vi
+      .spyOn(fs, "readFileSync")
+      .mockImplementation((...args: Parameters<typeof fs.readFileSync>) => {
+        const path = String(args[0]);
+        if (
+          path.includes("runtime/private.js") ||
+          path === join(outside.root, "private.js")
+        )
+          outsideReads.push(path);
+        return readFileSync(...args);
+      });
+    syncBuiltinESMExports();
+    try {
+      const result = await dependencyArchitectureAdapter
+        .collect(context)
+        .catch((error) => error);
+      expect(outsideReads).toEqual([]);
+      expect(result).toMatchObject({
+        name: "CheckIncompleteError",
+        code: "DEPENDENCY_ARCHITECTURE_UNSAFE_LINK",
+        path: "runtime",
+      });
+    } finally {
+      spy.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 });
