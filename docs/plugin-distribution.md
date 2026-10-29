@@ -1,7 +1,8 @@
 # Swarm plugin distribution
 
 Swarm's agent plugin is prepared for the official OpenAI and Anthropic plugin
-directories. It provides setup, scan, fix and doctor workflows. A built package or
+directories. It provides scan, fix and doctor skills. The main skill handles
+installation/setup and scanning; `--agent-fix` opts into agent repairs. A built package or
 GitHub branch is not a marketplace listing. Users can search for and install
 **Swarm** in those directories only after the publisher submits it, each platform
 completes review, and the approved version is published.
@@ -13,6 +14,10 @@ metadata source. The Claude manifest and plugin license are generated mirrors;
 `plugin:check` rejects drift. The standalone `zedbee agent` command uses the same
 scan workflow and retains the standalone skill name `zedbee`. Plugin versions are
 independent of the CLI release pinned for missing-installation setup.
+
+Only `skills/scan`, `skills/fix`, and `skills/doctor` are user-facing skills.
+Setup and the complete scan/repair workflow live in packaged references. The
+standalone CLI reads the same scan reference, so both distributions share it.
 
 ```sh
 npm run plugin:generate
@@ -35,6 +40,36 @@ claude plugin validate --strict plugins/swarm
 Directory listing fields require Claude Code 2.1.281 or newer; older validators
 warn about those supported fields. Validate the built ZIP after extraction too.
 The public directories run additional metadata, policy and safety checks.
+
+## Test before submission
+
+Keep test artifacts in a persistent folder outside the source checkout. Build a
+ZIP there and extract it to an empty plugin folder. Temporary directories can be
+cleaned by the operating system; an empty leftover folder is not a plugin.
+
+From a disposable Git project, load the extracted plugin in Claude Code:
+
+```sh
+claude --plugin-dir /absolute/path/to/extracted/swarm
+```
+
+Check `/plugin` for load errors, then test `/swarm:scan`, `/swarm:fix`,
+`/swarm:scan --agent-fix`, and `/swarm:doctor`.
+For Codex, use a local test catalog pointing at the extracted folder, install the
+plugin from that catalog, and start a fresh conversation. Local catalogs test the
+package; they do not establish a public listing. See the
+[local catalog format](https://developers.openai.com/plugins/build/plugins).
+
+Use a project without Zedbee to verify the installation offer, then authorize
+setup through its numbered profile, run integration, and telemetry choices.
+Verify `0` cancels and partial replies ask only for missing choices. A clean
+working tree must still get the setup menu. Check the exact version and matching lockfile integrity.
+Delete the helper's private download and verify `npm ci --ignore-scripts` or
+`pnpm install --frozen-lockfile --ignore-scripts` from a fresh store. Repeat with
+an existing installation and pre-existing manifest edits. Scan a staged violation,
+apply a supported autofix, and verify that unstaged repairs are reported as
+pending until the intended bytes enter the scan target. Agent-authored repairs
+must require the explicit agent-fix mode or equivalent user authorization.
 
 ## Official OpenAI submission
 
@@ -69,14 +104,15 @@ See [Anthropic's submission guide](https://claude.com/docs/plugins/submit).
 
 The plugin README discloses local source analysis, the invoking agent's access,
 CLI telemetry (enabled by default, with opt-outs), OSV dependency metadata,
-GitHub release downloads and package-registry installation. Preserve normal CLI
+checksum-pinned npm registry downloads and package-registry installation. Preserve normal CLI
 telemetry preferences. Review the linked privacy policy and license before
 submitting data-handling or legal acknowledgements.
 
-Missing-CLI setup downloads and verifies the pinned official release. Installation
-saves the stable HTTPS release URL, preserving reproducible dependency metadata;
-it must never save a temporary file path. npm lockfile integrity must match the
-verified artifact before execution. Update the release URL, version and checksum
+Missing-CLI setup downloads and verifies the pinned official npm release.
+Installation saves the exact named registry version, preserving reproducible
+dependency metadata; it must never save a GitHub redirect URL or temporary file
+path. The package manager's lockfile integrity must match the verified artifact
+before execution. Update the registry URL, version and checksum
 together after verifying a new published artifact. Do not replace an existing
 release asset or assume an unpublished npm version is available.
 

@@ -1,8 +1,8 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "swarm",
-  "version": "0.1.0",
-  "description": "Set up Zedbee Swarm, scan proposed JavaScript and TypeScript changes, repair authorized findings, and diagnose incomplete checks.",
+  "version": "0.1.5",
+  "description": "Install and configure Zedbee Swarm hooks and CI, scan proposed changes, apply built-in autofixes, and diagnose problems. Opt into agent-assisted repairs with --agent-fix.",
   "author": {
     "name": "Zedbee",
     "url": "https://zedbee.dev"
@@ -10,29 +10,35 @@
   "homepage": "https://zedbee.dev",
   "repository": "https://github.com/zbiles/zedbee",
   "license": "PolyForm-Small-Business-1.0.0",
-  "keywords": ["swarm", "zedbee", "code-review", "javascript", "typescript"],
+  "keywords": [
+    "swarm",
+    "zedbee",
+    "code-review",
+    "javascript",
+    "typescript"
+  ],
   "extensions": {
     "com.openai": {
       "requires_local_executor": true,
       "interface": {
         "displayName": "Swarm",
         "shortDescription": "Scan, repair, verify changes",
-        "longDescription": "Use Zedbee Swarm to set up repository checks, inspect complete findings, repair authorized changes, verify the updated proposal, and diagnose incomplete analysis.",
+        "longDescription": "Set up Zedbee Swarm in your repository for pre-commit and CI checks. Scan proposed changes, apply built-in autofixes, opt into agent-assisted repairs, or diagnose installation and check failures.",
         "developerName": "Zedbee",
         "category": "Developer Tools",
         "websiteURL": "https://zedbee.dev",
         "privacyPolicyURL": "https://github.com/zbiles/zedbee/blob/main/docs/privacy.md",
         "termsOfServiceURL": "https://github.com/zbiles/zedbee/blob/main/LICENSE",
         "defaultPrompt": [
-          "Set up Swarm in this repository.",
+          "Set up Swarm with a pre-commit hook and CI in this repository.",
           "Scan my proposed changes with Swarm.",
-          "Fix the authorized Swarm findings and verify the result."
+          "Use Swarm to scan and fix my changes, including agent-assisted repairs."
         ],
         "logo": "./assets/icon.svg",
         "composerIcon": "./assets/icon.svg",
         "supportURL": "https://github.com/zbiles/zedbee/issues"
       },
-      "onboardingSkill": "./skills/setup/SKILL.md"
+      "onboardingSkill": "./skills/scan/SKILL.md"
     }
   }
 }

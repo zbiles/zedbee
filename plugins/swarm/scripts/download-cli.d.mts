@@ -14,6 +14,7 @@ export function downloadCli(options?: {
 }): Promise<{
   version: string;
   url: string;
+  package: string;
   integrity: string;
   tarball: string;
   directory: string;

@@ -17,7 +17,7 @@ async function run(cwd: string, install?: "codex" | "claude", yes = false) {
   return { code, stdout: stdout.join(""), stderr: stderr.join("") };
 }
 const source = new URL(
-  "../../plugins/swarm/skills/scan/SKILL.md",
+  "../../plugins/swarm/references/scan.md",
   import.meta.url,
 );
 
