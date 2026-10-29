@@ -54,6 +54,7 @@ function fixDependencies(
   dependencies: AnalysisSessionDependencies,
 ): BuildFixPlanDependencies {
   return {
+    captureIndexComparison: dependencies.captureIndexComparison,
     loadConfig: dependencies.loadIndexConfig,
     createGitClient: dependencies.createGitClient,
     readChangeSet: dependencies.readIndexChangeSet,

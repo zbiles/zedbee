@@ -194,7 +194,7 @@ describe("controller-owned scan rendering", () => {
         expect(delivered.checks[1].error.diagnostic).toEqual(diagnostic);
         expect(delivered.checks[2].error.code).toBe("SNAPSHOT_CLEANUP_FAILED");
       } else {
-        expect(stdout.join("")).toContain("temporary snapshot");
+        expect(stdout.join("")).toContain("temporary scan files");
       }
       const metadata = JSON.parse(
         stderr.join("").split("ZEDBEE DIAGNOSTICS\n")[1]!,
