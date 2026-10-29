@@ -1,4 +1,5 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CheckAdapter } from "../../src/checks/adapter.js";
 import type { dispatchChecks } from "../../src/checks/dispatcher.js";
@@ -97,6 +98,70 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it.each(["configuration", "metadata", "snapshots"])(
+    "keeps one selected comparison when HEAD/index change after %s",
+    async (point) => {
+      const repo = await repositoryFixture();
+      async function mutate() {
+        await repo.write(
+          "value.ts",
+          "export const value = 99;\nexport const later = 1;\n",
+        );
+        await repo.commitAll("concurrent agent commit");
+        await repo.write(
+          "value.ts",
+          "export const value = 99;\nexport const later = 2;\n",
+        );
+        await repo.git(["add", "value.ts"]);
+      }
+      let selected = "";
+      const outcome = await withAnalysisSession(
+        {
+          repositoryRoot: repo.root,
+          dependencies: {
+            ...defaults,
+            async loadIndexConfig(...parameters) {
+              const config = await defaults.loadIndexConfig(...parameters);
+              if (point === "configuration") await mutate();
+              return config;
+            },
+            async discoverIndexChangeSet(...parameters) {
+              const changes = await defaults.discoverIndexChangeSet!(
+                ...parameters,
+              );
+              if (point === "metadata") await mutate();
+              return changes;
+            },
+            async buildIndexSnapshots(...parameters) {
+              const pair = await defaults.buildIndexSnapshots(...parameters);
+              if (point === "snapshots") await mutate();
+              return pair;
+            },
+            async dispatch(_adapters, context) {
+              selected = await readFile(
+                join(context.snapshots.targetDir, "value.ts"),
+                "utf8",
+              );
+              expect(
+                await readFile(
+                  join(context.snapshots.baselineDir, "value.ts"),
+                  "utf8",
+                ),
+              ).toBe("export const value = 1;\n");
+              expect(
+                context.changeSet.files.get("value.ts")?.addedRanges,
+              ).toEqual([{ start: 1, end: 1 }]);
+              return [];
+            },
+          },
+        },
+        async () => null,
+      );
+      expect(outcome.completed, JSON.stringify(outcome)).toBe(true);
+      expect(selected).toBe("export const value = 2;\n");
+    },
+  );
+
   it("announces preparation before awaiting each operation, including source capture and cleanup", async () => {
     const repository = await repositoryFixture();
     const local = createLocalAnalyzerExecutor();

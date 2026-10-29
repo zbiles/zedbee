@@ -297,6 +297,9 @@ export async function discoverStagedChangeSet(
     [
       "diff",
       "--cached",
+      ...(git.selectedComparison === undefined
+        ? []
+        : [git.selectedComparison.diffBase]),
       "--name-status",
       "-z",
       "--no-relative",
@@ -374,6 +377,9 @@ export async function addStagedLineRanges(
     [
       "diff",
       "--cached",
+      ...(git.selectedComparison === undefined
+        ? []
+        : [git.selectedComparison.diffBase]),
       ...STAGED_DIFF_OPTIONS,
       "--text",
       "--",
@@ -420,6 +426,9 @@ export async function readStagedChangeSet(
     [
       "diff",
       "--cached",
+      ...(git.selectedComparison === undefined
+        ? []
+        : [git.selectedComparison.diffBase]),
       "--no-relative",
       "--ignore-submodules=none",
       "--submodule=short",

@@ -13,6 +13,7 @@ import { createIncompleteReport } from "./incomplete-report.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
 import { announceScanPhase } from "./progress.js";
+import type { SelectedIndexComparison } from "../git/selected-comparison.js";
 
 /** Keep each parent's rename and line attribution while scheduling the union of affected paths. */
 function comparisonChanges(
@@ -141,6 +142,7 @@ export async function runMergeScan(
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   let parents: readonly string[] | undefined;
+  let selected: SelectedIndexComparison | undefined;
   try {
     if (options.baseRef !== undefined)
       throw new MergeComparisonError("MERGE_PARENTS_INVALID");
@@ -151,9 +153,13 @@ export async function runMergeScan(
         ...(options.noTimeout ? { noTimeout: true } : {}),
       },
     );
-    const git = dependencies.createGitClient(options.repositoryRoot, {
+    let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });
+    if (dependencies.captureIndexComparison !== undefined) {
+      selected = await dependencies.captureIndexComparison(git, options.signal);
+      git = selected.bind(git);
+    }
     announceScanPhase(
       options.onEvent,
       "baseline-resolution",
@@ -185,6 +191,12 @@ export async function runMergeScan(
       const changeSet = comparisonChanges(changes[index]!, changes);
       const pairDependencies: RunScanDependencies = {
         ...dependencies,
+        // All parent scans already use the one immutable target tree below.
+        captureIndexComparison: async () => ({
+          baselineCommit: parent,
+          bind: (client) => client,
+          cleanup: async () => {},
+        }),
         loadIndexConfig: (root, client, configPath, signal) =>
           dependencies.loadCommitConfig(
             root,
@@ -318,5 +330,7 @@ export async function runMergeScan(
       ),
       ...(parents === undefined ? {} : { mergeParents: parents }),
     };
+  } finally {
+    await selected?.cleanup();
   }
 }

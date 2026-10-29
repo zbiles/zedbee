@@ -32,6 +32,10 @@ import { resolveBaseComparison } from "../git/base-comparison.js";
 import { safeRequestedBase } from "../git/base-ref.js";
 import { GitClient } from "../git/client.js";
 import {
+  captureSelectedIndexComparison,
+  type SelectedIndexComparison,
+} from "../git/selected-comparison.js";
+import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
   countSnapshotFileLines,
@@ -55,6 +59,7 @@ import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import { announceScanPhase } from "./progress.js";
 
 export interface AnalysisSessionDependencies {
+  captureIndexComparison?: typeof captureSelectedIndexComparison;
   resolveBaseComparison: typeof resolveBaseComparison;
   loadIndexConfig: typeof loadConfigFromIndex;
   loadCommitConfig: typeof loadConfigFromCommit;
@@ -82,6 +87,7 @@ export interface AnalysisSessionDependencies {
 
 export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies =
   {
+    captureIndexComparison: captureSelectedIndexComparison,
     resolveBaseComparison,
     loadIndexConfig: loadConfigFromIndex,
     loadCommitConfig: loadConfigFromCommit,
@@ -97,6 +103,8 @@ export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies 
     buildCommitSnapshots: buildCommitSnapshotPair,
     inspectRepository,
     async baselineForEmptyChange(git, signal) {
+      if (git.selectedComparison !== undefined)
+        return git.selectedComparison.baselineCommit === null ? null : "HEAD";
       return (
         await git.tryRun(
           ["rev-parse", "--verify", "HEAD"],
@@ -237,6 +245,7 @@ export async function withAnalysisSession<T>(
     announcePhase(phase);
   };
   let snapshots: SnapshotPair | undefined;
+  let selectedComparison: SelectedIndexComparison | undefined;
   let executor: AnalyzerExecutor | undefined;
   let execution: AnalyzerExecutionSession | undefined;
   let executionCleanupProved = true;
@@ -253,9 +262,19 @@ export async function withAnalysisSession<T>(
         ...(options.noTimeout ? { noTimeout: true } : {}),
       },
     );
-    const bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
+    let bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy: bootstrapResourcePolicy,
     });
+    if (
+      options.baseRef === undefined &&
+      dependencies.captureIndexComparison !== undefined
+    ) {
+      selectedComparison = await dependencies.captureIndexComparison(
+        bootstrapGit,
+        options.signal,
+      );
+      bootstrapGit = selectedComparison.bind(bootstrapGit);
+    }
     let baseComparison:
       Awaited<ReturnType<typeof resolveBaseComparison>> | undefined;
     let config: ResolvedConfig;
@@ -296,7 +315,7 @@ export async function withAnalysisSession<T>(
     options.onConfiguration?.(config);
     signal.throwIfAborted();
     enterPhase("change-discovery");
-    const git = dependencies.createGitClient(options.repositoryRoot, {
+    let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
       onSoftTimeout: () =>
         options.onEvent?.({
@@ -306,6 +325,7 @@ export async function withAnalysisSession<T>(
           timestamp: dependencies.clock(),
         }),
     });
+    if (selectedComparison !== undefined) git = selectedComparison.bind(git);
     const splitChangeDiscovery =
       baseComparison === undefined
         ? dependencies.discoverIndexChangeSet !== undefined &&
@@ -557,6 +577,7 @@ export async function withAnalysisSession<T>(
   try {
     if (!executionCleanupProved) throw new Error("Unproved execution cleanup");
     await snapshots?.cleanup();
+    await selectedComparison?.cleanup();
   } catch {
     cleanupFailure = safeCleanupFailure(
       snapshots === undefined ? undefined : dirname(snapshots.targetDir),

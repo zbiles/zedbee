@@ -35,7 +35,7 @@ import { GitCommandError } from "../../src/git/errors.js";
 import { DEFAULT_GIT_OUTPUT_LIMIT_BYTES } from "../../src/scan/resource-policy.js";
 import {
   buildCommitSnapshotPair,
-  buildSnapshotPair,
+  buildSnapshotPairSerial as buildSnapshotPair,
   countSnapshotFileLines,
   type SnapshotPair,
 } from "../../src/git/snapshot.js";

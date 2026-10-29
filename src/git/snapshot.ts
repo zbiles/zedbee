@@ -15,6 +15,7 @@ import { compareCodeUnits } from "../core/compare.js";
 import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
+import { captureSelectedIndexComparison } from "./selected-comparison.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -644,7 +645,7 @@ export async function buildCommitSnapshotPair(
   }
 }
 
-export async function buildSnapshotPair(
+export async function buildSnapshotPairSerial(
   repositoryRoot: string,
   git: GitClient,
   signal?: AbortSignal,
@@ -681,15 +682,19 @@ export async function buildSnapshotPair(
       signal,
     );
 
-    const head = await git.tryRun(["rev-parse", "--verify", "HEAD"], options);
-    const baselineRef = head.exitCode === 0 ? "HEAD" : null;
+    const baselineCommit =
+      git.selectedComparison === undefined
+        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
+            .stdout || null
+        : git.selectedComparison.baselineCommit;
+    const baselineRef = baselineCommit === null ? null : "HEAD";
     let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];
     let baselineSymlinkPaths: readonly string[] = [];
     if (baselineRef === "HEAD") {
       const baselineEntries = await readCommitEntries(
         repositoryRoot,
         git,
-        "HEAD",
+        baselineCommit!,
         signal,
       );
       baselineUnsupportedEntries = await materializeEntries(
@@ -716,5 +721,30 @@ export async function buildSnapshotPair(
     };
   } catch (error) {
     return cleanupConstructionFailure(root, error);
+  }
+}
+
+/** Standalone callers get the same fixed selection as a complete scan. */
+export async function buildSnapshotPair(
+  repositoryRoot: string,
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  if (git.selectedComparison !== undefined)
+    return buildSnapshotPairSerial(repositoryRoot, git, signal);
+  const selected = await captureSelectedIndexComparison(git, signal);
+  let pair: SnapshotPair | undefined;
+  try {
+    pair = await buildSnapshotPairSerial(
+      repositoryRoot,
+      selected.bind(git),
+      signal,
+    );
+    await selected.cleanup();
+    return pair;
+  } catch (error) {
+    await pair?.cleanup();
+    await selected.cleanup();
+    throw error;
   }
 }

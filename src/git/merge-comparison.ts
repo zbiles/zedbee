@@ -34,9 +34,20 @@ export async function resolveMergeComparison(
   ).stdout;
   let incoming: string[];
   try {
-    incoming = (await readFile(resolve(git.repositoryRoot, path), "utf8"))
-      .trim()
-      .split(/\r?\n/u);
+    if (
+      git.selectedComparison !== undefined &&
+      git.selectedComparison.mergeHeads === undefined
+    ) {
+      throw Object.assign(new Error("No captured merge parents"), {
+        code: "ENOENT",
+      });
+    }
+    incoming =
+      git.selectedComparison?.mergeHeads !== undefined
+        ? [...git.selectedComparison.mergeHeads]
+        : (await readFile(resolve(git.repositoryRoot, path), "utf8"))
+            .trim()
+            .split(/\r?\n/u);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     incoming = Object.keys(environment)
@@ -50,7 +61,10 @@ export async function resolveMergeComparison(
   if (incoming.length > 100 || incoming.some((id) => !isGitObjectId(id)))
     throw new MergeComparisonError("MERGE_PARENTS_INVALID");
   const parents: string[] = [];
-  for (const ref of ["HEAD", ...incoming]) {
+  for (const ref of [
+    git.selectedComparison?.baselineCommit ?? "HEAD",
+    ...incoming,
+  ]) {
     const output = await git.tryRun(
       ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
       options,

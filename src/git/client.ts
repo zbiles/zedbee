@@ -41,6 +41,13 @@ export interface GitBinaryOutput {
 }
 
 export interface GitClientOptions {
+  environment?: Readonly<Record<string, string>>;
+  selectedComparison?: Readonly<{
+    indexPath: string;
+    baselineCommit: string | null;
+    diffBase: string;
+    mergeHeads?: readonly string[];
+  }>;
   resourcePolicy?: ScanResourcePolicy;
   onSoftTimeout?: () => void;
   runCommand?: (
@@ -235,6 +242,32 @@ export class GitClient {
     private readonly clientOptions: GitClientOptions = {},
   ) {}
 
+  get selectedComparison() {
+    return this.clientOptions.selectedComparison;
+  }
+
+  /** Per-client binding: never changes the worktree's index or process environment. */
+  withSelectedIndex(
+    indexPath: string,
+    baselineCommit: string | null,
+    diffBase: string,
+    mergeHeads?: readonly string[],
+  ): GitClient {
+    return new GitClient(this.repositoryRoot, {
+      ...this.clientOptions,
+      environment: {
+        ...this.clientOptions.environment,
+        GIT_INDEX_FILE: indexPath,
+      },
+      selectedComparison: {
+        indexPath,
+        baselineCommit,
+        diffBase,
+        ...(mergeHeads === undefined ? {} : { mergeHeads }),
+      },
+    });
+  }
+
   private resolvedGitCommand(): Promise<ResolvedGitCommand> {
     this.gitCommand ??= resolveGitCommand(this.repositoryRoot);
     return this.gitCommand;
@@ -301,7 +334,10 @@ export class GitClient {
         stdin: "ignore",
         forceKillAfterDelay: 2_000,
         extendEnv: false,
-        env: commandEnvironment(command.path, options.env),
+        env: commandEnvironment(command.path, {
+          ...options.env,
+          ...this.clientOptions.environment,
+        }),
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
         cancelSignal: signal,
       } as const;
@@ -428,7 +464,10 @@ export class GitClient {
     let forceKillTimer: NodeJS.Timeout | undefined;
     const child = spawn(command.executable, ["cat-file", "--batch"], {
       cwd: options.cwd ?? this.repositoryRoot,
-      env: commandEnvironment(command.path, options.env),
+      env: commandEnvironment(command.path, {
+        ...options.env,
+        ...this.clientOptions.environment,
+      }),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });
