@@ -177,6 +177,8 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  /** Internal transfer from merge preflight; this session owns its cleanup. */
+  selectedComparison?: SelectedIndexComparison;
   executor?: AnalyzerExecutor;
   repositoryRoot: string;
   baseRef?: string;
@@ -247,7 +249,8 @@ export async function withAnalysisSession<T>(
     announcePhase(phase);
   };
   let snapshots: SnapshotPair | undefined;
-  let selectedComparison: SelectedIndexComparison | undefined;
+  let selectedComparison: SelectedIndexComparison | undefined =
+    options.selectedComparison;
   let executor: AnalyzerExecutor | undefined;
   let execution: AnalyzerExecutionSession | undefined;
   let executionCleanupProved = true;
@@ -269,14 +272,16 @@ export async function withAnalysisSession<T>(
     });
     if (
       options.baseRef === undefined &&
+      selectedComparison === undefined &&
       dependencies.captureIndexComparison !== undefined
     ) {
       selectedComparison = await dependencies.captureIndexComparison(
         bootstrapGit,
         options.signal,
       );
-      bootstrapGit = selectedComparison.bind(bootstrapGit);
     }
+    if (selectedComparison !== undefined)
+      bootstrapGit = selectedComparison.bind(bootstrapGit);
     let baseComparison:
       Awaited<ReturnType<typeof resolveBaseComparison>> | undefined;
     let config: ResolvedConfig;

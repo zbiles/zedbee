@@ -99,6 +99,88 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it("does not strand a handed-off selection if report clock setup fails", async () => {
+    const repo = await repositoryFixture();
+    let captures = 0;
+    let cleanups = 0;
+    let now = 0;
+    await expect(
+      runScan({
+        repositoryRoot: repo.root,
+        merge: "auto",
+        mergeEnvironment: {},
+        cache: false,
+        dependencies: {
+          ...defaults,
+          evaluate: evaluatePolicy,
+          now() {
+            if (++now === 2) throw new Error("clock failed");
+            return new Date();
+          },
+          async captureIndexComparison(...parameters) {
+            captures++;
+            const selected = await defaults.captureIndexComparison!(
+              ...parameters,
+            );
+            onTestFinished(selected.cleanup);
+            return {
+              ...selected,
+              async cleanup() {
+                cleanups++;
+                await selected.cleanup();
+              },
+            };
+          },
+        },
+      }),
+    ).rejects.toThrow("clock failed");
+    expect(cleanups).toBe(captures);
+  });
+  it.each([false, true])(
+    "hands an auto-merge preflight's selection to analysis once (cleanup fails=%s)",
+    async (cleanupFails) => {
+      const repo = await repositoryFixture();
+      let captures = 0;
+      let cleanups = 0;
+      const report = await runScan({
+        repositoryRoot: repo.root,
+        merge: "auto",
+        mergeEnvironment: {},
+        cache: false,
+        dependencies: {
+          ...defaults,
+          evaluate: evaluatePolicy,
+          now: () => new Date(),
+          dispatch: async () => [],
+          async captureIndexComparison(...parameters) {
+            captures++;
+            const selected = await defaults.captureIndexComparison!(
+              ...parameters,
+            );
+            return {
+              ...selected,
+              async cleanup() {
+                cleanups++;
+                await selected.cleanup();
+                if (cleanupFails) throw new Error("private raw cleanup detail");
+              },
+            };
+          },
+        },
+      });
+      expect(report.outcome).toBe(cleanupFails ? "incomplete" : "pass");
+      expect(captures).toBe(1);
+      expect(cleanups).toBe(1);
+      expect(report.changedFileCount).toBe(1);
+      if (cleanupFails)
+        expect(report.checks.map((check) => check.error?.code)).toEqual([
+          "SNAPSHOT_CLEANUP_FAILED",
+        ]);
+      expect(JSON.stringify(report)).not.toContain(
+        "private raw cleanup detail",
+      );
+    },
+  );
   it.each([false, true])(
     "cleans its private index and retains snapshot cleanup diagnosis (index cleanup fails=%s)",
     async (indexCleanupFails) => {

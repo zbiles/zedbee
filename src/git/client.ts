@@ -253,7 +253,7 @@ export class GitClient {
     diffBase: string,
     mergeHeads?: readonly string[],
   ): GitClient {
-    return new GitClient(this.repositoryRoot, {
+    const bound = new GitClient(this.repositoryRoot, {
       ...this.clientOptions,
       environment: {
         ...this.clientOptions.environment,
@@ -266,6 +266,9 @@ export class GitClient {
         ...(mergeHeads === undefined ? {} : { mergeHeads }),
       },
     });
+    // Index binding does not change the repository or trusted executable.
+    bound.gitCommand = this.gitCommand;
+    return bound;
   }
 
   private resolvedGitCommand(): Promise<ResolvedGitCommand> {

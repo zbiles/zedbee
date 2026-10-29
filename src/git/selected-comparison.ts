@@ -85,16 +85,20 @@ export async function captureSelectedIndexComparison(
 ): Promise<SelectedIndexComparison> {
   signal?.throwIfAborted();
   const options = signal ? { signal } : {};
-  const baselineCommit = await head(git, signal);
-  const mergePath = resolve(
-    git.repositoryRoot,
-    (await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)).stdout,
-  );
+  const [baseline, merge, index] = await Promise.allSettled([
+    head(git, signal),
+    git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options),
+    git.run(["rev-parse", "--git-path", "index"], options),
+  ]);
+  // These reads are independent, but all Git children must settle before this
+  // owner can fail or create the private selection directory.
+  if (baseline.status === "rejected") throw baseline.reason;
+  if (merge.status === "rejected") throw merge.reason;
+  if (index.status === "rejected") throw index.reason;
+  const baselineCommit = baseline.value;
+  const mergePath = resolve(git.repositoryRoot, merge.value.stdout);
   const incoming = await mergeHeads(mergePath);
-  const indexPath = resolve(
-    git.repositoryRoot,
-    (await git.run(["rev-parse", "--git-path", "index"], options)).stdout,
-  );
+  const indexPath = resolve(git.repositoryRoot, index.value.stdout);
   const before = await indexState(indexPath);
   const temporary = await mkdtemp(join(tmpdir(), "zedbee-selection-"));
   let cleaned = false;

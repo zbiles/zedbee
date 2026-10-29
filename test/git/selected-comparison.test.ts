@@ -61,6 +61,39 @@ afterEach(async () => {
 });
 
 describe("captured index comparison", () => {
+  it("overlaps independent baseline and index-path metadata reads", async () => {
+    const repo = await createGitRepository();
+    await repo.write("value.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    const git = new GitClient(repo.root);
+    const run = git.run.bind(git);
+    let start!: () => void;
+    let release!: () => void;
+    let started = 0;
+    const began = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    git.run = async (args, options) => {
+      if (args[0] === "rev-parse" && started < 3) {
+        started++;
+        start();
+        await held;
+      }
+      return run(args, options);
+    };
+    const pending = captureSelectedIndexComparison(git);
+    try {
+      await began;
+      expect(started).toBe(3);
+    } finally {
+      release();
+      const selected = await pending;
+      await selected.cleanup();
+    }
+  });
   it("captures the selected bytes on Git versions without rev-parse path-format support", async () => {
     const repo = await createGitRepository();
     await repo.write("value.ts", "export const value = 1;\n");

@@ -144,6 +144,7 @@ export async function runMergeScan(
   options: RunScanOptions,
   dependencies: RunScanDependencies,
   scan: (options: RunScanOptions) => Promise<ScanReport>,
+  onUnmergedSelection?: (selection: SelectedIndexComparison) => void,
 ): Promise<ScanReport | undefined> {
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
@@ -219,7 +220,13 @@ export async function runMergeScan(
       options.merge === "required",
       options.signal,
     );
-    if (comparison === undefined) return undefined;
+    if (comparison === undefined) {
+      if (selected !== undefined && onUnmergedSelection !== undefined) {
+        onUnmergedSelection(selected);
+        selected = undefined;
+      }
+      return undefined;
+    }
     parents = comparison.parents;
     announceScanPhase(options.onEvent, "change-discovery", dependencies.clock);
     const changes = await Promise.all(
