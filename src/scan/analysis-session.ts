@@ -584,11 +584,15 @@ export async function withAnalysisSession<T>(
   try {
     if (!executionCleanupProved) throw new Error("Unproved execution cleanup");
     await snapshots?.cleanup();
-    await selectedComparison?.cleanup();
   } catch {
     cleanupFailure = safeCleanupFailure(
       snapshots === undefined ? undefined : dirname(snapshots.targetDir),
     );
+  }
+  try {
+    await selectedComparison?.cleanup();
+  } catch {
+    cleanupFailure = safeCleanupFailure(undefined);
   }
   if (completion.completed && signal.aborted) {
     completion = { completed: false, error: signal.reason };

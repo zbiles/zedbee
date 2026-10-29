@@ -98,6 +98,44 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it("cleans its private index even when snapshot cleanup fails", async () => {
+    const repo = await repositoryFixture();
+    let selectedCleaned = false;
+    const outcome = await withAnalysisSession(
+      {
+        repositoryRoot: repo.root,
+        dependencies: {
+          ...defaults,
+          async captureIndexComparison(...parameters) {
+            const selected = await defaults.captureIndexComparison!(
+              ...parameters,
+            );
+            return {
+              ...selected,
+              async cleanup() {
+                await selected.cleanup();
+                selectedCleaned = true;
+              },
+            };
+          },
+          async buildIndexSnapshots(...parameters) {
+            const pair = await defaults.buildIndexSnapshots(...parameters);
+            return {
+              ...pair,
+              async cleanup() {
+                await pair.cleanup();
+                throw new Error("cleanup failed");
+              },
+            };
+          },
+          dispatch: async () => [],
+        },
+      },
+      async () => null,
+    );
+    expect(outcome.cleanupFailure).toBeDefined();
+    expect(selectedCleaned).toBe(true);
+  });
   it.each(["configuration", "metadata", "snapshots"])(
     "keeps one selected comparison when HEAD/index change after %s",
     async (point) => {

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { cpus, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { execa } from "execa";
+import type * as Cli from "./snapshot-cli.mjs";
 
 // External harness: imports ONLY the requested immutable build in a fresh child.
 const here = fileURLToPath(import.meta.url);
@@ -115,9 +116,30 @@ async function fixture(root: string, count: number, scenario: string) {
     join(root, "package.json"),
     '{"name":"snapshot-benchmark","private":true,"workspaces":["web","e2e","extension"]}',
   );
+  const checks = [
+    "formatting",
+    "lint",
+    "types",
+    "secrets",
+    "cyclomaticComplexity",
+    "readabilityComplexity",
+    "structuralSecurity",
+    "reactCorrectness",
+    "reactAccessibility",
+    "duplication",
+    "dependencyArchitecture",
+    "deadCode",
+    "vulnerabilities",
+  ];
   await writeFile(
     join(root, ".zedbeerc.jsonc"),
-    '{"schemaVersion":1,"profile":"recommended","checks":{"formatting":"off","lint":"off","types":"error","secrets":"off","cyclomaticComplexity":"off","readabilityComplexity":"off","structuralSecurity":"off","reactCorrectness":"off","reactAccessibility":"off"}}',
+    JSON.stringify({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: Object.fromEntries(
+        checks.map((id) => [id, id === "types" ? "error" : "off"]),
+      ),
+    }),
   );
   for (const name of ["web", "e2e", "extension"]) {
     await mkdir(join(root, name, "src", "deep", "nested"), { recursive: true });
@@ -127,7 +149,7 @@ async function fixture(root: string, count: number, scenario: string) {
     );
     await writeFile(
       join(root, name, "tsconfig.json"),
-      '{"compilerOptions":{"strict":true,"types":[],"resolveJsonModule":true,"esModuleInterop":true},"include":["src"]}',
+      '{"compilerOptions":{"strict":true,"types":[],"target":"ES2022","module":"ESNext","moduleResolution":"bundler","resolveJsonModule":true,"esModuleInterop":true},"include":["src"]}',
     );
   }
   // Bounded fixture generation; file count excludes Git internals and cache.
@@ -149,6 +171,10 @@ async function fixture(root: string, count: number, scenario: string) {
       }),
     );
   await writeFile(join(root, "web", "src", "data.json"), '{"value":1}\n');
+  await writeFile(
+    join(root, "web", "src", "consumer.ts"),
+    'import data from "./data.json";\nexport const value: number = data.value;\n',
+  );
   if (scenario === "large")
     await writeFile(
       join(root, "unchanged.bin"),
@@ -164,7 +190,7 @@ async function fixture(root: string, count: number, scenario: string) {
   else if (scenario === "config")
     await writeFile(
       join(root, "web", "tsconfig.json"),
-      '{"compilerOptions":{"strict":false,"types":[]},"include":["src"]}',
+      '{"compilerOptions":{"strict":false,"types":[],"target":"ES2022","module":"ESNext","moduleResolution":"bundler","resolveJsonModule":true,"esModuleInterop":true},"include":["src"]}',
     );
   else await writeFile(join(root, "web", "src", "data.json"), '{"value":2}\n');
   await git(["add", "."]);
@@ -189,6 +215,23 @@ async function coordinator() {
     scenarios.some((s) => !["json", "ts", "config", "large"].includes(s))
   )
     throw new Error("Invalid fixtures");
+  const kind = option("--kind", "all");
+  if (!["preparation", "cli", "all"].includes(kind))
+    throw new Error("Invalid benchmark kind");
+  const cacheModes = option("--cache-modes", "off,cold,warm").split(
+    ",",
+  ) as Cli.CacheMode[];
+  const executorModes = option(
+    "--executor-modes",
+    "local,cold-service,warm-service",
+  ).split(",") as Cli.ExecutorMode[];
+  if (
+    cacheModes.some((mode) => !["off", "cold", "warm"].includes(mode)) ||
+    executorModes.some(
+      (mode) => !["local", "cold-service", "warm-service"].includes(mode),
+    )
+  )
+    throw new Error("Invalid benchmark mode");
   const output = resolve(option("--output"));
   const temporary = await mkdtemp(join(tmpdir(), "zedbee-preparation-bench-"));
   const results: unknown[] = [];
@@ -202,6 +245,13 @@ async function coordinator() {
         .stdout,
     })),
   );
+  if (identities.some((identity) => identity.dirty !== ""))
+    throw new Error(
+      "Benchmark requires clean immutable implementation checkouts",
+    );
+  const { measureCli } = (await import(
+    new URL("./snapshot-cli.mts", import.meta.url).href
+  )) as typeof Cli;
   try {
     for (const count of sizes)
       for (const scenario of scenarios) {
@@ -211,45 +261,87 @@ async function coordinator() {
         for (let sample = -1; sample < samples; sample++) {
           const order = sample % 2 === 0 ? roots : [...roots].reverse();
           for (const root of order) {
-            const child = await execa(
-              process.execPath,
-              [
-                "--experimental-strip-types",
-                here,
-                "--worker",
-                "--implementation-root",
-                root,
-                "--repository",
-                repository,
-              ],
-              {
-                env: {
-                  NODE_OPTIONS: "",
-                  NODE_PATH: "",
-                  ZEDBEE_TELEMETRY_DISABLED: "1",
-                  ZEDBEE_NO_UPDATE_CHECK: "1",
+            if (kind !== "cli") {
+              const child = await execa(
+                process.execPath,
+                [
+                  "--experimental-strip-types",
+                  here,
+                  "--worker",
+                  "--implementation-root",
+                  root,
+                  "--repository",
+                  repository,
+                ],
+                {
+                  env: {
+                    NODE_OPTIONS: "",
+                    NODE_PATH: "",
+                    ZEDBEE_TELEMETRY_DISABLED: "1",
+                    ZEDBEE_NO_UPDATE_CHECK: "1",
+                  },
                 },
-              },
-            );
-            if (sample >= 0)
-              results.push({
-                root,
-                count,
-                scenario,
-                sample,
-                ...manifest,
-                ...JSON.parse(child.stdout),
-              });
+              );
+              if (sample >= 0)
+                results.push({
+                  root,
+                  count,
+                  scenario,
+                  sample,
+                  ...manifest,
+                  kind: "preparation",
+                  ...JSON.parse(child.stdout),
+                });
+            }
+            if (kind !== "preparation")
+              for (const cache of cacheModes)
+                for (const executor of executorModes) {
+                  const measured = await measureCli({
+                    implementationRoot: root,
+                    repositoryRoot: repository,
+                    sampleRoot: join(
+                      temporary,
+                      "samples",
+                      `${count}-${scenario}-${sample}-${roots.indexOf(root)}-${cache}-${executor}`,
+                    ),
+                    cache,
+                    executor,
+                  });
+                  if (sample >= 0)
+                    results.push({
+                      root,
+                      count,
+                      scenario,
+                      sample,
+                      ...manifest,
+                      kind: "cli",
+                      ...measured,
+                    });
+                }
           }
         }
       }
     const artifact = {
       schemaVersion: 1,
-      kind: "local-preparation",
+      kind,
+      cacheModes,
+      executorModes,
       samples,
       identities,
       harnessHash: createHash("sha256")
-        .update(await readFile(here))
+        .update(
+          Buffer.concat(
+            await Promise.all(
+              [
+                "snapshot-preparation.mts",
+                "snapshot-cli.mts",
+                "snapshot-observer.mjs",
+                "snapshot-memory.mts",
+                "cli-harness.mts",
+              ].map((name) => readFile(join(dirname(here), name))),
+            ),
+          ),
+        )
         .digest("hex"),
       environment: {
         node: process.version,
@@ -264,7 +356,7 @@ async function coordinator() {
     await mkdir(dirname(output), { recursive: true });
     await writeFile(output, JSON.stringify(artifact, null, 2) + "\n");
     process.stdout.write(
-      `Saved ${results.length} preparation samples to ${output}\n`,
+      `Saved ${results.length} benchmark samples to ${output}\n`,
     );
   } finally {
     await rm(temporary, { recursive: true, force: true });

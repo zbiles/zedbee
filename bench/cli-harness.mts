@@ -7,11 +7,14 @@ export async function runCompleteCli(options: {
   args: readonly string[];
   cliPath?: string;
   env?: NodeJS.ProcessEnv;
+  nodeArguments?: readonly string[];
+  onSpawn?: (pid: number) => void;
 }) {
   const start = performance.now();
-  const result = await execa(
+  const child = execa(
     process.execPath,
     [
+      ...(options.nodeArguments ?? []),
       options.cliPath ??
         fileURLToPath(new URL("../dist/cli.js", import.meta.url)),
       ...options.args,
@@ -28,6 +31,8 @@ export async function runCompleteCli(options: {
       stdin: "ignore",
     },
   );
+  if (child.pid !== undefined) options.onSpawn?.(child.pid);
+  const result = await child;
   const durationMs = performance.now() - start;
   let blockedScan = false;
   if (options.args[0] === "scan" && result.exitCode === 1) {
