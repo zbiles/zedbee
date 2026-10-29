@@ -16,6 +16,7 @@ import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
 import { captureSelectedIndexComparison } from "./selected-comparison.js";
+import { createSnapshotDirectories } from "./snapshot-directories.js";
 import {
   createSnapshotWorkOwner,
   createSnapshotWritePool,
@@ -339,8 +340,11 @@ async function writeRegularBlob(
   entry: SnapshotEntry,
   blob: GitBlobStream,
   signal?: AbortSignal,
+  directories?: ReturnType<typeof createSnapshotDirectories>,
 ): Promise<{ prefix: Buffer; containsNul: boolean }> {
-  await createParentDirectories(destinationRoot, entry.path);
+  if (directories === undefined)
+    await createParentDirectories(destinationRoot, entry.path);
+  else await directories.ensure(entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined) return invalidSelectedPath();
   const handle = await open(
@@ -407,6 +411,7 @@ async function writeSymlinkBlob(
   entry: SnapshotEntry,
   blob: GitBlobStream,
   signal?: AbortSignal,
+  directories?: ReturnType<typeof createSnapshotDirectories>,
 ): Promise<void> {
   if (blob.size > MAX_SYMLINK_TARGET_BYTES) return invalidSelectedPath();
   const chunks: Buffer[] = [];
@@ -425,7 +430,9 @@ async function writeSymlinkBlob(
     throw new Error("Git returned an invalid batch object response.");
   }
   const bytes = Buffer.concat(chunks, length);
-  await createParentDirectories(destinationRoot, entry.path);
+  if (directories === undefined)
+    await createParentDirectories(destinationRoot, entry.path);
+  else await directories.ensure(entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined || bytes.includes(0))
     return invalidSelectedPath();
@@ -473,6 +480,8 @@ async function materializeEntries(
       : [],
   );
   const options = signal === undefined ? {} : { signal };
+  const directories =
+    work === undefined ? undefined : createSnapshotDirectories(destinationRoot);
   const blobs = entries.filter((entry) => entry.mode !== "160000");
   let entryIndex = 0;
   await git.streamBlobs(
@@ -484,7 +493,13 @@ async function materializeEntries(
         throw new Error("Git returned an invalid batch object response.");
       }
       if (entry.mode === "120000") {
-        await writeSymlinkBlob(destinationRoot, entry, blob, signal);
+        await writeSymlinkBlob(
+          destinationRoot,
+          entry,
+          blob,
+          signal,
+          directories,
+        );
         return;
       }
       const write = async (owned: GitBlobStream, ownedSignal = signal) => {
@@ -493,6 +508,7 @@ async function materializeEntries(
           entry,
           owned,
           ownedSignal,
+          directories,
         );
         const unsupportedEntry = classify
           ? classifyBlob(entry, prefix, containsNul)
@@ -670,8 +686,9 @@ async function materializePair(
   baselineRef: string | null,
   targetRef: string,
   signal?: AbortSignal,
+  ownedRoot?: OwnedSnapshotRoot,
 ): Promise<SnapshotPair> {
-  const root = await createOwnedSnapshotRoot();
+  const root = ownedRoot ?? (await createOwnedSnapshotRoot());
   const owner = createSnapshotWorkOwner(signal);
   const pool = createSnapshotWritePool(owner);
   try {
@@ -770,31 +787,37 @@ export async function buildSnapshotPairOptimized(
       "UNRESOLVED_INDEX",
       "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
     );
-  const baselineCommit =
-    git.selectedComparison === undefined
-      ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options)).stdout ||
-        null
-      : git.selectedComparison.baselineCommit;
-  const staged = parseStagedEntries(
-    (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
-  );
-  validateEntryPaths(repositoryRoot, staged);
-  const intent = parseIntentToAddPaths(
-    (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
-  );
-  const target = staged.filter((entry) => !intent.has(entry.path));
-  const baseline =
-    baselineCommit === null
-      ? []
-      : await readCommitEntries(repositoryRoot, git, baselineCommit, signal);
-  return materializePair(
-    git,
-    baseline,
-    target,
-    baselineCommit === null ? null : "HEAD",
-    "index",
-    signal,
-  );
+  const root = await createOwnedSnapshotRoot();
+  try {
+    const baselineCommit =
+      git.selectedComparison === undefined
+        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
+            .stdout || null
+        : git.selectedComparison.baselineCommit;
+    const staged = parseStagedEntries(
+      (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
+    );
+    validateEntryPaths(repositoryRoot, staged);
+    const intent = parseIntentToAddPaths(
+      (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
+    );
+    const target = staged.filter((entry) => !intent.has(entry.path));
+    const baseline =
+      baselineCommit === null
+        ? []
+        : await readCommitEntries(repositoryRoot, git, baselineCommit, signal);
+    return materializePair(
+      git,
+      baseline,
+      target,
+      baselineCommit === null ? null : "HEAD",
+      "index",
+      signal,
+      root,
+    );
+  } catch (error) {
+    return cleanupConstructionFailure(root, error);
+  }
 }
 
 export async function buildSnapshotPairSerial(
