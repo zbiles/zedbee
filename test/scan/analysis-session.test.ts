@@ -1,6 +1,6 @@
 import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
 import type { CheckAdapter } from "../../src/checks/adapter.js";
 import type { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
@@ -98,44 +98,50 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
-  it("cleans its private index even when snapshot cleanup fails", async () => {
-    const repo = await repositoryFixture();
-    let selectedCleaned = false;
-    const outcome = await withAnalysisSession(
-      {
-        repositoryRoot: repo.root,
-        dependencies: {
-          ...defaults,
-          async captureIndexComparison(...parameters) {
-            const selected = await defaults.captureIndexComparison!(
-              ...parameters,
-            );
-            return {
-              ...selected,
-              async cleanup() {
-                await selected.cleanup();
-                selectedCleaned = true;
-              },
-            };
+  it.each([false, true])(
+    "cleans its private index and retains snapshot cleanup diagnosis (index cleanup fails=%s)",
+    async (indexCleanupFails) => {
+      const repo = await repositoryFixture();
+      let selectedCleaned = false;
+      const outcome = await withAnalysisSession(
+        {
+          repositoryRoot: repo.root,
+          dependencies: {
+            ...defaults,
+            async captureIndexComparison(...parameters) {
+              const selected = await defaults.captureIndexComparison!(
+                ...parameters,
+              );
+              return {
+                ...selected,
+                async cleanup() {
+                  await selected.cleanup();
+                  selectedCleaned = true;
+                  if (indexCleanupFails)
+                    throw new Error("index cleanup failed");
+                },
+              };
+            },
+            async buildIndexSnapshots(...parameters) {
+              const pair = await defaults.buildIndexSnapshots(...parameters);
+              onTestFinished(pair.cleanup);
+              return {
+                ...pair,
+                async cleanup() {
+                  throw new Error("cleanup failed");
+                },
+              };
+            },
+            dispatch: async () => [],
           },
-          async buildIndexSnapshots(...parameters) {
-            const pair = await defaults.buildIndexSnapshots(...parameters);
-            return {
-              ...pair,
-              async cleanup() {
-                await pair.cleanup();
-                throw new Error("cleanup failed");
-              },
-            };
-          },
-          dispatch: async () => [],
         },
-      },
-      async () => null,
-    );
-    expect(outcome.cleanupFailure).toBeDefined();
-    expect(selectedCleaned).toBe(true);
-  });
+        async () => null,
+      );
+      expect(outcome.cleanupFailure).toBeDefined();
+      expect(outcome.cleanupFailure?.temporaryPath).toBeDefined();
+      expect(selectedCleaned).toBe(true);
+    },
+  );
   it.each(["configuration", "metadata", "snapshots"])(
     "keeps one selected comparison when HEAD/index change after %s",
     async (point) => {

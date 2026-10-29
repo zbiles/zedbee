@@ -33,6 +33,7 @@ import { safeRequestedBase } from "../git/base-ref.js";
 import { GitClient } from "../git/client.js";
 import {
   captureSelectedIndexComparison,
+  SelectedIndexCleanupError,
   type SelectedIndexComparison,
 } from "../git/selected-comparison.js";
 import {
@@ -550,6 +551,10 @@ export async function withAnalysisSession<T>(
           )),
     };
   } catch (error) {
+    if (error instanceof SelectedIndexCleanupError) {
+      cleanupFailure = safeCleanupFailure(undefined);
+      error = error.originalError;
+    }
     if (error instanceof SnapshotConstructionCleanupError) {
       cleanupFailure = safeCleanupFailure(error.temporaryPath);
       completion = { completed: false, error: error.constructionError };
@@ -592,7 +597,7 @@ export async function withAnalysisSession<T>(
   try {
     await selectedComparison?.cleanup();
   } catch {
-    cleanupFailure = safeCleanupFailure(undefined);
+    cleanupFailure ??= safeCleanupFailure(undefined);
   }
   if (completion.completed && signal.aborted) {
     completion = { completed: false, error: signal.reason };

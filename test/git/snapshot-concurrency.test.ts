@@ -1,12 +1,14 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitClient } from "../../src/git/client.js";
+import { GitCommandError } from "../../src/git/errors.js";
 import { buildCommitSnapshotPair } from "../../src/git/snapshot.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 const writes = vi.hoisted(() => ({
   before: undefined as (() => Promise<void>) | undefined,
+  root: "",
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -15,6 +17,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
     async open(...parameters: Parameters<typeof actual.open>) {
       const handle = await actual.open(...parameters);
       if (!String(parameters[0]).includes("zedbee-snapshot-")) return handle;
+      writes.root = dirname(dirname(String(parameters[0])));
       return new Proxy(handle, {
         get(target, property) {
           if (property === "write")
@@ -34,6 +37,96 @@ afterEach(() => {
 });
 
 describe("snapshot side overlap", () => {
+  it("settles aborted Git readers and a held sibling write before cleaning a detached write failure", async () => {
+    const repo = await createGitRepository();
+    await repo.write("file.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    const oid = (await repo.git(["rev-parse", "HEAD"])).stdout;
+    function barrier() {
+      let release!: () => void;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    }
+    const ready = barrier();
+    const fail = barrier();
+    const aborted = barrier();
+    const readersClose = barrier();
+    const readersClosed = barrier();
+    const siblingWrite = barrier();
+    const bothWriting = barrier();
+    let readers = 0;
+    let aborts = 0;
+    let closed = 0;
+    let writing = 0;
+    let returned = false;
+    const original = new Error("detached destination failure");
+    writes.before = async () => {
+      const first = writing++ === 0;
+      if (writing === 2) bothWriting.release();
+      if (first) {
+        await fail.promise;
+        throw original;
+      }
+      await siblingWrite.promise;
+    };
+    const git = new GitClient(repo.root);
+    git.streamBlobs = async (ids, visit, options = {}) => {
+      const bytes = Buffer.from("export const value = 1;\n");
+      await visit({
+        objectId: ids[0]!,
+        size: bytes.length,
+        chunks: (async function* () {
+          yield bytes;
+        })(),
+      });
+      const signal = options.signal!;
+      const stopped = new Promise<void>((resolve) =>
+        signal.addEventListener(
+          "abort",
+          () => {
+            if (++aborts === 2) aborted.release();
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+      if (++readers === 2) ready.release();
+      await stopped;
+      await readersClose.promise;
+      if (++closed === 2) readersClosed.release();
+      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+    };
+    const observed = buildCommitSnapshotPair(repo.root, git, oid, oid).then(
+      () => {
+        returned = true;
+        return undefined;
+      },
+      (error: unknown) => {
+        returned = true;
+        return error;
+      },
+    );
+    try {
+      await ready.promise;
+      await bothWriting.promise;
+      fail.release();
+      await aborted.promise;
+      expect(returned).toBe(false);
+      await access(writes.root);
+      readersClose.release();
+      await readersClosed.promise;
+      expect(returned).toBe(false);
+      await access(writes.root);
+    } finally {
+      fail.release();
+      readersClose.release();
+      siblingWrite.release();
+    }
+    expect(await observed).toBe(original);
+    await expect(access(writes.root)).rejects.toThrow();
+  });
   it("admits another small blob while earlier file writes are still active", async () => {
     const repo = await createGitRepository();
     for (let i = 0; i < 8; i++)

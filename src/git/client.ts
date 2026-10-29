@@ -273,11 +273,25 @@ export class GitClient {
     return this.gitCommand;
   }
 
+  private selectedArguments(args: readonly string[]): readonly string[] {
+    const selected = this.selectedComparison;
+    return selected === undefined
+      ? args
+      : [
+          "-c",
+          `core.hooksPath=${join(dirname(selected.indexPath), "hooks-disabled")}`,
+          "-c",
+          "core.fsmonitor=false",
+          ...args,
+        ];
+  }
+
   private async execute(
     args: readonly string[],
     options: GitRunOptions,
     binary: boolean,
   ): Promise<GitOutput | GitBinaryOutput> {
+    args = this.selectedArguments(args);
     if (isAborted(options.signal)) {
       throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
     }
@@ -462,15 +476,19 @@ export class GitClient {
     let visitorFailed = false;
     let visitorFailure: unknown;
     let forceKillTimer: NodeJS.Timeout | undefined;
-    const child = spawn(command.executable, ["cat-file", "--batch"], {
-      cwd: options.cwd ?? this.repositoryRoot,
-      env: commandEnvironment(command.path, {
-        ...options.env,
-        ...this.clientOptions.environment,
-      }),
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(
+      command.executable,
+      this.selectedArguments(["cat-file", "--batch"]),
+      {
+        cwd: options.cwd ?? this.repositoryRoot,
+        env: commandEnvironment(command.path, {
+          ...options.env,
+          ...this.clientOptions.environment,
+        }),
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     const terminate = () => {
       // Do not wait for process shutdown to close the pipes. A failed blob
       // visitor can stop reading stdout while Git is still writing, and under

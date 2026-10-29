@@ -139,6 +139,19 @@ describe.each([
   ["serial", buildSnapshotPair],
   ["optimized", buildSnapshotPairOptimized],
 ] as const)("buildSnapshotPair (%s)", (_mode, buildSnapshotPair) => {
+  it.skipIf(process.platform === "win32")(
+    "preserves a valid literal backslash in a POSIX filename",
+    async () => {
+      const repo = await createGitRepository();
+      await repo.write("a\\b.ts", "export const value = 1;\n");
+      await repo.commitAll("valid POSIX filename");
+      const pair = await buildSnapshotPair(repo.root, new GitClient(repo.root));
+      onTestFinished(pair.cleanup);
+      expect(await readFile(join(pair.targetDir, "a\\b.ts"), "utf8")).toBe(
+        "export const value = 1;\n",
+      );
+    },
+  );
   it.each(["a".repeat(40), "b".repeat(64)])(
     "rejects an oversized staged symlink before pulling its body and cleans up (%s)",
     async (objectId) => {

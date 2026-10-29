@@ -1,13 +1,149 @@
-import { readFile, access } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  readFile,
+  access,
+  chmod,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { execa } from "execa";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import { captureSelectedIndexComparison } from "../../src/git/selected-comparison.js";
 import { readStagedChangeSet } from "../../src/git/change-set.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
+const faults = vi.hoisted(() => ({
+  removeBeforeRead: "",
+  beforeRead: undefined as (() => Promise<void>) | undefined,
+  failCleanup: false,
+  failedRoots: [] as string[],
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    async readFile(...parameters: Parameters<typeof actual.readFile>) {
+      if (String(parameters[0]) === faults.removeBeforeRead) {
+        faults.removeBeforeRead = "";
+        if (faults.beforeRead) await faults.beforeRead();
+        else await actual.rm(String(parameters[0]));
+      }
+      return actual.readFile(...parameters);
+    },
+    async rm(...parameters: Parameters<typeof actual.rm>) {
+      if (
+        faults.failCleanup &&
+        String(parameters[0]).includes("zedbee-selection-")
+      ) {
+        faults.failedRoots.push(String(parameters[0]));
+        throw new Error("private cleanup failed");
+      }
+      return actual.rm(...parameters);
+    },
+  };
+});
+afterEach(async () => {
+  faults.removeBeforeRead = "";
+  faults.beforeRead = undefined;
+  faults.failCleanup = false;
+  for (const root of faults.failedRoots.splice(0))
+    await rm(root, { recursive: true, force: true });
+});
+
 describe("captured index comparison", () => {
+  it("rejects an index changed and restored between its initial stat and byte read", async () => {
+    const repo = await createGitRepository();
+    await repo.write("value.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    const index = await realpath(join(repo.root, ".git/index"));
+    const bytes = await readFile(index);
+    faults.removeBeforeRead = index;
+    faults.beforeRead = async () => {
+      await writeFile(index, "changed");
+      await writeFile(index, bytes);
+    };
+    await expect(
+      captureSelectedIndexComparison(new GitClient(repo.root)),
+    ).rejects.toMatchObject({ code: "GIT_COMMAND_FAILED" });
+  });
+
+  it.each(["missing", "corrupt"])(
+    "fails closed for a %s split-index dependency without modifying the selected index",
+    async (kind) => {
+      const repo = await createGitRepository();
+      await repo.write("value.ts", "export const value = 1;\n");
+      await repo.commitAll("baseline");
+      await repo.git(["update-index", "--split-index"]);
+      const index = join(repo.root, ".git/index");
+      const before = await readFile(index);
+      const shared = resolve(
+        repo.root,
+        (await repo.git(["rev-parse", "--shared-index-path"])).stdout,
+      );
+      if (kind === "missing") await rm(shared);
+      else await writeFile(shared, "corrupt");
+      await expect(
+        captureSelectedIndexComparison(new GitClient(repo.root)),
+      ).rejects.toMatchObject({ code: "GIT_COMMAND_FAILED" });
+      expect(await readFile(index)).toEqual(before);
+    },
+  );
+
+  it.each(["split", "initial"])(
+    "does not execute repository hooks or fsmonitor while capturing %s indexes",
+    async (kind) => {
+      const repo = await createGitRepository();
+      if (kind === "split") {
+        await repo.write("value.ts", "export const value = 1;\n");
+        await repo.commitAll("baseline");
+        await repo.git(["update-index", "--split-index"]);
+      }
+      const hook = join(repo.root, ".git/hooks/post-index-change");
+      const fsmonitor = join(repo.root, ".git/hooks/test-fsmonitor");
+      await writeFile(hook, '#!/bin/sh\nprintf ran > "$PWD/hook-ran"\n');
+      await chmod(hook, 0o755);
+      await writeFile(
+        fsmonitor,
+        '#!/bin/sh\nprintf ran > "$PWD/fsmonitor-ran"\nprintf "token\\0"\n',
+      );
+      await chmod(fsmonitor, 0o755);
+      await repo.git(["config", "core.fsmonitor", fsmonitor]);
+      const selected = await captureSelectedIndexComparison(
+        new GitClient(repo.root),
+      );
+      onTestFinished(() => selected.cleanup());
+      await selected
+        .bind(new GitClient(repo.root))
+        .run(["ls-files", "--stage"]);
+      await expect(access(join(repo.root, "hook-ran"))).rejects.toThrow();
+      await expect(access(join(repo.root, "fsmonitor-ran"))).rejects.toThrow();
+    },
+  );
+
+  it("rejects an index disappearing after its initial metadata was read", async () => {
+    const repo = await createGitRepository();
+    await repo.write("value.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    faults.removeBeforeRead = await realpath(join(repo.root, ".git/index"));
+    const result = captureSelectedIndexComparison(new GitClient(repo.root));
+    void result.then(
+      (selected) => selected.cleanup(),
+      () => {},
+    );
+    await expect(result).rejects.toThrow();
+  });
+
+  it("retains a capture failure alongside a private-index cleanup failure", async () => {
+    const repo = await createGitRepository();
+    await writeFile(join(repo.root, ".git/index"), "invalid index");
+    faults.failCleanup = true;
+    await expect(
+      captureSelectedIndexComparison(new GitClient(repo.root)),
+    ).rejects.toMatchObject({ originalError: { code: "GIT_COMMAND_FAILED" } });
+  });
+
   it.each([false, true])(
     "keeps original bytes, flags and line ranges after live HEAD/index replacement (split=%s)",
     async (split) => {

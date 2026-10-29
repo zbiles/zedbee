@@ -11,6 +11,15 @@ export interface SelectedIndexComparison {
   cleanup(): Promise<void>;
 }
 
+export class SelectedIndexCleanupError extends Error {
+  constructor(readonly originalError: unknown) {
+    super("Zedbee could not remove its private selected index.", {
+      cause: originalError,
+    });
+    this.name = "SelectedIndexCleanupError";
+  }
+}
+
 function invalidSelection(): never {
   throw new GitCommandError(
     "GIT_COMMAND_FAILED",
@@ -19,30 +28,33 @@ function invalidSelection(): never {
 }
 
 async function indexState(path: string) {
+  let before;
   try {
-    const before = await lstat(path, { bigint: true });
-    if (!before.isFile() || before.isSymbolicLink()) return invalidSelection();
-    const bytes = await readFile(path);
-    const after = await lstat(path, { bigint: true });
-    if (
-      before.dev !== after.dev ||
-      before.ino !== after.ino ||
-      before.size !== after.size ||
-      before.mtimeNs !== after.mtimeNs ||
-      before.ctimeNs !== after.ctimeNs
-    )
-      return invalidSelection();
-    return {
-      bytes,
-      dev: after.dev,
-      ino: after.ino,
-      mtime: after.mtimeNs,
-      ctime: after.ctimeNs,
-    };
+    before = await lstat(path, { bigint: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+  // Once an index was observed, disappearance is a capture failure, not the
+  // legitimate initial-commit/no-index case.
+  if (!before.isFile() || before.isSymbolicLink()) return invalidSelection();
+  const bytes = await readFile(path);
+  const after = await lstat(path, { bigint: true });
+  if (
+    before.dev !== after.dev ||
+    before.ino !== after.ino ||
+    before.size !== after.size ||
+    before.mtimeNs !== after.mtimeNs ||
+    before.ctimeNs !== after.ctimeNs
+  )
+    return invalidSelection();
+  return {
+    bytes,
+    dev: after.dev,
+    ino: after.ino,
+    mtime: after.mtimeNs,
+    ctime: after.ctimeNs,
+  };
 }
 async function head(
   git: GitClient,
@@ -144,7 +156,11 @@ export async function captureSelectedIndexComparison(
       cleanup,
     };
   } catch (error) {
-    await cleanup();
+    try {
+      await cleanup();
+    } catch {
+      throw new SelectedIndexCleanupError(error);
+    }
     throw error;
   }
 }

@@ -49,7 +49,7 @@ export function createSnapshotDirectories(root: string): {
     async ensure(repositoryPath) {
       const parts = repositoryPath.split("/");
       if (
-        repositoryPath.includes("\\") ||
+        (process.platform === "win32" && repositoryPath.includes("\\")) ||
         repositoryPath.includes("\0") ||
         parts.some((part) => part === "" || part === "." || part === "..")
       ) {

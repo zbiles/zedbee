@@ -15,7 +15,10 @@ import { compareCodeUnits } from "../core/compare.js";
 import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
-import { captureSelectedIndexComparison } from "./selected-comparison.js";
+import {
+  captureSelectedIndexComparison,
+  SelectedIndexCleanupError,
+} from "./selected-comparison.js";
 import { createSnapshotDirectories } from "./snapshot-directories.js";
 import {
   createSnapshotWorkOwner,
@@ -909,17 +912,35 @@ export async function buildSnapshotPair(
     return buildSnapshotPairOptimized(repositoryRoot, git, signal);
   const selected = await captureSelectedIndexComparison(git, signal);
   let pair: SnapshotPair | undefined;
+  let failed = false;
+  let primaryError: unknown;
   try {
     pair = await buildSnapshotPairOptimized(
       repositoryRoot,
       selected.bind(git),
       signal,
     );
-    await selected.cleanup();
-    return pair;
   } catch (error) {
-    await pair?.cleanup();
-    await selected.cleanup();
-    throw error;
+    failed = true;
+    primaryError = error;
   }
+  let selectionCleanupFailed = false;
+  try {
+    await selected.cleanup();
+  } catch (error) {
+    selectionCleanupFailed = true;
+    if (!failed) primaryError = error;
+  }
+  if (!failed && !selectionCleanupFailed) return pair!;
+  // Snapshot and selected-index cleanup are independent. A failure in either
+  // must not skip the other or replace the original construction failure.
+  try {
+    await pair?.cleanup();
+  } catch {
+    throw new SnapshotConstructionCleanupError(
+      safeConstructionError(primaryError),
+    );
+  }
+  if (selectionCleanupFailed) throw new SelectedIndexCleanupError(primaryError);
+  throw primaryError;
 }
