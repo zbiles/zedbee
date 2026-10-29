@@ -16,7 +16,12 @@ import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
 import { captureSelectedIndexComparison } from "./selected-comparison.js";
-import { settleSnapshotWork } from "./snapshot-work.js";
+import {
+  createSnapshotWorkOwner,
+  createSnapshotWritePool,
+  settleSnapshotWork,
+  type SnapshotWritePool,
+} from "./snapshot-work.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -460,6 +465,7 @@ async function materializeEntries(
   destinationRoot: string,
   classify: boolean,
   signal?: AbortSignal,
+  work?: { pool: SnapshotWritePool; side: "baseline" | "target" },
 ): Promise<UnsupportedIndexEntry[]> {
   const unsupported: UnsupportedIndexEntry[] = entries.flatMap((entry) =>
     classify && entry.mode === "160000"
@@ -481,27 +487,38 @@ async function materializeEntries(
         await writeSymlinkBlob(destinationRoot, entry, blob, signal);
         return;
       }
-      const { prefix, containsNul } = await writeRegularBlob(
-        destinationRoot,
-        entry,
-        blob,
-        signal,
-      );
-      const unsupportedEntry = classify
-        ? classifyBlob(entry, prefix, containsNul)
-        : undefined;
-      if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
+      const write = async (owned: GitBlobStream, ownedSignal = signal) => {
+        const { prefix, containsNul } = await writeRegularBlob(
+          destinationRoot,
+          entry,
+          owned,
+          ownedSignal,
+        );
+        const unsupportedEntry = classify
+          ? classifyBlob(entry, prefix, containsNul)
+          : undefined;
+        if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
+      };
+      if (work === undefined) await write(blob);
+      else if (blob.size <= 128 * 1024)
+        await work.pool.enqueue(work.side, blob, write);
+      else
+        await work.pool.stream(work.side, (ownedSignal) =>
+          write(blob, ownedSignal),
+        );
     },
     options,
   );
   if (entryIndex !== blobs.length) {
     throw new Error("Git returned an invalid batch object response.");
   }
-  return unsupported.sort(
-    (left, right) =>
-      compareCodeUnits(left.path, right.path) ||
-      compareCodeUnits(left.kind, right.kind),
-  );
+  return work !== undefined
+    ? unsupported
+    : unsupported.sort(
+        (left, right) =>
+          compareCodeUnits(left.path, right.path) ||
+          compareCodeUnits(left.kind, right.kind),
+      );
 }
 
 async function readCommitEntries(
@@ -655,6 +672,8 @@ async function materializePair(
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
   const root = await createOwnedSnapshotRoot();
+  const owner = createSnapshotWorkOwner(signal);
+  const pool = createSnapshotWritePool(owner);
   try {
     const [baselineUnsupportedEntries, unsupportedEntries] =
       await settleSnapshotWork(
@@ -665,6 +684,7 @@ async function materializePair(
             root.baselineDir,
             true,
             ownedSignal,
+            { pool, side: "baseline" },
           ),
         (ownedSignal) =>
           materializeEntries(
@@ -673,9 +693,16 @@ async function materializePair(
             root.targetDir,
             true,
             ownedSignal,
+            { pool, side: "target" },
           ),
-        signal === undefined ? {} : { signal },
+        { owner },
       );
+    await pool.settle();
+    const order = (left: UnsupportedIndexEntry, right: UnsupportedIndexEntry) =>
+      compareCodeUnits(left.path, right.path) ||
+      compareCodeUnits(left.kind, right.kind);
+    baselineUnsupportedEntries.sort(order);
+    unsupportedEntries.sort(order);
     return {
       baselineDir: root.baselineDir,
       targetDir: root.targetDir,
@@ -692,7 +719,11 @@ async function materializePair(
       cleanup: root.cleanup,
     };
   } catch (error) {
+    owner.fail("target", error);
+    await pool.settle().catch(() => {});
     return cleanupConstructionFailure(root, error);
+  } finally {
+    owner.dispose();
   }
 }
 
