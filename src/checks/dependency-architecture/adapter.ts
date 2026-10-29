@@ -1,3 +1,4 @@
+import { CheckIncompleteError } from "../incomplete-error.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { join, posix } from "node:path";
 import { cruise, type ICruiseResult } from "dependency-cruiser";
@@ -102,6 +103,17 @@ async function validateContainedImports(
   sourceFiles: readonly string[],
 ): Promise<void> {
   const registry = await captureSnapshotRegistry(snapshotRoot);
+  // Dependency-cruiser uses native reads; its entire input tree must be safe.
+  for (const [path] of registry.unavailableSymlinks ?? []) {
+    throw new CheckIncompleteError({
+      code: "DEPENDENCY_ARCHITECTURE_UNSAFE_LINK",
+      message:
+        "Dependency architecture analysis cannot safely resolve this symbolic link.",
+      path,
+      remediation:
+        "Provide a link to a tracked target inside the repository or remove the runtime link from the selected snapshot, then retry.",
+    });
+  }
   for (const sourcePath of sourceFiles) {
     const source = await readContainedFile(registry, sourcePath);
     const file = ts.createSourceFile(
@@ -416,6 +428,7 @@ export const dependencyArchitectureAdapter: ObservationCheckAdapter = {
         projectDelta: hasProjectInputDelta(context, context.target),
       };
     } catch (error) {
+      if (error instanceof CheckIncompleteError) throw error;
       throw new Error("Dependency architecture analysis failed.", {
         cause: error,
       });

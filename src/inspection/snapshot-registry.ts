@@ -37,6 +37,7 @@ export interface SnapshotRegistryEntry {
 
 export interface SnapshotRegistry {
   readonly snapshotRoot: string;
+  readonly unavailableSymlinks?: ReadonlyMap<string, RepositoryInspectionError>;
   exact(repositoryPath: string): SnapshotRegistryEntry | undefined;
   resolve(repositoryPath: string): SnapshotRegistryEntry | undefined;
   entries(): readonly SnapshotRegistryEntry[];
@@ -87,6 +88,7 @@ export async function captureSnapshotRegistry(
   const exactEntries = new Map<string, SnapshotRegistryEntry>();
   const absoluteEntries = new Map<string, SnapshotRegistryEntry>();
   const capturedEntries: SnapshotRegistryEntry[] = [];
+  const unavailableSymlinks = new Map<string, RepositoryInspectionError>();
 
   const captureEntry = async (repositoryPath: string): Promise<void> => {
     if (exactEntries.has(repositoryPath)) return;
@@ -99,16 +101,45 @@ export async function captureSnapshotRegistry(
     let targetMetadata: BigIntStats;
     try {
       lexicalMetadata = await lstat(absolutePath, { bigint: true });
-      canonicalPath = await realpath(absolutePath);
-      if (!isContained(snapshotRoot, canonicalPath)) throw unsafePath();
-      targetMetadata = await lstat(canonicalPath, { bigint: true });
     } catch (error) {
-      if (error instanceof RepositoryInspectionError) throw error;
       if (
         requestedPaths !== undefined &&
         (error as NodeJS.ErrnoException).code === "ENOENT"
       )
         return;
+      throw invalidSnapshot();
+    }
+    try {
+      canonicalPath = await realpath(absolutePath);
+      if (!isContained(snapshotRoot, canonicalPath)) {
+        throw new RepositoryInspectionError(
+          "UNSAFE_SNAPSHOT_PATH",
+          "Zedbee refused a path outside the snapshot.",
+          lexicalMetadata.isSymbolicLink()
+            ? { path: repositoryPath, reason: "external-symlink" }
+            : undefined,
+        );
+      }
+      targetMetadata = await lstat(canonicalPath, { bigint: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const linkError = lexicalMetadata.isSymbolicLink()
+        ? error instanceof RepositoryInspectionError
+          ? error
+          : ["ENOENT", "ENOTDIR", "ELOOP"].includes(code ?? "")
+            ? new RepositoryInspectionError(
+                "INVALID_SNAPSHOT_DATA",
+                "Zedbee could not resolve a symbolic link in the snapshot.",
+                { path: repositoryPath, reason: "unresolved-symlink" },
+              )
+            : undefined
+        : undefined;
+      if (linkError !== undefined && requestedPaths === undefined) {
+        unavailableSymlinks.set(repositoryPath, linkError);
+        return;
+      }
+      if (linkError !== undefined) throw linkError;
+      if (error instanceof RepositoryInspectionError) throw error;
       throw invalidSnapshot();
     }
     const targetKind = metadataKind(targetMetadata);
@@ -197,6 +228,12 @@ export async function captureSnapshotRegistry(
     const exact = exactEntries.get(normalized);
     if (exact !== undefined) return exact;
     const components = normalized.split("/");
+    for (let index = 1; index <= components.length; index += 1) {
+      const failure = unavailableSymlinks.get(
+        components.slice(0, index).join("/"),
+      );
+      if (failure !== undefined) throw failure;
+    }
     for (let index = components.length - 1; index > 0; index -= 1) {
       const prefix = components.slice(0, index).join("/");
       const link = exactEntries.get(prefix);
@@ -215,6 +252,7 @@ export async function captureSnapshotRegistry(
 
   return Object.freeze({
     snapshotRoot,
+    unavailableSymlinks,
     exact: (repositoryPath: string) =>
       exactEntries.get(normalizePath(repositoryPath)),
     resolve: resolveEntry,
