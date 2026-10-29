@@ -7,8 +7,11 @@ description: Diagnose Swarm installation, configuration, dependencies, formatter
 
 Read repository instructions, Git status and the actual failure. Locate the
 project's installed CLI, including subfolder installations, and check its version.
-If the CLI is missing, explain that diagnosis and use [setup](../setup/SKILL.md)
-only when installation is authorized.
+If only an undeclared node_modules copy remains after a failed installation,
+diagnose the inconsistent manifest/lockfile state without running that copy.
+If the CLI is missing, explain that diagnosis and offer
+[guided setup](../../references/onboarding.md); proceed only when the choices
+are authorized.
 
 Use read-only diagnostics first:
 
@@ -20,7 +23,7 @@ zedbee checks --format json
 Read the complete output and each process status. Identify whether policy is being
 read from the intended staged or committed snapshot. `checks` describes configured
 checks; it does not run them. If a scan is needed, follow
-[the scan workflow](../scan/SKILL.md), using `scan --diagnostics --format json
+[the scan workflow](../../references/scan.md), using `scan --diagnostics --format json
 --no-source` to keep diagnostic stderr separate from complete JSON stdout.
 
 Distinguish missing dependencies, project coverage, invalid configuration, missing

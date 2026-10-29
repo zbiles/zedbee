@@ -1,3 +1,9 @@
+import {
+  prepareSnapshotAliases,
+  sourceModuleSpecifiers,
+} from "../typescript/aliases.js";
+import { createKnipImportValidator } from "./import-boundary.js";
+import { readContainedFile } from "../../inspection/read-json.js";
 import { managedKnipEntry } from "./managed-knip.js";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -112,6 +118,7 @@ export interface ManagedKnipConfig {
         readonly entry: readonly string[];
         readonly project: readonly string[];
         readonly ignore: readonly string[];
+        readonly paths?: Readonly<Record<string, readonly string[]>>;
       }
     >
   >;
@@ -148,6 +155,8 @@ async function disabledPinnedPlugins(): Promise<
 export async function createManagedKnipConfig(
   snapshotRoot: string,
   inspection: RepositoryInspection,
+  selectedWorkspace?: WorkspaceInspection,
+  missing?: (path: string) => Promise<void>,
 ): Promise<ManagedKnipConfig> {
   if (inspection.snapshotRoot !== snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
@@ -159,9 +168,45 @@ export async function createManagedKnipConfig(
       entry: readonly string[];
       project: readonly string[];
       ignore: readonly string[];
+      paths?: Readonly<Record<string, readonly string[]>>;
     }
   > = {};
+  const { collectCommentImports } = await createKnipImportValidator(registry);
+  const prepared = await Promise.all(
+    (selectedWorkspace === undefined
+      ? inspection.workspaces
+      : [selectedWorkspace]
+    ).map((workspace) =>
+      prepareSnapshotAliases(
+        snapshotRoot,
+        inspection,
+        workspace,
+        collectCommentImports,
+      ),
+    ),
+  );
+  const aliasesByWorkspace = new Map(
+    prepared.flatMap((item) => [...item.workspaces]),
+  );
+  const pathsByWorkspace = new Map(prepared.flatMap((item) => [...item.paths]));
   for (const workspace of inspection.workspaces) {
+    const aliases = aliasesByWorkspace.get(workspace.relativeRoot);
+    if (aliases !== undefined) {
+      const { validateImport } = await createKnipImportValidator(
+        registry,
+        missing,
+        (sourcePath, specifier) => aliases.resolve(sourcePath, specifier),
+      );
+      for (const sourcePath of workspace.sourceFiles) {
+        const source = await readContainedFile(registry, sourcePath);
+        for (const specifier of sourceModuleSpecifiers(
+          sourcePath,
+          source,
+          collectCommentImports,
+        ))
+          await validateImport(sourcePath, specifier);
+      }
+    }
     const manifest = record(
       await readJsonData(registry, workspace.manifestPath),
     );
@@ -182,6 +227,19 @@ export async function createManagedKnipConfig(
       entry,
       project,
       ignore: [...IGNORE],
+      paths: Object.fromEntries(
+        Object.entries(pathsByWorkspace.get(workspace.relativeRoot) ?? {}).map(
+          ([specifier, targets]) => [
+            specifier,
+            targets.map((target) =>
+              posix.relative(
+                workspace.relativeRoot === "." ? "" : workspace.relativeRoot,
+                target,
+              ),
+            ),
+          ],
+        ),
+      ),
     };
   }
   return Object.freeze({

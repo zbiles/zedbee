@@ -21,7 +21,7 @@ export async function downloadCli({
   if (
     !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(metadata.version) ||
     metadata.url !==
-      `https://github.com/zbiles/zedbee/releases/download/v${metadata.version}/zedbee-${metadata.version}.tgz` ||
+      `https://registry.npmjs.org/zedbee/-/zedbee-${metadata.version}.tgz` ||
     !/^[a-f0-9]{64}$/.test(metadata.sha256)
   )
     throw new Error("Invalid pinned CLI release.");
@@ -65,6 +65,7 @@ export async function downloadCli({
     complete = true;
     return {
       version: metadata.version,
+      package: `zedbee@${metadata.version}`,
       url: metadata.url,
       integrity: verifiedIntegrity,
       tarball,

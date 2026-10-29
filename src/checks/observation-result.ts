@@ -158,12 +158,12 @@ function ownsPath(relativeRoot: string, path: string): boolean {
 }
 
 function mostSpecificWorkspace(inspection: RepositoryInspection, path: string) {
+  const depth = (root: string) => (root === "." ? 0 : root.split("/").length);
   return inspection.workspaces
     .filter((workspace) => ownsPath(workspace.relativeRoot, path))
     .sort(
       (left, right) =>
-        right.relativeRoot.split("/").length -
-          left.relativeRoot.split("/").length ||
+        depth(right.relativeRoot) - depth(left.relativeRoot) ||
         compareCodeUnits(left.relativeRoot, right.relativeRoot),
     )[0];
 }

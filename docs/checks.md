@@ -22,7 +22,7 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 | `secrets`                | Secretlint 13.0.5 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
 | `duplication`            | jscpd clone detection and repository duplication percentage | Compares whole workspaces and attributes new clone regions/project regressions                                                 | Large source lists can exceed an operating-system argument limit                                                 |
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
-| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic conventions and TS path aliases can require future managed profiles      |
+| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic framework conventions can require future managed profiles                |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
 | `reactAccessibility`     | React DOM JSX accessibility                                 | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
@@ -67,6 +67,29 @@ Existing diagnostics remain non-blocking when their unchanged
 source lines move. A changed diagnostic message is compared separately from an
 existing diagnostic at the same location. This applies to both staged and
 `--base` scans.
+
+## Snapshot import resolution
+
+`deadCode` and `dependencyArchitecture` honor TypeScript `paths` mappings from
+contained snapshot configurations, including inherited mappings and mappings
+without an explicit `baseUrl`. Resolution uses each workspace's own captured
+configuration and files; native analyzer configuration and framework plugins
+remain disabled. Dependency architecture also resolves explicit stylesheet
+imports through those mappings.
+
+Changes to a workspace's TypeScript configuration or a contained inherited
+configuration can introduce new graph findings in otherwise unchanged source.
+Those checks compare baseline and target configuration independently. An
+unrelated workspace's existing invalid configuration does not become required
+merely because another workspace changed.
+
+Both complexity checks distinguish members of separate inline TypeScript classes,
+including anonymous classes with constructor parameter properties. Existing
+complexity debt remains non-blocking when a harmless edit leaves its score
+unchanged.
+When several anonymous classes are rewritten and reordered together without an
+unambiguous source match, unmatched members are treated as new rather than
+inheriting another class's baseline metrics.
 
 ## Profiles
 

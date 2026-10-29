@@ -10,7 +10,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -42,7 +42,7 @@ async function fixture() {
 const bytes = Buffer.from("verified release bytes");
 const release = {
   version: "0.1.0-beta.12",
-  url: "https://github.com/zbiles/zedbee/releases/download/v0.1.0-beta.12/zedbee-0.1.0-beta.12.tgz",
+  url: "https://registry.npmjs.org/zedbee/-/zedbee-0.1.0-beta.12.tgz",
   sha256: createHash("sha256").update(bytes).digest("hex"),
 };
 describe("official Swarm plugin package", () => {
@@ -76,8 +76,25 @@ describe("official Swarm plugin package", () => {
       "doctor",
       "fix",
       "scan",
-      "setup",
     ]);
+    expect(metadata.extensions["com.openai"].onboardingSkill).toBe(
+      "./skills/scan/SKILL.md",
+    );
+    for (const reference of ["onboarding.md", "setup.md", "scan.md"])
+      expect(
+        await readFile(join(unpacked, "references", reference), "utf8"),
+      ).not.toBe("");
+    // Every workflow link must survive extraction without access to the checkout.
+    for (const file of PLUGIN_FILES.filter((path) => path.endsWith(".md"))) {
+      const contents = await readFile(join(unpacked, file), "utf8");
+      for (const match of contents.matchAll(/\]\(([^)]+)\)/gu)) {
+        const target = match[1]!;
+        if (/^[a-z]+:/u.test(target) || target.startsWith("#")) continue;
+        const destination = resolve(unpacked, file, "..", target);
+        expect(destination.startsWith(`${unpacked}${sep}`)).toBe(true);
+        expect(await readFile(destination, "utf8")).not.toBe("");
+      }
+    }
     expect(await readFile(join(unpacked, "LICENSE"), "utf8")).toBe(
       await readFile("LICENSE", "utf8"),
     );
@@ -123,6 +140,11 @@ describe("verified CLI download", () => {
     });
     expect(await readFile(result.tarball)).toEqual(bytes);
     expect(result.version).toBe(release.version);
+    expect(result.package).toBe(`zedbee@${release.version}`);
+    expect(result.url).toBe(release.url);
+    expect(result.integrity).toBe(
+      `sha512-${createHash("sha512").update(bytes).digest("base64")}`,
+    );
   });
   it("discards a corrupt or substituted release", async () => {
     const root = await temp();
@@ -135,11 +157,14 @@ describe("verified CLI download", () => {
     ).rejects.toThrow(/checksum/);
     expect(await readdir(root)).toEqual([]);
   });
-  it("rejects a noncanonical release URL before fetching", async () => {
+  it.each([
+    "https://example.invalid/tool.tgz",
+    "https://github.com/zbiles/zedbee/releases/download/v0.1.0-beta.12/zedbee-0.1.0-beta.12.tgz",
+  ])("rejects nonregistry release URL %s before fetching", async (url) => {
     const root = await temp();
     await expect(
       downloadCli({
-        release: { ...release, url: "https://example.invalid/tool.tgz" },
+        release: { ...release, url },
         temporaryRoot: root,
         fetchRelease: async () => {
           throw new Error("must not fetch");

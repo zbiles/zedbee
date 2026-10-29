@@ -148,6 +148,163 @@ async function complexityContext(checkId: CheckId): Promise<CheckRunContext> {
 }
 
 describe("collectComplexityObservations", () => {
+  const inlineDebt =
+    "install(class { observe() { if (ready) { if (visible) work(); } } });";
+  const inlineNew =
+    "install(class { observe() { if (ready) { if (visible) notify(); } } });";
+  const inlineLow = "install(class { observe() { work(); } });";
+
+  it.each([
+    {
+      name: "prepend",
+      before: inlineDebt,
+      after: `${inlineNew}\n${inlineDebt}`,
+      added: [{ start: 1, end: 1 }],
+      staged: [1],
+    },
+    {
+      name: "append",
+      before: inlineDebt,
+      after: `${inlineDebt}\n${inlineNew}`,
+      added: [{ start: 2, end: 2 }],
+      staged: [2],
+    },
+    {
+      name: "remove earlier class",
+      before: `${inlineLow}\n${inlineDebt}`,
+      after: inlineDebt,
+      added: [{ start: 1, end: 1 }],
+      staged: [],
+    },
+    {
+      name: "reorder",
+      before: `${inlineDebt}\n${inlineLow}`,
+      after: `${inlineLow}\n${inlineDebt}`,
+      added: [{ start: 1, end: 2 }],
+      staged: [],
+    },
+    {
+      name: "unanchored rewritten classes cannot borrow reordered debt",
+      before: `${inlineDebt}\n${inlineLow}`,
+      after: `${inlineNew}\n${inlineDebt.replace("work();", "work(); notify();")}`,
+      added: [{ start: 1, end: 2 }],
+      staged: [1, 2],
+    },
+    {
+      name: "one middle anchor cannot pair two rewritten endpoints",
+      before: `${inlineDebt}\ninstall(class { observe() { if (ready) middle(); } });\n${inlineLow}`,
+      after: `${inlineNew}\ninstall(class { observe() { if (ready) middle(); } });\n${inlineDebt.replace("work();", "work(); notify();")}`,
+      added: [
+        { start: 1, end: 1 },
+        { start: 3, end: 3 },
+      ],
+      staged: [1, 3],
+    },
+    {
+      name: "one remaining edited class follows a consistent anchor",
+      before: `${inlineDebt}\n${inlineNew}`,
+      after: `${inlineNew.replace("notify();", "notify(); finish();")}\n${inlineDebt}`,
+      added: [{ start: 1, end: 1 }],
+      staged: [],
+    },
+    {
+      name: "prepend identical source",
+      before: inlineDebt,
+      after: `${inlineDebt}\n${inlineDebt}`,
+      added: [{ start: 1, end: 1 }],
+      staged: [1],
+    },
+    {
+      name: "unrelated insertion and harmless edit",
+      before: inlineDebt,
+      after: `const marker = 1;\n${inlineDebt.replace("work();", "work(); notify();")}`,
+      added: [{ start: 1, end: 2 }],
+      staged: [],
+    },
+    {
+      name: "prepend nested class with unchanged debt anchor",
+      before: [
+        "install(class {",
+        "outer() {",
+        inlineDebt,
+        "}",
+        "stable() {}",
+        "});",
+      ].join("\n"),
+      after: [
+        "install(class {",
+        "outer() {",
+        inlineNew,
+        inlineDebt,
+        "}",
+        "stable() {}",
+        "});",
+      ].join("\n"),
+      added: [{ start: 3, end: 3 }],
+      staged: [3],
+    },
+    {
+      name: "unanchored nested classes cannot borrow outer debt",
+      before: [
+        "install(class {",
+        "outer() {",
+        inlineDebt,
+        "}",
+        "stable() {}",
+        "});",
+      ].join("\n"),
+      after: [
+        "install(class {",
+        "outer() {",
+        inlineNew,
+        inlineDebt.replace("work();", "work(); notify();"),
+        "}",
+        "stable() {}",
+        "});",
+      ].join("\n"),
+      added: [{ start: 3, end: 4 }],
+      // Neither inner member has an unchanged source anchor: conservatively
+      // treat both as target-only rather than hide a new violation.
+      staged: [3, 4],
+    },
+  ])(
+    "pairs class metrics across snapshots: $name",
+    async ({ before, after, added, staged }) => {
+      for (const adapter of complexityAdapters) {
+        const run = await complexityContext(adapter.id as CheckId);
+        await Promise.all([
+          writeFile(join(run.snapshots.baselineDir, "src/changed.ts"), before),
+          writeFile(join(run.snapshots.targetDir, "src/changed.ts"), after),
+        ]);
+        run.changeSet = {
+          files: new Map([
+            [
+              "src/changed.ts",
+              {
+                path: "src/changed.ts",
+                status: "modified",
+                addedRanges: added,
+              },
+            ],
+          ]),
+          isEmpty: false,
+          containsAddedLine: (file, line) =>
+            file === "src/changed.ts" &&
+            added.some(({ start, end }) => line >= start && line <= end),
+        };
+
+        const set = await adapter.collect(run);
+        const result = await observationCheckResult(adapter.id, set, run, true);
+        expect(
+          result.findings
+            .filter(({ attribution }) => attribution.staged)
+            .map(({ location }) => location?.startLine)
+            .sort(),
+        ).toEqual(staged);
+      }
+    },
+  );
+
   it.each(complexityAdapters)(
     "$id does not parse unrelated unchanged files",
     async (adapter) => {
@@ -439,6 +596,200 @@ describe("collectComplexityObservations", () => {
       expect(new Set(methods.map(({ identity }) => identity)).size).toBe(2);
     }
   });
+
+  it.each([
+    ["anonymous", "class", "class"],
+    ["same-named", "class Observer", "class Observer"],
+    ["differently-named", "class FirstObserver", "class SecondObserver"],
+  ])(
+    "attributes members of %s inline classes independently",
+    async (_label, first, second) => {
+      const members = [
+        "constructor(private callback: () => void) { if (ready) this.callback(); }",
+        "observe() { if (ready) { if (visible) this.callback(); } }",
+        "get active() { return ready ? true : false; }",
+        "set active(value: boolean) { if (value) this.callback(); }",
+        "task = () => ready ? this.callback() : undefined;",
+      ].join(" ");
+      const source = `install(${first} { ${members} });\ninstall(${second} { ${members} });`;
+      const observations = await collectComplexityObservations(
+        "src/observers.ts",
+        source,
+      );
+
+      for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+        const metrics = observations.filter(
+          (observation) => observation.check === check,
+        );
+        expect(metrics).toHaveLength(10);
+        expect(new Set(metrics.map(({ identity }) => identity)).size).toBe(10);
+        expect(
+          metrics
+            .filter(({ entity }) => entity?.name === "observe")
+            .map(({ metric }) => metric?.value),
+        ).toEqual([3, 3]);
+      }
+    },
+  );
+
+  it("stages only the worsened inline class member while suppressing baseline debt", async () => {
+    const file = "src/observers.ts";
+    const debt =
+      "install(class { observe() { if (ready) { if (visible) work(); } } });";
+    const baselineSource = `${debt}\ninstall(class { observe() { work(); } });`;
+    const targetSource = `\n${debt}\ninstall(class { observe() { if (ready) { if (visible) work(); } } });`;
+    const baseline = await collectComplexityObservations(file, baselineSource);
+    const target = await collectComplexityObservations(file, targetSource);
+    const changed = collectChangedEntities(targetSource, file, [
+      { start: 2, end: 3 },
+    ]);
+
+    for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+      const previous = baseline.filter(
+        (observation) => observation.check === check,
+      );
+      const current = target.filter(
+        (observation) => observation.check === check,
+      );
+      expect(current.map(({ identity }) => identity)).toEqual(
+        previous.map(({ identity }) => identity),
+      );
+      const findings = current.map((observation) =>
+        attributeMetricDelta(
+          previous.find(({ identity }) => identity === observation.identity),
+          observation,
+          changed,
+          { limit: 1, blockWorsening: true },
+        ),
+      );
+
+      expect(findings.filter(({ attribution }) => attribution.staged)).toEqual([
+        expect.objectContaining({
+          check,
+          location: { file, startLine: 3, endLine: 3 },
+          attribution: expect.objectContaining({
+            evidence: expect.arrayContaining([
+              `baseline-value:${check === "cyclomaticComplexity" ? 1 : 0}`,
+              "target-value:3",
+              "reason:limit-crossing",
+            ]),
+          }),
+        }),
+      ]);
+      expect(
+        findings.find(({ location }) => location?.startLine === 2)?.attribution
+          .staged,
+      ).toBe(false);
+    }
+  });
+
+  it.each([
+    "CLASS",
+    "(CLASS)",
+    "CLASS as unknown",
+    "<unknown>CLASS",
+    "CLASS satisfies unknown",
+    "CLASS!",
+    "((CLASS as unknown)!)",
+  ])(
+    "preserves variable-bound class debt after unrelated insertion: %s",
+    async (expression) => {
+      const file = "src/observer.ts";
+      const source = `const Observer = ${expression.replace(
+        "CLASS",
+        "class { observe() { if (ready) { if (visible) work(); } } }",
+      )};`;
+      const targetSource = `const unrelated = 0;\n${source.replace("work();", "work(); notify();")}`;
+      const baseline = await collectComplexityObservations(file, source);
+      const target = await collectComplexityObservations(file, targetSource);
+      const changed = collectChangedEntities(targetSource, file, [
+        { start: 2, end: 2 },
+      ]);
+
+      for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+        const previous = baseline.find(
+          (observation) => observation.check === check,
+        );
+        const current = target.find(
+          (observation) => observation.check === check,
+        )!;
+        expect(current.metric?.value).toBe(3);
+        expect(
+          attributeMetricDelta(
+            baseline.find(
+              (observation) =>
+                observation.check === check &&
+                observation.identity === current.identity,
+            ),
+            current,
+            changed,
+            { limit: 1, blockWorsening: true },
+          ).attribution.staged,
+        ).toBe(false);
+        expect(current.identity).toBe(previous?.identity);
+        expect(current.identity).toBe(
+          "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+        );
+      }
+    },
+  );
+
+  it.each([
+    ["top-level", "BODY"],
+    ["named function", "function setup() { BODY }"],
+    ["named class method", "class Setup { install() { BODY } }"],
+  ])(
+    "preserves inline class debt after unrelated insertion in a %s owner",
+    async (_label, wrapper) => {
+      const file = "src/observer.ts";
+      const body =
+        "install(class { observe() { if (ready) { if (visible) work(); } } });";
+      const baselineSource = wrapper.replace("BODY", body);
+      const targetSource = wrapper.replace(
+        "BODY",
+        `const unrelated = 0;\n${body.replace("work();", "work(); notify();")}`,
+      );
+      const baseline = await collectComplexityObservations(
+        file,
+        baselineSource,
+      );
+      const target = await collectComplexityObservations(file, targetSource);
+      const changed = collectChangedEntities(targetSource, file, [
+        { start: 1, end: 2 },
+      ]);
+
+      for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
+        const current = target.find(
+          (observation) =>
+            observation.check === check &&
+            observation.entity?.name === "observe",
+        )!;
+        expect(current.metric?.value).toBe(3);
+        expect(
+          changed.some(({ identity }) => identity === current.identity),
+        ).toBe(true);
+        expect(
+          attributeMetricDelta(
+            baseline.find(
+              (observation) =>
+                observation.check === check &&
+                observation.identity === current.identity,
+            ),
+            current,
+            changed,
+            { limit: 1, blockWorsening: true },
+          ).attribution.staged,
+        ).toBe(false);
+        expect(current.identity).toBe(
+          baseline.find(
+            (observation) =>
+              observation.check === check &&
+              observation.entity?.name === "observe",
+          )?.identity,
+        );
+      }
+    },
+  );
 
   it("keeps duplicate same-named class-field arrows as distinct metrics", async () => {
     const observations = await collectComplexityObservations(

@@ -15,7 +15,13 @@ async function fixturePair() {
   for (const fixture of [baseline, target]) {
     await fixture.writeJson("package.json", {
       name: "root",
-      workspaces: ["apps/**", "packages/*", "links/*"],
+      workspaces: [
+        "apps/**",
+        "packages/*",
+        "links/*",
+        "reports",
+        "reports-archive",
+      ],
     });
     await fixture.write(
       "src/index.ts",
@@ -25,6 +31,13 @@ async function fixturePair() {
       "test/app.test.ts",
       "export function testRun() { return 1; }\n",
     );
+    for (const workspace of ["reports", "reports-archive"]) {
+      await fixture.writeJson(`${workspace}/package.json`, { name: workspace });
+      await fixture.write(
+        `${workspace}/src/index.ts`,
+        "export const report = true;\n",
+      );
+    }
     await fixture.writeJson("apps/web/package.json", { name: "web" });
     await fixture.write("apps/web/src/index.ts", "export const web = true;\n");
     await fixture.writeJson("apps/web/nested/package.json", { name: "nested" });
@@ -189,6 +202,73 @@ describe("observationCheckResult", () => {
       }),
     ]);
   });
+
+  it.each([
+    [".", "src/index.ts", "reports"],
+    ["reports", "reports/src/index.ts", "."],
+    ["apps/web/nested", "apps/web/nested/src/index.ts", "apps/web"],
+    ["reports-archive", "reports-archive/src/index.ts", "reports"],
+  ])(
+    "assigns %s files to their most specific workspace",
+    async (owner, file, other) => {
+      const target = {
+        id: owner,
+        kind: "workspace" as const,
+        relativeRoot: owner,
+      };
+      const runContext = await context("lint", target, {
+        severity: "error",
+        when: "relevant",
+      });
+      const observation = located("lint", file);
+
+      await expect(
+        observationCheckResult(
+          "lint",
+          {
+            checkId: "lint",
+            target,
+            baselineObservations: [observation],
+            targetObservations: [observation],
+          },
+          runContext,
+          true,
+        ),
+      ).resolves.toMatchObject({
+        status: "completed",
+        target: owner,
+        findings: [
+          {
+            location: { file },
+            attribution: { staged: false },
+          },
+        ],
+      });
+
+      const wrongTarget = {
+        id: other,
+        kind: "workspace" as const,
+        relativeRoot: other,
+      };
+      for (const side of ["baseline", "target"] as const) {
+        await expect(
+          observationCheckResult(
+            "lint",
+            {
+              checkId: "lint",
+              target: wrongTarget,
+              baselineObservations: side === "baseline" ? [observation] : [],
+              targetObservations: side === "target" ? [observation] : [],
+            },
+            { ...runContext, target: wrongTarget },
+            true,
+          ),
+        ).rejects.toThrow(
+          `Observation path does not belong to its ${side} target`,
+        );
+      }
+    },
+  );
 
   it("rejects target and baseline paths not owned by the exact workspace", async () => {
     const target = {
