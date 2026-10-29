@@ -25,7 +25,15 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return {
     ...actual,
     async readFile(...parameters: Parameters<typeof actual.readFile>) {
-      if (String(parameters[0]) === faults.removeBeforeRead) {
+      let canonical = String(parameters[0]);
+      if (faults.removeBeforeRead !== "") {
+        try {
+          canonical = await actual.realpath(canonical);
+        } catch {
+          /* An unrelated optional path may not exist. */
+        }
+      }
+      if (canonical === faults.removeBeforeRead) {
         faults.removeBeforeRead = "";
         if (faults.beforeRead) await faults.beforeRead();
         else await actual.rm(String(parameters[0]));
@@ -53,6 +61,28 @@ afterEach(async () => {
 });
 
 describe("captured index comparison", () => {
+  it("captures the selected bytes on Git versions without rev-parse path-format support", async () => {
+    const repo = await createGitRepository();
+    await repo.write("value.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    await repo.write("value.ts", "export const value = 2;\n");
+    await repo.git(["add", "value.ts"]);
+    const git = new GitClient(repo.root);
+    const run = git.run.bind(git);
+    git.run = async (args, options) =>
+      args.includes("--path-format=absolute")
+        ? {
+            ...(await run(["rev-parse", "--git-path", "index"], options)),
+            stdout: "--path-format=absolute\n.git/index",
+          }
+        : run(args, options);
+    const selected = await captureSelectedIndexComparison(git);
+    onTestFinished(selected.cleanup);
+    expect(
+      (await selected.bind(new GitClient(repo.root)).run(["show", ":value.ts"]))
+        .stdout,
+    ).toBe("export const value = 2;");
+  });
   it("rejects an index changed and restored between its initial stat and byte read", async () => {
     const repo = await createGitRepository();
     await repo.write("value.ts", "export const value = 1;\n");

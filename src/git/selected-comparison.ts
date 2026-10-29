@@ -93,12 +93,7 @@ export async function captureSelectedIndexComparison(
   const incoming = await mergeHeads(mergePath);
   const indexPath = resolve(
     git.repositoryRoot,
-    (
-      await git.run(
-        ["rev-parse", "--path-format=absolute", "--git-path", "index"],
-        options,
-      )
-    ).stdout,
+    (await git.run(["rev-parse", "--git-path", "index"], options)).stdout,
   );
   const before = await indexState(indexPath);
   const temporary = await mkdtemp(join(tmpdir(), "zedbee-selection-"));
