@@ -57,6 +57,7 @@ import type { ActiveScanPhase } from "./analysis-failure.js";
 import type { ScanFailureInput } from "./incomplete-report.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import { announceScanPhase } from "./progress.js";
+import { settleSnapshotWork } from "../git/snapshot-work.js";
 
 export interface AnalysisSessionDependencies {
   captureIndexComparison?: typeof captureSelectedIndexComparison;
@@ -473,14 +474,20 @@ export async function withAnalysisSession<T>(
         }
 
         signal.throwIfAborted();
-        enterPhase("baseline-inspection");
-        const baselineInspection = await dependencies.inspectRepository(
-          snapshots.baselineDir,
-        );
-        signal.throwIfAborted();
-        enterPhase("target-inspection");
-        const targetInspection = await dependencies.inspectRepository(
-          snapshots.targetDir,
+        state.phase = "baseline-inspection";
+        announcePhase("project-inspection");
+        const [baselineInspection, targetInspection] = await settleSnapshotWork(
+          () => dependencies.inspectRepository(snapshots!.baselineDir),
+          () => dependencies.inspectRepository(snapshots!.targetDir),
+          {
+            signal,
+            onFailure(side) {
+              state.phase =
+                side === "baseline"
+                  ? "baseline-inspection"
+                  : "target-inspection";
+            },
+          },
         );
         signal.throwIfAborted();
         state.phase = "dispatch";

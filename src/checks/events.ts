@@ -37,6 +37,7 @@ export type ScanPhase =
   | "snapshot-construction"
   | "baseline-inspection"
   | "target-inspection"
+  | "project-inspection"
   | "source-capture"
   | "dispatch"
   | "policy-evaluation"

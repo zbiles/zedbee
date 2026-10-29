@@ -39,6 +39,7 @@ const PHASE_LABELS: Record<ScanPhase, string> = {
   "snapshot-construction": "Building scan snapshots",
   "baseline-inspection": "Inspecting previous project snapshot",
   "target-inspection": "Inspecting changed project snapshot",
+  "project-inspection": "Inspecting project snapshots",
   "source-capture": "Preparing analyzer inputs",
   dispatch: "Planning checks",
   "policy-evaluation": "Preparing scan results",
