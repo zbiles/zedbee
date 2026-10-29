@@ -333,14 +333,17 @@ function CheckPanel({
       {phase === undefined ? null : (
         <Box flexDirection="column" paddingX={2}>
           <Text {...colorProp(color, ZEDBEE_THEME.primary)}>
-            {statusIcon("RUNNING", animations, elapsedMs, 0)}{" "}
             {phase.finalizing ? "Finalizing scan" : "Preparing scan"}
           </Text>
           <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            <Text {...colorProp(color, ZEDBEE_THEME.pass)}>
+              {statusIcon("RUNNING", animations, elapsedMs, 0)}
+            </Text>{" "}
             {phase.label}
-          </Text>
-          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
-            Step elapsed: {(phase.elapsedMs / 1000).toFixed(1)}s
+            <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
+              {" "}
+              ({(phase.elapsedMs / 1000).toFixed(1)}s)
+            </Text>
           </Text>
         </Box>
       )}

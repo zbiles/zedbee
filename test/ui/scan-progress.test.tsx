@@ -21,8 +21,8 @@ describe("bounded live progress", () => {
       />,
     ).lastFrame()!;
     expect(frame).toContain("Preparing scan");
-    expect(frame).toContain("Starting scan…");
-    expect(frame).toContain("Step elapsed: 55.5s");
+    expect(frame).toContain("● Starting scan… (55.5s)");
+    expect(frame).not.toContain("Step elapsed:");
     expect(progress.states.size).toBe(0);
   });
 
@@ -58,12 +58,45 @@ describe("bounded live progress", () => {
         animations={false}
       />,
     ).lastFrame()!;
-    expect(frame).toContain("Inspecting changed project snapshot");
-    expect(frame).toContain("Step elapsed: 6.5s");
+    expect(frame).toContain("● Inspecting changed project snapshot (6.5s)");
     expect(progress.states.size).toBe(0);
     expect(progress.activity.map(({ text }) => text)).toContain(
       "Building scan snapshots",
     );
+  });
+
+  it("cycles the active indicator beside the step while keeping its elapsed time inline", () => {
+    const progress = createScanProgress([
+      {
+        type: "scan-phase",
+        checkId: "zedbee",
+        target: ".",
+        timestamp: 1000,
+        phase: "snapshot-construction",
+      },
+    ]);
+    const view = render(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={0}
+        width={120}
+        color={false}
+        animations
+      />,
+    );
+    expect(view.lastFrame()).toContain("⠋ Building scan snapshots (0.0s)");
+    view.rerender(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={80}
+        width={120}
+        color={false}
+        animations
+      />,
+    );
+    expect(view.lastFrame()).toContain("⠙ Building scan snapshots (0.1s)");
   });
 
   it("replaces preparation with real checks, then shows finalization alongside results", () => {
