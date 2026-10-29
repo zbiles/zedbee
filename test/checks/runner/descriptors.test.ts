@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fileURLToPath } from "node:url";
+import { realpath } from "node:fs/promises";
 import { CHECK_METADATA } from "../../../src/checks/metadata.js";
 import { createManagedAdapters } from "../../../src/checks/descriptors.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
@@ -14,6 +15,7 @@ import { loadAnalyzerAdapter } from "../../../src/checks/runner/registry.js";
 import type { CheckId } from "../../../src/config/schema.js";
 import type { ChangedFile } from "../../../src/git/change-set.js";
 import type { WorkspaceInspection } from "../../../src/inspection/types.js";
+import { createInspectionFixture } from "../../inspection/fixture.js";
 
 function context(): CheckRunContext {
   const config = resolveConfig({
@@ -372,6 +374,14 @@ describe("default managed execution descriptors", () => {
   it.each(Object.keys(CHECK_METADATA))(
     "preserves %s applicability across source and dependency changes",
     async (id) => {
+      const fixture = await createInspectionFixture();
+      await fixture.writeJson("package.json", {
+        name: "fixture",
+        private: true,
+      });
+      await fixture.writeJson("tsconfig.json", { include: ["src"] });
+      await fixture.write("src/a.tsx", "export const value = 1;\n");
+      const snapshotRoot = await realpath(fixture.root);
       const direct = await loadAnalyzerAdapter(id as CheckId);
       const proxy = createManagedAdapters().find(
         (adapter) => adapter.id === id,
@@ -395,11 +405,18 @@ describe("default managed execution descriptors", () => {
           };
           const inspection = {
             ...original.targetInspection,
+            snapshotRoot,
             workspaces: [workspace],
             lockfiles: ["package-lock.json"],
           };
           const input = {
             ...original,
+            repositoryRoot: snapshotRoot,
+            snapshots: {
+              ...original.snapshots,
+              baselineDir: snapshotRoot,
+              targetDir: snapshotRoot,
+            },
             config: {
               ...original.config,
               checks: {

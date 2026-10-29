@@ -15,6 +15,8 @@ export interface DependencyDeclarations {
   readonly production: ReadonlySet<string>;
   readonly development: ReadonlySet<string>;
   readonly aliases?: readonly string[];
+  readonly aliasConfigPath?: string;
+  readonly localAliasSpecifiers?: ReadonlySet<string>;
   readonly workspacePackages?: ReadonlySet<string>;
 }
 
@@ -133,6 +135,8 @@ function observation(rule: string, from: string, to: string): Observation {
 }
 
 function matchesAlias(specifier: string, aliases: readonly string[]): boolean {
+  if (/^(?:\.{1,2}(?:[/\\]|$)|[/\\]|[A-Za-z][A-Za-z0-9+.-]*:)/u.test(specifier))
+    return false;
   return aliases.some((alias) => {
     const star = alias.indexOf("*");
     return star === -1
@@ -162,7 +166,8 @@ function declarationObservations(
       const workspacePackage =
         declarations.workspacePackages?.has(dependencyName) === true;
       if (
-        !workspacePackage &&
+        (!workspacePackage ||
+          declarations.localAliasSpecifiers?.has(specifier) === true) &&
         matchesAlias(specifier, declarations.aliases ?? [])
       ) {
         continue;
@@ -262,6 +267,10 @@ export function normalizeDependencyViolations(
         packageName(violation.unresolvedTo ?? violation.to) !== undefined &&
         !declarations.workspacePackages?.has(
           packageName(violation.unresolvedTo ?? violation.to)!,
+        ) &&
+        !matchesAlias(
+          violation.unresolvedTo ?? violation.to,
+          declarations.aliases ?? [],
         )
       ) {
         return [];
@@ -289,7 +298,15 @@ export function normalizeDependencyViolations(
           rule,
           identity: `edge:${rule}:${from}->${to}`,
           severity: "error",
-          message: message(rule),
+          message:
+            rule === DEPENDENCY_RULE_NAMES.unresolved
+              ? `Import "${to}" cannot be resolved.${
+                  declarations.aliasConfigPath !== undefined &&
+                  matchesAlias(to, declarations.aliases ?? [])
+                    ? ` TypeScript configuration: ${declarations.aliasConfigPath}.`
+                    : ""
+                }`
+              : message(rule),
           location: { file: from },
         },
       ];

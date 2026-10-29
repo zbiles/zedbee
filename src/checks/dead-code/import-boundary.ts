@@ -165,6 +165,7 @@ type CommentCollector = (
 export async function createKnipImportValidator(
   registry: SnapshotRegistry,
   missing: (path: string) => Promise<void> = assertMissing,
+  resolveAlias?: (sourcePath: string, specifier: string) => string | undefined,
 ): Promise<{
   validateImport: (sourcePath: string, specifier: string) => Promise<void>;
   collectCommentImports: CommentCollector;
@@ -271,6 +272,7 @@ export async function createKnipImportValidator(
     validateSpecifier(sourcePath, rawSpecifier);
     const specifier = sanitizeSpecifier(rawSpecifier);
     validateSpecifier(sourcePath, specifier);
+    if (resolveAlias?.(sourcePath, specifier) !== undefined) return;
     if (!specifier.startsWith("#")) {
       if (!specifier.startsWith(".") && !isBuiltin(specifier)) {
         await validatePackage(

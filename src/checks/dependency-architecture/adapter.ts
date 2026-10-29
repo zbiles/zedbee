@@ -1,7 +1,13 @@
+import {
+  prepareSnapshotAliases,
+  sourceModuleSpecifiers,
+  normalizedAliasSpecifier,
+  type PreparedSnapshotAliases,
+} from "../typescript/aliases.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { join, posix } from "node:path";
+import { projectInputsMayHaveChanged } from "../project-inputs.js";
+import { join, posix, relative, resolve, sep } from "node:path";
 import { cruise, type ICruiseResult } from "dependency-cruiser";
-import ts from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import {
@@ -49,34 +55,6 @@ function selectedTsconfig(workspace: WorkspaceInspection): string | undefined {
   return sorted[0];
 }
 
-function staticModuleSpecifier(node: ts.Node): string | undefined {
-  if (
-    (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-    node.moduleSpecifier !== undefined &&
-    ts.isStringLiteralLike(node.moduleSpecifier)
-  ) {
-    return node.moduleSpecifier.text;
-  }
-  if (
-    ts.isImportEqualsDeclaration(node) &&
-    ts.isExternalModuleReference(node.moduleReference) &&
-    node.moduleReference.expression !== undefined &&
-    ts.isStringLiteralLike(node.moduleReference.expression)
-  ) {
-    return node.moduleReference.expression.text;
-  }
-  if (
-    ts.isCallExpression(node) &&
-    node.arguments.length === 1 &&
-    ts.isStringLiteralLike(node.arguments[0]!) &&
-    (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-      (ts.isIdentifier(node.expression) && node.expression.text === "require"))
-  ) {
-    return node.arguments[0]!.text;
-  }
-  return undefined;
-}
-
 function validateSpecifier(sourcePath: string, specifier: string): void {
   if (
     specifier.includes("\\") ||
@@ -104,19 +82,8 @@ async function validateContainedImports(
   const registry = await captureSnapshotRegistry(snapshotRoot);
   for (const sourcePath of sourceFiles) {
     const source = await readContainedFile(registry, sourcePath);
-    const file = ts.createSourceFile(
-      sourcePath,
-      source,
-      ts.ScriptTarget.Latest,
-      false,
-      sourcePath.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-    );
-    const visit = (node: ts.Node): void => {
-      const specifier = staticModuleSpecifier(node);
-      if (specifier !== undefined) validateSpecifier(sourcePath, specifier);
-      ts.forEachChild(node, visit);
-    };
-    visit(file);
+    for (const specifier of sourceModuleSpecifiers(sourcePath, source))
+      validateSpecifier(sourcePath, specifier);
   }
 }
 
@@ -136,30 +103,6 @@ function validateContainedGraph(result: ICruiseResult): void {
       }
     }
   }
-}
-
-function hasProjectInputDelta(
-  context: CheckRunContext,
-  target: CheckTarget,
-): boolean {
-  const workspaces = [
-    ...context.baselineInspection.workspaces,
-    ...context.targetInspection.workspaces,
-  ].filter(({ relativeRoot }) => relativeRoot === target.relativeRoot);
-  const structuralPaths = new Set(
-    workspaces.flatMap((workspace) => [
-      workspace.manifestPath,
-      ...workspace.tsconfigPaths,
-    ]),
-  );
-  return [...context.changeSet.files.values()].some(
-    (file) =>
-      structuralPaths.has(file.path) ||
-      (file.status === "deleted" &&
-        workspaces.some((workspace) =>
-          workspace.sourceFiles.includes(file.path),
-        )),
-  );
 }
 
 function entrypointRecord(value: unknown): Record<string, unknown> {
@@ -306,6 +249,59 @@ async function workspaceAliases(
   return aliases;
 }
 
+/** Redirect only to pre-resolved captured files, scoped to the importing workspace. */
+function capturedAliasPlugin(
+  snapshotRoot: string,
+  prepared: PreparedSnapshotAliases,
+): Extract<
+  NonNullable<NonNullable<Parameters<typeof cruise>[2]>["plugins"]>[number],
+  { apply: unknown }
+> {
+  const scopes = [...prepared.workspaces.keys()].sort(
+    (a, b) => Number(a === ".") - Number(b === ".") || b.length - a.length,
+  );
+  return {
+    apply(resolver) {
+      const target = resolver.ensureHook("resolve");
+      resolver
+        .getHook("resolve")
+        .tapAsync(
+          { name: "ZedbeeSnapshotAliases", stage: -100 },
+          (request, context, callback) => {
+            if (request.request === undefined || request.path === false)
+              return callback();
+            const path = relative(snapshotRoot, resolve(request.path))
+              .split(sep)
+              .join("/");
+            const scope = scopes.find(
+              (root) =>
+                root === "." || path === root || path.startsWith(`${root}/`),
+            );
+            const specifier = normalizedAliasSpecifier(request.request);
+            const file =
+              scope === undefined
+                ? undefined
+                : (prepared.paths.get(scope)?.[specifier]?.[0] ??
+                  prepared.workspaces
+                    .get(scope)
+                    ?.resolve(
+                      posix.join(path, ".zedbee-resolution.ts"),
+                      specifier,
+                    ));
+            if (file === undefined) return callback();
+            return resolver.doResolve(
+              target,
+              { ...request, request: join(snapshotRoot, file) },
+              "captured TypeScript alias",
+              context,
+              callback,
+            );
+          },
+        );
+    },
+  };
+}
+
 function resultObject(output: ICruiseResult | string): ICruiseResult {
   const parsed =
     typeof output === "string" ? (JSON.parse(output) as unknown) : output;
@@ -332,7 +328,12 @@ async function collectSide(
     .filter((path) => SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
-  await validateContainedImports(canonicalRoot, sourceFiles);
+  const aliases = await prepareSnapshotAliases(
+    canonicalRoot,
+    inspection,
+    workspace,
+  );
+  await validateContainedImports(canonicalRoot, aliases.sourceFiles);
   const tsconfig = selectedTsconfig(workspace);
   const programInput =
     tsconfig === undefined
@@ -356,6 +357,7 @@ async function collectSide(
       modules: [join(canonicalRoot, ".zedbee-unavailable-node-modules")],
       bustTheCache: true,
       alias: await workspaceAliases(inspection, canonicalRoot),
+      plugins: [capturedAliasPlugin(canonicalRoot, aliases)],
     },
     programInput === undefined
       ? undefined
@@ -370,6 +372,14 @@ async function collectSide(
   if ((result.summary.environment.issues?.length ?? 0) > 0) {
     throw new Error("Dependency architecture analysis failed.");
   }
+  const aliasConfigPath = aliases.workspaces.get(
+    workspace.relativeRoot,
+  )?.configPath;
+  const aliasScopes = [...inspection.workspaces].sort(
+    (left, right) =>
+      Number(left.relativeRoot === ".") - Number(right.relativeRoot === ".") ||
+      right.relativeRoot.length - left.relativeRoot.length,
+  );
   return normalizeDependencyViolations(
     result,
     canonicalRoot,
@@ -379,6 +389,20 @@ async function collectSide(
       development: new Set(workspace.developmentDependencies ?? []),
       aliases: Object.keys(programInput?.options.paths ?? {}).sort(
         compareCodeUnits,
+      ),
+      ...(aliasConfigPath === undefined ? {} : { aliasConfigPath }),
+      localAliasSpecifiers: new Set(
+        Object.entries(aliases.paths.get(workspace.relativeRoot) ?? {})
+          .filter(([, targets]) =>
+            targets.some(
+              (path) =>
+                aliasScopes.find(
+                  ({ relativeRoot }) =>
+                    relativeRoot === "." || path.startsWith(`${relativeRoot}/`),
+                )?.relativeRoot === workspace.relativeRoot,
+            ),
+          )
+          .map(([specifier]) => specifier),
       ),
       workspacePackages: new Set(
         inspection.workspaces
@@ -413,7 +437,11 @@ export const dependencyArchitectureAdapter: ObservationCheckAdapter = {
         target: context.target,
         baselineObservations,
         targetObservations,
-        projectDelta: hasProjectInputDelta(context, context.target),
+        projectDelta: await projectInputsMayHaveChanged(
+          context,
+          context.target,
+          "deletions",
+        ),
       };
     } catch (error) {
       throw new Error("Dependency architecture analysis failed.", {

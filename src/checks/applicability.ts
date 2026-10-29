@@ -11,6 +11,7 @@ import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import { projectInputsMayHaveChanged } from "./project-inputs.js";
 import {
   compilerInputsMayHaveChanged,
   hasTypeScriptInputs,
@@ -137,8 +138,7 @@ export async function inspectManagedCheck(
     const candidates = new Map(
       all.map((workspace) => [workspace.relativeRoot, workspace]),
     );
-    const changedIncludingDeleted = new Set(files.map((file) => file.path));
-    workspaces = [...candidates.values()]
+    const eligible = [...candidates.values()]
       // A removed workspace cannot create findings in the merged target.
       .filter(
         (workspace) =>
@@ -146,26 +146,18 @@ export async function inspectManagedCheck(
           context.targetInspection.workspaces.some(
             (target) => target.relativeRoot === workspace.relativeRoot,
           ),
-      )
-      .filter((workspace) =>
-        always
+      );
+    const selected = await Promise.all(
+      eligible.map(async (workspace) => ({
+        workspace,
+        relevant: always
           ? workspace.sourceFiles.some((path) => SOURCE.test(path))
-          : all
-              .filter((side) => side.relativeRoot === workspace.relativeRoot)
-              .some(
-                (side) =>
-                  changedIncludingDeleted.has(side.manifestPath) ||
-                  (checkId === "dependencyArchitecture" &&
-                    side.tsconfigPaths.some((path) =>
-                      changedIncludingDeleted.has(path),
-                    )) ||
-                  side.sourceFiles.some(
-                    (path) =>
-                      (checkId === "deadCode" || SOURCE.test(path)) &&
-                      changedIncludingDeleted.has(path),
-                  ),
-              ),
-      )
+          : await projectInputsMayHaveChanged(context, targetFor(workspace)),
+      })),
+    );
+    workspaces = selected
+      .filter(({ relevant }) => relevant)
+      .map(({ workspace }) => workspace)
       .sort((a, b) => compareCodeUnits(a.relativeRoot, b.relativeRoot));
   } else if (checkId === "lint")
     workspaces = workspaces.filter(
