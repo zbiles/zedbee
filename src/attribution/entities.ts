@@ -27,6 +27,10 @@ interface LexicalOwner {
   readonly name: string;
 }
 
+interface ClassExpressionScope {
+  nextOrdinal: number;
+}
+
 export interface MetricEntitySpan {
   readonly entity: ChangedEntity;
   readonly startOffset: number;
@@ -252,7 +256,35 @@ function entityDeclaration(
   return undefined;
 }
 
-function structuralOwner(node: ts.Node): LexicalOwner | undefined {
+function structuralOwner(
+  node: ts.Node,
+  classScope: ClassExpressionScope,
+): LexicalOwner | undefined {
+  // Separate inline classes can share names and members in the same scope.
+  if (ts.isClassExpression(node)) {
+    let expression: ts.Node = node;
+    while (
+      ts.isParenthesizedExpression(expression.parent) ||
+      ts.isAsExpression(expression.parent) ||
+      ts.isTypeAssertionExpression(expression.parent) ||
+      ts.isSatisfiesExpression(expression.parent) ||
+      ts.isNonNullExpression(expression.parent)
+    ) {
+      expression = expression.parent;
+    }
+    const parent = expression.parent;
+    if (
+      ts.isVariableDeclaration(parent) &&
+      parent.initializer === expression &&
+      declarationName(parent.name) !== undefined
+    ) {
+      // A direct binding already owns this class independently of its position.
+      return undefined;
+    }
+    const ordinal = classScope.nextOrdinal;
+    classScope.nextOrdinal += 1;
+    return { kind: "class-scope", name: `class@${ordinal}` };
+  }
   if (ts.isVariableDeclaration(node)) {
     const name = declarationName(node.name);
     return name === undefined ? undefined : { kind: "variable", name };
@@ -369,6 +401,7 @@ export function collectChangedEntities(
     node: ts.Node,
     owners: readonly LexicalOwner[],
     syntaxPath: readonly number[],
+    classScope: ClassExpressionScope,
   ): void {
     const declaration = entityDeclaration(node, syntaxPath);
     if (declaration !== undefined) {
@@ -394,7 +427,7 @@ export function collectChangedEntities(
         );
       }
     }
-    const owner = declaration ?? structuralOwner(node);
+    const owner = declaration ?? structuralOwner(node, classScope);
     const childOwners =
       owner === undefined
         ? owners
@@ -403,13 +436,15 @@ export function collectChangedEntities(
             ...(declaration?.identityQualifiers ?? []),
             { kind: owner.kind, name: owner.name },
           ];
+    const childClassScope =
+      owner === undefined ? classScope : { nextOrdinal: 0 };
     let childIndex = 0;
     node.forEachChild((child) => {
-      visit(child, childOwners, [...syntaxPath, childIndex]);
+      visit(child, childOwners, [...syntaxPath, childIndex], childClassScope);
       childIndex += 1;
     });
   }
-  visit(parsedSourceFile, [], []);
+  visit(parsedSourceFile, [], [], { nextOrdinal: 0 });
 
   entities.sort(
     (left, right) =>
@@ -446,6 +481,7 @@ export function collectMetricEntitySpans(
     node: ts.Node,
     owners: readonly LexicalOwner[],
     syntaxPath: readonly number[],
+    classScope: ClassExpressionScope,
   ): void {
     const declaration = entityDeclaration(node, syntaxPath);
     if (declaration !== undefined && declaration.kind !== "class") {
@@ -478,7 +514,7 @@ export function collectMetricEntitySpans(
         }),
       );
     }
-    const owner = declaration ?? structuralOwner(node);
+    const owner = declaration ?? structuralOwner(node, classScope);
     const childOwners =
       owner === undefined
         ? owners
@@ -487,12 +523,14 @@ export function collectMetricEntitySpans(
             ...(declaration?.identityQualifiers ?? []),
             { kind: owner.kind, name: owner.name },
           ];
+    const childClassScope =
+      owner === undefined ? classScope : { nextOrdinal: 0 };
     let childIndex = 0;
     node.forEachChild((child) => {
-      visit(child, childOwners, [...syntaxPath, childIndex]);
+      visit(child, childOwners, [...syntaxPath, childIndex], childClassScope);
       childIndex += 1;
     });
   }
-  visit(parsed, [], []);
+  visit(parsed, [], [], { nextOrdinal: 0 });
   return Object.freeze(spans);
 }

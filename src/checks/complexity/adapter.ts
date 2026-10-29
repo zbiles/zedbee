@@ -30,6 +30,10 @@ import {
   parseComplexityMetric,
   type ComplexityMetricName,
 } from "./metric-message.js";
+import {
+  pairClassMetricObservations,
+  type ComplexitySnapshot,
+} from "./pair-class-metrics.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
@@ -227,7 +231,7 @@ async function collectSide(
   policyForFile: FilePolicyResolver,
   side: SnapshotSide,
   selectedPaths: ReadonlySet<string>,
-): Promise<readonly Observation[]> {
+): Promise<ComplexitySnapshot> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Complexity analysis failed.");
@@ -248,7 +252,7 @@ async function collectSide(
         policyForFile(checkId, path, side).when === "always",
     )
     .sort(compareCodeUnits);
-  if (files.length === 0) return Object.freeze([]);
+  if (files.length === 0) return { observations: [], files: {} };
   const engine = createManagedEslint({
     cwd: canonicalRoot,
     mode: "complexity",
@@ -257,12 +261,14 @@ async function collectSide(
   const results = await engine.lintFiles(files);
   const allowed = new Set(files);
   const observations: Observation[] = [];
+  const sources: Record<string, string> = {};
   for (const result of results) {
     const file = relative(canonicalRoot, result.filePath).split(sep).join("/");
     if (!allowed.has(file)) throw new Error("Complexity analysis failed.");
     if (result.messages.length === 0) continue;
     if (result.source === undefined)
       throw new Error("Complexity analysis failed.");
+    sources[file] = result.source;
     try {
       const policy = policyForFile(checkId, file, side);
       observations.push(
@@ -284,11 +290,14 @@ async function collectSide(
       });
     }
   }
-  return Object.freeze(
-    observations.sort((left, right) =>
-      compareCodeUnits(left.identity, right.identity),
+  return {
+    observations: Object.freeze(
+      observations.sort((left, right) =>
+        compareCodeUnits(left.identity, right.identity),
+      ),
     ),
-  );
+    files: sources,
+  };
 }
 
 function createComplexityAdapter(
@@ -302,7 +311,7 @@ function createComplexityAdapter(
       inspectManagedCheck(id, context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const baselineObservations = await collectSide(
+        const baseline = await collectSide(
           context.snapshots.baselineDir,
           context.baselineInspection,
           context.target,
@@ -312,7 +321,7 @@ function createComplexityAdapter(
           "baseline",
           changedFilePaths(context, "baseline"),
         );
-        const targetObservations = await collectSide(
+        const target = await collectSide(
           context.snapshots.targetDir,
           context.targetInspection,
           context.target,
@@ -325,8 +334,7 @@ function createComplexityAdapter(
         return {
           checkId: id,
           target: context.target,
-          baselineObservations,
-          targetObservations,
+          ...pairClassMetricObservations(baseline, target, context.changeSet),
         };
       } catch (error) {
         if (error instanceof CheckIncompleteError) throw error;

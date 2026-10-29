@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import * as ts from "typescript";
-import { collectChangedEntities } from "../../src/attribution/entities.js";
+import {
+  collectChangedEntities,
+  collectMetricEntitySpans,
+} from "../../src/attribution/entities.js";
 
 describe("collectChangedEntities", () => {
   it("assigns constructors the canonical instance-member identity", () => {
@@ -57,6 +60,92 @@ describe("collectChangedEntities", () => {
     expect(
       methods.every(({ identity }) => identity.includes("object-scope=")),
     ).toBe(true);
+  });
+
+  it.each([
+    ["anonymous", "class", "class"],
+    ["same-named", "class Observer", "class Observer"],
+    ["differently-named", "class FirstObserver", "class SecondObserver"],
+  ])("distinguishes members of %s inline classes", (_label, first, second) => {
+    const members = [
+      "constructor(private callback: () => void) {}",
+      "observe() { this.callback(); }",
+      "get active() { return true; }",
+      "set active(value: boolean) {}",
+      "task = () => this.callback();",
+    ].join(" ");
+    const source = `install(${first} { ${members} });\ninstall(${second} { ${members} });`;
+    const file = "src/observers.ts";
+    const entities = collectChangedEntities(source, file, [
+      { start: 1, end: 2 },
+    ]);
+
+    expect(entities).toHaveLength(10);
+    expect(new Set(entities.map(({ identity }) => identity)).size).toBe(10);
+    expect(
+      collectMetricEntitySpans(source, file)
+        .map(({ entity }) => entity.identity)
+        .sort(),
+    ).toEqual(entities.map(({ identity }) => identity).sort());
+    expect(
+      collectChangedEntities(`\n${source}\nconst unrelated = 0;`, file, [
+        { start: 2, end: 3 },
+      ]).map(({ identity }) => identity),
+    ).toEqual(entities.map(({ identity }) => identity));
+  });
+
+  it.each([
+    "[class { observe() {} }, class { observe() {} }]",
+    "ready ? class { observe() {} } : class { observe() {} }",
+    "install(class { observe() {} }, class { observe() {} })",
+  ])(
+    "distinguishes classes nested in one variable initializer: %s",
+    (expression) => {
+      const entities = collectChangedEntities(
+        `const observers = ${expression};`,
+        "src/observers.ts",
+        [{ start: 1, end: 1 }],
+      );
+
+      expect(entities).toHaveLength(2);
+      expect(new Set(entities.map(({ identity }) => identity)).size).toBe(2);
+    },
+  );
+
+  it("keeps the variable's stable ownership through class expression wrappers", () => {
+    const [entity] = collectChangedEntities(
+      "const Observer = ((class { observe() {} } as unknown)!);",
+      "src/observer.ts",
+      [{ start: 1, end: 1 }],
+    );
+
+    expect(entity?.identity).toBe(
+      "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+    );
+  });
+
+  it("keeps nested class scopes consistent across collectors and independent owners", () => {
+    const source =
+      "function setup() { install(class { run() { install(class { observe() {} }); } }); install(class { observe() {} }); }";
+    const file = "src/observers.ts";
+    const entities = collectChangedEntities(source, file, [
+      { start: 1, end: 1 },
+    ]);
+
+    expect(entities).toHaveLength(4);
+    expect(new Set(entities.map(({ identity }) => identity)).size).toBe(4);
+    expect(
+      collectMetricEntitySpans(source, file)
+        .map(({ entity }) => entity.identity)
+        .sort(),
+    ).toEqual(entities.map(({ identity }) => identity).sort());
+    expect(
+      collectChangedEntities(
+        `function unrelated() { install(class { observe() {} }); }\n${source}`,
+        file,
+        [{ start: 2, end: 2 }],
+      ).map(({ identity }) => identity),
+    ).toEqual(entities.map(({ identity }) => identity));
   });
 
   it("keeps an anonymous function entity for unresolved computed properties", () => {
