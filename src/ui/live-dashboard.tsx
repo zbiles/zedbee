@@ -1,5 +1,5 @@
 import { Box, Text } from "ink";
-import type { ScanEvent } from "../checks/events.js";
+import type { ScanEvent, ScanPhase } from "../checks/events.js";
 import type { CheckResult } from "../core/types.js";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import {
@@ -29,7 +29,21 @@ interface CheckState {
 export interface ScanProgress {
   readonly states: Map<string, CheckState>;
   readonly activity: { key: string; text: string; color: string }[];
+  phase?: { name: ScanPhase; startedAt: number };
 }
+
+const PHASE_LABELS: Record<ScanPhase, string> = {
+  configuration: "Reading scan configuration",
+  "baseline-resolution": "Resolving comparison baseline",
+  "change-discovery": "Reading changed files and lines",
+  "snapshot-construction": "Building scan snapshots",
+  "baseline-inspection": "Inspecting previous project snapshot",
+  "target-inspection": "Inspecting changed project snapshot",
+  "source-capture": "Preparing analyzer inputs",
+  dispatch: "Planning checks",
+  "policy-evaluation": "Preparing scan results",
+  cleanup: "Cleaning up scan resources",
+};
 
 export function createScanProgress(
   events: readonly ScanEvent[] = [],
@@ -80,6 +94,10 @@ export function updateScanProgress(
       color: activityColor(event),
     });
     if (activity.length > 6) activity.shift();
+  }
+  if (event.type === "scan-phase") {
+    progress.phase = { name: event.phase, startedAt: event.timestamp };
+    return;
   }
   if (
     event.type === "network-disclosure" ||
@@ -153,6 +171,7 @@ function statusText(
 }
 
 function activityText(event: ScanEvent): string | undefined {
+  if (event.type === "scan-phase") return PHASE_LABELS[event.phase];
   const label = stateLabel(event.checkId, event.target);
   if (event.type === "check-queued") return undefined;
   if (event.type === "network-disclosure") {
@@ -280,6 +299,7 @@ function SummaryChip({
 
 function CheckPanel({
   states,
+  phase,
   now,
   elapsedMs,
   animations,
@@ -287,6 +307,7 @@ function CheckPanel({
   width,
 }: {
   states: readonly CheckState[];
+  phase: { label: string; elapsedMs: number; finalizing: boolean } | undefined;
   now: number;
   elapsedMs: number;
   animations: boolean;
@@ -309,6 +330,20 @@ function CheckPanel({
         : {})}
     >
       <PanelHeading label={heading} width={width} color={color} />
+      {phase === undefined ? null : (
+        <Box flexDirection="column" paddingX={2}>
+          <Text {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {statusIcon("RUNNING", animations, elapsedMs, 0)}{" "}
+            {phase.finalizing ? "Finalizing scan" : "Preparing scan"}
+          </Text>
+          <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            {phase.label}
+          </Text>
+          <Text {...colorProp(color, ZEDBEE_THEME.muted)}>
+            Step elapsed: {(phase.elapsedMs / 1000).toFixed(1)}s
+          </Text>
+        </Box>
+      )}
       {states.map((state, index) => (
         <Box key={state.id} flexDirection="column">
           <Box paddingX={2}>
@@ -502,6 +537,25 @@ export function LiveDashboard({
 }) {
   const states = [...progress.states.values()];
   const now = (startedAt ?? 0) + elapsedMs;
+  const showPhase =
+    progress.phase === undefined
+      ? states.length === 0
+      : progress.phase.name !== "dispatch" || states.length === 0;
+  const phase = showPhase
+    ? {
+        label:
+          progress.phase === undefined
+            ? "Starting scan…"
+            : PHASE_LABELS[progress.phase.name],
+        elapsedMs:
+          progress.phase === undefined
+            ? elapsedMs
+            : Math.max(0, now - progress.phase.startedAt),
+        finalizing:
+          progress.phase?.name === "policy-evaluation" ||
+          progress.phase?.name === "cleanup",
+      }
+    : undefined;
   const frameWidth = Math.max(1, width - 2);
   const wide = width >= 88;
   const showBrandBee = width >= 69;
@@ -520,6 +574,7 @@ export function LiveDashboard({
   const checks = (
     <CheckPanel
       states={states}
+      phase={phase}
       now={now}
       elapsedMs={elapsedMs}
       animations={animations}
@@ -530,7 +585,17 @@ export function LiveDashboard({
   const activitySummaryWidth = Math.max(1, panelWidth - 1);
   const activity = (
     <ActivityPanel
-      activity={progress.activity}
+      activity={
+        progress.activity.length > 0
+          ? progress.activity
+          : [
+              {
+                key: "startup",
+                text: "Starting scan…",
+                color: ZEDBEE_THEME.muted,
+              },
+            ]
+      }
       color={color}
       width={activitySummaryWidth}
     />

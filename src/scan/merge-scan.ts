@@ -12,6 +12,7 @@ import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import { createIncompleteReport } from "./incomplete-report.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
+import { announceScanPhase } from "./progress.js";
 
 /** Keep each parent's rename and line attribution while scheduling the union of affected paths. */
 function comparisonChanges(
@@ -153,6 +154,11 @@ export async function runMergeScan(
     const git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });
+    announceScanPhase(
+      options.onEvent,
+      "baseline-resolution",
+      dependencies.clock,
+    );
     const comparison = await resolveMergeComparison(
       git,
       options.mergeEnvironment ?? process.env,
@@ -161,6 +167,7 @@ export async function runMergeScan(
     );
     if (comparison === undefined) return undefined;
     parents = comparison.parents;
+    announceScanPhase(options.onEvent, "change-discovery", dependencies.clock);
     const changes = await Promise.all(
       parents.map((parent) =>
         dependencies.readCommitChangeSet(

@@ -73,6 +73,52 @@ async function runInkScan(
 }
 
 describe("runInkScan", () => {
+  it("paints startup and preparation while analysis is still waiting, before any checks exist", async () => {
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      output.push(String(args[0] ?? ""));
+      const callback = args.find((value) => typeof value === "function");
+      if (typeof callback === "function")
+        queueMicrotask(callback as () => void);
+      return true;
+    }) as typeof process.stdout.write);
+    try {
+      await runInkScan(
+        { repositoryRoot: "/repo" },
+        {
+          requestedFormat: "ink",
+          color: false,
+          animations: false,
+          width: 120,
+        },
+        {
+          interactive: true,
+          async runScan(options) {
+            await vi.waitFor(() =>
+              expect(output.join("")).toContain("Starting scan…"),
+            );
+            options.onEvent?.({
+              type: "scan-phase",
+              checkId: "zedbee",
+              target: ".",
+              phase: "snapshot-construction",
+              timestamp: performance.now(),
+            });
+            await vi.waitFor(() =>
+              expect(output.join("")).toContain("Building scan snapshots"),
+            );
+            expect(output.join("")).not.toContain("SCAN RESULT");
+            return createReport({ checks: [] });
+          },
+        },
+      );
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+
   it.each(["auto", "ink"] as const)(
     "does not deliver the final %s report when cancelled during minimum display",
     async (format) => {

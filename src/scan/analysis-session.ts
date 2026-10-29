@@ -8,7 +8,7 @@ import { withAnalyzerExecutionSession } from "../checks/runner/session.js";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
 import { dispatchChecks, type DispatchOptions } from "../checks/dispatcher.js";
-import type { ScanEvent } from "../checks/events.js";
+import type { ScanEvent, ScanPhase } from "../checks/events.js";
 import {
   loadConfigFromCommit,
   loadConfigFromIndex,
@@ -52,6 +52,7 @@ import {
 import type { ActiveScanPhase } from "./analysis-failure.js";
 import type { ScanFailureInput } from "./incomplete-report.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
+import { announceScanPhase } from "./progress.js";
 
 export interface AnalysisSessionDependencies {
   resolveBaseComparison: typeof resolveBaseComparison;
@@ -228,6 +229,13 @@ export async function withAnalysisSession<T>(
     configuredPathExclusions: [],
     appliedPathExclusions: [],
   };
+  const announcePhase = (phase: ScanPhase) => {
+    announceScanPhase(options.onEvent, phase, dependencies.clock);
+  };
+  const enterPhase = (phase: ActiveScanPhase) => {
+    state.phase = phase;
+    announcePhase(phase);
+  };
   let snapshots: SnapshotPair | undefined;
   let executor: AnalyzerExecutor | undefined;
   let execution: AnalyzerExecutionSession | undefined;
@@ -237,6 +245,7 @@ export async function withAnalysisSession<T>(
     { completed: true; value: T } | { completed: false; error: unknown };
   try {
     signal.throwIfAborted();
+    enterPhase("configuration");
     const bootstrapResourcePolicy = resolveScanResourcePolicy(
       { gitHardTimeout: "30s" },
       {
@@ -258,7 +267,7 @@ export async function withAnalysisSession<T>(
         options.signal,
       );
     } else {
-      state.phase = "baseline-resolution";
+      enterPhase("baseline-resolution");
       baseComparison = await dependencies.resolveBaseComparison(
         bootstrapGit,
         options.baseRef,
@@ -270,7 +279,7 @@ export async function withAnalysisSession<T>(
         target: baseComparison.targetCommit,
         requestedBase: baseComparison.requestedBase,
       });
-      state.phase = "configuration";
+      enterPhase("configuration");
       config = await dependencies.loadCommitConfig(
         options.repositoryRoot,
         bootstrapGit,
@@ -286,7 +295,7 @@ export async function withAnalysisSession<T>(
     });
     options.onConfiguration?.(config);
     signal.throwIfAborted();
-    state.phase = "change-discovery";
+    enterPhase("change-discovery");
     const git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
       onSoftTimeout: () =>
@@ -334,7 +343,7 @@ export async function withAnalysisSession<T>(
         baseComparison === undefined &&
         options.resolveEmptyBaseline !== false
       ) {
-        state.phase = "baseline-resolution";
+        enterPhase("baseline-resolution");
         state.source = {
           mode: "index",
           baseline: await dependencies.baselineForEmptyChange(
@@ -347,7 +356,7 @@ export async function withAnalysisSession<T>(
       session = { kind: "empty", config, git, signal, changeSet };
     } else {
       options.executor?.prepare?.();
-      state.phase = "snapshot-construction";
+      enterPhase("snapshot-construction");
       snapshots =
         baseComparison === undefined
           ? await dependencies.buildIndexSnapshots(
@@ -387,7 +396,7 @@ export async function withAnalysisSession<T>(
         };
       } else {
         if (splitChangeDiscovery) {
-          state.phase = "change-discovery";
+          enterPhase("change-discovery");
           const excludedPaths = new Set(
             snapshots.unsupportedEntries.map((entry) => entry.path),
           );
@@ -444,17 +453,18 @@ export async function withAnalysisSession<T>(
         }
 
         signal.throwIfAborted();
-        state.phase = "baseline-inspection";
+        enterPhase("baseline-inspection");
         const baselineInspection = await dependencies.inspectRepository(
           snapshots.baselineDir,
         );
         signal.throwIfAborted();
-        state.phase = "target-inspection";
+        enterPhase("target-inspection");
         const targetInspection = await dependencies.inspectRepository(
           snapshots.targetDir,
         );
         signal.throwIfAborted();
         state.phase = "dispatch";
+        announcePhase("source-capture");
         executor = options.executor ?? createLocalAnalyzerExecutor();
         executionCleanupProved = false;
         execution = await executor.openSession({
@@ -471,6 +481,7 @@ export async function withAnalysisSession<T>(
             }),
           ),
         });
+        enterPhase("dispatch");
         const executions = await withAnalyzerExecutionSession(execution, () =>
           dependencies.dispatch(
             dependencies.adapters,
@@ -502,7 +513,7 @@ export async function withAnalysisSession<T>(
         };
       }
     }
-    if (session.kind === "analyzed") state.phase = "policy-evaluation";
+    if (session.kind === "analyzed") enterPhase("policy-evaluation");
     completion = {
       completed: true,
       value: await (execution === undefined
@@ -518,6 +529,13 @@ export async function withAnalysisSession<T>(
     } else {
       completion = { completed: false, error };
     }
+  }
+  if (
+    execution !== undefined ||
+    executor !== undefined ||
+    snapshots !== undefined
+  ) {
+    announcePhase("cleanup");
   }
   try {
     if (execution !== undefined) {

@@ -36,6 +36,44 @@ const events: ScanEvent[] = [
 ];
 
 describe("LiveDashboard", () => {
+  it.each([20, 40, 60, 96, 120, 160])(
+    "fits startup and long preparation labels at %i columns without animation or color",
+    (width) => {
+      for (const phase of [
+        undefined,
+        "baseline-inspection",
+        "source-capture",
+      ] as const) {
+        const frame = renderToString(
+          <LiveDashboard
+            events={
+              phase === undefined
+                ? []
+                : [
+                    {
+                      type: "scan-phase",
+                      checkId: "zedbee",
+                      target: ".",
+                      phase,
+                      timestamp: 1000,
+                    },
+                  ]
+            }
+            startedAt={1000}
+            elapsedMs={55500}
+            width={width}
+            color={false}
+            animations={false}
+          />,
+          { columns: width },
+        );
+        expect(maxLineWidth(frame)).toBeLessThanOrEqual(width);
+        expect(frame).not.toContain("\u001b[");
+        expect(frame).toContain("●");
+      }
+    },
+  );
+
   it("keeps friendly live labels separate from final engine labels", () => {
     expect(checkLabel("formatting")).toBe("Formatting");
     expect(checkLabel("lint")).toBe("Lint");
