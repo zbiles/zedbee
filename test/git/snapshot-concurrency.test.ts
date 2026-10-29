@@ -37,7 +37,7 @@ afterEach(() => {
 });
 
 describe("snapshot side overlap", () => {
-  it("settles aborted Git readers and a held sibling write before cleaning a detached write failure", async () => {
+  it("waits for the aborted peer's write and Git reader before cleaning a destination failure", async () => {
     const repo = await createGitRepository();
     await repo.write("file.ts", "export const value = 1;\n");
     await repo.commitAll("baseline");
@@ -52,16 +52,14 @@ describe("snapshot side overlap", () => {
     const ready = barrier();
     const fail = barrier();
     const aborted = barrier();
-    const readersClose = barrier();
-    const readersClosed = barrier();
+    const readerClose = barrier();
+    const peerWriteComplete = barrier();
     const siblingWrite = barrier();
     const bothWriting = barrier();
     let readers = 0;
-    let aborts = 0;
-    let closed = 0;
     let writing = 0;
     let returned = false;
-    const original = new Error("detached destination failure");
+    const original = new Error("destination failure");
     writes.before = async () => {
       const first = writing++ === 0;
       if (writing === 2) bothWriting.release();
@@ -73,30 +71,25 @@ describe("snapshot side overlap", () => {
     };
     const git = new GitClient(repo.root);
     git.streamBlobs = async (ids, visit, options = {}) => {
-      const bytes = Buffer.from("export const value = 1;\n");
-      await visit({
-        objectId: ids[0]!,
-        size: bytes.length,
-        chunks: (async function* () {
-          yield bytes;
-        })(),
-      });
       const signal = options.signal!;
-      const stopped = new Promise<void>((resolve) =>
-        signal.addEventListener(
-          "abort",
-          () => {
-            if (++aborts === 2) aborted.release();
-            resolve();
-          },
-          { once: true },
-        ),
-      );
+      const onAbort = () => aborted.release();
+      signal.addEventListener("abort", onAbort, { once: true });
       if (++readers === 2) ready.release();
-      await stopped;
-      await readersClose.promise;
-      if (++closed === 2) readersClosed.release();
-      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      try {
+        const bytes = Buffer.from("export const value = 1;\n");
+        await visit({
+          objectId: ids[0]!,
+          size: bytes.length,
+          chunks: (async function* () {
+            yield bytes;
+          })(),
+        });
+        peerWriteComplete.release();
+        await readerClose.promise;
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+      }
     };
     const observed = buildCommitSnapshotPair(repo.root, git, oid, oid).then(
       () => {
@@ -115,19 +108,19 @@ describe("snapshot side overlap", () => {
       await aborted.promise;
       expect(returned).toBe(false);
       await access(writes.root);
-      readersClose.release();
-      await readersClosed.promise;
+      siblingWrite.release();
+      await peerWriteComplete.promise;
       expect(returned).toBe(false);
       await access(writes.root);
     } finally {
       fail.release();
-      readersClose.release();
+      readerClose.release();
       siblingWrite.release();
     }
     expect(await observed).toBe(original);
     await expect(access(writes.root)).rejects.toThrow();
   });
-  it("admits another small blob while earlier file writes are still active", async () => {
+  it("keeps each blob visitor backpressured and limits active writes to two", async () => {
     const repo = await createGitRepository();
     for (let i = 0; i < 8; i++)
       await repo.write(`file-${i}.ts`, `export const value = ${i};\n`);
@@ -170,13 +163,13 @@ describe("snapshot side overlap", () => {
     // After each side's first visitor, serial writes cannot reach visitor 3.
     // Release in finally so a failed assertion never strands a real Git child.
     try {
-      expect(visited).toBeGreaterThan(2);
+      expect(visited).toBe(2);
     } finally {
       release();
       const pair = await pending;
       await pair.cleanup();
     }
-    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeLessThanOrEqual(2);
   });
   it("starts both Git blob streams before either completes", async () => {
     const repo = await createGitRepository();

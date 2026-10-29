@@ -19,13 +19,7 @@ import {
   captureSelectedIndexComparison,
   SelectedIndexCleanupError,
 } from "./selected-comparison.js";
-import { createSnapshotDirectories } from "./snapshot-directories.js";
-import {
-  createSnapshotWorkOwner,
-  createSnapshotWritePool,
-  settleSnapshotWork,
-  type SnapshotWritePool,
-} from "./snapshot-work.js";
+import { settleSnapshotWork } from "./snapshot-work.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -343,11 +337,8 @@ async function writeRegularBlob(
   entry: SnapshotEntry,
   blob: GitBlobStream,
   signal?: AbortSignal,
-  directories?: ReturnType<typeof createSnapshotDirectories>,
 ): Promise<{ prefix: Buffer; containsNul: boolean }> {
-  if (directories === undefined)
-    await createParentDirectories(destinationRoot, entry.path);
-  else await directories.ensure(entry.path);
+  await createParentDirectories(destinationRoot, entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined) return invalidSelectedPath();
   const handle = await open(
@@ -414,7 +405,6 @@ async function writeSymlinkBlob(
   entry: SnapshotEntry,
   blob: GitBlobStream,
   signal?: AbortSignal,
-  directories?: ReturnType<typeof createSnapshotDirectories>,
 ): Promise<void> {
   if (blob.size > MAX_SYMLINK_TARGET_BYTES) return invalidSelectedPath();
   const chunks: Buffer[] = [];
@@ -433,9 +423,7 @@ async function writeSymlinkBlob(
     throw new Error("Git returned an invalid batch object response.");
   }
   const bytes = Buffer.concat(chunks, length);
-  if (directories === undefined)
-    await createParentDirectories(destinationRoot, entry.path);
-  else await directories.ensure(entry.path);
+  await createParentDirectories(destinationRoot, entry.path);
   const destination = containedPath(destinationRoot, entry.path);
   if (destination === undefined || bytes.includes(0))
     return invalidSelectedPath();
@@ -475,7 +463,6 @@ async function materializeEntries(
   destinationRoot: string,
   classify: boolean,
   signal?: AbortSignal,
-  work?: { pool: SnapshotWritePool; side: "baseline" | "target" },
 ): Promise<UnsupportedIndexEntry[]> {
   const unsupported: UnsupportedIndexEntry[] = entries.flatMap((entry) =>
     classify && entry.mode === "160000"
@@ -483,8 +470,6 @@ async function materializeEntries(
       : [],
   );
   const options = signal === undefined ? {} : { signal };
-  const directories =
-    work === undefined ? undefined : createSnapshotDirectories(destinationRoot);
   const blobs = entries.filter((entry) => entry.mode !== "160000");
   let entryIndex = 0;
   await git.streamBlobs(
@@ -496,48 +481,30 @@ async function materializeEntries(
         throw new Error("Git returned an invalid batch object response.");
       }
       if (entry.mode === "120000") {
-        await writeSymlinkBlob(
-          destinationRoot,
-          entry,
-          blob,
-          signal,
-          directories,
-        );
+        await writeSymlinkBlob(destinationRoot, entry, blob, signal);
         return;
       }
-      const write = async (owned: GitBlobStream, ownedSignal = signal) => {
-        const { prefix, containsNul } = await writeRegularBlob(
-          destinationRoot,
-          entry,
-          owned,
-          ownedSignal,
-          directories,
-        );
-        const unsupportedEntry = classify
-          ? classifyBlob(entry, prefix, containsNul)
-          : undefined;
-        if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
-      };
-      if (work === undefined) await write(blob);
-      else if (blob.size <= 128 * 1024)
-        await work.pool.enqueue(work.side, blob, write);
-      else
-        await work.pool.stream(work.side, (ownedSignal) =>
-          write(blob, ownedSignal),
-        );
+      const { prefix, containsNul } = await writeRegularBlob(
+        destinationRoot,
+        entry,
+        blob,
+        signal,
+      );
+      const unsupportedEntry = classify
+        ? classifyBlob(entry, prefix, containsNul)
+        : undefined;
+      if (unsupportedEntry !== undefined) unsupported.push(unsupportedEntry);
     },
     options,
   );
   if (entryIndex !== blobs.length) {
     throw new Error("Git returned an invalid batch object response.");
   }
-  return work !== undefined
-    ? unsupported
-    : unsupported.sort(
-        (left, right) =>
-          compareCodeUnits(left.path, right.path) ||
-          compareCodeUnits(left.kind, right.kind),
-      );
+  return unsupported.sort(
+    (left, right) =>
+      compareCodeUnits(left.path, right.path) ||
+      compareCodeUnits(left.kind, right.kind),
+  );
 }
 
 async function readCommitEntries(
@@ -692,8 +659,6 @@ async function materializePair(
   ownedRoot?: OwnedSnapshotRoot,
 ): Promise<SnapshotPair> {
   const root = ownedRoot ?? (await createOwnedSnapshotRoot());
-  const owner = createSnapshotWorkOwner(signal);
-  const pool = createSnapshotWritePool(owner);
   try {
     const [baselineUnsupportedEntries, unsupportedEntries] =
       await settleSnapshotWork(
@@ -704,7 +669,6 @@ async function materializePair(
             root.baselineDir,
             true,
             ownedSignal,
-            { pool, side: "baseline" },
           ),
         (ownedSignal) =>
           materializeEntries(
@@ -713,16 +677,9 @@ async function materializePair(
             root.targetDir,
             true,
             ownedSignal,
-            { pool, side: "target" },
           ),
-        { owner },
+        signal === undefined ? {} : { signal },
       );
-    await pool.settle();
-    const order = (left: UnsupportedIndexEntry, right: UnsupportedIndexEntry) =>
-      compareCodeUnits(left.path, right.path) ||
-      compareCodeUnits(left.kind, right.kind);
-    baselineUnsupportedEntries.sort(order);
-    unsupportedEntries.sort(order);
     return {
       baselineDir: root.baselineDir,
       targetDir: root.targetDir,
@@ -739,11 +696,7 @@ async function materializePair(
       cleanup: root.cleanup,
     };
   } catch (error) {
-    owner.fail("target", error);
-    await pool.settle().catch(() => {});
     return cleanupConstructionFailure(root, error);
-  } finally {
-    owner.dispose();
   }
 }
 
