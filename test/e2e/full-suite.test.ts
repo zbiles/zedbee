@@ -501,9 +501,14 @@ describe("release verification contract", () => {
     async ({ name, triggers }) => {
       const workflow = parseYaml(
         await readFile(resolve(root, ".github/workflows", name), "utf8"),
-      ) as { on: unknown };
+      ) as { on: Record<string, unknown> };
 
-      expect(workflow.on).toEqual(triggers);
+      // Manual inputs do not enable automatic execution. Preserve the trigger
+      // allowlist and release-tag restriction independently of input options.
+      expect(Object.keys(workflow.on).sort()).toEqual(
+        Object.keys(triggers).sort(),
+      );
+      if ("push" in triggers) expect(workflow.on.push).toEqual(triggers.push);
     },
   );
 

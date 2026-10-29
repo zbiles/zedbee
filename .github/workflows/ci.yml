@@ -4,6 +4,12 @@ on:
   # Run local verification before pushing. Hosted checks are opt-in; automatic
   # release-tag verification lives in release-check.yml.
   workflow_dispatch:
+    inputs:
+      snapshot_baseline:
+        description: Optional immutable baseline ref for the primary snapshot performance gate
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -13,6 +19,37 @@ permissions:
   contents: read
 
 jobs:
+  snapshot-performance:
+    if: ${{ inputs.snapshot_baseline != '' }}
+    name: Snapshot preparation / ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci --ignore-scripts
+      - name: Measure clean base/head builds and enforce the primary gates
+        run: node --experimental-strip-types bench/snapshot-ci.mts
+        env:
+          SNAPSHOT_BASELINE_REF: ${{ inputs.snapshot_baseline }}
+          ZEDBEE_TELEMETRY_DISABLED: "1"
+      - name: Retain raw samples and gate decisions
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snapshot-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/snapshot-performance*.json
+          if-no-files-found: warn
+
   verify:
     name: ${{ matrix.os }} / Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
