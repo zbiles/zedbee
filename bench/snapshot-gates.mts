@@ -105,14 +105,184 @@ export function assessSnapshotPreparation(input: unknown) {
   };
 }
 
+interface MatrixSample {
+  root: string;
+  kind: string;
+  count: number;
+  scenario: string;
+  sample: number;
+  manifestHash: string;
+  timings?: { total: number; snapshots: number };
+  peakRssBytes?: number;
+  durationMs?: number;
+  cacheMode?: string;
+  executorMode?: string;
+  observed?: { gets: number; hits: number; serviceSessions: number };
+  service?: { state: string };
+  serviceTreeMemory?: {
+    verified: boolean;
+    samples: number;
+    intervalMs: number;
+    peakRssBytes: number;
+  };
+  decision?: {
+    outcome: string;
+    exitCode: number;
+    checks: Array<{ checkId: string; status: string }>;
+  };
+}
+
+/** One isolated cell; complete-matrix coverage is assessed across its artifacts. */
+export function assessSnapshotMatrixCell(input: unknown) {
+  const data = input as {
+    samples?: number;
+    identities?: Array<{ root: string; dirty: string }>;
+    results?: MatrixSample[];
+  };
+  if (
+    data?.samples !== 15 ||
+    data.identities?.length !== 2 ||
+    data.results?.length !== 30
+  )
+    throw new Error("Missing paired matrix evidence");
+  const identities = data.identities;
+  if (
+    identities.some(
+      (i) => typeof i.root !== "string" || !i.root || i.dirty !== "",
+    ) ||
+    new Set(identities.map((i) => i.root)).size !== 2
+  )
+    throw new Error("Matrix builds are not clean and distinct");
+  const rows = data.results;
+  const first = rows[0]!;
+  if (
+    !["preparation", "cli"].includes(first.kind) ||
+    ![100, 4000, 20000].includes(first.count) ||
+    !["json", "ts", "config", "large"].includes(first.scenario)
+  )
+    throw new Error("Invalid matrix cell");
+  const signature = (r: MatrixSample) =>
+    JSON.stringify([r.kind, r.count, r.scenario, r.cacheMode, r.executorMode]);
+  if (
+    rows.some(
+      (r) =>
+        signature(r) !== signature(first) ||
+        !/^[a-f0-9]{64}$/u.test(r.manifestHash),
+    ) ||
+    new Set(rows.map((r) => r.manifestHash)).size !== 1
+  )
+    throw new Error("Mixed or changed matrix fixtures");
+  const paired = identities.map(({ root }) => {
+    const selected = rows
+      .filter((r) => r.root === root)
+      .sort((a, b) => a.sample - b.sample);
+    if (selected.length !== 15 || selected.some((r, i) => r.sample !== i))
+      throw new Error("Missing or duplicated samples");
+    return selected;
+  });
+  const positive = (n: unknown) =>
+    typeof n === "number" && Number.isFinite(n) && n > 0;
+  if (first.kind === "cli") {
+    if (
+      !["off", "cold", "warm"].includes(first.cacheMode ?? "") ||
+      !["local", "cold-service", "warm-service"].includes(
+        first.executorMode ?? "",
+      )
+    )
+      throw new Error("Invalid execution mode");
+    for (const r of rows) {
+      const o = r.observed,
+        m = r.serviceTreeMemory;
+      if (
+        !o ||
+        !positive(o.gets) ||
+        !Number.isInteger(o.hits) ||
+        o.hits < 0 ||
+        (r.cacheMode === "warm" ? o.hits === 0 : o.hits !== 0) ||
+        (r.executorMode === "local"
+          ? o.serviceSessions !== 0 || r.service?.state !== "stopped"
+          : !positive(o.serviceSessions) || r.service?.state !== "running") ||
+        !m?.verified ||
+        !positive(m.samples) ||
+        m.intervalMs !== 100 ||
+        !positive(m.peakRssBytes)
+      )
+        throw new Error("Unverified matrix cache, service or memory evidence");
+    }
+  }
+  const summarize = (samples: MatrixSample[]) => {
+    const values = samples.map((r) =>
+      first.kind === "preparation" ? r.timings?.total : r.durationMs,
+    );
+    if (!values.every(positive)) throw new Error("Invalid timings");
+    const sorted = (values as number[]).sort((a, b) => a - b);
+    return { median: sorted[7]!, p95: sorted[14]! };
+  };
+  const baseline = summarize(paired[0]!);
+  const candidate = summarize(paired[1]!);
+  const failures: string[] = [];
+  for (const metric of ["median", "p95"] as const)
+    if (
+      candidate[metric] > baseline[metric] * 1.1 &&
+      candidate[metric] - baseline[metric] > 100
+    )
+      failures.push(metric);
+  if (first.kind === "cli") {
+    if (
+      paired[0]!.some(
+        (r, i) =>
+          JSON.stringify(r.decision) !==
+          JSON.stringify(paired[1]![i]!.decision),
+      )
+    )
+      failures.push("decision-parity");
+    if (
+      rows.some(
+        (r) =>
+          r.decision?.outcome !== "pass" ||
+          r.decision.exitCode !== 0 ||
+          !r.decision.checks?.some(
+            (c) => c.checkId === "types" && c.status === "completed",
+          ),
+      )
+    )
+      failures.push("scan-outcome");
+  } else {
+    if (
+      rows.some(
+        (r) => !positive(r.timings?.snapshots) || !positive(r.peakRssBytes),
+      )
+    )
+      throw new Error("Invalid preparation evidence");
+    if (first.count === 4000 && first.scenario === "json")
+      failures.push(...assessSnapshotPreparation(data).failures);
+  }
+  return {
+    scope: "single-matrix-cell",
+    passed: failures.length === 0,
+    failures: [...new Set(failures)],
+    baseline,
+    candidate,
+    cell: {
+      kind: first.kind,
+      count: first.count,
+      scenario: first.scenario,
+      cache: first.cacheMode,
+      executor: first.executorMode,
+    },
+    completeMatrixVerified: false,
+  };
+}
+
 if (
   process.argv[1] &&
   pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 ) {
   const path = resolve(process.argv[2] ?? "");
-  const result = assessSnapshotPreparation(
-    JSON.parse(await readFile(path, "utf8")),
-  );
+  const assess = process.argv.includes("--matrix")
+    ? assessSnapshotMatrixCell
+    : assessSnapshotPreparation;
+  const result = assess(JSON.parse(await readFile(path, "utf8")));
   await writeFile(`${path}.gates.json`, JSON.stringify(result, null, 2) + "\n");
   process.stdout.write(JSON.stringify(result, null, 2) + "\n");
   if (!result.passed) process.exitCode = 1;

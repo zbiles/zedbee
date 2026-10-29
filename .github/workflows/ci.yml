@@ -10,6 +10,11 @@ on:
         required: false
         type: string
         default: ""
+      snapshot_extended:
+        description: Run the complete fixture, cache, and executor matrix on isolated Linux Node 24 runners
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -47,6 +52,52 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: snapshot-${{ matrix.os }}-node-${{ matrix.node }}
+          path: ${{ runner.temp }}/snapshot-performance*.json
+          if-no-files-found: warn
+
+  snapshot-matrix:
+    if: ${{ inputs.snapshot_extended && inputs.snapshot_baseline != '' }}
+    name: Snapshot matrix / ${{ matrix.size }} / ${{ matrix.scenario }} / ${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: true
+      max-parallel: 12
+      matrix:
+        size: [100, 4000, 20000]
+        scenario: [json, ts, config, large]
+        mode:
+          - preparation
+          - off-local
+          - off-cold-service
+          - off-warm-service
+          - cold-local
+          - cold-cold-service
+          - cold-warm-service
+          - warm-local
+          - warm-cold-service
+          - warm-warm-service
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - name: Measure one complete paired matrix cell
+        run: node --experimental-strip-types bench/snapshot-ci.mts
+        env:
+          SNAPSHOT_BASELINE_REF: ${{ inputs.snapshot_baseline }}
+          SNAPSHOT_MATRIX_MODE: ${{ matrix.mode }}
+          SNAPSHOT_MATRIX_SIZE: ${{ matrix.size }}
+          SNAPSHOT_MATRIX_SCENARIO: ${{ matrix.scenario }}
+          ZEDBEE_TELEMETRY_DISABLED: "1"
+      - name: Retain raw paired samples and the cell decision
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: snapshot-matrix-${{ matrix.size }}-${{ matrix.scenario }}-${{ matrix.mode }}
           path: ${{ runner.temp }}/snapshot-performance*.json
           if-no-files-found: warn
 

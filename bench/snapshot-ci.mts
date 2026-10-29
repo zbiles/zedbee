@@ -8,6 +8,19 @@ const temporary = resolve(
 );
 const baseRoot = join(temporary, "zedbee-snapshot-baseline");
 const output = join(temporary, "snapshot-performance.json");
+const mode = process.env.SNAPSHOT_MATRIX_MODE;
+const size = process.env.SNAPSHOT_MATRIX_SIZE ?? "4000";
+const scenario = process.env.SNAPSHOT_MATRIX_SCENARIO ?? "json";
+const match = mode?.match(
+  /^(off|cold|warm)-(local|cold-service|warm-service)$/u,
+);
+if (
+  (mode !== undefined && mode !== "preparation" && !match) ||
+  !["100", "4000", "20000"].includes(size) ||
+  !["json", "ts", "config", "large"].includes(scenario)
+)
+  throw new Error("Invalid matrix selection");
+const cli = match !== null && match !== undefined;
 const requestedBase = process.env.SNAPSHOT_BASELINE_REF;
 if (!requestedBase)
   throw new Error("An explicit snapshot baseline ref is required");
@@ -42,11 +55,14 @@ try {
       "--implementation-root",
       root,
       "--kind",
-      "preparation",
+      cli ? "cli" : "preparation",
       "--sizes",
-      "4000",
+      size,
       "--scenarios",
-      "json",
+      scenario,
+      ...(cli
+        ? ["--cache-modes", match![1]!, "--executor-modes", match![2]!]
+        : []),
       "--output",
       output,
     ],
@@ -54,7 +70,12 @@ try {
   );
   await execa(
     process.execPath,
-    ["--experimental-strip-types", "bench/snapshot-gates.mts", output],
+    [
+      "--experimental-strip-types",
+      "bench/snapshot-gates.mts",
+      output,
+      ...(mode === undefined ? [] : ["--matrix"]),
+    ],
     { stdio: "inherit" },
   );
 } finally {
