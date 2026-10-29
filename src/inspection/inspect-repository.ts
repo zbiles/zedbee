@@ -195,6 +195,25 @@ export async function inspectRepository(
     dependencies.registry ?? (await captureSnapshotRegistry(canonicalRoot));
   const readHooks = dependencies.readHooks ?? (() => undefined);
   const workspaces = await discoverWorkspaces(registry, readHooks);
+  for (const [path, failure] of registry.unavailableSymlinks ?? []) {
+    const name = posix.basename(path);
+    const required =
+      SOURCE_EXTENSION.test(path) ||
+      TSCONFIG_NAME.test(name) ||
+      name === "package.json" ||
+      name === "pnpm-workspace.yaml" ||
+      Object.hasOwn(LOCKFILE_MANAGERS, name) ||
+      workspaces.some(({ relativeRoot, canonicalRelativeRoot }) =>
+        [relativeRoot, canonicalRelativeRoot].some(
+          (root) =>
+            ownsPath(root, path) ||
+            root === path ||
+            root.startsWith(`${path}/`),
+        ),
+      );
+    if (required) throw failure;
+  }
+
   const sourceFiles = discoverRepositoryFiles(registry, (path) =>
     SOURCE_EXTENSION.test(path),
   );
