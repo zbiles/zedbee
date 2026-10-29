@@ -19,6 +19,7 @@ import {
   type AnalyzerExecutor,
 } from "../../src/checks/runner/executor.js";
 import { activeAnalyzerExecutionSession } from "../../src/checks/runner/session.js";
+import type { ScanEvent } from "../../src/checks/events.js";
 
 const configuration = {
   schemaVersion: 1,
@@ -96,6 +97,129 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it("announces preparation before awaiting each operation, including source capture and cleanup", async () => {
+    const repository = await repositoryFixture();
+    const local = createLocalAnalyzerExecutor();
+    const order: string[] = [];
+    const observed: ScanEvent[] = [];
+    let tick = 0;
+    try {
+      const outcome = await withAnalysisSession(
+        {
+          repositoryRoot: repository.root,
+          onEvent(event) {
+            observed.push(event);
+            if (event.type === "scan-phase") order.push(event.phase);
+          },
+          executor: {
+            async openSession(options) {
+              order.push("capture");
+              return local.openSession(options);
+            },
+            close: () => local.close(),
+          },
+          dependencies: {
+            ...defaults,
+            clock: () => tick++,
+            async loadIndexConfig(...args) {
+              order.push("config");
+              return defaults.loadIndexConfig(...args);
+            },
+            async discoverIndexChangeSet(...args) {
+              order.push("discover");
+              return defaults.discoverIndexChangeSet!(...args);
+            },
+            async buildIndexSnapshots(...args) {
+              order.push("snapshots");
+              const pair = await defaults.buildIndexSnapshots(...args);
+              return {
+                ...pair,
+                async cleanup() {
+                  order.push("remove snapshots");
+                  await pair.cleanup();
+                },
+              };
+            },
+            async addIndexLineRanges(...args) {
+              order.push("ranges");
+              return defaults.addIndexLineRanges!(...args);
+            },
+            async inspectRepository(...args) {
+              order.push("inspect");
+              return defaults.inspectRepository(...args);
+            },
+            async dispatch() {
+              order.push("checks");
+              return [];
+            },
+          },
+        },
+        async () => {
+          order.push("consume");
+          return 42;
+        },
+      );
+      expect(outcome.completed).toBe(true);
+      expect(order).toEqual([
+        "configuration",
+        "config",
+        "change-discovery",
+        "discover",
+        "snapshot-construction",
+        "snapshots",
+        "change-discovery",
+        "ranges",
+        "baseline-inspection",
+        "inspect",
+        "target-inspection",
+        "inspect",
+        "source-capture",
+        "capture",
+        "dispatch",
+        "checks",
+        "policy-evaluation",
+        "consume",
+        "cleanup",
+        "remove snapshots",
+      ]);
+      expect(observed.map(({ timestamp }) => timestamp)).toEqual(
+        observed.map((_, index) => index),
+      );
+    } finally {
+      await local.close();
+    }
+  });
+
+  it("keeps a failing progress observer from changing the scan outcome or cleanup", async () => {
+    const repository = await repositoryFixture();
+    let cleaned = false;
+    const outcome = await withAnalysisSession(
+      {
+        repositoryRoot: repository.root,
+        onEvent() {
+          throw new Error("display unavailable");
+        },
+        dependencies: {
+          ...defaults,
+          async buildIndexSnapshots(...args) {
+            const pair = await defaults.buildIndexSnapshots(...args);
+            return {
+              ...pair,
+              async cleanup() {
+                await pair.cleanup();
+                cleaned = true;
+              },
+            };
+          },
+          dispatch: async () => [],
+        },
+      },
+      async () => 42,
+    );
+    expect(outcome).toMatchObject({ completed: true, value: 42 });
+    expect(cleaned).toBe(true);
+  });
+
   it.each([false, true])(
     "prepares only after nonempty discovery and before snapshots (snapshot fails: %s)",
     async (fails) => {

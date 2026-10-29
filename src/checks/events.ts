@@ -29,9 +29,28 @@ export interface GitSoftTimeoutEvent extends CheckEventBase {
   type: "git-soft-timeout";
 }
 
+/** Scan work outside individual checks; never contributes to check counts. */
+export type ScanPhase =
+  | "configuration"
+  | "baseline-resolution"
+  | "change-discovery"
+  | "snapshot-construction"
+  | "baseline-inspection"
+  | "target-inspection"
+  | "source-capture"
+  | "dispatch"
+  | "policy-evaluation"
+  | "cleanup";
+
+export interface ScanPhaseEvent extends CheckEventBase {
+  type: "scan-phase";
+  phase: ScanPhase;
+}
+
 export type ScanEvent =
   | CheckQueuedEvent
   | CheckRunningEvent
   | CheckCompletedEvent
   | NetworkDisclosureEvent
-  | GitSoftTimeoutEvent;
+  | GitSoftTimeoutEvent
+  | ScanPhaseEvent;

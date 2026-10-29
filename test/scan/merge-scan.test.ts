@@ -91,6 +91,10 @@ describe("staged merge comparison", () => {
       (event) => event.type === "check-completed",
     );
     expect(completed.map((event) => event.result)).toEqual(report.checks);
+    expect(events.slice(0, 2)).toMatchObject([
+      { type: "scan-phase", phase: "baseline-resolution" },
+      { type: "scan-phase", phase: "change-discovery" },
+    ]);
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
     expect(JSON.parse(renderJson(report)).mergeParents).toEqual([

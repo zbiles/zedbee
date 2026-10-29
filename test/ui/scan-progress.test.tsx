@@ -8,6 +8,143 @@ import {
 import { createFinding } from "../helpers/scan-report.js";
 
 describe("bounded live progress", () => {
+  it("shows startup immediately before any scan events arrive", () => {
+    const progress = createScanProgress();
+    const frame = render(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={55500}
+        width={120}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    expect(frame).toContain("Preparing scan");
+    expect(frame).toContain("● Starting scan… (55.5s)");
+    expect(frame).not.toContain("Step elapsed:");
+    expect(progress.states.size).toBe(0);
+  });
+
+  it("shows the active preparation stage and its own elapsed time without creating checks", () => {
+    const progress = createScanProgress();
+    updateScanProgress(progress, {
+      type: "scan-phase",
+      checkId: "zedbee",
+      target: ".",
+      timestamp: 2000,
+      phase: "snapshot-construction",
+    });
+    updateScanProgress(progress, {
+      type: "scan-phase",
+      checkId: "zedbee",
+      target: ".",
+      timestamp: 50000,
+      phase: "target-inspection",
+    });
+    updateScanProgress(progress, {
+      type: "git-soft-timeout",
+      checkId: "zedbee",
+      target: ".",
+      timestamp: 52000,
+    });
+    const frame = render(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={55500}
+        width={120}
+        color={false}
+        animations={false}
+      />,
+    ).lastFrame()!;
+    expect(frame).toContain("● Inspecting changed project snapshot (6.5s)");
+    expect(progress.states.size).toBe(0);
+    expect(progress.activity.map(({ text }) => text)).toContain(
+      "Building scan snapshots",
+    );
+  });
+
+  it("cycles the active indicator beside the step while keeping its elapsed time inline", () => {
+    const progress = createScanProgress([
+      {
+        type: "scan-phase",
+        checkId: "zedbee",
+        target: ".",
+        timestamp: 1000,
+        phase: "snapshot-construction",
+      },
+    ]);
+    const view = render(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={0}
+        width={120}
+        color={false}
+        animations
+      />,
+    );
+    expect(view.lastFrame()).toContain("⠋ Building scan snapshots (0.0s)");
+    view.rerender(
+      <LiveDashboard
+        progress={progress}
+        startedAt={1000}
+        elapsedMs={80}
+        width={120}
+        color={false}
+        animations
+      />,
+    );
+    expect(view.lastFrame()).toContain("⠙ Building scan snapshots (0.1s)");
+  });
+
+  it("replaces preparation with real checks, then shows finalization alongside results", () => {
+    const progress = createScanProgress();
+    updateScanProgress(progress, {
+      type: "scan-phase",
+      checkId: "zedbee",
+      target: ".",
+      timestamp: 1,
+      phase: "dispatch",
+    });
+    updateScanProgress(progress, {
+      type: "check-running",
+      checkId: "lint",
+      target: ".",
+      timestamp: 2,
+    });
+    const view = render(
+      <LiveDashboard
+        progress={progress}
+        elapsedMs={10}
+        width={120}
+        color={false}
+        animations={false}
+      />,
+    );
+    expect(view.lastFrame()).not.toContain("Preparing scan");
+    expect(view.lastFrame()).toContain("Lint");
+    updateScanProgress(progress, {
+      type: "scan-phase",
+      checkId: "zedbee",
+      target: ".",
+      timestamp: 20,
+      phase: "cleanup",
+    });
+    view.rerender(
+      <LiveDashboard
+        progress={progress}
+        elapsedMs={30}
+        width={120}
+        color={false}
+        animations={false}
+      />,
+    );
+    expect(view.lastFrame()).toContain("Cleaning up scan resources");
+    expect(progress.states.size).toBe(1);
+  });
+
   it("retains first-seen order and running times without keeping completed finding payloads", () => {
     const progress = createScanProgress();
     updateScanProgress(progress, {

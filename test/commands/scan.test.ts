@@ -573,6 +573,39 @@ describe("executeScanCommand", () => {
   );
 
   it.each(["text", "json", "sarif"] as const)(
+    "keeps scan preparation events out of %s output",
+    async (format) => {
+      const report = createReport();
+      const deps = dependencies();
+      deps.scan = async () => report;
+      const original = io(false);
+      await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        original,
+        deps,
+      );
+      deps.scan = async (options) => {
+        options.onEvent?.({
+          type: "scan-phase",
+          checkId: "zedbee",
+          target: ".",
+          timestamp: 1,
+          phase: "snapshot-construction",
+        });
+        return report;
+      };
+      const updated = io(false);
+      await executeScanCommand(
+        { cwd: "/repo", format, color: false, animations: false },
+        updated,
+        deps,
+      );
+      expect(updated.stdout).toEqual(original.stdout);
+      expect(updated.stderr).toEqual(original.stderr);
+    },
+  );
+
+  it.each(["text", "json", "sarif"] as const)(
     "writes a Git soft-timeout warning to stderr for %s without contaminating stdout",
     async (format) => {
       const terminal = io(false);

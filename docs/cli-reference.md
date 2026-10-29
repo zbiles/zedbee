@@ -337,6 +337,8 @@ npx zedbee scan --config config/zedbee.jsonc
 --format sarif  SARIF 2.1.0 structured output for enterprise ingestion
 ```
 
+The live Ink display starts with a preparation status before checks are queued. It shows the active scan stage, including snapshot construction, project inspection, analyzer input preparation, and cleanup, with elapsed time for that stage. Preparation stages do not count as checks or findings.
+
 Accessibility controls:
 
 ```bash
