@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { CHECK_IDS } from "../../src/config/schema.js";
 import { runScan } from "../../src/scan/run-scan.js";
+import { DEFAULT_ANALYSIS_SESSION_DEPENDENCIES } from "../../src/scan/analysis-session.js";
+import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { renderJson } from "../../src/renderers/json.js";
 import { renderSarif } from "../../src/renderers/sarif.js";
@@ -53,6 +55,43 @@ const scan = (repositoryRoot: string) =>
   });
 
 describe("staged merge comparison", () => {
+  it("retains a sanitized merge failure and cleanup diagnosis when private-index removal fails", async () => {
+    const repo = await createGitRepository();
+    await repo.write("value.ts", "export const value = 1;\n");
+    await repo.commitAll("baseline");
+    const report = await runScan({
+      repositoryRoot: repo.root,
+      merge: "required",
+      mergeEnvironment: {},
+      cache: false,
+      dependencies: {
+        ...DEFAULT_ANALYSIS_SESSION_DEPENDENCIES,
+        evaluate: evaluatePolicy,
+        now: () => new Date(),
+        async captureIndexComparison(...parameters) {
+          const selected =
+            await DEFAULT_ANALYSIS_SESSION_DEPENDENCIES.captureIndexComparison!(
+              ...parameters,
+            );
+          return {
+            ...selected,
+            async cleanup() {
+              await selected.cleanup();
+              throw new Error("private raw cleanup path");
+            },
+          };
+        },
+      },
+    });
+    expect(report.outcome).toBe("incomplete");
+    expect(report.checks.map((check) => check.error?.code)).toEqual(
+      expect.arrayContaining([
+        "MERGE_PARENTS_UNAVAILABLE",
+        "SNAPSHOT_CLEANUP_FAILED",
+      ]),
+    );
+    expect(JSON.stringify(report)).not.toContain("private raw cleanup path");
+  });
   it("does not block a TypeScript finding inherited from the incoming parent", async () => {
     const repo = await fixture();
     await repo.git(["switch", "incoming"]);

@@ -16,6 +16,11 @@ import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
 import {
+  captureSelectedIndexComparison,
+  SelectedIndexCleanupError,
+} from "./selected-comparison.js";
+import { settleSnapshotWork } from "./snapshot-work.js";
+import {
   SNAPSHOT_PREFIX,
   SnapshotError,
   type ValidatedSnapshotPath,
@@ -587,7 +592,7 @@ async function cleanupConstructionFailure(
   throw error;
 }
 
-export async function buildCommitSnapshotPair(
+export async function buildCommitSnapshotPairSerial(
   repositoryRoot: string,
   git: GitClient,
   baselineCommit: string,
@@ -644,7 +649,134 @@ export async function buildCommitSnapshotPair(
   }
 }
 
-export async function buildSnapshotPair(
+async function materializePair(
+  git: GitClient,
+  baselineEntries: readonly SnapshotEntry[],
+  targetEntries: readonly SnapshotEntry[],
+  baselineRef: string | null,
+  targetRef: string,
+  signal?: AbortSignal,
+  ownedRoot?: OwnedSnapshotRoot,
+): Promise<SnapshotPair> {
+  const root = ownedRoot ?? (await createOwnedSnapshotRoot());
+  try {
+    const [baselineUnsupportedEntries, unsupportedEntries] =
+      await settleSnapshotWork(
+        (ownedSignal) =>
+          materializeEntries(
+            git,
+            baselineEntries,
+            root.baselineDir,
+            true,
+            ownedSignal,
+          ),
+        (ownedSignal) =>
+          materializeEntries(
+            git,
+            targetEntries,
+            root.targetDir,
+            true,
+            ownedSignal,
+          ),
+        signal === undefined ? {} : { signal },
+      );
+    return {
+      baselineDir: root.baselineDir,
+      targetDir: root.targetDir,
+      baselineRef,
+      targetRef,
+      baselineUnsupportedEntries,
+      unsupportedEntries,
+      baselineSymlinkPaths: baselineEntries
+        .filter((entry) => entry.mode === "120000")
+        .map((entry) => entry.path),
+      symlinkPaths: targetEntries
+        .filter((entry) => entry.mode === "120000")
+        .map((entry) => entry.path),
+      cleanup: root.cleanup,
+    };
+  } catch (error) {
+    return cleanupConstructionFailure(root, error);
+  }
+}
+
+export async function buildCommitSnapshotPairOptimized(
+  repositoryRoot: string,
+  git: GitClient,
+  baselineCommit: string,
+  targetCommit: string,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  const baseline = await readCommitEntries(
+    repositoryRoot,
+    git,
+    baselineCommit,
+    signal,
+  );
+  const target = await readCommitEntries(
+    repositoryRoot,
+    git,
+    targetCommit,
+    signal,
+  );
+  return materializePair(
+    git,
+    baseline,
+    target,
+    baselineCommit,
+    targetCommit,
+    signal,
+  );
+}
+
+export const buildCommitSnapshotPair = buildCommitSnapshotPairOptimized;
+
+export async function buildSnapshotPairOptimized(
+  repositoryRoot: string,
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  const options = signal === undefined ? {} : { signal };
+  const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
+  if (unresolved.stdout !== "")
+    throw new SnapshotError(
+      "UNRESOLVED_INDEX",
+      "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
+    );
+  const root = await createOwnedSnapshotRoot();
+  try {
+    const baselineCommit =
+      git.selectedComparison === undefined
+        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
+            .stdout || null
+        : git.selectedComparison.baselineCommit;
+    const staged = parseStagedEntries(
+      (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
+    );
+    validateEntryPaths(repositoryRoot, staged);
+    const intent = parseIntentToAddPaths(
+      (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
+    );
+    const target = staged.filter((entry) => !intent.has(entry.path));
+    const baseline =
+      baselineCommit === null
+        ? []
+        : await readCommitEntries(repositoryRoot, git, baselineCommit, signal);
+    return materializePair(
+      git,
+      baseline,
+      target,
+      baselineCommit === null ? null : "HEAD",
+      "index",
+      signal,
+      root,
+    );
+  } catch (error) {
+    return cleanupConstructionFailure(root, error);
+  }
+}
+
+export async function buildSnapshotPairSerial(
   repositoryRoot: string,
   git: GitClient,
   signal?: AbortSignal,
@@ -681,15 +813,19 @@ export async function buildSnapshotPair(
       signal,
     );
 
-    const head = await git.tryRun(["rev-parse", "--verify", "HEAD"], options);
-    const baselineRef = head.exitCode === 0 ? "HEAD" : null;
+    const baselineCommit =
+      git.selectedComparison === undefined
+        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
+            .stdout || null
+        : git.selectedComparison.baselineCommit;
+    const baselineRef = baselineCommit === null ? null : "HEAD";
     let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];
     let baselineSymlinkPaths: readonly string[] = [];
     if (baselineRef === "HEAD") {
       const baselineEntries = await readCommitEntries(
         repositoryRoot,
         git,
-        "HEAD",
+        baselineCommit!,
         signal,
       );
       baselineUnsupportedEntries = await materializeEntries(
@@ -717,4 +853,47 @@ export async function buildSnapshotPair(
   } catch (error) {
     return cleanupConstructionFailure(root, error);
   }
+}
+
+/** Standalone callers get the same fixed selection as a complete scan. */
+export async function buildSnapshotPair(
+  repositoryRoot: string,
+  git: GitClient,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  if (git.selectedComparison !== undefined)
+    return buildSnapshotPairOptimized(repositoryRoot, git, signal);
+  const selected = await captureSelectedIndexComparison(git, signal);
+  let pair: SnapshotPair | undefined;
+  let failed = false;
+  let primaryError: unknown;
+  try {
+    pair = await buildSnapshotPairOptimized(
+      repositoryRoot,
+      selected.bind(git),
+      signal,
+    );
+  } catch (error) {
+    failed = true;
+    primaryError = error;
+  }
+  let selectionCleanupFailed = false;
+  try {
+    await selected.cleanup();
+  } catch (error) {
+    selectionCleanupFailed = true;
+    if (!failed) primaryError = error;
+  }
+  if (!failed && !selectionCleanupFailed) return pair!;
+  // Snapshot and selected-index cleanup are independent. A failure in either
+  // must not skip the other or replace the original construction failure.
+  try {
+    await pair?.cleanup();
+  } catch {
+    throw new SnapshotConstructionCleanupError(
+      safeConstructionError(primaryError),
+    );
+  }
+  if (selectionCleanupFailed) throw new SelectedIndexCleanupError(primaryError);
+  throw primaryError;
 }

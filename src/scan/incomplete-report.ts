@@ -136,8 +136,8 @@ export function withUnreportableCleanupFailure(
 ): ScanReport {
   return appendCleanupFailure(report, durationMs, {
     message:
-      "Zedbee could not remove its temporary snapshot or safely identify the remaining directory.",
+      "Zedbee could not remove its temporary scan files or safely identify the remaining directory.",
     remediation:
-      "Inspect the OS temporary directory for zedbee-snapshot-* directories and remove any stale Zedbee snapshots, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional snapshots.",
+      "Inspect the OS temporary directory for zedbee-snapshot-* and zedbee-selection-* directories and remove stale Zedbee scan files, then verify temporary-directory permissions or locks. A persistent filesystem or path-identity problem can cause later cleanups to fail and leave additional scan files.",
   });
 }

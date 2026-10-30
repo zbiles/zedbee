@@ -1,5 +1,6 @@
-import { access } from "node:fs/promises";
-import { describe, expect, it } from "vitest";
+import { access, readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished } from "vitest";
 import type { CheckAdapter } from "../../src/checks/adapter.js";
 import type { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
@@ -53,6 +54,7 @@ function fixDependencies(
   dependencies: AnalysisSessionDependencies,
 ): BuildFixPlanDependencies {
   return {
+    captureIndexComparison: dependencies.captureIndexComparison,
     loadConfig: dependencies.loadIndexConfig,
     createGitClient: dependencies.createGitClient,
     readChangeSet: dependencies.readIndexChangeSet,
@@ -97,6 +99,196 @@ async function analyze(
 }
 
 describe("shared analysis session", () => {
+  it("does not strand a handed-off selection if report clock setup fails", async () => {
+    const repo = await repositoryFixture();
+    let captures = 0;
+    let cleanups = 0;
+    let now = 0;
+    await expect(
+      runScan({
+        repositoryRoot: repo.root,
+        merge: "auto",
+        mergeEnvironment: {},
+        cache: false,
+        dependencies: {
+          ...defaults,
+          evaluate: evaluatePolicy,
+          now() {
+            if (++now === 2) throw new Error("clock failed");
+            return new Date();
+          },
+          async captureIndexComparison(...parameters) {
+            captures++;
+            const selected = await defaults.captureIndexComparison!(
+              ...parameters,
+            );
+            onTestFinished(selected.cleanup);
+            return {
+              ...selected,
+              async cleanup() {
+                cleanups++;
+                await selected.cleanup();
+              },
+            };
+          },
+        },
+      }),
+    ).rejects.toThrow("clock failed");
+    expect(cleanups).toBe(captures);
+  });
+  it.each([false, true])(
+    "hands an auto-merge preflight's selection to analysis once (cleanup fails=%s)",
+    async (cleanupFails) => {
+      const repo = await repositoryFixture();
+      let captures = 0;
+      let cleanups = 0;
+      const report = await runScan({
+        repositoryRoot: repo.root,
+        merge: "auto",
+        mergeEnvironment: {},
+        cache: false,
+        dependencies: {
+          ...defaults,
+          evaluate: evaluatePolicy,
+          now: () => new Date(),
+          dispatch: async () => [],
+          async captureIndexComparison(...parameters) {
+            captures++;
+            const selected = await defaults.captureIndexComparison!(
+              ...parameters,
+            );
+            return {
+              ...selected,
+              async cleanup() {
+                cleanups++;
+                await selected.cleanup();
+                if (cleanupFails) throw new Error("private raw cleanup detail");
+              },
+            };
+          },
+        },
+      });
+      expect(report.outcome).toBe(cleanupFails ? "incomplete" : "pass");
+      expect(captures).toBe(1);
+      expect(cleanups).toBe(1);
+      expect(report.changedFileCount).toBe(1);
+      if (cleanupFails)
+        expect(report.checks.map((check) => check.error?.code)).toEqual([
+          "SNAPSHOT_CLEANUP_FAILED",
+        ]);
+      expect(JSON.stringify(report)).not.toContain(
+        "private raw cleanup detail",
+      );
+    },
+  );
+  it.each([false, true])(
+    "cleans its private index and retains snapshot cleanup diagnosis (index cleanup fails=%s)",
+    async (indexCleanupFails) => {
+      const repo = await repositoryFixture();
+      let selectedCleaned = false;
+      const outcome = await withAnalysisSession(
+        {
+          repositoryRoot: repo.root,
+          dependencies: {
+            ...defaults,
+            async captureIndexComparison(...parameters) {
+              const selected = await defaults.captureIndexComparison!(
+                ...parameters,
+              );
+              return {
+                ...selected,
+                async cleanup() {
+                  await selected.cleanup();
+                  selectedCleaned = true;
+                  if (indexCleanupFails)
+                    throw new Error("index cleanup failed");
+                },
+              };
+            },
+            async buildIndexSnapshots(...parameters) {
+              const pair = await defaults.buildIndexSnapshots(...parameters);
+              onTestFinished(pair.cleanup);
+              return {
+                ...pair,
+                async cleanup() {
+                  throw new Error("cleanup failed");
+                },
+              };
+            },
+            dispatch: async () => [],
+          },
+        },
+        async () => null,
+      );
+      expect(outcome.cleanupFailure).toBeDefined();
+      expect(outcome.cleanupFailure?.temporaryPath).toBeDefined();
+      expect(selectedCleaned).toBe(true);
+    },
+  );
+  it.each(["configuration", "metadata", "snapshots"])(
+    "keeps one selected comparison when HEAD/index change after %s",
+    async (point) => {
+      const repo = await repositoryFixture();
+      async function mutate() {
+        await repo.write(
+          "value.ts",
+          "export const value = 99;\nexport const later = 1;\n",
+        );
+        await repo.commitAll("concurrent agent commit");
+        await repo.write(
+          "value.ts",
+          "export const value = 99;\nexport const later = 2;\n",
+        );
+        await repo.git(["add", "value.ts"]);
+      }
+      let selected = "";
+      const outcome = await withAnalysisSession(
+        {
+          repositoryRoot: repo.root,
+          dependencies: {
+            ...defaults,
+            async loadIndexConfig(...parameters) {
+              const config = await defaults.loadIndexConfig(...parameters);
+              if (point === "configuration") await mutate();
+              return config;
+            },
+            async discoverIndexChangeSet(...parameters) {
+              const changes = await defaults.discoverIndexChangeSet!(
+                ...parameters,
+              );
+              if (point === "metadata") await mutate();
+              return changes;
+            },
+            async buildIndexSnapshots(...parameters) {
+              const pair = await defaults.buildIndexSnapshots(...parameters);
+              if (point === "snapshots") await mutate();
+              return pair;
+            },
+            async dispatch(_adapters, context) {
+              selected = await readFile(
+                join(context.snapshots.targetDir, "value.ts"),
+                "utf8",
+              );
+              expect(
+                await readFile(
+                  join(context.snapshots.baselineDir, "value.ts"),
+                  "utf8",
+                ),
+              ).toBe("export const value = 1;\n");
+              expect(
+                context.changeSet.files.get("value.ts")?.addedRanges,
+              ).toEqual([{ start: 1, end: 1 }]);
+              return [];
+            },
+          },
+        },
+        async () => null,
+      );
+      expect(outcome.completed, JSON.stringify(outcome)).toBe(true);
+      expect(selected).toBe("export const value = 2;\n");
+    },
+  );
+
   it("announces preparation before awaiting each operation, including source capture and cleanup", async () => {
     const repository = await repositoryFixture();
     const local = createLocalAnalyzerExecutor();
@@ -169,9 +361,8 @@ describe("shared analysis session", () => {
         "snapshots",
         "change-discovery",
         "ranges",
-        "baseline-inspection",
+        "project-inspection",
         "inspect",
-        "target-inspection",
         "inspect",
         "source-capture",
         "capture",

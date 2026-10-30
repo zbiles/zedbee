@@ -7,9 +7,9 @@ export async function hashFilesInWorkers(
   files: readonly string[],
   budget: SharedArrayBuffer,
 ): Promise<string[]> {
-  const source = import.meta.url.endsWith(".ts");
+  const source = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = new URL(
-    source ? "./identity-worker.ts" : "./identity-worker.js",
+    source ? "./identity-source-worker.mjs" : "./identity-worker.js",
     import.meta.url,
   );
   const batches = Array.from(
@@ -32,7 +32,7 @@ export async function hashFilesInWorkers(
   try {
     for (const batch of batches) {
       const worker = new Worker(entry, {
-        execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
+        execArgv: [],
         workerData: { files: batch, budget },
       });
       let phase: "hashing" | "hashed" | "validating" | "validated" = "hashing";

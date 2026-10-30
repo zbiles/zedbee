@@ -35,7 +35,8 @@ import { GitCommandError } from "../../src/git/errors.js";
 import { DEFAULT_GIT_OUTPUT_LIMIT_BYTES } from "../../src/scan/resource-policy.js";
 import {
   buildCommitSnapshotPair,
-  buildSnapshotPair,
+  buildSnapshotPairSerial as buildSnapshotPair,
+  buildSnapshotPairOptimized,
   countSnapshotFileLines,
   type SnapshotPair,
 } from "../../src/git/snapshot.js";
@@ -134,7 +135,23 @@ function debugRecord(path = "value.ts"): string {
   return `${path}\0  ctime: 0:0\n  mtime: 0:0\n  dev: 0\tino: 0\n  uid: 0\tgid: 0\n  size: 0\tflags: 0\n`;
 }
 
-describe("buildSnapshotPair", () => {
+describe.each([
+  ["serial", buildSnapshotPair],
+  ["optimized", buildSnapshotPairOptimized],
+] as const)("buildSnapshotPair (%s)", (_mode, buildSnapshotPair) => {
+  it.skipIf(process.platform === "win32")(
+    "preserves a valid literal backslash in a POSIX filename",
+    async () => {
+      const repo = await createGitRepository();
+      await repo.write("a\\b.ts", "export const value = 1;\n");
+      await repo.commitAll("valid POSIX filename");
+      const pair = await buildSnapshotPair(repo.root, new GitClient(repo.root));
+      onTestFinished(pair.cleanup);
+      expect(await readFile(join(pair.targetDir, "a\\b.ts"), "utf8")).toBe(
+        "export const value = 1;\n",
+      );
+    },
+  );
   it.each(["a".repeat(40), "b".repeat(64)])(
     "rejects an oversized staged symlink before pulling its body and cleans up (%s)",
     async (objectId) => {

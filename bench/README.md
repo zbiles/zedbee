@@ -16,6 +16,27 @@ Run `npm run benchmark:update` to measure and append a new entry, then review an
 
 ## Correctness and release gates
 
+### Snapshot preparation and complete CLI comparison
+
+After building two clean checkouts with their locked dependencies, run the same external harness against both:
+
+```sh
+node --experimental-strip-types bench/snapshot-preparation.mts \
+  --baseline-root /absolute/path/to/base \
+  --implementation-root /absolute/path/to/candidate \
+  --output /absolute/path/to/private-results.json
+```
+
+The default matrix uses 100, 4,000 and 20,000 generated files, JSON/TypeScript/config edits and a large unchanged blob. It records 15 alternating paired samples after a discarded warm-up. Preparation samples use fresh local processes. Complete CLI samples cross observation-store off/cold/warm with local/cold-service/warm-service execution. Each CLI sample owns an installation, cache directory and service namespace; warm state is primed with that same build outside the timer. The harness verifies actual observation hits and service sessions/reuse. Off mode bypasses observation-store reads/writes through the benchmark preloader; cache-key computation remains part of the measured CLI path.
+
+`--kind preparation` or `--kind cli` selects one measurement family. `--sizes`, `--scenarios`, `--cache-modes`, `--executor-modes` and `--samples` restrict a diagnostic run; restricted or smoke runs do not establish the complete matrix. Preparation timing includes cleanup and selected-index capture. Each fresh child's peak RSS is reported in bytes. A separate 100 ms process-tree sampler includes discovered CLI/service descendants and priming; unavailable platforms or missed samples are explicitly unverified. Neither mode claims an OS disk-cache flush.
+
+Retain raw distributions and implementation/harness identities. Compute p95 by nearest rank (the maximum at 15 samples); do not silently drop outliers. Compare reports as well as timing, and verify every required platform before treating an optimization as ready for integration. These measurements are independent of the historical phase benchmarks and their existing gates below.
+
+The opt-in CI workflow accepts `snapshot_baseline`, an explicit baseline commit/ref. When supplied, additional jobs run the primary 4,000-file JSON preparation comparison on Windows, macOS and Linux with Node 22 and 24. Each job installs/builds both revisions, retains 15 paired raw samples, and enforces at least 25% median snapshot improvement, the total-time regression thresholds, and at most 16 MiB additional peak RSS. `bench/snapshot-gates.mts` can assess the same artifact locally. This primary gate does not certify the full fixture/cache/service matrix; restricted evidence is labelled accordingly.
+
+Set the manual `snapshot_extended` input alongside `snapshot_baseline` to run the full 120-cell fixture/cache/executor matrix on isolated Linux Node 24 runners. Each job compares both builds sequentially on the same runner and retains 15 paired samples and its gate decision. Twelve preparation cells and 108 CLI cells cover the three sizes, four scenarios, and all nine cache/executor combinations. Platform coverage remains the separate primary gate on Linux, macOS, and Windows with Node 22/24; the extended matrix does not claim every combination on every platform. No workflow is enabled automatically.
+
 `npm run verify` measures benchmark phases in explicit smoke mode. Smoke reports that no regression comparison ran, so correctness verification works without an archived baseline for the current operating system or runner.
 
 CI and release workflows separately measure the previous reachable release and the current revision sequentially on the same runner and Node version, each built with its own locked dependencies. Before an initial release, the first parent is used. Comparable common phases use the same 25% and 250 ms thresholds; missing or incompatible measurements cannot pass. New or removed phases are reported as unavailable. Raw measurements and the comparison are retained as workflow artifacts. Release publication requires successful performance and cross-platform verification jobs.

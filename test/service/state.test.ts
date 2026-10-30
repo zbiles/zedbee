@@ -10,6 +10,8 @@ import {
   rm,
   symlink,
   writeFile,
+  unlink,
+  type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -240,6 +242,80 @@ describe("private service state ownership", () => {
     // LockFileEx is mandatory: ordinary ReadFile overlaps the exclusive byte
     // range even for an empty file. Verify its bytes after releasing the lock.
     expect(await readFile(join(directory, "owner.lock"))).toHaveLength(0);
+  });
+  it.each([
+    "remove-after-read",
+    "remove-after-stat",
+    "replace",
+    "link",
+    "read-error",
+  ])("handles discovery changing during a checked read: %s", async (change) => {
+    const parent = await root();
+    const state = new ServiceState(join(parent, "state"));
+    await state.prepare();
+    const release = await state.lock();
+    const record = {
+      version: 1 as const,
+      identity: "a".repeat(64),
+      instance: "b".repeat(64),
+      secret: "c".repeat(64),
+    };
+    await state.publish(record);
+    const endpoint = join(state.directory, "endpoint.json");
+    const target = join(parent, "outside.json");
+    await writeFile(target, JSON.stringify(record), { mode: 0o600 });
+    let handle: FileHandle | undefined;
+    const original = (state as any).checkedFile.bind(state);
+    const checked = vi
+      .spyOn(state as any, "checkedFile")
+      .mockImplementation(async (...args) => {
+        const file: FileHandle = await original(...args);
+        if (args[0] !== endpoint) return file;
+        handle = file;
+        const read = file.read.bind(file);
+        vi.spyOn(file, "read").mockImplementation((async (
+          ...parameters: any[]
+        ) => {
+          if (change === "read-error")
+            throw Object.assign(new Error("Read failed"), { code: "ENOENT" });
+          const result = await (read as any)(...parameters);
+          if (change === "remove-after-read" || change === "link")
+            await unlink(endpoint);
+          if (change === "replace")
+            await state.publish({ ...record, identity: "d".repeat(64) });
+          if (change === "link") await symlink(target, endpoint);
+          return result;
+        }) as typeof file.read);
+        if (change === "remove-after-stat") {
+          const stat = file.stat.bind(file);
+          let calls = 0;
+          vi.spyOn(file, "stat").mockImplementation((async (
+            ...parameters: any[]
+          ) => {
+            const result = await (stat as any)(...parameters);
+            if (++calls === 2) await unlink(endpoint);
+            return result;
+          }) as typeof file.stat);
+        }
+        return file;
+      });
+    try {
+      if (change.startsWith("remove-")) {
+        await expect(state.read()).resolves.toBeUndefined();
+        const contender = await new ServiceState(state.directory).lock();
+        try {
+          expect(contender).toBeUndefined();
+        } finally {
+          await contender?.();
+        }
+      } else await expect(state.read()).rejects.toThrow();
+      expect(handle?.fd).toBe(-1);
+      expect(await readFile(target, "utf8")).toBe(JSON.stringify(record));
+    } finally {
+      checked.mockRestore();
+      await handle?.close();
+      await release!();
+    }
   });
   it("admits one kernel-lock owner and releases contention when the handle closes", async () => {
     const directory = join(await root(), "state");

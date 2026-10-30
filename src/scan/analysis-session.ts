@@ -32,6 +32,11 @@ import { resolveBaseComparison } from "../git/base-comparison.js";
 import { safeRequestedBase } from "../git/base-ref.js";
 import { GitClient } from "../git/client.js";
 import {
+  captureSelectedIndexComparison,
+  SelectedIndexCleanupError,
+  type SelectedIndexComparison,
+} from "../git/selected-comparison.js";
+import {
   buildCommitSnapshotPair,
   buildSnapshotPair,
   countSnapshotFileLines,
@@ -53,8 +58,10 @@ import type { ActiveScanPhase } from "./analysis-failure.js";
 import type { ScanFailureInput } from "./incomplete-report.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import { announceScanPhase } from "./progress.js";
+import { settleSnapshotWork } from "../git/snapshot-work.js";
 
 export interface AnalysisSessionDependencies {
+  captureIndexComparison?: typeof captureSelectedIndexComparison;
   resolveBaseComparison: typeof resolveBaseComparison;
   loadIndexConfig: typeof loadConfigFromIndex;
   loadCommitConfig: typeof loadConfigFromCommit;
@@ -82,6 +89,7 @@ export interface AnalysisSessionDependencies {
 
 export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies =
   {
+    captureIndexComparison: captureSelectedIndexComparison,
     resolveBaseComparison,
     loadIndexConfig: loadConfigFromIndex,
     loadCommitConfig: loadConfigFromCommit,
@@ -97,6 +105,8 @@ export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies 
     buildCommitSnapshots: buildCommitSnapshotPair,
     inspectRepository,
     async baselineForEmptyChange(git, signal) {
+      if (git.selectedComparison !== undefined)
+        return git.selectedComparison.baselineCommit === null ? null : "HEAD";
       return (
         await git.tryRun(
           ["rev-parse", "--verify", "HEAD"],
@@ -167,6 +177,8 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  /** Internal transfer from merge preflight; this session owns its cleanup. */
+  selectedComparison?: SelectedIndexComparison;
   executor?: AnalyzerExecutor;
   repositoryRoot: string;
   baseRef?: string;
@@ -237,6 +249,8 @@ export async function withAnalysisSession<T>(
     announcePhase(phase);
   };
   let snapshots: SnapshotPair | undefined;
+  let selectedComparison: SelectedIndexComparison | undefined =
+    options.selectedComparison;
   let executor: AnalyzerExecutor | undefined;
   let execution: AnalyzerExecutionSession | undefined;
   let executionCleanupProved = true;
@@ -253,9 +267,21 @@ export async function withAnalysisSession<T>(
         ...(options.noTimeout ? { noTimeout: true } : {}),
       },
     );
-    const bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
+    let bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy: bootstrapResourcePolicy,
     });
+    if (
+      options.baseRef === undefined &&
+      selectedComparison === undefined &&
+      dependencies.captureIndexComparison !== undefined
+    ) {
+      selectedComparison = await dependencies.captureIndexComparison(
+        bootstrapGit,
+        options.signal,
+      );
+    }
+    if (selectedComparison !== undefined)
+      bootstrapGit = selectedComparison.bind(bootstrapGit);
     let baseComparison:
       Awaited<ReturnType<typeof resolveBaseComparison>> | undefined;
     let config: ResolvedConfig;
@@ -296,7 +322,7 @@ export async function withAnalysisSession<T>(
     options.onConfiguration?.(config);
     signal.throwIfAborted();
     enterPhase("change-discovery");
-    const git = dependencies.createGitClient(options.repositoryRoot, {
+    let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
       onSoftTimeout: () =>
         options.onEvent?.({
@@ -306,6 +332,7 @@ export async function withAnalysisSession<T>(
           timestamp: dependencies.clock(),
         }),
     });
+    if (selectedComparison !== undefined) git = selectedComparison.bind(git);
     const splitChangeDiscovery =
       baseComparison === undefined
         ? dependencies.discoverIndexChangeSet !== undefined &&
@@ -453,14 +480,20 @@ export async function withAnalysisSession<T>(
         }
 
         signal.throwIfAborted();
-        enterPhase("baseline-inspection");
-        const baselineInspection = await dependencies.inspectRepository(
-          snapshots.baselineDir,
-        );
-        signal.throwIfAborted();
-        enterPhase("target-inspection");
-        const targetInspection = await dependencies.inspectRepository(
-          snapshots.targetDir,
+        state.phase = "baseline-inspection";
+        announcePhase("project-inspection");
+        const [baselineInspection, targetInspection] = await settleSnapshotWork(
+          () => dependencies.inspectRepository(snapshots!.baselineDir),
+          () => dependencies.inspectRepository(snapshots!.targetDir),
+          {
+            signal,
+            onFailure(side) {
+              state.phase =
+                side === "baseline"
+                  ? "baseline-inspection"
+                  : "target-inspection";
+            },
+          },
         );
         signal.throwIfAborted();
         state.phase = "dispatch";
@@ -523,6 +556,10 @@ export async function withAnalysisSession<T>(
           )),
     };
   } catch (error) {
+    if (error instanceof SelectedIndexCleanupError) {
+      cleanupFailure = safeCleanupFailure(undefined);
+      error = error.originalError;
+    }
     if (error instanceof SnapshotConstructionCleanupError) {
       cleanupFailure = safeCleanupFailure(error.temporaryPath);
       completion = { completed: false, error: error.constructionError };
@@ -561,6 +598,11 @@ export async function withAnalysisSession<T>(
     cleanupFailure = safeCleanupFailure(
       snapshots === undefined ? undefined : dirname(snapshots.targetDir),
     );
+  }
+  try {
+    await selectedComparison?.cleanup();
+  } catch {
+    cleanupFailure ??= safeCleanupFailure(undefined);
   }
   if (completion.completed && signal.aborted) {
     completion = { completed: false, error: signal.reason };

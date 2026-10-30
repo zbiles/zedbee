@@ -41,6 +41,13 @@ export interface GitBinaryOutput {
 }
 
 export interface GitClientOptions {
+  environment?: Readonly<Record<string, string>>;
+  selectedComparison?: Readonly<{
+    indexPath: string;
+    baselineCommit: string | null;
+    diffBase: string;
+    mergeHeads?: readonly string[];
+  }>;
   resourcePolicy?: ScanResourcePolicy;
   onSoftTimeout?: () => void;
   runCommand?: (
@@ -235,9 +242,51 @@ export class GitClient {
     private readonly clientOptions: GitClientOptions = {},
   ) {}
 
+  get selectedComparison() {
+    return this.clientOptions.selectedComparison;
+  }
+
+  /** Per-client binding: never changes the worktree's index or process environment. */
+  withSelectedIndex(
+    indexPath: string,
+    baselineCommit: string | null,
+    diffBase: string,
+    mergeHeads?: readonly string[],
+  ): GitClient {
+    const bound = new GitClient(this.repositoryRoot, {
+      ...this.clientOptions,
+      environment: {
+        ...this.clientOptions.environment,
+        GIT_INDEX_FILE: indexPath,
+      },
+      selectedComparison: {
+        indexPath,
+        baselineCommit,
+        diffBase,
+        ...(mergeHeads === undefined ? {} : { mergeHeads }),
+      },
+    });
+    // Index binding does not change the repository or trusted executable.
+    bound.gitCommand = this.gitCommand;
+    return bound;
+  }
+
   private resolvedGitCommand(): Promise<ResolvedGitCommand> {
     this.gitCommand ??= resolveGitCommand(this.repositoryRoot);
     return this.gitCommand;
+  }
+
+  private selectedArguments(args: readonly string[]): readonly string[] {
+    const selected = this.selectedComparison;
+    return selected === undefined
+      ? args
+      : [
+          "-c",
+          `core.hooksPath=${join(dirname(selected.indexPath), "hooks-disabled")}`,
+          "-c",
+          "core.fsmonitor=false",
+          ...args,
+        ];
   }
 
   private async execute(
@@ -245,6 +294,7 @@ export class GitClient {
     options: GitRunOptions,
     binary: boolean,
   ): Promise<GitOutput | GitBinaryOutput> {
+    args = this.selectedArguments(args);
     if (isAborted(options.signal)) {
       throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
     }
@@ -301,7 +351,10 @@ export class GitClient {
         stdin: "ignore",
         forceKillAfterDelay: 2_000,
         extendEnv: false,
-        env: commandEnvironment(command.path, options.env),
+        env: commandEnvironment(command.path, {
+          ...options.env,
+          ...this.clientOptions.environment,
+        }),
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
         cancelSignal: signal,
       } as const;
@@ -426,12 +479,19 @@ export class GitClient {
     let visitorFailed = false;
     let visitorFailure: unknown;
     let forceKillTimer: NodeJS.Timeout | undefined;
-    const child = spawn(command.executable, ["cat-file", "--batch"], {
-      cwd: options.cwd ?? this.repositoryRoot,
-      env: commandEnvironment(command.path, options.env),
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = spawn(
+      command.executable,
+      this.selectedArguments(["cat-file", "--batch"]),
+      {
+        cwd: options.cwd ?? this.repositoryRoot,
+        env: commandEnvironment(command.path, {
+          ...options.env,
+          ...this.clientOptions.environment,
+        }),
+        shell: false,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
     const terminate = () => {
       // Do not wait for process shutdown to close the pipes. A failed blob
       // visitor can stop reading stdout while Git is still writing, and under

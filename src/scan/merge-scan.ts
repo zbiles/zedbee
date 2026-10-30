@@ -9,10 +9,17 @@ import {
   MergeComparisonError,
 } from "../git/merge-comparison.js";
 import type { ChangeSet, ChangedFile } from "../git/change-set.js";
-import { createIncompleteReport } from "./incomplete-report.js";
+import {
+  createIncompleteReport,
+  withUnreportableCleanupFailure,
+} from "./incomplete-report.js";
 import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
 import { announceScanPhase } from "./progress.js";
+import {
+  SelectedIndexCleanupError,
+  type SelectedIndexComparison,
+} from "../git/selected-comparison.js";
 
 /** Keep each parent's rename and line attribution while scheduling the union of affected paths. */
 function comparisonChanges(
@@ -137,10 +144,54 @@ export async function runMergeScan(
   options: RunScanOptions,
   dependencies: RunScanDependencies,
   scan: (options: RunScanOptions) => Promise<ScanReport>,
+  onUnmergedSelection?: (selection: SelectedIndexComparison) => void,
 ): Promise<ScanReport | undefined> {
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
   let parents: readonly string[] | undefined;
+  let selected: SelectedIndexComparison | undefined;
+  let completed: ScanReport | undefined;
+  let primaryError: unknown;
+  let cleanupFailed = false;
+  const failureReport = (error: unknown): ScanReport => {
+    return {
+      ...createIncompleteReport(
+        {
+          repositoryRoot: options.repositoryRoot,
+          source: {
+            mode: "index",
+            baseline: parents?.[0] ?? null,
+            target: "index",
+          },
+          changedFileCount: null,
+          startedAt,
+          durationMs: Math.max(0, dependencies.clock() - started),
+          configuredPathExclusions: [],
+          appliedPathExclusions: [],
+          networkDisclosures: [],
+          presentationPolicy: {
+            terminalFindingLimit: 25,
+            temporaryReportMaxAge: "24h",
+            persistSourceExcerpts: false,
+            agentGuidance: EMPTY_AGENT_GUIDANCE,
+          },
+        },
+        {
+          code:
+            error instanceof MergeComparisonError
+              ? error.code
+              : "MERGE_COMPARISON_FAILED",
+          message:
+            error instanceof MergeComparisonError
+              ? error.message
+              : "Zedbee could not compare the staged merge against its parents.",
+          remediation:
+            "Resolve merge conflicts, verify the parent commits are available locally, and scan again. No merge findings were suppressed.",
+        },
+      ),
+      ...(parents === undefined ? {} : { mergeParents: parents }),
+    };
+  };
   try {
     if (options.baseRef !== undefined)
       throw new MergeComparisonError("MERGE_PARENTS_INVALID");
@@ -151,9 +202,13 @@ export async function runMergeScan(
         ...(options.noTimeout ? { noTimeout: true } : {}),
       },
     );
-    const git = dependencies.createGitClient(options.repositoryRoot, {
+    let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });
+    if (dependencies.captureIndexComparison !== undefined) {
+      selected = await dependencies.captureIndexComparison(git, options.signal);
+      git = selected.bind(git);
+    }
     announceScanPhase(
       options.onEvent,
       "baseline-resolution",
@@ -165,7 +220,13 @@ export async function runMergeScan(
       options.merge === "required",
       options.signal,
     );
-    if (comparison === undefined) return undefined;
+    if (comparison === undefined) {
+      if (selected !== undefined && onUnmergedSelection !== undefined) {
+        onUnmergedSelection(selected);
+        selected = undefined;
+      }
+      return undefined;
+    }
     parents = comparison.parents;
     announceScanPhase(options.onEvent, "change-discovery", dependencies.clock);
     const changes = await Promise.all(
@@ -185,6 +246,12 @@ export async function runMergeScan(
       const changeSet = comparisonChanges(changes[index]!, changes);
       const pairDependencies: RunScanDependencies = {
         ...dependencies,
+        // All parent scans already use the one immutable target tree below.
+        captureIndexComparison: async () => ({
+          baselineCommit: parent,
+          bind: (client) => client,
+          cleanup: async () => {},
+        }),
         loadIndexConfig: (root, client, configPath, signal) =>
           dependencies.loadCommitConfig(
             root,
@@ -262,7 +329,7 @@ export async function runMergeScan(
         check.status === "incomplete" &&
         check.incompleteDisposition === "block",
     );
-    return {
+    return (completed = {
       ...reports[0]!,
       mergeParents: parents,
       checks,
@@ -278,45 +345,31 @@ export async function runMergeScan(
       networkDisclosures: reports.flatMap(
         (report) => report.networkDisclosures,
       ),
-    };
+    });
   } catch (error) {
+    if (error instanceof SelectedIndexCleanupError) {
+      cleanupFailed = true;
+      error = error.originalError;
+    }
+    primaryError = error;
     if (options.signal?.aborted) throw error;
-    return {
-      ...createIncompleteReport(
-        {
-          repositoryRoot: options.repositoryRoot,
-          source: {
-            mode: "index",
-            baseline: parents?.[0] ?? null,
-            target: "index",
-          },
-          changedFileCount: null,
-          startedAt,
-          durationMs: Math.max(0, dependencies.clock() - started),
-          configuredPathExclusions: [],
-          appliedPathExclusions: [],
-          networkDisclosures: [],
-          presentationPolicy: {
-            terminalFindingLimit: 25,
-            temporaryReportMaxAge: "24h",
-            persistSourceExcerpts: false,
-            agentGuidance: EMPTY_AGENT_GUIDANCE,
-          },
-        },
-        {
-          code:
-            error instanceof MergeComparisonError
-              ? error.code
-              : "MERGE_COMPARISON_FAILED",
-          message:
-            error instanceof MergeComparisonError
-              ? error.message
-              : "Zedbee could not compare the staged merge against its parents.",
-          remediation:
-            "Resolve merge conflicts, verify the parent commits are available locally, and scan again. No merge findings were suppressed.",
-        },
-      ),
-      ...(parents === undefined ? {} : { mergeParents: parents }),
-    };
+    completed = failureReport(error);
+    return completed;
+  } finally {
+    try {
+      await selected?.cleanup();
+    } catch {
+      cleanupFailed = true;
+    }
+    if (cleanupFailed) {
+      if (options.signal?.aborted)
+        throw new SelectedIndexCleanupError(
+          primaryError ?? options.signal.reason,
+        );
+      return withUnreportableCleanupFailure(
+        completed ?? failureReport(new Error("Selected input cleanup failed")),
+        Math.max(0, dependencies.clock() - started),
+      );
+    }
   }
 }

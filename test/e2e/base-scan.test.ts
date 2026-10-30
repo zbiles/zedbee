@@ -171,11 +171,12 @@ async function createDelayedGitEnvironment(snapshotRoot: string) {
     [
       "#!/bin/sh",
       'if [ "$1" = "cat-file" ] && [ "$2" = "--batch" ]; then',
-      '  if [ -f "$ZEDBEE_FIRST_BLOB_READ" ]; then',
+      // mkdir atomically selects one reader when snapshot sides overlap.
+      '  if mkdir "$ZEDBEE_FIRST_BLOB_READ" 2>/dev/null; then',
+      "    :",
+      "  else",
       '    : > "$ZEDBEE_DELAYED_BLOB_READ"',
       "    exec sleep 30",
-      "  else",
-      '    : > "$ZEDBEE_FIRST_BLOB_READ"',
       "  fi",
       "fi",
       'exec "$ZEDBEE_REAL_GIT" "$@"',

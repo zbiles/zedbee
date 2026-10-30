@@ -49,9 +49,20 @@ export type RepositoryInspectionErrorCode =
 export class RepositoryInspectionError extends Error {
   readonly code: RepositoryInspectionErrorCode;
 
-  constructor(code: RepositoryInspectionErrorCode, message: string) {
+  readonly path?: string;
+  readonly reason?: "unresolved-symlink" | "external-symlink";
+
+  constructor(
+    code: RepositoryInspectionErrorCode,
+    message: string,
+    link?: { path: string; reason: "unresolved-symlink" | "external-symlink" },
+  ) {
     super(message);
     this.name = "RepositoryInspectionError";
     this.code = code;
+    if (link !== undefined) {
+      this.path = link.path;
+      this.reason = link.reason;
+    }
   }
 }

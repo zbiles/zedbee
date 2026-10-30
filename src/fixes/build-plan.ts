@@ -51,6 +51,7 @@ import {
 } from "./types.js";
 
 export interface BuildFixPlanDependencies {
+  captureIndexComparison?: AnalysisSessionDependencies["captureIndexComparison"];
   loadConfig(
     repositoryRoot: string,
     git: GitClient,
@@ -104,6 +105,8 @@ export class FixPlanCleanupError extends AnalysisSessionCleanupError {
 }
 
 const DEFAULT_DEPENDENCIES: BuildFixPlanDependencies = {
+  captureIndexComparison:
+    DEFAULT_ANALYSIS_SESSION_DEPENDENCIES.captureIndexComparison,
   loadConfig: loadConfigFromIndex,
   createGitClient: (repositoryRoot, options) =>
     new GitClient(repositoryRoot, options),
@@ -691,12 +694,16 @@ function sessionDependencies(
   selected: ReadonlySet<FixableCheckId>,
 ): AnalysisSessionDependencies {
   const {
+    captureIndexComparison: _capture,
     discoverIndexChangeSet: _discover,
     addIndexLineRanges: _ranges,
     ...shared
   } = DEFAULT_ANALYSIS_SESSION_DEPENDENCIES;
   return {
     ...shared,
+    ...(dependencies.captureIndexComparison === undefined
+      ? {}
+      : { captureIndexComparison: dependencies.captureIndexComparison }),
     createGitClient: dependencies.createGitClient,
     loadIndexConfig: dependencies.loadConfig,
     readIndexChangeSet: dependencies.readChangeSet,

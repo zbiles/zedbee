@@ -1,4 +1,5 @@
 import { runMergeScan } from "./merge-scan.js";
+import type { SelectedIndexComparison } from "../git/selected-comparison.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 export { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
@@ -121,12 +122,20 @@ function dispatchOptions(
 
 export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
-  if (options.merge !== undefined) {
-    const merged = await runMergeScan(options, dependencies, runScan);
-    if (merged !== undefined) return deepFreeze(merged);
-  }
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
+  let selectedComparison: SelectedIndexComparison | undefined;
+  if (options.merge !== undefined) {
+    const merged = await runMergeScan(
+      options,
+      dependencies,
+      runScan,
+      (selected) => {
+        selectedComparison = selected;
+      },
+    );
+    if (merged !== undefined) return deepFreeze(merged);
+  }
   const networkDisclosures: NetworkDisclosure[] = [];
   let includeSourceExcerpts = false;
   let presentationPolicy: ScanPresentationPolicy = Object.freeze({
@@ -149,6 +158,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const outcome = await withAnalysisSession(
     {
       ...options,
+      ...(selectedComparison === undefined ? {} : { selectedComparison }),
       dependencies,
       onConfiguration(config) {
         try {

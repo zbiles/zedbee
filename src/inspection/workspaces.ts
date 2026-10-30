@@ -258,6 +258,30 @@ export async function readPnpmWorkspacePatterns(
   return readStringArray(parsed.packages, repositoryPath);
 }
 
+function validateWorkspaceSearchLinks(
+  registry: SnapshotRegistry,
+  patterns: readonly string[],
+  relativeRoot = ".",
+): void {
+  const bases = patterns
+    .filter((pattern) => !pattern.startsWith("!"))
+    .map((pattern) => picomatch.scan(pattern).base);
+  for (const [path, failure] of registry.unavailableSymlinks ?? []) {
+    const local = posix.relative(relativeRoot, path);
+    if (local === ".." || local.startsWith("../")) continue;
+    if (
+      bases.some(
+        (base) =>
+          base === "" ||
+          base === local ||
+          local.startsWith(`${base}/`) ||
+          base.startsWith(`${local}/`),
+      )
+    )
+      throw failure;
+  }
+}
+
 export async function discoverWorkspaces(
   registry: SnapshotRegistry,
   readHooks: ReadHooksResolver = () => undefined,
@@ -278,6 +302,7 @@ export async function discoverWorkspaces(
     ...(rootManifest?.workspacePatterns ?? []),
     ...(await readPnpmWorkspacePatterns(registry, readHooks)),
   ].map(normalizeWorkspacePattern);
+  validateWorkspaceSearchLinks(registry, workspacePatterns);
   // Explicit workspace patterns remain authoritative. Otherwise, independent
   // projects may live below a non-JavaScript repository root.
   const discoverIndependentProjects = workspacePatterns.length === 0;
@@ -377,6 +402,13 @@ export async function discoverWorkspaces(
       continue;
     }
     if (discoverIndependentProjects) {
+      validateWorkspaceSearchLinks(
+        registry,
+        [...manifest.workspacePatterns, ...pnpmWorkspacePatterns].map(
+          normalizeWorkspacePattern,
+        ),
+        relativeRoot,
+      );
       independentWorkspacePatterns.set(
         relativeRoot,
         [...manifest.workspacePatterns, ...pnpmWorkspacePatterns].map(
