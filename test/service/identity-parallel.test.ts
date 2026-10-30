@@ -22,9 +22,9 @@ async function fixture() {
 }
 function start(files: string[], budget = new SharedArrayBuffer(8)) {
   const worker = new Worker(
-    new URL("../../src/service/identity-worker.ts", import.meta.url),
+    new URL("../../src/service/identity-source-worker.mjs", import.meta.url),
     {
-      execArgv: ["--import", import.meta.resolve("tsx")],
+      execArgv: [],
       workerData: { files, budget },
     },
   );

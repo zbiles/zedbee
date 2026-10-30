@@ -101,13 +101,13 @@ async function run(job: KnipJob) {
       globRequire.resolve("fdir"),
     ].map((entry) => pathToFileURL(`${dirname(entry)}/`).href);
     const source = (name: string, keys: string[]) =>
-      `const value=globalThis.${name}; export default value; ${keys
+      `module.exports=globalThis.${name}; ${keys
         .filter((key) => /^[A-Za-z_$][\w$]*$/u.test(key))
-        .map((key) => `export const ${key}=value.${key};`)
+        .map((key) => `exports.${key}=module.exports.${key};`)
         .join("\n")}`;
     const sources: Record<string, string> = {
       "zedbee-knip:package-metadata":
-        "export const _require = globalThis.__zedbeeKnipPackageMetadata;",
+        "exports._require = globalThis.__zedbeeKnipPackageMetadata;",
       "zedbee-knip:fs": source("__zedbeeKnipFs", Object.keys(nodeFs)),
       "zedbee-knip:promises": source(
         "__zedbeeKnipPromises",
@@ -118,6 +118,13 @@ async function run(job: KnipJob) {
       ]),
       "zedbee-knip:path": source("__zedbeeKnipPath", Object.keys(posix)),
     };
+    // Node 22 also loads these bindings through CommonJS (jiti). A synthetic
+    // .cjs file URL gives both require and ESM imports the captured bindings.
+    const shimUrl = (name: string) =>
+      new URL(`./.${name.replaceAll(":", "-")}.cjs`, import.meta.url).href;
+    const commonJsSources = Object.fromEntries(
+      Object.entries(sources).map(([name, value]) => [shimUrl(name), value]),
+    );
     const replacements = new Map([
       ["fs", "zedbee-knip:fs"],
       ["node:fs", "zedbee-knip:fs"],
@@ -131,23 +138,30 @@ async function run(job: KnipJob) {
           context.parentURL === manifestOwner &&
           specifier === "../util/require.js"
         )
-          return { url: "zedbee-knip:package-metadata", shortCircuit: true };
+          return {
+            url: shimUrl("zedbee-knip:package-metadata"),
+            shortCircuit: true,
+          };
         if (
           (specifier === "path" || specifier === "node:path") &&
           virtualPathOwners.some((owner) =>
             context.parentURL?.startsWith(owner),
           )
         )
-          return { url: "zedbee-knip:path", shortCircuit: true };
+          return { url: shimUrl("zedbee-knip:path"), shortCircuit: true };
         const url = replacements.get(specifier);
         return url === undefined
           ? next(specifier, context)
-          : { url, shortCircuit: true };
+          : { url: shimUrl(url), shortCircuit: true };
       },
       load(url, context, next) {
-        return sources[url] === undefined
+        return commonJsSources[url] === undefined
           ? next(url, context)
-          : { format: "module", source: sources[url], shortCircuit: true };
+          : {
+              format: "commonjs",
+              source: commonJsSources[url],
+              shortCircuit: true,
+            };
       },
     });
     const entry = fileURLToPath(managedKnipEntry);

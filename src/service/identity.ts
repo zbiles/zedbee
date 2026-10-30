@@ -20,14 +20,14 @@ export function installedContentIdentity(
   root: string,
   tree: string,
 ): Promise<string> {
-  const source = import.meta.url.endsWith(".ts");
+  const source = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = new URL(
-    source ? "./identity-worker.ts" : "./identity-worker.js",
+    source ? "./identity-source-worker.mjs" : "./identity-worker.js",
     import.meta.url,
   );
   return new Promise((resolve, reject) => {
     const worker = new Worker(entry, {
-      execArgv: source ? ["--import", import.meta.resolve("tsx")] : [],
+      execArgv: [],
       workerData: { root, tree },
     });
     let content: string | undefined;
@@ -52,7 +52,7 @@ export function installedContentIdentity(
   });
 }
 export async function serviceLocation(directory?: string) {
-  const source = import.meta.url.endsWith(".ts"),
+  const source = new URL(import.meta.url).pathname.endsWith(".ts"),
     tree = source ? "src" : "dist";
   const root = await realpath(
     fileURLToPath(new URL("../../", import.meta.url)),
