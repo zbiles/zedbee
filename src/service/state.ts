@@ -135,12 +135,22 @@ export class ServiceState {
       const bytes = Buffer.alloc(8193);
       const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
       const after = await file.stat({ bigint: true });
+      let current: BigIntStats;
+      try {
+        current = await lstat(path, { bigint: true });
+      } catch (error) {
+        // A competing drain can remove discovery after this handle was opened.
+        // Absence grants no authority; startup still requires owner.lock.
+        if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          return undefined;
+        throw error;
+      }
       if (
         bytesRead > 8192 ||
         BigInt(bytesRead) !== before.size ||
         before.mtimeNs !== after.mtimeNs ||
         before.ctimeNs !== after.ctimeNs ||
-        !same(after, await lstat(path, { bigint: true }))
+        !same(after, current)
       )
         throw new ServiceUnavailableError();
       const value: unknown = JSON.parse(bytes.toString("utf8", 0, bytesRead));
