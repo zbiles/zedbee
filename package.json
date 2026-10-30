@@ -122,7 +122,7 @@
     "@tybys/wasm-util": "0.10.3",
     "@yarnpkg/lockfile": "1.1.0",
     "commander": "15.0.0",
-    "dependency-cruiser": "18.2.0",
+    "dependency-cruiser": "18.7.0",
     "diff": "9.0.0",
     "eslint": "9.39.5",
     "eslint-plugin-jsx-a11y": "6.10.2",
