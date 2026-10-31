@@ -1,4 +1,5 @@
 import { TelemetryStore, telemetryDirectory } from "../telemetry/state.js";
+import { TelemetryDetailsStore } from "../telemetry/details-store.js";
 import {
   telemetryContext,
   telemetryDisabled,
@@ -13,6 +14,8 @@ export function executeTelemetryCommand(
   try {
     const store = new TelemetryStore(telemetryDirectory(env));
     if (operation !== "status") store.setEnabled(operation === "enable");
+    if (operation === "disable")
+      new TelemetryDetailsStore(store.directory).clear();
     const state = store.read();
     const reason = telemetryDisabled(env)
       ? "environment_override"

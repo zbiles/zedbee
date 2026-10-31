@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { startTelemetry } from "../../src/telemetry/client.js";
 import { TelemetryStore } from "../../src/telemetry/state.js";
 import type { TelemetryEvent } from "../../src/telemetry/schema.js";
+import type { ScanReport } from "../../src/scan/report.js";
 const roots: string[] = [];
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "telemetry-client-"));
@@ -16,6 +17,50 @@ afterEach(() => {
   roots.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true }));
 });
 describe("command telemetry", () => {
+  it("captures safe per-rule and independent caller metadata in memory for CI", async () => {
+    const { root, store } = fixture();
+    const sent: TelemetryEvent[] = [];
+    const client = startTelemetry({
+      command: "scan",
+      env: { CI: "1", CLAUDECODE: "1" },
+      store,
+      send: async (events) => {
+        sent.push(...events);
+        return true;
+      },
+    });
+    client.scanReport?.({
+      checks: [
+        { checkId: "lint", status: "completed", durationMs: 1, findings: [] },
+      ],
+      summary: {
+        passed: 0,
+        failed: 1,
+        incomplete: 0,
+        warnings: 0,
+        findings: [
+          {
+            id: "PRIVATE",
+            check: "lint",
+            rule: "no-unused-vars",
+            severity: "error",
+            message: "PRIVATE SOURCE",
+            attribution: { kind: "range-overlap", staged: true, evidence: [] },
+          },
+        ],
+      },
+    } satisfies Pick<ScanReport, "checks" | "summary">);
+    client.finish(1);
+    await client.flush(false);
+    expect(sent[1]).toMatchObject({
+      schema_version: 2,
+      finding_count: 1,
+      caller_ai_tool: "claude_code",
+      finding_groups: [{ rule_id: "no-unused-vars", count: 1 }],
+    });
+    expect(JSON.stringify(sent)).not.toContain("PRIVATE");
+    expect(existsSync(join(root, "state"))).toBe(false);
+  });
   it("does not print a standalone disclosure before command output", () => {
     const { store } = fixture();
     const write = vi

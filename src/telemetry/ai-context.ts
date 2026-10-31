@@ -14,6 +14,7 @@ export type RepositoryToolContext = Pick<
   | "repo_ai_detection_status"
 >;
 export interface DetectionOptions {
+  permitted?: () => boolean;
   budgetMs?: number;
   maxScopes?: number;
   maxProbes?: number;
@@ -93,7 +94,11 @@ export async function detectRepositoryTools(
   }
   let probes = 0;
   for (const directory of scopes) {
-    if (performance.now() - started >= budget || probes >= maximumProbes) {
+    if (
+      options.permitted?.() === false ||
+      performance.now() - started >= budget ||
+      probes >= maximumProbes
+    ) {
       result.repo_ai_detection_status = "partial";
       break;
     }
@@ -110,7 +115,11 @@ export async function detectRepositoryTools(
       break;
     }
     for (const [name, kind, tool] of markers) {
-      if (performance.now() - started >= budget || probes >= maximumProbes) {
+      if (
+        options.permitted?.() === false ||
+        performance.now() - started >= budget ||
+        probes >= maximumProbes
+      ) {
         result.repo_ai_detection_status = "partial";
         break;
       }
