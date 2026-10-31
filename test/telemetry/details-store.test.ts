@@ -21,6 +21,7 @@ import {
 } from "../../src/telemetry/schema.js";
 import { telemetryBatches } from "../../src/telemetry/batch.js";
 import { drainTelemetry } from "../../src/telemetry/worker.js";
+import { findingCatalog } from "../../src/telemetry/finding-catalog.js";
 const roots: string[] = [];
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -150,10 +151,28 @@ it("falls back to v1 for missing or inconsistent enrichment", () => {
 });
 it("packs enriched events by serialized bytes and count with stable identities", () => {
   const { event } = fixture();
+  const groups = Object.keys(findingCatalog.types!)
+    .slice(0, 100)
+    .map((rule_id) => ({
+      check_id: "types" as const,
+      rule_id,
+      severity: "error" as const,
+      count: 1,
+    }));
+  const largeDetails = {
+    ...details,
+    finding_groups: groups,
+    completed_check_ids: ["types" as const],
+  };
   const events = Array.from({ length: 60 }, () =>
-    enrichTelemetryEvent({ ...event, event_id: randomUUID() }, details),
+    enrichTelemetryEvent(
+      { ...event, finding_count: 100, event_id: randomUUID() },
+      largeDetails,
+    ),
   );
+  expect(events.every((event) => event.schema_version === 2)).toBe(true);
   const batches = telemetryBatches(events);
+  expect(batches.length).toBeGreaterThan(3);
   expect(batches.flat().map((row) => row.event_id)).toEqual(
     events.map((row) => row.event_id),
   );

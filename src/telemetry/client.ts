@@ -197,7 +197,9 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
               ...emptyRepositoryContext(),
               repo_ai_detection_status: "partial",
             };
-            void detectRepositoryTools(root, cwd, { permitted: allowed })
+            void detectRepositoryTools(root, cwd, {
+              permitted: () => allowed() && !finished,
+            })
               .then((value) => {
                 if (allowed() && !finished) repository = value;
               })

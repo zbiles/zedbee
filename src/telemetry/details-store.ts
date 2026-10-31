@@ -101,12 +101,14 @@ export class TelemetryDetailsStore {
         !z.string().uuid().safeParse(event.event_id).success
       )
         return undefined;
-      fd = openSync(
-        join(this.path, `${event.event_id}.json`),
-        constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
-      );
+      const path = join(this.path, `${event.event_id}.json`);
+      const before = lstatSync(path);
+      owned(before);
+      if (!before.isFile() || before.nlink !== 1) return undefined;
+      fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
       const stat = fstatSync(fd);
       owned(stat);
+      if (before.ino !== stat.ino || before.dev !== stat.dev) return undefined;
       if (!stat.isFile() || stat.nlink !== 1 || stat.size > 17_000)
         return undefined;
       const value = envelopeSchema.parse(JSON.parse(readFileSync(fd, "utf8")));
