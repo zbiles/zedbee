@@ -9,7 +9,7 @@ import {
 } from "./policy.js";
 import { TelemetryStore, telemetryDirectory } from "./state.js";
 import {
-  telemetryEventSchema,
+  telemetryV1EventSchema as telemetryEventSchema,
   type TelemetryEvent,
   type TelemetryCommand,
 } from "./schema.js";

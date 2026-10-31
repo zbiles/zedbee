@@ -54,7 +54,7 @@ describe("bounded telemetry transport", () => {
     };
     expect(
       await sendTelemetry(
-        [{ ...event, path: "private" } as typeof event],
+        [{ ...event, path: "private" } as unknown as typeof event],
         new AbortController().signal,
         sender,
       ),

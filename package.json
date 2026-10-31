@@ -73,7 +73,7 @@
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
     "artifact:prepare": "npm run package:check && node scripts/run-with-deadline.mjs scripts/prepare-release-artifact.mjs",
-    "package:check": "npm run build && node scripts/check-package-contents.mjs",
+    "package:check": "npm run build && npm run telemetry:catalog:check && node scripts/check-package-contents.mjs",
     "prepack": "npm run build && npm run licenses:check",
     "schema:generate": "npm run build && node dist/config/json-schema.js --write",
     "schema:check": "npm run build && node dist/config/json-schema.js --check",
@@ -84,7 +84,9 @@
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
     "bundles:generate": "node scripts/generate-bundled-dependencies.mjs",
     "vendors:generate": "node scripts/generate-vendored-dependencies.mjs",
-    "audit:production": "node scripts/audit-production-dependencies.mjs"
+    "audit:production": "node scripts/audit-production-dependencies.mjs",
+    "telemetry:catalog:generate": "node scripts/generate-telemetry-catalog.mjs",
+    "telemetry:catalog:check": "node scripts/generate-telemetry-catalog.mjs --check"
   },
   "keywords": [
     "precommit",
