@@ -30,6 +30,8 @@ describe("real scan telemetry delivery", () => {
         "package.json",
         '{"name":"telemetry-fixture","private":true}\n',
       );
+      await repo.write("CLAUDE.md", "PRIVATE INSTRUCTIONS\n");
+      await repo.write(".cursor/rules/project.mdc", "PRIVATE RULES\n");
       await repo.write(
         ".zedbeerc.jsonc",
         JSON.stringify({
@@ -75,6 +77,7 @@ describe("real scan telemetry delivery", () => {
               ...options,
               env: {
                 CI: "1",
+                CLAUDECODE: "1",
                 ...(disabled ? { ZEDBEE_TELEMETRY_DISABLED: "1" } : {}),
               },
               store: new TelemetryStore(join(repo.root, "telemetry-state")),
@@ -129,6 +132,21 @@ describe("real scan telemetry delivery", () => {
       ]);
       expect(sent[0]?.run_id).toBe(sent[1]?.run_id);
       expect(sent[1]).toMatchObject({
+        schema_version: 2,
+        caller_ai_tool: "claude_code",
+        detected_ai_tools: ["claude_code", "cursor"],
+        finding_breakdown_status: "complete",
+        completed_check_ids: ["types"],
+        finding_groups: blocked
+          ? [
+              {
+                check_id: "types",
+                rule_id: "typescript/TS7006",
+                severity: "error",
+                count: 1,
+              },
+            ]
+          : [],
         outcome,
         output_format: format,
         invocation_source: "git_hook",
@@ -141,7 +159,8 @@ describe("real scan telemetry delivery", () => {
         repo.root,
         "private-customer",
         "privateTelemetryValue",
-        "TS7006",
+        "PRIVATE INSTRUCTIONS",
+        "PRIVATE RULES",
       ])
         expect(wire).not.toContain(privateValue);
     },

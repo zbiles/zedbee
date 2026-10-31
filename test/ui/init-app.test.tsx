@@ -355,7 +355,7 @@ describe("hook setup choices", () => {
     await settleInput();
     expect(view.lastFrame()).toContain("[✽] Enable usage tracking");
     expect(view.lastFrame()).toContain(
-      "Share anonymous usage data to help us improve Zedbee Swarm",
+      "Share usage, issue types and AI tool detection to improve Swarm",
     );
     view.stdin.write("\u001b[A");
     await settleInput();

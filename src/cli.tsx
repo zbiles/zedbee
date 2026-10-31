@@ -457,6 +457,9 @@ export async function runCli(
         {
           cwd: process.cwd(),
           telemetrySummary: (value) => telemetry?.summary(value),
+          ...(telemetry?.scanReport === undefined
+            ? {}
+            : { telemetryObserver: telemetry }),
           format: options.format,
           service: options.service,
           color: options.color,

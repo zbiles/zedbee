@@ -19,8 +19,9 @@ npm install --save-dev zedbee@next
 npx zedbee init
 ```
 
-Usage metadata is collected by default, including in CI. No source code, paths,
-or report contents are sent. Set `ZEDBEE_TELEMETRY_DISABLED=1` before first use,
+Usage metadata, grouped issue types and AI tool detection are collected by default,
+including in CI. Source code, paths and finding messages are excluded.
+Set `ZEDBEE_TELEMETRY_DISABLED=1` before first use,
 or run `npx zedbee telemetry disable` to save an opt-out. See the
 [telemetry details](docs/privacy.md#usage-telemetry).
 

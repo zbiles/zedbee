@@ -46,6 +46,19 @@ describe("caller context", () => {
   });
 });
 describe("repository tool markers", () => {
+  it("recognizes an invocation directory alias when its physical target is inside the Git root", async () => {
+    const root = await fixture();
+    const aliases = await fixture();
+    await mkdir(join(root, ".cursor"));
+    await symlink(root, join(aliases, "checkout"));
+    expect(
+      (
+        await detectRepositoryTools(root, join(aliases, "checkout"), {
+          budgetMs: 1000,
+        })
+      ).detected_ai_tools,
+    ).toEqual(["cursor"]);
+  });
   it("keeps every tool independently and detects package-local generic instructions", async () => {
     const root = await fixture();
     await Promise.all([

@@ -4,7 +4,7 @@
 
 Zedbee CLI usage telemetry is **enabled by default**, including in CI. Interactive
 `zedbee init` includes an **Enable usage tracking** checkbox near the end of setup:
-“Share anonymous usage data to help us improve Zedbee Swarm.” It starts checked
+“Share usage, issue types and AI tool detection to improve Swarm.” It starts checked
 unless you have already opted out. Applying setup saves the choice for this local
 installation; cancelling leaves it unchanged. Setup sends no event before the
 choice is saved. No standalone startup notice is printed.
@@ -34,13 +34,17 @@ Cloudflare collector forwarding approved events to hosted PostHog:
 - detected CI provider, generated-hook marker, staged/base scan mode and output format;
 - scan outcome, whether input was empty, built-in profile/custom indicator,
   configured enabled check IDs, executed check IDs and finding count;
+- bounded counts by exact bundled rule ID, check and severity, plus completed
+  check IDs and explicit missing/truncated-detail indicators;
+- inferred caller tool and its evidence source, all supported repository tools
+  detected by filename presence, generic agent instructions and detection coverage;
 - setup outcome/profile/hook type, or fix outcome and aggregate applied/skipped counts;
 - a random user-local installation ID for local commands, or an ephemeral random
   command ID for CI. No persistent local ID is sent by detected CI invocations.
 
 Source code, paths, file hashes, reports, snippets, raw errors, secrets,
 dependency names, repository URLs/names, branch names, Git identities, hostnames
-and environment-variable contents are not collected. No npm-install script
+and raw environment-variable contents are not collected. No npm-install script
 sends telemetry. Help, internal service/hook-management commands and the
 programmatic API do not initialize telemetry. `check_ids` describes executed,
 non-skipped checks; `enabled_check_ids` describes checks enabled globally or by
@@ -53,6 +57,29 @@ Git index (staged scans) or target
 commit (base scans); no settings or paths are sent. It is omitted if configuration
 cannot be resolved. Setup profiles describe setup choices.
 
+Rule IDs identify issue types, not individual occurrences. Public GHSA and CVE
+advisory IDs can be included for vulnerability findings; package names and
+installed dependency versions are excluded, although the advisory can imply an
+affected package family. Readable labels come from Zedbee's bundled catalog.
+Counts represent appearances across scans and can repeat the same underlying
+issue. Oversized or unrecognized rule breakdowns are explicitly marked incomplete.
+
+Repository tooling detection checks only known marker names at the repository
+root and invocation-directory ancestors within it, including ignored/untracked
+markers at those locations. It does not read their contents or inspect home
+directories. Supported markers include `.codex`, `CLAUDE.md`, `CLAUDE.local.md`,
+`.claude`, `.cursor`, and `.cursorrules`; `AGENTS.md`, `AGENTS.override.md`, and
+`.agents` are generic signals. These describe the current checkout even for a
+committed-base scan; finding analysis still uses its selected snapshot.
+Symlinks, inaccessible locations and exhausted detection budgets leave partial
+or unavailable coverage. An empty list does not establish that AI was unused.
+
+Caller hints reduce the presence of a valid `CODEX_THREAD_ID` or `CLAUDECODE=1`
+to fixed tool names; the original values are excluded. Inherited or conflicting
+hints remain visible as ambiguous context. Repository tool lists are independent
+of the inferred caller. Cursor markers identify repository tooling; its caller
+remains unknown without a validated runtime signal. No model attribution is collected.
+
 CI is detected from `CI`, `GITHUB_ACTIONS` and `GITLAB_CI`; custom runners can set
 `ZEDBEE_TELEMETRY_CONTEXT=ci`. Detection is best-effort. No terminal or redirected
 output alone does not imply CI. Set the disable override pipeline-wide when you
@@ -62,6 +89,11 @@ separately from local installation counts. Neither is an exact count of people.
 Local settings and the bounded event outbox are stored under
 `$XDG_STATE_HOME/zedbee/telemetry` when that variable is absolute, otherwise
 `~/.local/state/zedbee/telemetry`. The outbox holds at most 100 events / 256 KiB
+plus an owner-restricted detail store capped at 100 records / 256 KiB. Detail
+records use random event IDs, expire after seven days, and can only enrich a
+currently pending, enabled parent event; they cannot be sent independently.
+Older CLI versions can still read the ordinary queue and preferences.
+The ordinary outbox retains events
 for up to seven days; expired events are discarded during subsequent activity
 and are not sent. Files request owner-only POSIX permissions; Windows relies
 on the user directory's access controls. Unreadable/corrupt preferences suppress

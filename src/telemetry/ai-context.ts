@@ -1,4 +1,4 @@
-import { lstat } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { TelemetryEnvironment } from "./policy.js";
 import type { ScanDetails } from "./schema.js";
@@ -71,7 +71,18 @@ export async function detectRepositoryTools(
 ): Promise<RepositoryToolContext> {
   root = resolve(root);
   cwd = resolve(cwd);
-  if (!contained(root, cwd)) return emptyRepositoryContext();
+  if (!contained(root, cwd)) {
+    try {
+      const physicalRoot = await realpath(root);
+      const physicalCwd = await realpath(cwd);
+      if (!contained(physicalRoot, physicalCwd))
+        return emptyRepositoryContext();
+      root = physicalRoot;
+      cwd = physicalCwd;
+    } catch {
+      return emptyRepositoryContext();
+    }
+  }
   const result: RepositoryToolContext = {
     ...emptyRepositoryContext(),
     repo_ai_detection_status: "complete",
