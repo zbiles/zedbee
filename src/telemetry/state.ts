@@ -15,7 +15,10 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { telemetryEventSchema, type TelemetryEvent } from "./schema.js";
+import {
+  telemetryV1EventSchema as telemetryEventSchema,
+  type TelemetryV1Event as TelemetryEvent,
+} from "./schema.js";
 import type { TelemetryEnvironment } from "./policy.js";
 const WEEK = 7 * 24 * 60 * 60 * 1000;
 const stateSchema = z.strictObject({
@@ -176,8 +179,8 @@ export class TelemetryStore {
       if (!enabled) state.events = [];
     });
   }
-  enqueue(event: TelemetryEvent): void {
-    telemetryEventSchema.parse(event);
+  enqueue(input: unknown): void {
+    const event = telemetryEventSchema.parse(input);
     if (event.environment === "ci")
       throw new Error("CI events cannot be persisted");
     this.update((state) => {

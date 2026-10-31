@@ -3,6 +3,11 @@ import { fileURLToPath } from "node:url";
 import { telemetryContext, telemetryDisabled } from "./policy.js";
 import { TelemetryStore, telemetryDirectory } from "./state.js";
 import { sendTelemetry, type TelemetrySend } from "./transport.js";
+import {
+  TelemetryDetailsStore,
+  enrichTelemetryEvent,
+} from "./details-store.js";
+import { telemetryBatches } from "./batch.js";
 export async function drainTelemetry(
   store: TelemetryStore,
   signal: AbortSignal,
@@ -16,12 +21,21 @@ export async function drainTelemetry(
     )
       return;
     release = store.lock("sender.lock");
+    const details = new TelemetryDetailsStore(store.directory);
     for (let attempt = 0; attempt < 5 && !signal.aborted; attempt++) {
       if (telemetryDisabled(process.env)) return;
-      const events = store.pending().slice(0, 20);
+      const pending = store.pending();
+      details.prune(pending.map((event) => event.event_id));
+      const events =
+        telemetryBatches(
+          pending
+            .slice(0, 20)
+            .map((event) => enrichTelemetryEvent(event, details.read(event))),
+        )[0] ?? [];
       if (events.length === 0) return;
       if (!(await send(events, signal))) return;
       store.acknowledge(events.map((event) => event.event_id));
+      details.remove(events.map((event) => event.event_id));
     }
   } catch {
     /* Busy, unreadable, disabled, or offline: leave bounded events for later. */

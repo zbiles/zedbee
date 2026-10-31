@@ -73,6 +73,12 @@ All three commands support `--format json` and are themselves untracked. The
 setting belongs to the OS user, not the repository, and survives npm upgrades.
 For disposable CI runners, set the disable variable at the pipeline level.
 
+The same preference governs grouped exact-rule finding counts and AI tool
+detection. Telemetry includes all supported tools detected in repository marker
+names independently of any inferred invoking tool. Detection is scoped and
+best-effort; no model attribution is collected. Source, paths and finding
+messages are excluded. Details omitted by size or detection limits are marked.
+
 CI usage is included and classified separately. Generic `CI` and GitHub/GitLab
 flags are recognized; custom runners may set `ZEDBEE_TELEMETRY_CONTEXT=ci`.
 See [privacy and data handling](privacy.md#usage-telemetry) for exact fields,

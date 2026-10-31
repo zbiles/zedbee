@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { allowedFindingRule } from "./finding-rules.js";
 
 // Self-contained wire contract, also vendored and checked by the private collector.
 export const TELEMETRY_CHECK_IDS = [
@@ -32,7 +33,7 @@ export const TELEMETRY_EVENTS = [
 ] as const;
 const count = z.number().int().min(0).max(1_000_000);
 const identity = z.string().uuid();
-export const telemetryEventSchema = z
+export const telemetryV1EventSchema = z
   .strictObject({
     schema_version: z.literal(1),
     event: z.enum(TELEMETRY_EVENTS),
@@ -155,6 +156,143 @@ export const telemetryEventSchema = z
       invalid();
     if (event.command !== "init" && event.hook !== undefined) invalid();
   });
+export type TelemetryV1Event = z.infer<typeof telemetryV1EventSchema>;
+export const AI_TOOLS = ["claude_code", "codex", "cursor"] as const;
+const unique = <T>(values: T[]) => new Set(values).size === values.length;
+const checkIds = z.array(z.enum(TELEMETRY_CHECK_IDS)).max(13).refine(unique);
+const toolIds = z.array(z.enum(AI_TOOLS)).max(3).refine(unique);
+export const findingGroupSchema = z
+  .strictObject({
+    check_id: z.enum(TELEMETRY_CHECK_IDS),
+    rule_id: z.string().max(128),
+    severity: z.enum(["info", "warning", "error"]),
+    count: count.min(1),
+  })
+  .refine(
+    (row) => allowedFindingRule(row.check_id, row.rule_id),
+    "Unapproved finding rule",
+  );
+export const scanDetailsSchema = z
+  .strictObject({
+    finding_breakdown_version: z.literal(1),
+    finding_breakdown_status: z.enum(["complete", "truncated", "unavailable"]),
+    finding_groups: z.array(findingGroupSchema).max(256).optional(),
+    finding_unmapped_count: count.optional(),
+    finding_omitted_count: count.optional(),
+    finding_counts_clipped: z.boolean().optional(),
+    completed_check_ids: checkIds.optional(),
+    ai_detection_version: z.literal(1),
+    caller_ai_tool: z.enum([...AI_TOOLS, "unknown", "ambiguous"]),
+    caller_ai_tool_candidates: toolIds,
+    caller_ai_tool_source: z.enum(["none", "environment_hint"]),
+    detected_ai_tools: toolIds,
+    generic_agent_instructions_detected: z.boolean(),
+    repo_ai_detection_status: z.enum(["complete", "partial", "unavailable"]),
+  })
+  .superRefine((details, ctx) => {
+    const invalid = () =>
+      ctx.addIssue({ code: "custom", message: "Invalid scan detail contract" });
+    const fields = [
+      details.finding_groups,
+      details.finding_unmapped_count,
+      details.finding_omitted_count,
+      details.finding_counts_clipped,
+      details.completed_check_ids,
+    ];
+    if (details.finding_breakdown_status === "unavailable") {
+      if (fields.some((value) => value !== undefined)) invalid();
+    } else {
+      if (fields.some((value) => value === undefined)) invalid();
+      if (
+        details.finding_breakdown_status === "complete" &&
+        (details.finding_unmapped_count !== 0 ||
+          details.finding_omitted_count !== 0 ||
+          details.finding_counts_clipped !== false)
+      )
+        invalid();
+      const keys =
+        details.finding_groups?.map((row) =>
+          JSON.stringify([row.check_id, row.rule_id, row.severity]),
+        ) ?? [];
+      if (!unique(keys)) invalid();
+      if (
+        details.finding_breakdown_status === "truncated" &&
+        !details.finding_counts_clipped &&
+        details.finding_unmapped_count === 0 &&
+        details.finding_omitted_count === 0
+      )
+        invalid();
+    }
+    const candidates = details.caller_ai_tool_candidates;
+    const expected =
+      candidates.length === 0
+        ? "unknown"
+        : candidates.length === 1
+          ? candidates[0]
+          : "ambiguous";
+    if (
+      details.caller_ai_tool !== expected ||
+      details.caller_ai_tool_source !==
+        (candidates.length ? "environment_hint" : "none")
+    )
+      invalid();
+    if (new TextEncoder().encode(JSON.stringify(details)).byteLength > 16_384)
+      invalid();
+  });
+export type ScanDetails = z.infer<typeof scanDetailsSchema>;
+export type FindingGroup = z.infer<typeof findingGroupSchema>;
+export const SCAN_DETAIL_KEYS = Object.keys(
+  scanDetailsSchema.shape,
+) as (keyof ScanDetails)[];
+const telemetryV2EventSchema = z
+  .strictObject({
+    ...telemetryV1EventSchema.shape,
+    ...scanDetailsSchema.shape,
+    schema_version: z.literal(2),
+    event: z.literal("scan_finished"),
+    command: z.literal("scan"),
+  })
+  .superRefine((event, ctx) => {
+    const legacy = Object.fromEntries(
+      Object.keys(telemetryV1EventSchema.shape).map((key) => [
+        key,
+        event[key as keyof typeof event],
+      ]),
+    );
+    legacy.schema_version = 1;
+    const details = Object.fromEntries(
+      SCAN_DETAIL_KEYS.map((key) => [key, event[key]]),
+    );
+    const invalid = () =>
+      ctx.addIssue({
+        code: "custom",
+        message: "Invalid enriched scan contract",
+      });
+    if (
+      !telemetryV1EventSchema.safeParse(legacy).success ||
+      !scanDetailsSchema.safeParse(details).success
+    )
+      invalid();
+    if (event.finding_breakdown_status === "unavailable") {
+      if (event.finding_count !== undefined) invalid();
+    } else if (event.finding_count === undefined) invalid();
+    else if (event.finding_counts_clipped) {
+      if (event.finding_count !== 1_000_000) invalid();
+    } else if (
+      (event.finding_groups ?? []).reduce(
+        (total, row) => total + row.count,
+        0,
+      ) +
+        (event.finding_unmapped_count ?? 0) +
+        (event.finding_omitted_count ?? 0) !==
+      event.finding_count
+    )
+      invalid();
+  });
+export const telemetryEventSchema = z.union([
+  telemetryV1EventSchema,
+  telemetryV2EventSchema,
+]);
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryCommand = (typeof TELEMETRY_COMMANDS)[number];
 export const telemetryBatchSchema = z.strictObject({

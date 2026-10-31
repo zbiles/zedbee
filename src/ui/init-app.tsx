@@ -837,7 +837,7 @@ function SetupPanel({
         </Text>
         <Box paddingLeft={2} flexDirection="column">
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-            Share anonymous usage data to help us improve Zedbee Swarm
+            Share usage, issue types and AI tool detection to improve Swarm
           </Text>
           {proposal.telemetryDisabledByEnvironment ? (
             <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>

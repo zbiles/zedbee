@@ -1,5 +1,8 @@
 import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
-import type { TelemetrySummary } from "../telemetry/client.js";
+import type {
+  TelemetrySummary,
+  CommandTelemetry,
+} from "../telemetry/client.js";
 import { extname, isAbsolute, relative, resolve } from "node:path";
 import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
@@ -43,6 +46,10 @@ export type OutputFormat = ReportingSurface;
 export interface ScanCommandOptions {
   merge?: boolean;
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
+  readonly telemetryObserver?: Pick<
+    CommandTelemetry,
+    "observeRepository" | "scanReport"
+  >;
   service?: boolean;
   executor?: AnalyzerExecutor;
   cwd: string;
@@ -245,6 +252,12 @@ export async function executeScanCommand(
       options.configPath === undefined
         ? undefined
         : validConfigPath(repositoryRoot, options.configPath);
+    try {
+      options.telemetryObserver?.observeRepository?.(
+        repositoryRoot,
+        options.cwd,
+      );
+    } catch {}
     if (options.configPath !== undefined && configPath === undefined) {
       io.writeStderr(
         "Zedbee configuration must be a .jsonc file inside the repository.\n",
@@ -414,6 +427,7 @@ export async function executeScanCommand(
       }
     }
     try {
+      options.telemetryObserver?.scanReport?.(report);
       options.telemetrySummary?.({
         empty_input: report.changedFileCount === 0,
         check_ids: [
