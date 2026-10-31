@@ -307,6 +307,15 @@ function main() {
   try {
     mkdirSync(artifactDirectory);
     const root = process.cwd();
+    const catalog = spawnSync(
+      process.execPath,
+      [resolve(root, "scripts/generate-telemetry-catalog.mjs"), "--check"],
+      { cwd: root, stdio: "inherit" },
+    );
+    if (catalog.error || catalog.status !== 0)
+      throw new Error(
+        "Telemetry finding catalog must match the bundled analyzers before packaging.",
+      );
     const pack = (directory) => {
       const invocation = commandInvocation("npm", [
         "pack",

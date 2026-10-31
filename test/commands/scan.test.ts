@@ -129,6 +129,39 @@ function completePresentation(report: ScanReport): TerminalPresentation {
   };
 }
 
+it("provides the complete canonical report to telemetry despite a bounded finding preview", async () => {
+  const report = reportWithFindings(40);
+  const deps = dependencies();
+  deps.scan = async () => report;
+  deps.preparePresentation = async () => ({
+    ...completePresentation(report),
+    findings: report.summary.findings.slice(0, 25),
+  });
+  let observed = 0;
+  let root = "";
+  const code = await executeScanCommand(
+    {
+      cwd: "/repo",
+      format: "text",
+      color: false,
+      animations: false,
+      telemetryObserver: {
+        observeRepository(value) {
+          root = value;
+        },
+        scanReport(value) {
+          observed = value.summary.findings.length;
+        },
+      },
+    },
+    io(false),
+    deps,
+  );
+  expect(code).toBe(1);
+  expect(root).toBe("/repo");
+  expect(observed).toBe(40);
+});
+
 function automaticPresentation(
   report: ScanReport,
   overrides: Partial<TerminalPresentation> = {},

@@ -9,11 +9,27 @@ import {
 } from "./policy.js";
 import { TelemetryStore, telemetryDirectory } from "./state.js";
 import {
-  telemetryEventSchema,
+  telemetryV1EventSchema as telemetryEventSchema,
   type TelemetryEvent,
   type TelemetryCommand,
+  type ScanDetails,
 } from "./schema.js";
 import { sendTelemetry, type TelemetrySend } from "./transport.js";
+import type { ScanReport } from "../scan/report.js";
+import {
+  summarizeFindings,
+  fitScanDetails,
+  type FindingBreakdown,
+} from "./finding-summary.js";
+import {
+  callerContext,
+  detectRepositoryTools,
+  emptyRepositoryContext,
+} from "./ai-context.js";
+import {
+  TelemetryDetailsStore,
+  enrichTelemetryEvent,
+} from "./details-store.js";
 export type TelemetrySummary = Partial<
   Pick<
     TelemetryEvent,
@@ -29,6 +45,8 @@ export type TelemetrySummary = Partial<
   >
 >;
 export interface CommandTelemetry {
+  observeRepository?(root: string, cwd: string): void;
+  scanReport?(report: Pick<ScanReport, "summary" | "checks">): void;
   summary(value: TelemetrySummary): void;
   finish(exitCode: number): void;
   flush(cancelled: boolean, signal?: AbortSignal): Promise<void>;
@@ -105,6 +123,12 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
     ...(options.outputFormat ? { output_format: options.outputFormat } : {}),
   };
   let summary: TelemetrySummary = {};
+  let findingBreakdown: FindingBreakdown | undefined;
+  let repository = emptyRepositoryContext();
+  const caller = callerContext(env);
+  const detailsStore = ci
+    ? undefined
+    : new TelemetryDetailsStore(store.directory);
   let finished = false;
   let pending = Promise.resolve();
   const allowed = () => {
@@ -127,14 +151,35 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
         event_id: randomUUID(),
         timestamp: new Date().toISOString(),
       });
+      let scanDetails: ScanDetails | undefined;
+      if (event === "scan_finished") {
+        try {
+          scanDetails = fitScanDetails({
+            finding_breakdown_version: 1,
+            finding_breakdown_status: "unavailable",
+            ...findingBreakdown,
+            ai_detection_version: 1,
+            ...caller,
+            ...repository,
+          });
+        } catch {
+          /* Optional reduction cannot suppress ordinary usage metadata. */
+        }
+      }
+      const wire = enrichTelemetryEvent(value, scanDetails);
       if (ci) {
         pending = pending
           .then(async () => {
             if (!controller.signal.aborted && allowed())
-              await send([value], controller.signal);
+              await send([wire], controller.signal);
           })
           .catch(() => {});
       } else {
+        if (wire.schema_version === 2 && scanDetails) {
+          try {
+            detailsStore?.write(value, scanDetails);
+          } catch {}
+        }
         store.enqueue(value);
         (options.launch ?? (() => launchTelemetrySender(env)))();
       }
@@ -144,6 +189,34 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
   };
   if (command === "scan") emit("scan_started");
   return {
+    ...(command === "scan"
+      ? {
+          observeRepository(root: string, cwd: string) {
+            if (!allowed() || finished) return;
+            repository = {
+              ...emptyRepositoryContext(),
+              repo_ai_detection_status: "partial",
+            };
+            void detectRepositoryTools(root, cwd, {
+              permitted: () => allowed() && !finished,
+            })
+              .then((value) => {
+                if (allowed() && !finished) repository = value;
+              })
+              .catch(() => {});
+          },
+          scanReport(report: Pick<ScanReport, "summary" | "checks">) {
+            if (!allowed() || finished) return;
+            try {
+              findingBreakdown = summarizeFindings(report);
+              summary.finding_count = Math.min(
+                1_000_000,
+                report.summary.findings.length,
+              );
+            } catch {}
+          },
+        }
+      : {}),
     summary(value) {
       // Only explicit metadata fields cross this boundary, even for untyped callers.
       try {

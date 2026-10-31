@@ -66,7 +66,10 @@ The plugin itself does not send usage events or upload source or reports. The CL
 has optional usage telemetry **enabled by default** and honors existing preferences,
 `ZEDBEE_TELEMETRY_DISABLED=1` and `DO_NOT_TRACK=1`. It sends command metadata to
 `https://telemetry.zedbee.dev/v1/events` (Cloudflare forwarding to PostHog), excluding
-source, paths, reports, hashes, secrets and dependency names. Disable it before
+source, paths, reports, hashes, secrets and dependency names. Metadata includes
+grouped exact-rule counts, public advisory IDs, caller hints and all supported
+repository tools detected from marker names. No model attribution is collected.
+Disable it before
 first use with an environment opt-out, or use `zedbee telemetry disable`.
 
 Enabled vulnerability checks send dependency names, exact versions and ecosystems
