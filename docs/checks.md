@@ -29,6 +29,8 @@ Zedbee owns the analyzer versions and inert configuration used by every v1 check
 
 ## Incomplete staged inputs
 
+The secrets check skips files classified as binary in each selected Git snapshot, including images larger than 1 MiB. Its 1 MiB safety limit applies to text files, regardless of their extension. Binary-to-text changes still scan the new text for secrets.
+
 Intent-to-add records supply no staged file content, so Zedbee excludes them as unstaged. A Git LFS pointer that is actually staged remains in scope but cannot be analyzed as the referenced file; Zedbee reports the repository-relative path and returns incomplete. With LFS tracking active, materializing and staging the object again recreates the pointer. Validate the referenced object separately; that validation does not clear Zedbee's incomplete result. If the file is appropriate for ordinary tracked text, deliberately convert it out of LFS tracking, then review, stage, and rescan. In committed base mode, that conversion must be committed. An intentional repository policy can instead exclude the path from the affected checks with `pathExclusions`; an exclusion suppresses those checks and does not validate the object.
 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
