@@ -1,6 +1,7 @@
 import { compareCodeUnits } from "../../core/compare.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import type { CheckRunContext } from "../adapter.js";
+import type { UnsupportedIndexEntry } from "../../git/snapshot.js";
 import {
   ContainedFileSizeError,
   readContainedFile,
@@ -66,6 +67,7 @@ async function readTextSource(
   repositoryPath: string,
   identityPath: string,
   required: boolean,
+  binary: boolean,
 ): Promise<SecretTextSource | undefined> {
   // A selected input is not permission to widen this consumer's inventory.
   const excluded = repositoryPath
@@ -92,6 +94,10 @@ async function readTextSource(
   if (entry.kind === "symlink" || entry.targetKind !== "file") {
     throw unsafeSecretFile(repositoryPath);
   }
+  // Git classifies the complete blob while materializing each snapshot. Use
+  // that result before the text size limit, including binary baselines and
+  // files too large for the optional immutable source capture.
+  if (binary) return undefined;
   let content: string;
   try {
     content = await readContainedFile(registry, repositoryPath, {
@@ -101,19 +107,19 @@ async function readTextSource(
     if (!(error instanceof ContainedFileSizeError)) throw error;
     throw new SecretContentError({
       code: "SECRET_FILE_TOO_LARGE",
-      message: "A changed file exceeds the Secretlint file-size safety limit.",
+      message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
       path: repositoryPath,
       remediation:
-        "Reduce the selected target file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
+        "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
     });
   }
   if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
     throw new SecretContentError({
       code: "SECRET_FILE_TOO_LARGE",
-      message: "A changed file exceeds the Secretlint file-size safety limit.",
+      message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
       path: repositoryPath,
       remediation:
-        "Reduce the selected target file below 1 MiB or disable the secrets check in Zedbee configuration, then retry.",
+        "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
     });
   }
   if (content.includes("\u0000")) return undefined;
@@ -137,6 +143,18 @@ export async function collectSecretSourcePairs(
     .filter(({ status }) => status !== "deleted")
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const pairs: SecretSourcePair[] = [];
+  const binaryPaths = (entries: readonly UnsupportedIndexEntry[]) =>
+    new Set(
+      entries
+        .filter((entry) => entry.kind === "binary")
+        .map(({ path }) => path),
+    );
+  const baselineBinaryPaths = binaryPaths(
+    context.snapshots?.baselineUnsupportedEntries ?? [],
+  );
+  const targetBinaryPaths = binaryPaths(
+    context.snapshots?.unsupportedEntries ?? [],
+  );
   const liveRegistries = new Map<string, Promise<SnapshotRegistry>>();
   if (!hasAnalysisSourceCapture()) {
     const roots = [
@@ -150,7 +168,12 @@ export async function collectSecretSourcePairs(
       liveRegistries.set(root, Promise.resolve(registries[index]!)),
     );
   }
-  const readSelected = async (root: string, path: string, identity: string) => {
+  const readSelected = async (
+    root: string,
+    path: string,
+    identity: string,
+    binary: boolean,
+  ) => {
     let registry = capturedSourceRegistry(root, [path]);
     if (registry === undefined) {
       let pending = liveRegistries.get(root);
@@ -160,7 +183,7 @@ export async function collectSecretSourcePairs(
       }
       registry = await pending;
     }
-    return readTextSource(registry, path, identity, true);
+    return readTextSource(registry, path, identity, true, binary);
   };
   for (const file of changed) {
     const targetPath = normalizeRepositoryRelativePath(file.path);
@@ -175,11 +198,13 @@ export async function collectSecretSourcePairs(
             context.baselineInspection.snapshotRoot,
             baselinePath,
             targetPath,
+            baselineBinaryPaths.has(baselinePath),
           ),
       readSelected(
         context.targetInspection.snapshotRoot,
         targetPath,
         targetPath,
+        targetBinaryPaths.has(targetPath),
       ),
     ]);
     if (baseline === undefined && target === undefined) continue;

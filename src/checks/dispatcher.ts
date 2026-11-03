@@ -515,6 +515,11 @@ function adapterBaseContext(context: DispatchContext): DispatchContext {
       targetDir: context.snapshots.targetDir,
       baselineRef: context.snapshots.baselineRef,
       targetRef: context.snapshots.targetRef,
+      baselineUnsupportedEntries: Object.freeze(
+        (context.snapshots.baselineUnsupportedEntries ?? []).map((entry) =>
+          Object.freeze({ ...entry }),
+        ),
+      ),
       unsupportedEntries: Object.freeze(
         context.snapshots.unsupportedEntries.map((entry) =>
           Object.freeze({ ...entry }),
