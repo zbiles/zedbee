@@ -26,6 +26,8 @@ Scan and fix analysis uses fresh sessions in supervised workers that may be reus
 
 Formatting can explicitly use a project's installed Prettier, its native configuration, and its plugins. This is the only path that evaluates project-provided JavaScript. It is off unless a user first chooses it in `init` (which records consent in local Git configuration) or passes `--trust-project-prettier` for one invocation; tracked repository configuration alone can never grant it. The trusted parent validates the installed package and spawns a dedicated, short-lived worker over a disposable mirror of the selected snapshot. This is process separation and environment hygiene, not a sandbox: trusted configuration and plugins can still read files and use the network with the user's permissions, so consent is an ongoing trust decision in that project's formatter.
 
+During `init`, copying settings from executable Prettier configuration requires separate consent and uses a disposable mirror of the working checkout. This one-time import evaluates working-copy configuration rather than selected Git snapshot configuration. Ordinary scan and fix analysis retains the selected-snapshot behavior above.
+
 The selected-source boundary permits these additional local reads:
 
 - TypeScript and typed lint can capture dependency inputs through constrained installed-package and bundled TypeScript resolution boundaries. Those bytes support analysis; they are not selected repository changes or persisted source-cache entries.

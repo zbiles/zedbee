@@ -98,6 +98,20 @@ commit.
 
 ## Preview and JSON
 
+The unstaged-change annotation compares captured working bytes and executable
+mode with raw blobs from the captured index. It does not invoke Git content
+filters, text conversion, or external diff drivers. Files whose bytes differ
+because of checkout conversion, such as line-ending normalization, are
+conservatively annotated as having unstaged changes.
+
+Working-file previews read at most eight files concurrently. Source capture is
+limited to 4 MiB per file and 64 MiB across candidate files; exceeding either
+limit stops preparation before approval or writes. A file that grows during
+capture also requires a fresh preview. Exact-edit mapping uses one character
+diff per file with a one-second computation limit. If that limit is reached,
+the affected exact fixes are reported as skipped; other applicable actions
+remain in the plan.
+
 A typical compact plan reports selected checks, fix-action and file counts,
 unique blocking and warning finding counts, file paths, whether each file
 already has unstaged changes, and finding IDs. Each exact edit is one fix; one

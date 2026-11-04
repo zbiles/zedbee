@@ -9,6 +9,7 @@ export interface InstallOptions {
 export interface InstallExecutionOptions {
   cwd: string;
   env: Record<string, string>;
+  extendEnv: false;
   cancelSignal: AbortSignal | undefined;
   timeout: number;
   stdin: "ignore";
@@ -35,4 +36,5 @@ export function installDependency(
 export function windowsManagerInvocation(
   manager: InstallManager,
   pathValue: string,
+  cwd: string,
 ): Promise<{ command: string; args: string[] }>;

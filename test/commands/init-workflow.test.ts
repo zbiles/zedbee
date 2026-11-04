@@ -282,17 +282,13 @@ describe("GitHub workflow initialization", () => {
       undefined,
       false,
       async (proposal, _options, select) => {
-        const selected = select(
-          proposal.profile,
-          undefined,
-          "block",
-          "none",
-          undefined,
-          false,
-          undefined,
-          undefined,
-          "github",
-        );
+        const selected = select({
+          profile: proposal.profile,
+          osvUnavailable: "block",
+          hook: "none",
+          projectTrust: false,
+          workflow: "github",
+        });
         expect(selected.files.some((file) => file.relativePath === path)).toBe(
           true,
         );

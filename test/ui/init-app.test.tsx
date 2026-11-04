@@ -1,3 +1,4 @@
+import type { InitSelection } from "../../src/init/selection-policy.js";
 import { waitForAssertion } from "../helpers/wait-for-assertion.js";
 import { PassThrough } from "node:stream";
 import { stripVTControlCharacters } from "node:util";
@@ -53,17 +54,12 @@ describe("GitHub workflow setup choice", () => {
     workflowAvailable: true,
     workflow: "none",
   };
-  const select: InitAppProps["proposalForSelection"] = (
+  const select: InitAppProps["proposalForSelection"] = ({
     profile,
     checks,
-    osvUnavailable,
-    _hook,
-    _formatting,
-    _trust,
-    _evaluated,
-    _scope,
+    osvUnavailable = "block",
     workflow = "none",
-  ) => ({
+  }) => ({
     ...available,
     profile,
     recommendedChecks: checks ?? available.recommendedChecks,
@@ -427,12 +423,7 @@ describe("hook setup choices", () => {
     const view = render(
       <InitApp
         proposal={selectable}
-        proposalForSelection={(
-          _profile,
-          _checks,
-          _osv,
-          selection: InitHookChoice = "tracked",
-        ) => ({
+        proposalForSelection={({ hook: selection = "tracked" }) => ({
           ...selectable,
           hookSelection: selection,
           hook:
@@ -481,12 +472,7 @@ describe("hook setup choices", () => {
     const view = render(
       <InitApp
         proposal={selectable}
-        proposalForSelection={(
-          _profile,
-          _checks,
-          _osv,
-          selection: InitHookChoice = "lefthook",
-        ) => ({
+        proposalForSelection={({ hook: selection = "lefthook" }) => ({
           ...selectable,
           hookSelection: selection,
           hook: selection === "none" ? "none" : "lefthook",
@@ -1368,7 +1354,11 @@ describe("InitApp", () => {
     const view = render(
       <InitApp
         proposal={proposal}
-        proposalForSelection={(profile, checks, osvUnavailable) => ({
+        proposalForSelection={({
+          profile,
+          checks,
+          osvUnavailable = "block",
+        }) => ({
           ...proposal,
           profile,
           recommendedChecks: checks ?? proposal.recommendedChecks,
@@ -1483,11 +1473,7 @@ describe("InitApp", () => {
   it("navigates profiles, checks, and OSV with one keyboard flow", async () => {
     const onDecision = vi.fn();
     const proposalForSelection = vi.fn(
-      (
-        profile: ProfileId,
-        checks: readonly CheckId[] | undefined,
-        osvUnavailable: "block" | "warn",
-      ) => ({
+      ({ profile, checks, osvUnavailable = "block" }: InitSelection) => ({
         ...proposal,
         profile,
         recommendedChecks:
@@ -1536,11 +1522,7 @@ describe("InitApp", () => {
           },
         ],
       }),
-    ) as unknown as (
-      profile: ProfileId,
-      checks: readonly CheckId[] | undefined,
-      osvUnavailable: "block" | "warn",
-    ) => InitProposal;
+    );
     const view = render(
       <InitApp
         proposal={proposal}
@@ -1908,14 +1890,9 @@ describe("formatting engine choice", () => {
     const view = render(
       <InitApp
         proposal={detected}
-        proposalForSelection={(
-          _profile,
-          _checks,
-          _osv,
-          _hook,
-          formatting,
-          projectTrust,
-        ) => selected(formatting, projectTrust === true)}
+        proposalForSelection={({ formatting, projectTrust }) =>
+          selected(formatting, projectTrust === true)
+        }
         width={80}
         terminalSize={{ columns: 80, rows: DEFAULT_TEST_ROWS }}
         color={false}
@@ -2000,7 +1977,9 @@ describe("formatting scope and prepared review", () => {
     expect(view.lastFrame()).toContain("➜ Formatting scope");
     view.stdin.write("\u001b[C");
     await waitForAssertion(() =>
-      expect(select.mock.calls.at(-1)?.[7]).toBe("repository"),
+      expect((select.mock.calls.at(-1)?.[0] as InitSelection).scope).toBe(
+        "repository",
+      ),
     );
     view.unmount();
   });
@@ -2032,4 +2011,131 @@ describe("formatting scope and prepared review", () => {
     expect(prepareReview).toHaveBeenCalledOnce();
     view.unmount();
   });
+});
+
+describe("executable settings evaluation ownership", () => {
+  const copyProposal: InitProposal = {
+    ...proposal,
+    formatting: "copy",
+    projectPrettierTrustConfirmed: true,
+    formattingDetection: [
+      {
+        projectRoot: ".",
+        status: "available",
+        executableConfig: true,
+        configPaths: ["prettier.config.js"],
+      },
+    ],
+  };
+
+  it("starts only one evaluation for rapid repeated E input", async () => {
+    let resolve!: (value: undefined) => void;
+    const evaluate = vi.fn(
+      () =>
+        new Promise<undefined>((done) => {
+          resolve = done;
+        }),
+    );
+    const view = render(
+      <InitApp
+        proposal={copyProposal}
+        proposalForSelection={() => copyProposal}
+        evaluateExecutableImport={evaluate}
+        width={100}
+        terminalSize={{ columns: 100, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    view.stdin.write("e");
+    view.stdin.write("e");
+    await settleInput();
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(view.lastFrame()).toContain("Evaluating executable settings...");
+    resolve(undefined);
+    await settleInput();
+    view.unmount();
+  });
+
+  it("renders evaluation failure and permits retry", async () => {
+    let attempts = 0;
+    const evaluate = async () => {
+      if (++attempts === 1) throw new Error("Formatter configuration failed");
+      return undefined;
+    };
+    const view = render(
+      <InitApp
+        proposal={copyProposal}
+        proposalForSelection={() => copyProposal}
+        evaluateExecutableImport={evaluate}
+        width={100}
+        terminalSize={{ columns: 100, rows: 120 }}
+        color={false}
+        animations={false}
+        onDecision={() => undefined}
+      />,
+    );
+    view.stdin.write("e");
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).toContain("Formatter configuration failed"),
+    );
+    view.stdin.write("e");
+    await settleInput();
+    expect(attempts).toBe(2);
+    await waitForAssertion(() =>
+      expect(view.lastFrame()).not.toContain("Formatter configuration failed"),
+    );
+    view.unmount();
+  });
+
+  it.each(["n", "\u001b[C", "\r"])(
+    "aborts evaluation on exit/navigation %j and ignores its late result",
+    async (input) => {
+      let signal: AbortSignal | undefined;
+      let resolve!: (
+        value: NonNullable<InitSelection["evaluatedImport"]>,
+      ) => void;
+      const evaluate = (value: AbortSignal) => {
+        signal = value;
+        return new Promise<NonNullable<InitSelection["evaluatedImport"]>>(
+          (done) => {
+            resolve = done;
+          },
+        );
+      };
+      const acceptedImports: InitSelection["evaluatedImport"][] = [];
+      const decision = vi.fn();
+      const view = render(
+        <InitApp
+          proposal={copyProposal}
+          proposalForSelection={(selection) => {
+            acceptedImports.push(selection.evaluatedImport);
+            return copyProposal;
+          }}
+          evaluateExecutableImport={evaluate}
+          width={100}
+          terminalSize={{ columns: 100, rows: 120 }}
+          color={false}
+          animations={false}
+          onDecision={decision}
+        />,
+      );
+      view.stdin.write("e");
+      await settleInput();
+      expect(signal?.aborted).toBe(false);
+      view.stdin.write(input);
+      await settleInput();
+      expect(signal?.aborted).toBe(true);
+      resolve({
+        imported: { settings: { semi: false }, overrides: [], limitations: [] },
+        evaluatedConfigs: [{ path: "prettier.config.js", sha256: "stale" }],
+      });
+      await settleInput();
+      expect(acceptedImports.every((value) => value === undefined)).toBe(true);
+      if (input === "n")
+        expect(decision).toHaveBeenCalledExactlyOnceWith(false);
+      view.unmount();
+    },
+  );
 });

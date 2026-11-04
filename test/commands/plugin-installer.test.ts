@@ -29,6 +29,8 @@ describe("packed Swarm installer", () => {
       await execa("unzip", ["-q", archive.archive, "-d", plugin]);
       const bin = join(root, "bin");
       await mkdir(bin);
+      const project = join(root, "project");
+      await mkdir(project);
       const marker = join(root, "orphan-marker");
       const ready = join(root, "descendant-ready");
       const managerPid = join(root, "manager-pid");
@@ -50,7 +52,7 @@ describe("packed Swarm installer", () => {
           "--manager",
           "npm",
           "--project-root",
-          root,
+          project,
           "--package",
           "zedbee@0.1.0-beta.13",
         ],
@@ -104,8 +106,12 @@ describe("packed Swarm installer", () => {
   it.each(["npm", "pnpm", "yarn"] as const)(
     "resolves standard Windows %s shims without evaluating a shell",
     async (manager) => {
-      const root = await mkdtemp(join(tmpdir(), "zedbee-windows-shim-"));
+      const root = await realpath(
+        await mkdtemp(join(tmpdir(), "zedbee-windows-shim-")),
+      );
       onTestFinished(() => rm(root, { recursive: true, force: true }));
+      const project = join(root, "project");
+      await mkdir(project);
       const script = join(
         root,
         "node_modules",
@@ -121,7 +127,7 @@ describe("packed Swarm installer", () => {
         join(root, `${manager}.cmd`),
         `@ECHO OFF\n"%dp0%\\node.exe" "%dp0%\\node_modules\\corepack\\dist\\${manager}.js" %*\n`,
       );
-      expect(await windowsManagerInvocation(manager, root)).toEqual({
+      expect(await windowsManagerInvocation(manager, root, project)).toEqual({
         command: process.execPath,
         args: [script],
       });
@@ -129,9 +135,9 @@ describe("packed Swarm installer", () => {
         join(root, `${manager}.cmd`),
         "@echo arbitrary command text",
       );
-      await expect(windowsManagerInvocation(manager, root)).rejects.toThrow(
-        "Cannot safely resolve",
-      );
+      await expect(
+        windowsManagerInvocation(manager, root, project),
+      ).rejects.toThrow("Cannot safely resolve");
     },
   );
 
@@ -150,7 +156,15 @@ describe("packed Swarm installer", () => {
       const bin = join(root, "bin");
       await mkdir(project);
       await mkdir(bin);
+      const hostileBin = join(project, "node_modules", ".bin");
+      await mkdir(hostileBin, { recursive: true });
       const sentinel = join(project, "EXECUTED");
+      const hostileManager = join(hostileBin, manager);
+      await writeFile(
+        hostileManager,
+        `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "project manager");\n`,
+      );
+      await chmod(hostileManager, 0o755);
       const log = join(root, "calls.jsonl");
       await writeFile(
         join(project, "package.json"),
@@ -215,7 +229,7 @@ else if (!args.includes("zedbee@0.1.0-beta.13")) process.exit(72);
           "zedbee@0.1.0-beta.13",
           "--workspace-root",
         ],
-        { env: { PATH: `${bin}:${process.env.PATH}` } },
+        { env: { PATH: `${hostileBin}:${bin}:${process.env.PATH}` } },
       );
       expect(await readFile(log, "utf8")).toContain("zedbee@0.1.0-beta.13");
       await expect(readFile(sentinel)).rejects.toMatchObject({

@@ -1,6 +1,15 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join, relative } from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
 import {
   installProjectDependency,
@@ -9,6 +18,7 @@ import {
 
 const execution = vi.hoisted(() => ({
   yarnVersion: "1.22.22",
+  command: "",
   calls: [] as Array<{
     command: string;
     args: readonly string[];
@@ -29,7 +39,7 @@ vi.mock("execa", async (importOriginal) => {
         env: Record<string, string>;
       },
     ) => {
-      if (!["npm", "pnpm", "yarn", "bun"].includes(command))
+      if (command !== execution.command)
         return original.execa(command, args, options);
       execution.calls.push({ command, args, options });
       if (args[0] === "--version")
@@ -42,8 +52,10 @@ vi.mock("execa", async (importOriginal) => {
       );
       // Modern Yarn's default PnP linker does not create the installation that
       // Swarm's real hook resolver requires when project rc is disabled.
-      if (command === "yarn" && Number(execution.yarnVersion.split(".")[0]) >= 3 &&
-          options.env.YARN_NODE_LINKER !== "node-modules")
+      if (
+        Number(execution.yarnVersion.split(".")[0]) >= 3 &&
+        options.env.YARN_NODE_LINKER !== "node-modules"
+      )
         return { stdout: "", stderr: "", exitCode: 0 };
       const packageRoot = join(options.cwd, "node_modules", "zedbee");
       await mkdir(packageRoot, { recursive: true });
@@ -57,6 +69,38 @@ vi.mock("execa", async (importOriginal) => {
   };
 });
 
+async function trustedYarn(repositoryRoot: string) {
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "zedbee-installed-yarn-")),
+  );
+  onTestFinished(async () => {
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  });
+  const command = join(
+    root,
+    process.platform === "win32" ? "yarn.exe" : "yarn",
+  );
+  await writeFile(
+    command,
+    "// External installed manager; execution replaced below.\n",
+  );
+  await chmod(command, 0o755);
+  const hostile = join(repositoryRoot, "tools");
+  await mkdir(hostile);
+  await writeFile(
+    join(hostile, "yarn"),
+    `#!${process.execPath}\nrequire("node:fs").writeFileSync(${JSON.stringify(join(repositoryRoot, "MANAGER_EXECUTED"))}, "unsafe");\n`,
+  );
+  await chmod(join(hostile, "yarn"), 0o755);
+  execution.command = command;
+  vi.stubEnv(
+    "PATH",
+    `${hostile}${delimiter}${root}${delimiter}${process.env.PATH ?? ""}`,
+  );
+  return { command, hostile };
+}
+
 describe("project installer subprocess boundary", () => {
   it.each([
     ["1.22.22", "yarn@4.0.0", "--ignore-scripts"],
@@ -67,6 +111,7 @@ describe("project installer subprocess boundary", () => {
       execution.calls = [];
       execution.yarnVersion = version;
       const repo = await createGitRepository();
+      const installed = await trustedYarn(repo.root);
       await repo.write(
         "package.json",
         JSON.stringify({ name: "fixture", packageManager }),
@@ -78,6 +123,14 @@ describe("project installer subprocess boundary", () => {
         new AbortController().signal,
       );
       const [probe, install] = execution.calls;
+      expect(probe?.command).toBe(installed.command);
+      expect(install?.command).toBe(installed.command);
+      expect(install?.options.env.PATH?.split(delimiter)).not.toContain(
+        installed.hostile,
+      );
+      await expect(
+        readFile(join(repo.root, "MANAGER_EXECUTED")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
       expect(probe?.args).toEqual(["--version"]);
       expect(relative(repo.root, probe!.options.cwd).startsWith("..")).toBe(
         true,
@@ -104,6 +157,7 @@ describe("project installer subprocess boundary", () => {
     execution.calls = [];
     execution.yarnVersion = "not a Yarn version";
     const repo = await createGitRepository();
+    await trustedYarn(repo.root);
     await repo.write(
       "package.json",
       '{"name":"fixture","packageManager":"yarn@4.0.0"}',
@@ -123,6 +177,7 @@ describe("project installer subprocess boundary", () => {
     execution.calls = [];
     execution.yarnVersion = "2.4.3";
     const repo = await createGitRepository();
+    await trustedYarn(repo.root);
     await repo.write(
       "package.json",
       '{"name":"fixture","packageManager":"yarn@2.4.3"}',

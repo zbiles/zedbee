@@ -2,9 +2,26 @@
 // The plugin copy is generated and byte-checked by scripts/prepare-plugin.mjs.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  access,
+  lstat,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import {
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { pathToFileURL } from "node:url";
 
 const MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
@@ -60,31 +77,125 @@ export function installArguments(
   ];
 }
 
-// Windows cannot execute .cmd shims without a shell. Resolve the static Node
-// entry used by npm-installed and Corepack shims instead of evaluating cmd text.
-export async function windowsManagerInvocation(manager, pathValue) {
-  for (const directory of pathValue.split(";")) {
-    if (!directory) continue;
-    const root = directory.replace(/^"|"$/gu, "");
-    for (const extension of [".exe", ".cmd"]) {
-      const executable = join(root, `${manager}${extension}`);
-      if (!(await lstat(executable).catch(() => undefined))?.isFile()) continue;
-      if (extension === ".exe") return { command: executable, args: [] };
+function containsDependencyBin(path) {
+  const parts = path.toLowerCase().split(/[\\/]+/u);
+  return parts.some(
+    (part, index) => part === "node_modules" && parts[index + 1] === ".bin",
+  );
+}
+
+function isContained(root, path) {
+  const fromRoot = relative(root, path);
+  return (
+    fromRoot === "" ||
+    (!isAbsolute(fromRoot) &&
+      fromRoot !== ".." &&
+      !fromRoot.startsWith(`..${sep}`))
+  );
+}
+
+async function repositoryTrustRoot(cwd) {
+  const start = await realpath(cwd);
+  let directory = start;
+  while (true) {
+    if (await lstat(join(directory, ".git")).catch(() => undefined))
+      return directory;
+    const parent = dirname(directory);
+    if (parent === directory) return start;
+    directory = parent;
+  }
+}
+
+async function trustedFile(path, repositoryRoot, executable, platform) {
+  try {
+    const canonical = await realpath(path);
+    if (
+      containsDependencyBin(canonical) ||
+      isContained(repositoryRoot, canonical) ||
+      !(await stat(canonical)).isFile()
+    )
+      return undefined;
+    await access(
+      canonical,
+      executable && platform !== "win32" ? constants.X_OK : constants.F_OK,
+    );
+    return canonical;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveManager(
+  manager,
+  cwd,
+  pathValue,
+  platform = process.platform,
+) {
+  const repositoryRoot = await repositoryTrustRoot(cwd);
+  const directories = [];
+  const separator = platform === "win32" ? ";" : delimiter;
+  for (const entry of pathValue.split(separator)) {
+    const path = platform === "win32" ? entry.replace(/^"|"$/gu, "") : entry;
+    if (!isAbsolute(path) || containsDependencyBin(path)) continue;
+    const canonical = await realpath(path).catch(() => undefined);
+    if (
+      canonical === undefined ||
+      containsDependencyBin(canonical) ||
+      isContained(repositoryRoot, canonical) ||
+      directories.includes(canonical)
+    )
+      continue;
+    if ((await stat(canonical).catch(() => undefined))?.isDirectory())
+      directories.push(canonical);
+  }
+  const path = directories.join(separator);
+  for (const directory of directories) {
+    for (const extension of platform === "win32" ? [".exe", ".cmd"] : [""]) {
+      const executable = await trustedFile(
+        join(directory, `${manager}${extension}`),
+        repositoryRoot,
+        true,
+        platform,
+      );
+      if (executable === undefined) continue;
+      if (extension !== ".cmd") return { command: executable, args: [], path };
+      // Windows cannot execute .cmd shims without a shell. Resolve the static
+      // Node entry used by npm-installed and Corepack shims, validating its
+      // canonical target as well as the shim itself.
       const shim = await readFile(executable, "utf8");
       const entry = /"(?:%~dp0|%dp0%)[\\/]([^"\r\n]+\.(?:c?js))"/iu.exec(
         shim,
       )?.[1];
       if (entry !== undefined && !entry.includes("%")) {
-        const script = resolve(root, entry.replaceAll("\\", "/"));
-        if ((await lstat(script).catch(() => undefined))?.isFile())
-          return { command: process.execPath, args: [script] };
+        const script = await trustedFile(
+          resolve(dirname(executable), entry.replaceAll("\\", "/")),
+          repositoryRoot,
+          false,
+          platform,
+        );
+        if (script !== undefined)
+          return { command: process.execPath, args: [script], path };
+        continue;
       }
       throw new Error(
         `Cannot safely resolve the installed ${manager} Windows shim to its Node entry. Use a standard package-manager installation.`,
       );
     }
   }
-  throw new Error(`Could not find the installed ${manager} package manager.`);
+  throw new Error(
+    `No trusted ${manager} executable is available outside the repository and dependency bins.`,
+  );
+}
+
+export async function windowsManagerInvocation(manager, pathValue, cwd) {
+  if (!MANAGERS.has(manager)) throw new Error("Unsupported package manager.");
+  const { command, args } = await resolveManager(
+    manager,
+    cwd,
+    pathValue,
+    "win32",
+  );
+  return { command, args };
 }
 
 function terminateTree(child) {
@@ -108,17 +219,10 @@ function terminateTree(child) {
 // No dependencies: this same executable ships inside the independent plugin ZIP.
 async function execute(command, args, options) {
   options.cancelSignal?.throwIfAborted();
-  const invocation =
-    process.platform === "win32"
-      ? await windowsManagerInvocation(
-          command,
-          process.env.PATH ?? process.env.Path ?? "",
-        )
-      : { command, args: [] };
   return new Promise((resolve, reject) => {
-    const child = spawn(invocation.command, [...invocation.args, ...args], {
+    const child = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+      env: options.env,
       detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -180,7 +284,23 @@ export async function installDependency(
   run = execute,
 ) {
   validate(manager, packageSpec);
+  signal?.throwIfAborted();
+  const projectRoot = await realpath(cwd);
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key, value]) => key.toLowerCase() !== "path" && value !== undefined,
+    ),
+  );
+  const pathValue =
+    Object.entries(process.env).find(
+      ([key]) => key.toLowerCase() === "path",
+    )?.[1] ?? "";
+  // Resolve before either executor: the CLI injects execa, while the standalone
+  // plugin uses the dependency-free runner. Both retain one manager identity.
+  const invocation = await resolveManager(manager, projectRoot, pathValue);
   const env = {
+    ...inherited,
+    PATH: invocation.path,
     COREPACK_ENABLE_PROJECT_SPEC: "0",
     COREPACK_ENABLE_AUTO_PIN: "0",
     npm_config_ignore_scripts: "true",
@@ -196,14 +316,19 @@ export async function installDependency(
     // away from project rc/delegation before selecting Classic/modern flags.
     const probeRoot = await mkdtemp(join(tmpdir(), "zedbee-yarn-version-"));
     try {
-      const version = await run("yarn", ["--version"], {
-        cwd: probeRoot,
-        env,
-        cancelSignal: signal,
-        timeout: 30_000,
-        stdin: "ignore",
-        reject: false,
-      });
+      const version = await run(
+        invocation.command,
+        [...invocation.args, "--version"],
+        {
+          cwd: probeRoot,
+          env,
+          extendEnv: false,
+          cancelSignal: signal,
+          timeout: 30_000,
+          stdin: "ignore",
+          reject: false,
+        },
+      );
       const major = /^(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?$/u.exec(
         version.stdout.trim(),
       )?.[1];
@@ -221,11 +346,15 @@ export async function installDependency(
     }
   }
   const result = await run(
-    manager,
-    installArguments(manager, workspaceRoot, classicYarn, packageSpec),
+    invocation.command,
+    [
+      ...invocation.args,
+      ...installArguments(manager, workspaceRoot, classicYarn, packageSpec),
+    ],
     {
-      cwd: await realpath(cwd),
+      cwd: projectRoot,
       env,
+      extendEnv: false,
       cancelSignal: signal,
       killDescendants: true,
       timeout: 300_000,

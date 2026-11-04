@@ -17,6 +17,12 @@ export interface InitFormattingImport {
   readonly limitations: readonly string[];
 }
 
+/** Supported imported values and the exact configuration bytes they came from. */
+export interface EvaluatedExecutableImports {
+  readonly imported: InitFormattingImport;
+  readonly evaluatedConfigs: readonly ExecutableEvaluatedConfig[];
+}
+
 /** Data-only detection summary; never grants or executes anything. */
 export interface InitFormattingDetection {
   readonly projectRoot: string;
