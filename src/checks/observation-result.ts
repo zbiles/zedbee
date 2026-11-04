@@ -32,6 +32,7 @@ import {
 } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
+  IGNORED_DIRECTORY_NAMES,
   type SnapshotRegistry,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
@@ -145,12 +146,16 @@ async function changedEntities(
   return Object.freeze(entities);
 }
 
-function hasObservationPaths(input: readonly Observation[]): boolean {
-  return input.some(
-    (observation) =>
-      observation.location?.file !== undefined ||
-      observation.entity?.file !== undefined,
-  );
+function observationPaths(input: readonly Observation[]): readonly string[] {
+  return [
+    ...new Set(
+      input.flatMap((observation) =>
+        [observation.location?.file, observation.entity?.file].filter(
+          (path): path is string => path !== undefined,
+        ),
+      ),
+    ),
+  ].sort(compareCodeUnits);
 }
 
 function ownsPath(relativeRoot: string, path: string): boolean {
@@ -201,12 +206,25 @@ function validateObservationPaths(
 async function snapshotRegistry(
   snapshotRoot: string,
   inspection: RepositoryInspection,
+  paths: readonly string[],
 ): Promise<SnapshotRegistry> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (inspection.snapshotRoot !== canonicalRoot) {
     throw new TypeError("Inspection does not match its repository snapshot");
   }
-  return captureSnapshotRegistry(canonicalRoot);
+  const registry = await captureSnapshotRegistry(canonicalRoot, paths);
+  // Requested inventories must retain the full inventory's excluded-path
+  // boundary, including a symlink's canonical target and its ancestors.
+  const excluded = new Set<string>(IGNORED_DIRECTORY_NAMES);
+  if (
+    registry
+      .entries()
+      .some((entry) =>
+        entry.repositoryPath.split("/").some((part) => excluded.has(part)),
+      )
+  )
+    throw new TypeError("Unknown observation path");
+  return registry;
 }
 
 function addedRanges(context: CheckRunContext) {
@@ -339,15 +357,22 @@ export async function observationCheckResult(
     : undefined;
   assertUniqueMetricFingerprints("baseline", set.baseline);
   assertUniqueMetricFingerprints("target", set.target);
+  const baselinePaths = observationPaths(set.baseline);
+  const targetPaths = observationPaths(set.target);
   const [baselineRegistry, targetRegistry] = await Promise.all([
-    hasObservationPaths(set.baseline)
+    baselinePaths.length > 0
       ? snapshotRegistry(
           context.snapshots.baselineDir,
           context.baselineInspection,
+          baselinePaths,
         )
       : undefined,
-    hasObservationPaths(set.target)
-      ? snapshotRegistry(context.snapshots.targetDir, context.targetInspection)
+    targetPaths.length > 0
+      ? snapshotRegistry(
+          context.snapshots.targetDir,
+          context.targetInspection,
+          targetPaths,
+        )
       : undefined,
   ]);
   if (baselineRegistry !== undefined)

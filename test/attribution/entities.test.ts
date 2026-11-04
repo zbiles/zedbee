@@ -1,11 +1,75 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createAnalysisReuseSession,
+  withAnalysisReuseSession,
+} from "../../src/checks/analysis-reuse.js";
 import * as ts from "typescript";
 import {
   collectChangedEntities,
   collectMetricEntitySpans,
 } from "../../src/attribution/entities.js";
 
+// Keep the real TypeScript parser and syntax validation while counting work.
+vi.mock("typescript", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("typescript")>();
+  return {
+    ...actual,
+    createSourceFile: vi.fn(actual.createSourceFile),
+    transpileModule: vi.fn(actual.transpileModule),
+  };
+});
+
 describe("collectChangedEntities", () => {
+  it("validates and collects syntax once for metric and changed entities in a session", async () => {
+    const session = createAnalysisReuseSession();
+    const source =
+      "class Worker { run() { return () => 1; } }\nfunction other() {}";
+    vi.mocked(ts.createSourceFile).mockClear();
+    vi.mocked(ts.transpileModule).mockClear();
+    try {
+      await withAnalysisReuseSession(session, async () => {
+        const spans = collectMetricEntitySpans(source, "src/worker.ts");
+        const changed = collectChangedEntities(source, "src/worker.ts", [
+          { start: 1, end: 1 },
+        ]);
+        expect(changed.map(({ name }) => name)).toEqual([
+          "Worker",
+          expect.stringMatching(/^anonymous@/u),
+          "run",
+        ]);
+        expect(
+          spans.some(
+            ({ entity }) =>
+              entity.identity ===
+              changed.find(({ name }) => name === "run")?.identity,
+          ),
+        ).toBe(true);
+        expect(collectMetricEntitySpans(source, "src/worker.ts")).toEqual(
+          spans,
+        );
+        expect(ts.createSourceFile).toHaveBeenCalledTimes(1);
+        expect(ts.transpileModule).toHaveBeenCalledTimes(1);
+        expect(() =>
+          collectChangedEntities(source, "src/worker.ts", [
+            { start: 0, end: 1 },
+          ]),
+        ).toThrow(TypeError);
+        const other = collectMetricEntitySpans(
+          source + "\nfunction added() {}",
+          "src/worker.ts",
+        );
+        expect(other.some(({ entity }) => entity.name === "added")).toBe(true);
+        expect(
+          collectMetricEntitySpans(source, "src/other.ts").every(
+            ({ entity }) => entity.file === "src/other.ts",
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("assigns constructors the canonical instance-member identity", () => {
     const [constructor] = collectChangedEntities(
       "class Worker { constructor() { work(); } }",

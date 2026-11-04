@@ -69,12 +69,12 @@ function groupedScopes(
 }
 
 function remapScope(owner: string, pairs: ReadonlyMap<string, string>): string {
-  const match = [...pairs.keys()]
-    .filter((scope) => owner === scope || owner.startsWith(`${scope}/`))
-    .sort((left, right) => right.length - left.length)[0];
-  return match === undefined
-    ? owner
-    : pairs.get(match)! + owner.slice(match.length);
+  for (let end = owner.length; end > 0; end = owner.lastIndexOf("/", end - 1)) {
+    const prefix = owner.slice(0, end);
+    const matched = pairs.get(prefix);
+    if (matched !== undefined) return matched + owner.slice(end);
+  }
+  return owner;
 }
 
 function pairFileMembers(
@@ -106,31 +106,65 @@ function pairFileMembers(
         member.span.entity.startLine <= end &&
         member.span.entity.endLine >= start,
     );
+  const baselineCounts = new Map<string, number>();
+  for (const member of baseline)
+    baselineCounts.set(
+      member.sourceKey,
+      (baselineCounts.get(member.sourceKey) ?? 0) + 1,
+    );
+  const targetGroups = new Map<
+    string,
+    {
+      members: ClassMember[];
+      unedited: ClassMember[];
+      uneditedByLines: Map<string, ClassMember[]>;
+    }
+  >();
+  for (const member of target) {
+    const group: NonNullable<ReturnType<typeof targetGroups.get>> =
+      targetGroups.get(member.sourceKey) ?? {
+        members: [],
+        unedited: [],
+        uneditedByLines: new Map(),
+      };
+    group.members.push(member);
+    if (!edited(member)) {
+      group.unedited.push(member);
+      const lines = `${member.span.entity.startLine}:${member.span.entity.endLine}`;
+      const atLines = group.uneditedByLines.get(lines) ?? [];
+      atLines.push(member);
+      group.uneditedByLines.set(lines, atLines);
+    }
+    targetGroups.set(member.sourceKey, group);
+  }
   const anchors = new Map<ClassMember, ClassMember>();
   for (const member of baseline) {
-    const candidates = target.filter(
-      ({ sourceKey }) => sourceKey === member.sourceKey,
-    );
-    const span = unchanged.find(
-      (range) =>
-        range.before <= member.span.entity.startLine &&
-        member.span.entity.endLine < range.before + range.count,
-    );
+    const group = targetGroups.get(member.sourceKey);
+    if (group === undefined) continue;
+    const candidates = group.members;
+    let start = 0;
+    let end = unchanged.length;
+    while (start < end) {
+      const middle = (start + end) >>> 1;
+      if (unchanged[middle]!.before <= member.span.entity.startLine)
+        start = middle + 1;
+      else end = middle;
+    }
+    const range = unchanged[start - 1];
+    const span =
+      range !== undefined &&
+      member.span.entity.endLine < range.before + range.count
+        ? range
+        : undefined;
+    const delta = span === undefined ? undefined : span.after - span.before;
     const mapped =
-      span === undefined
+      delta === undefined
         ? []
-        : candidates.filter(
-            (candidate) =>
-              !edited(candidate) &&
-              candidate.span.entity.startLine ===
-                member.span.entity.startLine + span.after - span.before &&
-              candidate.span.entity.endLine ===
-                member.span.entity.endLine + span.after - span.before,
-          );
-    const unedited = candidates.filter((candidate) => !edited(candidate));
-    const uniqueBefore =
-      baseline.filter(({ sourceKey }) => sourceKey === member.sourceKey)
-        .length === 1;
+        : (group.uneditedByLines.get(
+            `${member.span.entity.startLine + delta}:${member.span.entity.endLine + delta}`,
+          ) ?? []);
+    const unedited = group.unedited;
+    const uniqueBefore = baselineCounts.get(member.sourceKey) === 1;
     const candidate =
       mapped.length === 1
         ? mapped[0]
@@ -167,6 +201,7 @@ function pairFileMembers(
     if (choices.size === 1 && backward.get(candidate!)?.size === 1)
       scopePairs.set(scope, candidate!);
   }
+  const pairedTargets = new Set(scopePairs.values());
   const oldScopes = groupedScopes(baseline);
   const newScopes = groupedScopes(target);
   // After source anchors, only a single remaining old/new class can be paired
@@ -188,12 +223,12 @@ function pairFileMembers(
     const unmatchedOld = [...siblings].filter(
       (scope) => !scopePairs.has(scope),
     );
-    const pairedTargets = new Set(scopePairs.values());
     const unmatchedNew = [...candidates].filter(
       (scope) => !pairedTargets.has(scope),
     );
     if (unmatchedOld.length === 1 && unmatchedNew.length === 1) {
       scopePairs.set(unmatchedOld[0]!, unmatchedNew[0]!);
+      pairedTargets.add(unmatchedNew[0]!);
     }
   }
   const identities = new Map<string, string>();

@@ -11,6 +11,8 @@ import {
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
 import type { ScanReport } from "./report.js";
+import pLimit from "p-limit";
+import { freezeResult } from "../core/freeze-result.js";
 
 interface SecretRange {
   readonly startLine: number;
@@ -181,16 +183,6 @@ function redactedMarker(
   });
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value)) {
-      deepFreeze(nested);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
 export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
   const checks = Object.freeze(
     report.checks.map((check) =>
@@ -202,7 +194,7 @@ export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
       ),
     ),
   );
-  return deepFreeze({
+  return freezeResult({
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
@@ -243,8 +235,10 @@ async function captureRegistry(
 export async function enrichSourceExcerpts(
   checks: readonly CheckResult[],
   snapshot: Pick<RepositoryInspection, "snapshotRoot">,
+  privateTargetResults: readonly CheckResult[] = checks,
 ): Promise<readonly CheckResult[]> {
-  const secretRanges = secretRangeIndex(checks);
+  // Attribution and visibility decide what is reported, never what is secret.
+  const secretRanges = secretRangeIndex([...checks, ...privateTargetResults]);
   const registry = await captureRegistry(snapshot.snapshotRoot);
   const requestedLines = new Map<string, Set<number>>();
   for (const check of checks) {
@@ -270,13 +264,16 @@ export async function enrichSourceExcerpts(
     string,
     Promise<ReadonlyMap<number, string> | undefined>
   >();
+  const limit = pLimit(8);
   if (registry !== undefined) {
     for (const [file, lines] of requestedLines) {
       sourceLines.set(
         file,
-        readContainedLines(registry, file, [...lines], {
-          maxCodePoints: SOURCE_EXCERPT_MAX_CODE_POINTS + 1,
-        }).catch(() => undefined),
+        limit(() =>
+          readContainedLines(registry, file, [...lines], {
+            maxCodePoints: SOURCE_EXCERPT_MAX_CODE_POINTS + 1,
+          }),
+        ).catch(() => undefined),
       );
     }
   }

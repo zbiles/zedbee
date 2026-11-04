@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as fsPromises from "node:fs/promises";
+import { join } from "node:path";
 import type { CheckRunContext, CheckTarget } from "../../src/checks/adapter.js";
 import { observationCheckResult } from "../../src/checks/observation-result.js";
 import { resolveConfig } from "../../src/config/profiles.js";
@@ -8,6 +10,16 @@ import type { Observation } from "../../src/core/types.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
+
+// Count actual filesystem work, retaining containment and identity checks.
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readdir: vi.fn(actual.readdir),
+    lstat: vi.fn(actual.lstat),
+  };
+});
 
 async function fixturePair() {
   const baseline = await createInspectionFixture();
@@ -145,6 +157,122 @@ function metricAt(
 }
 
 describe("observationCheckResult", () => {
+  it("inventories only unique reported paths across workspace results", async () => {
+    const rootTarget = {
+      id: ".",
+      kind: "repository" as const,
+      relativeRoot: ".",
+    };
+    const runContext = await context("lint", rootTarget, {
+      severity: "error",
+      when: "relevant",
+    });
+    // Unrelated inventory size must not multiply filesystem work per check target.
+    for (let index = 0; index < 40; index++)
+      await fsPromises.writeFile(
+        join(runContext.snapshots.targetDir, `unrelated-${index}.txt`),
+        "unrelated",
+      );
+    vi.mocked(fsPromises.readdir).mockClear();
+    vi.mocked(fsPromises.lstat).mockClear();
+    for (const root of ["apps/web", "packages/core", "links/linked"]) {
+      const target = {
+        id: root,
+        kind: "workspace" as const,
+        relativeRoot: root,
+      };
+      const observation = located("lint", `${root}/src/index.ts`);
+      const result = await observationCheckResult(
+        "lint",
+        {
+          checkId: "lint",
+          target,
+          baselineObservations: [],
+          targetObservations: [
+            observation,
+            { ...observation, identity: "second-rule" },
+          ],
+        },
+        { ...runContext, target },
+        false,
+      );
+      expect(result.status).toBe("completed");
+    }
+    expect(fsPromises.readdir).not.toHaveBeenCalled();
+    expect(vi.mocked(fsPromises.lstat).mock.calls.length).toBeLessThan(50);
+  });
+
+  it.each(["node_modules/dependency/private.ts", "ignored-alias/private.ts"])(
+    "continues rejecting observation paths excluded from inventories: %s",
+    async (file) => {
+      const target = {
+        id: ".",
+        kind: "repository" as const,
+        relativeRoot: ".",
+      };
+      const runContext = await context("lint", target, {
+        severity: "error",
+        when: "relevant",
+      });
+      await fsPromises.mkdir(
+        join(runContext.snapshots.targetDir, "node_modules/dependency"),
+        { recursive: true },
+      );
+      await fsPromises.writeFile(
+        join(
+          runContext.snapshots.targetDir,
+          "node_modules/dependency/private.ts",
+        ),
+        "private source",
+      );
+      await fsPromises.symlink(
+        join(runContext.snapshots.targetDir, "node_modules/dependency"),
+        join(runContext.snapshots.targetDir, "ignored-alias"),
+        process.platform === "win32" ? "junction" : undefined,
+      );
+      await expect(
+        observationCheckResult(
+          "lint",
+          {
+            checkId: "lint",
+            target,
+            baselineObservations: [],
+            targetObservations: [located("lint", file)],
+          },
+          runContext,
+          false,
+        ),
+      ).rejects.toThrow();
+    },
+  );
+
+  it("rejects an observation through an external symlink without traversing other paths", async () => {
+    const target = { id: ".", kind: "repository" as const, relativeRoot: "." };
+    const runContext = await context("lint", target, {
+      severity: "error",
+      when: "relevant",
+    });
+    const outside = await createInspectionFixture();
+    await outside.write("private.ts", "private source");
+    await fsPromises.symlink(
+      join(outside.root, "private.ts"),
+      join(runContext.snapshots.targetDir, "escape.ts"),
+    );
+    await expect(
+      observationCheckResult(
+        "lint",
+        {
+          checkId: "lint",
+          target,
+          baselineObservations: [],
+          targetObservations: [located("lint", "escape.ts")],
+        },
+        runContext,
+        false,
+      ),
+    ).rejects.toThrow();
+  });
+
   it("attributes manifest entities without parsing them as JavaScript", async () => {
     const target = { id: ".", kind: "workspace" as const, relativeRoot: "." };
     const runContext = await context(

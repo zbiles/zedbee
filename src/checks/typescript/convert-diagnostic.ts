@@ -29,18 +29,43 @@ function severity(category: ts.DiagnosticCategory): Severity {
   return "info";
 }
 
-function sanitizeMessage(
+let messageTemplates: ReadonlyMap<number, string> | undefined;
+
+/** Compiler-owned prose only: interpolated literals may need source context to detect. */
+export function typescriptDiagnosticMessage(code: number): string {
+  if (messageTemplates === undefined) {
+    const diagnostics =
+      (ts as unknown as { Diagnostics?: Record<string, ts.DiagnosticMessage> })
+        .Diagnostics ?? {};
+    messageTemplates = new Map(
+      Object.values(diagnostics)
+        .filter(
+          (entry) =>
+            Number.isSafeInteger(entry.code) &&
+            typeof entry.message === "string",
+        )
+        .map((entry) => [
+          entry.code,
+          entry.message.replace(/\{\d+\}/gu, "[source]"),
+        ]),
+    );
+  }
+  return messageTemplates.get(code) ?? "TypeScript reported a diagnostic.";
+}
+
+function privateMessageIdentity(
   message: string,
   snapshotRoot: string,
   repositoryRoot: string,
 ): string {
-  return message
+  const normalized = message
     .split(snapshotRoot)
     .join("<snapshot>")
     .split(repositoryRoot)
     .join("<repository>")
     .replaceAll("\\", "/")
     .replace(/(^|[\s("'`])(?:[A-Za-z]:\/|\/)[^\s'"`<>]+/gu, "$1<path>");
+  return createHash("sha256").update(normalized).digest("hex");
 }
 
 export function convertTypescriptDiagnostic(
@@ -49,11 +74,12 @@ export function convertTypescriptDiagnostic(
   repositoryRoot: string,
 ): Observation | undefined {
   const rule = `typescript/TS${diagnostic.code}`;
-  const flattened = ts.flattenDiagnosticMessageText(
-    diagnostic.messageText,
-    " ",
+  const sanitized = typescriptDiagnosticMessage(diagnostic.code);
+  const messageIdentity = privateMessageIdentity(
+    ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+    snapshotRoot,
+    repositoryRoot,
   );
-  const sanitized = sanitizeMessage(flattened, snapshotRoot, repositoryRoot);
   const path =
     diagnostic.file === undefined
       ? undefined
@@ -91,12 +117,13 @@ export function convertTypescriptDiagnostic(
         };
   const scope =
     location === undefined
-      ? `repository:${createHash("sha256").update(sanitized).digest("hex").slice(0, 16)}`
+      ? `repository:${messageIdentity.slice(0, 16)}`
       : `${location.file}:${location.startLine ?? 0}:${location.startColumn ?? 0}`;
   return {
     check: "types",
     rule,
     identity: `${rule}:${scope}`,
+    comparisonIdentity: messageIdentity,
     severity: severity(diagnostic.category),
     message: sanitized,
     ...(location === undefined ? {} : { location }),

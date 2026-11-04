@@ -1,3 +1,4 @@
+import { freezeResult } from "../core/freeze-result.js";
 import { createHash } from "node:crypto";
 import {
   createLocalAnalyzerExecutor,
@@ -236,14 +237,6 @@ function digest(source: string): string {
   return createHash("sha256").update(source, "utf8").digest("hex");
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value)) deepFreeze(nested);
-    Object.freeze(value);
-  }
-  return value;
-}
-
 function issue(
   kind: FixIssue["kind"],
   file: string,
@@ -350,7 +343,7 @@ function completedFixResult(
   progress: ApplyFixProgress,
   interrupted = false,
 ): FixResult {
-  return deepFreeze({
+  return freezeResult({
     exitCode:
       progress.issues.length === 0 && !interrupted
         ? (0 as const)

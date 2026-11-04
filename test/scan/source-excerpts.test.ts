@@ -13,6 +13,8 @@ import { createReport } from "../helpers/scan-report.js";
 const readBoundary = vi.hoisted(() => ({
   containedFileReads: [] as string[],
   forbidWholeFileReads: false,
+  activeLineReads: 0,
+  maximumLineReads: 0,
 }));
 
 vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
@@ -20,6 +22,20 @@ vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
     await importOriginal<typeof import("../../src/inspection/read-json.js")>();
   return {
     ...original,
+    async readContainedLines(
+      ...args: Parameters<typeof original.readContainedLines>
+    ) {
+      readBoundary.activeLineReads += 1;
+      readBoundary.maximumLineReads = Math.max(
+        readBoundary.maximumLineReads,
+        readBoundary.activeLineReads,
+      );
+      try {
+        return await original.readContainedLines(...args);
+      } finally {
+        readBoundary.activeLineReads -= 1;
+      }
+    },
     async readContainedFile(
       ...args: Parameters<typeof original.readContainedFile>
     ) {
@@ -478,5 +494,51 @@ describe("enrichSourceExcerpts", () => {
     });
     expect(readBoundary.containedFileReads).toEqual([]);
     expect(JSON.stringify(results)).not.toContain("RECOGNIZABLE-STAGED-SECRET");
+  });
+
+  it("uses private target secret evidence even when policy has hidden the existing finding", async () => {
+    const snapshotRoot = await sourceSnapshot(
+      "one\ntwo\nthree\nEXISTING-SECRET\n",
+    );
+    const secret = finding({
+      check: "secrets",
+      attribution: { kind: "none", staged: false, evidence: [] },
+    });
+    const results = await enrichSourceExcerpts(
+      [completed([finding()])],
+      { snapshotRoot },
+      [completed([secret])],
+    );
+    expect(results[0]?.findings[0]?.sourceExcerpt).toEqual({
+      line: 4,
+      redacted: true,
+      truncated: false,
+    });
+    expect(JSON.stringify(results)).not.toContain("EXISTING-SECRET");
+    expect(results[0]?.findings).toHaveLength(1);
+  });
+
+  it("bounds file reads while returning every requested excerpt", async () => {
+    const snapshotRoot = await sourceSnapshot("first\n");
+    const findings = await Promise.all(
+      Array.from({ length: 40 }, async (_, index) => {
+        const file = `src/value-${index}.ts`;
+        await writeFile(join(snapshotRoot, file), `value ${index}\n`);
+        return finding({
+          id: `lint:${index}`,
+          location: { file, startLine: 1 },
+        });
+      }),
+    );
+    readBoundary.maximumLineReads = 0;
+    const results = await enrichSourceExcerpts([completed(findings)], {
+      snapshotRoot,
+    });
+    expect(readBoundary.maximumLineReads).toBeLessThanOrEqual(8);
+    expect(
+      results[0]?.findings.every(
+        ({ sourceExcerpt }) => sourceExcerpt?.text !== undefined,
+      ),
+    ).toBe(true);
   });
 });

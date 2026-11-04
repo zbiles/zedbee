@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as crypto from "node:crypto";
 import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +37,17 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, readdir: vi.fn(actual.readdir) };
+});
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...actual,
+    createHash: vi.fn((...args: Parameters<typeof actual.createHash>) => {
+      const hash = actual.createHash(...args);
+      vi.spyOn(hash, "update");
+      return hash;
+    }),
+  };
 });
 beforeEach(() => vi.clearAllMocks());
 
@@ -562,7 +574,46 @@ describe("observation cache keys", () => {
     expect(new Set(keys).size).toBe(2);
   });
 
-  it("retains v2 key bytes including source identity and symlinks", async () => {
+  it("hashes canonical snapshot inventories once rather than once per target key", async () => {
+    const fixture = await createInspectionFixture();
+    for (let index = 0; index < 100; index++)
+      await fixture.write(
+        `src/function-${index}.ts`,
+        `export const value = ${index};`,
+      );
+    const keyFor = createObservationCacheKeyBuilder(
+      fixture.root,
+      fixture.root,
+      { mode: "index", baseline: "HEAD", target: "index" },
+    );
+    const input = {
+      checkId: "lint",
+      engineIdentity: "test",
+      policy: { severity: "error" as const, when: "relevant" as const },
+      checkTarget: { id: ".", kind: "repository" as const, relativeRoot: "." },
+    };
+    const first = await keyFor(input);
+    vi.mocked(crypto.createHash).mockClear();
+    const second = await keyFor({
+      ...input,
+      checkTarget: { ...input.checkTarget, id: "other" },
+    });
+    expect(second).not.toBe(first);
+    const hashedBytes = vi
+      .mocked(crypto.createHash)
+      .mock.results.flatMap((result) =>
+        result.type === "return"
+          ? vi
+              .mocked(result.value.update)
+              .mock.calls.map(([data]) => Buffer.byteLength(data))
+          : [],
+      )
+      .reduce((total, bytes) => total + bytes, 0);
+    expect(hashedBytes).toBeLessThan(2048);
+    expect(await keyFor(input)).toBe(first);
+  });
+
+  it("uses versioned digest key bytes including source identity and symlinks", async () => {
     const [baseline, target] = await Promise.all([
       createInspectionFixture(),
       createInspectionFixture(),
@@ -598,7 +649,7 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
+      "95a5ea237680b7a5b92e3611eba82957a184ad15cd0361552b51091f08e9985a",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
@@ -606,7 +657,7 @@ describe("observation cache keys", () => {
       { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
+      "95a5ea237680b7a5b92e3611eba82957a184ad15cd0361552b51091f08e9985a",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);

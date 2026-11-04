@@ -1,3 +1,5 @@
+import { freezeResult } from "../core/freeze-result.js";
+import { readonlyMap } from "../core/immutable-map.js";
 import { createHash } from "node:crypto";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { lstat } from "node:fs/promises";
@@ -128,53 +130,6 @@ const DEFAULT_DEPENDENCIES: BuildFixPlanDependencies = {
     throw new Error("Zedbee could not determine the working-file state.");
   },
 };
-
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value)) deepFreeze(nested);
-    Object.freeze(value);
-  }
-  return value;
-}
-
-function readonlyMap<K, V>(
-  entries: readonly (readonly [K, V])[],
-): ReadonlyMap<K, V> {
-  const internal = new Map(entries);
-  let facade: ReadonlyMap<K, V>;
-  facade = Object.freeze({
-    get size() {
-      return internal.size;
-    },
-    get(key: K) {
-      return internal.get(key);
-    },
-    has(key: K) {
-      return internal.has(key);
-    },
-    entries() {
-      return internal.entries();
-    },
-    keys() {
-      return internal.keys();
-    },
-    values() {
-      return internal.values();
-    },
-    forEach(
-      callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void,
-      thisArg?: unknown,
-    ) {
-      internal.forEach((value, key) =>
-        callback.call(thisArg, value, key, facade),
-      );
-    },
-    [Symbol.iterator]() {
-      return internal[Symbol.iterator]();
-    },
-  });
-  return facade;
-}
 
 function selectedChecks(
   input: readonly FixableCheckId[] | undefined,
@@ -588,7 +543,7 @@ function publicPlan(
       .filter((item) => item.status === "skipped")
       .reduce((total, item) => total + fixesFor(item), 0),
   });
-  return deepFreeze({
+  return freezeResult({
     schemaVersion: 1 as const,
     target: "index" as const,
     selectedChecks: selected,
@@ -745,7 +700,7 @@ export async function buildFixPlan(
       const { config, git, signal } = session;
       if (session.kind === "unsupported") throw unsupportedInputError();
       if (session.kind === "empty") {
-        return deepFreeze({
+        return freezeResult({
           publicPlan: publicPlan(
             selected,
             [],
@@ -773,7 +728,7 @@ export async function buildFixPlan(
       );
       const planned = planCandidates(candidates, workingFiles);
       const checks = planChecks(selected, executions, planned.items);
-      return deepFreeze({
+      return freezeResult({
         publicPlan: publicPlan(
           selected,
           planned.items,

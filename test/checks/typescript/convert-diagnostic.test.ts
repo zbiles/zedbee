@@ -64,4 +64,28 @@ describe("convertTypescriptDiagnostic", () => {
 
     expect(second?.identity).toBe(first?.identity);
   });
+
+  it("distinguishes locationless compiler inputs privately while publishing only a source-free template", () => {
+    const make = (name: string): ts.Diagnostic => ({
+      category: ts.DiagnosticCategory.Error,
+      code: 2688,
+      file: undefined,
+      start: undefined,
+      length: undefined,
+      messageText: `Cannot find type definition file for '${name}'.`,
+    });
+    const first = convertTypescriptDiagnostic(
+      make("missing-foo"),
+      "/snapshot",
+      "/repository",
+    );
+    const second = convertTypescriptDiagnostic(
+      make("missing-bar"),
+      "/snapshot",
+      "/repository",
+    );
+    expect(first?.identity).not.toBe(second?.identity);
+    expect(first?.message).toBe(second?.message);
+    expect(JSON.stringify([first, second])).not.toMatch(/missing-(?:foo|bar)/u);
+  });
 });

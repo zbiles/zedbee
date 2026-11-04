@@ -13,7 +13,10 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { CheckObservationSet, CheckTarget } from "../checks/adapter.js";
 import { normalizeObservation } from "../attribution/fingerprint.js";
-import { isCacheableObservationCheck } from "../checks/metadata.js";
+import {
+  isCacheableObservationCheck,
+  requiresDependencyInputs,
+} from "../checks/metadata.js";
 import { sanitizeCheckTarget } from "../checks/sanitize-target.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Observation } from "../core/types.js";
@@ -74,12 +77,7 @@ export function sanitizeCacheableObservationSet(
     input.dependencyInputs === undefined
       ? undefined
       : sanitizeDependencyInputManifest(input.dependencyInputs);
-  if (
-    (input.checkId === "lint" ||
-      input.checkId === "types" ||
-      input.checkId === "deadCode") &&
-    dependencyInputs === undefined
-  )
+  if (requiresDependencyInputs(input.checkId) && dependencyInputs === undefined)
     throw new TypeError("Missing dependency inputs");
   if (
     [...baselineObservations, ...targetObservations].some(

@@ -41,7 +41,12 @@ import {
   effectiveBehaviorFingerprint,
 } from "../cache/key.js";
 import { observationCacheEngineIdentity } from "./engine-identity.js";
-import { isCacheableObservationCheck } from "./metadata.js";
+import {
+  isCacheableObservationCheck,
+  requiresDependencyInputs,
+} from "./metadata.js";
+import { readonlyMap } from "../core/immutable-map.js";
+import { createDiagnosticMessageSanitizer } from "./diagnostic-messages.js";
 import {
   sanitizeCacheableObservationSet,
   type ObservationCache,
@@ -146,45 +151,6 @@ function inspectionPolicy(
   if (root === undefined || !CHECK_IDS.includes(checkId as CheckId))
     return root;
   return resolveInspectionPolicy(context.config, checkId as CheckId);
-}
-
-function readonlyMap<K, V>(
-  entries: readonly (readonly [K, V])[],
-): ReadonlyMap<K, V> {
-  const internal = new Map(entries);
-  let facade: ReadonlyMap<K, V>;
-  facade = Object.freeze({
-    get size() {
-      return internal.size;
-    },
-    get(key: K) {
-      return internal.get(key);
-    },
-    has(key: K) {
-      return internal.has(key);
-    },
-    entries() {
-      return internal.entries();
-    },
-    keys() {
-      return internal.keys();
-    },
-    values() {
-      return internal.values();
-    },
-    forEach(
-      callback: (value: V, key: K, map: ReadonlyMap<K, V>) => void,
-      thisArg?: unknown,
-    ) {
-      internal.forEach((value, key) =>
-        callback.call(thisArg, value, key, facade),
-      );
-    },
-    [Symbol.iterator]() {
-      return internal[Symbol.iterator]();
-    },
-  });
-  return facade;
 }
 
 function snapshotChangedFile(file: ChangedFile): Readonly<ChangedFile> {
@@ -410,18 +376,23 @@ async function collectObservations(
   behavior: unknown,
   options: DispatchOptions,
   cacheKeyFor: ReturnType<typeof createObservationCacheKeyBuilder>,
+  sanitizeMessages: ReturnType<typeof createDiagnosticMessageSanitizer>,
 ): Promise<CheckObservationSet> {
   if (
     !isCacheableObservationCheck(adapter.id) ||
     (options.cache === undefined && options.cacheEngineIdentity === undefined)
   ) {
-    return Reflect.apply(adapter.collect, undefined, [runContext]);
+    return sanitizeMessages(
+      await Reflect.apply(adapter.collect, undefined, [runContext]),
+    );
   }
   const engineIdentity = (
     options.cacheEngineIdentity ?? observationCacheEngineIdentity
   )(adapter.id);
   if (engineIdentity === undefined) {
-    return Reflect.apply(adapter.collect, undefined, [runContext]);
+    return sanitizeMessages(
+      await Reflect.apply(adapter.collect, undefined, [runContext]),
+    );
   }
   let cacheKey: string | undefined;
   if (options.cache !== undefined && engineIdentity !== undefined) {
@@ -465,34 +436,30 @@ async function collectObservations(
         cached !== undefined &&
         cached.checkId === adapter.id &&
         sameTarget(cached.target, runContext.target) &&
-        ((adapter.id !== "lint" &&
-          adapter.id !== "types" &&
-          adapter.id !== "deadCode") ||
+        (!requiresDependencyInputs(adapter.id) ||
           validateDependencyInputs(
             cached.dependencyInputs,
             runContext,
             adapter.id === "deadCode" ? "knip" : false,
           ))
       ) {
-        return sanitizeCacheableObservationSet(cached);
+        return sanitizeMessages(sanitizeCacheableObservationSet(cached));
       }
     } catch {
       cacheKey = undefined;
     }
   }
 
-  const collected = await Reflect.apply(adapter.collect, undefined, [
-    runContext,
-  ]);
+  const collected = await sanitizeMessages(
+    await Reflect.apply(adapter.collect, undefined, [runContext]),
+  );
   if (
     cacheKey !== undefined &&
     options.cache !== undefined &&
     !runContext.signal.aborted &&
     (adapter.id !== "deadCode" ||
       (await cacheKeyFor.matchesSnapshotFiles(collected.dependencyInputs))) &&
-    ((adapter.id !== "lint" &&
-      adapter.id !== "types" &&
-      adapter.id !== "deadCode") ||
+    (!requiresDependencyInputs(adapter.id) ||
       validateDependencyInputs(
         collected.dependencyInputs,
         runContext,
@@ -778,6 +745,7 @@ export async function dispatchChecks(
   // Bounded producers retain only four active adapter inputs. Worker/class
   // scheduling belongs to the shared executor, including its four-worker mode.
   const limit = pLimit(4);
+  const sanitizeMessages = createDiagnosticMessageSanitizer();
   // Default installed metadata is reused only within this dispatch. Preserve
   // injected resolvers' per-collection behavior and avoid all reads without cache.
   const identities = new Map<string, string | undefined>();
@@ -1066,6 +1034,7 @@ export async function dispatchChecks(
                   : undefined,
                 executionOptions,
                 cacheKeyFor,
+                sanitizeMessages,
               );
               try {
                 adapterResult = await observationCheckResult(

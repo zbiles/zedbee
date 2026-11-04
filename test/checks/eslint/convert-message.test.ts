@@ -87,7 +87,7 @@ describe("convertEslintMessage", () => {
     expect(first.severity).toBe("warning");
   });
 
-  it("redacts absolute paths without corrupting an HTTPS documentation URL", () => {
+  it("omits untrusted prose for an unknown rule including source paths and supplied links", () => {
     const observation = convertEslintMessage(
       "src/value.ts",
       {
@@ -102,7 +102,7 @@ describe("convertEslintMessage", () => {
       "/snapshot",
     );
 
-    expect(observation.message).toContain("https://typescript-eslint.io/rules");
+    expect(observation.message).toBe("The analyzer reported a diagnostic.");
     expect(observation.message).not.toMatch(/C:|secret|\/opt|build\/value/);
   });
 
@@ -118,7 +118,8 @@ describe("convertEslintMessage", () => {
       ruleId: "react-hooks/refs",
       message:
         "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering.\n\n/private/tmp/zedbee-snapshot-secret/src/app.tsx:4:3\n  4 | ref.current = value;",
-      expected: "Error: Cannot access refs during render",
+      expected:
+        'Validates correct usage of refs, not reading/writing during render. See the "pitfalls" section in [`useRef()` usage](https://react.dev/reference/react/useRef#usage)',
     },
   ])(
     "produces a bounded safe summary for multiline $ruleId diagnostics",

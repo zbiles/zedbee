@@ -28,11 +28,11 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "captured-inputs-v3-diff-project-coverage",
+    revision: "captured-inputs-v3-diff-project-coverage+diagnostic-privacy-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
-    revision: "captured-inputs-v4-diff-project-coverage",
+    revision: "captured-inputs-v4-diff-project-coverage+diagnostic-privacy-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
@@ -63,7 +63,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: "zedbee-react-calibration-v2",
+    revision: "zedbee-react-calibration-v2+diagnostic-privacy-v1",
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -72,6 +72,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
+    revision: "diagnostic-privacy-v1",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

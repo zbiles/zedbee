@@ -1,4 +1,5 @@
 import type { Linter } from "eslint";
+import { createHash } from "node:crypto";
 import type {
   Observation,
   Severity,
@@ -6,6 +7,39 @@ import type {
 } from "../../core/types.js";
 import { managedAutomaticFixFor } from "../../attribution/fingerprint.js";
 import { DISPLAY_TEXT_LIMITS } from "../../core/display-text.js";
+import { managedRuleInventory } from "./rule-settings.js";
+
+/** Only managed package metadata may supply source-free diagnostic prose. */
+export function eslintDiagnosticMessage(
+  rule: string,
+  check: string,
+  message?: string,
+  messageId?: string,
+): string {
+  if (rule === "eslint/parsing-error") return "The source could not be parsed.";
+  if (
+    check !== "lint" &&
+    check !== "reactCorrectness" &&
+    check !== "reactAccessibility"
+  )
+    return "The analyzer reported a diagnostic.";
+  try {
+    const metadata = managedRuleInventory(check).get(rule)?.meta;
+    const templates = Object.fromEntries(
+      Object.entries(metadata?.messages ?? {}).map(([id, template]) => [
+        id,
+        template.replace(/\{\{[^{}]+\}\}/gu, "[source]"),
+      ]),
+    );
+    if (messageId !== undefined && Object.hasOwn(templates, messageId))
+      return templates[messageId]!;
+    if (message !== undefined && Object.values(templates).includes(message))
+      return message;
+    return metadata?.docs?.description ?? "The analyzer reported a diagnostic.";
+  } catch {
+    return "The analyzer reported a diagnostic.";
+  }
+}
 
 const TRUNCATION_MARKER = "... [truncated]";
 const UNSAFE_DISPLAY_CHARACTER = /[\p{Cc}\p{Cf}\u2028\u2029]+/gu;
@@ -77,8 +111,18 @@ export function convertEslintMessage(
     check,
     rule,
     identity: identity(rule, normalizedLocation),
+    ...(check === "lint"
+      ? {
+          comparisonIdentity: createHash("sha256")
+            .update(sanitizeMessage(message.message, snapshotRoot))
+            .digest("hex"),
+        }
+      : {}),
     severity,
-    message: sanitizeMessage(message.message, snapshotRoot),
+    message: sanitizeMessage(
+      eslintDiagnosticMessage(rule, check, message.message, message.messageId),
+      snapshotRoot,
+    ),
     location: normalizedLocation,
     ...(automaticFix === undefined ? {} : { automaticFix }),
   };

@@ -616,7 +616,7 @@ describe("TypeScript observation adapter", () => {
     ).toEqual([
       expect.objectContaining({
         rule: "typescript/TS2322",
-        message: "Type 'boolean' is not assignable to type 'number'.",
+        message: "Type '[source]' is not assignable to type '[source]'.",
       }),
     ]);
   });
