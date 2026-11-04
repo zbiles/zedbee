@@ -1,3 +1,4 @@
+import { openKernelFileLease } from "../core/kernel-lease.js";
 import { constants, type BigIntStats } from "node:fs";
 import {
   lstat,
@@ -187,29 +188,10 @@ export class ServiceState {
     const file = await this.checkedFile(path, create);
     try {
       if ((await file.stat()).size !== 0) throw new ServiceUnavailableError();
-      const koffi = (await import("koffi")).default;
-      // Noninherited Node fd; LOCK_EX|LOCK_NB, never shell flock or PID guesses.
-      // Koffi maps null to RTLD_DEFAULT: use the runtime's already-loaded
-      // native flock symbol without assuming glibc's filename on musl Linux.
-      // Missing native symbols remain pre-acceptance unavailable, not emulated.
-      const libc = koffi.load(null);
-      const flock = libc.func("int flock(int fd, int operation)");
-      let closed = false;
-      return {
-        acquire() {
-          if (closed) throw new ServiceUnavailableError();
-          if (flock(file.fd, 2 | 4) === 0) return true;
-          if (koffi.errno() === (process.platform === "darwin" ? 35 : 11))
-            return false;
-          throw new ServiceUnavailableError();
-        },
-        async close() {
-          if (!closed) {
-            closed = true;
-            await file.close();
-          }
-        },
-      };
+      return await openKernelFileLease(
+        file,
+        () => new ServiceUnavailableError(),
+      );
     } catch (error) {
       await file.close().catch(() => {});
       throw error;

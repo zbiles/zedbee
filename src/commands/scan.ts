@@ -3,7 +3,7 @@ import type {
   TelemetrySummary,
   CommandTelemetry,
 } from "../telemetry/client.js";
-import { extname, isAbsolute, relative, resolve } from "node:path";
+import { validConfigPath } from "../config/selection-path.js";
 import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
 import { renderSarif } from "../renderers/sarif.js";
@@ -182,24 +182,6 @@ function usesLinearAutomaticOutput(
 
 export function signalExitCode(signal: "SIGINT" | "SIGTERM"): 130 | 143 {
   return signal === "SIGINT" ? 130 : 143;
-}
-
-function validConfigPath(
-  repositoryRoot: string,
-  requested: string,
-): string | undefined {
-  const candidate = resolve(repositoryRoot, requested);
-  const fromRoot = relative(repositoryRoot, candidate);
-  if (
-    extname(candidate) !== ".jsonc" ||
-    fromRoot === "" ||
-    isAbsolute(fromRoot) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
-  ) {
-    return undefined;
-  }
-  return candidate;
 }
 
 const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {

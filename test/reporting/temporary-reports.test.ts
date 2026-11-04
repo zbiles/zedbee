@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { execFile } from "node:child_process";
 import {
   lstat,
@@ -17,7 +18,6 @@ import {
 } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
@@ -50,7 +50,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const key = String(args[0]);
       if (
         filesystemControl.rejectNumericDirectoryOpen &&
-        typeof args[1] === "number"
+        typeof args[1] === "number" &&
+        (args[1] & constants.O_DIRECTORY) !== 0
       ) {
         throw Object.assign(new Error("Injected Windows directory failure"), {
           code: "EPERM",
@@ -132,7 +133,7 @@ async function storedState(reportPath: string): Promise<{
 }> {
   const repositoryDirectory = dirname(reportPath);
   const stateName = (await readdir(repositoryDirectory)).find(
-    (entry) => !REPORT_NAME.test(entry),
+    (entry) => entry === ".lifecycle.json",
   );
   if (stateName === undefined) throw new Error("Lifecycle state not found");
   const path = join(repositoryDirectory, stateName);
@@ -148,6 +149,7 @@ async function repositoryDirectory(
 ): Promise<string> {
   const canonicalRepositoryRoot = await realpath(repositoryRoot);
   const repositoryHash = createHash("sha256")
+    .update("zedbee-temporary-reports:kernel-lock-v2\0", "utf8")
     .update(canonicalRepositoryRoot, "utf8")
     .digest("hex")
     .slice(0, 32);
@@ -270,6 +272,7 @@ describe("temporary report store", () => {
     const canonicalRepositoryRoot = await realpath(repositoryRoot);
     const canonicalTemporaryRoot = await realpath(temporaryRoot);
     const expectedHash = createHash("sha256")
+      .update("zedbee-temporary-reports:kernel-lock-v2\0", "utf8")
       .update(canonicalRepositoryRoot, "utf8")
       .digest("hex")
       .slice(0, 32);
@@ -403,7 +406,10 @@ describe("temporary report store", () => {
       repositoryRoot,
       temporaryRoot,
     );
-    expect(await readdir(managedDirectory)).toEqual([".lifecycle.json"]);
+    expect(await readdir(managedDirectory)).toEqual([
+      ".lifecycle.json",
+      LOCK_FILE_NAME,
+    ]);
   });
 
   it("uses a fresh report name without overwriting earlier bytes", async () => {
@@ -1018,7 +1024,7 @@ describe("temporary report store", () => {
     );
   });
 
-  it("times out on an existing lock without deleting it or changing lifecycle state", async () => {
+  it("rejects a nonempty lock without deleting it or changing lifecycle state", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const store = createTemporaryReportStore({ temporaryRoot });
     const created = await store.maintain({
@@ -1030,40 +1036,18 @@ describe("temporary report store", () => {
     const stateBefore = await readFile(state.path, "utf8");
     const lockPath = join(dirname(created.reportPath!), LOCK_FILE_NAME);
     await writeFile(lockPath, "held by another process", {
-      flag: "wx",
+      flag: "w",
       mode: 0o600,
     });
-    const dateNow = vi
-      .spyOn(Date, "now")
-      .mockReturnValueOnce(0)
-      .mockReturnValue(1_000_000);
-    // Advance the runtime's monotonic clock across its two-second lock limit
-    // without imposing a second wall-clock deadline on this test.
-    const monotonicNow = vi
-      .spyOn(performance, "now")
-      .mockReturnValueOnce(0)
-      .mockReturnValueOnce(1_999)
-      .mockReturnValue(2_000);
-
     const maintained = await store.maintain({
       repositoryRoot,
       maxAgeMs: 86_400_000,
       json: "must not be written\n",
     });
-    monotonicNow.mockRestore();
-    dateNow.mockRestore();
 
     expect(maintained.reportPath).toBeUndefined();
-    expect(maintained.warnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "TEMP_REPORT_CLEANUP_FAILED" }),
-      ]),
-    );
     expect(maintained.warnings).toContainEqual(
-      expect.objectContaining({
-        code: "TEMP_REPORT_CLEANUP_FAILED",
-        path: lockPath,
-      }),
+      expect.objectContaining({ code: "TEMP_REPORT_WRITE_FAILED" }),
     );
     await expect(readFile(lockPath, "utf8")).resolves.toBe(
       "held by another process",
@@ -1075,7 +1059,7 @@ describe("temporary report store", () => {
     expect(reportNames).toEqual([basename(created.reportPath!)]);
   });
 
-  it("names a validated lock when its unlink fails", async () => {
+  it("retains the same coordination inode across writes and never unlinks it", async () => {
     const { repositoryRoot, temporaryRoot } = await fixture();
     const store = createTemporaryReportStore({ temporaryRoot });
     const initial = await store.maintain({
@@ -1084,30 +1068,25 @@ describe("temporary report store", () => {
       json: "initial\n",
     });
     const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
-    // Fail exactly the filesystem operation under test. A concurrent chflags
-    // raced the complete write/unlink and did not reliably inject any failure.
+    const before = await lstat(lockPath);
     filesystemControl.unlinkFailures.set(lockPath, "EPERM");
-    try {
-      const maintained = await store.maintain({
-        repositoryRoot,
-        maxAgeMs: 86_400_000,
-        json: "next\n",
-      });
-      expect(maintained.warnings).toContainEqual(
-        expect.objectContaining({
-          code: "TEMP_REPORT_CLEANUP_FAILED",
-          path: lockPath,
-        }),
-      );
-      expect((await lstat(lockPath)).isFile()).toBe(true);
-    } finally {
-      filesystemControl.unlinkFailures.delete(lockPath);
-      await unlink(lockPath);
-    }
+    const maintained = await store.maintain({
+      repositoryRoot,
+      maxAgeMs: 86_400_000,
+      json: "next\n",
+    });
+    expect(maintained.reportPath).toBeDefined();
+    expect(maintained.warnings).toEqual([]);
+    const after = await lstat(lockPath);
+    expect([after.dev, after.ino, after.size]).toEqual([
+      before.dev,
+      before.ino,
+      0,
+    ]);
   });
 
   it.skipIf(process.platform === "win32")(
-    "omits the removed lock path when only directory synchronization fails",
+    "rejects a symbolic lock without touching its target",
     async () => {
       const { repositoryRoot, temporaryRoot } = await fixture();
       const store = createTemporaryReportStore({ temporaryRoot });
@@ -1116,30 +1095,22 @@ describe("temporary report store", () => {
         maxAgeMs: 86_400_000,
         json: "initial\n",
       });
-      const directory = dirname(initial.reportPath!);
-      const lockPath = join(directory, LOCK_FILE_NAME);
-      // Fail directory synchronization only after the real lock unlink. Polling
-      // for a short-lived lock can miss it entirely on a fast filesystem.
-      filesystemControl.syncFailuresAfterUnlink.add(lockPath);
+      const lockPath = join(dirname(initial.reportPath!), LOCK_FILE_NAME);
+      const target = join(temporaryRoot, "outside-lock");
+      await writeFile(target, "outside");
+      await unlink(lockPath);
+      await symlink(target, lockPath);
       const maintained = await store.maintain({
         repositoryRoot,
         maxAgeMs: 86_400_000,
-        json: "sync payload\n",
+        json: "blocked\n",
       });
+      expect(maintained.reportPath).toBeUndefined();
       expect(maintained.warnings).toContainEqual(
-        expect.objectContaining({
-          code: "TEMP_REPORT_CLEANUP_FAILED",
-          message: expect.stringContaining(
-            "released lock directory could not be synchronized",
-          ),
-        }),
+        expect.objectContaining({ code: "TEMP_REPORT_WRITE_FAILED" }),
       );
-      expect(
-        maintained.warnings
-          .filter((item) => item.message.includes("released lock"))
-          .every((item) => item.path === undefined),
-      ).toBe(true);
-      await expect(lstat(lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(readFile(target, "utf8")).resolves.toBe("outside");
+      expect((await lstat(lockPath)).isSymbolicLink()).toBe(true);
     },
   );
 

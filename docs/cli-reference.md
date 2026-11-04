@@ -327,7 +327,7 @@ React correctness runs for React, React DOM, Ink, Next.js, and Remix. DOM access
 
 Zedbee Readability Complexity is an original metric, not Sonar Cognitive Complexity, and teams migrating from Sonar must recalibrate thresholds. The built-in structural-security rules are deliberately narrower than Semgrep: they have no dataflow, taint, interfile analysis, reachability, framework packs, or live rule registry. See [the readability scoring contract](readability-complexity.md), [React analysis policy](react-analysis.md), and [structural-security coverage](structural-security-coverage.md).
 
-Use another repository-contained JSONC file when needed:
+Use another repository-contained JSONC file when needed. Selected-index and committed scans reject external configuration paths rather than reading live filesystem configuration:
 
 ```bash
 npx zedbee scan --config config/zedbee.jsonc

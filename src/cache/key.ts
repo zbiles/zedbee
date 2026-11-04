@@ -75,10 +75,9 @@ function validatedCacheSource(
   return Object.freeze({ ...source });
 }
 
-function targetPolicyPaths(
-  paths: readonly string[],
+function targetPolicyRenames(
   changeSet: ChangeSet,
-): readonly string[] {
+): ReadonlyMap<string, string> {
   const renames = new Map<string, string>();
   for (const file of changeSet.files.values()) {
     if (file.status !== "renamed") continue;
@@ -95,6 +94,13 @@ function targetPolicyPaths(
     }
     renames.set(baselinePath, targetPath);
   }
+  return renames;
+}
+
+function targetPolicyPaths(
+  paths: readonly string[],
+  renames: ReadonlyMap<string, string>,
+): readonly string[] {
   return Object.freeze(
     [
       ...new Set(
@@ -107,34 +113,70 @@ function targetPolicyPaths(
   );
 }
 
+type EffectiveBehaviorFingerprint = Readonly<{
+  repository: unknown;
+  files: readonly Readonly<{ path: string; policy: unknown }>[];
+}>;
+
+/** Build once for an immutable dispatch, and only when a cache key is needed. */
+export function createEffectiveBehaviorFingerprint(
+  config: ResolvedConfig,
+  changeSet: ChangeSet,
+): (
+  checkId: CheckId,
+  paths: readonly string[],
+) => EffectiveBehaviorFingerprint {
+  const policyForFile = createFilePolicyResolver(config, changeSet);
+  const renames = targetPolicyRenames(changeSet);
+  return (checkId, paths) => {
+    const files = Object.freeze(
+      targetPolicyPaths(paths, renames).map((path) =>
+        Object.freeze({
+          path,
+          policy: snapshotManagedPolicy(
+            checkId,
+            policyForFile(checkId, path, "target"),
+          ),
+        }),
+      ),
+    );
+    return immutableConfigurationSnapshot({
+      repository: {
+        profile: config.profile,
+        policy: snapshotManagedPolicy(checkId, config.checks[checkId]),
+      },
+      files,
+    });
+  };
+}
+
 export function effectiveBehaviorFingerprint(
   config: ResolvedConfig,
   checkId: CheckId,
   paths: readonly string[],
   changeSet: ChangeSet,
-): Readonly<{
-  repository: unknown;
-  files: readonly Readonly<{ path: string; policy: unknown }>[];
-}> {
-  const policyForFile = createFilePolicyResolver(config, changeSet);
-  const files = Object.freeze(
-    targetPolicyPaths(paths, changeSet).map((path) =>
-      Object.freeze({
-        path,
-        policy: snapshotManagedPolicy(
-          checkId,
-          policyForFile(checkId, path, "target"),
-        ),
-      }),
-    ),
-  );
-  return immutableConfigurationSnapshot({
-    repository: {
-      profile: config.profile,
-      policy: snapshotManagedPolicy(checkId, config.checks[checkId]),
-    },
-    files,
-  });
+): EffectiveBehaviorFingerprint {
+  return createEffectiveBehaviorFingerprint(config, changeSet)(checkId, paths);
+}
+
+/** Collection attribution depends on metadata even when snapshot bytes match. */
+export function changeSetCacheDigest(changeSet: ChangeSet): string {
+  const files = [...changeSet.files.values()]
+    .sort((left, right) => compareCodeUnits(left.path, right.path))
+    .map((file) => ({
+      path: file.path,
+      previousPath: file.previousPath,
+      status: file.status,
+      addedRanges: [...file.addedRanges]
+        .sort((left, right) => left.start - right.start || left.end - right.end)
+        .map(({ start, end }) => ({ start, end })),
+    }));
+  return createHash("sha256")
+    .update(
+      JSON.stringify(stable({ isEmpty: changeSet.isEmpty, files })),
+      "utf8",
+    )
+    .digest("hex");
 }
 
 function stable(value: unknown): unknown {
@@ -315,8 +357,8 @@ function observationCacheKey(
   target: string,
 ): string {
   const payload = stable({
-    // v3 replaces embedded inventories with their canonical SHA-256 digests.
-    schema: "zedbee-observation-cache-key-v3",
+    // v4 also binds dispatch keys to a shared canonical changeset digest.
+    schema: "zedbee-observation-cache-key-v4",
     mode: source.mode,
     baseline: source.baseline,
     target: source.target,
