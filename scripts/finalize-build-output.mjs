@@ -43,3 +43,9 @@ for (const [source, target] of [
     join(root, "assets", "oxc-resolver", source),
     join(root, "dist", "checks", "dead-code", target),
   );
+
+for (const file of ["install-dependency.mjs", "install-dependency.d.mts"])
+  copyFileSync(
+    join(root, "src", "init", file),
+    join(root, "dist", "init", file),
+  );

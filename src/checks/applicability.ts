@@ -139,15 +139,15 @@ export async function inspectManagedCheck(
     const candidates = new Map(
       all.map((workspace) => [workspace.relativeRoot, workspace]),
     );
-    const eligible = [...candidates.values()]
-      // A removed workspace cannot create findings in the merged target.
-      .filter(
-        (workspace) =>
-          context.mergeComparison !== true ||
-          context.targetInspection.workspaces.some(
-            (target) => target.relativeRoot === workspace.relativeRoot,
-          ),
-      );
+    const targetRoots =
+      context.mergeComparison === true
+        ? new Set(workspaces.map((workspace) => workspace.relativeRoot))
+        : undefined;
+    // A removed workspace cannot create findings in the merged target.
+    const eligible = [...candidates.values()].filter(
+      (workspace) =>
+        targetRoots === undefined || targetRoots.has(workspace.relativeRoot),
+    );
     const acquire = pLimit(4);
     const selected = await Promise.all(
       eligible.map((workspace) =>

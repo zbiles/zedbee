@@ -117,6 +117,8 @@ export function assertBundledDependencyLock(manifest, lockfile) {
 }
 
 const FIXED_PACKAGE_FILES = Object.freeze([
+  "dist/init/install-dependency.mjs",
+  "dist/init/install-dependency.d.mts",
   ...VENDORED_FILES,
   "SECURITY.md",
   "DISCLOSURE",
@@ -158,6 +160,8 @@ export const REQUIRED_PACKAGE_FILES = Object.freeze([
   "licenses/reviewed-overrides.json",
   "licenses/reviewed-obligations.json",
   ...reviewedOverrideTexts,
+  "dist/init/install-dependency.mjs",
+  "dist/init/install-dependency.d.mts",
   "dist/cli.js",
   "dist/index.js",
   "dist/index.d.ts",

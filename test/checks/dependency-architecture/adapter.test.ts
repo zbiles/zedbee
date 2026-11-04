@@ -415,6 +415,81 @@ describe("dependencyArchitectureAdapter", () => {
     ]);
   });
 
+  it.each([false, true])(
+    "attributes unchanged JavaScript graph findings to canonical config-target-only alias changes (root link: %s)",
+    async (rootLink) => {
+      const baseline = await createInspectionFixture();
+      const staged = await createInspectionFixture();
+      for (const fixture of [baseline, staged]) {
+        await fixture.writeJson("package.json", {
+          name: "fixture",
+          type: "module",
+        });
+        await fixture.write(
+          "src/a.js",
+          "import { b } from '@entry'; export const a = b;\n",
+        );
+        await fixture.write(
+          "src/b.js",
+          "import { a } from './a.js'; export const b = a;\n",
+        );
+        await fixture.write("src/leaf.js", "export const b = 1;\n");
+        await fixture.writeJson("config/base.json", {
+          compilerOptions: {
+            allowJs: true,
+            module: "NodeNext",
+            moduleResolution: "NodeNext",
+            baseUrl: rootLink ? "." : "..",
+            paths: {
+              "@entry": [fixture === baseline ? "src/leaf.js" : "src/b.js"],
+            },
+          },
+          include: ["src"],
+        });
+        await fixture.symlink("base.json", "config/alias.json");
+        if (rootLink)
+          await fixture.symlink("config/alias.json", "tsconfig.json");
+        else
+          await fixture.writeJson("tsconfig.json", {
+            extends: "./config/alias.json",
+            include: ["src"],
+          });
+      }
+      const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+      const context: CheckRunContext = {
+        repositoryRoot: staged.root,
+        changeSet: changes("config/base.json"),
+        config,
+        snapshots: {
+          baselineDir: baseline.root,
+          targetDir: staged.root,
+          baselineRef: "HEAD",
+          targetRef: "index",
+          unsupportedEntries: [],
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(staged.root),
+        target,
+        policy: config.checks.dependencyArchitecture,
+        policyForFile: testFilePolicyResolver(config),
+        signal: new AbortController().signal,
+      };
+      expect(
+        await dependencyArchitectureAdapter.inspect(context),
+      ).toMatchObject({ applies: true });
+      expect(await stagedFindings(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            attribution: expect.objectContaining({
+              staged: true,
+              evidence: expect.arrayContaining(["project-delta"]),
+            }),
+          }),
+        ]),
+      );
+    },
+  );
+
   it("resolves declared workspace packages to their staged source entrypoints", async () => {
     const [baseline, staged, live] = await Promise.all([
       createInspectionFixture(),

@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import * as fsPromises from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
@@ -16,6 +24,16 @@ const readBoundary = vi.hoisted(() => ({
   activeLineReads: 0,
   maximumLineReads: 0,
 }));
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readdir: vi.fn(actual.readdir),
+    lstat: vi.fn(actual.lstat),
+    realpath: vi.fn(actual.realpath),
+  };
+});
 
 vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
   const original =
@@ -279,6 +297,83 @@ describe("omitReportSourceExcerpts", () => {
 });
 
 describe("enrichSourceExcerpts", () => {
+  it.each([0, 1])(
+    "inventories only requested files with %s findings",
+    async (count) => {
+      const snapshotRoot = await sourceSnapshot("one\ntwo\nthree\nfour\n");
+      for (let i = 0; i < 100; i++)
+        await writeFile(join(snapshotRoot, `unrelated-${i}.txt`), "unrelated");
+      vi.mocked(fsPromises.readdir).mockClear();
+      vi.mocked(fsPromises.lstat).mockClear();
+      vi.mocked(fsPromises.realpath).mockClear();
+      const results = await enrichSourceExcerpts(
+        [completed(count ? [finding()] : [])],
+        { snapshotRoot },
+      );
+      expect(fsPromises.readdir).not.toHaveBeenCalled();
+      expect(vi.mocked(fsPromises.lstat).mock.calls.length).toBeLessThanOrEqual(
+        count ? 12 : 0,
+      );
+      expect(
+        vi.mocked(fsPromises.realpath).mock.calls.length,
+      ).toBeLessThanOrEqual(count ? 8 : 0);
+      if (count)
+        expect(results[0]?.findings[0]?.sourceExcerpt?.text).toBe("four");
+    },
+  );
+
+  it("retains containment and ignored-directory boundaries for selective acquisition", async () => {
+    const snapshotRoot = await sourceSnapshot("one\ntwo\nthree\nvisible\n");
+    const outside = await sourceSnapshot("OUTSIDE-MUST-NOT-LEAK\n");
+    await mkdir(join(snapshotRoot, "node_modules"));
+    await writeFile(
+      join(snapshotRoot, "node_modules/private.ts"),
+      "IGNORED-MUST-NOT-LEAK\n",
+    );
+    await symlink(
+      join(outside, "src/value.ts"),
+      join(snapshotRoot, "src/external.ts"),
+    );
+    await symlink(
+      join(outside, "src"),
+      join(snapshotRoot, "external"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+    await symlink("node_modules/private.ts", join(snapshotRoot, "ignored.ts"));
+    const paths = [
+      "src/value.ts",
+      "src/external.ts",
+      "external/value.ts",
+      "node_modules/private.ts",
+      "ignored.ts",
+      "../outside.ts",
+    ];
+    const results = await enrichSourceExcerpts(
+      [
+        completed(
+          paths.map((file, index) =>
+            finding({
+              id: `finding-${index}`,
+              location: { file, startLine: index === 0 ? 4 : 1 },
+            }),
+          ),
+        ),
+      ],
+      { snapshotRoot },
+    );
+    expect(
+      results[0]?.findings.map((finding) => finding.sourceExcerpt?.text),
+    ).toEqual([
+      "visible",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(JSON.stringify(results)).not.toContain("MUST-NOT-LEAK");
+  });
+
   it("normalizes tabs and terminal controls on the selected source line", async () => {
     const snapshotRoot = await sourceSnapshot(
       "one\ntwo\nthree\n\tconst BIDI_MARKER = 'before\u202eafter';\u001b\u0085\n",

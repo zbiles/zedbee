@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { realpath } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { execa } from "execa";
+import { installArguments, installDependency } from "./install-dependency.mjs";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
@@ -15,47 +14,6 @@ export interface ProjectInstallTarget {
   readonly args: readonly string[];
   readonly hasPrettier: boolean;
   readonly workspaceRoot?: boolean;
-}
-
-function installArguments(
-  manager: ProjectInstallTarget["manager"],
-  workspaceRoot: boolean,
-  classicYarn: boolean,
-): string[] {
-  if (manager === "npm")
-    return [
-      "install",
-      "--save-dev",
-      "--save-exact",
-      "--ignore-scripts",
-      `zedbee@${ZEDBEE_VERSION}`,
-    ];
-  if (manager === "pnpm")
-    return [
-      "add",
-      ...(workspaceRoot ? ["--workspace-root"] : []),
-      "--save-dev",
-      "--save-exact",
-      "--ignore-scripts",
-      "--ignore-pnpmfile",
-      "--manage-package-manager-versions=false",
-      `zedbee@${ZEDBEE_VERSION}`,
-    ];
-  return [
-    "add",
-    "--dev",
-    "--exact",
-    ...(manager === "yarn"
-      ? classicYarn
-        ? [
-            "--ignore-scripts",
-            "--no-default-rc",
-            ...(workspaceRoot ? ["--ignore-workspace-root-check"] : []),
-          ]
-        : ["--mode=skip-build"]
-      : ["--ignore-scripts"]),
-    `zedbee@${ZEDBEE_VERSION}`,
-  ];
 }
 
 const LOCKFILES = [
@@ -108,7 +66,12 @@ export async function projectInstallTargets(
         project.relativeRoot === "." &&
         (project.manifest.workspacePatterns.length > 0 ||
           paths.has("pnpm-workspace.yaml"));
-      const args = installArguments(manager, workspaceRoot, classicYarn);
+      const args = installArguments(
+        manager,
+        workspaceRoot,
+        classicYarn,
+        `zedbee@${ZEDBEE_VERSION}`,
+      );
       return {
         projectRoot: project.relativeRoot,
         manager,
@@ -137,72 +100,19 @@ export async function installProjectDependency(
   const current = (await projectInstallTargets(root, [target.projectRoot]))[0];
   if (current === undefined)
     throw new Error("The selected project folder is no longer available.");
-  const env = {
-    // Never delegate to a repository-specified package-manager executable.
-    COREPACK_ENABLE_PROJECT_SPEC: "0",
-    COREPACK_ENABLE_AUTO_PIN: "0",
-    npm_config_ignore_scripts: "true",
-    NPM_CONFIG_IGNORE_SCRIPTS: "true",
-    YARN_IGNORE_PATH: "1",
-    // Modern Yarn loads plugins from its rc before running any command. Use an
-    // unpredictable absent filename rather than loading project configuration.
-    YARN_RC_FILENAME: `.zedbee-${randomUUID()}.yarnrc.yml`,
-    YARN_ENABLE_SCRIPTS: "false",
-    // The hook resolver requires a physical local CLI; disabling project rc
-    // must not switch a node_modules installation to Yarn's default PnP.
-    YARN_NODE_LINKER: "node-modules",
-  };
-  let args = [...current.args];
-  if (current.manager === "yarn") {
-    // A lockfile or packageManager declaration cannot prove which installed
-    // Yarn will run. Classic silently accepts some unsupported flags, so probe
-    // outside the repository before choosing the script-suppression strategy.
-    const probeRoot = await mkdtemp(join(tmpdir(), "zedbee-yarn-version-"));
-    try {
-      const version = await execa("yarn", ["--version"], {
-        cwd: probeRoot,
-        env,
-        cancelSignal: signal,
-        timeout: 30_000,
-        stdin: "ignore",
-        reject: false,
-      });
-      const major = /^(\d+)\.\d+\.\d+(?:[-+][\w.-]+)?$/u.exec(
-        version.stdout.trim(),
-      )?.[1];
-      if (version.exitCode !== 0 || major === undefined || Number(major) < 1)
-        throw new Error(
-          "Could not identify a supported Yarn version for a script-free installation.",
-        );
-      if (major === "2")
-        throw new Error(
-          "Yarn 2 cannot safely add this dependency without workspace builds. Use Yarn 1 or Yarn 3 and newer for automatic installation.",
-        );
-      args = installArguments(
-        "yarn",
-        current.workspaceRoot === true,
-        major === "1",
-      );
-    } finally {
-      await rm(probeRoot, { recursive: true, force: true });
-    }
-  }
-  const result = await execa(current.manager, args, {
-    cwd,
-    env,
-    cancelSignal: signal,
-    killDescendants: true,
-    timeout: 300_000,
-    maxBuffer: 16 * 1024 * 1024,
-    stdin: "ignore",
-    reject: false,
-  });
-  if (result.exitCode !== 0) {
-    const detail = (result.stderr || result.stdout).trim().slice(-800);
-    throw new Error(
-      detail ||
-        "Zedbee installation failed. Check your package manager and registry access.",
-    );
-  }
+  await installDependency(
+    {
+      manager: current.manager,
+      cwd,
+      packageSpec: `zedbee@${ZEDBEE_VERSION}`,
+      workspaceRoot: current.workspaceRoot === true,
+      signal,
+    },
+    (command, args, { cancelSignal, ...options }) =>
+      execa(command, args, {
+        ...options,
+        ...(cancelSignal === undefined ? {} : { cancelSignal }),
+      }),
+  );
   await resolveHookCommand(root);
 }

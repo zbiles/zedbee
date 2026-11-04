@@ -1,4 +1,4 @@
-import { posix } from "node:path";
+import { posix, relative, sep } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
 import { readContainedFile } from "../../inspection/read-json.js";
 import {
@@ -81,9 +81,24 @@ export function createCompilerConfigurationResolver(snapshotRoot: string) {
     workspace: WorkspaceInspection,
   ): Promise<ReadonlySet<string>> => {
     const paths = new Set<string>(workspace.tsconfigPaths);
+    // Only lexical requests are parsed: relative extends are based on the
+    // requested alias, not on the canonical target's directory.
+    const parsed = new Set<string>();
     const pending = [...paths];
     while (pending.length > 0) {
       const path = pending.pop()!;
+      if (parsed.has(path)) continue;
+      parsed.add(path);
+      const registry = await fileRegistry(path);
+      for (const entry of registry?.entries() ?? []) {
+        if (entry.kind === "symlink") paths.add(entry.repositoryPath);
+        if (entry.targetKind === "file") {
+          paths.add(entry.repositoryPath);
+          paths.add(
+            relative(snapshotRoot, entry.canonicalPath).split(sep).join("/"),
+          );
+        }
+      }
       const data = await configuration(path);
       if (typeof data !== "object" || data === null || Array.isArray(data))
         continue;
@@ -124,10 +139,8 @@ export function createCompilerConfigurationResolver(snapshotRoot: string) {
           posix.join(base, "tsconfig.json"),
         ]) {
           if ((await fileRegistry(candidate)) === undefined) continue;
-          if (!paths.has(candidate)) {
-            paths.add(candidate);
-            pending.push(candidate);
-          }
+          paths.add(candidate);
+          if (!parsed.has(candidate)) pending.push(candidate);
           break;
         }
       }
