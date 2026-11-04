@@ -24,7 +24,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@emnapi/core",
       "@emnapi/runtime",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v7-snapshot-aliases",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v8-source-identities",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
@@ -36,11 +36,11 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v5",
+    revision: "complexity-v6-source-identities",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v5",
+    revision: "zedbee-readability-v6-source-identities",
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),

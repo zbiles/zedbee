@@ -1,3 +1,7 @@
+import {
+  sourceEntityName,
+  syntaxIdentity,
+} from "../../helpers/source-identity.js";
 import { Linter } from "eslint";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectComplexityObservations } from "../../../src/checks/complexity/adapter.js";
@@ -46,10 +50,10 @@ describe("complexity source indexing", () => {
       {
         check: "cyclomaticComplexity",
         rule: "cyclomatic-complexity",
-        identity: "function:src/lines.ts:first",
+        identity: syntaxIdentity("function:src/lines.ts:first"),
         severity: "error",
         message: "Cyclomatic complexity metric.",
-        entity: { kind: "function", name: "first", file },
+        entity: { kind: "function", name: sourceEntityName("first"), file },
         metric: { name: "cyclomatic-complexity", value: 2 },
         location: { file, startLine: 2, endLine: 2 },
       },
@@ -97,20 +101,28 @@ describe("complexity source indexing", () => {
       );
       expect(metrics).toHaveLength(4);
       expect(
-        metrics.find(({ entity }) => entity?.name === "inner"),
+        metrics.find(
+          ({ entity }) => entity?.name === sourceEntityName("inner"),
+        ),
       ).toMatchObject({
-        identity: "function:src/lines.ts:function=outer/function=inner",
+        identity: syntaxIdentity(
+          "function:src/lines.ts:function=outer/function=inner",
+        ),
         location: { file, startLine: 2, endLine: 2 },
         metric: { value: check === "cyclomaticComplexity" ? 2 : 1, limit: 5 },
       });
       expect(
-        metrics.find(({ entity }) => entity?.name === "outer"),
+        metrics.find(
+          ({ entity }) => entity?.name === sourceEntityName("outer"),
+        ),
       ).toMatchObject({
-        identity: "function:src/lines.ts:outer",
+        identity: syntaxIdentity("function:src/lines.ts:outer"),
         location: { file, startLine: 1, endLine: 4 },
         metric: { value: check === "cyclomaticComplexity" ? 1 : 0, limit: 5 },
       });
-      const fields = metrics.filter(({ entity }) => entity?.name === "task");
+      const fields = metrics.filter(
+        ({ entity }) => entity?.name === sourceEntityName("task"),
+      );
       expect(fields.map(({ metric }) => metric?.value)).toEqual(
         check === "cyclomaticComplexity" ? [2, 3] : [1, 3],
       );
@@ -169,40 +181,40 @@ describe("complexity source indexing", () => {
       {
         check: "cyclomaticComplexity",
         rule: "cyclomatic-complexity",
-        identity: "function:src/lines.ts:first",
+        identity: syntaxIdentity("function:src/lines.ts:first"),
         severity: "error",
         message: "Cyclomatic complexity metric.",
-        entity: { kind: "function", name: "first", file },
+        entity: { kind: "function", name: sourceEntityName("first"), file },
         metric: { name: "cyclomatic-complexity", value: 2, limit: 5 },
         location: { file, startLine: 1, endLine: 3 },
       },
       {
         check: "readabilityComplexity",
         rule: "readability-complexity",
-        identity: "function:src/lines.ts:first",
+        identity: syntaxIdentity("function:src/lines.ts:first"),
         severity: "error",
         message: "Readability complexity metric.",
-        entity: { kind: "function", name: "first", file },
+        entity: { kind: "function", name: sourceEntityName("first"), file },
         metric: { name: "readability-complexity", value: 1, limit: 5 },
         location: { file, startLine: 1, endLine: 3 },
       },
       {
         check: "cyclomaticComplexity",
         rule: "cyclomatic-complexity",
-        identity: "function:src/lines.ts:last",
+        identity: syntaxIdentity("function:src/lines.ts:last"),
         severity: "error",
         message: "Cyclomatic complexity metric.",
-        entity: { kind: "function", name: "last", file },
+        entity: { kind: "function", name: sourceEntityName("last"), file },
         metric: { name: "cyclomatic-complexity", value: 2, limit: 5 },
         location: { file, startLine: 5, endLine: 8 },
       },
       {
         check: "readabilityComplexity",
         rule: "readability-complexity",
-        identity: "function:src/lines.ts:last",
+        identity: syntaxIdentity("function:src/lines.ts:last"),
         severity: "error",
         message: "Readability complexity metric.",
-        entity: { kind: "function", name: "last", file },
+        entity: { kind: "function", name: sourceEntityName("last"), file },
         metric: { name: "readability-complexity", value: 1, limit: 5 },
         location: { file, startLine: 5, endLine: 8 },
       },

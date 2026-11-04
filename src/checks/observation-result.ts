@@ -9,7 +9,7 @@ import {
   normalizeObservation,
 } from "../attribution/fingerprint.js";
 import {
-  attributeMetricDelta,
+  prepareMetricAttribution,
   type MetricDeltaPolicy,
 } from "../attribution/metrics.js";
 import type {
@@ -317,6 +317,7 @@ function metricFindings(
 
   if (targetMetricFingerprints.size === 0) return [];
 
+  const attributeMetric = prepareMetricAttribution(entities);
   return target
     .filter((observation) => observation.metric !== undefined)
     .map((observation) => {
@@ -333,12 +334,7 @@ function metricFindings(
           "Metric check has no supported effective policy limit",
         );
       }
-      return attributeMetricDelta(
-        baselineObservation,
-        observation,
-        entities,
-        policy,
-      );
+      return attributeMetric(baselineObservation, observation, policy);
     });
 }
 

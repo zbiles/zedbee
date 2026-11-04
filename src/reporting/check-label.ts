@@ -1,18 +1,4 @@
-const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  formatting: "Formatting",
-  lint: "Lint",
-  types: "TypeScript",
-  cyclomaticComplexity: "Cyclomatic complexity",
-  readabilityComplexity: "Readability complexity",
-  structuralSecurity: "Structural security",
-  secrets: "Secrets",
-  duplication: "Duplication",
-  dependencyArchitecture: "Dependency architecture",
-  deadCode: "Dead code",
-  reactCorrectness: "React correctness",
-  reactAccessibility: "React accessibility",
-  vulnerabilities: "Vulnerabilities",
-});
+export { checkLabel } from "../core/check-label.js";
 
 const FINDING_CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   formatting: "Prettier",
@@ -30,10 +16,6 @@ const FINDING_CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
   vulnerabilities: "OSV",
   zedbee: "Zedbee",
 });
-
-export function checkLabel(checkId: string): string {
-  return CHECK_LABELS[checkId] ?? checkId;
-}
 
 export function findingCheckLabel(checkId: string): string {
   return FINDING_CHECK_LABELS[checkId] ?? checkId;

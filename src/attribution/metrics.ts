@@ -215,6 +215,38 @@ export function attributeMetricDelta(
 ): Finding | undefined {
   const policySnapshot = normalizePolicy(policy);
   const changed = normalizeChangedEntities(changedEntities);
+  return attributePreparedMetricDelta(
+    baseline,
+    target,
+    changed,
+    policySnapshot,
+  );
+}
+
+/** Validate and snapshot entity ownership once for one analyzer result. */
+export function prepareMetricAttribution(
+  changedEntities: readonly ChangedEntity[],
+) {
+  const changed = normalizeChangedEntities(changedEntities);
+  return (
+    baseline: Observation | undefined,
+    target: Observation,
+    policy: MetricDeltaPolicy,
+  ): Finding =>
+    attributePreparedMetricDelta(
+      baseline,
+      target,
+      changed,
+      normalizePolicy(policy),
+    )!;
+}
+
+function attributePreparedMetricDelta(
+  baseline: Observation | undefined,
+  target: Observation | undefined,
+  changed: ReadonlyMap<string, ChangedEntity>,
+  policySnapshot: MetricDeltaPolicy,
+): Finding | undefined {
   if (target === undefined) {
     if (baseline === undefined)
       throw new TypeError("Expected a baseline or target metric observation");

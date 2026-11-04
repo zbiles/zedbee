@@ -58,10 +58,10 @@ describe("managed check cache metadata", () => {
     )("cyclomaticComplexity");
 
     expect(identity).toBe(
-      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v5",
+      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v6-source-identities",
     );
     expect(observationCacheEngineIdentity("cyclomaticComplexity")).toMatch(
-      /^eslint@\d+\.\d+\.\d+[^+]*\+typescript-eslint@\d+\.\d+\.\d+[^+]*\+typescript@\d+\.\d+\.\d+[^+]*\+complexity-v5$/u,
+      /^eslint@\d+\.\d+\.\d+[^+]*\+typescript-eslint@\d+\.\d+\.\d+[^+]*\+typescript@\d+\.\d+\.\d+[^+]*\+complexity-v6-source-identities$/u,
     );
   });
 
@@ -77,7 +77,7 @@ describe("managed check cache metadata", () => {
     );
 
     expect(identity("readabilityComplexity")).toBe(
-      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v5",
+      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v6-source-identities",
     );
     expect(identity("structuralSecurity")).toBe(
       "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v3",

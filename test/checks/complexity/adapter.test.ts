@@ -1,3 +1,7 @@
+import {
+  sourceEntityName,
+  syntaxIdentity,
+} from "../../helpers/source-identity.js";
 import { describe, expect, it } from "vitest";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -350,9 +354,9 @@ describe("collectComplexityObservations", () => {
     expect(metrics).toHaveLength(3);
     expect(metrics).toEqual(
       expect.arrayContaining([
-        { name: "makeAdapter", value: 1 },
-        { name: "inspect", value: 2 },
-        { name: "collect", value: 1 },
+        { name: sourceEntityName("makeAdapter"), value: 1 },
+        { name: sourceEntityName("inspect"), value: 2 },
+        { name: sourceEntityName("collect"), value: 1 },
       ]),
     );
   });
@@ -379,8 +383,8 @@ describe("collectComplexityObservations", () => {
         })),
     ).toEqual(
       expect.arrayContaining([
-        { name: "readonlyMap", value: 1 },
-        { name: "Symbol.iterator", value: 1 },
+        { name: sourceEntityName("readonlyMap"), value: 1 },
+        { name: sourceEntityName("Symbol.iterator"), value: 1 },
       ]),
     );
   });
@@ -401,8 +405,9 @@ describe("collectComplexityObservations", () => {
         })),
     ).toContainEqual({
       name: "anonymous@1.1.0.1.0.1",
-      identity:
+      identity: syntaxIdentity(
         "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
+      ),
       value: 2,
     });
   });
@@ -445,7 +450,9 @@ describe("collectComplexityObservations", () => {
         expect(metrics).toHaveLength(2);
         expect(new Set(metrics.map(({ identity }) => identity)).size).toBe(2);
         expect(
-          metrics.find(({ entity }) => entity?.name === "outer")?.metric?.value,
+          metrics.find(
+            ({ entity }) => entity?.name === sourceEntityName("outer"),
+          )?.metric?.value,
         ).toBe(outerValue);
         expect(
           metrics.find(({ entity }) => entity?.name.startsWith("anonymous@"))
@@ -511,9 +518,9 @@ describe("collectComplexityObservations", () => {
           value: metric?.value,
         })),
     ).toEqual([
-      { name: "current", value: 1 },
-      { name: "offset", value: 1 },
-      { name: "ended", value: 1 },
+      { name: sourceEntityName("current"), value: 1 },
+      { name: sourceEntityName("offset"), value: 1 },
+      { name: sourceEntityName("ended"), value: 1 },
     ]);
   });
 
@@ -535,13 +542,21 @@ describe("collectComplexityObservations", () => {
         }),
         expect.objectContaining({
           check: "readabilityComplexity",
-          entity: expect.objectContaining({ kind: "method", name: "value" }),
+          entity: expect.objectContaining({
+            kind: "method",
+            name: sourceEntityName("value"),
+          }),
           identity: expect.stringContaining("member-role=get"),
         }),
         expect.objectContaining({
           check: "readabilityComplexity",
-          entity: expect.objectContaining({ kind: "function", name: "nested" }),
-          identity: expect.stringContaining("method=method/function=nested"),
+          entity: expect.objectContaining({
+            kind: "function",
+            name: sourceEntityName("nested"),
+          }),
+          identity: expect.stringContaining(
+            `method=${sourceEntityName("method")}/function=${sourceEntityName("nested")}`,
+          ),
         }),
       ]),
     );
@@ -574,7 +589,7 @@ describe("collectComplexityObservations", () => {
           }),
           expect.objectContaining({
             identity: expect.stringContaining(
-              "member-role=field/function=task",
+              `member-role=field/function=${sourceEntityName("task")}`,
             ),
           }),
         ]),
@@ -590,7 +605,8 @@ describe("collectComplexityObservations", () => {
     for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
       const methods = observations.filter(
         (observation) =>
-          observation.check === check && observation.entity?.name === "run",
+          observation.check === check &&
+          observation.entity?.name === sourceEntityName("run"),
       );
       expect(methods).toHaveLength(2);
       expect(new Set(methods.map(({ identity }) => identity)).size).toBe(2);
@@ -625,7 +641,9 @@ describe("collectComplexityObservations", () => {
         expect(new Set(metrics.map(({ identity }) => identity)).size).toBe(10);
         expect(
           metrics
-            .filter(({ entity }) => entity?.name === "observe")
+            .filter(
+              ({ entity }) => entity?.name === sourceEntityName("observe"),
+            )
             .map(({ metric }) => metric?.value),
         ).toEqual([3, 3]);
       }
@@ -728,7 +746,9 @@ describe("collectComplexityObservations", () => {
         ).toBe(false);
         expect(current.identity).toBe(previous?.identity);
         expect(current.identity).toBe(
-          "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+          syntaxIdentity(
+            "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+          ),
         );
       }
     },
@@ -762,7 +782,7 @@ describe("collectComplexityObservations", () => {
         const current = target.find(
           (observation) =>
             observation.check === check &&
-            observation.entity?.name === "observe",
+            observation.entity?.name === sourceEntityName("observe"),
         )!;
         expect(current.metric?.value).toBe(3);
         expect(
@@ -784,7 +804,7 @@ describe("collectComplexityObservations", () => {
           baseline.find(
             (observation) =>
               observation.check === check &&
-              observation.entity?.name === "observe",
+              observation.entity?.name === sourceEntityName("observe"),
           )?.identity,
         );
       }
@@ -799,7 +819,8 @@ describe("collectComplexityObservations", () => {
     for (const check of ["cyclomaticComplexity", "readabilityComplexity"]) {
       const fields = observations.filter(
         (observation) =>
-          observation.check === check && observation.entity?.name === "task",
+          observation.check === check &&
+          observation.entity?.name === sourceEntityName("task"),
       );
       expect(fields).toHaveLength(2);
       expect(new Set(fields.map(({ identity }) => identity)).size).toBe(2);
@@ -878,7 +899,9 @@ describe("collectComplexityObservations", () => {
           kind: "metric-delta",
           staged: true,
           evidence: expect.arrayContaining([
-            expect.stringContaining("function:src/changed.ts:changed"),
+            expect.stringContaining(
+              syntaxIdentity("function:src/changed.ts:changed"),
+            ),
           ]),
         },
       });

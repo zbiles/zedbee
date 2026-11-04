@@ -4,6 +4,7 @@ import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
 import { normalizeRepositoryRelativePath } from "./fingerprint.js";
+import { sourceEntityName } from "./source-identity.js";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".js",
@@ -54,9 +55,9 @@ function declarationName(
 ): string | undefined {
   if (name === undefined) return undefined;
   if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name))
-    return canonicalName(name.text);
+    return sourceEntityName(canonicalName(name.text));
   if (ts.isStringLiteral(name) || ts.isNumericLiteral(name))
-    return canonicalName(name.text);
+    return sourceEntityName(canonicalName(name.text));
   return undefined;
 }
 
@@ -72,7 +73,7 @@ function memberName(name: ts.PropertyName): string | undefined {
   ) {
     return undefined;
   }
-  return canonicalName(`Symbol.${expression.name.text}`);
+  return sourceEntityName(canonicalName(`Symbol.${expression.name.text}`));
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {

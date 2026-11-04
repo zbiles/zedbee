@@ -35,6 +35,7 @@ import type {
 } from "../config/schema.js";
 import { displayResultForPolicy } from "../policy/evaluate.js";
 import { compareCodeUnits } from "../core/compare.js";
+import { checkLabel } from "../core/check-label.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import {
   createObservationCacheKeyBuilder,
@@ -86,26 +87,6 @@ type DispatchContext = InspectionContext &
     readonly policyForFile: FilePolicyResolver;
   };
 type TrustedDispatchContext = DispatchContext;
-
-const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
-  formatting: "Formatting",
-  lint: "Lint",
-  types: "TypeScript",
-  cyclomaticComplexity: "Cyclomatic complexity",
-  readabilityComplexity: "Readability complexity",
-  structuralSecurity: "Structural security",
-  secrets: "Secrets",
-  duplication: "Duplication",
-  dependencyArchitecture: "Dependency architecture",
-  deadCode: "Dead code",
-  reactCorrectness: "React correctness",
-  reactAccessibility: "React accessibility",
-  vulnerabilities: "Vulnerabilities",
-});
-
-function checkLabel(checkId: string): string {
-  return CHECK_LABELS[checkId] ?? checkId;
-}
 
 function immutablePolicy<
   T extends ResolvedCheckPolicy | ResolvedCheckPolicyPatch,

@@ -429,15 +429,7 @@ export async function readStagedChangeSet(
       ...(git.selectedComparison === undefined
         ? []
         : [git.selectedComparison.diffBase]),
-      "--no-relative",
-      "--ignore-submodules=none",
-      "--submodule=short",
-      "--unified=0",
-      "--no-color",
-      "--no-ext-diff",
-      "--find-renames",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
+      ...STAGED_DIFF_OPTIONS,
     ],
     signal === undefined ? {} : { signal },
   );

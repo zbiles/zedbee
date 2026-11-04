@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 import type { CheckRunContext, CheckTarget } from "../../src/checks/adapter.js";
+import { collectMetricEntitySpans } from "../../src/attribution/entities.js";
 import { observationCheckResult } from "../../src/checks/observation-result.js";
 import { resolveConfig } from "../../src/config/profiles.js";
 import { createFilePolicyResolver } from "../../src/config/file-policy.js";
@@ -10,6 +11,25 @@ import type { Observation } from "../../src/core/types.js";
 import type { ChangeSet } from "../../src/git/change-set.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
+
+const metricWork = vi.hoisted(() => ({ entityIdentityReads: 0 }));
+vi.mock("../../src/attribution/entities.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/attribution/entities.js")>();
+  return {
+    ...actual,
+    collectChangedEntities: (
+      ...args: Parameters<typeof actual.collectChangedEntities>
+    ) =>
+      actual.collectChangedEntities(...args).map((entity) => ({
+        ...entity,
+        get identity() {
+          metricWork.entityIdentityReads++;
+          return entity.identity;
+        },
+      })),
+  };
+});
 
 // Count actual filesystem work, retaining containment and identity checks.
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -128,13 +148,17 @@ function located(check: CheckId, file: string): Observation {
 }
 
 function metric(check: CheckId, value: number, limit?: number): Observation {
+  const entity = collectMetricEntitySpans(
+    "export function run() { return 1; }",
+    "src/index.ts",
+  )[0]!.entity;
   return {
     check,
     rule: "metric",
-    identity: "function:src/index.ts:run",
+    identity: entity.identity,
     severity: "error",
     message: "Metric observation",
-    entity: { kind: "function", name: "run", file: "src/index.ts" },
+    entity,
     metric: {
       name: "fixture-metric",
       value,
@@ -149,14 +173,83 @@ function metricAt(
   file: string,
   name: string,
 ): Observation {
+  const entity = collectMetricEntitySpans(
+    `export function ${name}() { return 1; }`,
+    file,
+  )[0]!.entity;
   return {
     ...metric(check, value),
-    identity: `function:${file}:${name}`,
-    entity: { kind: "function", name, file },
+    identity: entity.identity,
+    entity,
   };
 }
 
 describe("observationCheckResult", () => {
+  it("validates changed entities once for all metrics in a result", async () => {
+    const target = { id: ".", kind: "repository" as const, relativeRoot: "." };
+    const source = Array.from(
+      { length: 60 },
+      (_, i) => `function item${i}() { return 1; }`,
+    ).join("\n");
+    const runContext = await context(
+      "cyclomaticComplexity",
+      target,
+      {
+        severity: "error",
+        when: "relevant",
+        max: 20,
+        blockWorsening: true,
+      },
+      {
+        files: new Map([
+          [
+            "src/index.ts",
+            {
+              path: "src/index.ts",
+              status: "modified",
+              addedRanges: [{ start: 1, end: 60 }],
+            },
+          ],
+        ]),
+        isEmpty: false,
+        containsAddedLine: () => true,
+      },
+    );
+    await fsPromises.writeFile(
+      join(runContext.snapshots.targetDir, "src/index.ts"),
+      source,
+    );
+    const targetObservations = collectMetricEntitySpans(
+      source,
+      "src/index.ts",
+    ).map(({ entity }, index): Observation => ({
+      check: "cyclomaticComplexity",
+      rule: "metric",
+      identity: entity.identity,
+      severity: "error",
+      message: "Metric observation",
+      entity,
+      metric: { name: "fixture-metric", value: index % 2 === 0 ? 21 : 1 },
+    }));
+    metricWork.entityIdentityReads = 0;
+    const result = await observationCheckResult(
+      "cyclomaticComplexity",
+      {
+        checkId: "cyclomaticComplexity",
+        target,
+        baselineObservations: [],
+        targetObservations,
+      },
+      runContext,
+      true,
+    );
+    expect(result.findings).toHaveLength(60);
+    expect(
+      result.findings.filter(({ attribution }) => attribution.staged),
+    ).toHaveLength(30);
+    expect(metricWork.entityIdentityReads).toBeLessThanOrEqual(180);
+  });
+
   it("inventories only unique reported paths across workspace results", async () => {
     const rootTarget = {
       id: ".",

@@ -21,6 +21,7 @@ import {
 import { compareCodeUnits } from "../core/compare.js";
 import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
+import { captureSelectedIndexComparison } from "../git/selected-comparison.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { discoverProjectPrettier } from "../init/prettier-discovery.js";
@@ -75,12 +76,15 @@ export interface ChecksCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   loadConfig(
     repositoryRoot: string,
-    configPath?: string,
+    configPath: string | undefined,
+    git: GitClient,
   ): Promise<ResolvedConfig>;
   inspectChecks(
     repositoryRoot: string,
     config: ResolvedConfig,
+    git: GitClient,
   ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>>;
+  captureIndexComparison?: typeof captureSelectedIndexComparison;
   discoverProjectPrettier?: typeof discoverProjectPrettier;
   renderDashboard?(
     checks: readonly CheckDescription[],
@@ -206,8 +210,8 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
 async function inspectConfiguredChecks(
   repositoryRoot: string,
   config: ResolvedConfig,
+  git: GitClient,
 ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>> {
-  const git = new GitClient(repositoryRoot);
   const changeSet = await readStagedChangeSet(git);
   const snapshots = await buildSnapshotPair(repositoryRoot, git);
   try {
@@ -281,14 +285,36 @@ const DEFAULT_DEPENDENCIES: ChecksCommandDependencies = {
     return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
       .stdout;
   },
-  loadConfig: (repositoryRoot, configPath) =>
-    loadConfigFromIndex(
-      repositoryRoot,
-      new GitClient(repositoryRoot),
-      configPath,
-    ),
+  loadConfig: (repositoryRoot, configPath, git) =>
+    loadConfigFromIndex(repositoryRoot, git, configPath),
   inspectChecks: inspectConfiguredChecks,
+  captureIndexComparison: captureSelectedIndexComparison,
 };
+
+async function inspectSelectedChecks(
+  repositoryRoot: string,
+  configPath: string | undefined,
+  dependencies: ChecksCommandDependencies,
+) {
+  const bootstrap = new GitClient(repositoryRoot);
+  const selected = await dependencies.captureIndexComparison?.(bootstrap);
+  try {
+    const git = selected?.bind(bootstrap) ?? bootstrap;
+    const config = await dependencies.loadConfig(
+      repositoryRoot,
+      configPath,
+      git,
+    );
+    const applicability = await dependencies.inspectChecks(
+      repositoryRoot,
+      config,
+      git,
+    );
+    return { config, applicability };
+  } finally {
+    await selected?.cleanup();
+  }
+}
 
 const MINIMUM_DASHBOARD_WIDTH = 80;
 
@@ -493,13 +519,10 @@ export async function executeChecksCommand(
     const repositoryRoot = await dependencies.resolveRepositoryRoot(
       options.cwd,
     );
-    const config = await dependencies.loadConfig(
+    const { config, applicability } = await inspectSelectedChecks(
       repositoryRoot,
       options.configPath,
-    );
-    const applicability = await dependencies.inspectChecks(
-      repositoryRoot,
-      config,
+      dependencies,
     );
     const formattingUsesProject =
       config.checks.formatting.engine === "project" ||

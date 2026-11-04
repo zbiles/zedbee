@@ -170,6 +170,8 @@ async function createDelayedGitEnvironment(snapshotRoot: string) {
     shim,
     [
       "#!/bin/sh",
+      "maybe_delay() {",
+      'while [ "$1" = "-c" ]; do shift 2; done',
       'if [ "$1" = "cat-file" ] && [ "$2" = "--batch" ]; then',
       // mkdir atomically selects one reader when snapshot sides overlap.
       '  if mkdir "$ZEDBEE_FIRST_BLOB_READ" 2>/dev/null; then',
@@ -179,6 +181,8 @@ async function createDelayedGitEnvironment(snapshotRoot: string) {
       "    exec sleep 30",
       "  fi",
       "fi",
+      "}",
+      'maybe_delay "$@"',
       'exec "$ZEDBEE_REAL_GIT" "$@"',
       "",
     ].join("\n"),
@@ -719,6 +723,8 @@ describe("committed base scans", () => {
           error: expect.objectContaining({ code: "GIT_HARD_TIMEOUT" }),
         }),
       ]);
+      await expect(access(delayed.firstBlobRead)).resolves.toBeUndefined();
+      await expect(access(delayed.delayedBlobRead)).resolves.toBeUndefined();
       await expectNoSnapshots(snapshotRoot);
     },
   );

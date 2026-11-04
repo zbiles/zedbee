@@ -13,6 +13,7 @@ import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { CheckObservationSet, CheckTarget } from "../checks/adapter.js";
 import { normalizeObservation } from "../attribution/fingerprint.js";
+import { assertSourceSafeEntityObservation } from "../attribution/source-identity.js";
 import {
   isCacheableObservationCheck,
   requiresDependencyInputs,
@@ -73,6 +74,8 @@ export function sanitizeCacheableObservationSet(
   const targetObservations = input.targetObservations.map((item) =>
     normalizeObservation(item as Observation),
   );
+  for (const observation of [...baselineObservations, ...targetObservations])
+    assertSourceSafeEntityObservation(observation);
   const dependencyInputs =
     input.dependencyInputs === undefined
       ? undefined
@@ -171,7 +174,7 @@ export class ObservationCacheStore implements ObservationCache {
       const envelope = JSON.parse(serialized) as Record<string, unknown>;
       const payloadText = JSON.stringify(envelope.payload);
       if (
-        envelope.schemaVersion !== 2 ||
+        envelope.schemaVersion !== 3 ||
         typeof envelope.integrity !== "string" ||
         envelope.integrity !== digest(payloadText)
       ) {
@@ -194,7 +197,7 @@ export class ObservationCacheStore implements ObservationCache {
       const payload = sanitizeCacheableObservationSet(value);
       const payloadText = JSON.stringify(payload);
       const serialized = `${JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 3,
         integrity: digest(payloadText),
         payload,
       })}\n`;

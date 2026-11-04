@@ -31,6 +31,7 @@ import { createInspectionFixture } from "../inspection/fixture.js";
 import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
 import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 import type { CheckFixCandidate } from "../../src/fixes/types.js";
+import { collectMetricEntitySpans } from "../../src/attribution/entities.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -1596,15 +1597,21 @@ describe("dispatchChecks", () => {
     context.baselineInspection = await inspectRepository(baseline.root);
     context.targetInspection = await inspectRepository(targetFixture.root);
     const events: ScanEvent[] = [];
-    const metricObservation = (file: string, name: string): Observation => ({
-      check: "cyclomaticComplexity",
-      rule: "cyclomatic-complexity",
-      identity: `function:${file}:${name}`,
-      severity: "error",
-      message: "Complexity exceeds policy.",
-      entity: { kind: "function", name, file },
-      metric: { name: "cyclomatic-complexity", value: 11 },
-    });
+    const metricObservation = (file: string, name: string): Observation => {
+      const { entity } = collectMetricEntitySpans(
+        `export function ${name}() { return 1; }\n`,
+        file,
+      )[0]!;
+      return {
+        check: "cyclomaticComplexity",
+        rule: "cyclomatic-complexity",
+        identity: entity.identity,
+        severity: "error",
+        message: "Complexity exceeds policy.",
+        entity: { kind: entity.kind, name: entity.name, file },
+        metric: { name: "cyclomatic-complexity", value: 11 },
+      };
+    };
     const adapter: ObservationCheckAdapter = {
       id: "cyclomaticComplexity",
       output: "observations",

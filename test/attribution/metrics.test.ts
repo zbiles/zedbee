@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { attributeMetricDelta } from "../../src/attribution/metrics.js";
+import {
+  attributeMetricDelta,
+  prepareMetricAttribution,
+} from "../../src/attribution/metrics.js";
 import type { ChangedEntity, Observation } from "../../src/core/types.js";
 
 const entity: ChangedEntity = {
@@ -24,6 +27,26 @@ function metric(value: number): Observation {
 }
 
 describe("attributeMetricDelta", () => {
+  it("retains validated ownership snapshots when prepared inputs are later changed", () => {
+    const mutable = { ...entity };
+    const target = metric(26);
+    const attribute = prepareMetricAttribution([mutable]);
+    mutable.name = "different";
+    mutable.identity = "function:src/parser.ts:different";
+    expect(
+      attribute(undefined, target, { limit: 20, blockWorsening: true })
+        .attribution.staged,
+    ).toBe(true);
+    expect(() =>
+      prepareMetricAttribution([
+        { ...entity, identity: "function:src/parser.ts:wrong" },
+      ]),
+    ).toThrow(TypeError);
+    expect(() =>
+      attribute(undefined, target, { limit: Number.NaN, blockWorsening: true }),
+    ).toThrow(TypeError);
+  });
+
   it("stages a worsening metric on an exactly changed entity", () => {
     const finding = attributeMetricDelta(metric(25), metric(26), [entity], {
       limit: 20,

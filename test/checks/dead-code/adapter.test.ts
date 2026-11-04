@@ -1,3 +1,5 @@
+import { sourceEntityName } from "../../../src/attribution/source-identity.js";
+const knipName = (name: string) => sourceEntityName(JSON.stringify([name]));
 import { access, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,7 +143,7 @@ describe("captured Knip execution", () => {
       });
       expect(
         result.targetObservations.map((item) => item.entity?.name),
-      ).not.toContain("@tools/runner");
+      ).not.toContain(knipName("@tools/runner"));
       expect(result.dependencyInputs).toBeDefined();
       expect(
         validateDependencyInputs(result.dependencyInputs, run, "knip"),
@@ -180,9 +182,9 @@ describe("captured Knip execution", () => {
     }
     const result = await deadCodeAdapter.collect(run);
     const names = result.targetObservations.map((item) => item.entity?.name);
-    expect(names).toContain("unused");
-    expect(names).not.toContain("zedbee");
-    expect(names).not.toContain("@tools/runner");
+    expect(names).toContain(knipName("unused"));
+    expect(names).not.toContain(knipName("zedbee"));
+    expect(names).not.toContain(knipName("@tools/runner"));
     expect(result.dependencyInputs).toBeDefined();
     expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
       true,
@@ -323,7 +325,7 @@ describe("captured Knip execution", () => {
         const collected = await deadCodeAdapter.collect(input);
         expect(
           collected.targetObservations.some(
-            (item) => item.entity?.name === "hidden",
+            (item) => item.entity?.name === knipName("hidden"),
           ),
         ).toBe(true);
         return collected;
@@ -351,7 +353,7 @@ describe("captured Knip execution", () => {
     const collected = await deadCodeAdapter.collect(run);
     expect(
       collected.targetObservations.some(
-        (item) => item.entity?.name === "unused",
+        (item) => item.entity?.name === knipName("unused"),
       ),
     ).toBe(true);
     expect(collected.dependencyInputs).toBeDefined();
@@ -750,7 +752,7 @@ describe("deadCodeAdapter", () => {
       ).toEqual([
         expect.objectContaining({
           rule: "unresolved",
-          entity: expect.objectContaining({ name: "#alias" }),
+          entity: expect.objectContaining({ name: knipName("#alias") }),
         }),
       ]);
     });

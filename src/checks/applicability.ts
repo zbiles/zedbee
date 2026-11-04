@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import type { CheckId } from "../config/schema.js";
 import type {
   CheckApplicability,
@@ -147,13 +148,16 @@ export async function inspectManagedCheck(
             (target) => target.relativeRoot === workspace.relativeRoot,
           ),
       );
+    const acquire = pLimit(4);
     const selected = await Promise.all(
-      eligible.map(async (workspace) => ({
-        workspace,
-        relevant: always
-          ? workspace.sourceFiles.some((path) => SOURCE.test(path))
-          : await projectInputsMayHaveChanged(context, targetFor(workspace)),
-      })),
+      eligible.map((workspace) =>
+        acquire(async () => ({
+          workspace,
+          relevant: always
+            ? workspace.sourceFiles.some((path) => SOURCE.test(path))
+            : await projectInputsMayHaveChanged(context, targetFor(workspace)),
+        })),
+      ),
     );
     workspaces = selected
       .filter(({ relevant }) => relevant)

@@ -148,32 +148,35 @@ describe("observation cache", () => {
     await expect(store.get(cacheKey)).resolves.toBeUndefined();
   });
 
-  it("treats the prior observation cache envelope as a miss", async () => {
-    const root = await cacheRoot("zedbee-cache-legacy-");
-    const store = new ObservationCacheStore({ root });
-    const cacheKey = "e".repeat(64);
-    const payload = {
-      checkId: "cyclomaticComplexity",
-      target: { id: ".", kind: "repository" as const, relativeRoot: "." },
-      baselineObservations: [],
-      targetObservations: [],
-    };
-    const payloadText = JSON.stringify(payload);
+  it.each([1, 2])(
+    "treats observation cache envelope v%s as a miss",
+    async (schemaVersion) => {
+      const root = await cacheRoot("zedbee-cache-legacy-");
+      const store = new ObservationCacheStore({ root });
+      const cacheKey = "e".repeat(64);
+      const payload = {
+        checkId: "cyclomaticComplexity",
+        target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+        baselineObservations: [],
+        targetObservations: [],
+      };
+      const payloadText = JSON.stringify(payload);
 
-    await store.set(cacheKey, payload);
-    await writeFile(
-      join(root, `${cacheKey}.json`),
-      `${JSON.stringify({
-        schemaVersion: 1,
-        integrity: createHash("sha256")
-          .update(payloadText, "utf8")
-          .digest("hex"),
-        payload,
-      })}\n`,
-    );
+      await store.set(cacheKey, payload);
+      await writeFile(
+        join(root, `${cacheKey}.json`),
+        `${JSON.stringify({
+          schemaVersion,
+          integrity: createHash("sha256")
+            .update(payloadText, "utf8")
+            .digest("hex"),
+          payload,
+        })}\n`,
+      );
 
-    await expect(store.get(cacheKey)).resolves.toBeUndefined();
-  });
+      await expect(store.get(cacheKey)).resolves.toBeUndefined();
+    },
+  );
 
   it("prunes least-recently-used entries to the configured bound", async () => {
     const root = await cacheRoot("zedbee-cache-prune-");

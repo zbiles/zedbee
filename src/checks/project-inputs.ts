@@ -1,5 +1,22 @@
 import type { CheckTarget, InspectionContext } from "./adapter.js";
-import { compilerConfigurationPaths } from "./typescript/configuration-paths.js";
+import type { RepositoryInspection } from "../inspection/types.js";
+import { createCompilerConfigurationResolver } from "./typescript/configuration-paths.js";
+
+// Inspection objects are immutable and scan-scoped. Avoid process-wide caches
+// keyed by directory paths, which can outlive their selected snapshot.
+const configurationResolvers = new WeakMap<
+  RepositoryInspection,
+  ReturnType<typeof createCompilerConfigurationResolver>
+>();
+
+function configurationResolver(inspection: RepositoryInspection) {
+  let resolver = configurationResolvers.get(inspection);
+  if (resolver === undefined) {
+    resolver = createCompilerConfigurationResolver(inspection.snapshotRoot);
+    configurationResolvers.set(inspection, resolver);
+  }
+  return resolver;
+}
 
 /** Scope graph analysis to changed workspace inputs, including contained
  * inherited configurations outside the workspace's own directory.
@@ -41,12 +58,9 @@ export async function projectInputsMayHaveChanged(
     )
       return true;
     if (
-      [
-        ...(await compilerConfigurationPaths(
-          inspection.snapshotRoot,
-          workspace,
-        )),
-      ].some((path) => changed.has(path))
+      [...(await configurationResolver(inspection)(workspace))].some((path) =>
+        changed.has(path),
+      )
     )
       return true;
   }

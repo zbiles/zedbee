@@ -276,17 +276,19 @@ export class GitClient {
     return this.gitCommand;
   }
 
-  private selectedArguments(args: readonly string[]): readonly string[] {
+  private inertArguments(args: readonly string[]): readonly string[] {
     const selected = this.selectedComparison;
-    return selected === undefined
-      ? args
-      : [
-          "-c",
-          `core.hooksPath=${join(dirname(selected.indexPath), "hooks-disabled")}`,
-          "-c",
-          "core.fsmonitor=false",
-          ...args,
-        ];
+    return [
+      "-c",
+      "core.fsmonitor=false",
+      ...(selected === undefined
+        ? []
+        : [
+            "-c",
+            `core.hooksPath=${join(dirname(selected.indexPath), "hooks-disabled")}`,
+          ]),
+      ...args,
+    ];
   }
 
   private async execute(
@@ -294,7 +296,7 @@ export class GitClient {
     options: GitRunOptions,
     binary: boolean,
   ): Promise<GitOutput | GitBinaryOutput> {
-    args = this.selectedArguments(args);
+    args = this.inertArguments(args);
     if (isAborted(options.signal)) {
       throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
     }
@@ -481,7 +483,7 @@ export class GitClient {
     let forceKillTimer: NodeJS.Timeout | undefined;
     const child = spawn(
       command.executable,
-      this.selectedArguments(["cat-file", "--batch"]),
+      this.inertArguments(["cat-file", "--batch"]),
       {
         cwd: options.cwd ?? this.repositoryRoot,
         env: commandEnvironment(command.path, {
