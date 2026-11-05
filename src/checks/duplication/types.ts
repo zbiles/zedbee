@@ -39,6 +39,8 @@ export interface NormalizedCloneFragment extends SourceLocation {
   readonly file: string;
   readonly startLine: number;
   readonly endLine: number;
+  readonly startOffset?: number;
+  readonly endOffset?: number;
 }
 
 export interface NormalizedClone {

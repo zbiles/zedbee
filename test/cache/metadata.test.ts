@@ -58,10 +58,10 @@ describe("managed check cache metadata", () => {
     )("cyclomaticComplexity");
 
     expect(identity).toBe(
-      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v5",
+      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v6-source-identities",
     );
     expect(observationCacheEngineIdentity("cyclomaticComplexity")).toMatch(
-      /^eslint@\d+\.\d+\.\d+[^+]*\+typescript-eslint@\d+\.\d+\.\d+[^+]*\+typescript@\d+\.\d+\.\d+[^+]*\+complexity-v5$/u,
+      /^eslint@\d+\.\d+\.\d+[^+]*\+typescript-eslint@\d+\.\d+\.\d+[^+]*\+typescript@\d+\.\d+\.\d+[^+]*\+complexity-v6-source-identities$/u,
     );
   });
 
@@ -77,7 +77,7 @@ describe("managed check cache metadata", () => {
     );
 
     expect(identity("readabilityComplexity")).toBe(
-      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v5",
+      "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v6-source-identities",
     );
     expect(identity("structuralSecurity")).toBe(
       "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v3",
@@ -94,17 +94,21 @@ describe("managed check cache metadata", () => {
       createObservationCacheEngineIdentityResolver((name) =>
         versions.get(name),
       )("duplication"),
-    ).toBe("jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2");
+    ).toBe(
+      "jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v3-occurrences",
+    );
   });
 
   it("versions compiler project coverage and paired typed-lint attribution", () => {
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("types"),
-    ).toBe("typescript@6.0.3+captured-inputs-v4-diff-project-coverage");
+    ).toBe(
+      "typescript@6.0.3+captured-inputs-v4-diff-project-coverage+diagnostic-privacy-v1",
+    );
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("lint"),
     ).toBe(
-      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v3-diff-project-coverage",
+      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v3-diff-project-coverage+diagnostic-privacy-v1",
     );
   });
 

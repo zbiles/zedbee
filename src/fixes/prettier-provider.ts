@@ -1,6 +1,10 @@
+import type { FilePolicyResolver } from "../config/file-policy.js";
 import { runAnalyzerJob } from "../checks/runner/run-job.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
-import type { CheckRunContext } from "../checks/adapter.js";
+import type {
+  CheckRunContext,
+  CheckExecutionResult,
+} from "../checks/adapter.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
 import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
@@ -12,7 +16,11 @@ import {
 import { compareCodeUnits } from "../core/compare.js";
 import type { Finding } from "../core/types.js";
 import { sanitizeFixCandidates } from "./sanitize.js";
-import type { FormatFileFixCandidate } from "./types.js";
+import type {
+  FormatFileFixCandidate,
+  CheckFixCandidate,
+  FixableCheckId,
+} from "./types.js";
 
 function isFixableFormattingFinding(finding: Finding): finding is Finding & {
   readonly severity: "warning" | "error";
@@ -131,4 +139,68 @@ export async function formatWorkingSource(
     },
     options,
   );
+}
+
+function resolvePolicyForFile(
+  executions: readonly CheckExecutionResult[],
+): FilePolicyResolver | undefined {
+  return executions.find((execution) => execution.policyForFile !== undefined)
+    ?.policyForFile;
+}
+
+export function addFormattingForExactCandidates(
+  candidates: readonly CheckFixCandidate[],
+  selected: ReadonlySet<FixableCheckId>,
+  executions: readonly CheckExecutionResult[],
+): readonly CheckFixCandidate[] {
+  if (!selected.has("formatting")) return candidates;
+  const policyForFile = resolvePolicyForFile(executions);
+  if (policyForFile === undefined) return candidates;
+
+  const byFile = new Map<string, FormatFileFixCandidate>();
+  for (const candidate of candidates) {
+    if (candidate.kind !== "format-file") continue;
+    byFile.set(candidate.file, candidate);
+  }
+  for (const candidate of candidates) {
+    if (
+      candidate.kind !== "exact-file" ||
+      prettierParserFor(candidate.file) === undefined
+    ) {
+      continue;
+    }
+    const policy = policyForFile("formatting", candidate.file, "target");
+    if (policy.severity === "off") continue;
+    // Project-engine files are formatted by their own engine through the
+    // formatting finding path, never by bundling managed settings here.
+    if (policy.engine === "project") continue;
+    const existing = byFile.get(candidate.file);
+    const findingIds = [
+      ...(existing?.findingIds ?? []),
+      ...candidate.edits.map((edit) => edit.findingId),
+    ];
+    const severities = [
+      ...(existing?.severities ?? []),
+      ...candidate.edits.map((edit) => edit.severity),
+    ];
+    const [formatCandidate] = sanitizeFixCandidates(
+      [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: candidate.file,
+          findingIds,
+          severities,
+          settings: policy.settings,
+        },
+      ],
+      { checkId: "formatting", findingIds },
+    );
+    byFile.set(candidate.file, formatCandidate as FormatFileFixCandidate);
+  }
+  const otherCandidates = candidates.filter(
+    (candidate) => candidate.kind !== "format-file",
+  );
+  const formattingCandidates = [...byFile.values()];
+  return Object.freeze([...otherCandidates, ...formattingCandidates]);
 }

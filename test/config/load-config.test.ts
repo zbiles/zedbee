@@ -5,6 +5,7 @@ import { describe, expect, it, onTestFinished } from "vitest";
 import {
   loadConfig,
   loadConfigFromCommit,
+  loadConfigFromIndex,
 } from "../../src/config/load-config.js";
 import { GitClient } from "../../src/git/client.js";
 import { createGitRepository } from "../helpers/git-repository.js";
@@ -759,32 +760,32 @@ describe("loadConfigFromCommit", () => {
   it.skipIf(process.platform === "win32")(
     "treats an explicit magic-looking path as a literal committed filename",
     async () => {
-    const repository = await createGitRepository();
-    const configName = ":(glob)ci-policy.jsonc";
-    await repository.write(
-      configName,
-      '{"schemaVersion":1,"profile":"thorough"}\n',
-    );
-    await repository.commitAll("strict magic-name policy");
-    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
-    await repository.write(
-      configName,
-      '{"schemaVersion":1,"profile":"fast"}\n',
-    );
-    await repository.git(["add", "--", configName]);
-    await repository.write(
-      configName,
-      '{"schemaVersion":1,"profile":"recommended"}\n',
-    );
+      const repository = await createGitRepository();
+      const configName = ":(glob)ci-policy.jsonc";
+      await repository.write(
+        configName,
+        '{"schemaVersion":1,"profile":"thorough"}\n',
+      );
+      await repository.commitAll("strict magic-name policy");
+      const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+      await repository.write(
+        configName,
+        '{"schemaVersion":1,"profile":"fast"}\n',
+      );
+      await repository.git(["add", "--", configName]);
+      await repository.write(
+        configName,
+        '{"schemaVersion":1,"profile":"recommended"}\n',
+      );
 
-    const config = await loadConfigFromCommit(
-      repository.root,
-      new GitClient(repository.root),
-      targetCommit,
-      join(repository.root, configName),
-    );
+      const config = await loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+        join(repository.root, configName),
+      );
 
-    expect(config.profile).toBe("thorough");
+      expect(config.profile).toBe("thorough");
     },
   );
 
@@ -950,7 +951,7 @@ describe("loadConfigFromCommit", () => {
     ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
   });
 
-  it("preserves live loading for an explicit external configuration", async () => {
+  it("rejects explicit external configuration in committed mode", async () => {
     const repository = await createGitRepository();
     await repository.write("value.ts", "export const value = 1;\n");
     await repository.commitAll("target");
@@ -959,15 +960,14 @@ describe("loadConfigFromCommit", () => {
     const configPath = join(externalRoot, "external.jsonc");
     await writeFile(configPath, '{"schemaVersion":1,"profile":"fast"}\n');
 
-    const config = await loadConfigFromCommit(
-      repository.root,
-      new GitClient(repository.root),
-      targetCommit,
-      configPath,
-    );
-
-    expect(config.profile).toBe("fast");
-    expect(config.configPath).toBe(configPath);
+    await expect(
+      loadConfigFromCommit(
+        repository.root,
+        new GitClient(repository.root),
+        targetCommit,
+        configPath,
+      ),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
   });
 
   it("preserves abort errors while reading the target tree", async () => {
@@ -1040,5 +1040,31 @@ describe("loadConfigFromCommit", () => {
         maxOutputBytes: 1024 * 1024,
       },
     ]);
+  });
+});
+
+describe("selected configuration rejects working-copy fallback", () => {
+  it("rejects external configuration in both index and commit modes before Git access", async () => {
+    const parent = await createRepositoryRoot();
+    const root = join(parent, "repo");
+    await mkdir(root);
+    const external = join(parent, "external.jsonc");
+    await writeFile(
+      external,
+      JSON.stringify({ schemaVersion: 1, profile: "fast" }),
+    );
+    const git = {
+      run() {
+        throw new Error("Unexpected Git access");
+      },
+    } as unknown as GitClient;
+    await expect(
+      loadConfigFromIndex(root, git, external),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    await expect(
+      loadConfigFromCommit(root, git, "a".repeat(40), external),
+    ).rejects.toMatchObject({ code: "CONFIG_INVALID" });
+    // Deliberate working-copy loading remains explicit for setup/diagnostics.
+    expect((await loadConfig(root, external)).profile).toBe("fast");
   });
 });

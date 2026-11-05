@@ -1,6 +1,7 @@
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
+import { sourceEntityName } from "../../attribution/source-identity.js";
 
 const ISSUE_TYPES = [
   "files",
@@ -68,7 +69,7 @@ function itemObservations(
   if (!Array.isArray(rawItems)) throw new TypeError("Expected Knip issue list");
   const groups =
     type === "duplicates" ? rawItems : rawItems.map((item) => [item]);
-  return groups.map((rawGroup): Observation => {
+  return groups.flatMap((rawGroup): Observation[] => {
     if (!Array.isArray(rawGroup) || rawGroup.length === 0) {
       throw new TypeError("Expected Knip issue group");
     }
@@ -76,23 +77,35 @@ function itemObservations(
     const names = items.map((item) => text(item.name, "Knip issue name"));
     const line = coordinate(items[0]?.line);
     const column = coordinate(items[0]?.col);
-    return {
-      check: "deadCode",
-      rule: type,
-      identity: `${type}:${file}:${[...names].sort(compareCodeUnits).join("|")}`,
-      severity: "error",
-      message: message(type),
-      entity: {
-        kind: `knip-${type}`,
-        name: [...names].sort(compareCodeUnits).join("|"),
-        file,
+    // Terminal use does not require a static import or script reference.
+    if (
+      (type === "dependencies" || type === "devDependencies") &&
+      names.length === 1 &&
+      names[0] === "zedbee"
+    )
+      return [];
+    const name = sourceEntityName(
+      JSON.stringify([...names].sort(compareCodeUnits)),
+    );
+    return [
+      {
+        check: "deadCode",
+        rule: type,
+        identity: `${type}:${file}:${name}`,
+        severity: "error",
+        message: message(type),
+        entity: {
+          kind: `knip-${type}`,
+          name,
+          file,
+        },
+        location: {
+          file,
+          ...(line === undefined ? {} : { startLine: line }),
+          ...(column === undefined ? {} : { startColumn: column }),
+        },
       },
-      location: {
-        file,
-        ...(line === undefined ? {} : { startLine: line }),
-        ...(column === undefined ? {} : { startColumn: column }),
-      },
-    };
+    ];
   });
 }
 
@@ -118,14 +131,6 @@ export function parseKnipReport(
   }
   const unique = new Map<string, Observation>();
   for (const observation of observations) {
-    // Zedbee is also used directly from a terminal; static imports/scripts
-    // cannot prove it unused. Keep this exception limited to that declaration.
-    if (
-      (observation.rule === "dependencies" ||
-        observation.rule === "devDependencies") &&
-      observation.entity?.name === "zedbee"
-    )
-      continue;
     unique.set(`${observation.rule}:${observation.identity}`, observation);
   }
   return Object.freeze(

@@ -5,7 +5,9 @@ import { execa } from "execa";
 import { isAnalyzerWorker } from "../runner/context.js";
 import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import { compareCodeUnits } from "../../core/compare.js";
-import type { Observation } from "../../core/types.js";
+import type { NormalizedDuplicationReport } from "./types.js";
+import { loadDuplicationSources } from "./source-tokens.js";
+import { compareCloneOccurrences } from "./clone-comparison.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { digestContainedLineRange } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
@@ -25,7 +27,6 @@ import {
   writeManagedJsonConfig,
 } from "../project/config-boundary.js";
 import {
-  cloneObservations,
   missingCloneFragmentLocations,
   parseJscpdReport,
 } from "./normalize-clone.js";
@@ -120,17 +121,31 @@ async function collectSide(
   policyThreshold: number,
   settings: ReturnType<typeof jscpdOptions>,
   signal: AbortSignal,
-): Promise<readonly Observation[]> {
+): Promise<{
+  report: NormalizedDuplicationReport;
+  files: readonly string[];
+  root: string;
+}> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new Error("Duplication analysis failed.");
   }
   const workspace = workspaceFor(inspection, target);
-  if (workspace === undefined) return Object.freeze([]);
+  if (workspace === undefined)
+    return {
+      report: { percentage: 0, clones: [] },
+      files: [],
+      root: canonicalRoot,
+    };
   const sourceFiles = workspace.sourceFiles
     .filter((path) => SOURCE.test(path))
     .sort(compareCodeUnits);
-  if (sourceFiles.length === 0) return Object.freeze([]);
+  if (sourceFiles.length === 0)
+    return {
+      report: { percentage: 0, clones: [] },
+      files: [],
+      root: canonicalRoot,
+    };
 
   const output = await createManagedOutputDirectory("jscpd", [JSCPD_REPORT]);
   try {
@@ -213,7 +228,7 @@ async function collectSide(
       ) {
         throw new Error("Duplication analysis failed.");
       }
-      return cloneObservations(report, policyThreshold);
+      return { report, files: sourceFiles, root: canonicalRoot };
     } finally {
       await managed.cleanup();
     }
@@ -231,7 +246,7 @@ export const duplicationAdapter: ObservationCheckAdapter = {
     try {
       const policy = context.policy as ResolvedDuplicationPolicy;
       const policyThreshold = threshold(policy.threshold);
-      const baselineObservations = await collectSide(
+      const baseline = await collectSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
         context.target,
@@ -239,7 +254,7 @@ export const duplicationAdapter: ObservationCheckAdapter = {
         policy.settings,
         context.signal,
       );
-      const targetObservations = await collectSide(
+      const target = await collectSide(
         context.snapshots.targetDir,
         context.targetInspection,
         context.target,
@@ -247,6 +262,59 @@ export const duplicationAdapter: ObservationCheckAdapter = {
         policy.settings,
         context.signal,
       );
+      if (
+        target.report.percentage <= policyThreshold ||
+        target.report.clones.length === 0
+      ) {
+        return {
+          checkId: "duplication",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+        };
+      }
+      const fullInventory = baseline.report.percentage <= policyThreshold;
+      const fragmentFiles = (report: NormalizedDuplicationReport): string[] => [
+        ...new Set(
+          report.clones.flatMap((clone) =>
+            clone.fragments.map(({ file }) => file),
+          ),
+        ),
+      ];
+      const baselineFiles = fullInventory
+        ? baseline.files
+        : fragmentFiles(baseline.report);
+      const targetFiles = fullInventory
+        ? target.files
+        : fragmentFiles(target.report);
+      const [baselineRegistry, targetRegistry] = await Promise.all([
+        captureSnapshotRegistry(baseline.root, baselineFiles),
+        captureSnapshotRegistry(target.root, targetFiles),
+      ]);
+      const [baselineSources, targetSources] = await Promise.all([
+        loadDuplicationSources(
+          baselineRegistry,
+          baselineFiles,
+          policy.settings,
+          context.signal,
+        ),
+        loadDuplicationSources(
+          targetRegistry,
+          targetFiles,
+          policy.settings,
+          context.signal,
+        ),
+      ]);
+      const { baselineObservations, targetObservations } =
+        compareCloneOccurrences(
+          baseline.report,
+          target.report,
+          baselineSources,
+          targetSources,
+          context.changeSet,
+          policyThreshold,
+          policy.settings.mode,
+        );
       return {
         checkId: "duplication",
         target: context.target,

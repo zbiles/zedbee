@@ -1,3 +1,4 @@
+import { sourceEntityName } from "../../../src/attribution/source-identity.js";
 import { describe, expect, it } from "vitest";
 import { join } from "node:path";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
@@ -97,7 +98,7 @@ describe("snapshot TypeScript aliases", () => {
     expect(result.architecture).toEqual([]);
     expect(
       result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-    ).toEqual([["exports", "unused"]]);
+    ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
     const aliases = await loadSnapshotAliases(
       context.targetInspection.snapshotRoot,
       context.targetInspection.workspaces[0]!,
@@ -152,7 +153,7 @@ describe("snapshot TypeScript aliases", () => {
       expect(result.architecture).toEqual([]);
       expect(
         result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-      ).toEqual([["exports", "unused"]]);
+      ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
     },
   );
 
@@ -181,7 +182,7 @@ describe("snapshot TypeScript aliases", () => {
     expect(result.architecture).toEqual([]);
     expect(
       result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-    ).toEqual([["exports", "unused"]]);
+    ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
   });
 
   it("keeps alias consumers reachable through a TSX component imported by a Node test", async () => {
@@ -209,7 +210,7 @@ describe("snapshot TypeScript aliases", () => {
     });
     expect(
       result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-    ).toEqual([["exports", "unused"]]);
+    ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
     expect(result.architecture).toEqual([]);
   });
 
@@ -241,7 +242,11 @@ describe("snapshot TypeScript aliases", () => {
           expect.objectContaining({
             rule: prefix === "utils" ? "unlisted" : "unresolved",
             entity: expect.objectContaining({
-              name: prefix === "utils" ? "utils" : `${prefix}/missing`,
+              name: sourceEntityName(
+                JSON.stringify([
+                  prefix === "utils" ? "utils" : `${prefix}/missing`,
+                ]),
+              ),
             }),
           }),
         ]),
@@ -285,7 +290,10 @@ describe("snapshot TypeScript aliases", () => {
       expect.arrayContaining([
         expect.objectContaining({
           rule: "exports",
-          entity: expect.objectContaining({ name: "unused", file: "exact.ts" }),
+          entity: expect.objectContaining({
+            name: sourceEntityName(JSON.stringify(["unused"])),
+            file: "exact.ts",
+          }),
         }),
       ]),
     );
@@ -355,7 +363,7 @@ describe("snapshot TypeScript aliases", () => {
         expect.objectContaining({
           rule: "exports",
           entity: expect.objectContaining({
-            name: "unused",
+            name: sourceEntityName(JSON.stringify(["unused"])),
             file: "special/value.ts",
           }),
         }),
@@ -380,7 +388,7 @@ describe("snapshot TypeScript aliases", () => {
     expect(result.architecture).toEqual([]);
     expect(
       result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-    ).toEqual([["exports", "unused"]]);
+    ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
   });
 
   it("does not read an installed package that collides with a valid local alias", async () => {
@@ -404,7 +412,7 @@ describe("snapshot TypeScript aliases", () => {
     expect(result.architecture).toEqual([]);
     expect(
       result.deadCode.map(({ rule, entity }) => [rule, entity?.name]),
-    ).toEqual([["exports", "unused"]]);
+    ).toEqual([["exports", sourceEntityName(JSON.stringify(["unused"]))]]);
   });
 
   it("does not require an unrelated workspace package for a captured local alias", async () => {

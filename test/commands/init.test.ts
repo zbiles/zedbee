@@ -184,13 +184,21 @@ describe("executeInitCommand", () => {
     deps.confirm = async (proposal, _options, select) => {
       expect(proposal.hookSelection).toBe("tracked");
       expect(proposal.hookChoices).toEqual(["none", "tracked", "raw"]);
-      const local = select("recommended", undefined, "block", "raw");
+      const local = select({
+        profile: "recommended",
+        osvUnavailable: "block",
+        hook: "raw",
+      });
       expect(
         local.files.some(
           (file) => file.relativePath === ".git/hooks/pre-commit",
         ),
       ).toBe(true);
-      return select("recommended", undefined, "block", "none");
+      return select({
+        profile: "recommended",
+        osvUnavailable: "block",
+        hook: "none",
+      });
     };
     const code = await executeInitCommand(
       {
@@ -252,7 +260,11 @@ describe("executeInitCommand", () => {
       expect(proposal.limitations.join(" ")).toContain(
         "Tracked setup is unavailable",
       );
-      return select("recommended", undefined, "block", "raw");
+      return select({
+        profile: "recommended",
+        osvUnavailable: "block",
+        hook: "raw",
+      });
     };
     expect(
       await executeInitCommand(
@@ -411,11 +423,11 @@ describe("executeInitCommand", () => {
     const deps = dependencies(root);
     deps.confirm = async (proposal, options, proposalForSelection) => {
       expect(options).not.toHaveProperty("terminalSize");
-      const reviewed = proposalForSelection(
-        "thorough",
-        ["lint", "types"],
-        "warn",
-      );
+      const reviewed = proposalForSelection({
+        profile: "thorough",
+        checks: ["lint", "types"],
+        osvUnavailable: "warn",
+      });
       received.push({ proposal, options });
       expect(reviewed.profile).toBe("thorough");
       expect(reviewed.recommendedChecks).toEqual(["lint", "types"]);
@@ -598,7 +610,12 @@ describe("executeInitCommand", () => {
       _proposal,
       _options,
       proposalForSelection,
-    ) => proposalForSelection("recommended", ["lint", "types"], "block");
+    ) =>
+      proposalForSelection({
+        profile: "recommended",
+        checks: ["lint", "types"],
+        osvUnavailable: "block",
+      });
 
     const baseOptions = {
       profile: "recommended" as const,
@@ -749,17 +766,21 @@ describe("executeInitCommand", () => {
       deps.confirm = async (_proposal, options, select) => {
         prompted = true;
         expect(options.projectPrettierTrustStored).toBe(true);
-        const selected = select(
-          "recommended",
-          undefined,
-          "block",
-          "none",
-          "project",
-        );
+        const selected = select({
+          profile: "recommended",
+          osvUnavailable: "block",
+          hook: "none",
+          formatting: "project",
+        });
         expect(selected.projectPrettierTrustConfirmed).toBe(true);
         expect(
-          select("recommended", undefined, "block", "none", "project", false)
-            .projectPrettierTrustConfirmed,
+          select({
+            profile: "recommended",
+            osvUnavailable: "block",
+            hook: "none",
+            formatting: "project",
+            projectTrust: false,
+          }).projectPrettierTrustConfirmed,
         ).not.toBe(true);
         return selected;
       };

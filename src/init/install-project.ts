@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, sep } from "node:path";
 import { execa } from "execa";
+import { installArguments, installDependency } from "./install-dependency.mjs";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
@@ -12,6 +13,7 @@ export interface ProjectInstallTarget {
   readonly manager: "npm" | "pnpm" | "yarn" | "bun";
   readonly args: readonly string[];
   readonly hasPrettier: boolean;
+  readonly workspaceRoot?: boolean;
 }
 
 const LOCKFILES = [
@@ -64,29 +66,17 @@ export async function projectInstallTargets(
         project.relativeRoot === "." &&
         (project.manifest.workspacePatterns.length > 0 ||
           paths.has("pnpm-workspace.yaml"));
-      const args =
-        manager === "npm" || manager === "pnpm"
-          ? [
-              manager === "npm" ? "install" : "add",
-              "--save-dev",
-              "--save-exact",
-            ]
-          : [
-              "add",
-              "--dev",
-              "--exact",
-              ...(workspaceRoot && manager === "yarn" && classicYarn
-                ? ["--ignore-workspace-root-check"]
-                : []),
-            ];
-      if (workspaceRoot && manager === "pnpm") {
-        args.splice(1, 0, "--workspace-root");
-      }
-      args.push(`zedbee@${ZEDBEE_VERSION}`);
+      const args = installArguments(
+        manager,
+        workspaceRoot,
+        classicYarn,
+        `zedbee@${ZEDBEE_VERSION}`,
+      );
       return {
         projectRoot: project.relativeRoot,
         manager,
         args,
+        workspaceRoot,
         hasPrettier: prettier.some(
           (found) =>
             found.projectRoot === project.relativeRoot &&
@@ -110,21 +100,19 @@ export async function installProjectDependency(
   const current = (await projectInstallTargets(root, [target.projectRoot]))[0];
   if (current === undefined)
     throw new Error("The selected project folder is no longer available.");
-  const result = await execa(current.manager, [...current.args], {
-    cwd,
-    cancelSignal: signal,
-    killDescendants: true,
-    timeout: 300_000,
-    maxBuffer: 16 * 1024 * 1024,
-    stdin: "ignore",
-    reject: false,
-  });
-  if (result.exitCode !== 0) {
-    const detail = (result.stderr || result.stdout).trim().slice(-800);
-    throw new Error(
-      detail ||
-        "Zedbee installation failed. Check your package manager and registry access.",
-    );
-  }
+  await installDependency(
+    {
+      manager: current.manager,
+      cwd,
+      packageSpec: `zedbee@${ZEDBEE_VERSION}`,
+      workspaceRoot: current.workspaceRoot === true,
+      signal,
+    },
+    (command, args, { cancelSignal, ...options }) =>
+      execa(command, args, {
+        ...options,
+        ...(cancelSignal === undefined ? {} : { cancelSignal }),
+      }),
+  );
   await resolveHookCommand(root);
 }

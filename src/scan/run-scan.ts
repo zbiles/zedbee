@@ -1,4 +1,5 @@
 import { runMergeScan } from "./merge-scan.js";
+import { freezeResult } from "../core/freeze-result.js";
 import type { SelectedIndexComparison } from "../git/selected-comparison.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
@@ -89,16 +90,6 @@ const DEFAULT_DEPENDENCIES: RunScanDependencies = {
   createObservationCache: () =>
     new ObservationCacheStore({ root: defaultObservationCacheRoot() }),
 };
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value)) {
-      deepFreeze(nested);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
 function dispatchOptions(
   onEvent: RunScanOptions["onEvent"],
   networkDisclosures: NetworkDisclosure[],
@@ -134,7 +125,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         selectedComparison = selected;
       },
     );
-    if (merged !== undefined) return deepFreeze(merged);
+    if (merged !== undefined) return freezeResult(merged);
   }
   const networkDisclosures: NetworkDisclosure[] = [];
   let includeSourceExcerpts = false;
@@ -204,6 +195,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
             ? await enrichSourceExcerpts(
                 decision.results,
                 session.targetInspection,
+                session.executions.map(({ result }) => result),
               )
             : omitSourceExcerpts(decision.results);
       const context = reportContext(state);
@@ -262,5 +254,5 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
             durationMs,
           );
   }
-  return deepFreeze(report);
+  return freezeResult(report);
 }

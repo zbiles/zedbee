@@ -3,7 +3,10 @@ import { changedFilePaths } from "../changed-file-paths.js";
 import { relative, sep } from "node:path";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
-import { collectMetricEntitySpans } from "../../attribution/entities.js";
+import {
+  collectMetricEntitySpans,
+  type MetricEntitySpan,
+} from "../../attribution/entities.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
@@ -94,13 +97,75 @@ function observationsFromMessages(
   );
 }
 
+/** Index syntax intervals once; queries visit only possible containing spans. */
+function metricSpanLookup(spans: readonly MetricEntitySpan[], source: string) {
+  const ordered = spans
+    .map((span, ordinal) => ({
+      span,
+      ordinal,
+      start: span.startOffset,
+      end: span.endOffset,
+    }))
+    .sort(
+      (left, right) => left.start - right.start || left.ordinal - right.ordinal,
+    );
+  const maxEnds: number[] = [];
+  function build(node: number, start: number, end: number): number {
+    if (end - start === 1) return (maxEnds[node] = ordered[start]!.end);
+    const middle = (start + end) >>> 1;
+    return (maxEnds[node] = Math.max(
+      build(node * 2, start, middle),
+      build(node * 2 + 1, middle, end),
+    ));
+  }
+  if (ordered.length > 0) build(1, 0, ordered.length);
+  return (offset: number): MetricEntitySpan | undefined => {
+    let best: (typeof ordered)[number] | undefined;
+    function containing(node: number, start: number, end: number): void {
+      if (ordered[start]!.start > offset || maxEnds[node]! <= offset) return;
+      if (end - start === 1) {
+        const candidate = ordered[start]!;
+        if (
+          best === undefined ||
+          candidate.end - candidate.start < best.end - best.start ||
+          (candidate.end - candidate.start === best.end - best.start &&
+            candidate.ordinal < best.ordinal)
+        )
+          best = candidate;
+        return;
+      }
+      const middle = (start + end) >>> 1;
+      containing(node * 2, start, middle);
+      containing(node * 2 + 1, middle, end);
+    }
+    if (ordered.length > 0) containing(1, 0, ordered.length);
+    if (best !== undefined) return best.span;
+    // Declaration diagnostics can precede their function on the same line.
+    let start = 0;
+    let end = ordered.length;
+    while (start < end) {
+      const middle = (start + end) >>> 1;
+      if (ordered[middle]!.start < offset) start = middle + 1;
+      else end = middle;
+    }
+    const next = ordered[start];
+    return next !== undefined &&
+      !source.slice(offset, next.start).includes("\n")
+      ? next.span
+      : undefined;
+  };
+}
+
 function rawObservationsFromMessages(
   file: string,
   source: string,
   messages: readonly LinterTypes.LintMessage[],
   limit?: number,
 ): readonly Observation[] {
-  const spans = collectMetricEntitySpans(source, file);
+  const spanAt = metricSpanLookup(
+    collectMetricEntitySpans(source, file),
+    source,
+  );
   if (messages.some((message) => message.fatal === true)) {
     throw new Error("Complexity analysis failed.");
   }
@@ -113,26 +178,7 @@ function rawObservationsFromMessages(
     }
     const offset =
       (starts[message.line - 1] ?? source.length) + message.column - 1;
-    const containing = spans
-      .filter(
-        ({ startOffset, endOffset }) =>
-          offset >= startOffset && offset < endOffset,
-      )
-      .sort(
-        (left, right) =>
-          left.endOffset -
-          left.startOffset -
-          (right.endOffset - right.startOffset),
-      )[0];
-    const span =
-      containing ??
-      spans
-        .filter(
-          ({ startOffset }) =>
-            startOffset >= offset &&
-            !source.slice(offset, startOffset).includes("\n"),
-        )
-        .sort((left, right) => left.startOffset - right.startOffset)[0];
+    const span = spanAt(offset);
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
     const check =

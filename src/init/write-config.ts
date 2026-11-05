@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import {
   chmod,
   lstat,
@@ -27,6 +27,7 @@ import {
   revokeProjectPrettierTrust,
   type ProjectPrettierTrustSnapshot,
 } from "../checks/prettier/project-trust.js";
+import { verifyExecutableImportProvenance } from "./import-provenance.js";
 import { initContentHash } from "./recommend.js";
 import type {
   ApplyInitDependencies,
@@ -295,24 +296,10 @@ export async function applyInitProposal(
   const trustSnapshots: ProjectPrettierTrustSnapshot[] = [];
   const revokeSnapshots: ProjectPrettierTrustSnapshot[] = [];
   if (proposal.executableEvaluatedConfigs !== undefined) {
-    // A consented evaluation was bound to exact working-copy bytes; if the
-    // native configuration changed since the preview, the imported values no
-    // longer describe the project. This is checked before any write so the
-    // failure surfaces its own message without touching the repository.
-    for (const evaluated of proposal.executableEvaluatedConfigs) {
-      const current = await readFile(join(root, evaluated.path), "utf8").catch(
-        () => undefined,
-      );
-      if (
-        current === undefined ||
-        createHash("sha256").update(current, "utf8").digest("hex") !==
-          evaluated.sha256
-      ) {
-        throw new Error(
-          "The project Prettier configuration changed after the preview; run zedbee init again.",
-        );
-      }
-    }
+    await verifyExecutableImportProvenance(
+      root,
+      proposal.executableEvaluatedConfigs,
+    );
   }
   try {
     for (const [index, item] of validated.entries()) {

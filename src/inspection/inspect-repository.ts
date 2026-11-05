@@ -79,12 +79,14 @@ function detectPackageManager(
 function discoverRepositoryFiles(
   registry: SnapshotRegistry,
   matches: (repositoryPath: string) => boolean,
+  includeFileSymlinks = false,
 ): readonly string[] {
   return registry
     .entries()
     .filter(
       (entry) =>
-        entry.kind === "file" &&
+        (entry.kind === "file" ||
+          (includeFileSymlinks && entry.kind === "symlink")) &&
         entry.targetKind === "file" &&
         matches(entry.repositoryPath),
     )
@@ -217,8 +219,10 @@ export async function inspectRepository(
   const sourceFiles = discoverRepositoryFiles(registry, (path) =>
     SOURCE_EXTENSION.test(path),
   );
-  const tsconfigPaths = discoverRepositoryFiles(registry, (path) =>
-    TSCONFIG_NAME.test(posix.basename(path)),
+  const tsconfigPaths = discoverRepositoryFiles(
+    registry,
+    (path) => TSCONFIG_NAME.test(posix.basename(path)),
+    true,
   );
   const discoveredLockfiles = lockfilesAtProjectRoots(
     discoverRepositoryFiles(

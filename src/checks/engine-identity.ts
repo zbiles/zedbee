@@ -24,23 +24,23 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@emnapi/core",
       "@emnapi/runtime",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v7-snapshot-aliases",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v9-next-entries",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "captured-inputs-v3-diff-project-coverage",
+    revision: "captured-inputs-v3-diff-project-coverage+diagnostic-privacy-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
-    revision: "captured-inputs-v4-diff-project-coverage",
+    revision: "captured-inputs-v4-diff-project-coverage+diagnostic-privacy-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v5",
+    revision: "complexity-v6-source-identities",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v5",
+    revision: "zedbee-readability-v6-source-identities",
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
@@ -48,7 +48,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),
-    revision: "zedbee-clone-normalization-v2",
+    revision: "zedbee-clone-normalization-v3-occurrences",
   }),
   dependencyArchitecture: Object.freeze({
     packages: Object.freeze(["dependency-cruiser", "typescript"]),
@@ -63,7 +63,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: "zedbee-react-calibration-v2",
+    revision: "zedbee-react-calibration-v2+diagnostic-privacy-v1",
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -72,6 +72,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
+    revision: "diagnostic-privacy-v1",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

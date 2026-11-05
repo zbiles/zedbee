@@ -1,6 +1,15 @@
 import type { BigIntStats } from "node:fs";
-import { lstat, readdir, realpath } from "node:fs/promises";
-import { isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { lstat, readdir, readlink, realpath } from "node:fs/promises";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { RepositoryInspectionError } from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
 
@@ -205,6 +214,29 @@ export async function captureSnapshotRegistry(
   for (const path of requestedPaths ?? []) await captureRequestedPath(path);
   for (const entry of capturedEntries) {
     if (entry.kind !== "symlink") continue;
+    if (requestedPaths !== undefined) {
+      // realpath collapses intermediate links. Retain each immediate hop and its
+      // ancestors so retargeting any participating link is an input change.
+      // Entries are deduplicated; realpath above rejects cycles before traversal.
+      let destination: string;
+      try {
+        const parent = await realpath(dirname(entry.absolutePath));
+        if (!isContained(snapshotRoot, parent)) throw unsafePath();
+        const linkPath = join(parent, basename(entry.absolutePath));
+        destination = resolve(parent, await readlink(linkPath));
+        if (linkPath !== entry.absolutePath)
+          await captureRequestedPath(
+            normalizePath(relative(snapshotRoot, linkPath)),
+          );
+      } catch {
+        throw invalidSnapshot();
+      }
+      if (!isContained(snapshotRoot, destination)) throw unsafePath();
+      if (destination !== snapshotRoot)
+        await captureRequestedPath(
+          normalizePath(relative(snapshotRoot, destination)),
+        );
+    }
     if (requestedPaths !== undefined && entry.canonicalPath !== snapshotRoot)
       await captureRequestedPath(
         normalizePath(relative(snapshotRoot, entry.canonicalPath)),

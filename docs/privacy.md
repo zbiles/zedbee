@@ -92,7 +92,18 @@ Local settings and the bounded event outbox are stored under
 plus an owner-restricted detail store capped at 100 records / 256 KiB. Detail
 records use random event IDs, expire after seven days, and can only enrich a
 currently pending, enabled parent event; they cannot be sent independently.
-Older CLI versions can still read the ordinary queue and preferences.
+Current CLI versions use a separate `state-v2.json` preference/outbox file,
+`details-v2` directory and permanent, zero-byte kernel lease files. The operating
+system releases a lease when its process exits, including after a crash; no PID
+or recovery-marker deletion is needed. Older CLI state, outboxes and recovery
+markers are left untouched so concurrent older writers cannot corrupt current
+state. Existing installation IDs and opt-outs are carried forward, and a later
+old-version opt-out also suppresses current collection. Explicitly enabling the
+current version acknowledges the old preference as it exists at that moment;
+a subsequent old-version opt-out wins again. Old queued events remain owned by
+the older sender and are not copied into the new outbox. Older versions cannot
+read a current-version opt-out: when running both generations, disable each
+version or use the environment opt-out for all invocations.
 The ordinary outbox retains events
 for up to seven days; expired events are discarded during subsequent activity
 and are not sent. Files request owner-only POSIX permissions; Windows relies
@@ -151,6 +162,10 @@ Snapshot paths are validated under a Zedbee-owned temporary directory, selected 
 Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, or remediation. The sole executable project-configuration exception is explicitly trusted project Prettier mode, described below.
 
 TypeScript and typed lint can also capture supporting dependency inputs through constrained installed project `node_modules` and bundled TypeScript resolution boundaries. These are permitted local dependency reads outside the selected source snapshots. Captured content supports analysis in memory; only validated input fingerprints and normalized observations may enter the scan cache. Knip's captured inputs remain snapshot-only. Setup and diagnostics (`init` and `doctor`) may read working-copy configuration.
+
+Consented `init --formatting copy` evaluation uses one temporary working-copy capture across its configuration scopes. The capture includes repository files and the installed dependency closure declared by package manifests; it excludes Git metadata, `node_modules` traversal, and common cache directories. Installed packages are copied through bounded declared dependency lookups. Capture limits are 128 MiB in total, 32 MiB per file, 20,000 input records, 1,024 package roots and 4,096 package dependency edges. Unsupported layouts or exceeded limits make one-time import unavailable. Configuration references resolve from their containing config, and contained file symlinks retain their relative module context.
+
+Imported settings carry only input fingerprints, not copied source. Setup checks captured source inputs after execution and rebuilds the bounded inventory before writing. This conservative check can require another preview after an unrelated included file changes, or after a declared optional package is installed or removed. The capture is removed after verified worker cleanup; it remains if execution cleanup cannot be proved. Trusted configuration can still read external files, time, environment or network data with the user's permissions: those arbitrary dynamic inputs are outside this captured inventory and are not made deterministic by consent or fingerprinting.
 
 ## Local analyzer service
 
@@ -222,6 +237,10 @@ and is not included in scan findings, temporary reports, or structured exports.
 
 ## Scan cache
 
+Syntax entity names, including quoted member keys and lexical owners, and Knip issue names become deterministic opaque digests before attribution or cache persistence. Structural ownership markers remain available for comparison, without retaining the original names. Prior cache payload versions are rejected; upgrades do not retroactively erase old cache files or exported reports.
+
+TypeScript, lint, and React diagnostics use explanations from the bundled compiler and managed rule metadata. Substituted source values appear as `[source]`, so credentials that require surrounding source context to detect cannot leak through diagnostic messages. Private message digests preserve comparison between diagnostics without storing their original prose. Cached diagnostic messages are checked against the same trusted explanations before reuse. Existing cache files and previously exported reports are not retroactively erased by an upgrade.
+
 When enabled, the content-addressed cache stores only schema-validated normalized observations and integrity metadata from audited analyzers. TypeScript, lint, and Knip entries include private input fingerprints: content digests, scoped path identifiers, directory listings, and missing-file observations. Knip's scope remains the selected snapshot, including guards against installed packages entering resolution; its captured filesystem does not grant access to outside source bytes. Captured bytes remain in memory for analysis and are not saved in this cache. Zedbee rechecks fingerprints before reusing results; incomplete metadata disables caching for that result. Each internal Knip worker exits before its snapshot is released. New or unknown checks remain uncached until their inputs are audited. Installed engine identities come from the package metadata shipped with the active installation; missing identity metadata disables caching for that check. The cache must never store source, detected secret values, raw analyzer output, absolute snapshot paths, or online response bodies. Corrupt, ineligible, or incompatible entries are treated as misses.
 
 ## Report source visibility
@@ -229,6 +248,8 @@ When enabled, the content-addressed cache stores only schema-validated normalize
 Interactive Ink shows ordinary source excerpts from the selected immutable target snapshot by default: the staged index in index mode or committed `HEAD` in base mode. Redirected text, JSON, and SARIF source excerpts are default off. This means ordinary selected source may be visible to the human or agent that invokes an interactive scan; use `--no-source` to suppress it. Use `--include-source` to opt text, JSON, or SARIF in, or set repository policy to `always`; an explicit CLI choice overrides repository policy for that scan. SARIF follows the same source-excerpt policy and never exposes secret finding content.
 
 Automatic scans always write their complete JSON report to protected operating-system temporary storage, including passes with zero findings. Forced `--format ink` writes one only when its finding preview overflows. Zedbee requests owner-only POSIX permissions (directory mode `0700`, file mode `0600`) where supported and relies on user-specific OS temporary-storage protections on other platforms. `reporting.temporaryReportMaxAge` defaults to `"24h"`. Temporary reports become eligible for cleanup at the configured age and are removed during a subsequent Zedbee maintenance run. The operating system may remove them sooner. These handoffs are not archives. Use explicit JSON or SARIF output/redirection for a durable export.
+
+Temporary-report storage uses a versioned repository namespace to isolate its locking protocol from older CLI writers. Older report files and lifecycle state are left untouched by the current protocol. They may require manual cleanup after all older CLI writers have stopped, or removal by the operating system.
 
 Interactive source excerpts and disk persistence deliberately use separate source-excerpt policy decisions. By default, an automatic temporary report omits ordinary source, while Ink may show excerpts with the `interactive` setting; `always` or `--include-source` permits persistence, while `never` or `--no-source` prevents it. Existing source options and CLI overrides apply to automatic reports. Secret content is always redacted under every choice.
 

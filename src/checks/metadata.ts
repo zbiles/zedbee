@@ -39,17 +39,13 @@ export const CHECK_METADATA = Object.freeze({
   vulnerabilities: metadata("vulnerabilities", "disabled"),
 }) satisfies Readonly<Record<CheckId, ManagedCheckMetadata>>;
 
-export type CacheableObservationCheckId =
-  | {
-      [
-        K in CheckId
-      ]: (typeof CHECK_METADATA)[K]["observationInputs"] extends "snapshot-only"
-        ? K
-        : never;
-    }[CheckId]
-  | "lint"
-  | "types"
-  | "deadCode";
+export type CacheableObservationCheckId = {
+  [
+    K in CheckId
+  ]: (typeof CHECK_METADATA)[K]["observationInputs"] extends "disabled"
+    ? never
+    : K;
+}[CheckId];
 
 export function managedCheckMetadata(
   checkId: string,
@@ -61,10 +57,14 @@ export function managedCheckMetadata(
 export function isCacheableObservationCheck(
   checkId: string,
 ): checkId is CacheableObservationCheckId {
+  const inputs = managedCheckMetadata(checkId)?.observationInputs;
+  return inputs !== undefined && inputs !== "disabled";
+}
+
+/** Dependency manifests follow the same capability as collection/cache eligibility. */
+export function requiresDependencyInputs(checkId: string): boolean {
   return (
-    checkId === "lint" ||
-    checkId === "types" ||
-    checkId === "deadCode" ||
-    managedCheckMetadata(checkId)?.observationInputs === "snapshot-only"
+    managedCheckMetadata(checkId)?.observationInputs ===
+    "installed-dependencies"
   );
 }

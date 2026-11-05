@@ -226,7 +226,7 @@ it.each([false, true])(
     const status = await serviceStatus(config);
     expect(status.state).toBe("running");
     if (status.state !== "running") throw new Error("Missing service");
-    const owned = await descendants(status.pid);
+    const owned = await observeTree(status.pid);
     const engines = await engineProcesses(status.pid);
     const supervisor = killSupervisor
       ? engines.find((row) => row.role === "supervisor")?.pid
@@ -242,16 +242,38 @@ it.each([false, true])(
     }
     await session.close().catch(() => {});
     await executor.close().catch(() => {});
-    // POSIX cleanup proves the worker groups have stopped. The supervisor we
-    // killed independently can remain visible until the OS reaps its PID.
-    const killedPosixSupervisor =
-      process.platform === "win32" ? undefined : supervisor;
-    for (const pid of owned.filter((pid) => pid !== killedPosixSupervisor))
-      expect(() => process.kill(pid, 0), `worker ${pid}`).toThrow();
-    if (killedPosixSupervisor !== undefined)
-      await waitForAssertion(() =>
-        expect(() => process.kill(killedPosixSupervisor, 0)).toThrow(),
-      );
+    if (process.platform === "win32") {
+      for (const { pid, command } of owned)
+        expect(
+          () => process.kill(pid, 0),
+          `worker ${pid}: ${command}`,
+        ).toThrow();
+    } else {
+      // Bootstrap starts its own group before engine code is admitted. This is
+      // the exact independent cleanup witness: no member may remain when close
+      // settles. EPERM is not absence and must never satisfy this assertion.
+      for (const { pid } of engines.filter((row) => row.role === "bootstrap")) {
+        let failure: unknown;
+        try {
+          process.kill(-pid, 0);
+        } catch (error) {
+          failure = error;
+        }
+        expect(failure, `witnessed worker group ${pid}`).toMatchObject({
+          code: "ESRCH",
+        });
+      }
+      // A process inventory also includes supervision/control processes. PID
+      // visibility alone does not prove execution: wait separately for OS reaping
+      // after the strict group-absence check, including an abruptly killed parent.
+      for (const { pid, command } of owned)
+        await waitForAssertion(() =>
+          expect(
+            () => process.kill(pid, 0),
+            `reap ${pid}: ${command}`,
+          ).toThrow(),
+        );
+    }
     const next = await acquire(config);
     try {
       const fresh = await next.openSession();

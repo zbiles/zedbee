@@ -24,9 +24,13 @@ import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { runScan, type RunScanDependencies } from "../../src/scan/run-scan.js";
 import { createGitRepository } from "../helpers/git-repository.js";
+import { collectMetricEntitySpans } from "../../src/attribution/entities.js";
 
 const CHECK_ID = "cyclomaticComplexity";
-const ENTITY_ID = "function:src/parser.ts:parseOrder";
+const PARSER_ENTITY = collectMetricEntitySpans(
+  "export function parseOrder(value: number) { return value; }",
+  "src/parser.ts",
+)[0]!.entity;
 
 function issue(rule: string, line: number): Observation {
   return {
@@ -43,10 +47,10 @@ function metric(value: number): Observation {
   return {
     check: CHECK_ID,
     rule: "cyclomatic-complexity",
-    identity: ENTITY_ID,
+    identity: PARSER_ENTITY.identity,
     severity: "error",
     message: "Function complexity exceeds policy.",
-    entity: { kind: "function", name: "parseOrder", file: "src/parser.ts" },
+    entity: PARSER_ENTITY,
     metric: { name: "cyclomatic-complexity", value },
   };
 }
@@ -55,10 +59,10 @@ function entityIssue(): Observation {
   return {
     check: CHECK_ID,
     rule: "changed-function-shape",
-    identity: ENTITY_ID,
+    identity: PARSER_ENTITY.identity,
     severity: "error",
     message: "Changed function has a structural issue.",
-    entity: { kind: "function", name: "parseOrder", file: "src/parser.ts" },
+    entity: PARSER_ENTITY,
   };
 }
 
@@ -283,6 +287,11 @@ describe("attribution platform", () => {
         } catch {
           mutationRejected = true;
         }
+        const file = "packages/dup/src/index.ts";
+        const { entity } = collectMetricEntitySpans(
+          await readFile(join(context.snapshots.targetDir, file), "utf8"),
+          file,
+        )[0]!;
         return {
           checkId: "duplication",
           target: context.target,
@@ -291,14 +300,10 @@ describe("attribution platform", () => {
             {
               check: "duplication",
               rule: "duplicate-density",
-              identity: "function:packages/dup/src/index.ts:measure",
+              identity: entity.identity,
               severity: "error" as const,
               message: "Duplicate density exceeds policy.",
-              entity: {
-                kind: "function",
-                name: "measure",
-                file: "packages/dup/src/index.ts",
-              },
+              entity,
               metric: { name: "duplicate-density", value: 12, limit: 100 },
             },
           ],

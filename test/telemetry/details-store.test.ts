@@ -91,13 +91,13 @@ function fixture() {
     sidecars: new TelemetryDetailsStore(store.directory),
   };
 }
-it("keeps v2 details out of legacy state and enriches only pending parent events", async () => {
+it("keeps v2 details out of the ordinary v1 event queue and enriches only pending parent events", async () => {
   const { store, event, sidecars } = fixture();
   sidecars.write(event, details);
   store.enqueue(event);
   expect(
-    JSON.parse(readFileSync(join(store.directory, "state.json"), "utf8"))
-      .events[0].schema_version,
+    JSON.parse(readFileSync(join(store.directory, "state-v2.json"), "utf8"))
+      .state.events[0].schema_version,
   ).toBe(1);
   const sent: unknown[] = [];
   await drainTelemetry(store, new AbortController().signal, async (events) => {
@@ -130,13 +130,10 @@ it("cannot resurrect orphan details after an old client's disable/enable clears 
 });
 it("rejects linked sidecar files without reading or changing their targets", () => {
   const { root, store, event, sidecars } = fixture();
-  mkdirSync(join(store.directory, "details"), { mode: 0o700 });
+  mkdirSync(sidecars.path, { mode: 0o700 });
   const target = join(root, "private");
   writeFileSync(target, "PRIVATE", { mode: 0o600 });
-  symlinkSync(
-    target,
-    join(store.directory, "details", `${event.event_id}.json`),
-  );
+  symlinkSync(target, join(sidecars.path, `${event.event_id}.json`));
   expect(sidecars.read(event)).toBeUndefined();
   sidecars.clear();
   expect(readFileSync(target, "utf8")).toBe("PRIVATE");

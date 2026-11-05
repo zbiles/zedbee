@@ -1,11 +1,82 @@
-import { describe, expect, it } from "vitest";
+import {
+  sourceEntityName,
+  syntaxIdentity,
+} from "../helpers/source-identity.js";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createAnalysisReuseSession,
+  withAnalysisReuseSession,
+} from "../../src/checks/analysis-reuse.js";
 import * as ts from "typescript";
 import {
   collectChangedEntities,
   collectMetricEntitySpans,
 } from "../../src/attribution/entities.js";
 
+// Keep the real TypeScript parser and syntax validation while counting work.
+vi.mock("typescript", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("typescript")>();
+  return {
+    ...actual,
+    createSourceFile: vi.fn(actual.createSourceFile),
+    transpileModule: vi.fn(actual.transpileModule),
+  };
+});
+
 describe("collectChangedEntities", () => {
+  it("validates and collects syntax once for metric and changed entities in a session", async () => {
+    const session = createAnalysisReuseSession();
+    const source =
+      "class Worker { run() { return () => 1; } }\nfunction other() {}";
+    vi.mocked(ts.createSourceFile).mockClear();
+    vi.mocked(ts.transpileModule).mockClear();
+    try {
+      await withAnalysisReuseSession(session, async () => {
+        const spans = collectMetricEntitySpans(source, "src/worker.ts");
+        const changed = collectChangedEntities(source, "src/worker.ts", [
+          { start: 1, end: 1 },
+        ]);
+        expect(changed.map(({ name }) => name)).toEqual([
+          sourceEntityName("Worker"),
+          expect.stringMatching(/^anonymous@/u),
+          sourceEntityName("run"),
+        ]);
+        expect(
+          spans.some(
+            ({ entity }) =>
+              entity.identity ===
+              changed.find(({ name }) => name === sourceEntityName("run"))
+                ?.identity,
+          ),
+        ).toBe(true);
+        expect(collectMetricEntitySpans(source, "src/worker.ts")).toEqual(
+          spans,
+        );
+        expect(ts.createSourceFile).toHaveBeenCalledTimes(1);
+        expect(ts.transpileModule).toHaveBeenCalledTimes(1);
+        expect(() =>
+          collectChangedEntities(source, "src/worker.ts", [
+            { start: 0, end: 1 },
+          ]),
+        ).toThrow(TypeError);
+        const other = collectMetricEntitySpans(
+          source + "\nfunction added() {}",
+          "src/worker.ts",
+        );
+        expect(
+          other.some(({ entity }) => entity.name === sourceEntityName("added")),
+        ).toBe(true);
+        expect(
+          collectMetricEntitySpans(source, "src/other.ts").every(
+            ({ entity }) => entity.file === "src/other.ts",
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   it("assigns constructors the canonical instance-member identity", () => {
     const [constructor] = collectChangedEntities(
       "class Worker { constructor() { work(); } }",
@@ -16,8 +87,9 @@ describe("collectChangedEntities", () => {
     expect(constructor).toMatchObject({
       kind: "method",
       name: "constructor",
-      identity:
+      identity: syntaxIdentity(
         "method:src/worker.ts:class=Worker/member-scope=instance/member-role=constructor/method=constructor",
+      ),
     });
   });
 
@@ -34,14 +106,17 @@ describe("collectChangedEntities", () => {
           kind: "function",
           name: expect.stringMatching(/^anonymous@/u),
           identity: expect.stringMatching(
-            /function=outer\/function=anonymous%40/u,
+            new RegExp(
+              `function=${sourceEntityName("outer")}/function=anonymous%40`,
+              "u",
+            ),
           ),
         }),
         expect.objectContaining({
           kind: "function",
-          name: "task",
+          name: sourceEntityName("task"),
           identity: expect.stringContaining(
-            "member-scope=instance/member-role=field/function=task",
+            `member-scope=instance/member-role=field/function=${sourceEntityName("task")}`,
           ),
         }),
       ]),
@@ -53,7 +128,7 @@ describe("collectChangedEntities", () => {
       "consume({ run(){ if (a) work(); } }, { run(){ if (a) { if (b) work(); } } });",
       "src/objects.ts",
       [{ start: 1, end: 1 }],
-    ).filter(({ name }) => name === "run");
+    ).filter(({ name }) => name === sourceEntityName("run"));
 
     expect(methods).toHaveLength(2);
     expect(new Set(methods.map(({ identity }) => identity)).size).toBe(2);
@@ -120,7 +195,9 @@ describe("collectChangedEntities", () => {
     );
 
     expect(entity?.identity).toBe(
-      "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+      syntaxIdentity(
+        "method:src/observer.ts:variable=Observer/member-scope=instance/member-role=method/method=observe",
+      ),
     );
   });
 
@@ -161,8 +238,9 @@ describe("collectChangedEntities", () => {
       file: "value.ts",
       startLine: 1,
       endLine: 1,
-      identity:
+      identity: syntaxIdentity(
         "function:value.ts:variable=value/function=anonymous%401.1.0.1.0.1",
+      ),
     });
   });
 
@@ -171,7 +249,7 @@ describe("collectChangedEntities", () => {
       "class Worker { task = () => ready ? 1 : 0; task = () => fallback ? 1 : 0; }",
       "src/fields.ts",
       [{ start: 1, end: 1 }],
-    ).filter(({ name }) => name === "task");
+    ).filter(({ name }) => name === sourceEntityName("task"));
 
     expect(fields).toHaveLength(2);
     expect(new Set(fields.map(({ identity }) => identity)).size).toBe(2);
@@ -191,14 +269,15 @@ describe("collectChangedEntities", () => {
     ).toEqual([
       expect.objectContaining({
         kind: "class",
-        name: "Profile",
-        identity: "class:src/profile.ts:Profile",
+        name: sourceEntityName("Profile"),
+        identity: syntaxIdentity("class:src/profile.ts:Profile"),
       }),
       expect.objectContaining({
         kind: "method",
-        name: "name",
-        identity:
+        name: sourceEntityName("name"),
+        identity: syntaxIdentity(
           "method:src/profile.ts:class=Profile/member-scope=instance/member-role=get/method=name",
+        ),
       }),
     ]);
   });
@@ -218,11 +297,11 @@ describe("collectChangedEntities", () => {
     ).toEqual([
       {
         kind: "function",
-        name: "parseOrder",
+        name: sourceEntityName("parseOrder"),
         file: "src/parser.ts",
         startLine: 1,
         endLine: 6,
-        identity: "function:src/parser.ts:parseOrder",
+        identity: syntaxIdentity("function:src/parser.ts:parseOrder"),
       },
     ]);
   });
@@ -246,9 +325,24 @@ describe("collectChangedEntities", () => {
         }),
       ),
     ).toEqual([
-      { kind: "class", name: "Parser", startLine: 1, endLine: 3 },
-      { kind: "method", name: "parse", startLine: 2, endLine: 2 },
-      { kind: "function", name: "Button", startLine: 4, endLine: 4 },
+      {
+        kind: "class",
+        name: sourceEntityName("Parser"),
+        startLine: 1,
+        endLine: 3,
+      },
+      {
+        kind: "method",
+        name: sourceEntityName("parse"),
+        startLine: 2,
+        endLine: 2,
+      },
+      {
+        kind: "function",
+        name: sourceEntityName("Button"),
+        startLine: 4,
+        endLine: 4,
+      },
       { kind: "function", name: "default", startLine: 5, endLine: 5 },
     ]);
   });
@@ -290,10 +384,12 @@ describe("collectChangedEntities", () => {
       collectChangedEntities(source, "src/nested.js", [
         { start: 3, end: 3 },
       ]).map(({ name }) => name),
-    ).toEqual(["outer", "inner"]);
+    ).toEqual([sourceEntityName("outer"), sourceEntityName("inner")]);
     expect(
       collectChangedEntities(source, "src/nested.js", [{ start: 7, end: 7 }]),
-    ).toEqual([expect.objectContaining({ name: "untouched" })]);
+    ).toEqual([
+      expect.objectContaining({ name: sourceEntityName("untouched") }),
+    ]);
   });
 
   it("distinguishes repeated names by lexical owner without line-based identity", () => {
@@ -315,14 +411,24 @@ describe("collectChangedEntities", () => {
       { start: 1, end: 12 },
     ]);
     const repeated = entities.filter(
-      ({ name }) => name === "parse" || name === "visit",
+      ({ name }) =>
+        name === sourceEntityName("parse") ||
+        name === sourceEntityName("visit"),
     );
 
     expect(repeated.map(({ identity }) => identity)).toEqual([
-      "method:src/owners.ts:class=Alpha/member-scope=instance/member-role=method/method=parse",
-      "function:src/owners.ts:class=Alpha/member-scope=instance/member-role=method/method=parse/function=visit",
-      "method:src/owners.ts:class=Beta/member-scope=instance/member-role=method/method=parse",
-      "function:src/owners.ts:class=Beta/member-scope=instance/member-role=method/method=parse/function=visit",
+      syntaxIdentity(
+        "method:src/owners.ts:class=Alpha/member-scope=instance/member-role=method/method=parse",
+      ),
+      syntaxIdentity(
+        "function:src/owners.ts:class=Alpha/member-scope=instance/member-role=method/method=parse/function=visit",
+      ),
+      syntaxIdentity(
+        "method:src/owners.ts:class=Beta/member-scope=instance/member-role=method/method=parse",
+      ),
+      syntaxIdentity(
+        "function:src/owners.ts:class=Beta/member-scope=instance/member-role=method/method=parse/function=visit",
+      ),
     ]);
     expect(new Set(repeated.map(({ identity }) => identity)).size).toBe(4);
     expect(
@@ -341,11 +447,15 @@ describe("collectChangedEntities", () => {
 
     const accessors = collectChangedEntities(source, "src/profile.ts", [
       { start: 2, end: 3 },
-    ]).filter(({ name }) => name === "name");
+    ]).filter(({ name }) => name === sourceEntityName("name"));
 
     expect(accessors.map(({ identity }) => identity)).toEqual([
-      "method:src/profile.ts:class=Profile/member-scope=instance/member-role=get/method=name",
-      "method:src/profile.ts:class=Profile/member-scope=instance/member-role=set/method=name",
+      syntaxIdentity(
+        "method:src/profile.ts:class=Profile/member-scope=instance/member-role=get/method=name",
+      ),
+      syntaxIdentity(
+        "method:src/profile.ts:class=Profile/member-scope=instance/member-role=set/method=name",
+      ),
     ]);
     expect(new Set(accessors.map(({ identity }) => identity)).size).toBe(2);
   });
@@ -360,11 +470,15 @@ describe("collectChangedEntities", () => {
 
     const methods = collectChangedEntities(source, "src/parser.ts", [
       { start: 2, end: 3 },
-    ]).filter(({ name }) => name === "parse");
+    ]).filter(({ name }) => name === sourceEntityName("parse"));
 
     expect(methods.map(({ identity }) => identity)).toEqual([
-      "method:src/parser.ts:class=Parser/member-scope=instance/member-role=method/method=parse",
-      "method:src/parser.ts:class=Parser/member-scope=static/member-role=method/method=parse",
+      syntaxIdentity(
+        "method:src/parser.ts:class=Parser/member-scope=instance/member-role=method/method=parse",
+      ),
+      syntaxIdentity(
+        "method:src/parser.ts:class=Parser/member-scope=static/member-role=method/method=parse",
+      ),
     ]);
     expect(new Set(methods.map(({ identity }) => identity)).size).toBe(2);
   });
@@ -383,7 +497,7 @@ describe("collectChangedEntities", () => {
 
     const entities = collectChangedEntities(source, "src/convert.ts", [
       { start: 1, end: 8 },
-    ]).filter(({ name }) => name === "convert");
+    ]).filter(({ name }) => name === sourceEntityName("convert"));
 
     expect(
       entities.map(({ identity, startLine, endLine }) => ({
@@ -393,13 +507,14 @@ describe("collectChangedEntities", () => {
       })),
     ).toEqual([
       {
-        identity: "function:src/convert.ts:convert",
+        identity: syntaxIdentity("function:src/convert.ts:convert"),
         startLine: 3,
         endLine: 3,
       },
       {
-        identity:
+        identity: syntaxIdentity(
           "method:src/convert.ts:class=Converter/member-scope=instance/member-role=method/method=convert",
+        ),
         startLine: 7,
         endLine: 7,
       },
@@ -459,7 +574,9 @@ describe("collectChangedEntities", () => {
         "src/order.ts",
         [{ start: 1, end: 1 }],
       );
-      expect(entities.map(({ name }) => name)).toEqual(["alpha", "zulu"]);
+      expect(entities.map(({ name }) => name)).toEqual(
+        [sourceEntityName("alpha"), sourceEntityName("zulu")].sort(),
+      );
     } finally {
       String.prototype.localeCompare = original;
     }

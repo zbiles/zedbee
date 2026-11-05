@@ -1,3 +1,5 @@
+import { sourceEntityName } from "../../../src/attribution/source-identity.js";
+const knipName = (name: string) => sourceEntityName(JSON.stringify([name]));
 import { access, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,7 +143,7 @@ describe("captured Knip execution", () => {
       });
       expect(
         result.targetObservations.map((item) => item.entity?.name),
-      ).not.toContain("@tools/runner");
+      ).not.toContain(knipName("@tools/runner"));
       expect(result.dependencyInputs).toBeDefined();
       expect(
         validateDependencyInputs(result.dependencyInputs, run, "knip"),
@@ -180,9 +182,9 @@ describe("captured Knip execution", () => {
     }
     const result = await deadCodeAdapter.collect(run);
     const names = result.targetObservations.map((item) => item.entity?.name);
-    expect(names).toContain("unused");
-    expect(names).not.toContain("zedbee");
-    expect(names).not.toContain("@tools/runner");
+    expect(names).toContain(knipName("unused"));
+    expect(names).not.toContain(knipName("zedbee"));
+    expect(names).not.toContain(knipName("@tools/runner"));
     expect(result.dependencyInputs).toBeDefined();
     expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
       true,
@@ -323,7 +325,7 @@ describe("captured Knip execution", () => {
         const collected = await deadCodeAdapter.collect(input);
         expect(
           collected.targetObservations.some(
-            (item) => item.entity?.name === "hidden",
+            (item) => item.entity?.name === knipName("hidden"),
           ),
         ).toBe(true);
         return collected;
@@ -351,7 +353,7 @@ describe("captured Knip execution", () => {
     const collected = await deadCodeAdapter.collect(run);
     expect(
       collected.targetObservations.some(
-        (item) => item.entity?.name === "unused",
+        (item) => item.entity?.name === knipName("unused"),
       ),
     ).toBe(true);
     expect(collected.dependencyInputs).toBeDefined();
@@ -750,7 +752,7 @@ describe("deadCodeAdapter", () => {
       ).toEqual([
         expect.objectContaining({
           rule: "unresolved",
-          entity: expect.objectContaining({ name: "#alias" }),
+          entity: expect.objectContaining({ name: knipName("#alias") }),
         }),
       ]);
     });
@@ -945,4 +947,236 @@ describe("deadCodeAdapter", () => {
       deadCodeAdapter.collect({ ...runContext, signal: controller.signal }),
     ).rejects.toThrow("Dead-code analysis failed.");
   });
+});
+
+describe("captured Next framework entries", () => {
+  it.each(["./route-lib.js", "@/route-lib.js"])(
+    "keeps grouped dynamic routes reachable through %s while reporting library exports and orphans",
+    async (specifier) => {
+      const run = await context(
+        "export const used = 1;",
+        "export const used = 1;",
+        { dependencies: { next: "16.0.0", unrelated: "1.0.0" } },
+        async (fixture) => {
+          await fixture.writeJson("tsconfig.json", {
+            compilerOptions: { baseUrl: ".", paths: { "@/*": ["src/*"] } },
+          });
+          await fixture.write(
+            "src/app/(group)/[id]/page.tsx",
+            `export { default } from '${specifier.startsWith("@") ? specifier : "../../../route-lib.js"}';`,
+          );
+          await fixture.write(
+            "src/route-lib.ts",
+            "export default function Page() { return null; }\nexport const unusedRouteExport = 1;",
+          );
+          await fixture.write("src/orphan.ts", "export const orphan = 1;");
+        },
+      );
+      const result = await deadCodeAdapter.collect(run);
+      const observations = result.targetObservations;
+      expect(
+        observations.some(
+          (item) => item.location?.file === "src/app/(group)/[id]/page.tsx",
+        ),
+      ).toBe(false);
+      expect(
+        observations.some(
+          (item) =>
+            item.location?.file === "src/route-lib.ts" &&
+            item.entity?.name === knipName("unusedRouteExport"),
+        ),
+      ).toBe(true);
+      expect(
+        observations.some((item) => item.location?.file === "src/orphan.ts"),
+      ).toBe(true);
+      expect(
+        observations.some((item) => item.entity?.name === knipName("next")),
+      ).toBe(false);
+      expect(
+        observations.some(
+          (item) => item.entity?.name === knipName("unrelated"),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each(["js", "mjs", "cjs", "ts", "mts"])(
+    "treats next.config.%s as inert source and follows its imports",
+    async (extension) => {
+      const marker = join((await createInspectionFixture()).root, "executed");
+      const run = await context(
+        "export const used = 1;",
+        "export const used = 1;",
+        {
+          dependencies: { next: "16.0.0", unrelated: "1.0.0" },
+          scripts: { postinstall: `touch ${marker}` },
+        },
+        async (fixture) => {
+          await fixture.write(
+            `next.config.${extension}`,
+            `import { writeFileSync } from 'node:fs'; import { value } from './config-helper.js'; writeFileSync(${JSON.stringify(marker)}, 'bad'); export default {value};`,
+          );
+          await fixture.write(
+            "config-helper.ts",
+            "export const value = 1; export const unusedConfigExport = 2;",
+          );
+          await fixture.write(
+            "next-env.d.ts",
+            '/// <reference types="next" />',
+          );
+        },
+      );
+      const observations = (await deadCodeAdapter.collect(run))
+        .targetObservations;
+      expect(
+        observations.some(
+          (item) => item.location?.file === `next.config.${extension}`,
+        ),
+      ).toBe(false);
+      expect(
+        observations.some(
+          (item) => item.entity?.name === knipName("unusedConfigExport"),
+        ),
+      ).toBe(true);
+      expect(
+        observations.some((item) => item.entity?.name === knipName("next")),
+      ).toBe(false);
+      expect(
+        observations.some(
+          (item) => item.entity?.name === knipName("unrelated"),
+        ),
+      ).toBe(true);
+      await expect(access(marker)).rejects.toThrow();
+    },
+  );
+});
+
+it("uses selected snapshot routes instead of contradictory live Next configuration", async () => {
+  const run = await context(
+    "export const used=1;",
+    "export const used=1;",
+    { dependencies: { next: "16" } },
+    async (fixture) => {
+      await fixture.write(
+        "route-helper.ts",
+        "export const value=1; export const unusedSelectedExport=2;",
+      );
+      await fixture.write("orphan.ts", "export const orphan=1;");
+    },
+  );
+  await writeFile(
+    join(run.snapshots.targetDir, "package.json"),
+    JSON.stringify({ name: "fixture", dependencies: { next: "16" } }),
+  );
+  await mkdir(join(run.snapshots.targetDir, "app"), { recursive: true });
+  await writeFile(
+    join(run.snapshots.targetDir, "app/page.tsx"),
+    "import {value} from '../route-helper.js'; export default value;",
+  );
+  await writeFile(
+    join(run.repositoryRoot, "package.json"),
+    JSON.stringify({ name: "live", dependencies: { other: "1" } }),
+  );
+  await writeFile(
+    join(run.repositoryRoot, "next.config.js"),
+    "throw new Error('live config must not run');",
+  );
+  const result = await deadCodeAdapter.collect({
+    ...run,
+    targetInspection: await inspectRepository(run.snapshots.targetDir),
+  });
+  expect(
+    result.baselineObservations.some(
+      (item) =>
+        item.location?.file === "route-helper.ts" && item.rule === "files",
+    ),
+  ).toBe(true);
+  expect(
+    result.targetObservations.some(
+      (item) =>
+        item.location?.file === "route-helper.ts" && item.rule === "files",
+    ),
+  ).toBe(false);
+  expect(
+    result.targetObservations.some(
+      (item) => item.entity?.name === knipName("unusedSelectedExport"),
+    ),
+  ).toBe(true);
+  expect(
+    result.targetObservations.some(
+      (item) => item.location?.file === "orphan.ts",
+    ),
+  ).toBe(true);
+  const reverse = await deadCodeAdapter.collect({
+    ...run,
+    snapshots: {
+      ...run.snapshots,
+      baselineDir: run.snapshots.targetDir,
+      targetDir: run.snapshots.baselineDir,
+    },
+    baselineInspection: await inspectRepository(run.snapshots.targetDir),
+    targetInspection: run.baselineInspection,
+  });
+  expect(
+    reverse.targetObservations.some(
+      (item) =>
+        item.location?.file === "route-helper.ts" && item.rule === "files",
+    ),
+  ).toBe(true);
+});
+
+it("isolates sibling framework detection and honors empty root shadowing through the worker", async () => {
+  const run = await context(
+    "export const used=1;",
+    "export const used=1;",
+    { workspaces: ["web", "plain"] },
+    async (fixture) => {
+      await fixture.writeJson("web/package.json", {
+        name: "web",
+        dependencies: { next: "16" },
+      });
+      await fixture.writeJson("plain/package.json", { name: "plain" });
+      await mkdir(join(fixture.root, "web/app"), { recursive: true });
+      await fixture.write("web/src/app/page.tsx", "export default 1;");
+      await fixture.write(
+        "web/src/pages/index.tsx",
+        "import {value} from '../../helper.js'; export default value;",
+      );
+      await fixture.write(
+        "web/helper.ts",
+        "export const value=1; export const unusedSiblingExport=2;",
+      );
+      await fixture.write("plain/app/page.tsx", "export default 1;");
+    },
+  );
+  const web = (
+    await deadCodeAdapter.collect({
+      ...run,
+      target: { id: "web", kind: "workspace", relativeRoot: "web" },
+    })
+  ).targetObservations;
+  expect(
+    web.some(
+      (item) =>
+        item.location?.file === "web/src/app/page.tsx" && item.rule === "files",
+    ),
+  ).toBe(true);
+  expect(
+    web.some((item) => item.location?.file === "web/src/pages/index.tsx"),
+  ).toBe(false);
+  expect(
+    web.some((item) => item.entity?.name === knipName("unusedSiblingExport")),
+  ).toBe(true);
+  const plain = (
+    await deadCodeAdapter.collect({
+      ...run,
+      target: { id: "plain", kind: "workspace", relativeRoot: "plain" },
+    })
+  ).targetObservations;
+  expect(
+    plain.some(
+      (item) =>
+        item.location?.file === "plain/app/page.tsx" && item.rule === "files",
+    ),
+  ).toBe(true);
 });

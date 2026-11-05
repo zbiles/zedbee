@@ -1173,7 +1173,11 @@ describe("buildCommitSnapshotPair", () => {
         shim,
         [
           "#!/bin/sh",
-          `printf '%s %s\\n' "$1" "$2" >> ${JSON.stringify(commandLog)}`,
+          "log_command() {",
+          '  while [ "$1" = "-c" ]; do shift 2; done',
+          `  printf '%s %s\\n' "$1" "$2" >> ${JSON.stringify(commandLog)}`,
+          "}",
+          'log_command "$@"',
           `exec ${JSON.stringify(realGit)} "$@"`,
           "",
         ].join("\n"),

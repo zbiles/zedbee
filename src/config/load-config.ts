@@ -1,5 +1,6 @@
+import { repositoryConfigPath } from "./selection-path.js";
 import { access, readFile } from "node:fs/promises";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { GitClient } from "../git/client.js";
 import { GitCommandError } from "../git/errors.js";
@@ -307,22 +308,6 @@ function parseIntentToAddPaths(
   return paths;
 }
 
-function repositoryRelativePath(
-  repositoryRoot: string,
-  path: string,
-): string | undefined {
-  const fromRoot = relative(repositoryRoot, path);
-  if (
-    fromRoot === "" ||
-    isAbsolute(fromRoot) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${sep}`)
-  ) {
-    return undefined;
-  }
-  return fromRoot.split(sep).join("/");
-}
-
 function parseIndexEntries(output: string, configPath: string): IndexEntry[] {
   return output
     .split("\0")
@@ -509,9 +494,13 @@ export async function loadConfigFromIndex(
 ): Promise<ResolvedConfig> {
   const configPath =
     explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
-  const repositoryPath = repositoryRelativePath(repositoryRoot, configPath);
+  const repositoryPath = repositoryConfigPath(repositoryRoot, configPath);
   if (repositoryPath === undefined) {
-    return loadConfig(repositoryRoot, explicitConfigPath);
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      "Selected configuration must be inside the repository.",
+      configPath,
+    );
   }
 
   const candidatePaths =
@@ -583,9 +572,13 @@ export async function loadConfigFromCommit(
 ): Promise<ResolvedConfig> {
   const configPath =
     explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
-  const repositoryPath = repositoryRelativePath(repositoryRoot, configPath);
+  const repositoryPath = repositoryConfigPath(repositoryRoot, configPath);
   if (repositoryPath === undefined) {
-    return loadConfig(repositoryRoot, explicitConfigPath);
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      "Selected configuration must be inside the repository.",
+      configPath,
+    );
   }
 
   const entry = await targetTreeEntry(

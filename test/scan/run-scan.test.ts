@@ -809,6 +809,7 @@ describe("runScan", () => {
           new GitClient(root, {
             ...options,
             async runCommand(args, runOptions) {
+              while (args[0] === "-c") args = args.slice(2);
               if (args[0] === "cat-file") return delayed(args, runOptions);
               if (args[0] === "merge-base") {
                 return {

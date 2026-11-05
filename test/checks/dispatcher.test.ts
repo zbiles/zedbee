@@ -31,6 +31,7 @@ import { createInspectionFixture } from "../inspection/fixture.js";
 import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
 import { duplicationAdapter } from "../../src/checks/duplication/adapter.js";
 import type { CheckFixCandidate } from "../../src/fixes/types.js";
+import { collectMetricEntitySpans } from "../../src/attribution/entities.js";
 
 function createConfig(
   policies: Readonly<Record<string, "off" | "warn" | "error">>,
@@ -208,6 +209,86 @@ function observationAdapter(
 }
 
 describe("dispatchChecks", () => {
+  it.each([false, true])(
+    "checks source-bearing messages before events/cache even for an unsafe cache hit=%s",
+    async (unsafeHit) => {
+      const token = `ghp_${"A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"}`;
+      const baseline = await createInspectionFixture();
+      const target = await createInspectionFixture();
+      await baseline.write("package.json", '{"name":"privacy"}');
+      await target.write("package.json", '{"name":"privacy"}');
+      await baseline.write("fixture.ts", "export {};\n");
+      await target.write("fixture.ts", "export const value = 1;\n");
+      const baseContext = createContext(
+        createConfig({ reactCorrectness: "error", secrets: "off" }),
+      );
+      const context: CheckRunContext = {
+        ...baseContext,
+        target: { id: ".", kind: "workspace", relativeRoot: "." },
+        snapshots: {
+          ...baseContext.snapshots,
+          baselineDir: baseline.root,
+          targetDir: target.root,
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(target.root),
+      };
+      const observations = {
+        checkId: "reactCorrectness",
+        target: context.target,
+        projectDelta: true,
+        baselineObservations: [],
+        targetObservations: [
+          {
+            check: "reactCorrectness",
+            rule: "fixture",
+            identity: "fixture:repository",
+            severity: "error" as const,
+            message: `'${token}' is not defined.`,
+          },
+        ],
+      };
+      let collections = 0;
+      const adapter: ObservationCheckAdapter = {
+        id: "reactCorrectness",
+        output: "observations",
+        inspect: async () => ({
+          applies: true,
+          executionClass: "lightweight",
+          requiresBaseline: false,
+          targets: [context.target],
+        }),
+        collect: async () => {
+          collections += 1;
+          return observations;
+        },
+      };
+      const events: ScanEvent[] = [];
+      const writes: unknown[] = [];
+      const results = await dispatchChecks([adapter], context, {
+        cacheEngineIdentity: () => "privacy-fixture",
+        cache: {
+          get: async () => (unsafeHit ? observations : undefined),
+          set: async (_key, value) => {
+            writes.push(value);
+          },
+        },
+        onEvent: (event) => events.push(event),
+      });
+      expect(collections, JSON.stringify(results)).toBe(unsafeHit ? 0 : 1);
+      expect(results[0]?.result.findings[0]?.message).toContain("diagnostic");
+      expect(
+        events.find(
+          (event) =>
+            event.type === "check-completed" &&
+            event.result.findings.length === 1,
+        ),
+      ).toBeDefined();
+      expect(JSON.stringify([results, events, writes])).not.toContain(token);
+      expect(writes).toHaveLength(unsafeHit ? 0 : 1);
+    },
+  );
+
   it("reserves the legacy adapter type for formatting", () => {
     expectTypeOf<
       LegacyCheckResultAdapter["id"]
@@ -1516,15 +1597,21 @@ describe("dispatchChecks", () => {
     context.baselineInspection = await inspectRepository(baseline.root);
     context.targetInspection = await inspectRepository(targetFixture.root);
     const events: ScanEvent[] = [];
-    const metricObservation = (file: string, name: string): Observation => ({
-      check: "cyclomaticComplexity",
-      rule: "cyclomatic-complexity",
-      identity: `function:${file}:${name}`,
-      severity: "error",
-      message: "Complexity exceeds policy.",
-      entity: { kind: "function", name, file },
-      metric: { name: "cyclomatic-complexity", value: 11 },
-    });
+    const metricObservation = (file: string, name: string): Observation => {
+      const { entity } = collectMetricEntitySpans(
+        `export function ${name}() { return 1; }\n`,
+        file,
+      )[0]!;
+      return {
+        check: "cyclomaticComplexity",
+        rule: "cyclomatic-complexity",
+        identity: entity.identity,
+        severity: "error",
+        message: "Complexity exceeds policy.",
+        entity: { kind: entity.kind, name: entity.name, file },
+        metric: { name: "cyclomatic-complexity", value: 11 },
+      };
+    };
     const adapter: ObservationCheckAdapter = {
       id: "cyclomaticComplexity",
       output: "observations",

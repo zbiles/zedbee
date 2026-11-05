@@ -1,8 +1,10 @@
 import { extname } from "node:path";
 import * as ts from "typescript";
+import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
 import { normalizeRepositoryRelativePath } from "./fingerprint.js";
+import { sourceEntityName } from "./source-identity.js";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".js",
@@ -53,9 +55,9 @@ function declarationName(
 ): string | undefined {
   if (name === undefined) return undefined;
   if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name))
-    return canonicalName(name.text);
+    return sourceEntityName(canonicalName(name.text));
   if (ts.isStringLiteral(name) || ts.isNumericLiteral(name))
-    return canonicalName(name.text);
+    return sourceEntityName(canonicalName(name.text));
   return undefined;
 }
 
@@ -71,7 +73,7 @@ function memberName(name: ts.PropertyName): string | undefined {
   ) {
     return undefined;
   }
-  return canonicalName(`Symbol.${expression.name.text}`);
+  return sourceEntityName(canonicalName(`Symbol.${expression.name.text}`));
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
@@ -355,14 +357,26 @@ function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-export function collectChangedEntities(
+interface ValidatedEntities {
+  readonly entities: readonly ChangedEntity[];
+  readonly spans: readonly MetricEntitySpan[];
+  readonly lineCount: number;
+}
+
+const validatedEntities = Symbol("validated canonical syntax entities");
+
+function collectValidatedEntities(
   sourceText: string,
   file: string,
-  ranges: readonly LineRange[],
-): readonly ChangedEntity[] {
+): ValidatedEntities {
   if (typeof sourceText !== "string")
     throw new TypeError("Expected source text to be a string");
   const normalizedFile = normalizeRepositoryRelativePath(file);
+  const store = analysisStore<ValidatedEntities>(validatedEntities);
+  const key =
+    store === undefined ? undefined : analysisKey([normalizedFile, sourceText]);
+  const retained = key === undefined ? undefined : store!.get(key);
+  if (retained !== undefined) return retained;
   const extension = extname(normalizedFile);
   if (!SUPPORTED_EXTENSIONS.has(extension)) {
     throw new TypeError("Expected a JavaScript or TypeScript source path");
@@ -394,8 +408,8 @@ export function collectChangedEntities(
     true,
   );
   const entities: ChangedEntity[] = [];
+  const spans: MetricEntitySpan[] = [];
   const lineCount = parsedSourceFile.getLineStarts().length;
-  const snapshots = normalizedRanges(ranges, lineCount);
 
   function visit(
     node: ts.Node,
@@ -413,16 +427,28 @@ export function collectChangedEntities(
         parsedSourceFile.getLineAndCharacterOfPosition(
           declaration.node.getEnd(),
         ).line + 1;
-      if (intersects(startLine, endLine, snapshots)) {
-        const identity = entityIdentity(declaration, normalizedFile, owners);
-        entities.push(
+      const entity = Object.freeze({
+        kind: declaration.kind,
+        name: declaration.name,
+        file: normalizedFile,
+        startLine,
+        endLine,
+        identity: entityIdentity(declaration, normalizedFile, owners),
+      });
+      entities.push(entity);
+      if (declaration.kind !== "class") {
+        const parent = declaration.node.parent;
+        // ESLint may report a property function at its key, before its body.
+        const startOffset =
+          ts.isPropertyAssignment(parent) &&
+          parent.initializer === declaration.node
+            ? parent.getStart(parsedSourceFile)
+            : declaration.node.getStart(parsedSourceFile);
+        spans.push(
           Object.freeze({
-            kind: declaration.kind,
-            name: declaration.name,
-            file: normalizedFile,
-            startLine,
-            endLine,
-            identity,
+            entity,
+            startOffset,
+            endOffset: declaration.node.getEnd(),
           }),
         );
       }
@@ -455,7 +481,28 @@ export function collectChangedEntities(
       compareCodeUnits(left.name, right.name) ||
       compareCodeUnits(left.identity, right.identity),
   );
-  return Object.freeze(entities);
+  const result = Object.freeze({
+    entities: Object.freeze(entities),
+    spans: Object.freeze(spans),
+    lineCount,
+  });
+  if (key !== undefined)
+    store!.set(key, result, sourceText.length * 4 + entities.length * 1024);
+  return result;
+}
+
+export function collectChangedEntities(
+  sourceText: string,
+  file: string,
+  ranges: readonly LineRange[],
+): readonly ChangedEntity[] {
+  const validated = collectValidatedEntities(sourceText, file);
+  const snapshots = normalizedRanges(ranges, validated.lineCount);
+  return Object.freeze(
+    validated.entities.filter(({ startLine, endLine }) =>
+      intersects(startLine, endLine, snapshots),
+    ),
+  );
 }
 
 /** Canonical syntax entities with offsets for inspector-owned metric adapters. */
@@ -463,74 +510,5 @@ export function collectMetricEntitySpans(
   sourceText: string,
   file: string,
 ): readonly MetricEntitySpan[] {
-  const normalizedFile = normalizeRepositoryRelativePath(file);
-  const parsed = ts.createSourceFile(
-    normalizedFile,
-    sourceText,
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const lineCount = parsed.getLineStarts().length;
-  // Reuse the public collector's extension, syntax, and canonical-path checks.
-  collectChangedEntities(sourceText, normalizedFile, [
-    { start: 1, end: lineCount },
-  ]);
-  const spans: MetricEntitySpan[] = [];
-
-  function visit(
-    node: ts.Node,
-    owners: readonly LexicalOwner[],
-    syntaxPath: readonly number[],
-    classScope: ClassExpressionScope,
-  ): void {
-    const declaration = entityDeclaration(node, syntaxPath);
-    if (declaration !== undefined && declaration.kind !== "class") {
-      const declarationStart = declaration.node.getStart(parsed);
-      const parent = declaration.node.parent;
-      // ESLint reports a property function's cyclomatic metric at its key,
-      // including computed keys before an anonymous initializer's own span.
-      // Extend only metric matching; keep the canonical entity coordinates.
-      const startOffset =
-        ts.isPropertyAssignment(parent) &&
-        parent.initializer === declaration.node
-          ? parent.getStart(parsed)
-          : declarationStart;
-      const endOffset = declaration.node.getEnd();
-      const startLine =
-        parsed.getLineAndCharacterOfPosition(declarationStart).line + 1;
-      const endLine = parsed.getLineAndCharacterOfPosition(endOffset).line + 1;
-      spans.push(
-        Object.freeze({
-          entity: Object.freeze({
-            kind: declaration.kind,
-            name: declaration.name,
-            file: normalizedFile,
-            startLine,
-            endLine,
-            identity: entityIdentity(declaration, normalizedFile, owners),
-          }),
-          startOffset,
-          endOffset,
-        }),
-      );
-    }
-    const owner = declaration ?? structuralOwner(node, classScope);
-    const childOwners =
-      owner === undefined
-        ? owners
-        : [
-            ...owners,
-            ...(declaration?.identityQualifiers ?? []),
-            { kind: owner.kind, name: owner.name },
-          ];
-    const childClassScope =
-      owner === undefined ? classScope : { nextOrdinal: 0 };
-    let childIndex = 0;
-    node.forEachChild((child) => {
-      visit(child, childOwners, [...syntaxPath, childIndex], childClassScope);
-      childIndex += 1;
-    });
-  }
-  visit(parsed, [], [], { nextOrdinal: 0 });
-  return Object.freeze(spans);
+  return collectValidatedEntities(sourceText, file).spans;
 }

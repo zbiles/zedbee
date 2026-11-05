@@ -11,14 +11,15 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+  captureImportDependencies,
+  isImportPackageName,
+} from "./project-import-dependencies.js";
+import {
+  createImportSourceCapture,
+  type ImportCaptureProvenance,
+} from "./project-import-capture.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { discoverWorkspaces } from "../../inspection/workspaces.js";
@@ -30,6 +31,9 @@ export interface ProjectWorkspaceInput {
   readonly repositoryRoot: string;
   readonly snapshotRoot: string;
   readonly projectRoot: string;
+  /** One-time setup import: freeze dependency bytes rather than link live packages. */
+  readonly captureImportSources?: boolean;
+  readonly importConfigPaths?: readonly string[];
 }
 
 export interface ProjectWorkspace {
@@ -39,6 +43,9 @@ export interface ProjectWorkspace {
   readonly treeRoot: string;
   /** Working directory for the formatter worker. */
   readonly workerCwd: string;
+  acquireUse(): () => void;
+  readonly importProvenance?: ImportCaptureProvenance;
+  verifyImportSources?(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -163,53 +170,74 @@ async function planDependencyLinks(
     const names = new Set(
       workspace.manifest.dependencyDeclarations.map(({ name }) => name),
     );
-    for (const name of names) {
-      let directory: string | undefined = resolve(
-        repositoryRoot,
-        workspace.relativeRoot,
-      );
-      while (directory !== undefined && isContainedPath(repositoryRoot, directory)) {
-        const candidate = join(directory, "node_modules", name);
-        try {
-          const metadata = await lstat(candidate);
-          if (!metadata.isDirectory() && !metadata.isSymbolicLink()) {
-            throw new Error("skip");
-          }
-          const real = await realpath(candidate);
-          const linkPath = repositoryRelative(repositoryRoot, candidate);
-          if (linkPath === undefined) throw new Error("skip");
-          const fromRepositoryRoot = repositoryRelative(
-            repositoryRoot,
-            real,
+    const contexts = new Set([resolve(repositoryRoot, workspace.relativeRoot)]);
+    for (const config of input.importConfigPaths ?? []) {
+      const origin = resolve(repositoryRoot, config);
+      if (!isContainedPath(repositoryRoot, origin))
+        throw new ProjectWorkspaceLayoutError(
+          "The configuration origin is outside the repository.",
+        );
+      if (
+        isContainedPath(resolve(repositoryRoot, workspace.relativeRoot), origin)
+      )
+        contexts.add(dirname(origin));
+    }
+    for (const context of contexts) {
+      for (const name of names) {
+        if (input.captureImportSources && !isImportPackageName(name))
+          throw new ProjectWorkspaceLayoutError(
+            "The project declares an unsupported dependency name; one-time import is unavailable.",
           );
-          const insideRepository =
-            fromRepositoryRoot !== undefined;
-          const underNodeModules =
-            insideRepository &&
-            fromRepositoryRoot!.split("/").includes("node_modules");
-          if (metadata.isSymbolicLink() && insideRepository && !underNodeModules) {
-            // A workspace package linked into node_modules must use the
-            // snapshot copy, never live source or untracked build output.
-            const owner = workspaceRealRoots.find(
-              (entry) => entry.realRoot === real,
-            );
-            if (owner === undefined) {
-              throw new ProjectWorkspaceLayoutError(
-                `The ${name} installation resolves to live repository code outside the selected snapshot; this layout is unsupported.`,
-              );
+        let directory: string | undefined = resolve(context);
+        while (
+          directory !== undefined &&
+          isContainedPath(repositoryRoot, directory)
+        ) {
+          const candidate = join(directory, "node_modules", name);
+          try {
+            const metadata = await lstat(candidate);
+            if (!metadata.isDirectory() && !metadata.isSymbolicLink()) {
+              throw new Error("skip");
             }
-            links.set(linkPath, join(treeRoot, ...owner.relativeRoot.split("/")));
-          } else {
-            links.set(linkPath, real);
+            const real = await realpath(candidate);
+            const linkPath = repositoryRelative(repositoryRoot, candidate);
+            if (linkPath === undefined) throw new Error("skip");
+            const fromRepositoryRoot = repositoryRelative(repositoryRoot, real);
+            const insideRepository = fromRepositoryRoot !== undefined;
+            const underNodeModules =
+              insideRepository &&
+              fromRepositoryRoot!.split("/").includes("node_modules");
+            if (
+              metadata.isSymbolicLink() &&
+              insideRepository &&
+              !underNodeModules
+            ) {
+              // A workspace package linked into node_modules must use the
+              // snapshot copy, never live source or untracked build output.
+              const owner = workspaceRealRoots.find(
+                (entry) => entry.realRoot === real,
+              );
+              if (owner === undefined) {
+                throw new ProjectWorkspaceLayoutError(
+                  `The ${name} installation resolves to live repository code outside the selected snapshot; this layout is unsupported.`,
+                );
+              }
+              links.set(
+                linkPath,
+                join(treeRoot, ...owner.relativeRoot.split("/")),
+              );
+            } else {
+              links.set(linkPath, real);
+            }
+            break;
+          } catch (error) {
+            if (error instanceof ProjectWorkspaceLayoutError) throw error;
+            /* Try the next hoisted level. */
           }
-          break;
-        } catch (error) {
-          if (error instanceof ProjectWorkspaceLayoutError) throw error;
-          /* Try the next hoisted level. */
+          if (directory === repositoryRoot) break;
+          const parent = dirname(directory);
+          directory = parent === directory ? undefined : parent;
         }
-        if (directory === repositoryRoot) break;
-        const parent = dirname(directory);
-        directory = parent === directory ? undefined : parent;
       }
     }
   }
@@ -243,9 +271,15 @@ export async function createProjectWorkspace(
   input: ProjectWorkspaceInput,
   signal: AbortSignal = new AbortController().signal,
 ): Promise<ProjectWorkspace> {
-  const root = await mkdtemp(join(tmpdir(), "zedbee-project-workspace-"));
+  const root = await realpath(
+    await mkdtemp(join(tmpdir(), "zedbee-project-workspace-")),
+  );
   const treeRoot = join(root, "tree");
   let disposed = false;
+  let activeUses = 0;
+  const capture = input.captureImportSources
+    ? createImportSourceCapture(signal, input.importConfigPaths)
+    : undefined;
   try {
     await mkdir(treeRoot, { recursive: true });
     // Bound EditorConfig lookup above the mirror without touching the repository.
@@ -257,11 +291,33 @@ export async function createProjectWorkspace(
     await writeFile(join(root, "empty-prettier-config.json"), "{}\n", {
       mode: 0o600,
     });
-    await copyRegularFiles(input.snapshotRoot, treeRoot, signal);
-    await attachDependencyLinks(
-      treeRoot,
-      await planDependencyLinks(input, treeRoot),
-    );
+    if (capture === undefined)
+      await copyRegularFiles(input.snapshotRoot, treeRoot, signal);
+    else await capture.copy(input.snapshotRoot, treeRoot, "repository");
+    const links = await planDependencyLinks(input, treeRoot);
+    if (capture === undefined) await attachDependencyLinks(treeRoot, links);
+    else {
+      const captureDependency = captureImportDependencies(capture, signal);
+      for (const { linkPath, target } of links) {
+        signal.throwIfAborted();
+        if (isContainedPath(treeRoot, target)) {
+          await attachDependencyLinks(treeRoot, [{ linkPath, target }]);
+        } else {
+          const source = join(input.repositoryRoot, linkPath);
+          await capture.recordLink(
+            `dependency:${linkPath}`,
+            source,
+            await realpath(source),
+          );
+          await captureDependency(
+            target,
+            join(treeRoot, linkPath),
+            `dependency:${linkPath}`,
+          );
+        }
+      }
+      await capture.verify();
+    }
   } catch (error) {
     await rm(root, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -272,8 +328,30 @@ export async function createProjectWorkspace(
     root,
     treeRoot,
     workerCwd,
+    acquireUse() {
+      if (disposed)
+        throw new Error("The formatting workspace has already been disposed.");
+      activeUses++;
+      let released = false;
+      return () => {
+        if (!released) {
+          released = true;
+          activeUses--;
+        }
+      };
+    },
+    ...(capture === undefined
+      ? {}
+      : {
+          importProvenance: capture.provenance(),
+          verifyImportSources: () => capture.verify(),
+        }),
     async dispose() {
       if (disposed) return;
+      if (activeUses > 0)
+        throw new Error(
+          "Project formatter cleanup could not be verified; its workspace was retained.",
+        );
       disposed = true;
       await rm(root, { recursive: true, force: true, maxRetries: 3 });
     },

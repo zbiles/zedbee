@@ -37,6 +37,11 @@ async function fixture() {
   const root = await temp();
   await cp(resolve("plugins"), join(root, "plugins"), { recursive: true });
   await cp(resolve("LICENSE"), join(root, "LICENSE"));
+  await mkdir(join(root, "src/init"), { recursive: true });
+  await cp(
+    resolve("src/init/install-dependency.mjs"),
+    join(root, "src/init/install-dependency.mjs"),
+  );
   return root;
 }
 const bytes = Buffer.from("verified release bytes");

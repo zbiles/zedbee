@@ -1,5 +1,7 @@
 import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { chmod, realpath, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   executeChecksCommand,
   type ChecksCommandDependencies,
@@ -165,6 +167,107 @@ function hasUnpairedSurrogate(value: string): boolean {
 }
 
 describe("executeChecksCommand", () => {
+  it
+    .runIf(process.platform !== "win32")
+    .each(["textconv", "command", "fsmonitor"] as const)(
+    "does not execute a configured Git %s helper",
+    async (helper) => {
+      const repository = await createGitRepository();
+      await repository.write(
+        "package.json",
+        '{"name":"fixture","private":true}\n',
+      );
+      await repository.write(".gitattributes", "*.js diff=sentinel\n");
+      await repository.write("src/value.js", "export const value = 1;\n");
+      await repository.commitAll("baseline");
+      await repository.write("src/value.js", "export const value = 2;\n");
+      await repository.git(["add", "--", "src/value.js"]);
+      const marker = join(repository.root, "GIT_HELPER_EXECUTED");
+      const script = join(repository.root, "git-helper.sh");
+      await repository.write(
+        "git-helper.sh",
+        `#!/bin/sh\nprintf executed > '${marker}'\n${helper === "textconv" ? 'cat "$1"\n' : ""}`,
+      );
+      await chmod(script, 0o755);
+      await repository.git([
+        "config",
+        helper === "fsmonitor" ? "core.fsmonitor" : `diff.sentinel.${helper}`,
+        script,
+      ]);
+      // Prove that this Git installation exercises the helper without Zedbee's policy.
+      await repository.git(
+        helper === "fsmonitor"
+          ? ["ls-files", "--stage"]
+          : ["diff", "--cached", "--ext-diff"],
+      );
+      await expect(realpath(marker)).resolves.toEqual(expect.any(String));
+      await rm(marker);
+
+      const result = await executeChecksCommand(
+        { cwd: repository.root, format: "json", color: false },
+        terminal(),
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(result.checks.map(({ id }) => id)).toEqual(CHECK_IDS);
+      expect(
+        result.checks.find(({ id }) => id === "formatting")?.applicability,
+      ).toBe("applicable");
+      await expect(realpath(marker)).rejects.toThrow();
+    },
+  );
+
+  it("keeps configuration and applicability on one captured index when staging changes", async () => {
+    const repository = await createGitRepository();
+    await repository.write(
+      "package.json",
+      '{"name":"fixture","private":true}\n',
+    );
+    await repository.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"profile":"fast"}\n',
+    );
+    await repository.write("src/value.js", "export const value = 1;\n");
+    await repository.commitAll("baseline");
+    await repository.write("src/value.js", "export const value = 2;\n");
+    await repository.git(["add", "--", "src/value.js"]);
+    const originalRun = GitClient.prototype.run;
+    let changedIndex = false;
+    let selectedIndexPath: string | undefined;
+    const read = vi
+      .spyOn(GitClient.prototype, "run")
+      .mockImplementation(async function (this: GitClient, args, options) {
+        const output = await originalRun.call(this, args, options);
+        if (
+          !changedIndex &&
+          args[0] === "ls-files" &&
+          args.includes("--stage")
+        ) {
+          changedIndex = true;
+          selectedIndexPath = this.selectedComparison?.indexPath;
+          await repository.git(["reset", "HEAD", "--", "src/value.js"]);
+        }
+        return output;
+      });
+    onTestFinished(() => read.mockRestore());
+
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      terminal(),
+    );
+
+    expect(changedIndex).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(
+      result.checks.find(({ id }) => id === "formatting")?.applicability,
+    ).toBe("applicable");
+    expect(
+      (await repository.git(["diff", "--cached", "--name-only"])).stdout,
+    ).toBe("");
+    expect(selectedIndexPath).toEqual(expect.any(String));
+    await expect(realpath(selectedIndexPath!)).rejects.toThrow();
+  });
+
   it("describes the indexed policy when the working configuration differs", async () => {
     const repository = await createGitRepository();
     const indexedConfig = {

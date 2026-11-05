@@ -6,11 +6,13 @@ import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedLines } from "../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
-  type SnapshotRegistry,
+  IGNORED_DIRECTORY_NAMES,
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
 import type { ScanReport } from "./report.js";
+import pLimit from "p-limit";
+import { freezeResult } from "../core/freeze-result.js";
 
 interface SecretRange {
   readonly startLine: number;
@@ -181,16 +183,6 @@ function redactedMarker(
   });
 }
 
-function deepFreeze<T>(value: T): T {
-  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
-    for (const nested of Object.values(value)) {
-      deepFreeze(nested);
-    }
-    Object.freeze(value);
-  }
-  return value;
-}
-
 export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
   const checks = Object.freeze(
     report.checks.map((check) =>
@@ -202,7 +194,7 @@ export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
       ),
     ),
   );
-  return deepFreeze({
+  return freezeResult({
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
@@ -230,22 +222,13 @@ export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
   });
 }
 
-async function captureRegistry(
-  snapshotRoot: string,
-): Promise<SnapshotRegistry | undefined> {
-  try {
-    return await captureSnapshotRegistry(snapshotRoot);
-  } catch {
-    return undefined;
-  }
-}
-
 export async function enrichSourceExcerpts(
   checks: readonly CheckResult[],
   snapshot: Pick<RepositoryInspection, "snapshotRoot">,
+  privateTargetResults: readonly CheckResult[] = checks,
 ): Promise<readonly CheckResult[]> {
-  const secretRanges = secretRangeIndex(checks);
-  const registry = await captureRegistry(snapshot.snapshotRoot);
+  // Attribution and visibility decide what is reported, never what is secret.
+  const secretRanges = secretRangeIndex([...checks, ...privateTargetResults]);
   const requestedLines = new Map<string, Set<number>>();
   for (const check of checks) {
     for (const finding of check.findings) {
@@ -270,15 +253,35 @@ export async function enrichSourceExcerpts(
     string,
     Promise<ReadonlyMap<number, string> | undefined>
   >();
-  if (registry !== undefined) {
-    for (const [file, lines] of requestedLines) {
-      sourceLines.set(
-        file,
-        readContainedLines(registry, file, [...lines], {
+  const limit = pLimit(8);
+  for (const [file, lines] of requestedLines) {
+    sourceLines.set(
+      file,
+      limit(async () => {
+        const path = normalizedPath(file);
+        if (path === undefined) return undefined;
+        const registry = await captureSnapshotRegistry(snapshot.snapshotRoot, [
+          path,
+        ]);
+        if (
+          registry
+            .entries()
+            .some((entry) =>
+              entry.repositoryPath
+                .split("/")
+                .some((part) =>
+                  IGNORED_DIRECTORY_NAMES.includes(
+                    part as (typeof IGNORED_DIRECTORY_NAMES)[number],
+                  ),
+                ),
+            )
+        )
+          return undefined;
+        return readContainedLines(registry, path, [...lines], {
           maxCodePoints: SOURCE_EXCERPT_MAX_CODE_POINTS + 1,
-        }).catch(() => undefined),
-      );
-    }
+        });
+      }).catch(() => undefined),
+    );
   }
 
   const enrichedChecks = await Promise.all(

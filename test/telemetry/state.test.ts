@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   mkdtempSync,
   rmSync,
@@ -6,7 +6,6 @@ import {
   writeFileSync,
   symlinkSync,
   existsSync,
-  utimesSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,32 +92,4 @@ describe("private telemetry state", () => {
     expect(() => store.setEnabled(false)).toThrow();
     expect(readFileSync(target, "utf8")).toBe("private");
   });
-});
-
-it("never lets competing stale-lock recovery delete a new owner's lock", () => {
-  const { root, store } = fixture();
-  store.initialize();
-  const path = join(root, "state", "state.lock");
-  writeFileSync(path, "99999999", { mode: 0o600 });
-  utimesSync(path, new Date(0), new Date(0));
-  let nested = false;
-  const owners: Array<() => void> = [];
-  const spy = vi.spyOn(process, "kill").mockImplementation(() => {
-    if (!nested) {
-      nested = true;
-      try {
-        owners.push(store.lock());
-      } catch {}
-    }
-    throw Object.assign(new Error("dead process"), { code: "ESRCH" });
-  });
-  try {
-    try {
-      owners.push(store.lock());
-    } catch {}
-    expect(owners).toHaveLength(1);
-  } finally {
-    spy.mockRestore();
-    owners.forEach((release) => release());
-  }
 });

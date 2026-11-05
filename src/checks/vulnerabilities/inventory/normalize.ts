@@ -75,15 +75,19 @@ export function validateExactVersion(value: unknown): string {
   return value;
 }
 
-export function finalizeDependencyRecords(
-  records: readonly DependencyRecord[],
-): DependencyInventory {
-  if (records.length > MAX_DEPENDENCY_RECORDS) {
+export function validateDependencyRecordCount(count: number): void {
+  if (count > MAX_DEPENDENCY_RECORDS) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
       "The lockfile contains too many dependency records.",
     );
   }
+}
+
+export function finalizeDependencyRecords(
+  records: readonly DependencyRecord[],
+): DependencyInventory {
+  validateDependencyRecordCount(records.length);
   const deduplicated = new Map<string, DependencyRecord>();
   for (const candidate of records) {
     const name = validatePackageName(candidate.name);

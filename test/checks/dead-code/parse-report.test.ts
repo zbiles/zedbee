@@ -1,3 +1,5 @@
+import { sourceEntityName } from "../../../src/attribution/source-identity.js";
+const knipName = (name: string) => sourceEntityName(JSON.stringify([name]));
 import { describe, expect, it } from "vitest";
 import { parseKnipReport } from "../../../src/checks/dead-code/parse-report.js";
 
@@ -28,10 +30,10 @@ describe("parseKnipReport", () => {
           result
             .filter((item) => item.rule === field)
             .map((item) => item.entity?.name),
-        ).toEqual(["another-tool", "zedbee-helper"]);
+        ).toEqual([knipName("another-tool"), knipName("zedbee-helper")].sort());
         expect(
           result
-            .filter((item) => item.entity?.name === "zedbee")
+            .filter((item) => item.entity?.name === knipName("zedbee"))
             .map((item) => item.rule),
         ).toEqual(["exports", "unlisted", "unresolved"]);
       }
@@ -70,7 +72,7 @@ describe("parseKnipReport", () => {
           rule: "exports",
           entity: {
             kind: "knip-exports",
-            name: "unused",
+            name: knipName("unused"),
             file: "src/a.ts",
           },
           location: { file: "src/a.ts", startLine: 2, startColumn: 7 },
@@ -85,6 +87,19 @@ describe("parseKnipReport", () => {
   });
 
   it("fails closed on malformed, unsafe, and unowned output", () => {
+    expect(() =>
+      parseKnipReport(
+        {
+          issues: [
+            {
+              file: "package.json",
+              dependencies: [{ name: "zedbee", line: -1 }],
+            },
+          ],
+        },
+        new Set(["package.json"]),
+      ),
+    ).toThrow(/coordinate/i);
     expect(() => parseKnipReport({}, new Set())).toThrow(/issues/i);
     expect(() =>
       parseKnipReport(

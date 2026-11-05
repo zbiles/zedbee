@@ -32,22 +32,23 @@ and returns `version`, `package` (`zedbee@<exact-version>`), canonical registry
 `url`, npm-compatible SHA-512 `integrity`, private `tarball`, and `directory`.
 Keep the verified artifact until installation and integrity checks are complete.
 
-Install the returned exact **package specifier**, not a GitHub URL, redirect URL,
-downloaded file path, or unpinned tag. Use the existing package manager:
+Install the returned exact **package specifier** with the packaged installer;
+it uses the same executable installation policy as the CLI:
 
 ```sh
-npm install --save-dev --save-exact --ignore-scripts -- zedbee@<exact-version>
-pnpm add --save-dev --save-exact --ignore-scripts zedbee@<exact-version>
-yarn add --dev --exact --ignore-scripts zedbee@<exact-version>
+node <plugin-root>/scripts/install-dependency.mjs --manager <npm|pnpm|yarn|bun> --project-root <selected-project-directory> --package zedbee@<exact-version>
 ```
 
-These are alternatives, not commands to run in sequence. Use the Yarn command
-only with Yarn Classic; for other managers, use their supported equivalent and
-verify their lockfile integrity before execution. In a pnpm workspace, add
-`--workspace-root` only when the selected dependency owner is the root; otherwise
-run in or target the intended member. Preserve package-manager choice, workspace
-ownership and lockfile conventions. Do not upgrade unrelated dependencies, enable
-lifecycle scripts, or bypass repository dependency restrictions.
+Use the repository's existing manager and exact `package` from the download
+helper. Do not pass a GitHub URL, redirect URL, downloaded file path or unpinned
+tag. Add `--workspace-root` only when the selected dependency owner is a workspace
+root; otherwise select the intended member directory. The helper preserves the
+exact dependency and manager conventions, suppresses lifecycle scripts, pnpm
+hooks/version management, and Yarn/Corepack project executable/config delegation.
+It detects the installed Yarn outside the repository and chooses Classic or
+modern flags; unsupported Yarn versions stop before installation. Check its
+process status before continuing. Do not replace it with direct manager commands,
+enable scripts, upgrade unrelated dependencies, or bypass dependency restrictions.
 
 Confirm the installed Zedbee version and manifest dependency match the exact
 requested version. Inspect the matching lockfile package entry and compare its

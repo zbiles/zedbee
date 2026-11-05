@@ -1,10 +1,42 @@
-import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { chmod, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
 describe("GitClient", () => {
+  it.runIf(process.platform !== "win32")(
+    "disables filesystem monitors on unbound index reads without changing local configuration",
+    async () => {
+      const repository = await createGitRepository();
+      await repository.write("value.js", "export const value = 1;\n");
+      await repository.commitAll("baseline");
+      const marker = join(repository.root, "FSMONITOR_EXECUTED");
+      const monitor = join(repository.root, "fsmonitor.sh");
+      await repository.write(
+        "fsmonitor.sh",
+        `#!/bin/sh\nprintf executed > '${marker}'\n`,
+      );
+      await chmod(monitor, 0o755);
+      await repository.git(["config", "core.fsmonitor", monitor]);
+      await repository.git(["ls-files", "--stage"]);
+      await expect(realpath(marker)).resolves.toEqual(expect.any(String));
+      await rm(marker);
+
+      const output = await new GitClient(repository.root).run([
+        "ls-files",
+        "--stage",
+      ]);
+
+      expect(output.stdout).toContain("value.js");
+      await expect(realpath(marker)).rejects.toThrow();
+      expect(
+        (await repository.git(["config", "--local", "--get", "core.fsmonitor"]))
+          .stdout,
+      ).toBe(monitor);
+    },
+  );
+
   it.runIf(process.platform !== "win32")(
     "does not execute a project dependency named git",
     async () => {

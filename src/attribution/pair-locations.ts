@@ -21,7 +21,7 @@ function comparisonIdentity(
         location?.startColumn,
         location?.endLine,
         location?.endColumn,
-        observation.message,
+        observation.comparisonIdentity ?? observation.message,
       ]),
     )
     .digest("hex");

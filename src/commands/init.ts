@@ -1,4 +1,21 @@
 import {
+  resolveFormattingSetup,
+  evaluateExecutableProjectConfigs,
+  ProjectPrettierTrustRequiredError,
+} from "../init/formatter-setup.js";
+import {
+  publicProposal,
+  renderText,
+  renderInitFailure,
+  renderInteractiveResult,
+} from "../init/presentation.js";
+import {
+  buildInitSelectionOptions,
+  type InitSelection,
+  type InitSelectionContext,
+} from "../init/selection-policy.js";
+import type { EvaluatedExecutableImports } from "../init/types.js";
+import {
   HookInstallationError,
   resolveHookCommand,
   resolveLocalSchemaReference,
@@ -15,8 +32,7 @@ import {
   type TelemetryEnvironment,
 } from "../telemetry/policy.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
-import { createHash } from "node:crypto";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GitClient } from "../git/client.js";
 import {
@@ -25,7 +41,6 @@ import {
 } from "../hooks/detect.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
-import { RepositoryInspectionError } from "../inspection/types.js";
 import { parse as parseJsonc } from "jsonc-parser";
 import {
   GithubWorkflowSetupError,
@@ -34,30 +49,14 @@ import {
 import { formatInitProposal } from "../init/format-proposal.js";
 import { createInitProposal } from "../init/recommend.js";
 import type {
-  CreateInitProposalOptions,
-  ExecutableEvaluatedConfig,
   InitFormattingChoice,
   InitFormattingScope,
-  InitFormattingDetection,
-  InitFormattingImport,
   InitHookChoice,
   InitWorkflowChoice,
   InitOsvUnavailable,
   InitProposal,
 } from "../init/types.js";
-import type { ImportableNativeConfig } from "../checks/prettier/project-types.js";
 import { applyInitProposal } from "../init/write-config.js";
-import { discoverProjectPrettier } from "../init/prettier-discovery.js";
-import { previewPrettierSettingsImport } from "../init/prettier-import.js";
-import { buildSnapshotPair } from "../git/snapshot.js";
-import {
-  readProjectPrettierTrust,
-  requireProjectPrettierTrust,
-} from "../checks/prettier/project-trust.js";
-import {
-  openProjectFormatter,
-  resolveProjectPrettierInstallation,
-} from "../checks/prettier/project-engine.js";
 import { CHECK_IDS, type CheckId, type ProfileId } from "../config/schema.js";
 
 export interface InitCommandOptions {
@@ -110,18 +109,10 @@ export interface InitCommandDependencies {
   confirm(
     proposal: InitProposal,
     options: InitPromptOptions,
-    proposalForSelection: (
-      profile: ProfileId,
-      checks: readonly CheckId[] | undefined,
-      osvUnavailable: InitOsvUnavailable,
-      hook?: InitHookChoice,
-      formatting?: InitFormattingChoice,
-      projectTrust?: boolean,
-      evaluatedImport?: InitFormattingImport,
-      scope?: InitFormattingScope,
-      workflow?: InitWorkflowChoice,
-    ) => InitProposal,
-    evaluateExecutableImport?: () => Promise<InitFormattingImport | undefined>,
+    proposalForSelection: (selection: InitSelection) => InitProposal,
+    evaluateExecutableImport?: (
+      signal: AbortSignal,
+    ) => Promise<EvaluatedExecutableImports | undefined>,
     prepareReview?: (proposal: InitProposal) => Promise<InitProposal>,
   ): Promise<false | InitProposal>;
 }
@@ -180,349 +171,6 @@ async function existingConfig(repositoryRoot: string): Promise<string | null> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-}
-
-function publicProposal(proposal: InitProposal) {
-  return {
-    profile: proposal.profile,
-    workflow: proposal.workflow ?? "none",
-    workflowAvailable: proposal.workflowAvailable ?? false,
-    ...(proposal.workflowMessage === undefined
-      ? {}
-      : { workflowMessage: proposal.workflowMessage }),
-    hook: proposal.hook,
-    hookActivation: proposal.hookActivation,
-    ...(proposal.hooksPathChange === undefined
-      ? {}
-      : { hooksPathChange: proposal.hooksPathChange }),
-    detectedEnvironments: proposal.detectedEnvironments,
-    recommendedChecks: proposal.recommendedChecks,
-    formatting: proposal.formatting ?? "managed",
-    formattingScope: proposal.formattingScope ?? "repository",
-    formattingScopeRoots: proposal.formattingScopeRoots ?? [],
-    ...(proposal.formattingDetection === undefined
-      ? {}
-      : { formattingDetection: proposal.formattingDetection }),
-    ...(proposal.formattingImport === undefined
-      ? {}
-      : {
-          formattingImport: {
-            settings: proposal.formattingImport.settings,
-            overrides: proposal.formattingImport.overrides,
-            limitations: proposal.formattingImport.limitations,
-          },
-        }),
-    vulnerabilityScanningAvailable: proposal.vulnerabilityScanningAvailable,
-    osvUnavailable: proposal.osvUnavailable,
-    networkChecks: proposal.networkChecks,
-    limitations: proposal.limitations,
-    files: proposal.files.map(
-      ({ relativePath, beforeHash, afterHash, diff, mode }) => ({
-        relativePath,
-        beforeHash,
-        afterHash,
-        diff,
-        mode,
-      }),
-    ),
-  };
-}
-
-function renderText(proposal: InitProposal, applied: boolean): string {
-  const lines = [
-    applied
-      ? "Zedbee initialization applied."
-      : "Zedbee initialization preview.",
-    `Profile: ${proposal.profile}`,
-    `Hook: ${proposal.hook}`,
-    `GitHub workflow: ${proposal.workflow === "github" ? "requested" : "not requested"}`,
-    ...(proposal.workflowMessage === undefined
-      ? []
-      : [proposal.workflowMessage]),
-    `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
-    `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
-    `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
-    `Formatting: ${proposal.formatting ?? "managed"}`,
-    `Formatting scope: ${proposal.formattingScope === "projects" ? proposal.formattingScopeRoots?.join(", ") || "repository" : "whole repository"}`,
-    ...(proposal.formattingDetection ?? []).map(
-      (entry) =>
-        `Prettier setup: ${
-          entry.projectRoot === "." ? "repository root" : entry.projectRoot
-        } — ${entry.status}${
-          entry.version === undefined ? "" : ` (Prettier ${entry.version})`
-        }${entry.executableConfig ? "; executable configuration" : ""}`,
-    ),
-    ...(proposal.formattingDetection !== undefined &&
-    proposal.formattingDetection.length === 0
-      ? ["Prettier setup: none detected; Zedbee keeps its managed formatter."]
-      : []),
-    ...(proposal.vulnerabilityScanningAvailable
-      ? [`OSV unavailable: ${proposal.osvUnavailable}`]
-      : []),
-  ];
-  for (const network of proposal.networkChecks) {
-    lines.push(`Network: ${network.disclosure}`);
-  }
-  if (proposal.hookActivation.remediation !== undefined) {
-    lines.push(
-      `Hook activation required: ${proposal.hookActivation.remediation}`,
-    );
-  }
-  for (const file of proposal.files) lines.push("", file.diff);
-  if (proposal.hooksPathChange !== undefined)
-    lines.push(
-      `Git configuration: core.hooksPath → ${proposal.hooksPathChange.after}`,
-    );
-  if (applied)
-    lines.push(
-      "",
-      "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
-    );
-  if (!applied) lines.push("", "No files were written without confirmation.");
-  return `${lines.join("\n")}\n`;
-}
-
-function renderInitFailure(error: unknown): string {
-  const lines = ["Zedbee could not initialize this repository safely."];
-  if (error instanceof GithubWorkflowSetupError) {
-    lines.push(`Reason: ${error.message}`);
-  } else if (error instanceof HookInstallationError) {
-    lines.push(error.message);
-  } else if (
-    error instanceof RepositoryInspectionError &&
-    error.code === "UNSAFE_SNAPSHOT_PATH"
-  ) {
-    lines.push(
-      "Reason: Repository inspection found a symbolic link that leaves the repository.",
-      "Remediation: Remove the external link or move it into a directory Zedbee ignores.",
-    );
-  } else if (error instanceof ProjectPrettierTrustRequiredError) {
-    lines.push(`Reason: ${error.message}`);
-    lines.push(
-      "Remediation: Re-run zedbee init with --trust-project-prettier, or run interactively to review the execution disclosure.",
-    );
-  } else if (
-    error instanceof Error &&
-    error.message.includes("unresolved limitations")
-  ) {
-    lines.push(`Reason: ${error.message}`);
-    lines.push(
-      "Remediation: Run zedbee init interactively to review and accept the settings-copy limitations.",
-    );
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-function renderInteractiveResult(
-  confirmed: boolean,
-  proposal: InitProposal,
-): string {
-  if (!confirmed) return "Zedbee initialization cancelled\n";
-  const lines = [
-    "Zedbee initialized successfully",
-    "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
-  ];
-  if (proposal.hookActivation.remediation !== undefined) {
-    lines.push(`Next step: ${proposal.hookActivation.remediation}`);
-  }
-  return `${lines.join("\n")}\n`;
-}
-
-interface FormattingSetup {
-  readonly imported: InitFormattingImport;
-  readonly detection: readonly InitFormattingDetection[];
-  /** Primary project used for messages and executable-config evaluation. */
-  readonly projectRoot: string;
-  /** Every discovered project root; project mode enables each of them. */
-  readonly projectRoots: readonly string[];
-  /** Roots that already hold a local executable-code grant. */
-  readonly storedTrustRoots: readonly string[];
-  readonly executableTargets: readonly ExecutableConfigTarget[];
-}
-async function resolveFormattingSetup(
-  repositoryRoot: string,
-): Promise<FormattingSetup> {
-  // Discovery failures are reported; they are never converted into an empty
-  // setup that would misrepresent the project.
-  const discoveries = await discoverProjectPrettier(repositoryRoot);
-  const projectRoots = discoveries.map((entry) => entry.projectRoot);
-  const storedTrustRoots: string[] = [];
-  for (const root of projectRoots) {
-    const stored = await readProjectPrettierTrust(repositoryRoot, root).catch(
-      () => undefined,
-    );
-    if (stored === "v1") storedTrustRoots.push(root);
-  }
-  const projectRoot =
-    discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
-    discoveries[0]?.projectRoot ??
-    ".";
-  const preview = await previewPrettierSettingsImport(repositoryRoot);
-  const sharedConfigs = new Map(
-    preview.sharedConfigs.map(
-      (entry) => [entry.projectRoot, entry.specifier] as const,
-    ),
-  );
-  const detection = Object.freeze(
-    discoveries.map((entry) => {
-      const sharedConfig = sharedConfigs.get(entry.projectRoot);
-      return Object.freeze({
-        projectRoot: entry.projectRoot,
-        ...(entry.version === undefined ? {} : { version: entry.version }),
-        status: entry.status,
-        executableConfig: entry.executableConfig,
-        configPaths: Object.freeze([...entry.configPaths]),
-        ...(sharedConfig === undefined ? {} : { sharedConfig }),
-      });
-    }),
-  );
-  const limitations = [...preview.limitations];
-  const executableTargets: ExecutableConfigTarget[] = [
-    ...preview.executableConfigs.map(({ projectRoot, configPath }) => ({
-      projectRoot,
-      target: { configPath },
-    })),
-  ];
-  for (const { projectRoot, configPath, specifier } of preview.sharedConfigs)
-    executableTargets.push({
-      projectRoot,
-      target: { sharedConfig: specifier, configPath },
-    });
-  return Object.freeze({
-    imported: Object.freeze({
-      settings: preview.settings,
-      overrides: preview.overrides,
-      ...(preview.pathExclusions === undefined
-        ? {}
-        : { pathExclusions: preview.pathExclusions }),
-      limitations: Object.freeze(limitations),
-    }),
-    detection,
-    projectRoot,
-    projectRoots: Object.freeze(projectRoots),
-    storedTrustRoots: Object.freeze(storedTrustRoots),
-    executableTargets: Object.freeze(executableTargets),
-  });
-}
-
-class ProjectPrettierTrustRequiredError extends Error {
-  readonly projectRoot: string;
-  constructor(projectRoot: string) {
-    super(
-      `Using the project's Prettier in ${
-        projectRoot === "." ? "the repository root" : projectRoot
-      } requires explicit trust. Re-run with --trust-project-prettier or interactively.`,
-    );
-    this.name = "ProjectPrettierTrustRequiredError";
-    this.projectRoot = projectRoot;
-  }
-}
-
-interface EvaluatedExecutableImport {
-  readonly nativeConfig: ImportableNativeConfig;
-  /** Exact working-copy bytes the evaluation was bound to. */
-  readonly evaluatedConfig: ExecutableEvaluatedConfig;
-}
-
-/**
- * Separately consented one-time evaluation of an executable or shared Prettier
- * configuration. Setup deliberately differs from scans: it evaluates the exact
- * working-copy bytes the preview showed — not a rebuilt Git snapshot — through
- * the same supervised project runner, and returns only supported plain values.
- * Anything not representable is reported as a limitation. The evaluated bytes
- * are recorded so apply can refuse if the configuration changed afterwards.
- */
-async function evaluateExecutableProjectConfig(
-  repositoryRoot: string,
-  projectRoot: string,
-  target:
-    | { readonly configPath: string }
-    | { readonly sharedConfig: string; readonly configPath: string },
-  signal: AbortSignal,
-): Promise<EvaluatedExecutableImport> {
-  const permit = await requireProjectPrettierTrust(
-    repositoryRoot,
-    projectRoot,
-    true,
-  );
-  const installation = await resolveProjectPrettierInstallation(
-    repositoryRoot,
-    projectRoot,
-    repositoryRoot,
-  );
-  const session = await openProjectFormatter({
-    checkoutRoot: await realpath(repositoryRoot),
-    snapshotRoot: repositoryRoot,
-    projectRoot,
-    installation,
-    permit,
-    signal,
-  });
-  try {
-    const imported =
-      "sharedConfig" in target
-        ? await session.readSharedConfigForImport(target.sharedConfig)
-        : await session.readConfigForImport(target.configPath);
-    const boundPath = target.configPath;
-    const boundBytes = await readFile(join(repositoryRoot, boundPath), "utf8");
-    return Object.freeze({
-      nativeConfig: imported,
-      evaluatedConfig: Object.freeze({
-        path: boundPath,
-        sha256: createHash("sha256").update(boundBytes, "utf8").digest("hex"),
-      }),
-    });
-  } finally {
-    await session.close();
-  }
-}
-
-interface ExecutableConfigTarget {
-  readonly projectRoot: string;
-  readonly target:
-    | { readonly configPath: string }
-    | { readonly sharedConfig: string; readonly configPath: string };
-}
-
-interface EvaluatedExecutableImports {
-  readonly imported: InitFormattingImport;
-  readonly evaluatedConfigs: readonly ExecutableEvaluatedConfig[];
-}
-
-async function evaluateExecutableProjectConfigs(
-  repositoryRoot: string,
-  base: InitFormattingImport,
-  targets: readonly ExecutableConfigTarget[],
-  signal: AbortSignal,
-): Promise<EvaluatedExecutableImports> {
-  const nativeConfigs = new Map<string, ImportableNativeConfig>();
-  const evaluatedConfigs: ExecutableEvaluatedConfig[] = [];
-  for (const { projectRoot, target } of targets) {
-    const evaluated = await evaluateExecutableProjectConfig(
-      repositoryRoot,
-      projectRoot,
-      target,
-      signal,
-    );
-    nativeConfigs.set(evaluated.evaluatedConfig.path, evaluated.nativeConfig);
-    evaluatedConfigs.push(evaluated.evaluatedConfig);
-  }
-  // Rebuild every inherited EditorConfig scope from its evaluated owner.
-  // Real nested Prettier configs still reset inherited Prettier settings.
-  const preview = await previewPrettierSettingsImport(
-    repositoryRoot,
-    nativeConfigs,
-  );
-  const imported: InitFormattingImport = {
-    ...base,
-    settings: preview.settings,
-    overrides: preview.overrides,
-    limitations: preview.limitations,
-  };
-  return Object.freeze({
-    imported,
-    evaluatedConfigs: Object.freeze(evaluatedConfigs),
-  });
 }
 
 export async function executeInitCommand(
@@ -625,32 +273,20 @@ export async function executeInitCommand(
             options.signal ?? new AbortController().signal,
           )
         : undefined;
-    const evaluateExecutableImport =
+    const evaluateExecutableImportForUi =
       canPrompt && executableTargets.length > 0
-        ? async () =>
+        ? (signal: AbortSignal) =>
             evaluateExecutableProjectConfigs(
               repositoryRoot,
               formattingSetup.imported,
               executableTargets,
-              options.signal ?? new AbortController().signal,
+              options.signal === undefined
+                ? signal
+                : AbortSignal.any([signal, options.signal]),
             )
         : undefined;
     const effectiveCopyImport =
       evaluatedExecutableImports?.imported ?? formattingSetup.imported;
-    const effectiveEvaluatedConfigs =
-      evaluatedExecutableImports?.evaluatedConfigs;
-    // Interactive evaluation records the same byte binding when the UI's
-    // evaluated import is used, so apply rechecks what the user previewed.
-    let interactiveEvaluatedConfigs:
-      readonly ExecutableEvaluatedConfig[] | undefined;
-    const evaluateExecutableImportForUi =
-      evaluateExecutableImport === undefined
-        ? undefined
-        : async () => {
-            const result = await evaluateExecutableImport();
-            interactiveEvaluatedConfigs = result.evaluatedConfigs;
-            return result.imported;
-          };
     if (
       options.formatting === "copy" &&
       !canPrompt &&
@@ -660,9 +296,6 @@ export async function executeInitCommand(
         "The settings copy has unresolved limitations and cannot be applied noninteractively.",
       );
     }
-    const enabledProjectRoots = formattingSetup.projectRoots.filter(
-      (root) => root !== ".",
-    );
     const formattingScopeRoots = formattingSetup.projectRoots;
     const formattingScope: InitFormattingScope =
       options.formattingScope ??
@@ -677,38 +310,6 @@ export async function executeInitCommand(
       (formattingScopeRoots.length > 0 && !formattingScopeRoots.includes(".")
         ? "projects"
         : "repository");
-    const formattingProposalFields = {
-      formattingScope,
-      formattingScopeRoots,
-      // Detection is always reported, even when nothing is imported/executed.
-      formattingDetection: formattingSetup.detection,
-      ...(options.formatting === undefined
-        ? {}
-        : { formatting: options.formatting }),
-      ...(options.formatting === "copy"
-        ? { formattingImport: effectiveCopyImport }
-        : {}),
-      ...(options.formatting === "project"
-        ? {
-            formattingProjectRoots: enabledProjectRoots,
-            formattingRootProject: formattingSetup.projectRoots.includes("."),
-          }
-        : {}),
-      ...(options.formatting === "project" &&
-      (options.trustProjectPrettier || allProjectsTrusted)
-        ? {
-            projectPrettierTrustRoots: formattingSetup.projectRoots,
-            projectPrettierTrustConfirmed: true,
-          }
-        : {}),
-      ...((options.formatting === "managed" || options.formatting === "off") &&
-      formattingSetup.projectRoots.length > 0
-        ? { projectPrettierRevokeRoots: formattingSetup.projectRoots }
-        : {}),
-      ...(effectiveEvaluatedConfigs === undefined
-        ? {}
-        : { executableEvaluatedConfigs: effectiveEvaluatedConfigs }),
-    };
     const workflowProposalFields = {
       workflow: options.workflow ?? ("none" as InitWorkflowChoice),
       workflowAvailable: workflowPreparation?.status === "available",
@@ -723,26 +324,33 @@ export async function executeInitCommand(
       repositoryRoot,
       ...workflowProposalFields,
       ...(schemaReference === undefined ? {} : { schemaReference }),
-      hook: hookIntegration.hook,
       configBefore,
-      ...(hookIntegration.change === undefined
-        ? {}
-        : { hookChange: hookIntegration.change }),
-      hookActivation: hookIntegration.activation,
-      hookChanges: hookIntegration.changes,
-      hooksPathChange: hookIntegration.hooksPathChange,
     };
-    const proposalOptions: CreateInitProposalOptions = {
-      ...proposalBaseOptions,
-      ...formattingProposalFields,
+    const initialSelection: InitSelection = {
       profile: options.profile,
-      ...(options.checks === undefined ? {} : { checks: options.checks }),
-      ...(options.osvUnavailable === undefined
-        ? {}
-        : { osvUnavailable: options.osvUnavailable }),
+      checks: options.checks,
+      osvUnavailable: options.osvUnavailable,
+      formatting: options.formatting,
+      projectTrust: allProjectsTrusted,
+      evaluatedImport: evaluatedExecutableImports,
+      workflow: options.workflow,
+    };
+    const selectionContext: InitSelectionContext = {
+      base: proposalBaseOptions,
+      defaults: {
+        ...initialSelection,
+        hook: hookIntegration.hook,
+        scope: formattingScope,
+      },
+      integrations: new Map([[hookIntegration.hook, hookIntegration]]),
+      formatting: formattingSetup,
+      invocationTrust: options.trustProjectPrettier === true,
     };
     let proposal = await formatInitProposal(
-      createInitProposal(inspection, proposalOptions),
+      createInitProposal(
+        inspection,
+        buildInitSelectionOptions(selectionContext, initialSelection),
+      ),
     );
     const color = options.color && io.env.NO_COLOR === undefined;
     let confirmed = options.yes;
@@ -789,103 +397,27 @@ export async function executeInitCommand(
         selection = "tracked";
         choices = ["none", "tracked"];
       }
-      const proposalForSelection = (
-        profile: ProfileId,
-        checks: readonly CheckId[] | undefined,
-        osvUnavailable: InitOsvUnavailable,
-        selectedHook: InitHookChoice = selection,
-        selectedFormatting:
-          InitFormattingChoice | undefined = options.formatting,
-        selectedProjectTrust = allProjectsTrusted,
-        evaluatedImport: InitFormattingImport | undefined = undefined,
-        selectedScope: InitFormattingScope = formattingScope,
-        selectedWorkflow: InitWorkflowChoice = options.workflow ?? "none",
-      ): InitProposal => {
-        const selectedIntegration = integrations.get(selectedHook);
-        if (selectedIntegration === undefined)
-          throw new Error("Invalid hook selection.");
-        // Prompt capability alone never authorizes executable code; only the
-        // saved grant, separately confirmed disclosure, or explicit CLI flag does.
-        const trustGranted =
-          selectedFormatting === "project" &&
-          (options.trustProjectPrettier || selectedProjectTrust);
-        const formattingFields =
-          selectedFormatting === undefined
-            ? {
-                // Detection stays visible even when no engine choice is made.
-                formattingDetection: formattingSetup.detection,
-              }
-            : {
-                formattingDetection: formattingSetup.detection,
-                formatting: selectedFormatting,
-                ...(selectedFormatting === "copy"
-                  ? {
-                      formattingImport:
-                        evaluatedImport ?? formattingSetup.imported,
-                    }
-                  : {}),
-                ...(selectedFormatting === "project"
-                  ? {
-                      formattingProjectRoots: enabledProjectRoots,
-                      formattingRootProject:
-                        formattingSetup.projectRoots.includes("."),
-                    }
-                  : {}),
-                ...(trustGranted
-                  ? {
-                      projectPrettierTrustRoots: formattingSetup.projectRoots,
-                      projectPrettierTrustConfirmed: true,
-                    }
-                  : {}),
-                ...((selectedFormatting === "managed" ||
-                  selectedFormatting === "off") &&
-                formattingSetup.projectRoots.length > 0
-                  ? {
-                      projectPrettierRevokeRoots: formattingSetup.projectRoots,
-                    }
-                  : {}),
-                ...(evaluatedImport !== undefined &&
-                interactiveEvaluatedConfigs !== undefined
-                  ? {
-                      executableEvaluatedConfigs: interactiveEvaluatedConfigs,
-                    }
-                  : {}),
-              };
-        const selectedProposal = createInitProposal(inspection, {
-          ...workflowProposalFields,
-          workflow: selectedWorkflow,
-          repositoryRoot,
-          ...(schemaReference === undefined ? {} : { schemaReference }),
-          configBefore,
-          profile,
-          osvUnavailable,
-          hook: selectedIntegration.hook,
-          hookActivation: selectedIntegration.activation,
-          hookChanges: selectedIntegration.changes,
-          hooksPathChange: selectedIntegration.hooksPathChange,
-          ...formattingFields,
-          formattingScope: selectedScope,
-          formattingScopeRoots,
-          ...(selectedIntegration.change === undefined
-            ? {}
-            : { hookChange: selectedIntegration.change }),
-          ...(checks === undefined ? {} : { checks }),
-        });
+      const interactiveContext: InitSelectionContext = {
+        ...selectionContext,
+        defaults: { ...selectionContext.defaults, hook: selection },
+        integrations,
+      };
+      const proposalForSelection = (selected: InitSelection): InitProposal => {
+        const selectedProposal = createInitProposal(
+          inspection,
+          buildInitSelectionOptions(interactiveContext, selected),
+        );
         return Object.freeze({
           ...selectedProposal,
           telemetryEnabled,
           telemetryDisabledByEnvironment,
           limitations: [...selectedProposal.limitations, ...hookLimitations],
-          hookSelection: selectedHook,
+          hookSelection: selected.hook ?? selection,
           ...(choices.length > 1 ? { hookChoices: choices } : {}),
         });
       };
       proposal = await formatInitProposal(
-        proposalForSelection(
-          options.profile,
-          options.checks,
-          options.osvUnavailable ?? "block",
-        ),
+        proposalForSelection(initialSelection),
       );
       const decision = await dependencies.confirm(
         proposal,

@@ -84,18 +84,33 @@ export function parseProjectRequest(value: unknown): ProjectPrettierRequest {
   if (value.operation === "importConfig") {
     if ("configPackage" in value) {
       if (
-        !exactKeys(value, ["id", "operation", "configPackage"]) ||
+        !exactKeys(
+          value,
+          value.originConfig === undefined
+            ? ["id", "operation", "configPackage"]
+            : ["id", "operation", "configPackage", "originConfig"],
+        ) ||
         typeof value.configPackage !== "string" ||
         value.configPackage.length === 0 ||
         value.configPackage.length > 214 ||
-        value.configPackage.startsWith(".") ||
-        value.configPackage.startsWith("/")
+        (value.configPackage.startsWith(".") &&
+          value.originConfig === undefined) ||
+        value.configPackage.startsWith("/") ||
+        value.configPackage.includes("\\") ||
+        value.configPackage.includes(":") ||
+        (value.originConfig !== undefined &&
+          typeof value.originConfig !== "string")
       ) {
         throw new TypeError("Invalid project formatter request fields");
       }
+      if (typeof value.originConfig === "string")
+        normalizeRepositoryRelativePath(value.originConfig);
       return {
         id: value.id,
         operation: "importConfig",
+        ...(typeof value.originConfig === "string"
+          ? { originConfig: value.originConfig }
+          : {}),
         configPackage: value.configPackage,
       };
     }

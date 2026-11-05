@@ -1,4 +1,7 @@
+import { deadCodeAdapter } from "../../src/checks/dead-code/adapter.js";
 import * as fs from "node:fs";
+import * as crypto from "node:crypto";
+import * as filePolicy from "../../src/config/file-policy.js";
 import * as fsPromises from "node:fs/promises";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +19,7 @@ import type {
   CheckAdapter,
   CheckObservationSet,
   CheckRunContext,
+  ObservationCheckAdapter,
 } from "../../src/checks/adapter.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { createObservationCacheEngineIdentityResolver } from "../../src/checks/engine-identity.js";
@@ -36,6 +40,25 @@ vi.mock("node:fs", async (importOriginal) => {
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return { ...actual, readdir: vi.fn(actual.readdir) };
+});
+vi.mock("node:crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:crypto")>();
+  return {
+    ...actual,
+    createHash: vi.fn((...args: Parameters<typeof actual.createHash>) => {
+      const hash = actual.createHash(...args);
+      vi.spyOn(hash, "update");
+      return hash;
+    }),
+  };
+});
+vi.mock("../../src/config/file-policy.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/config/file-policy.js")>();
+  return {
+    ...actual,
+    createFilePolicyResolver: vi.fn(actual.createFilePolicyResolver),
+  };
 });
 beforeEach(() => vi.clearAllMocks());
 
@@ -112,7 +135,7 @@ const adapter = {
   }),
 } satisfies CheckAdapter;
 
-function adapterFor(id: string): CheckAdapter {
+function adapterFor(id: string): ObservationCheckAdapter {
   return {
     ...adapter,
     id,
@@ -161,6 +184,11 @@ describe("observation cache keys", () => {
 
   it.each([
     {
+      checkId: "duplication",
+      legacyIdentity:
+        "jscpd@104.5.6+typescript@103.4.5+zedbee-clone-normalization-v2",
+    },
+    {
       checkId: "cyclomaticComplexity",
       legacyIdentity:
         "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v3",
@@ -182,7 +210,14 @@ describe("observation cache keys", () => {
           values.set(key, value);
         },
       };
-      const context = contextFor(fixture.root, "^19.0.0");
+      const context = contextFor(
+        fixture.root,
+        "^19.0.0",
+        resolveConfig({
+          schemaVersion: 1,
+          checks: { [checkId]: { severity: "error", when: "always" } },
+        }),
+      );
       let collections = 0;
       const countingAdapter: CheckAdapter = {
         ...adapter,
@@ -203,6 +238,7 @@ describe("observation cache keys", () => {
         cacheEngineIdentity: () => legacyIdentity,
       });
       const versions = new Map([
+        ["jscpd", "104.5.6"],
         ["eslint", "101.2.3"],
         ["typescript-eslint", "102.3.4"],
         ["typescript", "103.4.5"],
@@ -562,7 +598,313 @@ describe("observation cache keys", () => {
     expect(new Set(keys).size).toBe(2);
   });
 
-  it("retains v2 key bytes including source identity and symlinks", async () => {
+  it("hashes canonical snapshot inventories once rather than once per target key", async () => {
+    const fixture = await createInspectionFixture();
+    for (let index = 0; index < 100; index++)
+      await fixture.write(
+        `src/function-${index}.ts`,
+        `export const value = ${index};`,
+      );
+    const keyFor = createObservationCacheKeyBuilder(
+      fixture.root,
+      fixture.root,
+      { mode: "index", baseline: "HEAD", target: "index" },
+    );
+    const input = {
+      checkId: "lint",
+      engineIdentity: "test",
+      policy: { severity: "error" as const, when: "relevant" as const },
+      checkTarget: { id: ".", kind: "repository" as const, relativeRoot: "." },
+    };
+    const first = await keyFor(input);
+    vi.mocked(crypto.createHash).mockClear();
+    const second = await keyFor({
+      ...input,
+      checkTarget: { ...input.checkTarget, id: "other" },
+    });
+    expect(second).not.toBe(first);
+    const hashedBytes = vi
+      .mocked(crypto.createHash)
+      .mock.results.flatMap((result) =>
+        result.type === "return"
+          ? vi
+              .mocked(result.value.update)
+              .mock.calls.map(([data]) => Buffer.byteLength(data))
+          : [],
+      )
+      .reduce((total, bytes) => total + bytes, 0);
+    expect(hashedBytes).toBeLessThan(2048);
+    expect(await keyFor(input)).toBe(first);
+  });
+
+  it("canonicalizes the full changeset once for many dispatched workspace targets, including cache hits", async () => {
+    const fixture = await createInspectionFixture();
+    const roots = Array.from({ length: 80 }, (_, index) => `packages/${index}`);
+    const paths = roots.map((root) => `${root}/value.ts`);
+    const context = contextFor(fixture.root, "^19.0.0", undefined, paths);
+    const workspaces = roots.map((root) => ({
+      ...context.targetInspection.workspaces[0]!,
+      relativeRoot: root,
+      manifestPath: `${root}/package.json`,
+      sourceFiles: [`${root}/value.ts`],
+    }));
+    context.baselineInspection = { ...context.baselineInspection, workspaces };
+    context.targetInspection = { ...context.targetInspection, workspaces };
+    const collect = vi.fn(adapter.collect);
+    const manyTargets: CheckAdapter = {
+      ...adapter,
+      inspect: async () => ({
+        applies: true,
+        executionClass: "lightweight",
+        requiresBaseline: false,
+        targets: roots.map((root) => ({
+          id: root,
+          kind: "workspace",
+          relativeRoot: root,
+        })),
+      }),
+      collect,
+    };
+    const values = new Map<string, CheckObservationSet>();
+    const cache: ObservationCache = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+    };
+    for (let run = 0; run < 2; run++) {
+      vi.clearAllMocks();
+      const results = await dispatchChecks([manyTargets], context, {
+        cache,
+        cacheEngineIdentity: () => "test-engine",
+      });
+      expect(results).toHaveLength(roots.length);
+      expect(results.every(({ result }) => result.status === "completed")).toBe(
+        true,
+      );
+      expect(collect).toHaveBeenCalledTimes(run === 0 ? roots.length : 0);
+      const metadataRecords = vi
+        .mocked(crypto.createHash)
+        .mock.results.flatMap((result) =>
+          result.type === "return"
+            ? vi.mocked(result.value.update).mock.calls
+            : [],
+        )
+        .reduce(
+          (count, [data]) =>
+            count + (String(data).match(/"addedRanges":/gu)?.length ?? 0),
+          0,
+        );
+      expect(metadataRecords).toBe(paths.length);
+      expect(filePolicy.createFilePolicyResolver).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it.each([
+    "disabled",
+    "identity-only",
+    "missing-engine",
+    "secrets",
+    "vulnerabilities",
+  ] as const)(
+    "does no cache fingerprint work when caching is %s",
+    async (eligibility) => {
+      const fixture = await createInspectionFixture();
+      const checkId =
+        eligibility === "secrets" || eligibility === "vulnerabilities"
+          ? eligibility
+          : "cyclomaticComplexity";
+      const config = resolveConfig({
+        schemaVersion: 1,
+        checks: { [checkId]: { severity: "error", when: "always" } },
+      });
+      const context = contextFor(fixture.root, "^19.0.0", config);
+      const collect = vi.fn(adapterFor(checkId).collect);
+      const cache = {
+        get: vi.fn(async () => undefined),
+        set: vi.fn(async () => {}),
+      };
+      const options =
+        eligibility === "disabled"
+          ? {}
+          : eligibility === "identity-only"
+            ? { cacheEngineIdentity: () => "test-engine" }
+            : {
+                cache,
+                cacheEngineIdentity: () =>
+                  eligibility === "missing-engine" ? undefined : "test-engine",
+              };
+      vi.clearAllMocks();
+      const results = await dispatchChecks(
+        [{ ...adapterFor(checkId), collect }],
+        context,
+        options,
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0]?.result.status).toBe("completed");
+      expect(collect).toHaveBeenCalledTimes(1);
+      expect(filePolicy.createFilePolicyResolver).not.toHaveBeenCalled();
+      expect(crypto.createHash).not.toHaveBeenCalled();
+      expect(cache.get).not.toHaveBeenCalled();
+    },
+  );
+
+  it("invalidates dispatch cache entries for status, ranges, renames, and mode-only changes", async () => {
+    const fixture = await createInspectionFixture();
+    const context = contextFor(fixture.root, "^19.0.0");
+    const variants = [
+      changed({
+        path: "src/value.ts",
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      }),
+      changed({
+        path: "src/value.ts",
+        status: "modified",
+        addedRanges: [{ start: 2, end: 2 }],
+      }),
+      changed({
+        path: "src/value.ts",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      }),
+      changed({
+        path: "src/value.ts",
+        previousPath: "old/value.ts",
+        status: "renamed",
+        addedRanges: [{ start: 1, end: 1 }],
+      }),
+      changed({
+        path: "src/value.ts",
+        previousPath: "older/value.ts",
+        status: "renamed",
+        addedRanges: [{ start: 1, end: 1 }],
+      }),
+      changed({ path: "src/value.ts", status: "modified", addedRanges: [] }),
+      unchanged,
+    ];
+    const values = new Map<string, CheckObservationSet>();
+    const cache: ObservationCache = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+    };
+    const collect = vi.fn(adapter.collect);
+    // Always schedule so mode-only and empty changesets exercise the cache key.
+    const config = resolveConfig({
+      schemaVersion: 1,
+      checks: { cyclomaticComplexity: { when: "always" } },
+    });
+    for (const changeSet of [...variants, ...variants]) {
+      const [result] = await dispatchChecks(
+        [{ ...adapter, collect }],
+        {
+          ...context,
+          config,
+          changeSet,
+          policyForFile: testFilePolicyResolver(config),
+        },
+        { cache, cacheEngineIdentity: () => "test-engine" },
+      );
+      expect(result?.result.status).toBe("completed");
+    }
+    expect(collect).toHaveBeenCalledTimes(variants.length);
+    expect(values.size).toBe(variants.length);
+  });
+
+  it("reuses dispatch entries across changeset insertion and range ordering", async () => {
+    const fixture = await createInspectionFixture();
+    const context = contextFor(fixture.root, "^19.0.0");
+    const first = {
+      path: "src/value.ts",
+      status: "modified" as const,
+      addedRanges: [
+        { start: 1, end: 2 },
+        { start: 5, end: 6 },
+      ],
+    };
+    const second = {
+      path: "other.ts",
+      status: "deleted" as const,
+      addedRanges: [],
+    };
+    const values = new Map<string, CheckObservationSet>();
+    const cache: ObservationCache = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+    };
+    const collect = vi.fn(adapter.collect);
+    for (const changeSet of [
+      changed(first, second),
+      changed(second, {
+        ...first,
+        addedRanges: [...first.addedRanges].reverse(),
+      }),
+    ]) {
+      const [result] = await dispatchChecks(
+        [{ ...adapter, collect }],
+        { ...context, changeSet },
+        { cache, cacheEngineIdentity: () => "test-engine" },
+      );
+      expect(result?.result.status).toBe("completed");
+    }
+    expect(collect).toHaveBeenCalledTimes(1);
+    expect(values.size).toBe(1);
+  });
+
+  it("uses target rename policy for cache invalidation and ignores unrelated overrides", async () => {
+    const fixture = await createInspectionFixture();
+    const changeSet = changed({
+      path: "src/value.ts",
+      previousPath: "old/value.ts",
+      status: "renamed",
+      addedRanges: [{ start: 1, end: 1 }],
+    });
+    const values = new Map<string, CheckObservationSet>();
+    const cache: ObservationCache = {
+      get: async (key) => values.get(key),
+      set: async (key, value) => {
+        values.set(key, value);
+      },
+    };
+    const collect = vi.fn(adapter.collect);
+    const run = async (files: string[], max: number) => {
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "fast",
+        overrides: [{ files, checks: { cyclomaticComplexity: { max } } }],
+      });
+      const context = contextFor(fixture.root, "^19.0.0", config);
+      context.changeSet = changeSet;
+      context.baselineInspection = {
+        ...context.baselineInspection,
+        workspaces: context.baselineInspection.workspaces.map((workspace) => ({
+          ...workspace,
+          sourceFiles: ["old/value.ts"],
+        })),
+      };
+      const [result] = await dispatchChecks(
+        [{ ...adapter, collect }],
+        context,
+        { cache, cacheEngineIdentity: () => "test-engine" },
+      );
+      expect(result?.result.status).toBe("completed");
+    };
+    await run(["old/**"], 10);
+    await run(["old/**"], 15);
+    expect(collect).toHaveBeenCalledTimes(1);
+    await run(["src/**"], 10);
+    expect(collect).toHaveBeenCalledTimes(2);
+    await run(["src/**"], 15);
+    expect(collect).toHaveBeenCalledTimes(3);
+    await run(["src/**"], 10);
+    expect(collect).toHaveBeenCalledTimes(3);
+  });
+
+  it("uses versioned digest key bytes including source identity and symlinks", async () => {
     const [baseline, target] = await Promise.all([
       createInspectionFixture(),
       createInspectionFixture(),
@@ -598,7 +940,7 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
+      "32e2c7ffac4a68cd8f137837db0e98ac3df88a614c00b1efa81fc1e22cb08735",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
@@ -606,7 +948,7 @@ describe("observation cache keys", () => {
       { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "9430489187eb4e81c195470e6cbf8c60e041bd3742b2b1636580902f549c667e",
+      "32e2c7ffac4a68cd8f137837db0e98ac3df88a614c00b1efa81fc1e22cb08735",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);
@@ -968,4 +1310,67 @@ describe("observation cache keys", () => {
       behavior(relabeled, "lint", ["src/value.ts"]),
     );
   });
+});
+
+it("does not reuse a completed dead-code observation from before managed Next entries", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.write("src/value.ts", "export const value=1;");
+  const values = new Map<string, CheckObservationSet>();
+  const cache: ObservationCache = {
+    get: async (key) => values.get(key),
+    set: async (key, value) => {
+      values.set(key, value);
+    },
+  };
+  const current = createObservationCacheEngineIdentityResolver(() => "1.0.0")(
+    "deadCode",
+  );
+  if (current === undefined) throw new Error("Missing dead-code identity");
+  const legacy = current.replace("v9-next-entries", "v8-source-identities");
+  await fixture.writeJson("package.json", {
+    name: "next-app",
+    dependencies: { next: "16" },
+  });
+  const inspection = await inspectRepository(fixture.root);
+  const base = contextFor(
+    fixture.root,
+    "1",
+    resolveConfig({
+      schemaVersion: 1,
+      checks: { deadCode: { severity: "error", when: "always" } },
+    }),
+  );
+  const run = {
+    ...base,
+    repositoryRoot: inspection.snapshotRoot,
+    snapshots: {
+      ...base.snapshots,
+      baselineDir: inspection.snapshotRoot,
+      targetDir: inspection.snapshotRoot,
+    },
+    baselineInspection: inspection,
+    targetInspection: inspection,
+  };
+  let collections = 0;
+  const counting: CheckAdapter = {
+    ...deadCodeAdapter,
+    id: "deadCode",
+    collect: async (context) => {
+      collections++;
+      return deadCodeAdapter.collect(context);
+    },
+  };
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => legacy,
+  });
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => current,
+  });
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => current,
+  });
+  expect(collections).toBe(2);
 });

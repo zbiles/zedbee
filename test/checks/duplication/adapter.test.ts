@@ -358,6 +358,169 @@ describe("duplication policy", () => {
     expect(JSON.stringify(result)).not.toContain("live");
   });
 
+  it("does not attribute a comment inserted inside existing cloned code", async () => {
+    const context = await duplicationContext(false);
+    const path = "src/debt-a.ts";
+    const original = await readFile(
+      join(context.snapshots.targetDir, path),
+      "utf8",
+    );
+    await writeFile(
+      join(context.snapshots.targetDir, path),
+      original.replace(
+        "  if (value > 3)",
+        "  // explanatory comment\n  if (value > 3)",
+      ),
+    );
+    const updated = { ...context, changeSet: changes(path, 7, 7) };
+    const set = await duplicationAdapter.collect(updated);
+    const result = await observationCheckResult(
+      "duplication",
+      set,
+      updated,
+      true,
+    );
+    expect(
+      result.findings.filter(({ attribution }) => attribution.staged),
+    ).toEqual([]);
+  });
+
+  it.each(["/** explanation */", "/** @type {number} */"])(
+    "does not attribute JSDoc inside an existing clone: %s",
+    async (comment) => {
+      const context = await duplicationContext(false);
+      const path = "src/debt-a.ts";
+      const original = await readFile(
+        join(context.snapshots.targetDir, path),
+        "utf8",
+      );
+      await writeFile(
+        join(context.snapshots.targetDir, path),
+        original.replace("  if (value > 3)", `  ${comment}\n  if (value > 3)`),
+      );
+      const updated = { ...context, changeSet: changes(path, 7, 7) };
+      const set = await duplicationAdapter.collect(updated);
+      const result = await observationCheckResult(
+        "duplication",
+        set,
+        updated,
+        true,
+      );
+      expect(
+        result.findings.filter(({ attribution }) => attribution.staged),
+      ).toEqual([]);
+    },
+  );
+
+  it.each(["/** explanation */", "/** @type {number} */"])(
+    "preserves existing debt across a JSDoc density crossing: %s",
+    async (comment) => {
+      const [baseline, staged] = await Promise.all([
+        createInspectionFixture(),
+        createInspectionFixture(),
+      ]);
+      const body = `export function calculate(values) {
+    const result = [];
+    for (const value of values) {
+        if (value.active) {
+            const amount = value.price * value.quantity;
+            const tax = amount * 0.08;
+            const discount = value.member ? amount * 0.1 : 0;
+            const total = amount + tax - discount;
+            result.push({
+                name: value.name,
+                amount,
+                tax,
+                discount,
+                total,
+            });
+        }
+    }
+    return result;
+}
+`;
+      for (const fixture of [baseline, staged]) {
+        await fixture.writeJson("package.json", {
+          name: "fixture",
+          private: true,
+        });
+        await fixture.write("src/a.js", body);
+        await fixture.write("src/b.js", body);
+        await fixture.write(
+          "src/index.js",
+          'import { calculate as a } from "./a.js"; import { calculate as b } from "./b.js"; console.log(a([]), b([]));',
+        );
+      }
+      await staged.write(
+        "src/a.js",
+        body.replace(
+          "            const tax",
+          `            ${comment}\n            const tax`,
+        ),
+      );
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "thorough",
+        checks: { duplication: { severity: "error", threshold: 50 } },
+      });
+      const context: CheckRunContext = {
+        repositoryRoot: staged.root,
+        changeSet: changes("src/a.js", 6, 6),
+        config,
+        snapshots: {
+          baselineDir: baseline.root,
+          targetDir: staged.root,
+          baselineRef: "HEAD",
+          targetRef: "index",
+          unsupportedEntries: [],
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(staged.root),
+        target,
+        policy: config.checks.duplication,
+        policyForFile: testFilePolicyResolver(config),
+        signal: new AbortController().signal,
+      };
+      const set = await duplicationAdapter.collect(context);
+      expect(set.baselineObservations.length).toBeGreaterThan(0);
+      const result = await observationCheckResult(
+        "duplication",
+        set,
+        context,
+        true,
+      );
+      expect(
+        result.findings.filter(({ attribution }) => attribution.staged),
+      ).toEqual([]);
+    },
+  );
+
+  it("attributes a new third clone even when the analyzer chooses a different peer", async () => {
+    const context = await duplicationContext(false);
+    const path = "src/changed.ts";
+    await writeFile(
+      join(context.snapshots.targetDir, path),
+      source("third", "debt"),
+    );
+    const updated = { ...context, changeSet: changes(path, 20) };
+    const set = await duplicationAdapter.collect(updated);
+    const result = await observationCheckResult(
+      "duplication",
+      set,
+      updated,
+      true,
+    );
+    expect(
+      result.findings.filter(({ attribution }) => attribution.staged),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          location: expect.objectContaining({ file: path }),
+        }),
+      ]),
+    );
+  });
+
   it("does not attribute existing clones when only unrelated source changes", async () => {
     const context = await duplicationContext(false);
     const set = await duplicationAdapter.collect(context);
@@ -432,6 +595,90 @@ describe("duplication policy", () => {
       ]),
     );
   });
+
+  it("maps repeated surviving copies across trivia and an unrelated executable addition", async () => {
+    const context = await selfDuplicationContext();
+    const path = "src/only.ts";
+    const first = assignmentSource("first", 14);
+    const second = assignmentSource("second", 14);
+    const baseline = `${first}\n${second}`;
+    const targetSource = `${first.replace("  result.item3", "  // explanation\n  result.item3")}\n${second}\nconsole.log(42);\n`;
+    await writeFile(join(context.snapshots.baselineDir, path), baseline);
+    await writeFile(join(context.snapshots.targetDir, path), targetSource);
+    const modified: ChangeSet = {
+      files: new Map([
+        [
+          path,
+          {
+            path,
+            status: "modified",
+            addedRanges: [
+              { start: 6, end: 6 },
+              { start: 42, end: 42 },
+            ],
+          },
+        ],
+      ]),
+      isEmpty: false,
+      containsAddedLine: (file, line) =>
+        file === path && (line === 6 || line === 42),
+    };
+    const updated = { ...context, changeSet: modified };
+    const set = await duplicationAdapter.collect(updated);
+    const result = await observationCheckResult(
+      "duplication",
+      set,
+      updated,
+      true,
+    );
+    expect(
+      result.findings.filter(({ attribution }) => attribution.staged),
+    ).toEqual([]);
+  });
+
+  it.each(["before", "after"] as const)(
+    "attributes a new same-file copy inserted %s surviving copies",
+    async (position) => {
+      const context = await selfDuplicationContext();
+      const path = "src/only.ts";
+      const first = assignmentSource("first", 14);
+      const second = assignmentSource("second", 14);
+      const added = assignmentSource("third", 14);
+      const original = `${first}\n${second}`;
+      const targetSource =
+        position === "before"
+          ? `${added}\n${original}`
+          : `${original}\n${added}`;
+      await writeFile(join(context.snapshots.baselineDir, path), original);
+      await writeFile(join(context.snapshots.targetDir, path), targetSource);
+      const addedStart =
+        position === "before" ? 1 : original.split("\n").length + 1;
+      const addedEnd = addedStart + added.split("\n").length - 1;
+      const updated = {
+        ...context,
+        changeSet: changes(path, addedEnd, addedStart),
+      };
+      const set = await duplicationAdapter.collect(updated);
+      const result = await observationCheckResult(
+        "duplication",
+        set,
+        updated,
+        true,
+      );
+      expect(
+        result.findings.filter(({ attribution }) => attribution.staged),
+      ).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            location: expect.objectContaining({
+              file: path,
+              startLine: expect.any(Number),
+            }),
+          }),
+        ]),
+      );
+    },
+  );
 
   it("detects staged self-duplication in a single source file", async () => {
     const context = await selfDuplicationContext();

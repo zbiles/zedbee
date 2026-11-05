@@ -26,6 +26,7 @@ export const PLUGIN_FILES = Object.freeze([
   "references/setup.md",
   "references/scan.md",
   "scripts/download-cli.mjs",
+  "scripts/install-dependency.mjs",
   ...["scan", "fix", "doctor"].map((name) => `skills/${name}/SKILL.md`),
 ]);
 export function claudeManifest(manifest) {
@@ -105,6 +106,10 @@ export async function checkPlugin(root = ROOT, { write = false } = {}) {
   const generated = {
     ".claude-plugin/plugin.json": json(claudeManifest(manifest)),
     LICENSE: await readFile(join(root, "LICENSE"), "utf8"),
+    "scripts/install-dependency.mjs": await readFile(
+      join(root, "src/init/install-dependency.mjs"),
+      "utf8",
+    ),
   };
   for (const [path, content] of Object.entries(generated)) {
     if (write) {

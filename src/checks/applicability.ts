@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import type { CheckId } from "../config/schema.js";
 import type {
   CheckApplicability,
@@ -138,22 +139,25 @@ export async function inspectManagedCheck(
     const candidates = new Map(
       all.map((workspace) => [workspace.relativeRoot, workspace]),
     );
-    const eligible = [...candidates.values()]
-      // A removed workspace cannot create findings in the merged target.
-      .filter(
-        (workspace) =>
-          context.mergeComparison !== true ||
-          context.targetInspection.workspaces.some(
-            (target) => target.relativeRoot === workspace.relativeRoot,
-          ),
-      );
+    const targetRoots =
+      context.mergeComparison === true
+        ? new Set(workspaces.map((workspace) => workspace.relativeRoot))
+        : undefined;
+    // A removed workspace cannot create findings in the merged target.
+    const eligible = [...candidates.values()].filter(
+      (workspace) =>
+        targetRoots === undefined || targetRoots.has(workspace.relativeRoot),
+    );
+    const acquire = pLimit(4);
     const selected = await Promise.all(
-      eligible.map(async (workspace) => ({
-        workspace,
-        relevant: always
-          ? workspace.sourceFiles.some((path) => SOURCE.test(path))
-          : await projectInputsMayHaveChanged(context, targetFor(workspace)),
-      })),
+      eligible.map((workspace) =>
+        acquire(async () => ({
+          workspace,
+          relevant: always
+            ? workspace.sourceFiles.some((path) => SOURCE.test(path))
+            : await projectInputsMayHaveChanged(context, targetFor(workspace)),
+        })),
+      ),
     );
     workspaces = selected
       .filter(({ relevant }) => relevant)
