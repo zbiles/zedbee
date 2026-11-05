@@ -1,3 +1,4 @@
+import { resolveFrameworkEntrypoints } from "./framework-entrypoints.js";
 import {
   prepareSnapshotAliases,
   sourceModuleSpecifiers,
@@ -116,6 +117,7 @@ export interface ManagedKnipConfig {
       string,
       {
         readonly entry: readonly string[];
+        readonly ignoreDependencies: readonly string[];
         readonly project: readonly string[];
         readonly ignore: readonly string[];
         readonly paths?: Readonly<Record<string, readonly string[]>>;
@@ -167,6 +169,7 @@ export async function createManagedKnipConfig(
     {
       entry: readonly string[];
       project: readonly string[];
+      ignoreDependencies: readonly string[];
       ignore: readonly string[];
       paths?: Readonly<Record<string, readonly string[]>>;
     }
@@ -220,11 +223,13 @@ export async function createManagedKnipConfig(
     const project = workspace.sourceFiles
       .map((path) => relativeToWorkspace(workspace, path))
       .sort(compareCodeUnits);
-    const entry = [...new Set([...declaredEntries, ...sourceEntries])].sort(
-      compareCodeUnits,
-    );
+    const framework = resolveFrameworkEntrypoints(workspace, registry);
+    const entry = [
+      ...new Set([...declaredEntries, ...sourceEntries, ...framework.entry]),
+    ].sort(compareCodeUnits);
     workspaces[workspace.relativeRoot] = {
       entry,
+      ignoreDependencies: framework.ignoreDependencies,
       project,
       ignore: [...IGNORE],
       paths: Object.fromEntries(

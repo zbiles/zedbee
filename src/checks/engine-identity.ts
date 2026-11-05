@@ -24,7 +24,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@emnapi/core",
       "@emnapi/runtime",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v8-source-identities",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v9-next-entries",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
@@ -48,7 +48,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),
-    revision: "zedbee-clone-normalization-v2",
+    revision: "zedbee-clone-normalization-v3-occurrences",
   }),
   dependencyArchitecture: Object.freeze({
     packages: Object.freeze(["dependency-cruiser", "typescript"]),

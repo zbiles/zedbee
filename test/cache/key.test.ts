@@ -1,3 +1,4 @@
+import { deadCodeAdapter } from "../../src/checks/dead-code/adapter.js";
 import * as fs from "node:fs";
 import * as crypto from "node:crypto";
 import * as filePolicy from "../../src/config/file-policy.js";
@@ -183,6 +184,11 @@ describe("observation cache keys", () => {
 
   it.each([
     {
+      checkId: "duplication",
+      legacyIdentity:
+        "jscpd@104.5.6+typescript@103.4.5+zedbee-clone-normalization-v2",
+    },
+    {
       checkId: "cyclomaticComplexity",
       legacyIdentity:
         "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+complexity-v3",
@@ -204,7 +210,14 @@ describe("observation cache keys", () => {
           values.set(key, value);
         },
       };
-      const context = contextFor(fixture.root, "^19.0.0");
+      const context = contextFor(
+        fixture.root,
+        "^19.0.0",
+        resolveConfig({
+          schemaVersion: 1,
+          checks: { [checkId]: { severity: "error", when: "always" } },
+        }),
+      );
       let collections = 0;
       const countingAdapter: CheckAdapter = {
         ...adapter,
@@ -225,6 +238,7 @@ describe("observation cache keys", () => {
         cacheEngineIdentity: () => legacyIdentity,
       });
       const versions = new Map([
+        ["jscpd", "104.5.6"],
         ["eslint", "101.2.3"],
         ["typescript-eslint", "102.3.4"],
         ["typescript", "103.4.5"],
@@ -1296,4 +1310,67 @@ describe("observation cache keys", () => {
       behavior(relabeled, "lint", ["src/value.ts"]),
     );
   });
+});
+
+it("does not reuse a completed dead-code observation from before managed Next entries", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.write("src/value.ts", "export const value=1;");
+  const values = new Map<string, CheckObservationSet>();
+  const cache: ObservationCache = {
+    get: async (key) => values.get(key),
+    set: async (key, value) => {
+      values.set(key, value);
+    },
+  };
+  const current = createObservationCacheEngineIdentityResolver(() => "1.0.0")(
+    "deadCode",
+  );
+  if (current === undefined) throw new Error("Missing dead-code identity");
+  const legacy = current.replace("v9-next-entries", "v8-source-identities");
+  await fixture.writeJson("package.json", {
+    name: "next-app",
+    dependencies: { next: "16" },
+  });
+  const inspection = await inspectRepository(fixture.root);
+  const base = contextFor(
+    fixture.root,
+    "1",
+    resolveConfig({
+      schemaVersion: 1,
+      checks: { deadCode: { severity: "error", when: "always" } },
+    }),
+  );
+  const run = {
+    ...base,
+    repositoryRoot: inspection.snapshotRoot,
+    snapshots: {
+      ...base.snapshots,
+      baselineDir: inspection.snapshotRoot,
+      targetDir: inspection.snapshotRoot,
+    },
+    baselineInspection: inspection,
+    targetInspection: inspection,
+  };
+  let collections = 0;
+  const counting: CheckAdapter = {
+    ...deadCodeAdapter,
+    id: "deadCode",
+    collect: async (context) => {
+      collections++;
+      return deadCodeAdapter.collect(context);
+    },
+  };
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => legacy,
+  });
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => current,
+  });
+  await dispatchChecks([counting], run, {
+    cache,
+    cacheEngineIdentity: () => current,
+  });
+  expect(collections).toBe(2);
 });

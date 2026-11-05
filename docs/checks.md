@@ -195,6 +195,8 @@ Duplication uses these workspace-wide values:
 
 The bundled jscpd 5.3.2 counts both endpoints of a cloned line range. Compared with jscpd 5.2.1, duplicated-line totals can increase by one line per clone, which can raise the reported percentage near a configured threshold.
 
+Duplication attribution compares individual source occurrences across the selected snapshots. In the default mild mode, comment and whitespace edits to an existing clone do not introduce duplication. This also applies when those edits alone move the physical-line percentage over the threshold: the source inventory and significant tokens must remain unchanged. New copies and enlarged clone regions remain eligible findings. Multiple analyzer pairs referencing the same physical occurrence produce one diagnostic for that occurrence.
+
 ### Bundled ESLint and React rules
 
 `lint`, `reactCorrectness`, and `reactAccessibility` accept a `rules` object. A value can be a severity (`"off"`, `"warn"`, `"error"`, `0`, `1`, or `2`) or an array such as `["error", { "argsIgnorePattern": "^_" }]`. Each check has a bounded editor-schema inventory: bundled rules are supported, while unknown rules, rules belonging to another check, and custom plugins are rejected. Rule options follow the analyzer and plugin versions pinned by the installed Zedbee release and may change only with a Zedbee engine upgrade.
@@ -303,3 +305,23 @@ By default Zedbee runs a managed boundary: it does not load a project's native a
 The single exception is formatting: with `checks.formatting.engine` set to `"project"` plus an explicit trust decision, Zedbee runs the project's installed Prettier, its native configuration, and its plugins in a supervised worker. This exception never applies to ESLint, Secretlint, or any other managed analyzer. See [formatting engines](#formatting-engines).
 
 The generated `.husky/install.mjs` installer may import declared development dependencies. This exception does not exempt missing declarations, classify hook files as tests, or apply to other hook scripts.
+
+Next.js dead-code analysis recognizes default framework entries from each captured
+workspace declaring `next`. App Router conventions include page, layout, route,
+template, default, error, loading, not-found, forbidden and unauthorized files;
+global-error and global-not-found apply at the app root. Pages Router routes,
+API routes and special pages are entries. Root app/pages directories shadow their
+src counterparts independently, including empty root directories. Private app
+subtrees beginning with `_` are excluded; route groups, slots and dynamic segments
+remain supported. Default extensions are js/jsx/ts/tsx, excluding declarations.
+Metadata includes root or one-group manifest/robots (js/ts), nested sitemap
+(js/ts), and nested icon/apple-icon/opengraph-image/twitter-image (js/jsx/ts/tsx).
+Root or src instrumentation, instrumentation-client, middleware and proxy files
+are also entries. Root next.config.js/mjs/cjs/ts/mts and next-env.d.ts are analyzed
+as inert source. Configuration is never evaluated and analyzer plugins remain
+disabled. Only `next` is exempted from unused dependency reporting when a concrete
+supported route, runtime support file or config exists; next-env alone is insufficient.
+Framework entries use Knip's entry-export exemption, so their exports are not
+checked for exact framework consumption. Reachable library exports still receive
+normal analysis. Custom `pageExtensions`, MDX/custom compilers and
+`next <command> <subdirectory>` discovery are outside these default conventions.

@@ -134,6 +134,15 @@ export function normalizeCloneFragment(
     file: reportedPath(value.name, snapshotRoot, workspaceRoot, sourceFiles),
     startLine,
     endLine,
+    ...(Number.isSafeInteger(startLoc.position) &&
+    (startLoc.position as number) >= 0 &&
+    Number.isSafeInteger(endLoc.position) &&
+    (endLoc.position as number) >= (startLoc.position as number)
+      ? {
+          startOffset: startLoc.position as number,
+          endOffset: endLoc.position as number,
+        }
+      : {}),
   });
 }
 

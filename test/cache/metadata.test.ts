@@ -94,7 +94,9 @@ describe("managed check cache metadata", () => {
       createObservationCacheEngineIdentityResolver((name) =>
         versions.get(name),
       )("duplication"),
-    ).toBe("jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v2");
+    ).toBe(
+      "jscpd@201.2.3+typescript@202.3.4+zedbee-clone-normalization-v3-occurrences",
+    );
   });
 
   it("versions compiler project coverage and paired typed-lint attribution", () => {
