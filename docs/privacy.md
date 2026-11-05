@@ -92,7 +92,18 @@ Local settings and the bounded event outbox are stored under
 plus an owner-restricted detail store capped at 100 records / 256 KiB. Detail
 records use random event IDs, expire after seven days, and can only enrich a
 currently pending, enabled parent event; they cannot be sent independently.
-Older CLI versions can still read the ordinary queue and preferences.
+Current CLI versions use a separate `state-v2.json` preference/outbox file,
+`details-v2` directory and permanent, zero-byte kernel lease files. The operating
+system releases a lease when its process exits, including after a crash; no PID
+or recovery-marker deletion is needed. Older CLI state, outboxes and recovery
+markers are left untouched so concurrent older writers cannot corrupt current
+state. Existing installation IDs and opt-outs are carried forward, and a later
+old-version opt-out also suppresses current collection. Explicitly enabling the
+current version acknowledges the old preference as it exists at that moment;
+a subsequent old-version opt-out wins again. Old queued events remain owned by
+the older sender and are not copied into the new outbox. Older versions cannot
+read a current-version opt-out: when running both generations, disable each
+version or use the environment opt-out for all invocations.
 The ordinary outbox retains events
 for up to seven days; expired events are discarded during subsequent activity
 and are not sent. Files request owner-only POSIX permissions; Windows relies
@@ -151,6 +162,10 @@ Snapshot paths are validated under a Zedbee-owned temporary directory, selected 
 Local analyzers receive protected snapshot paths, selected checked source bytes, and managed inert configuration. Zedbee does not run package-manager lifecycle scripts, project commands, or remediation. The sole executable project-configuration exception is explicitly trusted project Prettier mode, described below.
 
 TypeScript and typed lint can also capture supporting dependency inputs through constrained installed project `node_modules` and bundled TypeScript resolution boundaries. These are permitted local dependency reads outside the selected source snapshots. Captured content supports analysis in memory; only validated input fingerprints and normalized observations may enter the scan cache. Knip's captured inputs remain snapshot-only. Setup and diagnostics (`init` and `doctor`) may read working-copy configuration.
+
+Consented `init --formatting copy` evaluation uses one temporary working-copy capture across its configuration scopes. The capture includes repository files and the installed dependency closure declared by package manifests; it excludes Git metadata, `node_modules` traversal, and common cache directories. Installed packages are copied through bounded declared dependency lookups. Capture limits are 128 MiB in total, 32 MiB per file, 20,000 input records, 1,024 package roots and 4,096 package dependency edges. Unsupported layouts or exceeded limits make one-time import unavailable. Configuration references resolve from their containing config, and contained file symlinks retain their relative module context.
+
+Imported settings carry only input fingerprints, not copied source. Setup checks captured source inputs after execution and rebuilds the bounded inventory before writing. This conservative check can require another preview after an unrelated included file changes, or after a declared optional package is installed or removed. The capture is removed after verified worker cleanup; it remains if execution cleanup cannot be proved. Trusted configuration can still read external files, time, environment or network data with the user's permissions: those arbitrary dynamic inputs are outside this captured inventory and are not made deterministic by consent or fingerprinting.
 
 ## Local analyzer service
 

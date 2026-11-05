@@ -38,6 +38,8 @@ export interface InitFormattingDetection {
 export interface ExecutableEvaluatedConfig {
   readonly path: string;
   readonly sha256: string;
+  /** Bounded repository + dependency input inventory captured before execution. */
+  readonly capture?: import("../checks/prettier/project-import-capture.js").ImportCaptureProvenance;
 }
 
 export type InitHookChoice =

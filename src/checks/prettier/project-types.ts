@@ -51,8 +51,7 @@ export type ProjectFormatSupport =
   | ProjectFormatIgnored;
 
 export type ProjectFormatResult =
-  | { readonly kind: "formatted"; readonly text: string }
-  | ProjectFormatIgnored;
+  { readonly kind: "formatted"; readonly text: string } | ProjectFormatIgnored;
 
 export interface ImportableNativeConfig {
   readonly settings: Partial<FormattingSettings>;
@@ -86,6 +85,8 @@ export type ProjectPrettierRequest =
       readonly operation: "importConfig";
       /** Package-exported shared configuration specifier. */
       readonly configPackage: string;
+      /** Repository-relative containing config, for native module resolution. */
+      readonly originConfig?: string;
     };
 
 export type ProjectPrettierReply =

@@ -43,7 +43,7 @@ function owned(stat: Stats): void {
 export class TelemetryDetailsStore {
   readonly path: string;
   constructor(readonly directory: string) {
-    this.path = join(directory, "details");
+    this.path = join(directory, "details-v2");
   }
   private directoryReady(create = false): boolean {
     try {

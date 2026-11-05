@@ -3,6 +3,7 @@ import { inventoryError } from "./errors.js";
 import {
   finalizeDependencyRecords,
   plainRecord,
+  validateDependencyRecordCount,
   validateExactVersion,
   validateLockfileInput,
   validatePackageName,
@@ -36,11 +37,20 @@ function dependencyPath(key: string): readonly string[] {
   return Object.freeze(path);
 }
 
-function propertyNode(root: JsonNode, section: string, key: string): JsonNode | undefined {
-  const sectionProperty = root.children?.find((item) => item.children?.[0]?.value === section);
+function packageOffsets(root: JsonNode): ReadonlyMap<string, number> {
+  const sectionProperty = root.children?.find((item) => item.children?.[0]?.value === "packages");
   const sectionNode = sectionProperty?.children?.[1];
-  const property = sectionNode?.children?.find((item) => item.children?.[0]?.value === key);
-  return property?.children?.[1];
+  const offsets = new Map<string, number>();
+  for (const property of sectionNode?.children ?? []) {
+    const key: unknown = property.children?.[0]?.value;
+    const value = property.children?.[1];
+    // JSONC conversion uses the last duplicate value, but provenance has always
+    // identified the first matching source property.
+    if (typeof key === "string" && value !== undefined && !offsets.has(key)) {
+      offsets.set(key, value.offset);
+    }
+  }
+  return offsets;
 }
 
 export function parseBunLockfile(contents: string, repositoryPath: string): DependencyInventory {
@@ -58,6 +68,7 @@ export function parseBunLockfile(contents: string, repositoryPath: string): Depe
   }
   const packages = plainRecord(data.packages ?? {}, "The Bun lockfile packages must be an object.");
   const positions = createSourcePositionIndex(contents);
+  const offsets = packageOffsets(root);
   const records: DependencyRecord[] = [];
   for (const [key, raw] of Object.entries(packages)) {
     if (!Array.isArray(raw) || raw.length === 0) {
@@ -65,14 +76,15 @@ export function parseBunLockfile(contents: string, repositoryPath: string): Depe
     }
     const resolved = locator(raw[0]);
     if (resolved === undefined) continue;
-    const node = propertyNode(root, "packages", key);
+    const offset = offsets.get(key);
     records.push({
       ...resolved,
       ecosystem: "npm",
       lockfilePath,
-      ...(node === undefined ? {} : { line: positions.lineAt(node.offset) }),
+      ...(offset === undefined ? {} : { line: positions.lineAt(offset) }),
       dependencyPath: dependencyPath(key),
     });
+    validateDependencyRecordCount(records.length);
   }
   return finalizeDependencyRecords(records);
 }

@@ -13,7 +13,9 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { openSynchronousKernelFileLease } from "../core/kernel-lease.js";
+import { openWindowsStateLease } from "../service/windows-pipe.js";
 import { z } from "zod";
 import {
   telemetryV1EventSchema as telemetryEventSchema,
@@ -29,6 +31,23 @@ const stateSchema = z.strictObject({
   events: z.array(telemetryEventSchema).max(100),
 });
 export type TelemetryState = z.infer<typeof stateSchema>;
+const persistedSchema = z.strictObject({
+  version: z.literal(2),
+  state: stateSchema,
+  acknowledged_legacy_optout: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/u)
+    .optional(),
+});
+type PersistedState = z.infer<typeof persistedSchema>;
+function unavailable(): Error {
+  return Object.assign(
+    new Error(
+      "Telemetry state is busy or unavailable; retry or set ZEDBEE_TELEMETRY_DISABLED=1",
+    ),
+    { code: "EBUSY" },
+  );
+}
 export function telemetryDirectory(env: TelemetryEnvironment): string {
   const root =
     env.XDG_STATE_HOME && isAbsolute(env.XDG_STATE_HOME)
@@ -43,10 +62,16 @@ function owned(stat: Stats): void {
   )
     throw new Error("Unsafe telemetry permissions");
 }
-function readPrivate(path: string, maximum: number): string | undefined {
+function readPrivate(
+  path: string,
+  maximum: number,
+): { raw: string; fingerprint: string } | undefined {
   let fd: number;
   try {
-    fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    fd = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NONBLOCK | (constants.O_NOFOLLOW ?? 0),
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
@@ -56,7 +81,34 @@ function readPrivate(path: string, maximum: number): string | undefined {
     owned(stat);
     if (!stat.isFile() || stat.nlink !== 1 || stat.size > maximum)
       throw new Error("Unsafe telemetry file");
-    return readFileSync(fd, "utf8");
+    const raw = readFileSync(fd, "utf8");
+    const after = fstatSync(fd);
+    const current = lstatSync(path);
+    if (
+      after.dev !== stat.dev ||
+      after.ino !== stat.ino ||
+      after.size !== stat.size ||
+      after.mtimeMs !== stat.mtimeMs ||
+      after.ctimeMs !== stat.ctimeMs ||
+      current.dev !== stat.dev ||
+      current.ino !== stat.ino
+    )
+      throw unavailable();
+    return {
+      raw,
+      fingerprint: createHash("sha256")
+        .update(
+          JSON.stringify([
+            stat.dev,
+            stat.ino,
+            stat.size,
+            stat.mtimeMs,
+            stat.ctimeMs,
+            raw,
+          ]),
+        )
+        .digest("hex"),
+    };
   } finally {
     closeSync(fd);
   }
@@ -76,85 +128,115 @@ export class TelemetryStore {
       throw error;
     }
   }
-  read(): TelemetryState | undefined {
-    if (!this.checkDirectory()) return undefined;
-    const raw = readPrivate(join(this.directory, "state.json"), 300_000);
-    return raw === undefined ? undefined : stateSchema.parse(JSON.parse(raw));
-  }
-  // No waiting on another CLI: optional telemetry skips busy state, rather than blocking a commit.
-  lock(name = "state.lock"): () => void {
-    this.checkDirectory(true);
-    const path = join(this.directory, name);
-    // Serialize reclamation too: two reclaimers must never unlink a fresh owner's lock.
-    let recovery: number | undefined;
-    const recoveryPath = `${path}.reclaim`;
-    try {
-      if (Date.now() - lstatSync(path).mtimeMs > 10_000) {
-        recovery = openSync(recoveryPath, "wx", 0o600);
-        const raw = readPrivate(path, 128);
-        if (
-          raw !== undefined &&
-          Date.now() - lstatSync(path).mtimeMs > 10_000
-        ) {
-          const pid = Number(raw);
-          if (Number.isSafeInteger(pid) && pid > 0) {
-            try {
-              process.kill(pid, 0);
-            } catch (error) {
-              if ((error as NodeJS.ErrnoException).code === "ESRCH")
-                unlinkSync(path);
-            }
-          }
-        }
-      }
-    } catch {
-      /* Fail closed on unverifiable/busy recovery locks. */
-    } finally {
-      if (recovery !== undefined) {
-        closeSync(recovery);
-        try {
-          unlinkSync(recoveryPath);
-        } catch {}
-      }
+  private snapshot(): {
+    persisted: PersistedState | undefined;
+    legacyFingerprint: string | undefined;
+  } {
+    if (!this.checkDirectory())
+      return { persisted: undefined, legacyFingerprint: undefined };
+    // Older wx/PID writers never touch this protocol's state, lease or outbox.
+    // Their preference is read-only input; their recovery markers are never trusted.
+    const legacyFile = readPrivate(join(this.directory, "state.json"), 300_000);
+    const legacy =
+      legacyFile === undefined
+        ? undefined
+        : stateSchema.parse(JSON.parse(legacyFile.raw));
+    const current = readPrivate(join(this.directory, "state-v2.json"), 301_000);
+    let persisted =
+      current === undefined
+        ? undefined
+        : persistedSchema.parse(JSON.parse(current.raw));
+    if (!persisted && legacy) {
+      // Do not duplicate the old sender's outbox. Preserve its installation identity.
+      persisted = { version: 2, state: { ...legacy, events: [] } };
     }
-    const fd = openSync(path, "wx", 0o600);
-    try {
-      writeFileSync(fd, String(process.pid));
-    } catch (error) {
-      closeSync(fd);
-      try {
-        unlinkSync(path);
-      } catch {}
-      throw error;
+    if (
+      persisted &&
+      legacy?.enabled === false &&
+      persisted.acknowledged_legacy_optout !== legacyFile?.fingerprint
+    ) {
+      persisted.state.enabled = false;
+      persisted.state.events = [];
     }
-    const identity = fstatSync(fd);
-    closeSync(fd);
-    return () => {
-      try {
-        const current = lstatSync(path);
-        if (current.ino === identity.ino && current.dev === identity.dev)
-          unlinkSync(path);
-      } catch {}
+    return {
+      persisted,
+      legacyFingerprint:
+        legacy?.enabled === false ? legacyFile?.fingerprint : undefined,
     };
   }
-  private update(change: (state: TelemetryState) => void): TelemetryState {
+  read(): TelemetryState | undefined {
+    return this.snapshot().persisted?.state;
+  }
+  // Kernel ownership expires on process death. No retry, PID reclamation or unlink.
+  lock(name: "state.lock" | "sender.lock" = "state.lock"): () => void {
+    this.checkDirectory(true);
+    const path = join(
+      this.directory,
+      name === "state.lock" ? "state-v2.lease" : "sender-v2.lease",
+    );
+    let lease;
+    if (process.platform === "win32") {
+      lease = openWindowsStateLease(path);
+    } else {
+      const fd = openSync(
+        path,
+        constants.O_CREAT |
+          constants.O_RDWR |
+          constants.O_NONBLOCK |
+          (constants.O_NOFOLLOW ?? 0),
+        0o600,
+      );
+      try {
+        const stat = fstatSync(fd);
+        owned(stat);
+        if (!stat.isFile() || stat.nlink !== 1 || stat.size !== 0)
+          throw new Error("Unsafe telemetry lease");
+        const current = lstatSync(path);
+        if (current.dev !== stat.dev || current.ino !== stat.ino)
+          throw unavailable();
+      } catch (error) {
+        closeSync(fd);
+        throw error;
+      }
+      lease = openSynchronousKernelFileLease(fd, unavailable);
+    }
+    try {
+      if (!lease.acquire()) throw unavailable();
+      this.checkDirectory();
+    } catch (error) {
+      lease.close();
+      throw error;
+    }
+    return () => lease.close();
+  }
+  private update(
+    change: (state: TelemetryState) => void,
+    explicitlyEnable = false,
+  ): TelemetryState {
     const release = this.lock();
     let temporary: string | undefined;
     try {
-      const state = this.read() ?? {
-        version: 1,
-        enabled: true,
-        notice_version: 0,
-        events: [],
+      const snapshot = this.snapshot();
+      const persisted: PersistedState = snapshot.persisted ?? {
+        version: 2,
+        state: {
+          version: 1,
+          enabled: true,
+          notice_version: 0,
+          events: [],
+        },
       };
+      const state = persisted.state;
+      if (explicitlyEnable && snapshot.legacyFingerprint !== undefined)
+        persisted.acknowledged_legacy_optout = snapshot.legacyFingerprint;
       change(state);
       stateSchema.parse(state);
       temporary = join(this.directory, `${randomUUID()}.tmp`);
-      writeFileSync(temporary, JSON.stringify(state), {
+      writeFileSync(temporary, JSON.stringify(persisted), {
         flag: "wx",
         mode: 0o600,
       });
-      renameSync(temporary, join(this.directory, "state.json"));
+      renameSync(temporary, join(this.directory, "state-v2.json"));
       return state;
     } finally {
       if (temporary) {
@@ -177,7 +259,7 @@ export class TelemetryStore {
     this.update((state) => {
       state.enabled = enabled;
       if (!enabled) state.events = [];
-    });
+    }, enabled);
   }
   enqueue(input: unknown): void {
     const event = telemetryEventSchema.parse(input);

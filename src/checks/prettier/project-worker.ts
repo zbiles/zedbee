@@ -1,6 +1,7 @@
+import { realpath } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { isContainedPath } from "../../inspection/read-json.js";
 import type {
@@ -23,6 +24,7 @@ interface WorkerState {
   readonly treeRoot: string;
   readonly projectRoot: string;
   readonly prettier: PrettierModule;
+  readonly capturedImportSources: boolean;
 }
 
 /** Carries a structured formatter failure out of the request handlers. */
@@ -378,12 +380,41 @@ async function importConfig(
     // approved installed dependencies inside the mirror, then executes once
     // under this consented evaluation.
     const require = createRequire(
-      join(current.treeRoot, current.projectRoot, "package.json"),
+      request.originConfig === undefined
+        ? join(current.treeRoot, current.projectRoot, "package.json")
+        : resolve(current.treeRoot, request.originConfig),
     );
+    if (
+      request.configPackage.startsWith(".") &&
+      !isContainedPath(
+        current.treeRoot,
+        resolve(
+          dirname(resolve(current.treeRoot, request.originConfig!)),
+          request.configPackage,
+        ),
+      )
+    ) {
+      throw new WorkerConfigError(
+        "PROJECT_PRETTIER_CONFIG_INVALID",
+        "The shared configuration is outside the formatting workspace.",
+      );
+    }
     const resolved = require.resolve(request.configPackage);
-    module = (await import(pathToFileURL(resolved).href)) as {
-      default?: unknown;
-    };
+    if (
+      (current.capturedImportSources || request.originConfig !== undefined) &&
+      !isContainedPath(current.treeRoot, await realpath(resolved))
+    ) {
+      throw new WorkerConfigError(
+        "PROJECT_PRETTIER_CONFIG_INVALID",
+        "The shared configuration is outside the formatting workspace.",
+      );
+    }
+    module =
+      extname(resolved) === ".json"
+        ? { default: require(resolved) as unknown }
+        : ((await import(pathToFileURL(resolved).href)) as {
+            default?: unknown;
+          });
   } else {
     const absolute = resolve(current.treeRoot, request.configFile);
     if (!isContainedPath(current.treeRoot, absolute)) {
@@ -482,6 +513,16 @@ async function handle(
         failure: failure(error.code, error.message),
       };
     }
+    if (request.operation === "importConfig") {
+      return {
+        id: request.id,
+        operation: "error",
+        failure: failure(
+          "PROJECT_PRETTIER_CONFIG_INVALID",
+          "The project configuration could not be evaluated from captured inputs; one-time import is unavailable.",
+        ),
+      };
+    }
     const message = error instanceof Error ? error.message : "Formatter failed";
     const pluginMissing =
       /plugin|Cannot find module|Cannot find package/iu.test(message);
@@ -516,6 +557,7 @@ process.on("message", (message: unknown) => {
         installation: { entryUrl: string };
         treeRoot: string;
         projectRoot: string;
+        capturedImportSources?: boolean;
       };
       const imported = (await import(init.installation.entryUrl)) as {
         default?: PrettierModule;
@@ -528,6 +570,7 @@ process.on("message", (message: unknown) => {
         treeRoot: init.treeRoot,
         projectRoot: init.projectRoot,
         prettier,
+        capturedImportSources: init.capturedImportSources === true,
       };
       process.send?.({ type: "ready" });
       return;

@@ -1,9 +1,10 @@
 import * as yarnLockfile from "@yarnpkg/lockfile";
-import { isMap, isScalar, parseDocument, type Node } from "yaml";
+import { isMap, isScalar, parseDocument } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
   finalizeDependencyRecords,
   plainRecord,
+  validateDependencyRecordCount,
   validateExactVersion,
   validateLockfileInput,
   validatePackageName,
@@ -57,19 +58,21 @@ function parseClassic(contents: string, lockfilePath: string): DependencyInvento
   }
   validateParsedStructure(parsed.object, "Yarn Classic");
   const lines = classicLineIndex(contents);
-  const records = Object.entries(parsed.object).map(([descriptor, raw]): DependencyRecord => {
+  const records: DependencyRecord[] = [];
+  for (const [descriptor, raw] of Object.entries(parsed.object)) {
     const entry = plainRecord(raw);
     const line = lines.get(descriptor);
     const name = locatorName(descriptor);
-    return {
+    records.push({
       name,
       version: validateExactVersion(entry.version),
       ecosystem: "npm",
       lockfilePath,
       ...(line === undefined ? {} : { line }),
       dependencyPath: Object.freeze([name]),
-    };
-  });
+    });
+    validateDependencyRecordCount(records.length);
+  }
   return finalizeDependencyRecords(records);
 }
 
@@ -92,6 +95,14 @@ function parseModern(contents: string, lockfilePath: string): DependencyInventor
   }
   const positions = createSourcePositionIndex(contents);
   const root = document.contents;
+  const offsets = new Map<string, number>();
+  if (isMap(root)) {
+    for (const pair of root.items) {
+      if (!isScalar(pair.key) || pair.key.range == null) continue;
+      const descriptor = pair.key.value;
+      if (typeof descriptor === "string") offsets.set(descriptor, pair.key.range[0]);
+    }
+  }
   const records: DependencyRecord[] = [];
   for (const [descriptor, raw] of Object.entries(data)) {
     if (descriptor === "__metadata") continue;
@@ -106,22 +117,18 @@ function parseModern(contents: string, lockfilePath: string): DependencyInventor
       throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains an unsupported package resolution.");
     }
     const name = validatePackageName(resolution.slice(0, npmMarker));
-    const pair = isMap(root)
-      ? root.items.find(
-          (item) => isScalar(item.key) && item.key.value === descriptor,
-        )
-      : undefined;
-    const keyNode = pair?.key as Node | null | undefined;
+    const offset = offsets.get(descriptor);
     records.push({
       name,
       version: validateExactVersion(entry.version),
       ecosystem: "npm",
       lockfilePath,
-      ...(keyNode?.range == null
+      ...(offset === undefined
         ? {}
-        : { line: positions.lineAt(keyNode.range[0]) }),
+        : { line: positions.lineAt(offset) }),
       dependencyPath: Object.freeze([name]),
     });
+    validateDependencyRecordCount(records.length);
   }
   return finalizeDependencyRecords(records);
 }

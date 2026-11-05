@@ -1,3 +1,7 @@
+import { ImportCaptureError } from "../checks/prettier/project-import-capture.js";
+import { ProjectWorkspaceLayoutError } from "../checks/prettier/project-workspace.js";
+import { ProjectPrettierFailureError } from "../checks/prettier/project-error.js";
+import { ExecutableImportStaleError } from "./import-provenance.js";
 import { ProjectPrettierTrustRequiredError } from "./formatter-setup.js";
 import { HookInstallationError } from "../hooks/command.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
@@ -106,7 +110,25 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
 
 export function renderInitFailure(error: unknown): string {
   const lines = ["Zedbee could not initialize this repository safely."];
-  if (error instanceof GithubWorkflowSetupError) {
+  if (
+    error instanceof ImportCaptureError ||
+    error instanceof ProjectWorkspaceLayoutError
+  ) {
+    lines.push(
+      "Reason: One-time Prettier import is unavailable for these configuration inputs or installed dependency layout.",
+      "Remediation: Use managed formatting settings or project formatting, or reduce the captured inputs and retry.",
+    );
+  } else if (error instanceof ExecutableImportStaleError) {
+    lines.push(`Reason: ${error.message}`);
+  } else if (
+    error instanceof ProjectPrettierFailureError &&
+    error.code === "PROJECT_PRETTIER_CONFIG_INVALID"
+  ) {
+    lines.push(
+      "Reason: The project configuration could not be evaluated from captured inputs; one-time import is unavailable.",
+      "Remediation: Check relative shared configuration paths and installed dependencies, then retry.",
+    );
+  } else if (error instanceof GithubWorkflowSetupError) {
     lines.push(`Reason: ${error.message}`);
   } else if (error instanceof HookInstallationError) {
     lines.push(error.message);

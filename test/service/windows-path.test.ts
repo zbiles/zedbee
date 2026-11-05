@@ -1,4 +1,5 @@
-import { beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeEach, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
 
 // Replace only native calls; the real path-inspection/handle-lifetime code and
 // Koffi's ABI helpers still execute. No test-only API is added to the product.
@@ -10,63 +11,68 @@ const native = vi.hoisted(() => ({
   openSucceeds: true,
   securityAttempted: false,
 }));
-vi.mock("koffi", async (original) => {
-  const actual = (await original<typeof import("koffi")>()).default;
-  const handle = Buffer.alloc(8);
-  return {
-    default: {
-      ...actual,
-      load: () => ({
-        func: (...declaration: any[]) => {
-          const name =
-            declaration.length > 1
-              ? declaration[1]
-              : /\b(\w+)\s*\(/u.exec(declaration[0])?.[1];
-          return (...args: any[]) => {
-            if (name === "CreateFileW") {
-              const [
-                path,
-                access,
-                share,
-                attributes,
-                disposition,
-                flags,
-                template,
-              ] = args;
-              native.access.push(access);
-              expect([share, attributes, disposition, flags, template]).toEqual(
-                [3, null, 3, 0x02200000, null],
-              );
-              if (
-                !native.openSucceeds ||
-                (path === "ancestor" && access & 0x20000)
-              )
-                return null;
-              return handle;
-            }
-            if (name === "GetFileInformationByHandleEx") {
-              expect([args[0], args[1], args[3]]).toEqual([handle, 9, 8]);
-              args[2].writeUInt32LE(native.attributes);
-              return Number(native.querySucceeds);
-            }
-            if (name === "CloseHandle") {
-              expect(args[0]).toBe(handle);
-              native.closed++;
-              return 1;
-            }
-            if (name === "GetLastError") return 5;
-            if (name === "GetCurrentProcess") return handle;
-            if (name === "OpenProcessToken") {
-              native.securityAttempted = true;
-              return 0; // An unavailable ownership proof must still reject private state.
-            }
-            throw new Error(`Unexpected native operation ${String(name)}`);
-          };
-        },
-      }),
-    },
-  };
-});
+// The product loads Koffi synchronously at first native operation. An ESM
+// vi.mock does not intercept createRequire, so instrument that exact module.
+const koffi = createRequire(import.meta.url)(
+  "koffi",
+) as typeof import("koffi").default;
+const handle = Buffer.alloc(8);
+const load = vi.spyOn(koffi, "load").mockImplementation(
+  () =>
+    ({
+      func: (...declaration: any[]) => {
+        const name =
+          declaration.length > 1
+            ? declaration[1]
+            : /\b(\w+)\s*\(/u.exec(declaration[0])?.[1];
+        return (...args: any[]) => {
+          if (name === "CreateFileW") {
+            const [
+              path,
+              access,
+              share,
+              attributes,
+              disposition,
+              flags,
+              template,
+            ] = args;
+            native.access.push(access);
+            expect([share, attributes, disposition, flags, template]).toEqual([
+              3,
+              null,
+              3,
+              0x02200000,
+              null,
+            ]);
+            if (
+              !native.openSucceeds ||
+              (path === "ancestor" && access & 0x20000)
+            )
+              return null;
+            return handle;
+          }
+          if (name === "GetFileInformationByHandleEx") {
+            expect([args[0], args[1], args[3]]).toEqual([handle, 9, 8]);
+            args[2].writeUInt32LE(native.attributes);
+            return Number(native.querySucceeds);
+          }
+          if (name === "CloseHandle") {
+            expect(args[0]).toBe(handle);
+            native.closed++;
+            return 1;
+          }
+          if (name === "GetLastError") return 5;
+          if (name === "GetCurrentProcess") return handle;
+          if (name === "OpenProcessToken") {
+            native.securityAttempted = true;
+            return 0; // An unavailable ownership proof must still reject private state.
+          }
+          throw new Error(`Unexpected native operation ${String(name)}`);
+        };
+      },
+    }) as ReturnType<typeof koffi.load>,
+);
+afterAll(() => load.mockRestore());
 import { verifyWindowsPath } from "../../src/service/windows-pipe.js";
 
 beforeEach(() => {

@@ -106,8 +106,8 @@ it("expires old outbox records before sending", () => {
   const { store, root } = fixture();
   const old = { ...event(), timestamp: "2020-01-01T00:00:00.000Z" };
   writeFileSync(
-    join(root, "state", "state.json"),
-    JSON.stringify({ ...store.read(), events: [old] }),
+    join(root, "state", "state-v2.json"),
+    JSON.stringify({ version: 2, state: { ...store.read(), events: [old] } }),
   );
   expect(store.pending()).toEqual([]);
   store.enqueue(event());

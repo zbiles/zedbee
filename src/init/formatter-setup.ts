@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, realpath } from "node:fs/promises";
+import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ExecutableEvaluatedConfig,
@@ -8,6 +8,11 @@ import type {
   InitFormattingImport,
 } from "./types.js";
 import type { ImportableNativeConfig } from "../checks/prettier/project-types.js";
+import { readBoundedImportFile } from "../checks/prettier/project-import-capture.js";
+import {
+  createProjectWorkspace,
+  type ProjectWorkspace,
+} from "../checks/prettier/project-workspace.js";
 import { discoverProjectPrettier } from "./prettier-discovery.js";
 import { previewPrettierSettingsImport } from "./prettier-import.js";
 import {
@@ -16,6 +21,7 @@ import {
 } from "../checks/prettier/project-trust.js";
 import {
   openProjectFormatter,
+  type ProjectFormatterSession,
   resolveProjectPrettierInstallation,
 } from "../checks/prettier/project-engine.js";
 
@@ -111,49 +117,34 @@ interface EvaluatedExecutableImport {
  * are recorded so apply can refuse if the configuration changed afterwards.
  */
 async function evaluateExecutableProjectConfig(
-  repositoryRoot: string,
-  projectRoot: string,
   target:
     | { readonly configPath: string }
     | { readonly sharedConfig: string; readonly configPath: string },
   signal: AbortSignal,
+  workspace: ProjectWorkspace,
+  session: ProjectFormatterSession,
 ): Promise<EvaluatedExecutableImport> {
   signal.throwIfAborted();
-  const permit = await requireProjectPrettierTrust(
-    repositoryRoot,
-    projectRoot,
-    true,
+  const boundPath = target.configPath;
+  const boundBytes = await readBoundedImportFile(
+    await realpath(join(workspace.treeRoot, boundPath)),
+    workspace.treeRoot,
   );
-  const installation = await resolveProjectPrettierInstallation(
-    repositoryRoot,
-    projectRoot,
-    repositoryRoot,
-  );
-  const session = await openProjectFormatter({
-    checkoutRoot: await realpath(repositoryRoot),
-    snapshotRoot: repositoryRoot,
-    projectRoot,
-    installation,
-    permit,
-    signal,
+  const imported =
+    "sharedConfig" in target
+      ? await session.readSharedConfigForImport(
+          target.sharedConfig,
+          target.configPath,
+        )
+      : await session.readConfigForImport(target.configPath);
+  return Object.freeze({
+    nativeConfig: imported,
+    evaluatedConfig: Object.freeze({
+      path: boundPath,
+      capture: workspace.importProvenance!,
+      sha256: createHash("sha256").update(boundBytes).digest("hex"),
+    }),
   });
-  try {
-    const imported =
-      "sharedConfig" in target
-        ? await session.readSharedConfigForImport(target.sharedConfig)
-        : await session.readConfigForImport(target.configPath);
-    const boundPath = target.configPath;
-    const boundBytes = await readFile(join(repositoryRoot, boundPath), "utf8");
-    return Object.freeze({
-      nativeConfig: imported,
-      evaluatedConfig: Object.freeze({
-        path: boundPath,
-        sha256: createHash("sha256").update(boundBytes, "utf8").digest("hex"),
-      }),
-    });
-  } finally {
-    await session.close();
-  }
 }
 
 interface ExecutableConfigTarget {
@@ -171,16 +162,74 @@ export async function evaluateExecutableProjectConfigs(
 ): Promise<EvaluatedExecutableImports> {
   const nativeConfigs = new Map<string, ImportableNativeConfig>();
   const evaluatedConfigs: ExecutableEvaluatedConfig[] = [];
-  for (const { projectRoot, target } of targets) {
+  if (targets.length === 0)
+    return Object.freeze({ imported: base, evaluatedConfigs: [] });
+  // Establish every project grant before creating the single invocation capture.
+  for (const { projectRoot } of targets) {
     signal.throwIfAborted();
-    const evaluated = await evaluateExecutableProjectConfig(
-      repositoryRoot,
-      projectRoot,
-      target,
-      signal,
-    );
-    nativeConfigs.set(evaluated.evaluatedConfig.path, evaluated.nativeConfig);
-    evaluatedConfigs.push(evaluated.evaluatedConfig);
+    await requireProjectPrettierTrust(repositoryRoot, projectRoot, true);
+  }
+  const workspace = await createProjectWorkspace(
+    {
+      repositoryRoot: await realpath(repositoryRoot),
+      snapshotRoot: repositoryRoot,
+      projectRoot: ".",
+      captureImportSources: true,
+      importConfigPaths: targets.map(({ target }) => target.configPath),
+    },
+    signal,
+  );
+  try {
+    const groups = new Map<string, ExecutableConfigTarget["target"][]>();
+    for (const { projectRoot, target } of targets) {
+      const group = groups.get(projectRoot) ?? [];
+      group.push(target);
+      groups.set(projectRoot, group);
+    }
+    for (const [projectRoot, group] of groups) {
+      signal.throwIfAborted();
+      const permit = await requireProjectPrettierTrust(
+        repositoryRoot,
+        projectRoot,
+        true,
+      );
+      const installation = await resolveProjectPrettierInstallation(
+        workspace.treeRoot,
+        projectRoot,
+        workspace.treeRoot,
+      );
+      const session = await openProjectFormatter({
+        checkoutRoot: await realpath(repositoryRoot),
+        snapshotRoot: workspace.treeRoot,
+        projectRoot,
+        installation,
+        permit,
+        signal,
+        importWorkspace: workspace,
+      });
+      try {
+        for (const target of group) {
+          const evaluated = await evaluateExecutableProjectConfig(
+            target,
+            signal,
+            workspace,
+            session,
+          );
+          nativeConfigs.set(
+            evaluated.evaluatedConfig.path,
+            evaluated.nativeConfig,
+          );
+          evaluatedConfigs.push(evaluated.evaluatedConfig);
+        }
+      } finally {
+        await session.close();
+      }
+    }
+    // Refuse source edits during capture/evaluation, never pair old values with
+    // hashes of a newer live config or live installed dependency package.
+    await workspace.verifyImportSources!();
+  } finally {
+    await workspace.dispose();
   }
   // Rebuild every inherited EditorConfig scope from its evaluated owner.
   // Real nested Prettier configs still reset inherited Prettier settings.

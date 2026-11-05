@@ -3,6 +3,7 @@ export { ProjectPrettierFailureError } from "./project-error.js";
 export { snapshotIdentity } from "./project-snapshot-identity.js";
 export { resolveProjectPrettierInstallation } from "./project-installation.js";
 import { fork, type ChildProcess, type Serializable } from "node:child_process";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   projectPrettierPermitAllows,
@@ -38,6 +39,7 @@ export interface ProjectFormatterSession {
   /** Consent-required evaluation of a package-exported shared configuration. */
   readSharedConfigForImport(
     configPackage: string,
+    originConfig?: string,
   ): Promise<ImportableNativeConfig>;
   close(): Promise<void>;
 }
@@ -49,6 +51,8 @@ export interface ProjectFormatterInput {
   readonly installation: ProjectPrettierInstallation;
   readonly permit: ProjectPrettierPermit;
   readonly signal: AbortSignal;
+  /** Borrowed captured import workspace; the caller owns its lifetime. */
+  readonly importWorkspace?: ProjectWorkspace;
 }
 
 function sourceExecArgv(): readonly string[] {
@@ -128,14 +132,16 @@ async function openSession(
   }
   let workspace: ProjectWorkspace;
   try {
-    workspace = await createProjectWorkspace(
-      {
-        repositoryRoot: input.checkoutRoot,
-        snapshotRoot: input.snapshotRoot,
-        projectRoot: input.projectRoot,
-      },
-      input.signal,
-    );
+    workspace =
+      input.importWorkspace ??
+      (await createProjectWorkspace(
+        {
+          repositoryRoot: input.checkoutRoot,
+          snapshotRoot: input.snapshotRoot,
+          projectRoot: input.projectRoot,
+        },
+        input.signal,
+      ));
   } catch (error) {
     if (error instanceof ProjectWorkspaceLayoutError) {
       throw new ProjectPrettierFailureError({
@@ -146,6 +152,12 @@ async function openSession(
     }
     throw error;
   }
+  const releaseWorkspace = input.importWorkspace?.acquireUse();
+  // A borrowed mirror is never deleted while another session may still need it.
+  const disposeWorkspace = async (): Promise<void> => {
+    if (input.importWorkspace === undefined) await workspace.dispose();
+    else releaseWorkspace?.();
+  };
   const workerEntry = fileURLToPath(
     new URL(
       `./project-worker.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
@@ -153,7 +165,7 @@ async function openSession(
     ),
   );
   const owner = await createProjectProcessOwner().catch(async () => {
-    await workspace.dispose();
+    await disposeWorkspace();
     throw new ProjectPrettierFailureError(
       pendingFailure(
         input.projectRoot,
@@ -170,7 +182,10 @@ async function openSession(
   let child: ChildProcess;
   try {
     child = fork(bootstrap, [], {
-      cwd: workspace.workerCwd,
+      cwd:
+        input.importWorkspace === undefined
+          ? workspace.workerCwd
+          : resolve(workspace.treeRoot, input.projectRoot),
       env: minimalEnvironment(workspace.root),
       execArgv: [...sourceExecArgv()],
       stdio: ["ignore", "ignore", "ignore", "ipc"],
@@ -179,7 +194,7 @@ async function openSession(
     });
   } catch {
     await owner.stop();
-    await workspace.dispose();
+    await disposeWorkspace();
     throw new ProjectPrettierFailureError(
       pendingFailure(
         input.projectRoot,
@@ -202,7 +217,7 @@ async function openSession(
           ),
         );
       }
-      await workspace.dispose();
+      await disposeWorkspace();
     })());
 
   try {
@@ -321,6 +336,7 @@ async function openSession(
                 installation: { entryUrl: input.installation.entryUrl },
                 treeRoot: workspace.treeRoot,
                 projectRoot: input.projectRoot,
+                capturedImportSources: workspace.importProvenance !== undefined,
               },
             },
             (error) => {
@@ -457,8 +473,12 @@ async function openSession(
     },
     async readSharedConfigForImport(
       configPackage: string,
+      originConfig?: string,
     ): Promise<ImportableNativeConfig> {
-      const reply = await request("importConfig", { configPackage });
+      const reply = await request("importConfig", {
+        configPackage,
+        ...(originConfig === undefined ? {} : { originConfig }),
+      });
       if (reply.operation !== "importConfig")
         throw new Error("Unexpected reply");
       return reply.result;
