@@ -1,3 +1,4 @@
+import { RepositoryInspectionError } from "../../inspection/types.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import type { CheckRunContext } from "../adapter.js";
@@ -11,10 +12,7 @@ import {
   IGNORED_DIRECTORY_NAMES,
   type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
-import {
-  capturedSourceRegistry,
-  hasAnalysisSourceCapture,
-} from "../../inspection/source-capture.js";
+import { capturedSourceRegistry } from "../../inspection/source-capture.js";
 
 export const MAX_SECRET_FILE_BYTES = 1024 * 1024;
 
@@ -156,17 +154,22 @@ export async function collectSecretSourcePairs(
     context.snapshots?.unsupportedEntries ?? [],
   );
   const liveRegistries = new Map<string, Promise<SnapshotRegistry>>();
-  if (!hasAnalysisSourceCapture()) {
-    const roots = [
-      context.baselineInspection.snapshotRoot,
-      context.targetInspection.snapshotRoot,
-    ];
-    const registries = await Promise.all(
-      roots.map((root) => captureSnapshotRegistry(root)),
-    );
-    roots.forEach((root, index) =>
-      liveRegistries.set(root, Promise.resolve(registries[index]!)),
-    );
+  const requiredPaths = new Map<string, Set<string>>();
+  for (const file of changed) {
+    const add = (root: string, path: string) => {
+      let paths = requiredPaths.get(root);
+      if (paths === undefined) {
+        paths = new Set();
+        requiredPaths.set(root, paths);
+      }
+      paths.add(path);
+    };
+    add(context.targetInspection.snapshotRoot, file.path);
+    if (file.status !== "added")
+      add(
+        context.baselineInspection.snapshotRoot,
+        file.previousPath ?? file.path,
+      );
   }
   const readSelected = async (
     root: string,
@@ -178,7 +181,18 @@ export async function collectSecretSourcePairs(
     if (registry === undefined) {
       let pending = liveRegistries.get(root);
       if (pending === undefined) {
-        pending = captureSnapshotRegistry(root);
+        const paths = [...(requiredPaths.get(root) ?? [])];
+        pending = captureSnapshotRegistry(root, paths).catch(
+          (error: unknown) => {
+            const failed =
+              error instanceof RepositoryInspectionError &&
+              error.path !== undefined &&
+              paths.includes(error.path)
+                ? error.path
+                : path;
+            throw unsafeSecretFile(failed);
+          },
+        );
         liveRegistries.set(root, pending);
       }
       registry = await pending;

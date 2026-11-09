@@ -11,6 +11,32 @@ for investigating incomplete analyzer jobs.
 
 Zedbee owns the analyzer versions and inert configuration used by every v1 check. `relevant` checks run when staged state can affect them; `always` checks run whenever their required project inputs exist. Analysis scope may be broader than the changed lines, while attribution still blocks only new or worsened staged responsibility.
 
+Check selection uses the selected baseline and target snapshots before starting
+analyzer workers. An eligible scan with no analyzer jobs still validates its
+configuration and selected inputs, reports the real changed-file count and
+skipped checks, and avoids opening an analyzer session or capturing source for
+analysis. Skipped checks have not analyzed and passed their inputs.
+
+With the recommended profile, ordinary files, default managed formatting and
+`when: "relevant"`, the following changes select these checks:
+
+| Selected changes                                                | Analyzer jobs          |
+| --------------------------------------------------------------- | ---------------------- |
+| Python edits                                                    | Secrets                |
+| `.gitignore` edit plus removal of a Markdown file from tracking | Secrets                |
+| Markdown deletion only                                          | None                   |
+| Markdown edit                                                   | Formatting and secrets |
+
+Secrets is language-independent: a new secret in Python, Markdown or
+`.gitignore` remains eligible. Deleted files have no target text to scan. A
+secrets-only scan captures changed target files and their baseline counterparts,
+including previous rename paths, rather than unrelated workspace source.
+Profiles, overrides, exclusions and explicit `always` timing can change the
+selected checks. Project Prettier support is determined within the explicitly
+trusted formatter boundary, including its plugins, so an unfamiliar extension
+does not by itself rule out formatting. Ignore-file edits do not expand
+formatting to every unchanged file.
+
 | Check ID                 | Coverage                                                    | Scope and attribution                                                                                                          | Important limitation                                                                                             |
 | ------------------------ | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
 | `formatting`             | Prettier formatting                                         | Transforms staged target files and intersects formatting changes with added lines                                              | Managed fixing formats the complete current working file, including unstaged work                                |
@@ -37,16 +63,30 @@ Complete JSON, text, and SARIF exports report every attributed finding. Automati
 
 ## TypeScript diagnostics
 
-For any nonempty delta, `types` and typed `lint` conservatively check every
-discovered workspace containing TypeScript sources, because configuration, JSON
-imports, and cross-workspace dependencies can affect unchanged consumers. Both
-checks compare findings across the project, including unchanged files. Existing
+`types` and typed `lint` inspect changed paths against source and configuration
+metadata from both selected snapshots. Ordinary Python, documentation and
+`.gitignore` changes do not select compiler jobs when that metadata establishes
+that they are unrelated. JavaScript/TypeScript source, deletions and renames,
+JSON/JSONC data, manifests, lockfiles and compiler configuration remain relevant.
+A contained inherited configuration is relevant even with an unusual filename
+such as `compiler.md`. Known source/configuration membership takes precedence
+over the filename extension. Unknown inputs and incomplete configuration
+metadata conservatively retain analysis; policy configuration edits may also
+select compiler jobs even when only reporting settings changed.
+
+When a possible compiler input changes, both checks still conservatively check
+every discovered workspace containing TypeScript sources, including unchanged
+consumers and sibling workspaces. Both compare findings across the project,
+including unchanged files. Existing
 baseline findings remain non-blocking when unchanged source moves or is renamed.
-File policies still control which lint findings are enabled. Other analyzers
-retain their own scope rules.
+File policies still control which lint findings are enabled. `when: "always"`
+retains full project comparison for a nonempty changeset even when its changed
+paths would otherwise be unrelated. Other analyzers retain their own input
+scope rules.
 
 Types and typed lint share project discovery and validated compiler inputs within
-an analysis session. They load contained snapshot projects, including sibling
+an analysis session, with separate mutable TypeScript programs for each check.
+They load contained snapshot projects, including sibling
 configurations and project references. An option-only configuration used through
 `extends` is a helper. Canonical `tsconfig.json`, configurations declaring their
 own source selectors or project references, and explicitly referenced

@@ -81,11 +81,43 @@ function compareResults(
   );
 }
 
+export interface PreparedCheckDispatch {
+  readonly hasJobs: boolean;
+  readonly scheduledTargets: readonly {
+    checkId: string;
+    target: import("./adapter.js").CheckTarget;
+  }[];
+}
+const preparedExecutions = new WeakMap<
+  PreparedCheckDispatch,
+  () => Promise<CheckExecutionResult[]>
+>();
+
+export function executePreparedCheckDispatch(
+  plan: PreparedCheckDispatch,
+): Promise<CheckExecutionResult[]> {
+  const execute = preparedExecutions.get(plan);
+  if (execute === undefined)
+    throw new TypeError("Invalid or consumed dispatch plan");
+  preparedExecutions.delete(plan);
+  return execute();
+}
+
 export async function dispatchChecks(
   adapters: readonly CheckAdapter[],
   context: DispatchContext,
   options: DispatchOptions = {},
 ): Promise<CheckExecutionResult[]> {
+  return executePreparedCheckDispatch(
+    await prepareCheckDispatch(adapters, context, options),
+  );
+}
+
+export async function prepareCheckDispatch(
+  adapters: readonly CheckAdapter[],
+  context: DispatchContext,
+  options: DispatchOptions = {},
+): Promise<PreparedCheckDispatch> {
   const clock = options.clock ?? performance.now.bind(performance);
   const emit = (event: ScanEvent): void => {
     try {
@@ -104,6 +136,11 @@ export async function dispatchChecks(
   );
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
+  const jobs: (() => Promise<CheckExecutionResult>)[] = [];
+  const scheduledTargets: {
+    checkId: string;
+    target: import("./adapter.js").CheckTarget;
+  }[] = [];
   const adapterSnapshots = adapters.map(snapshotAdapter);
   for (const snapshot of adapterSnapshots) {
     if (!snapshot.valid) {
@@ -246,12 +283,11 @@ export async function dispatchChecks(
     for (const target of targets) {
       let policy: ResolvedCheckPolicy;
       try {
-        const scheduledPolicy = resolveScheduledTargetPolicy(
+        const scheduledPolicy = await resolveScheduledTargetPolicy(
           context.config,
           adapter.id as CheckId,
           target,
-          context.targetInspection,
-          context.changeSet,
+          context,
           adapterContext.policyForFile,
         );
         if (scheduledPolicy === undefined) continue;
@@ -293,42 +329,50 @@ export async function dispatchChecks(
       }
       const executionPolicy = immutablePolicy(adapter.id, policy);
 
-      if (applicability.networkDisclosure !== undefined) {
+      scheduledTargets.push({ checkId: adapter.id, target });
+      jobs.push(async () => {
+        if (applicability.networkDisclosure !== undefined) {
+          emit({
+            type: "network-disclosure",
+            checkId: adapter.id,
+            target: target.id,
+            timestamp: clock(),
+            services: applicability.networkDisclosure.services,
+            metadata: applicability.networkDisclosure.metadata,
+          });
+        }
+
         emit({
-          type: "network-disclosure",
+          type: "check-queued",
           checkId: adapter.id,
           target: target.id,
           timestamp: clock(),
-          services: applicability.networkDisclosure.services,
-          metadata: applicability.networkDisclosure.metadata,
         });
-      }
-
-      emit({
-        type: "check-queued",
-        checkId: adapter.id,
-        target: target.id,
-        timestamp: clock(),
+        return executeDispatchTarget(
+          adapter,
+          adapterContext,
+          target,
+          executionPolicy,
+          applicability.requiresBaseline,
+          {
+            clock,
+            emit,
+            collectObservations,
+            collectFixes: options.collectFixes === true,
+          },
+        );
       });
-      scheduled.push(
-        limit(() =>
-          executeDispatchTarget(
-            adapter,
-            adapterContext,
-            target,
-            executionPolicy,
-            applicability.requiresBaseline,
-            {
-              clock,
-              emit,
-              collectObservations,
-              collectFixes: options.collectFixes === true,
-            },
-          ),
-        ),
-      );
     }
   }
 
-  return (await Promise.all(scheduled)).sort(compareResults);
+  const plan: PreparedCheckDispatch = Object.freeze({
+    hasJobs: jobs.length > 0,
+    scheduledTargets: Object.freeze(scheduledTargets),
+  });
+  preparedExecutions.set(plan, async () =>
+    (await Promise.all([...scheduled, ...jobs.map((job) => limit(job))])).sort(
+      compareResults,
+    ),
+  );
+  return plan;
 }

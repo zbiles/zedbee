@@ -107,7 +107,7 @@ it("help and an actual empty index never acquire the service", async () => {
   expect(acquire).not.toHaveBeenCalled();
 });
 
-it("command snapshot failure still awaits and closes the prepared acquisition", async () => {
+it("command snapshot failure does not acquire an analyzer service", async () => {
   const repository = await createGitRepository("zedbee-prepared-failure-");
   await repository.write("index.js", "export const value = 1;\n");
   await repository.git(["add", "index.js"]);
@@ -160,12 +160,13 @@ it("command snapshot failure still awaits and closes the prepared acquisition", 
   });
   try {
     await snapshot.promise;
-    expect(acquire).toHaveBeenCalledTimes(1);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(settled).toBe(false);
+    expect(acquire).not.toHaveBeenCalled();
+    await command;
+    expect(settled).toBe(true);
   } finally {
     pending.resolve(local);
   }
   expect(await command).toBe(2);
-  await expect(local.openSession()).rejects.toThrow();
+  expect(acquire).not.toHaveBeenCalled();
+  await local.close();
 });

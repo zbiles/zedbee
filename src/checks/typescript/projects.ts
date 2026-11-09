@@ -5,7 +5,10 @@ import type { SnapshotSide } from "../../config/file-policy.js";
 import type { WorkspaceInspection } from "../../inspection/types.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import { analyzerDiagnostic, type AnalyzerOperation } from "../diagnostics.js";
-import { createSnapshotProgram } from "./compiler-host.js";
+import {
+  createSnapshotProgram,
+  type CompilerProgramPurpose,
+} from "./compiler-host.js";
 import {
   loadSnapshotProgramProjects,
   SnapshotConfigurationError,
@@ -25,6 +28,7 @@ export async function loadSnapshotProjectSet(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
   dependencies?: CapturedDependencies,
+  reusePurpose: CompilerProgramPurpose = "standalone",
 ): Promise<SnapshotProjectSet> {
   const projects = await loadSnapshotProgramProjects(
     snapshotRoot,
@@ -36,6 +40,7 @@ export async function loadSnapshotProjectSet(
     ({ input }) =>
       createSnapshotProgram({
         ...input,
+        reusePurpose,
         ...(dependencies === undefined ? {} : { dependencies }),
       }).programs,
   );

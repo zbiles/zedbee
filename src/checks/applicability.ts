@@ -12,9 +12,13 @@ import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  duplicationInputPaths,
+  duplicationInputsMayHaveChanged,
+} from "./duplication/input-paths.js";
 import { projectInputsMayHaveChanged } from "./project-inputs.js";
 import {
-  compilerInputsMayHaveChanged,
+  compilerInputRelevance,
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
 
@@ -163,20 +167,42 @@ export async function inspectManagedCheck(
       .filter(({ relevant }) => relevant)
       .map(({ workspace }) => workspace)
       .sort((a, b) => compareCodeUnits(a.relativeRoot, b.relativeRoot));
-  } else if (checkId === "lint")
-    workspaces = workspaces.filter(
-      (workspace) =>
-        workspace.sourceFiles.length > 0 &&
-        (always ||
-          compilerInputsMayHaveChanged(workspace, context.changeSet) ||
-          workspace.sourceFiles.some((path) => changed.has(path))),
+  } else if (checkId === "duplication") {
+    const selected = await Promise.all(
+      workspaces.map(async (workspace) => ({
+        workspace,
+        relevant: always
+          ? (await duplicationInputPaths(context.targetInspection, workspace))
+              .length > 0
+          : await duplicationInputsMayHaveChanged(
+              context,
+              workspace.relativeRoot,
+            ),
+      })),
     );
-  else if (checkId === "types") {
-    workspaces = workspaces.filter(
-      (workspace) =>
-        hasTypeScriptInputs(workspace) &&
-        (always || compilerInputsMayHaveChanged(workspace, context.changeSet)),
+    workspaces = selected
+      .filter(({ relevant }) => relevant)
+      .map(({ workspace }) => workspace);
+  } else if (checkId === "lint" || checkId === "types") {
+    const selected = await Promise.all(
+      workspaces.map(async (workspace) => ({
+        workspace,
+        relevant:
+          checkId === "types"
+            ? hasTypeScriptInputs(workspace) &&
+              (always ||
+                (await compilerInputRelevance(context, workspace)).relevant)
+            : workspace.sourceFiles.length > 0 &&
+              (always ||
+                (hasTypeScriptInputs(workspace) &&
+                  (await compilerInputRelevance(context, workspace))
+                    .relevant) ||
+                workspace.sourceFiles.some((path) => changed.has(path))),
+      })),
     );
+    workspaces = selected
+      .filter(({ relevant }) => relevant)
+      .map(({ workspace }) => workspace);
   } else {
     if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {
       const environments =

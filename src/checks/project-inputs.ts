@@ -4,23 +4,7 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../inspection/types.js";
-import { createCompilerConfigurationResolver } from "./typescript/configuration-paths.js";
-
-// Inspection objects are immutable and scan-scoped. Avoid process-wide caches
-// keyed by directory paths, which can outlive their selected snapshot.
-const configurationResolvers = new WeakMap<
-  RepositoryInspection,
-  ReturnType<typeof createCompilerConfigurationResolver>
->();
-
-function configurationResolver(inspection: RepositoryInspection) {
-  let resolver = configurationResolvers.get(inspection);
-  if (resolver === undefined) {
-    resolver = createCompilerConfigurationResolver(inspection.snapshotRoot);
-    configurationResolvers.set(inspection, resolver);
-  }
-  return resolver;
-}
+import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 
 // Weak keys bind preparation to the immutable scan inputs, including when the
 // dispatcher creates new context objects for applicability and collection.
@@ -92,9 +76,11 @@ export async function projectInputsMayHaveChanged(
     )
       return true;
     if (
-      [...(await configurationResolver(inspection)(workspace))].some((path) =>
-        changed.has(path),
-      )
+      [
+        ...(
+          await compilerConfigurationInputsForInspection(inspection, workspace)
+        ).paths,
+      ].some((path) => changed.has(path))
     )
       return true;
   }

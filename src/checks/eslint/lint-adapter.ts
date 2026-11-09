@@ -1,6 +1,6 @@
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
-import { compilerInputsMayHaveChanged } from "../compiler-inputs.js";
+import { compilerInputRelevance } from "../compiler-inputs.js";
 import { relative, sep } from "node:path";
 import type * as ts from "typescript";
 import type { ESLint } from "eslint";
@@ -524,8 +524,10 @@ export function createLintAdapter(
         target: context.target,
         ...pairLocationObservations(baseline, target, context.changeSet),
         projectDelta:
+          !context.changeSet.isEmpty &&
           workspace !== undefined &&
-          compilerInputsMayHaveChanged(workspace, context.changeSet),
+          ((await compilerInputRelevance(context, workspace)).relevant ||
+            context.policy.when === "always"),
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     },

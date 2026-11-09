@@ -34,15 +34,17 @@ function Callouts({
   lines,
   width,
   color,
+  paddingX = 1,
 }: {
   readonly lines: readonly ReportCalloutLine[];
   readonly width: number;
   readonly color: boolean;
+  readonly paddingX?: number;
 }) {
   if (lines.length === 0) return null;
-  const contentWidth = Math.max(1, width - 2);
+  const contentWidth = Math.max(1, width - paddingX * 2);
   return (
-    <Box flexDirection="column" width={width} paddingX={1} marginY={1}>
+    <Box flexDirection="column" width={width} paddingX={paddingX} marginY={1}>
       {lines.flatMap((line, index) =>
         line.kind === "text"
           ? [
@@ -522,8 +524,21 @@ export function ScanResultDashboard({
             color={color}
           />
         </BrandedCommandPanel>
+        {callouts.closing.length === 0 ? null : (
+          <BrandedCommandPanel
+            title="NEXT STEPS"
+            width={panelWidth}
+            color={color}
+          >
+            <Callouts
+              lines={callouts.closing}
+              width={Math.max(1, panelWidth - 2)}
+              color={color}
+              paddingX={2}
+            />
+          </BrandedCommandPanel>
+        )}
       </BrandedCommandFrame>
-      <Callouts lines={callouts.closing} width={width} color={color} />
     </Box>
   );
 }

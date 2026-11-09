@@ -518,7 +518,7 @@ describe("owned analysis reuse", () => {
     }
   });
 
-  it("shares exact real typed-lint/type programs in both orders with complete dependency metadata", async () => {
+  it("isolates real typed-lint/type programs in both orders with complete dependency metadata", async () => {
     const baseline = await createInspectionFixture();
     const target = await createInspectionFixture();
     for (const fixture of [baseline, target]) {
@@ -606,7 +606,7 @@ describe("owned analysis reuse", () => {
           }
           expect(seen).toHaveLength(4);
           expect(seen[0]).not.toBe(seen[1]);
-          expect(new Set(seen).size).toBe(2);
+          expect(new Set(seen).size).toBe(4);
         });
       } finally {
         await owner.close();
