@@ -258,3 +258,7 @@ Report cleanup and write warnings are non-blocking maintenance diagnostics. Zedb
 ## Agent and CI output
 
 Explicit `--format text`, `--format json`, and `--format sarif` are complete surfaces with no terminal finding cap and no automatic report file. JSON and SARIF are stable machine surfaces; SARIF is emitted as a complete SARIF 2.1.0 report for enterprise ingestion. Both structured formats use repository-relative paths, deterministic ordering, stable finding IDs, explicit attribution evidence, and the same online disclosures as the interactive experience. ANSI decoration and animation are never included.
+
+### Performance diagnostics
+
+Completed scan telemetry can include bounded totals by check: elapsed, worker queue and execution milliseconds, cache hits/misses/bypasses, a changed-file-count bucket, execution mode, and approved incomplete-error codes. These retain everyday local usage. They contain no repository/workspace names, file paths, source, or raw error messages. Overlapping check durations are not CPU time or an additive scan-duration breakdown. Older clients may omit these details. Existing opt-out settings apply.

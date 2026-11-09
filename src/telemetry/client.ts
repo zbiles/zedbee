@@ -1,3 +1,5 @@
+import { summarizeScanPerformance } from "./performance-summary.js";
+import type { ScanPerformanceSummary } from "../diagnostics/scan-performance.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -46,7 +48,12 @@ export type TelemetrySummary = Partial<
 >;
 export interface CommandTelemetry {
   observeRepository?(root: string, cwd: string): void;
-  scanReport?(report: Pick<ScanReport, "summary" | "checks">): void;
+  performanceSummary?(summary: ScanPerformanceSummary): void;
+  scanReport?(
+    report: Pick<ScanReport, "summary" | "checks"> & {
+      changedFileCount?: number | null;
+    },
+  ): void;
   summary(value: TelemetrySummary): void;
   finish(exitCode: number): void;
   flush(cancelled: boolean, signal?: AbortSignal): Promise<void>;
@@ -129,6 +136,9 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
   const detailsStore = ci
     ? undefined
     : new TelemetryDetailsStore(store.directory);
+  let performanceSummary: ScanPerformanceSummary | undefined;
+  let performanceDetails:
+    import("./schema.js").ScanPerformanceTelemetry | undefined;
   let finished = false;
   let pending = Promise.resolve();
   const allowed = () => {
@@ -166,7 +176,17 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
           /* Optional reduction cannot suppress ordinary usage metadata. */
         }
       }
-      const wire = enrichTelemetryEvent(value, scanDetails);
+      const wire = enrichTelemetryEvent(
+        value,
+        scanDetails
+          ? {
+              ...scanDetails,
+              ...(performanceDetails
+                ? { performance: performanceDetails }
+                : {}),
+            }
+          : undefined,
+      );
       if (ci) {
         pending = pending
           .then(async () => {
@@ -175,9 +195,9 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
           })
           .catch(() => {});
       } else {
-        if (wire.schema_version === 2 && scanDetails) {
+        if (wire.schema_version >= 2 && scanDetails) {
           try {
-            detailsStore?.write(value, scanDetails);
+            detailsStore?.write(value, scanDetails, performanceDetails);
           } catch {}
         }
         store.enqueue(value);
@@ -205,8 +225,21 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
               })
               .catch(() => {});
           },
-          scanReport(report: Pick<ScanReport, "summary" | "checks">) {
+          performanceSummary(value: ScanPerformanceSummary) {
+            performanceSummary = value;
+          },
+          scanReport(
+            report: Pick<ScanReport, "summary" | "checks"> & {
+              changedFileCount?: number | null;
+            },
+          ) {
             if (!allowed() || finished) return;
+            try {
+              performanceDetails = summarizeScanPerformance(
+                performanceSummary,
+                report,
+              );
+            } catch {}
             try {
               findingBreakdown = summarizeFindings(report);
               summary.finding_count = Math.min(

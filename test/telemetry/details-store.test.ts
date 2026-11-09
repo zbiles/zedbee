@@ -1,3 +1,4 @@
+import { fitScanDetails } from "../../src/telemetry/finding-summary.js";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   mkdtempSync,
@@ -17,6 +18,7 @@ import {
 import { TelemetryStore } from "../../src/telemetry/state.js";
 import {
   telemetryV1EventSchema,
+  TELEMETRY_CHECK_IDS,
   type ScanDetails,
 } from "../../src/telemetry/schema.js";
 import { telemetryBatches } from "../../src/telemetry/batch.js";
@@ -179,4 +181,90 @@ it("packs enriched events by serialized bytes and count with stable identities",
       Buffer.byteLength(JSON.stringify({ events: batch })),
     ).toBeLessThanOrEqual(60 * 1024);
   }
+});
+
+it("persists and drains optional v3 diagnostics alongside legacy parent events", async () => {
+  const { store, event } = fixture();
+  const performance = {
+    performance_version: 1,
+    performance_status: "complete",
+    changed_file_count_bucket: "1",
+    change_category: "unknown",
+    execution_mode: "none",
+    check_performance: [],
+    incomplete_reasons: [],
+    incomplete_reasons_omitted: 0,
+  } as const;
+  const detailsStore = new TelemetryDetailsStore(store.directory);
+  detailsStore.write(event, details, {
+    ...performance,
+    check_performance: [],
+    incomplete_reasons: [],
+  });
+  store.enqueue(event);
+  let sent: unknown;
+  await drainTelemetry(store, new AbortController().signal, async (events) => {
+    sent = events[0];
+    return true;
+  });
+  expect(sent).toMatchObject({
+    schema_version: 3,
+    performance_status: "complete",
+    finding_groups: details.finding_groups,
+  });
+  expect(store.pending()).toEqual([]);
+});
+
+it("retains a partial v3 header when saturated findings require trimming diagnostic rows", () => {
+  const { store, event } = fixture();
+  const groups = Object.keys(findingCatalog.types!)
+    .slice(0, 256)
+    .map((rule_id) => ({
+      check_id: "types" as const,
+      rule_id,
+      severity: "error" as const,
+      count: 1,
+    }));
+  const large = fitScanDetails({
+    ...details,
+    finding_groups: groups,
+    completed_check_ids: ["types" as const],
+  });
+  const performance = {
+    performance_version: 1 as const,
+    performance_status: "complete" as const,
+    changed_file_count_bucket: "1" as const,
+    change_category: "unknown" as const,
+    execution_mode: "local" as const,
+    check_performance: [],
+    incomplete_reasons: [],
+    incomplete_reasons_omitted: 0,
+  };
+  const rows = Array.from({ length: 13 }, (_, i) => ({
+    check_id: TELEMETRY_CHECK_IDS[i]!,
+    task_count: 1000000,
+    elapsed_sum_ms: 604800000,
+    elapsed_max_ms: 604800000,
+    queue_sum_ms: 604800000,
+    queue_max_ms: 604800000,
+    worker_sum_ms: 604800000,
+    worker_max_ms: 604800000,
+    cache_hits: 1000000,
+    cache_misses: 1000000,
+    cache_bypasses: 1000000,
+  }));
+  const ds = new TelemetryDetailsStore(store.directory);
+  ds.write({ ...event, finding_count: groups.length }, large, {
+    ...performance,
+    check_performance: rows,
+  });
+  const wire = enrichTelemetryEvent(
+    { ...event, finding_count: groups.length },
+    ds.read(event),
+  );
+  expect(wire).toMatchObject({
+    schema_version: 3,
+    performance_status: "partial",
+    finding_groups: large.finding_groups,
+  });
 });
