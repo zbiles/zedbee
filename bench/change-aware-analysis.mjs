@@ -49,6 +49,8 @@ const mode = option("--mode", "cold");
 const sampleCount = Number(option("--samples", "10"));
 const workers = Number(option("--workers", "2"));
 const diagnostics = process.argv.includes("--diagnostics");
+const parallelScans = Number(option("--parallel", "1"));
+if (![1, 2].includes(parallelScans)) throw Error("Parallel scans must be1or2");
 const onlyScenario = option("--scenario", undefined);
 if (![1, 2, 4].includes(workers)) throw Error("Workers must be 1, 2, or 4");
 const referenceIndex = process.argv.indexOf("--reference");
@@ -127,6 +129,17 @@ for (const scenario of [
   if (scenario === "large-source")
     await write("web/src/item-0.ts", 'export const item0: number = "wrong";\n');
   git("add", "-u");
+  const roots = [root];
+  if (parallelScans === 2) {
+    const peer = join(base, `${scenario}-peer`);
+    git("worktree", "add", "--detach", peer, "HEAD");
+    execFileSync("git", ["apply", "--index"], {
+      cwd: peer,
+      input: git("diff", "--cached", "--binary"),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    roots.push(peer);
+  }
   const ordered =
     (samples.length / (sampleCount * implementations.length)) % 2
       ? [...implementations].reverse()
@@ -144,7 +157,7 @@ for (const scenario of [
       close: async (executor) => executor.close(),
       run: async (executor, cache) => {
         const jobs = [];
-        let diagnosticSummary;
+        const diagnosticSummaries = [];
         let cacheHits = 0,
           cacheMisses = 0;
         const cacheAdapter = {
@@ -157,28 +170,59 @@ for (const scenario of [
           set: (key, value) => observationCache.set(key, value),
         };
         const start = performance.now();
-        const report = await implementation.runScan({
-          repositoryRoot: root,
-          executor,
-          cache: cache ? cacheAdapter : false,
-          ...(diagnostics
-            ? {
-                onPerformanceSummary: (value) => {
-                  diagnosticSummary = value;
-                },
-              }
-            : {}),
-          sourceExcerpts: "exclude",
-          onEvent: (e) => {
-            if (e.type === "check-running") jobs.push(e.checkId);
-          },
-        });
+        const reports = await Promise.all(
+          roots.map((repositoryRoot) =>
+            implementation.runScan({
+              repositoryRoot,
+              executor,
+              cache: cache ? cacheAdapter : false,
+              ...(diagnostics
+                ? {
+                    onPerformanceSummary: (value) => {
+                      diagnosticSummaries.push(value);
+                    },
+                  }
+                : {}),
+              sourceExcerpts: "exclude",
+              onEvent: (e) => {
+                if (e.type === "check-running") jobs.push(e.checkId);
+              },
+            }),
+          ),
+        );
+        const expected = ["type-regression", "large-source"].includes(scenario)
+          ? "blocked"
+          : "pass";
+        for (const item of reports) {
+          if (item.outcome !== expected)
+            throw Error(
+              `${scenario}: expected ${expected}, received ${item.outcome}`,
+            );
+          if (
+            expected === "blocked" &&
+            !item.summary.findings.some(
+              (f) => f.check === "types" && f.rule === "typescript/TS2322",
+            )
+          )
+            throw Error("Expected actual TypeScript assignment regression");
+        }
+        if (
+          version === "candidate" &&
+          !["type-regression", "large-source"].includes(scenario) &&
+          jobs.some((id) => id === "types" || id === "lint")
+        )
+          throw Error("Irrelevant compiler job scheduled");
+        const report = reports[0];
+        if (reports.some((other) => other.outcome !== report.outcome))
+          throw Error("Concurrent scan outcome mismatch");
         return {
           scenario,
           version,
           package: implementation.metadata,
           sample: index++,
           mode,
+          parallelScans,
+          scanDurationsMs: reports.map((r) => r.durationMs),
           workers,
           runtime: process.version,
           os: `${platform()} ${release()} ${arch()}`,
@@ -187,7 +231,7 @@ for (const scenario of [
           outcome: report.outcome,
           cacheHits,
           cacheMisses,
-          ...(diagnostics ? { diagnosticSummary } : {}),
+          ...(diagnostics ? { diagnosticSummaries } : {}),
           jobs,
           memory: "unavailable-in-process",
         };
