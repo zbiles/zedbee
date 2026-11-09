@@ -59,7 +59,7 @@ function Callouts({
                     : ZEDBEE_THEME.primary,
                 )}
               >
-                {line.value}
+                {line.value === "" ? " " : line.value}
               </Text>,
             ]
           : chunkTerminalCells(
