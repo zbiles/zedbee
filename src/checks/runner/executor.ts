@@ -31,6 +31,8 @@ import {
 } from "../../inspection/source-capture.js";
 
 export interface AnalyzerExecutionSession {
+  readonly executionMode?: "local" | "service";
+  readonly workerCount?: 1 | 2 | 4;
   run<R extends AnalyzerRequest>(
     request: R,
     options?: AnalyzerJobOptions,
@@ -67,6 +69,7 @@ interface Job extends WorkerJob {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: unknown) => void;
   readonly retainedBytes: number;
+  readonly queuedAt: number;
   cancel?: () => void;
   provisional?: Outcome | undefined;
 }
@@ -83,6 +86,10 @@ function affinity(request: AnalyzerRequest): string {
     : request.checkId;
 }
 class Session implements AnalyzerExecutionSession {
+  readonly executionMode = "local" as const;
+  get workerCount(): 1 | 2 | 4 {
+    return this.owner.concurrency;
+  }
   readonly id = randomUUID();
   closed = false;
   closing?: Promise<void>;
@@ -227,6 +234,7 @@ class LocalExecutor implements AnalyzerExecutor {
         resolve,
         reject,
         retainedBytes,
+        queuedAt: performance.now(),
         complete: (outcome) => this.settle(job, outcome),
       };
       job.cancel = () => {
@@ -313,6 +321,22 @@ class LocalExecutor implements AnalyzerExecutor {
             continue;
           }
           this.queue.splice(index, 1);
+          if (job.options.signal?.aborted || job.session.closed) {
+            this.settle(job, {
+              error: jobFailure(job.request, "cancellation"),
+            });
+            continue;
+          }
+          try {
+            job.options.onTiming?.(
+              "queue",
+              Math.min(
+                604800000,
+                Math.max(0, Math.round(performance.now() - job.queuedAt)),
+              ),
+            );
+          } catch {}
+          // Observers may synchronously abort or close their owning session.
           if (job.options.signal?.aborted || job.session.closed) {
             this.settle(job, {
               error: jobFailure(job.request, "cancellation"),

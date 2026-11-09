@@ -322,3 +322,35 @@ describe("service executor isolation", () => {
     }
   });
 });
+
+it("keeps measured concurrent service jobs isolated and observer failures harmless", async () => {
+  const { state, record } = await fixture();
+  const executor = executorForConnection(await connectService(state, record));
+  cleanups.push(() => executor.close());
+  const a = await executor.openSession(),
+    b = await executor.openSession();
+  const timingsA: { kind: string; ms: number }[] = [],
+    timingsB: { kind: string; ms: number }[] = [];
+  const values = await Promise.all([
+    a.run(request, {
+      onTiming: (kind, ms) => {
+        timingsA.push({ kind, ms });
+      },
+    }),
+    b.run(
+      { ...request, input: { ...request.input, source: "const b=2" } },
+      {
+        onTiming: (kind, ms) => {
+          timingsB.push({ kind, ms });
+          throw Error("observer");
+        },
+      },
+    ),
+  ]);
+  expect(values).toEqual(["const a = 1;\n", "const b = 2;\n"]);
+  for (const rows of [timingsA, timingsB]) {
+    expect(rows.map((r) => r.kind)).toEqual(["queue", "worker"]);
+    expect(rows.every((r) => r.ms >= 0)).toBe(true);
+  }
+  await Promise.all([a.close(), b.close()]);
+});

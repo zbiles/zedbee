@@ -299,10 +299,22 @@ export class SupervisedWorkerSlot {
       return;
     }
     if (
-      matchingIdentity(event, job, "result", ["response"]) &&
+      matchingIdentity(event, job, "result", ["response", "workerMs"]) &&
       job.provisional === undefined
     ) {
       try {
+        if (event.workerMs !== undefined) {
+          if (
+            typeof event.workerMs !== "number" ||
+            !Number.isSafeInteger(event.workerMs) ||
+            event.workerMs < 0 ||
+            event.workerMs > 604800000
+          )
+            throw Error("Invalid timing");
+          try {
+            job.options.onTiming?.("worker", event.workerMs);
+          } catch {}
+        }
         job.provisional = decodeWorkerResponse(job.request, event.response);
         if ("error" in job.provisional) this.stop(job.provisional.error);
       } catch {

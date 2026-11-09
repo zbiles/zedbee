@@ -1,3 +1,4 @@
+import { recordPerformance } from "../diagnostics/scan-performance.js";
 import {
   analyzerRequestRetentionBytes,
   exactFields,
@@ -51,26 +52,57 @@ export function executorForConnection(
       let released = false,
         release: Promise<void> | undefined;
       const session: AnalyzerExecutionSession = {
+        executionMode: "service",
         async run<R extends AnalyzerRequest>(
           request: R,
           options: AnalyzerJobOptions = {},
         ): Promise<AnalyzerResult<R>> {
           if (released || closed) throw new ServiceUnavailableError();
           const signal = options.signal;
-          if (!exactFields(options, ["signal"]))
+          const onTiming = options.onTiming;
+          if (!exactFields(options, ["signal", "onTiming"]))
             throw new ServiceUnavailableError();
           analyzerRequestRetentionBytes(request);
           const captured = structuredClone(request);
           validateAnalyzerRequest(captured);
-          return validateAnalyzerResult(
+          const measured = onTiming !== undefined;
+          const serviceStarted = performance.now();
+          const response = await client.request(
+            measured ? "run-measured" : "run",
+            { sessionId, request: captured },
+            signal,
             captured,
-            await client.request(
-              "run",
-              { sessionId, request: captured },
-              signal,
-              captured,
-            ),
           );
+          recordPerformance({
+            checkId: request.checkId,
+            kind: "service",
+            durationMs: performance.now() - serviceStarted,
+          });
+          if (!measured) return validateAnalyzerResult(captured, response);
+          if (
+            !exactFields(response, ["result", "timings"]) ||
+            !Array.isArray(response.timings) ||
+            response.timings.length > 2
+          )
+            throw new ServiceUnavailableError();
+          for (const timing of response.timings) {
+            if (
+              !exactFields(timing, ["kind", "durationMs"]) ||
+              !["queue", "worker"].includes(timing.kind as string) ||
+              typeof timing.durationMs !== "number" ||
+              !Number.isSafeInteger(timing.durationMs) ||
+              timing.durationMs < 0 ||
+              timing.durationMs > 604800000
+            )
+              throw new ServiceUnavailableError();
+          }
+          const result = validateAnalyzerResult(captured, response.result);
+          for (const timing of response.timings) {
+            try {
+              onTiming?.(timing.kind, timing.durationMs);
+            } catch {}
+          }
+          return result;
         },
         close() {
           if (!release) {

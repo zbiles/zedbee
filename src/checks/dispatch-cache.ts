@@ -1,3 +1,4 @@
+import { recordPerformance } from "../diagnostics/scan-performance.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -158,12 +159,22 @@ export function createDispatchObservationCollector(
       !isCacheableObservationCheck(adapter.id) ||
       (options.cache === undefined && options.cacheEngineIdentity === undefined)
     ) {
+      recordPerformance({
+        checkId: adapter.id,
+        kind: "cache_bypass",
+        durationMs: 0,
+      });
       return sanitizeMessages(
         await Reflect.apply(adapter.collect, undefined, [runContext]),
       );
     }
     const engineIdentity = engineIdentityFor(adapter.id);
     if (engineIdentity === undefined) {
+      recordPerformance({
+        checkId: adapter.id,
+        kind: "cache_bypass",
+        durationMs: 0,
+      });
       return sanitizeMessages(
         await Reflect.apply(adapter.collect, undefined, [runContext]),
       );
@@ -171,6 +182,7 @@ export function createDispatchObservationCollector(
     let cacheKey: string | undefined;
     if (options.cache !== undefined) {
       try {
+        const preparationStarted = performance.now();
         const prepared = prepareCache();
         const checkId = adapter.id as CheckId;
         cacheKey = await prepared.cacheKeyFor({
@@ -204,7 +216,18 @@ export function createDispatchObservationCollector(
             ),
           },
         });
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "cache_prepare",
+          durationMs: performance.now() - preparationStarted,
+        });
+        const lookupStarted = performance.now();
         const cached = await options.cache.get(cacheKey).catch(() => undefined);
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "cache_lookup",
+          durationMs: performance.now() - lookupStarted,
+        });
         if (
           cached !== undefined &&
           cached.checkId === adapter.id &&
@@ -216,6 +239,11 @@ export function createDispatchObservationCollector(
               adapter.id === "deadCode" ? "knip" : false,
             ))
         ) {
+          recordPerformance({
+            checkId: adapter.id,
+            kind: "cache_hit",
+            durationMs: 0,
+          });
           return sanitizeMessages(sanitizeCacheableObservationSet(cached));
         }
       } catch {
@@ -223,6 +251,11 @@ export function createDispatchObservationCollector(
       }
     }
 
+    recordPerformance({
+      checkId: adapter.id,
+      kind: cacheKey === undefined ? "cache_bypass" : "cache_miss",
+      durationMs: 0,
+    });
     const collected = await sanitizeMessages(
       await Reflect.apply(adapter.collect, undefined, [runContext]),
     );
