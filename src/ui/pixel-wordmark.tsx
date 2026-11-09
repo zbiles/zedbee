@@ -44,7 +44,21 @@ export function pixelWordmarkHeight(compact: boolean): number {
   return compact ? Math.ceil(WORDMARK_GRID.length / 2) : WORDMARK_GRID.length;
 }
 
-export function PlainWordmark({ color }: { color: boolean }) {
+export function PlainWordmark({
+  color,
+  inline = false,
+}: {
+  color: boolean;
+  inline?: boolean;
+}) {
+  if (inline)
+    return (
+      <Text bold>
+        <Text {...colorProp(color, ZEDBEE_THEME.wordmark)}>ZEDBEE</Text>
+        <Text> </Text>
+        <Text {...colorProp(color, ZEDBEE_THEME.yellow)}>SWARM</Text>
+      </Text>
+    );
   return (
     <Box flexDirection="column" height={3}>
       <Text bold {...colorProp(color, ZEDBEE_THEME.wordmark)}>

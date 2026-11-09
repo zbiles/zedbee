@@ -568,10 +568,17 @@ export function LiveDashboard({
   const horizontalPadding = narrowFrame ? 1 : 3;
   const contentWidth = Math.max(1, frameWidth - 4 - horizontalPadding);
   const panelWidth = wide ? Math.floor((contentWidth - 2) / 2) : contentWidth;
-  const brandHeight = narrowFrame ? 3 : pixelWordmarkHeight(compactBrand);
+  const inlineBrand = narrowFrame && frameWidth - 7 >= 12;
+  const brandHeight = narrowFrame
+    ? inlineBrand
+      ? 1
+      : 3
+    : pixelWordmarkHeight(compactBrand);
   const beeTop = 0;
   const brandWidth = narrowFrame
-    ? "ZEDBEE".length
+    ? inlineBrand
+      ? "ZEDBEE SWARM".length
+      : "ZEDBEE".length
     : pixelWordmarkWidth(compactBrand);
   const brandGroupWidth =
     brandWidth + (showBrandBee ? 2 + pixelBeeWidth(compactBrand) : 0);
@@ -640,6 +647,7 @@ export function LiveDashboard({
           <Box
             height={brandHeight}
             justifyContent="center"
+            marginLeft={inlineBrand ? -1 : 0}
             marginTop={showBrandBee ? 2 : 1}
             marginBottom={showBrandBee ? 2 : 1}
           >
@@ -649,7 +657,7 @@ export function LiveDashboard({
               height={brandHeight}
             >
               {narrowFrame ? (
-                <PlainWordmark color={color} />
+                <PlainWordmark color={color} inline={inlineBrand} />
               ) : (
                 <PixelWordmark color={color} compact={compactBrand} />
               )}
