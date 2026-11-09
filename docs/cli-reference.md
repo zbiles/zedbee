@@ -124,7 +124,7 @@ Doctor checks snapshot filesystem creation and cleanup separately from backgroun
 
 Zedbee's supported v1 interface is its command-line interface. The package also exports TypeScript and JavaScript functions for programmatic use, but that API is experimental: its names, types, and behavior may change between releases without the normal compatibility guarantees. Do not build a production integration around it yet. Feedback about intended API uses is welcome; see the package exports and generated declarations for the current surface.
 
-`runScan({ repositoryRoot })` owns and closes a local executor. It does not start the CLI service. An explicit executor can be reused across calls; each call still captures a fresh source epoch, closes its own session, and preserves configuration, attribution and cache validation. The caller must close the executor, including after cancellation or errors:
+`runScan({ repositoryRoot })` owns and closes a local executor. It does not start the CLI service. An explicit executor can be reused across calls; each call selects fresh snapshots and preserves configuration, attribution and cache validation. When analyzer jobs are selected, it captures a fresh source epoch and closes its own session. The caller must close the executor, including after cancellation or errors:
 
 ```js
 import { createLocalAnalyzerExecutor, runScan } from "zedbee";
@@ -258,6 +258,24 @@ The optional root configuration is `.zedbeerc.jsonc`. It is data, not executable
 
 Profiles are `fast`, `recommended`, and `thorough`. A check can use severity `off`, `warn`, or `error`, and timing `relevant` or `always`. Exactly seven configurable checks expose additional managed settings: `formatting`, `lint`, `cyclomaticComplexity`, `readabilityComplexity`, `duplication`, `reactCorrectness`, and `reactAccessibility`. The complete option tables, defaults, rule boundaries, and override examples are in the [check guide](checks.md).
 
+`relevant` selects checks from their actual inputs in the selected snapshots.
+Ordinary Python, documentation and `.gitignore` changes skip TypeScript and typed
+lint when source/configuration metadata proves they are unrelated. Source
+changes, JSON/JSONC, dependency inputs and compiler configuration still select
+project comparison, including unchanged consumers across TypeScript workspaces.
+Custom inherited configuration filenames, unknown inputs and incomplete metadata
+retain conservative analysis. Policy edits can also select compiler work even
+when they only change reporting. `always` retains supported full project
+comparisons for unrelated nonempty changesets.
+
+Under recommended defaults with managed formatting, Python edits select secrets;
+an ordinary `.gitignore` edit plus a Markdown deletion also selects only secrets.
+A Markdown deletion alone starts no analyzer jobs, while a Markdown edit selects
+formatting and secrets. `.gitignore` is text and can contain a secret. Project
+formatter plugins, profiles and policy overrides can change selection; see the
+[check selection details](checks.md). A skipped check has not analyzed and passed
+its inputs.
+
 Overrides are evaluated in array order for each repository-relative file. Every matching patch is applied, and a later matching override takes precedence for the fields it supplies. This is true per-file behavior: two selected target files in the same workspace can receive different formatting, rule, complexity, severity, and timing policy. Duplication is the exception because jscpd compares a workspace as a whole; its `threshold`, `minLines`, `minTokens`, and `mode` settings are workspace-wide and are rejected in file overrides.
 
 `pathExclusions` suppresses named checks for exact files or directory globs. Each entry must include at least one repository-relative path, at least one check ID, and a short reason. Exclusions are applied after file overrides, so a matching exclusion always wins for the named checks. Patterns use forward slashes and support ordinary `*`, `**`, and `?` matching; absolute paths, parent traversal, negation, braces, and extended globs are rejected. Other checks still inspect the path. JSON reports include the configured exclusions and identify the ones that matched the selected changes.
@@ -375,9 +393,9 @@ npx zedbee scan --format sarif > zedbee.sarif
 npx zedbee scan --format text --include-source > zedbee-report-with-source.txt
 ```
 
-Automatic scans use branded Ink in a wide ordinary TTY. Narrow terminals, redirected output, CI, `TERM=dumb`, and screen-reader output use a linear ANSI-free result. Every automatic scan writes a complete versioned temporary JSON report, even on pass with zero findings. Its path appears in the opening and closing complete-report lines around the final result, and only after the file exists. Fixing only the visible preview is insufficient—process every finding in the complete report.
+Automatic scans use branded Ink in a wide ordinary TTY. Narrow terminals, redirected output, CI, `TERM=dumb`, and screen-reader output use a linear ANSI-free result. Every automatic scan writes a complete versioned temporary JSON report, even on pass with zero findings. Its path appears in the opening and closing complete-report lines, and only after the file exists. In branded automatic output, the closing `AGENT NEXT STEP` guidance and `COMPLETE REPORT` path appear in a `NEXT STEPS` panel after `SCAN RESULT`, inside the yellow frame. Opening guidance remains above the frame; the complete closing path wraps within its panel. Configured guidance is preserved for every outcome, including a pass. Fixing only the visible preview is insufficient—process every finding in the complete report.
 
-Automatic output and explicit `--format ink` show at most `reporting.terminalFindingLimit` findings; blockers appear first. Explicit Ink writes a temporary report only when its finding preview overflows. If an automatic or overflowed Ink report cannot be retained safely, Zedbee shows every finding, omits report paths and configured guidance, preserves the canonical scan outcome, and prints the fixed `REPORT UNAVAILABLE` alert at both the top and bottom. Any `REPORT DELIVERY WARNING` is a detail panel, not that fixed alert.
+Automatic output and explicit `--format ink` show at most `reporting.terminalFindingLimit` findings; blockers appear first. Explicit Ink writes a temporary report only when its finding preview overflows. If an automatic or overflowed Ink report cannot be retained safely, Zedbee shows every finding, omits report paths and configured guidance, preserves the canonical scan outcome, and prints the fixed `REPORT UNAVAILABLE` alert at both the top and bottom. The closing alert occupies `NEXT STEPS` in the branded automatic dashboard. A dashboard without closing callouts omits that panel. Any `REPORT DELIVERY WARNING` is a detail panel, not that fixed alert.
 
 Explicit `--format text`, `--format json`, and `--format sarif` output remains complete, has no finding cap, and writes no sidecar. Redirect an explicit format when you need a durable saved location. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](reporting.md) for the full contract, including incomplete-scan notifications, retention, and source-excerpt behavior.
 
@@ -430,6 +448,13 @@ Ordinary `git rebase` and `git cherry-pick` operations do not run Zedbee's pre-c
 Zedbee may cache content-addressed, normalized observations for audited local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript and lint capture their dependency files and resolution state; Knip captures its permitted snapshot inputs and package-absence guards. These inputs are checked again before saved findings are reused. Incomplete metadata prevents saving or reusing a result, and unknown checks default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never stored in the observation cache. Cached and uncached reports are required to remain semantically identical.
 
 Scan time depends on project size, enabled checks, baseline comparison, and validated cache reuse. A running service does not mean every analyzer remains loaded: some engines retire after a session or snapshot side. These lifecycle choices do not guarantee faster scans. See [safe analyzer diagnostics](reporting.md#safe-analyzer-diagnostics) to investigate a slow or incomplete job.
+
+Check selection precedes analyzer startup and source capture. An eligible scan
+with no jobs opens no analyzer session; a secrets-only scan captures changed files
+and their baseline or rename counterparts. Git selection, configuration checks,
+snapshot safety checks and project inspection still take time. Reported elapsed
+check durations can include worker waiting and are not measurements of analyzer
+CPU time.
 
 ## Current coverage
 

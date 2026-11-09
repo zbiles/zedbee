@@ -28,11 +28,13 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "captured-inputs-v3-diff-project-coverage+diagnostic-privacy-v1",
+    revision:
+      "captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
-    revision: "captured-inputs-v4-diff-project-coverage+diagnostic-privacy-v1",
+    revision:
+      "captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),

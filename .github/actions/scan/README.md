@@ -8,7 +8,7 @@ Run a committed pull-request scan using a pinned Zedbee GitHub release. The call
 - name: Scan committed pull-request changes
   uses: zbiles/zedbee/.github/actions/scan@f8f33d26372cbc806cd89692c664554b1c516fb7
   with:
-    version: 0.1.0-beta.12
+    version: 0.1.0-beta.15
     base-ref: ${{ github.event.pull_request.base.sha }}
     report-format: sarif
 ```

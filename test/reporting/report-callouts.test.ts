@@ -29,6 +29,7 @@ describe("buildReportCallouts", () => {
       opening: [
         { kind: "text", value: "AGENT GUIDANCE" },
         { kind: "text", value: "Read the complete report." },
+        { kind: "text", value: "" },
         { kind: "text", value: "COMPLETE REPORT" },
         {
           kind: "report-path",
@@ -38,6 +39,7 @@ describe("buildReportCallouts", () => {
       closing: [
         { kind: "text", value: "AGENT NEXT STEP" },
         { kind: "text", value: "Resolve blocking findings." },
+        { kind: "text", value: "" },
         { kind: "text", value: "COMPLETE REPORT" },
         {
           kind: "report-path",

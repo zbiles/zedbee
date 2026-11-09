@@ -1,6 +1,9 @@
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
-import { hasTypeScriptInputs } from "../compiler-inputs.js";
+import {
+  compilerInputRelevance,
+  hasTypeScriptInputs,
+} from "../compiler-inputs.js";
 import { resolve } from "node:path";
 import * as ts from "typescript";
 import { settleSnapshotSides } from "../settle-snapshot-sides.js";
@@ -159,7 +162,15 @@ export const typescriptAdapter: ObservationCheckAdapter = {
         target: context.target,
         ...pairTypescriptObservations(baseline, target, context.changeSet),
         // A declaration edit can break references on otherwise unchanged lines.
-        projectDelta: !context.changeSet.isEmpty,
+        projectDelta:
+          !context.changeSet.isEmpty &&
+          (context.policy.when === "always" ||
+            (
+              await compilerInputRelevance(
+                context,
+                workspaceFor(context.targetInspection, context.target)!,
+              )
+            ).relevant),
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
       };
     } catch (error) {

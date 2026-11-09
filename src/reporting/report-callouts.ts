@@ -38,6 +38,7 @@ function availableCallout(
       : [
           Object.freeze({ kind: "text" as const, value: heading }),
           Object.freeze({ kind: "text" as const, value: guidance }),
+          Object.freeze({ kind: "text" as const, value: "" }),
         ]),
     Object.freeze({ kind: "text" as const, value: "COMPLETE REPORT" }),
     Object.freeze({ kind: "report-path" as const, path }),

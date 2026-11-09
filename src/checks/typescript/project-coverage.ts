@@ -52,6 +52,7 @@ export function createSnapshotProjectCoverage(
         context.repositoryRoot,
         workspace,
         dependencies,
+        checkId,
       ).catch((error: unknown) => {
         throw (
           configurationIncompleteError(error, checkId, side, operation) ?? error

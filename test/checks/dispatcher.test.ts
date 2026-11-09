@@ -16,7 +16,11 @@ import type {
   ObservationCheckAdapter,
 } from "../../src/checks/adapter.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
-import { dispatchChecks } from "../../src/checks/dispatcher.js";
+import {
+  dispatchChecks,
+  prepareCheckDispatch,
+  executePreparedCheckDispatch,
+} from "../../src/checks/dispatcher.js";
 import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
@@ -2610,4 +2614,40 @@ describe("dispatchChecks", () => {
     expect(execution?.result.error?.code).toBe("FIX_PROVIDER_FAILED");
     expect(execution?.fixCandidates).toBeUndefined();
   });
+});
+
+it("prepares adapter selection once without collecting until execution", async () => {
+  const context = createContext(createConfig({ lint: "error" }));
+  let inspections = 0;
+  let collections = 0;
+  const adapter: ObservationCheckAdapter = {
+    id: "lint",
+    output: "observations",
+    async inspect() {
+      inspections++;
+      return {
+        applies: true,
+        executionClass: "project-analysis",
+        requiresBaseline: true,
+        targets: [{ id: ".", kind: "workspace", relativeRoot: "." }],
+      };
+    },
+    async collect(run) {
+      collections++;
+      return {
+        checkId: "lint",
+        target: run.target,
+        baselineObservations: [],
+        targetObservations: [],
+      };
+    },
+  };
+  const plan = await prepareCheckDispatch([adapter], context);
+  expect(plan.hasJobs).toBe(true);
+  expect(inspections).toBe(1);
+  expect(collections).toBe(0);
+  const result = await executePreparedCheckDispatch(plan);
+  expect(result[0]?.result.status).toBe("completed");
+  expect(inspections).toBe(1);
+  expect(collections).toBe(1);
 });

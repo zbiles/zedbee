@@ -12,9 +12,12 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../inspection/types.js";
-import type { CheckTarget } from "./adapter.js";
+import type { CheckTarget, InspectionContext } from "./adapter.js";
 import { isFormattingCandidate } from "./prettier/supported-path.js";
-import { compilerInputsMayHaveChanged } from "./compiler-inputs.js";
+import {
+  compilerInputRelevance,
+  hasTypeScriptInputs,
+} from "./compiler-inputs.js";
 
 const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
@@ -145,14 +148,15 @@ function actualRelevantPaths(
   );
 }
 
-export function shouldScheduleTarget(
+export async function shouldScheduleTarget(
   checkId: CheckId,
   target: CheckTarget,
   targetPolicy: Readonly<ResolvedCheckPolicy>,
-  inspection: RepositoryInspection,
-  changeSet: ChangeSet,
+  context: InspectionContext,
   policyForFile: FilePolicyResolver,
-): boolean {
+): Promise<boolean> {
+  const inspection = context.targetInspection;
+  const changeSet = context.changeSet;
   if (!FILE_SCOPED_CHECKS.has(checkId)) {
     return targetPolicy.severity !== "off";
   }
@@ -164,9 +168,15 @@ export function shouldScheduleTarget(
   );
   const compilerInputChange =
     checkId === "lint" &&
-    targetWorkspaces(target, inspection).some((workspace) =>
-      compilerInputsMayHaveChanged(workspace, changeSet),
-    );
+    (
+      await Promise.all(
+        targetWorkspaces(target, inspection).map(
+          async (workspace) =>
+            hasTypeScriptInputs(workspace) &&
+            (await compilerInputRelevance(context, workspace)).relevant,
+        ),
+      )
+    ).some(Boolean);
   return actualRelevantPaths(checkId, target, inspection, changeSet).some(
     (path) => {
       if (
@@ -188,23 +198,26 @@ export function shouldScheduleTarget(
   );
 }
 
-export function resolveScheduledTargetPolicy(
+export async function resolveScheduledTargetPolicy(
   config: ResolvedConfig,
   checkId: CheckId,
   target: CheckTarget,
-  inspection: RepositoryInspection,
-  changeSet: ChangeSet,
+  context: InspectionContext,
   policyForFile: FilePolicyResolver,
-): Readonly<ResolvedCheckPolicy> | undefined {
-  const policy = resolveTargetPolicy(config, checkId, target, inspection);
-  return shouldScheduleTarget(
+): Promise<Readonly<ResolvedCheckPolicy> | undefined> {
+  const policy = resolveTargetPolicy(
+    config,
+    checkId,
+    target,
+    context.targetInspection,
+  );
+  return (await shouldScheduleTarget(
     checkId,
     target,
     policy,
-    inspection,
-    changeSet,
+    context,
     policyForFile,
-  )
+  ))
     ? policy
     : undefined;
 }

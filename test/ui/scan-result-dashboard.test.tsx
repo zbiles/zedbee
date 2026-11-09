@@ -1,6 +1,9 @@
 import { render } from "ink-testing-library";
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it } from "vitest";
 import type { TerminalPresentation } from "../../src/reporting/presentation.js";
+import { terminalCellWidth } from "../../src/renderers/terminal-cells.js";
+import type { ScanReport } from "../../src/scan/report.js";
 import { ScanResultDashboard } from "../../src/ui/scan-result-dashboard.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
 
@@ -138,7 +141,7 @@ describe("ScanResultDashboard", () => {
     expect(output).not.toMatch(/staged/iu);
   });
 
-  it("keeps generated managed-fix guidance out of the permanent post-frame callout", () => {
+  it("keeps generated managed-fix guidance out of the closing next-steps panel", () => {
     const finding = createFinding({
       id: "fixable",
       check: "lint",
@@ -182,7 +185,7 @@ describe("ScanResultDashboard", () => {
     expect(output).not.toContain("npx --no-install zedbee fix lint");
   });
 
-  it("frames a passing result and prints the complete report above and below", () => {
+  it("frames a passing result with opening report information and closing next steps", () => {
     const output = dashboard(
       createReport({
         presentationPolicy: {
@@ -207,10 +210,132 @@ describe("ScanResultDashboard", () => {
       "AGENT GUIDANCE",
       "COMPLETE REPORT",
       "SCAN RESULT",
+      "NEXT STEPS",
       "AGENT NEXT STEP",
       "COMPLETE REPORT",
     ]);
   });
+
+  for (const width of [40, 80, 120]) {
+    for (const color of [false, true]) {
+      it.each([
+        ["pass", {}],
+        [
+          "warnings",
+          {
+            summary: {
+              passed: 1,
+              failed: 0,
+              warnings: 1,
+              incomplete: 0,
+              findings: [],
+            },
+          },
+        ],
+        ["blocked", { outcome: "blocked", exitCode: 1 }],
+        ["incomplete", { outcome: "incomplete", exitCode: 2 }],
+        ["no changes", { changedFileCount: 0, checks: [] }],
+        [
+          "all checks skipped",
+          {
+            checks: [
+              {
+                checkId: "types",
+                status: "skipped",
+                durationMs: 0,
+                findings: [],
+                skipReason: "No relevant inputs.",
+              },
+            ],
+          },
+        ],
+      ] satisfies [string, Partial<ScanReport>][])(
+        `contains closing guidance and every opaque path character for %s at ${width} cells (color: ${color})`,
+        (_state, overrides) => {
+          const path =
+            '/private/var/folders/temporary reports/分析/e\u0301/"quoted"/\\reports/' +
+            "long-report-directory/".repeat(5) +
+            "complete.json";
+          const output = stripVTControlCharacters(
+            dashboard(
+              createReport({
+                ...overrides,
+                presentationPolicy: {
+                  terminalFindingLimit: 25,
+                  temporaryReportMaxAge: "24h",
+                  persistSourceExcerpts: false,
+                  agentGuidance: {
+                    opening: "Read the complete report.",
+                    nextStep:
+                      "Apply the configured next step after reviewing this result.",
+                  },
+                },
+              }),
+              presentation({ reportPath: path }),
+              { width, color },
+            ),
+          );
+          expectOrder(output, [
+            "AGENT GUIDANCE",
+            "COMPLETE REPORT",
+            "SCAN RESULT",
+            "NEXT STEPS",
+            "AGENT NEXT STEP",
+            "COMPLETE REPORT",
+          ]);
+          expectPanelsTouch(output, "SCAN RESULT", "NEXT STEPS");
+          expectBlankRowAfterPanelHeading(output, "NEXT STEPS");
+          const lines = output.split("\n");
+          const heading = lines.findIndex((line) =>
+            line.includes("NEXT STEPS"),
+          );
+          const bottom = lines.findIndex(
+            (line, index) => index > heading && line.includes("└"),
+          );
+          const closingLines = lines.slice(heading + 3, bottom);
+          for (const line of closingLines) {
+            expect(line).toMatch(/^ ██.*│.*│.*██ *$/u);
+          }
+          const content = closingLines.map((line) =>
+            line.slice(line.indexOf("│") + 1, line.lastIndexOf("│")).trim(),
+          );
+          const reportLabel = content.indexOf("COMPLETE REPORT");
+          expect(content.slice(0, reportLabel).join(" ")).toContain(
+            "Apply the configured next step after reviewing this result.",
+          );
+          expect(content.slice(reportLabel + 1).join("")).toBe(
+            JSON.stringify(path).replaceAll(" ", "\\u0020"),
+          );
+          expect(output.match(/AGENT NEXT STEP/gu)).toHaveLength(1);
+          expect(output.match(/COMPLETE REPORT/gu)).toHaveLength(2);
+          const frameBottom = lines.findIndex(
+            (line, index) => index > bottom && /^ █+ *$/u.test(line),
+          );
+          expect(frameBottom).toBeGreaterThan(bottom);
+          expect(
+            lines
+              .slice(frameBottom + 1)
+              .join("")
+              .trim(),
+          ).toBe("");
+          expect(Math.max(...lines.map(terminalCellWidth))).toBeLessThanOrEqual(
+            width,
+          );
+        },
+      );
+    }
+  }
+
+  it.each([{ automatic: false }, { reportStatus: "not-requested" as const }])(
+    "omits the next-steps panel when no closing callouts are requested: %j",
+    (overrides) => {
+      const output = dashboard(createReport(), presentation(overrides));
+      expect(output).toContain("SCAN RESULT");
+      expect(output).not.toContain("NEXT STEPS");
+      expect(output).not.toContain("AGENT NEXT STEP");
+      expect(output).not.toContain("COMPLETE REPORT");
+    },
+  );
 
   it("separates blocking and warning findings while retaining finding detail", () => {
     const blocking = createFinding({
@@ -506,6 +631,18 @@ describe("ScanResultDashboard", () => {
     );
 
     expect(output.match(/REPORT UNAVAILABLE/gu)).toHaveLength(2);
+    expectOrder(output, [
+      "REPORT UNAVAILABLE",
+      "SCAN RESULT",
+      "NEXT STEPS",
+      "REPORT UNAVAILABLE",
+    ]);
+    const closing = output.slice(output.indexOf("NEXT STEPS"));
+    expect(closing).toContain(
+      "The terminal output is the complete source of truth.",
+    );
+    expect(closing).not.toContain("AGENT NEXT STEP");
+    expect(closing).not.toContain("COMPLETE REPORT");
     expect(output).toContain("first-rule");
     expect(output).toContain("second-rule");
     expect(output).not.toContain("complete.json");
@@ -538,6 +675,11 @@ describe("ScanResultDashboard", () => {
     expect(openingBlank).toContain("AGENT NEXT STEP");
     expect(nextStepBlank).toContain("AGENT GUIDANCE");
     expect(nextStepBlank).not.toContain("AGENT NEXT STEP");
+    expectOrder(nextStepBlank, [
+      "SCAN RESULT",
+      "NEXT STEPS",
+      "COMPLETE REPORT",
+    ]);
     expect(openingBlank.match(/COMPLETE REPORT/gu)).toHaveLength(2);
     expect(nextStepBlank.match(/COMPLETE REPORT/gu)).toHaveLength(2);
   });

@@ -1,9 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { stripVTControlCharacters } from "node:util";
 import {
   executeScanCommand,
   type ScanCommandDependencies,
 } from "../../src/commands/scan.js";
 import { createFinding, createReport } from "../helpers/scan-report.js";
+import { openInkSession } from "../../src/ui/render-ink.js";
 
 const acquire = vi.hoisted(() => vi.fn());
 vi.mock("../../src/service/client.js", async (original) => ({
@@ -13,6 +15,109 @@ vi.mock("../../src/service/client.js", async (original) => ({
 afterEach(() => acquire.mockReset());
 
 describe("controller-owned scan rendering", () => {
+  it("retains one framed closing callout after the automatic live session closes", async () => {
+    const output: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(((
+      ...args: unknown[]
+    ) => {
+      output.push(String(args[0] ?? ""));
+      const callback = args.find((value) => typeof value === "function");
+      if (typeof callback === "function")
+        queueMicrotask(callback as () => void);
+      return true;
+    }) as typeof process.stdout.write);
+    let closes = 0;
+    let afterFinish = "";
+    let afterClose = "";
+    try {
+      const report = createReport({
+        presentationPolicy: {
+          terminalFindingLimit: 25,
+          temporaryReportMaxAge: "24h",
+          persistSourceExcerpts: false,
+          agentGuidance: {
+            opening: "Read the complete report.",
+            nextStep: "Use the configured next step.",
+          },
+        },
+      });
+      const exit = await executeScanCommand(
+        { cwd: "/repo", format: "auto", color: false, animations: false },
+        {
+          stdinIsTTY: true,
+          stdoutIsTTY: true,
+          width: 120,
+          env: {},
+          writeStdout: (value) => {
+            output.push(value);
+          },
+          writeStderr() {},
+        },
+        {
+          resolveRepositoryRoot: async () => "/repo",
+          scan: async () => report,
+          preparePresentation: async () => ({
+            automatic: true,
+            reportStatus: "available",
+            findings: [],
+            totalFindingCount: 0,
+            abbreviated: false,
+            reportPath:
+              "/private/tmp/zedbee-reports/synthetic-session/complete.json",
+            maximumAge: "24h",
+            warnings: [],
+          }),
+          openInk: async (options, onError) => {
+            const session = await openInkSession(options, onError, {
+              interactive: false,
+            });
+            return {
+              update: session.update,
+              async finish(result, shown) {
+                await session.finish(result, shown);
+                afterFinish = output.join("");
+              },
+              async close() {
+                closes++;
+                await session.close();
+                afterClose = output.join("");
+              },
+            };
+          },
+        },
+      );
+      expect(exit).toBe(0);
+      expect(closes).toBe(1);
+      expect(afterClose).toBe(afterFinish);
+      const final = stripVTControlCharacters(afterClose).slice(
+        stripVTControlCharacters(afterClose).indexOf("SCAN RESULT"),
+      );
+      expect(final).toContain("NEXT STEPS");
+      expect(final.match(/AGENT NEXT STEP/gu)).toHaveLength(1);
+      expect(final.match(/COMPLETE REPORT/gu)).toHaveLength(1);
+      expect(final).toContain("Use the configured next step.");
+      expect(final).toContain(
+        '"/private/tmp/zedbee-reports/synthetic-session/complete.json"',
+      );
+      const bottom = final
+        .split("\n")
+        .findIndex((line) => /^ █+ *$/u.test(line));
+      expect(bottom).toBeGreaterThan(0);
+      expect(
+        final
+          .split("\n")
+          .slice(bottom + 1)
+          .join("")
+          .trim(),
+      ).toBe("");
+      expect(
+        stripVTControlCharacters(afterClose).match(/COMPLETE REPORT/gu),
+      ).toHaveLength(2);
+    } finally {
+      stdout.mockRestore();
+    }
+  });
+
   it.each([false, true])(
     "reports cleanup failure once when a completed report already has cleanup failure: %s",
     async (alreadyFailed) => {

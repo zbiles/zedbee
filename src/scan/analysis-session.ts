@@ -7,7 +7,12 @@ import {
 import { withAnalyzerExecutionSession } from "../checks/runner/session.js";
 import type { CheckAdapter, CheckExecutionResult } from "../checks/adapter.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../checks/descriptors.js";
-import { dispatchChecks, type DispatchOptions } from "../checks/dispatcher.js";
+import {
+  dispatchChecks,
+  prepareCheckDispatch,
+  executePreparedCheckDispatch,
+  type DispatchOptions,
+} from "../checks/dispatcher.js";
 import type { ScanEvent, ScanPhase } from "../checks/events.js";
 import {
   loadConfigFromCommit,
@@ -382,7 +387,6 @@ export async function withAnalysisSession<T>(
       }
       session = { kind: "empty", config, git, signal, changeSet };
     } else {
-      options.executor?.prepare?.();
       enterPhase("snapshot-construction");
       snapshots =
         baseComparison === undefined
@@ -496,44 +500,82 @@ export async function withAnalysisSession<T>(
           },
         );
         signal.throwIfAborted();
+        const dispatchContext = {
+          repositoryRoot: options.repositoryRoot,
+          changeSet,
+          config,
+          snapshots: snapshots!,
+          baselineInspection,
+          targetInspection,
+          signal,
+          policyForFile,
+          ...(options.projectPrettierTrust === true
+            ? { projectPrettierTrust: true }
+            : {}),
+        };
+        const dispatchOptions = options.dispatchOptions?.();
         state.phase = "dispatch";
-        announcePhase("source-capture");
-        executor = options.executor ?? createLocalAnalyzerExecutor();
-        executionCleanupProved = false;
-        execution = await executor.openSession({
-          sourceSelections: [baselineInspection, targetInspection].map(
-            (inspection) => ({
-              snapshotRoot: inspection.snapshotRoot,
-              paths: [
-                ...new Set(
-                  inspection.workspaces.flatMap(
-                    (workspace) => workspace.sourceFiles,
-                  ),
-                ),
-              ],
-            }),
-          ),
-        });
+        const prepared =
+          dependencies.dispatch === dispatchChecks
+            ? await prepareCheckDispatch(
+                dependencies.adapters,
+                dispatchContext,
+                dispatchOptions,
+              )
+            : undefined;
+        if (prepared === undefined || prepared.hasJobs) {
+          announcePhase("source-capture");
+          options.executor?.prepare?.();
+          executor = options.executor ?? createLocalAnalyzerExecutor();
+          executionCleanupProved = false;
+          const secretsOnly =
+            prepared !== undefined &&
+            prepared.scheduledTargets.every(
+              ({ checkId }) => checkId === "secrets",
+            );
+          execution = await executor.openSession({
+            sourceSelections: [baselineInspection, targetInspection].map(
+              (inspection, side) => ({
+                snapshotRoot: inspection.snapshotRoot,
+                paths: secretsOnly
+                  ? [
+                      ...new Set(
+                        [...changeSet.files.values()]
+                          .filter(
+                            (file) =>
+                              file.status !== "deleted" &&
+                              (side === 1 || file.status !== "added"),
+                          )
+                          .map((file) =>
+                            side === 0
+                              ? (file.previousPath ?? file.path)
+                              : file.path,
+                          ),
+                      ),
+                    ]
+                  : [
+                      ...new Set(
+                        inspection.workspaces.flatMap(
+                          (workspace) => workspace.sourceFiles,
+                        ),
+                      ),
+                    ],
+              }),
+            ),
+          });
+        }
         enterPhase("dispatch");
-        const executions = await withAnalyzerExecutionSession(execution, () =>
-          dependencies.dispatch(
-            dependencies.adapters,
-            {
-              repositoryRoot: options.repositoryRoot,
-              changeSet,
-              config,
-              snapshots: snapshots!,
-              baselineInspection,
-              targetInspection,
-              signal,
-              policyForFile,
-              ...(options.projectPrettierTrust === true
-                ? { projectPrettierTrust: true }
-                : {}),
-            },
-            options.dispatchOptions?.(),
-          ),
-        );
+        const dispatch = () =>
+          prepared === undefined
+            ? dependencies.dispatch(
+                dependencies.adapters,
+                dispatchContext,
+                dispatchOptions,
+              )
+            : executePreparedCheckDispatch(prepared);
+        const executions = await (execution === undefined
+          ? dispatch()
+          : withAnalyzerExecutionSession(execution, dispatch));
         signal.throwIfAborted();
         session = {
           kind: "analyzed",

@@ -103,12 +103,12 @@ describe("managed check cache metadata", () => {
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("types"),
     ).toBe(
-      "typescript@6.0.3+captured-inputs-v4-diff-project-coverage+diagnostic-privacy-v1",
+      "typescript@6.0.3+captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1",
     );
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("lint"),
     ).toBe(
-      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v3-diff-project-coverage+diagnostic-privacy-v1",
+      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1",
     );
   });
 

@@ -412,7 +412,7 @@ describe("shared analysis session", () => {
   });
 
   it.each([false, true])(
-    "prepares only after nonempty discovery and before snapshots (snapshot fails: %s)",
+    "prepares only after successful snapshots and inspection (snapshot fails: %s)",
     async (fails) => {
       const repository = await repositoryFixture();
       const local = createLocalAnalyzerExecutor();
@@ -453,8 +453,8 @@ describe("shared analysis session", () => {
         expect(outcome.completed).toBe(!fails);
         expect(order).toEqual(
           fails
-            ? ["prepare", "snapshot"]
-            : ["prepare", "snapshot", "inspection", "inspection", "open"],
+            ? ["snapshot"]
+            : ["snapshot", "inspection", "inspection", "prepare", "open"],
         );
       } finally {
         await local.close();

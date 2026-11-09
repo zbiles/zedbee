@@ -8,7 +8,10 @@ import {
   compilerPrograms,
 } from "./reuse-inputs.js";
 
+export type CompilerProgramPurpose = "types" | "lint" | "standalone";
+
 export interface SnapshotProgramInput {
+  readonly reusePurpose?: CompilerProgramPurpose;
   readonly repositoryRoot: string;
   readonly snapshotRoot?: string;
   readonly files: Readonly<Record<string, string>>;

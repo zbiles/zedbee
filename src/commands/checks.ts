@@ -241,17 +241,21 @@ async function inspectConfiguredChecks(
           Object.freeze({ ...context, config: inspectionConfig }),
         );
         const targets = applicability.applies
-          ? applicability.targets.filter(
-              (target) =>
-                resolveScheduledTargetPolicy(
-                  config,
-                  id,
-                  target,
-                  targetInspection,
-                  changeSet,
-                  policyForFile,
-                ) !== undefined,
-            )
+          ? (
+              await Promise.all(
+                applicability.targets.map(async (target) =>
+                  (await resolveScheduledTargetPolicy(
+                    config,
+                    id,
+                    target,
+                    context,
+                    policyForFile,
+                  )) !== undefined
+                    ? target
+                    : undefined,
+                ),
+              )
+            ).filter((target) => target !== undefined)
           : [];
         return [
           id,

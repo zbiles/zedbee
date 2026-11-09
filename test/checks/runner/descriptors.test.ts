@@ -127,7 +127,6 @@ describe("default managed execution descriptors", () => {
       "cyclomaticComplexity",
       "readabilityComplexity",
       "structuralSecurity",
-      "duplication",
     ]) {
       const adapter = createManagedAdapters().find(
         (adapter) => adapter.id === id,
@@ -144,6 +143,28 @@ describe("default managed execution descriptors", () => {
         ],
       });
     }
+    // Duplication's denominator includes unchanged sources, so removing a
+    // source can change the ratio in the workspace that retains its caller.
+    expect(
+      await createManagedAdapters()
+        .find((adapter) => adapter.id === "duplication")!
+        .inspect(input),
+    ).toMatchObject({
+      applies: true,
+      requiresBaseline: true,
+      targets: [
+        {
+          id: "packages/new",
+          kind: "workspace",
+          relativeRoot: "packages/new",
+        },
+        {
+          id: "packages/deleted",
+          kind: "workspace",
+          relativeRoot: "packages/deleted",
+        },
+      ],
+    });
     const deletedOnly = {
       ...input,
       changeSet: {

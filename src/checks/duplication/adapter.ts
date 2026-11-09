@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { execa } from "execa";
 import { isAnalyzerWorker } from "../runner/context.js";
 import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
-import { compareCodeUnits } from "../../core/compare.js";
+import { duplicationInputPaths } from "./input-paths.js";
 import type { NormalizedDuplicationReport } from "./types.js";
 import { loadDuplicationSources } from "./source-tokens.js";
 import { compareCloneOccurrences } from "./clone-comparison.js";
@@ -88,7 +88,6 @@ export async function createFallbackTokenHashes(
   return hashes;
 }
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const JSCPD_REPORT = "jscpd-report.json";
 
 function workspaceFor(
@@ -137,9 +136,7 @@ async function collectSide(
       files: [],
       root: canonicalRoot,
     };
-  const sourceFiles = workspace.sourceFiles
-    .filter((path) => SOURCE.test(path))
-    .sort(compareCodeUnits);
+  const sourceFiles = await duplicationInputPaths(inspection, workspace);
   if (sourceFiles.length === 0)
     return {
       report: { percentage: 0, clones: [] },

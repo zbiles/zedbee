@@ -92,11 +92,16 @@ export function BrandedCommandFrame({
   const narrowFrame = !showWordmark;
   const showBee =
     showWordmark && brandWidth + 2 + beeWidth <= availableBrandWidth;
-  const brandHeight = narrowFrame ? 3 : pixelWordmarkHeight(compactBrand);
+  const inlineBrand = narrowFrame && availableBrandWidth >= 12;
+  const brandHeight = narrowFrame
+    ? inlineBrand
+      ? 1
+      : 3
+    : pixelWordmarkHeight(compactBrand);
   const beeTop = 0;
   const brandGroupWidth = showWordmark
     ? brandWidth + (showBee ? 2 + beeWidth : 0)
-    : Math.min(availableBrandWidth, 6);
+    : Math.min(availableBrandWidth, inlineBrand ? 12 : 6);
 
   return (
     <Box width={width} paddingLeft={1} paddingRight={1} paddingTop={2}>
@@ -125,6 +130,7 @@ export function BrandedCommandFrame({
             <Box
               height={brandHeight}
               justifyContent="center"
+              marginLeft={inlineBrand ? -1 : 0}
               marginTop={2}
               marginBottom={2}
             >
@@ -136,7 +142,7 @@ export function BrandedCommandFrame({
                 {showWordmark ? (
                   <PixelWordmark color={color} compact={compactBrand} />
                 ) : (
-                  <PlainWordmark color={color} />
+                  <PlainWordmark color={color} inline={inlineBrand} />
                 )}
                 {showBee ? (
                   <Box position="absolute" left={brandWidth + 2} top={beeTop}>
