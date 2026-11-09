@@ -254,3 +254,9 @@ Compared with: 2026-09-30T20:21:15.475Z — MacBook / Apple M5 Max / 128 GiB.
 | monorepo / Structural security (collection) | -0.3437 ms (-3.69%) | -0.3184 ms (-3.43%) |
 | monorepo / Attribution | +0.0023 ms (+6.30%) | +0.001 ms (+6.13%) |
 | monorepo / Rendering | 0 ms (0.00%) | +0.0004 ms (+10.00%) |
+
+## Change-aware comparison
+
+After building both packages, run `node bench/change-aware-analysis.mjs --reference /absolute/installed/reference --candidate /absolute/installed/candidate --samples 10 --workers 2 --mode cold`. Modes: `cold` creates a fresh executor with observation caching disabled; `warm-engine` reuses an executor with observation caching disabled; `warm-cache` reuses executor and observation cache. Warm-up samples are excluded. Cold does not flush OS filesystem caches. Counts/outcomes are correctness evidence; medians and p90 are exploratory samples. This harness does not run in consumer commit hooks. Its in-process memory field is explicitly unavailable; use the external process-tree benchmark for attributable memory.
+
+`--scenario type-regression` selects one scenario; `--diagnostics` captures candidate timing summaries for each sample. Warm-cache uses an isolated fixture/package-specific observation store and records hit/miss counts, rather than relying on a user cache. Package hashes cover the compiled dist tree and package manifest.
