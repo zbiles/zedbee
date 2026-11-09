@@ -103,3 +103,11 @@ test("queue observer cancellation prevents dispatch to a reused worker", async (
     await executor.close();
   }
 });
+
+test("keeps dispatcher waiting and result processing out of worker execution", () => {
+  const r = new ScanPerformanceRecorder();
+  r.record({ checkId: "types", kind: "dispatcher", durationMs: 30 });
+  r.record({ checkId: "types", kind: "result", durationMs: 5 });
+  expect(r.snapshot().overhead).toMatchObject({ dispatcher: 30, result: 5 });
+  expect(r.snapshot().checks[0]?.worker_sum_ms).toBeUndefined();
+});

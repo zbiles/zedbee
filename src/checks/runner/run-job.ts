@@ -10,7 +10,10 @@ export interface AnalyzerJobOptions {
   readonly signal?: AbortSignal;
   /** Internal test entry injection; never populated by config, CLI or service. */
   readonly workerEntry?: string;
-  readonly onTiming?: (kind: "queue" | "worker", durationMs: number) => void;
+  readonly onTiming?: (
+    kind: "queue" | "worker" | "result",
+    durationMs: number,
+  ) => void;
 }
 const localExecutor = createLocalAnalyzerExecutor();
 export async function runAnalyzerJob<R extends AnalyzerRequest>(

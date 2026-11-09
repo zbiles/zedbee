@@ -1,3 +1,4 @@
+import { recordPerformance } from "../diagnostics/scan-performance.js";
 import pLimit from "p-limit";
 import {
   CHECK_IDS,
@@ -136,7 +137,7 @@ export async function prepareCheckDispatch(
   );
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
-  const jobs: (() => Promise<CheckExecutionResult>)[] = [];
+  const jobs: ((queuedAt: number) => Promise<CheckExecutionResult>)[] = [];
   const scheduledTargets: {
     checkId: string;
     target: import("./adapter.js").CheckTarget;
@@ -330,7 +331,12 @@ export async function prepareCheckDispatch(
       const executionPolicy = immutablePolicy(adapter.id, policy);
 
       scheduledTargets.push({ checkId: adapter.id, target });
-      jobs.push(async () => {
+      jobs.push(async (queuedAt) => {
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "dispatcher",
+          durationMs: performance.now() - queuedAt,
+        });
         if (applicability.networkDisclosure !== undefined) {
           emit({
             type: "network-disclosure",
@@ -370,9 +376,15 @@ export async function prepareCheckDispatch(
     scheduledTargets: Object.freeze(scheduledTargets),
   });
   preparedExecutions.set(plan, async () =>
-    (await Promise.all([...scheduled, ...jobs.map((job) => limit(job))])).sort(
-      compareResults,
-    ),
+    (
+      await Promise.all([
+        ...scheduled,
+        ...jobs.map((job) => {
+          const queuedAt = performance.now();
+          return limit(() => job(queuedAt));
+        }),
+      ])
+    ).sort(compareResults),
   );
   return plan;
 }

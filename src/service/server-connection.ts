@@ -419,12 +419,18 @@ export function acceptServiceConnection(
         controller = new AbortController();
       jobs.set(id, controller);
       try {
-        const timings: { kind: "queue" | "worker"; durationMs: number }[] = [];
+        const timings: {
+          kind: "queue" | "worker" | "result";
+          durationMs: number;
+        }[] = [];
         const result = await session.run(value.request as AnalyzerRequest, {
           signal: controller.signal,
           ...(value.op === "run-measured"
             ? {
-                onTiming: (kind: "queue" | "worker", durationMs: number) => {
+                onTiming: (
+                  kind: "queue" | "worker" | "result",
+                  durationMs: number,
+                ) => {
                   timings.push({ kind, durationMs });
                 },
               }

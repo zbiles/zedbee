@@ -315,7 +315,17 @@ export class SupervisedWorkerSlot {
             job.options.onTiming?.("worker", event.workerMs);
           } catch {}
         }
+        const processingStarted = performance.now();
         job.provisional = decodeWorkerResponse(job.request, event.response);
+        try {
+          job.options.onTiming?.(
+            "result",
+            Math.min(
+              604800000,
+              Math.max(0, Math.round(performance.now() - processingStarted)),
+            ),
+          );
+        } catch {}
         if ("error" in job.provisional) this.stop(job.provisional.error);
       } catch {
         invalid();

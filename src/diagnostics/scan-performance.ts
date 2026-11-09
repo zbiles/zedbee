@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
 export type PerformanceKind =
+  | "dispatcher"
+  | "result"
   | "elapsed"
   | "queue"
   | "worker"
@@ -117,7 +119,15 @@ export class ScanPerformanceRecorder {
     }
     if (sample.durationMs > 604800000) this.partial = true;
     const ms = bounded(sample.durationMs);
-    if (["cache_lookup", "cache_prepare", "service"].includes(sample.kind)) {
+    if (
+      [
+        "cache_lookup",
+        "cache_prepare",
+        "service",
+        "dispatcher",
+        "result",
+      ].includes(sample.kind)
+    ) {
       this.overhead[sample.kind] = bounded(
         (this.overhead[sample.kind] ?? 0) + ms,
       );
@@ -175,7 +185,9 @@ export function recordPerformance(sample: PerformanceSample): void {
 }
 export function performanceObserver(
   checkId: string,
-): ((kind: "queue" | "worker", durationMs: number) => void) | undefined {
+):
+  | ((kind: "queue" | "worker" | "result", durationMs: number) => void)
+  | undefined {
   const recorder = active.getStore();
   if (!recorder) return undefined;
   return (kind, durationMs) => {

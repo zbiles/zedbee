@@ -349,7 +349,7 @@ it("keeps measured concurrent service jobs isolated and observer failures harmle
   ]);
   expect(values).toEqual(["const a = 1;\n", "const b = 2;\n"]);
   for (const rows of [timingsA, timingsB]) {
-    expect(rows.map((r) => r.kind)).toEqual(["queue", "worker"]);
+    expect(rows.map((r) => r.kind)).toEqual(["queue", "worker", "result"]);
     expect(rows.every((r) => r.ms >= 0)).toBe(true);
   }
   await Promise.all([a.close(), b.close()]);

@@ -82,13 +82,13 @@ export function executorForConnection(
           if (
             !exactFields(response, ["result", "timings"]) ||
             !Array.isArray(response.timings) ||
-            response.timings.length > 2
+            response.timings.length > 3
           )
             throw new ServiceUnavailableError();
           for (const timing of response.timings) {
             if (
               !exactFields(timing, ["kind", "durationMs"]) ||
-              !["queue", "worker"].includes(timing.kind as string) ||
+              !["queue", "worker", "result"].includes(timing.kind as string) ||
               typeof timing.durationMs !== "number" ||
               !Number.isSafeInteger(timing.durationMs) ||
               timing.durationMs < 0 ||
