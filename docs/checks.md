@@ -365,3 +365,21 @@ Framework entries use Knip's entry-export exemption, so their exports are not
 checked for exact framework consumption. Reachable library exports still receive
 normal analysis. Custom `pageExtensions`, MDX/custom compilers and
 `next <command> <subdirectory>` discovery are outside these default conventions.
+
+### Synthetic credentials in fixtures
+
+Secretlint can recognize a deliberately fake database URL as a credential. For a confirmed synthetic fixture, suppress just the database rule on the next line, with a reason:
+
+```python
+# secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- Synthetic redaction fixture
+DATABASE_URL = "postgresql://fixture:fake_password@db.example.invalid/test"
+```
+
+```javascript
+// secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- Synthetic redaction fixture
+const databaseUrl = "postgresql://fixture:fake_password@db.example.invalid/test";
+```
+
+Stage the annotation together with the fixture. It suppresses the named rule on that one line; other rules and adjacent lines remain protected. This is an intentional suppression, not verification that a credential is fake. Remove and rotate real credentials. Test directories and localhost URLs are not automatically exempt.
+
+For dedicated fixture files, an exact-file `pathExclusions` entry with `checks: ["secrets"]` and a reason is also supported. That excludes the whole file from that check and is broader than the next-line annotation.
