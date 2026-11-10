@@ -1,3 +1,4 @@
+import { summarizeChanges, type ChangeSummary } from "./change-summary.js";
 import { dirname } from "node:path";
 import {
   createLocalAnalyzerExecutor,
@@ -160,6 +161,7 @@ export interface AnalysisSessionState {
   phase: ActiveScanPhase;
   source: ScanSourceIdentity;
   changedFileCount: number | null;
+  changeSummary?: ChangeSummary;
   configuredPathExclusions: readonly PathExclusion[];
   appliedPathExclusions: readonly PathExclusion[];
 }
@@ -368,6 +370,7 @@ export async function withAnalysisSession<T>(
       policyForFile,
     );
     state.changedFileCount = changeSet.files.size;
+    state.changeSummary = summarizeChanges(changeSet);
     signal.throwIfAborted();
     let session: AnalysisSession;
     if (changeSet.isEmpty) {

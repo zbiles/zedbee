@@ -1,3 +1,4 @@
+import type { ChangeSummary } from "./change-summary.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult } from "../core/types.js";
@@ -24,6 +25,7 @@ export interface ScanReportContext {
   readonly repositoryRoot: string;
   readonly source: ScanSourceIdentity;
   readonly changedFileCount: number | null;
+  readonly changeSummary?: ChangeSummary;
   readonly startedAt: string;
   readonly durationMs: number;
   readonly configuredPathExclusions: readonly PathExclusion[];
@@ -71,6 +73,9 @@ export function createIncompleteReport(
       ? {}
       : { requestedBase: source.requestedBase }),
     changedFileCount: context.changedFileCount,
+    ...(context.changeSummary === undefined
+      ? {}
+      : { changeSummary: context.changeSummary }),
     startedAt: context.startedAt,
     durationMs: context.durationMs,
     configuredPathExclusions: context.configuredPathExclusions,

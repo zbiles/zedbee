@@ -19,3 +19,10 @@ export function emptyChangesCopy(report: ScanReport): string {
     ? "No committed changes. Commit allowed."
     : "No staged changes. Commit allowed.";
 }
+
+export function selectedChangesLine(report: ScanReport): string | undefined {
+  if (report.changeSummary === undefined || report.mergeParents !== undefined)
+    return undefined;
+  const { added, modified, deleted, renamed } = report.changeSummary;
+  return `${report.mode === "base" ? "Committed" : "Staged"} changes: ${added} added · ${modified} modified · ${deleted} deleted · ${renamed} renamed`;
+}

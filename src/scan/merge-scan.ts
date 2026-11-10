@@ -329,8 +329,9 @@ export async function runMergeScan(
         check.status === "incomplete" &&
         check.incompleteDisposition === "block",
     );
+    const { changeSummary: _pairwiseSummary, ...firstReport } = reports[0]!;
     return (completed = {
-      ...reports[0]!,
+      ...firstReport,
       mergeParents: parents,
       checks,
       summary,

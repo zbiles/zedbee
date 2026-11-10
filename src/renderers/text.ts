@@ -1,3 +1,8 @@
+import { selectedChangesLine } from "../reporting/source-identity.js";
+import {
+  allowedScanDetail,
+  coverageLine,
+} from "../reporting/check-coverage.js";
 import type { Finding, ManagedAutomaticFix } from "../core/types.js";
 import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
@@ -176,7 +181,11 @@ function headline(report: ScanReport): string[] {
       "THAT STINGS",
       "A check failed. Commit blocked.",
       ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+      ...(selectedChangesLine(report) === undefined
+        ? []
+        : [selectedChangesLine(report)!]),
       countLine(report),
+      coverageLine(report),
     ];
   }
   if (report.outcome === "incomplete") {
@@ -184,16 +193,22 @@ function headline(report: ScanReport): string[] {
       "SCAN INCOMPLETE",
       "A required check could not finish. Commit blocked.",
       ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+      ...(selectedChangesLine(report) === undefined
+        ? []
+        : [selectedChangesLine(report)!]),
       countLine(report),
+      coverageLine(report),
     ];
   }
   return [
     "BEE-UTIFUL",
-    report.changedFileCount === 0
-      ? emptyChangesCopy(report)
-      : "All checks passed. Commit allowed.",
+    allowedScanDetail(report),
     ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+    ...(selectedChangesLine(report) === undefined
+      ? []
+      : [selectedChangesLine(report)!]),
     countLine(report),
+    coverageLine(report),
   ];
 }
 
@@ -403,7 +418,11 @@ function automaticHeadline(
       "COMMIT BLOCKED",
       "A check failed. Commit blocked.",
       ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+      ...(selectedChangesLine(report) === undefined
+        ? []
+        : [selectedChangesLine(report)!]),
       automaticCountLine(report),
+      coverageLine(report),
       ...previewLine,
     ];
   }
@@ -412,19 +431,41 @@ function automaticHeadline(
       "SCAN INCOMPLETE",
       "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
       ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+      ...(selectedChangesLine(report) === undefined
+        ? []
+        : [selectedChangesLine(report)!]),
       automaticCountLine(report),
+      coverageLine(report),
       ...previewLine,
     ];
   }
   return [
     "COMMIT ALLOWED",
-    report.changedFileCount === 0
-      ? emptyChangesCopy(report)
-      : "All checks passed. Commit allowed.",
+    allowedScanDetail(report),
     ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
+    ...(selectedChangesLine(report) === undefined
+      ? []
+      : [selectedChangesLine(report)!]),
     automaticCountLine(report),
+    coverageLine(report),
     ...previewLine,
   ];
+}
+
+function skippedReasonLines(
+  report: ScanReport,
+  width: number,
+  verbose: boolean,
+): string[] {
+  if (!verbose) return [];
+  return report.checks
+    .filter((check) => check.status === "skipped")
+    .flatMap((check) =>
+      wrapWords(
+        `${check.checkId}: skipped — ${check.skipReason ?? "Not applicable"}`,
+        width,
+      ),
+    );
 }
 
 function automaticTextLines(
@@ -445,6 +486,7 @@ function automaticTextLines(
   const callouts = buildReportCallouts(
     presentation,
     report.presentationPolicy.agentGuidance,
+    report,
   );
   return [
     ...calloutLines(callouts.opening, width),
@@ -461,6 +503,7 @@ function automaticTextLines(
       width,
       verbose,
     ),
+    ...skippedReasonLines(report, width, verbose),
     ...disclosureSectionLines(sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
     ...incompleteSectionLines(sections.incompleteChecks, width),
@@ -562,6 +605,7 @@ export function renderText(
         }).summaryFindings;
   const lines = [
     ...headline(report).flatMap((line) => wrapWords(line, width)),
+    ...skippedReasonLines(report, width, options.verbose === true),
     ...incompleteSectionLines(sanitized.checks, width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),

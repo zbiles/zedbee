@@ -2642,6 +2642,7 @@ describe("runScan", () => {
       "baseline",
       "target",
       "changedFileCount",
+      "changeSummary",
       "startedAt",
       "durationMs",
       "configuredPathExclusions",

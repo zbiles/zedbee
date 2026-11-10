@@ -139,6 +139,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     repositoryRoot: options.repositoryRoot,
     source: state.source,
     changedFileCount: state.changedFileCount,
+    ...(state.changeSummary === undefined
+      ? {}
+      : { changeSummary: state.changeSummary }),
     startedAt,
     durationMs: Math.max(0, dependencies.clock() - started),
     configuredPathExclusions: state.configuredPathExclusions,
@@ -206,6 +209,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         repositoryRoot: options.repositoryRoot,
         ...state.source,
         changedFileCount: state.changedFileCount,
+        ...(state.changeSummary === undefined
+          ? {}
+          : { changeSummary: state.changeSummary }),
         startedAt,
         durationMs: context.durationMs,
         configuredPathExclusions: context.configuredPathExclusions,

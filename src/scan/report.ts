@@ -1,3 +1,4 @@
+import type { ChangeSummary } from "./change-summary.js";
 import type { CheckResult, RunSummary } from "../core/types.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import type { ScanMode } from "./source-mode.js";
@@ -31,6 +32,7 @@ export interface ScanReport {
   readonly requestedBase?: string;
   /** Number of changed paths, or null when change discovery failed. */
   readonly changedFileCount: number | null;
+  readonly changeSummary?: ChangeSummary;
   startedAt: string;
   durationMs: number;
   networkDisclosures: readonly NetworkDisclosure[];

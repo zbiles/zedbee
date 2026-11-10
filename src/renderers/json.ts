@@ -138,6 +138,9 @@ export function renderJson(report: ScanReport): string {
       ? {}
       : { requestedBase: source.requestedBase }),
     changedFileCount: report.changedFileCount,
+    ...(report.changeSummary === undefined
+      ? {}
+      : { changeSummary: report.changeSummary }),
     startedAt: report.startedAt,
     durationMs: report.durationMs,
     ...(report.configuredPathExclusions.length === 0

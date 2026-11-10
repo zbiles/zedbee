@@ -689,6 +689,7 @@ describe("renderText", () => {
         "BEE-UTIFUL",
         "All checks passed. Commit allowed.",
         "1 passed · 0 warnings",
+        "1 check run · 0 skipped · 0 incomplete",
         "",
       ].join("\n"),
     );
@@ -802,7 +803,7 @@ describe("renderText", () => {
     });
 
     expect(renderText(report, { width: 80, color: false })).toContain(
-      "All checks passed. Commit allowed.",
+      "No checks ran for the selected changes. Commit allowed.",
     );
   });
 
@@ -896,7 +897,7 @@ describe("renderText", () => {
     expect(output.indexOf("SNAPSHOT CLEANUP FAILED")).toBeLessThan(
       output.indexOf("ESLint  no-unused-vars"),
     );
-    expect(output).not.toContain("1 incomplete");
+    expect(output).toContain("1 incomplete");
     expect(
       Math.max(...output.split("\n").map((line) => [...line].length)),
     ).toBeLessThanOrEqual(60);
@@ -1099,7 +1100,7 @@ describe("renderText", () => {
     expect(output).toContain(
       "Availability: commit allowed (onUnavailable: warn)",
     );
-    expect(output).not.toContain("1 incomplete");
+    expect(output).toContain("1 incomplete");
   });
 
   it("omits incomplete from visual outcome counts", () => {
