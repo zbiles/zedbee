@@ -482,3 +482,11 @@ See [the complete check matrix](checks.md), [support matrix](support.md), [priva
 - pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.
 - If a repository commits a package beneath `node_modules` and source code imports it, managed Knip analysis is incomplete. Zedbee refuses to let snapshot-controlled packages participate in analyzer module resolution; remove the committed package and restore dependencies through the package manager and lockfile.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.
+
+### Selected changes and check coverage
+
+Scan output distinguishes completed, skipped and incomplete check executions. Multiple workspace targets can contribute separate executions. Disabled checks are not counted as skipped. When every reported check is skipped, an allowed result says no applicable checks ran; when the execution list is empty, it says no checks ran for the selected changes. Neither claims that code was validated.
+
+Optional JSON `changeSummary` contains `added`, `modified`, `deleted` and `renamed` path counts from the selected index or commit comparison. Renames count once. The field is absent when change discovery failed and for combined merge comparisons. Existing `summary.passed` still counts completed executions without findings.
+
+A scan does not know whether an earlier staging command failed. Chain staging and committing with `&&` and review the selected changes; see [staging troubleshooting](support.md#staging-and-deletion-only-commits).
