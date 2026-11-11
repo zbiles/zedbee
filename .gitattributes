@@ -2,3 +2,7 @@ THIRD_PARTY_NOTICES.md text eol=lf
 licenses/production-inventory.json text eol=lf
 schema/zedbee.schema.json text eol=lf
 docs/** text eol=lf
+# Pinned generated plugin bytes contain upstream CRLF and must survive checkout.
+assets/react-hooks/** -text -whitespace
+patches/react-hooks/** text eol=lf
+src/checks/react/managed-hooks-identity.ts text eol=lf

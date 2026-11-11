@@ -43,22 +43,6 @@ const invocationForms = [
   ],
 ] as const;
 
-// Step 0C remains unresolved: 7.1.1 has both false positives and false
-// negatives. Keep the desired contract executable as expected failures rather
-// than changing production behavior or accepting these results as correct.
-// The latest evaluated upstream canary still fails the wrapper controls and
-// awaited-rejection control; its await-dominance fix alone is insufficient.
-const knownUpstreamFailures = new Set([
-  "only after await:then",
-  "before first await:await wrapper",
-  "after an await on both branches:then",
-  "after a conditional await:await wrapper",
-  "on a synchronous branch before await:await wrapper",
-  "in an awaited rejection handler:then",
-  "in a catch reachable before suspension:await wrapper",
-  "while evaluating an awaited argument:await wrapper",
-]);
-
 describe("managed synchronous state updates across async effect helpers", () => {
   for (const [name, helper, shouldReport] of [
     ["only after await", "await Promise.resolve(); setValue(1);", false],
@@ -100,10 +84,7 @@ describe("managed synchronous state updates across async effect helpers", () => 
     ],
   ] as const) {
     for (const [form, effect] of invocationForms) {
-      const knownFailure = knownUpstreamFailures.has(`${name}:${form}`);
-      const test = knownFailure ? it.fails : it;
-      const limitation = knownFailure ? "[unresolved upstream 7.1.1] " : "";
-      test(`${limitation}${shouldReport ? "reports" : "allows"} updates ${name} via ${form}`, async () => {
+      it(`${shouldReport ? "reports" : "allows"} updates ${name} via ${form}`, async () => {
         const messages = await findings(component(helper, effect));
         if (shouldReport) {
           expect(messages.length).toBeGreaterThan(0);

@@ -1,3 +1,4 @@
+import { managedHooksPlugin } from "../react/managed-hooks-plugin.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { ESLint, Rule } from "eslint";
@@ -156,8 +157,7 @@ function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {
       break;
     case "reactCorrectness":
       plugins.react = require("eslint-plugin-react") as ManagedRulePlugin;
-      plugins["react-hooks"] =
-        require("eslint-plugin-react-hooks") as ManagedRulePlugin;
+      plugins["react-hooks"] = managedHooksPlugin() as ManagedRulePlugin;
       break;
     case "reactAccessibility":
       plugins["jsx-a11y"] =

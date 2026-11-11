@@ -4,6 +4,7 @@ import {
 } from "./accessibility-settings.js";
 import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
+import { managedHooksPlugin } from "./managed-hooks-plugin.js";
 import { managedAccessibilityPlugin } from "./managed-accessibility-plugin.js";
 
 const require = createRequire(import.meta.url);
@@ -25,7 +26,7 @@ export function managedReactCorrectnessConfig(
   const reactPlugin =
     require("eslint-plugin-react") as typeof import("eslint-plugin-react");
   const reactHooksPlugin =
-    require("eslint-plugin-react-hooks") as typeof import("eslint-plugin-react-hooks");
+    managedHooksPlugin() as typeof import("eslint-plugin-react-hooks");
   const reactConfigs = reactPlugin.configs.flat as unknown as ReactFlatConfigs;
   const hooksConfigs = reactHooksPlugin.configs.flat as HooksFlatConfigs;
   return {

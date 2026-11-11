@@ -1,3 +1,4 @@
+import { generateManagedHooks } from "./generate-managed-react-hooks.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -255,6 +256,13 @@ async function noticesForInventory(root, inventory) {
       `## ${packageMetadata.name ?? "unknown"}@${packageMetadata.version ?? "unknown"}`,
       "",
       `License: ${packageMetadata.license ?? "unknown"}`,
+      ...(packageMetadata.name === "eslint-plugin-react-hooks" &&
+      packageMetadata.version === "7.1.1"
+        ? [
+            "Modified distribution: Swarm also ships a checksum-verified private copy correcting effect state-update timing analysis; original MIT copyright and license are retained in dist/vendor/react-hooks/7.1.1/LICENSE.",
+            "Patch provenance: dist/vendor/react-hooks/7.1.1/provenance.json (effect-timing-v1).",
+          ]
+        : []),
       ...selectedObligations.flatMap((obligation) => [
         `Source: ${obligation.sourceUrl}`,
         `Attribution: ${obligation.attribution}`,
@@ -336,6 +344,18 @@ async function readReleaseArtifact(path, label) {
 }
 
 export async function checkProductionLicenses(root) {
+  // The modified MIT plugin retains its original license; its generated
+  // provenance verifies the explicit copied runtime license and pinned source.
+  if (
+    await readFile(join(root, "patches/react-hooks/7.1.1/inputs.json")).then(
+      () => true,
+      (e) => {
+        if (e.code === "ENOENT") return false;
+        throw e;
+      },
+    )
+  )
+    generateManagedHooks(root, false);
   const artifacts = await buildProductionLicenseArtifacts(root);
   if (artifacts.denied.length > 0) return artifacts;
 

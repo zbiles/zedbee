@@ -10237,6 +10237,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ## eslint-plugin-react-hooks@7.1.1
 
 License: MIT
+Modified distribution: Swarm also ships a checksum-verified private copy correcting effect state-update timing analysis; original MIT copyright and license are retained in dist/vendor/react-hooks/7.1.1/LICENSE.
+Patch provenance: dist/vendor/react-hooks/7.1.1/provenance.json (effect-timing-v1).
 
 ### node_modules/eslint-plugin-react-hooks/LICENSE
 

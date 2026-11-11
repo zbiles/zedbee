@@ -79,3 +79,27 @@ actually render; Zedbee does not inspect their implementation to verify the map.
 Mappings do not execute project code or load project plugins. The managed
 focusable-separator correction also applies when the element uses a mapped
 custom component.
+
+### State updates across async effect helpers
+
+Managed React correctness includes Swarm's versioned correction to
+`react-hooks/set-state-in-effect`. The check distinguishes an immediate state
+update from one that can run only after an `await` suspends execution. For
+locally analyzable helpers, calling the helper with `.then()` or from an
+immediately invoked async wrapper preserves that distinction.
+
+An `async` function starts running immediately. A state update before its first
+`await` can therefore still be reported when the function is called from an
+effect, including through a wrapper. Updating state after a request settles
+is allowed by this rule. Error handlers need the same distinction: a function
+that throws before returning a promise can reach its caller's catch immediately;
+a rejected promise is observed after suspension.
+
+The correction follows known local calls and the compiler's supported aliases
+and control flow. It does not provide whole-program analysis of arbitrary
+imports, dynamic dispatch, or custom thenables. Existing rule options,
+configured severity, and ref-derived exceptions still apply. Other React
+checks continue to run.
+
+Project ESLint mode uses the project's installed Hooks plugin and its native
+behavior. Swarm's managed correction does not modify that installation.

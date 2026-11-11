@@ -473,9 +473,8 @@ line even when harmless handler edits expand the diagnostic range. A replacement
 opening line or newly added occurrence is not exempt merely because it reuses a
 line number.
 
-The bundled Hooks plugin has known `set-state-in-effect` inconsistencies around
-async helpers and wrappers. An `async` wrapper is not evidence that all updates
-are asynchronous: called helpers execute synchronously until their first await.
-Swarm does not disable this rule or silently rewrite project rules to hide the
-limitation. Regression cases are retained while a complete upstream correction
-is evaluated.
+The managed `react-hooks/set-state-in-effect` implementation includes a
+versioned correction for state updates across waits and local effect helpers.
+An async wrapper does not make an immediate update safe. See
+[React analysis](react-analysis.md#state-updates-across-async-effect-helpers)
+for its scope and the distinction from native project ESLint behavior.

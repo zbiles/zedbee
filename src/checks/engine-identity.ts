@@ -1,3 +1,7 @@
+import {
+  managedHooksRevision,
+  managedHooksProvenanceSha256,
+} from "./react/managed-hooks-identity.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -65,7 +69,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: "zedbee-react-calibration-v2+diagnostic-privacy-v1",
+    revision: `zedbee-react-calibration-v2+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([

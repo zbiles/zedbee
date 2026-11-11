@@ -1,3 +1,7 @@
+import {
+  hookAssetFiles,
+  generateManagedHooks,
+} from "./generate-managed-react-hooks.mjs";
 import { spawnSync } from "node:child_process";
 import {
   lstatSync,
@@ -116,7 +120,12 @@ export function assertBundledDependencyLock(manifest, lockfile) {
   }
 }
 
+const MANAGED_HOOKS_FILES = hookAssetFiles.map(
+  (file) => `dist/vendor/react-hooks/7.1.1/${file}`,
+);
+
 const FIXED_PACKAGE_FILES = Object.freeze([
+  ...MANAGED_HOOKS_FILES,
   "dist/init/install-dependency.mjs",
   "dist/init/install-dependency.d.mts",
   ...VENDORED_FILES,
@@ -139,6 +148,7 @@ const FIXED_PACKAGE_FILES = Object.freeze([
 ]);
 
 export const REQUIRED_PACKAGE_FILES = Object.freeze([
+  ...MANAGED_HOOKS_FILES,
   ...VENDORED_FILES,
   ...BUNDLED_FILES,
   "SECURITY.md",
@@ -311,6 +321,7 @@ function main() {
   try {
     mkdirSync(artifactDirectory);
     const root = process.cwd();
+    generateManagedHooks(root, false);
     const catalog = spawnSync(
       process.execPath,
       [resolve(root, "scripts/generate-telemetry-catalog.mjs"), "--check"],
