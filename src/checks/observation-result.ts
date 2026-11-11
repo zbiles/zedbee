@@ -397,7 +397,7 @@ export async function observationCheckResult(
       context.targetInspection,
       targetRegistry,
     );
-  if (context.mergeComparison === true) {
+  if (context.mergeComparison === true || checkId === "reactAccessibility") {
     const locationOnly = (observation: Observation) =>
       observation.location !== undefined &&
       observation.entity === undefined &&

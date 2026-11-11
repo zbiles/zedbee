@@ -8,6 +8,13 @@ export interface SnapshotLocationObservations {
   readonly files: Readonly<Record<string, string>>;
 }
 
+function anchoredOpening(observation: Observation): boolean {
+  return (
+    observation.check === "reactAccessibility" &&
+    observation.rule === "jsx-a11y/no-noninteractive-element-interactions"
+  );
+}
+
 function comparisonIdentity(
   observation: Observation,
   location = observation.location,
@@ -19,8 +26,8 @@ function comparisonIdentity(
         location?.file,
         location?.startLine,
         location?.startColumn,
-        location?.endLine,
-        location?.endColumn,
+        anchoredOpening(observation) ? null : location?.endLine,
+        anchoredOpening(observation) ? null : location?.endColumn,
         observation.comparisonIdentity ?? observation.message,
       ]),
     )
@@ -49,7 +56,10 @@ export function pairLocationObservations(
       count: number;
     }[]
   >();
-  const targetLocation = (location: SourceLocation): SourceLocation => {
+  const targetLocation = (
+    location: SourceLocation,
+    anchor: boolean,
+  ): SourceLocation => {
     const targetPath = renamedPaths.get(location.file) ?? location.file;
     const unchangedPosition = { ...location, file: targetPath };
     const before = baseline.files[location.file];
@@ -88,7 +98,9 @@ export function pairLocationObservations(
       lines = mapped;
       lineMaps.set(location.file, lines);
     }
-    const oldEnd = location.endLine ?? location.startLine;
+    const oldEnd = anchor
+      ? location.startLine
+      : (location.endLine ?? location.startLine);
     // Every line in a multiline diagnostic must still belong to the same unchanged span.
     const span = lines.find(
       (range) =>
@@ -109,7 +121,7 @@ export function pairLocationObservations(
       const location =
         observation.location === undefined
           ? undefined
-          : targetLocation(observation.location);
+          : targetLocation(observation.location, anchoredOpening(observation));
       return {
         ...observation,
         comparisonIdentity: comparisonIdentity(observation, location),
