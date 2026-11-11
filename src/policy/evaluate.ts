@@ -17,10 +17,23 @@ export interface PolicyDecision {
   summary: RunSummary;
 }
 
-function applySeverity(finding: Finding, policy: ResolvedCheckPolicy): Finding {
+function applySeverity(
+  finding: Finding,
+  policy: ResolvedCheckPolicy,
+): Finding | undefined {
+  const ruleOwned = ["lint", "reactCorrectness", "reactAccessibility"].includes(
+    finding.check,
+  );
+  const configured =
+    ruleOwned && "rules" in policy ? policy.rules?.[finding.rule] : undefined;
+  const level = Array.isArray(configured) ? configured[0] : configured;
+  if (level === "off" || level === 0) return undefined;
   return {
     ...finding,
-    severity: policy.severity === "warn" ? "warning" : "error",
+    severity:
+      policy.severity === "warn" || level === "warn" || level === 1
+        ? "warning"
+        : "error",
   };
 }
 
@@ -61,9 +74,9 @@ export function displayResultForPolicy(
           finding.location?.file !== undefined
             ? policyForFile(checkId, finding.location.file, "target")
             : policy;
-        return filePolicy.severity === "off"
-          ? []
-          : [applySeverity(finding, filePolicy)];
+        if (filePolicy.severity === "off") return [];
+        const applied = applySeverity(finding, filePolicy);
+        return applied === undefined ? [] : [applied];
       }),
   });
 }

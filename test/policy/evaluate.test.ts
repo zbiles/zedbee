@@ -371,3 +371,38 @@ describe("evaluatePolicy", () => {
     });
   });
 });
+
+it.each([
+  ["lint", "no-console"],
+  ["reactCorrectness", "react/prop-types"],
+  ["reactAccessibility", "jsx-a11y/no-noninteractive-element-interactions"],
+] as const)("preserves explicit rule warnings for %s", (check, rule) => {
+  const resolved = resolveConfig({
+    schemaVersion: 1,
+    profile: "recommended",
+    overrides: [
+      {
+        files: ["value.ts"],
+        checks: { [check]: { rules: { [rule]: "warn" } } },
+      },
+    ],
+  });
+  const policyForFile = createFilePolicyResolver(resolved, {
+    files: new Map(),
+    isEmpty: true,
+    containsAddedLine: () => false,
+  });
+  const diagnostic = { ...finding(true, "warning"), check, rule };
+  const decision = evaluatePolicy(
+    [
+      {
+        result: { ...completed([diagnostic]), checkId: check },
+        policy: resolved.checks[check],
+        policyForFile,
+      },
+    ],
+    resolved,
+  );
+  expect(decision.outcome).toBe("pass");
+  expect(decision.summary.findings[0]?.severity).toBe("warning");
+});
