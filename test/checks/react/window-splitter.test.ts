@@ -32,14 +32,16 @@ describe("focusable window splitter", () => {
       expect(found).not.toContain(tabindex);
     },
   );
-  it.each(["", "aria-valuenow={null}", "aria-valuenow={undefined}"])(
-    "retains checking without a usable current value: %s",
-    async (value) => {
-      expect(await rules(`role="separator" tabIndex={0} ${value}`)).toContain(
-        interaction,
-      );
-    },
-  );
+  it.each([
+    "",
+    "aria-valuenow={null}",
+    "aria-valuenow={undefined}",
+    "aria-valuenow={void 0}",
+  ])("retains checking without a usable current value: %s", async (value) => {
+    expect(await rules(`role="separator" tabIndex={0} ${value}`)).toContain(
+      interaction,
+    );
+  });
   it("retains checking for an unfocusable separator", async () => {
     expect(await rules('role="separator" aria-valuenow={5}')).toContain(
       interaction,

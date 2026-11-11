@@ -67,6 +67,9 @@ function isWindowSplitter(node: Syntax): boolean {
     );
   return (
     expression !== undefined &&
+    !(
+      expression.type === "UnaryExpression" && expression.operator === "void"
+    ) &&
     !(expression.type === "Identifier" && expression.name === "undefined")
   );
 }
@@ -86,9 +89,11 @@ function corrected(rule: Rule.RuleModule): Rule.RuleModule {
     },
   };
 }
+let cached: ReturnType<typeof upstreamPlugin> | undefined;
 export function managedAccessibilityPlugin() {
+  if (cached !== undefined) return cached;
   const upstream = upstreamPlugin();
-  return {
+  return (cached = {
     ...upstream,
     rules: {
       ...upstream.rules,
@@ -99,5 +104,5 @@ export function managedAccessibilityPlugin() {
         ].map((name) => [name, corrected(upstream.rules[name]!)]),
       ),
     },
-  };
+  });
 }

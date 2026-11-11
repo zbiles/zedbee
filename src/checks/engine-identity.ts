@@ -74,7 +74,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
-    revision: "diagnostic-privacy-v1",
+    revision: "diagnostic-privacy-v1+focusable-separator-v2",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

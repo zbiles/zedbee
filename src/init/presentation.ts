@@ -1,3 +1,7 @@
+import {
+  ProjectEslintSetupError,
+  PROJECT_ESLINT_DISCLOSURE,
+} from "./eslint-setup.js";
 import { ImportCaptureError } from "../checks/prettier/project-import-capture.js";
 import { ProjectWorkspaceLayoutError } from "../checks/prettier/project-workspace.js";
 import { ProjectPrettierFailureError } from "../checks/prettier/project-error.js";
@@ -23,6 +27,13 @@ export function publicProposal(proposal: InitProposal) {
       : { hooksPathChange: proposal.hooksPathChange }),
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
+    eslintEngine: proposal.eslintEngine ?? "managed",
+    eslintConflicts: proposal.eslintConflicts ?? [],
+    projectEslintMessages: proposal.projectEslintMessages ?? "redacted",
+    projectEslintTrustRoots: proposal.projectEslintTrustRoots ?? [],
+    projectEslintTrustConfirmed: proposal.projectEslintTrustConfirmed === true,
+    projectEslintMessagesConfirmed:
+      proposal.projectEslintMessagesConfirmed === true,
     formatting: proposal.formatting ?? "managed",
     formattingScope: proposal.formattingScope ?? "repository",
     formattingScopeRoots: proposal.formattingScopeRoots ?? [],
@@ -68,6 +79,16 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
     `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
+    `ESLint: ${proposal.eslintEngine === "project" ? "project (experimental)" : "built-in (default)"}`,
+    ...(proposal.eslintEngine === "project"
+      ? [
+          PROJECT_ESLINT_DISCLOSURE,
+          `Project diagnostic messages: ${proposal.projectEslintMessages ?? "redacted"}`,
+          ...(proposal.eslintConflicts ?? []).map(
+            (value) => `Configuration conflict: ${value}`,
+          ),
+        ]
+      : []),
     `Formatting: ${proposal.formatting ?? "managed"}`,
     `Formatting scope: ${proposal.formattingScope === "projects" ? proposal.formattingScopeRoots?.join(", ") || "repository" : "whole repository"}`,
     ...(proposal.formattingDetection ?? []).map(
@@ -128,6 +149,8 @@ export function renderInitFailure(error: unknown): string {
       "Reason: The project configuration could not be evaluated from captured inputs; one-time import is unavailable.",
       "Remediation: Check relative shared configuration paths and installed dependencies, then retry.",
     );
+  } else if (error instanceof ProjectEslintSetupError) {
+    lines.push(`Reason: ${error.message}`);
   } else if (error instanceof GithubWorkflowSetupError) {
     lines.push(`Reason: ${error.message}`);
   } else if (error instanceof HookInstallationError) {

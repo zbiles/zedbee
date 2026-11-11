@@ -142,7 +142,18 @@ export interface FormattingCoverage {
   readonly unsupportedFiles: number;
 }
 
+export interface EslintAnalysis {
+  readonly excludedFiles?: number;
+  readonly messageNotice?: "permission-required";
+  readonly version: "9.39.5";
+  readonly checkedFiles: number;
+  readonly ignoredFiles: number;
+  readonly baseline: "compared" | "new-coverage";
+  readonly messages: "redacted" | "full";
+}
+
 export interface CheckResult {
+  eslintAnalysis?: EslintAnalysis;
   checkId: string;
   target?: string;
   status: CheckStatus;

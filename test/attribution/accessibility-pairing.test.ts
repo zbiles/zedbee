@@ -75,3 +75,30 @@ it("does not suppress a second newly added occurrence", () => {
   );
   expect(result.filter((f) => f.attribution.staged)).toHaveLength(1);
 });
+it("does not pair a replacement element merely at the old coordinates", () => {
+  const paired = pairLocationObservations(
+    {
+      observations: [observation(3)],
+      files: { "app.tsx": '<div role="article"\n onKeyDown={()=>{}}\n/>' },
+    },
+    {
+      observations: [observation(5)],
+      files: {
+        "app.tsx":
+          '<section role="article"\n onClick={()=>{\n alert("new");\n }}\n/>',
+      },
+    },
+    { files: new Map(), isEmpty: false, containsAddedLine: () => true },
+  );
+  const result = compareObservationSets(
+    paired.baselineObservations,
+    paired.targetObservations,
+    {
+      changedPaths: ["app.tsx"],
+      changedEntityIdentities: [],
+      repositoryDelta: false,
+      addedRanges: [{ file: "app.tsx", start: 1, end: 5 }],
+    },
+  );
+  expect(result[0]?.attribution.staged).toBe(true);
+});

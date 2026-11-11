@@ -258,3 +258,12 @@ Report cleanup and write warnings are non-blocking maintenance diagnostics. Zedb
 ## Agent and CI output
 
 Explicit `--format text`, `--format json`, and `--format sarif` are complete surfaces with no terminal finding cap and no automatic report file. JSON and SARIF are stable machine surfaces; SARIF is emitted as a complete SARIF 2.1.0 report for enterprise ingestion. Both structured formats use repository-relative paths, deterministic ordering, stable finding IDs, explicit attribution evidence, and the same online disclosures as the interactive experience. ANSI decoration and animation are never included.
+
+Project ESLint configuration and plugins require separate local execution trust.
+Their diagnostic text is redacted by default. Full project messages require an
+additional permission because they may quote source; when permitted, that text
+may appear in terminal and local JSON reports. Revoking permission affects future
+reports, not copies already saved. Arbitrary project diagnostic text, private
+plugin rule names, source, and paths are excluded from telemetry. Supervised
+processes provide cancellation and failure isolation, not a sandbox for trusted
+configuration code.

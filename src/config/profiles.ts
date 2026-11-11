@@ -1,3 +1,8 @@
+import { assertProjectEslintConfiguration } from "./target-policy.js";
+import {
+  DEFAULT_ACCESSIBILITY_SETTINGS,
+  validateAccessibilitySettings,
+} from "../checks/react/accessibility-settings.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -79,6 +84,7 @@ function baseChecks(profile: ProfileId): MutableCheckPolicies {
     },
     lint: {
       ...common("lint"),
+      engine: "managed",
       rules: Object.freeze({}),
       typeInformation: "required",
     },
@@ -109,6 +115,7 @@ function baseChecks(profile: ProfileId): MutableCheckPolicies {
     reactAccessibility: {
       ...common("reactAccessibility"),
       rules: Object.freeze({}),
+      settings: DEFAULT_ACCESSIBILITY_SETTINGS,
     },
     vulnerabilities: {
       ...common("vulnerabilities"),
@@ -149,7 +156,10 @@ function policyPatch(
     patch.threshold = objectInput.threshold;
   if (objectInput.engine !== undefined) patch.engine = objectInput.engine;
   if (objectInput.settings !== undefined) {
-    patch.settings = Object.freeze({ ...objectInput.settings });
+    patch.settings =
+      checkId === "reactAccessibility"
+        ? validateAccessibilitySettings(objectInput.settings)
+        : Object.freeze({ ...objectInput.settings });
   }
   if (objectInput.rules !== undefined) {
     if (!isRuleCheckId(checkId)) {
@@ -227,9 +237,20 @@ function resolvePolicy(
         }),
       });
     }
-    case "lint":
-    case "reactCorrectness":
     case "reactAccessibility": {
+      const basePolicy = base as ResolvedCheckPolicies["reactAccessibility"];
+      return Object.freeze({
+        ...basePolicy,
+        ...patch,
+        settings: validateAccessibilitySettings({
+          ...basePolicy.settings,
+          ...patch.settings,
+        }),
+        rules: freezeRules({ ...basePolicy.rules, ...patch.rules }),
+      });
+    }
+    case "lint":
+    case "reactCorrectness": {
       const basePolicy = base as ResolvedCheckPolicies[typeof checkId];
       return Object.freeze({
         ...basePolicy,
@@ -485,6 +506,8 @@ export function resolveConfig(
     overrides: resolveOverrides(file),
     pathExclusions: resolvePathExclusions(file),
     reporting: Object.freeze({
+      projectEslintMessages:
+        file?.reporting?.projectEslintMessages ?? "redacted",
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",
       terminalFindingLimit: file?.reporting?.terminalFindingLimit ?? 25,
       temporaryReportMaxAge: file?.reporting?.temporaryReportMaxAge ?? "24h",
@@ -505,5 +528,6 @@ export function resolveConfig(
     failOnIncomplete: file?.failOnIncomplete ?? true,
   };
 
+  assertProjectEslintConfiguration(resolved);
   return configPath === undefined ? resolved : { ...resolved, configPath };
 }

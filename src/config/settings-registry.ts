@@ -1,3 +1,7 @@
+import {
+  ACCESSIBILITY_SETTINGS_DEFINITION,
+  type AccessibilitySettings,
+} from "../checks/react/accessibility-settings.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type {
   CheckId,
@@ -36,11 +40,13 @@ export type ConfigurableRuleCheckId =
 export interface ManagedSettingsDefinitions {
   readonly formatting: ManagedSettingsDefinition<FormattingSettings>;
   readonly duplication: ManagedSettingsDefinition<DuplicationSettings>;
+  readonly reactAccessibility: ManagedSettingsDefinition<AccessibilitySettings>;
 }
 
 const MANAGED_SETTINGS_DEFINITIONS: ManagedSettingsDefinitions = Object.freeze({
   formatting: FORMATTING_SETTINGS_DEFINITION,
   duplication: DUPLICATION_SETTINGS_DEFINITION,
+  reactAccessibility: ACCESSIBILITY_SETTINGS_DEFINITION,
 });
 
 export function managedSettingDefinition(
@@ -53,7 +59,7 @@ export function managedSettingDefinition(
 
 const MANAGED_POLICY_SCALAR_KEYS = Object.freeze({
   formatting: ["engine"],
-  lint: [],
+  lint: ["engine"],
   types: [],
   cyclomaticComplexity: ["blockWorsening", "max"],
   readabilityComplexity: ["blockWorsening", "max"],
@@ -85,11 +91,8 @@ export function isConfigurableRuleCheckId(
   );
 }
 
-const UNSAFE_CONFIGURATION_KEYS = new Set([
-  "__proto__",
-  "prototype",
-  "constructor",
-]);
+export { immutableConfigurationSnapshot } from "./immutable-configuration.js";
+import { immutableConfigurationSnapshot } from "./immutable-configuration.js";
 
 function unsupportedConfiguration(): TypeError {
   return new TypeError(
@@ -97,96 +100,9 @@ function unsupportedConfiguration(): TypeError {
   );
 }
 
-function immutableJsonValue(value: unknown, ancestors: Set<object>): unknown {
-  if (value === null) return null;
-  switch (typeof value) {
-    case "boolean":
-    case "string":
-      return value;
-    case "number":
-      if (Number.isFinite(value)) return value;
-      throw unsupportedConfiguration();
-    case "undefined":
-    case "bigint":
-    case "symbol":
-    case "function":
-      throw unsupportedConfiguration();
-    case "object":
-      break;
-  }
-
-  if (ancestors.has(value)) throw unsupportedConfiguration();
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype) {
-        throw unsupportedConfiguration();
-      }
-      const keys = Reflect.ownKeys(value);
-      if (
-        keys.length !== value.length + 1 ||
-        keys.some(
-          (key) =>
-            typeof key !== "string" ||
-            (key !== "length" &&
-              (!/^(?:0|[1-9][0-9]*)$/u.test(key) ||
-                Number(key) >= value.length)),
-        )
-      ) {
-        throw unsupportedConfiguration();
-      }
-      return Object.freeze(
-        Array.from({ length: value.length }, (_, index) => {
-          const descriptor = Object.getOwnPropertyDescriptor(
-            value,
-            String(index),
-          );
-          if (
-            descriptor === undefined ||
-            descriptor.enumerable !== true ||
-            !("value" in descriptor)
-          ) {
-            throw unsupportedConfiguration();
-          }
-          return immutableJsonValue(descriptor.value, ancestors);
-        }),
-      );
-    }
-
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw unsupportedConfiguration();
-    }
-    const entries: [string, unknown][] = [];
-    for (const key of Reflect.ownKeys(value).sort((left, right) =>
-      compareCodeUnits(String(left), String(right)),
-    )) {
-      if (typeof key !== "string" || UNSAFE_CONFIGURATION_KEYS.has(key)) {
-        throw unsupportedConfiguration();
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (
-        descriptor === undefined ||
-        descriptor.enumerable !== true ||
-        !("value" in descriptor)
-      ) {
-        throw unsupportedConfiguration();
-      }
-      entries.push([key, immutableJsonValue(descriptor.value, ancestors)]);
-    }
-    return Object.freeze(Object.fromEntries(entries));
-  } finally {
-    ancestors.delete(value);
-  }
-}
-
-export function immutableConfigurationSnapshot<T>(value: T): Readonly<T> {
-  return immutableJsonValue(value, new Set()) as Readonly<T>;
-}
-
 const POLICY_KEYS = Object.freeze({
   formatting: ["engine", "severity", "settings", "when"],
-  lint: ["rules", "severity", "typeInformation", "when"],
+  lint: ["engine", "rules", "severity", "typeInformation", "when"],
   types: ["severity", "when"],
   cyclomaticComplexity: ["blockWorsening", "max", "severity", "when"],
   readabilityComplexity: ["blockWorsening", "max", "severity", "when"],
@@ -196,7 +112,7 @@ const POLICY_KEYS = Object.freeze({
   dependencyArchitecture: ["severity", "when"],
   deadCode: ["severity", "when"],
   reactCorrectness: ["rules", "severity", "when"],
-  reactAccessibility: ["rules", "severity", "when"],
+  reactAccessibility: ["rules", "settings", "severity", "when"],
   vulnerabilities: ["onUnavailable", "severity", "when"],
 } as const satisfies Readonly<Record<CheckId, readonly string[]>>);
 

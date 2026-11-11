@@ -1,3 +1,4 @@
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
 import { summarizeChecks } from "../core/summarize.js";
@@ -127,6 +128,9 @@ function copyCheck(
   findings: readonly Finding[],
 ): CheckResult {
   return Object.freeze({
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,

@@ -28,6 +28,15 @@ function applySeverity(
     ruleOwned && "rules" in policy ? policy.rules?.[finding.rule] : undefined;
   const level = Array.isArray(configured) ? configured[0] : configured;
   if (level === "off" || level === 0) return undefined;
+  if (
+    finding.check === "lint" &&
+    "engine" in policy &&
+    policy.engine === "project"
+  )
+    return {
+      ...finding,
+      severity: policy.severity === "warn" ? "warning" : finding.severity,
+    };
   return {
     ...finding,
     severity:

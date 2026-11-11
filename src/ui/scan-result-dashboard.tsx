@@ -1,3 +1,4 @@
+import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
@@ -493,6 +494,11 @@ export function ScanResultDashboard({
     <Box flexDirection="column" width={width}>
       <Callouts lines={callouts.opening} width={width} color={color} />
       <BrandedCommandFrame width={width} color={color}>
+        {projectEslintNotices(report).map((notice) => (
+          <Box key={notice} marginY={1}>
+            <Text>{notice}</Text>
+          </Box>
+        ))}
         <FindingPanel
           title="BLOCKING FINDINGS"
           findings={sections.blockingFindings}

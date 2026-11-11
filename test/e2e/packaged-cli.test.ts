@@ -1953,3 +1953,58 @@ describe("project Prettier integration", () => {
     expect(committed.exitCode, committed.stdout + committed.stderr).toBe(0);
   });
 });
+
+it("runs project ESLint through the installed package's supervised worker", async () => {
+  const repository = await createInstalledRepository();
+  await repository.write(
+    "package.json",
+    JSON.stringify({
+      name: "native-eslint",
+      private: true,
+      type: "module",
+      devDependencies: { eslint: "9.39.5" },
+    }),
+  );
+  await repository.write(
+    "package-lock.json",
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: {
+        "": { devDependencies: { eslint: "9.39.5" } },
+        "node_modules/eslint": { version: "9.39.5" },
+      },
+    }),
+  );
+  const { CHECK_IDS } = await import("../../src/config/schema.js");
+  const checks = Object.fromEntries(
+    CHECK_IDS.filter(
+      (id) => !["reactCorrectness", "reactAccessibility"].includes(id),
+    ).map((id) => [
+      id,
+      id === "lint" ? { engine: "project", severity: "error" } : "off",
+    ]),
+  );
+  await repository.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({ schemaVersion: 1, profile: "recommended", checks }),
+  );
+  await repository.write(
+    "eslint.config.mjs",
+    "export default [{rules:{'no-undef':'warn'}}];\n",
+  );
+  await repository.write("native.js", "export const clean=1;\n");
+  await repository.commitAll("project baseline");
+  const { persistProjectEslintTrust } =
+    await import("../../src/checks/eslint/project/trust.js");
+  await persistProjectEslintTrust(repository.root, ".", "execute");
+  await repository.write("native.js", "undefinedValue();\n");
+  await repository.git(["add", "native.js"]);
+  const result = await runZedbee(repository.root, "json", ["--no-service"]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  const report = JSON.parse(result.stdout);
+  expect(report.summary.warnings).toBe(1);
+  expect(
+    report.checks.find((check: { checkId: string }) => check.checkId === "lint")
+      .eslintAnalysis,
+  ).toMatchObject({ version: "9.39.5", messages: "redacted" });
+});

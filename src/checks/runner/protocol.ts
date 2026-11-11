@@ -1,3 +1,4 @@
+import { sanitizeEslintAnalysis } from "../sanitize-result.js";
 import type { CheckId } from "../../config/schema.js";
 import type { CheckResult, Finding, Observation } from "../../core/types.js";
 import type { CheckFixCandidate } from "../../fixes/types.js";
@@ -163,6 +164,9 @@ export function validateAnalyzerResult<R extends AnalyzerRequest>(
       return safe;
     };
     result = {
+      ...(input.eslintAnalysis === undefined
+        ? {}
+        : { eslintAnalysis: sanitizeEslintAnalysis(input.eslintAnalysis) }),
       checkId: input.checkId,
       target,
       baselineObservations: input.baselineObservations.map(normalize),

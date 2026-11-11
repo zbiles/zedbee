@@ -68,6 +68,9 @@ interface CommanderDoctorOptions {
 }
 
 interface CommanderInitOptions {
+  eslintEngine?: "managed" | "project";
+  trustProjectEslint?: boolean;
+  allowProjectEslintMessages?: boolean;
   profile: ProfileId;
   hook: InitHookChoice;
   checks?: readonly CheckId[];
@@ -265,6 +268,20 @@ export async function runCli(
 
   program
     .command("init")
+    .addOption(
+      new Option(
+        "--eslint-engine <engine>",
+        "use built-in lint rules or experimental project ESLint",
+      ).choices(["managed", "project"]),
+    )
+    .option(
+      "--trust-project-eslint",
+      "explicitly trust the project ESLint configuration and plugins",
+    )
+    .option(
+      "--allow-project-eslint-messages",
+      "separately permit source-bearing project ESLint messages in local reports",
+    )
     .description(
       "preview and safely initialize Zedbee policy, hooks, and GitHub workflow",
     )
@@ -365,6 +382,17 @@ export async function runCli(
           ...(options.formattingScope === undefined
             ? {}
             : { formattingScope: options.formattingScope }),
+          ...(options.eslintEngine === undefined
+            ? {}
+            : { eslintEngine: options.eslintEngine }),
+          ...(options.trustProjectEslint === undefined
+            ? {}
+            : { trustProjectEslint: options.trustProjectEslint }),
+          ...(options.allowProjectEslintMessages === undefined
+            ? {}
+            : {
+                allowProjectEslintMessages: options.allowProjectEslintMessages,
+              }),
           trustProjectPrettier: options.trustProjectPrettier,
           yes: options.yes,
           format: options.format,

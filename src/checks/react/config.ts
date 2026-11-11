@@ -1,3 +1,7 @@
+import {
+  validateAccessibilitySettings,
+  type AccessibilitySettings,
+} from "./accessibility-settings.js";
 import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
 import { managedAccessibilityPlugin } from "./managed-accessibility-plugin.js";
@@ -39,7 +43,9 @@ export function managedReactCorrectnessConfig(
   };
 }
 
-export function managedReactAccessibilityConfig(): Linter.Config {
+export function managedReactAccessibilityConfig(
+  settings?: Readonly<AccessibilitySettings>,
+): Linter.Config {
   const jsxA11yPlugin = managedAccessibilityPlugin() as ESLint.Plugin & {
     readonly flatConfigs: { readonly recommended: Linter.Config };
   };
@@ -47,5 +53,8 @@ export function managedReactAccessibilityConfig(): Linter.Config {
     files: SOURCE_FILES,
     plugins: { "jsx-a11y": jsxA11yPlugin as ESLint.Plugin },
     rules: { ...jsxA11yPlugin.flatConfigs.recommended.rules },
+    ...(settings === undefined
+      ? {}
+      : { settings: { "jsx-a11y": validateAccessibilitySettings(settings) } }),
   };
 }

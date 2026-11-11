@@ -1,3 +1,4 @@
+import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import { Box, Text } from "ink";
 import type { ScanEvent } from "../checks/events.js";
 import type { ScanReport } from "../scan/report.js";
@@ -218,6 +219,11 @@ export function ScanApp(props: ScanAppProps) {
         : "✕ Restore the incomplete check, then scan again.";
   return (
     <Box flexDirection="column" width={props.width}>
+      {projectEslintNotices(props.report).map((notice) => (
+        <Box key={notice} marginY={1}>
+          <Text>{notice}</Text>
+        </Box>
+      ))}
       <OutcomeStrip
         report={props.report}
         width={props.width}

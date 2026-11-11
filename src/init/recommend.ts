@@ -1,3 +1,7 @@
+import {
+  configureInitEslint,
+  PROJECT_ESLINT_DISCLOSURE,
+} from "./eslint-setup.js";
 import { createHash } from "node:crypto";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
@@ -705,6 +709,20 @@ export function createInitProposal(
       );
     }
   }
+  const eslintSetup = configureInitEslint(
+    config.after,
+    before,
+    inspection,
+    options,
+  );
+  if (eslintSetup.after !== config.after) {
+    config = initFileChange(
+      config.relativePath,
+      config.before,
+      eslintSetup.after,
+      config.mode,
+    );
+  }
   const hook: ResolvedHookChoice =
     options.hook === "auto"
       ? "none"
@@ -759,7 +777,20 @@ export function createInitProposal(
         ? [hookActivation.remediation]
         : []),
       ...(options.formattingImport?.limitations ?? []),
+      ...(eslintSetup.engine === "project"
+        ? [PROJECT_ESLINT_DISCLOSURE, ...eslintSetup.conflicts]
+        : []),
     ]),
+    eslintEngine: eslintSetup.engine,
+    eslintConflicts: eslintSetup.conflicts,
+    projectEslintMessages: eslintSetup.messages,
+    projectEslintTrustRoots: eslintSetup.roots,
+    ...(options.projectEslintTrustConfirmed === true
+      ? { projectEslintTrustConfirmed: true }
+      : {}),
+    ...(options.projectEslintMessagesConfirmed === true
+      ? { projectEslintMessagesConfirmed: true }
+      : {}),
     formatting: formattingChoice,
     ...(options.formattingScope === undefined
       ? {}

@@ -37,3 +37,45 @@ node_modules or executes project React code. Baseline and target snapshots are
 calibrated independently, so a React upgrade is analyzed with each side's own
 declared dependency state. Rules of Hooks, missing list keys, and DOM accessibility
 rules do not depend on the React version setting.
+
+## Static JSX accessibility checks
+
+`reactAccessibility` applies static JSX accessibility checks; it cannot certify
+an accessible application. Test keyboard behavior, focus management, contrast,
+and assistive technology against the rendered interface as well.
+
+Teach the managed jsx-a11y engine about a design system with inert settings:
+
+```json
+{
+  "schemaVersion": 1,
+  "checks": {
+    "reactAccessibility": {
+      "settings": {
+        "components": { "Photo": "img", "Button": "button" },
+        "attributes": { "for": ["htmlFor", "for"] },
+        "polymorphicPropName": "as",
+        "polymorphicAllowList": ["Box"]
+      }
+    }
+  }
+}
+```
+
+Here `<Photo src="logo.png" />` receives the image's missing-alt check, while
+`<Photo src="logo.png" alt="Logo" />` passes that check. `<Box as="img" />`
+also receives image semantics. `attributes` maps a DOM attribute to an array of
+JSX property names supported by jsx-a11y; the example permits `for` as well as
+`htmlFor` for label association. A polymorphic allow list limits `as` handling to
+named components; omitting it applies the configured property wherever the
+plugin supports polymorphism. Dynamic rendered element names may be unknown to
+static analysis.
+
+These four fields are optional and default to no custom mappings. Use ordered
+`overrides` to scope settings to workspace or file globs. Later settings replace
+the corresponding field: a later `components` map replaces the earlier map,
+while unrelated fields are retained. Configure mappings to match what components
+actually render; Zedbee does not inspect their implementation to verify the map.
+Mappings do not execute project code or load project plugins. The managed
+focusable-separator correction also applies when the element uses a mapped
+custom component.

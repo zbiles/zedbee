@@ -1,3 +1,4 @@
+import { sanitizeEslintAnalysis } from "./sanitize-result.js";
 import { pairLocationObservations } from "../attribution/pair-locations.js";
 import {
   compareCodeUnits,
@@ -471,10 +472,21 @@ export async function observationCheckResult(
     entities,
     context,
   );
+  const eslintAnalysis =
+    rawSet.eslintAnalysis === undefined
+      ? undefined
+      : sanitizeEslintAnalysis(rawSet.eslintAnalysis);
   return {
+    ...(eslintAnalysis === undefined ? {} : { eslintAnalysis }),
+    ...(eslintAnalysis?.checkedFiles === 0
+      ? {
+          skipReason:
+            "Project ESLint did not check any files; all candidate files were ignored or excluded.",
+        }
+      : {}),
     checkId,
     target: context.target.id,
-    status: "completed",
+    status: eslintAnalysis?.checkedFiles === 0 ? "skipped" : "completed",
     durationMs: 0,
     findings: [...nonMetricFindings, ...metrics].sort(compareFindings),
   };

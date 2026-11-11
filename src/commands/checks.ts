@@ -368,7 +368,8 @@ function policyValueEntries(
     const settingKeys =
       definition === undefined ? [] : Object.keys(definition.describe);
     for (const key of settingKeys) {
-      entries.push([`settings.${key}`, settings[key]]);
+      if (settings[key] !== undefined)
+        entries.push([`settings.${key}`, settings[key]]);
     }
   }
   if ("rules" in policy && isConfigurableRuleCheckId(checkId)) {
@@ -528,6 +529,11 @@ export async function executeChecksCommand(
       options.configPath,
       dependencies,
     );
+    const lintUsesProject =
+      config.checks.lint.engine === "project" ||
+      config.overrides.some(
+        (override) => override.checks.lint?.engine === "project",
+      );
     const formattingUsesProject =
       config.checks.formatting.engine === "project" ||
       config.overrides.some(
@@ -613,9 +619,11 @@ export async function executeChecksCommand(
             ? { effectiveEngines: effectiveFormattingEngines }
             : {}),
           limitation:
-            id === "formatting" && formattingUsesProject
-              ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
-              : CATALOG[id].limitation,
+            id === "lint" && lintUsesProject
+              ? "Uses project ESLint configuration in selected workspaces under explicit trust; other workspaces retain managed rules. Project-rule automatic fixes are unavailable."
+              : id === "formatting" && formattingUsesProject
+                ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
+                : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined
             ? {}
             : { automaticFix: CATALOG[id].automaticFix }),

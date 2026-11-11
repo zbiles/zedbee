@@ -155,6 +155,13 @@ export function createDispatchObservationCollector(
   }
   return async (adapter, runContext) => {
     if (
+      adapter.id === "lint" &&
+      "engine" in runContext.policy &&
+      runContext.policy.engine === "project"
+    ) {
+      return Reflect.apply(adapter.collect, undefined, [runContext]);
+    }
+    if (
       !isCacheableObservationCheck(adapter.id) ||
       (options.cache === undefined && options.cacheEngineIdentity === undefined)
     ) {

@@ -1,3 +1,4 @@
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { compareFindings } from "../core/summarize.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -85,6 +86,9 @@ function serializeCheck(
             : { remediation: check.error.remediation }),
         };
   return {
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,

@@ -112,3 +112,10 @@ Explicit output is complete even when automatic terminal presentation is constra
 SARIF follows the configured source-excerpt policy. Redirected SARIF omits ordinary source excerpts by default; use `--include-source` to opt in, `--no-source` to suppress them, or configure `reporting.sourceExcerpts`. Secret findings remain redacted in every format. Index-mode SARIF uses the exact staged Git-index snapshot; base-mode SARIF uses committed `HEAD`. Neither observes later working-tree edits.
 
 SARIF columns use UTF-16 code units, declared by `run.columnKind: "utf16CodeUnits"`. Diagnostic locations retain their original ranges. Permitted source excerpts appear in `result.properties["zedbee/sourceExcerpt"]` with `line`, `text`, `redacted: false`, and `truncated`; the existing `sourceExcerptTruncated` property also records truncation. Excerpt text is a sanitized display line: tabs expand to spaces, unsafe characters are replaced, and long lines may be truncated. It is therefore not emitted as a SARIF `region.snippet` or `contextRegion`. Redacted and omitted excerpts expose no source text.
+
+Experimental project ESLint adds optional `eslintAnalysis` metadata to its lint
+check result: `version`, `checkedFiles`, `ignoredFiles`, `excludedFiles`, `baseline` (`compared` or
+`new-coverage`), and `messages` (`redacted` or `full`). Both snapshot sides use the
+reported target-installed toolchain. Zero checked files means skipped coverage,
+not a successful lint run. A requested full-message policy without its separate
+local permission remains `redacted` in the actual result.

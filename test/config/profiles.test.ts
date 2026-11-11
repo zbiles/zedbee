@@ -5,6 +5,7 @@ import { CHECK_IDS, type CheckId } from "../../src/config/schema.js";
 describe("managed check profiles", () => {
   it("resolves version-1 reporting defaults", () => {
     expect(resolveConfig(undefined).reporting).toEqual({
+      projectEslintMessages: "redacted",
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",

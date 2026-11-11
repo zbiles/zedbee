@@ -87,6 +87,7 @@ describe("public result sanitizer contract", () => {
     // Each production registry also `satisfies Record<keyof Contract, true>`,
     // so adding a contract field without updating the sanitizer fails typecheck.
     expect(Object.keys(PUBLIC_CHECK_RESULT_FIELDS)).toEqual([
+      "eslintAnalysis",
       "checkId",
       "target",
       "status",

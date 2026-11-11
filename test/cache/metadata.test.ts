@@ -251,3 +251,10 @@ describe("managed check cache metadata", () => {
     },
   );
 });
+it("invalidates accessibility observations created before splitter corrections", () => {
+  expect(
+    createObservationCacheEngineIdentityResolver(() => "1.0.0")(
+      "reactAccessibility",
+    ),
+  ).toContain("focusable-separator-v2");
+});

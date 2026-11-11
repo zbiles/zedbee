@@ -1,3 +1,4 @@
+import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
@@ -503,6 +504,7 @@ function automaticTextLines(
       width,
       verbose,
     ),
+    ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(report, width, verbose),
     ...disclosureSectionLines(sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
@@ -605,6 +607,7 @@ export function renderText(
         }).summaryFindings;
   const lines = [
     ...headline(report).flatMap((line) => wrapWords(line, width)),
+    ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(report, width, options.verbose === true),
     ...incompleteSectionLines(sanitized.checks, width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),

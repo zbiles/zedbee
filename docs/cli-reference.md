@@ -490,3 +490,13 @@ Scan output distinguishes completed, skipped and incomplete check executions. Mu
 Optional JSON `changeSummary` contains `added`, `modified`, `deleted` and `renamed` path counts from the selected index or commit comparison. Renames count once. The field is absent when change discovery failed and for combined merge comparisons. Existing `summary.passed` still counts completed executions without findings.
 
 A scan does not know whether an earlier staging command failed. Chain staging and committing with `&&` and review the selected changes; see [staging troubleshooting](support.md#staging-and-deletion-only-commits).
+
+Experimental ESLint setup options for `zedbee init`:
+
+- `--eslint-engine managed|project`: select bundled rules or the project's installed ESLint.
+- `--trust-project-eslint`: explicitly grant execution trust when applying project setup.
+- `--allow-project-eslint-messages`: separately allow source-bearing diagnostic text in local reports.
+
+Review the experimental support boundary in [Checks](checks.md#experimental-project-eslint)
+before choosing project mode. `zedbee doctor` inspects installation, flat config,
+and stored trust as data, without executing the configuration.

@@ -81,3 +81,31 @@ describe("init workflow options", () => {
     },
   );
 });
+
+it("forwards the experimental ESLint choice and separate permissions to setup", async () => {
+  let actual: unknown;
+  const code = await runCli(
+    [
+      "node",
+      "zedbee",
+      "init",
+      "--eslint-engine",
+      "project",
+      "--trust-project-eslint",
+      "--allow-project-eslint-messages",
+      "--yes",
+    ],
+    {
+      executeInitCommand: async (options) => {
+        actual = options;
+        return 0;
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(actual).toMatchObject({
+    eslintEngine: "project",
+    trustProjectEslint: true,
+    allowProjectEslintMessages: true,
+  });
+});

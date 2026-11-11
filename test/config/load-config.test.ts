@@ -59,6 +59,7 @@ describe("loadConfig", () => {
     expect(config.overrides).toEqual([]);
     expect(config.pathExclusions).toEqual([]);
     expect(config.reporting).toEqual({
+      projectEslintMessages: "redacted",
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
       temporaryReportMaxAge: "24h",
@@ -66,6 +67,21 @@ describe("loadConfig", () => {
         opening: "",
         nextStep: "",
       },
+    });
+  });
+
+  it("reports project ESLint policy contradictions as actionable configuration errors", async () => {
+    const root = await createRepositoryRoot();
+    await writeFile(
+      join(root, ".zedbeerc.jsonc"),
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: { lint: { engine: "project", severity: "off" } },
+      }),
+    );
+    await expect(loadConfig(root)).rejects.toMatchObject({
+      code: "CONFIG_INVALID",
+      message: expect.stringMatching(/Project ESLint.*lint is off/u),
     });
   });
 
@@ -88,6 +104,7 @@ describe("loadConfig", () => {
     );
 
     expect((await loadConfig(root)).reporting).toEqual({
+      projectEslintMessages: "redacted",
       sourceExcerpts: "always",
       terminalFindingLimit: "all",
       temporaryReportMaxAge: "7d",
@@ -280,6 +297,7 @@ describe("loadConfig", () => {
       },
     });
     expect(config.checks.lint).toEqual({
+      engine: "managed",
       severity: "error",
       when: "always",
       rules: {},

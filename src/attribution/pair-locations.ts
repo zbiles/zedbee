@@ -59,18 +59,18 @@ export function pairLocationObservations(
   const targetLocation = (
     location: SourceLocation,
     anchor: boolean,
-  ): SourceLocation => {
+  ): SourceLocation | undefined => {
     const targetPath = renamedPaths.get(location.file) ?? location.file;
     const unchangedPosition = { ...location, file: targetPath };
     const before = baseline.files[location.file];
     const after = target.files[targetPath];
-    if (before === after) return unchangedPosition;
+    if (before !== undefined && before === after) return unchangedPosition;
     if (
       before === undefined ||
       after === undefined ||
       location.startLine === undefined
     )
-      return unchangedPosition;
+      return anchor ? undefined : unchangedPosition;
     let lines = lineMaps.get(location.file);
     if (lines === undefined) {
       const components = diffLines(before, after, { timeout: 2_000 });
@@ -108,12 +108,14 @@ export function pairLocationObservations(
         oldEnd < range.baselineStart + range.count,
     );
     // Harmless edits may change a whole line while leaving the diagnostic itself identical.
-    if (span === undefined) return unchangedPosition;
+    if (span === undefined) return anchor ? undefined : unchangedPosition;
     const offset = span.targetStart - span.baselineStart;
     return {
       ...unchangedPosition,
       startLine: location.startLine + offset,
-      ...(location.endLine === undefined ? {} : { endLine: oldEnd + offset }),
+      ...(location.endLine === undefined
+        ? {}
+        : { endLine: location.endLine + offset }),
     };
   };
   return {
@@ -124,7 +126,10 @@ export function pairLocationObservations(
           : targetLocation(observation.location, anchoredOpening(observation));
       return {
         ...observation,
-        comparisonIdentity: comparisonIdentity(observation, location),
+        comparisonIdentity:
+          anchoredOpening(observation) && location === undefined
+            ? `unmapped-baseline:${comparisonIdentity(observation)}`
+            : comparisonIdentity(observation, location),
       };
     }),
     targetObservations: target.observations.map((observation) => ({

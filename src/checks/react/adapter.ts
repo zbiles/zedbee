@@ -149,6 +149,9 @@ async function collectPreparedSide(
         mode,
         managedIgnores: [],
         ruleOverrides: group.rules,
+        ...(group.accessibilitySettings === undefined
+          ? {}
+          : { accessibilitySettings: group.accessibilitySettings }),
         ...(prepared.reactVersion === undefined
           ? {}
           : {

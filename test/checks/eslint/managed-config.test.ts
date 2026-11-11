@@ -1,3 +1,4 @@
+import { managedAccessibilityPlugin } from "../../../src/checks/react/managed-accessibility-plugin.js";
 import { createRequire } from "node:module";
 import js from "@eslint/js";
 import type { ESLint } from "eslint";
@@ -73,6 +74,7 @@ describe("managedConfig", () => {
       reactPlugin,
       reactHooksPlugin,
       jsxA11yPlugin,
+      managedAccessibilityPlugin(),
       readabilityComplexityPlugin,
     ]);
     const allowedParsers = new Set<unknown>([
