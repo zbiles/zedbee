@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
+import { managedAccessibilityPlugin } from "./managed-accessibility-plugin.js";
 
 const require = createRequire(import.meta.url);
 
@@ -39,7 +40,7 @@ export function managedReactCorrectnessConfig(
 }
 
 export function managedReactAccessibilityConfig(): Linter.Config {
-  const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin & {
+  const jsxA11yPlugin = managedAccessibilityPlugin() as ESLint.Plugin & {
     readonly flatConfigs: { readonly recommended: Linter.Config };
   };
   return {
