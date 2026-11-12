@@ -184,6 +184,7 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  diagnosticMessages?: "contextual" | "source-free";
   /** Internal transfer from merge preflight; this session owns its cleanup. */
   selectedComparison?: SelectedIndexComparison;
   executor?: AnalyzerExecutor;
@@ -320,6 +321,17 @@ export async function withAnalysisSession<T>(
         options.configPath,
         options.signal,
       );
+    }
+    if (options.diagnosticMessages !== undefined) {
+      if (!["contextual", "source-free"].includes(options.diagnosticMessages))
+        throw new TypeError("Invalid diagnostic message policy");
+      config = Object.freeze({
+        ...config,
+        reporting: Object.freeze({
+          ...config.reporting,
+          diagnosticMessages: options.diagnosticMessages,
+        }),
+      });
     }
     state.configuredPathExclusions = config.pathExclusions;
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {

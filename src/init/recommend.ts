@@ -723,6 +723,36 @@ export function createInitProposal(
       config.mode,
     );
   }
+  if (options.diagnosticMessages !== undefined) {
+    let after = applyEdits(
+      config.after,
+      modify(
+        config.after,
+        ["reporting", "diagnosticMessages"],
+        options.diagnosticMessages,
+        { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+      ),
+    );
+    if (options.diagnosticMessages === "source-free")
+      after = applyEdits(
+        after,
+        modify(after, ["reporting", "sourceExcerpts"], "never", {
+          formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+        }),
+      );
+    config = initFileChange(
+      config.relativePath,
+      config.before,
+      after,
+      config.mode,
+    );
+  }
+  const diagnosticMessages =
+    (
+      parse(config.after) as {
+        reporting?: { diagnosticMessages?: "contextual" | "source-free" };
+      }
+    ).reporting?.diagnosticMessages ?? "contextual";
   const hook: ResolvedHookChoice =
     options.hook === "auto"
       ? "none"
@@ -781,6 +811,7 @@ export function createInitProposal(
         ? [PROJECT_ESLINT_DISCLOSURE, ...eslintSetup.conflicts]
         : []),
     ]),
+    diagnosticMessages,
     eslintEngine: eslintSetup.engine,
     eslintConflicts: eslintSetup.conflicts,
     projectEslintMessages: eslintSetup.messages,

@@ -37,6 +37,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  diagnosticMessages?: "contextual" | "source-free";
   merge?: boolean;
   hookInvocation?: boolean;
   service: boolean;
@@ -68,6 +69,7 @@ interface CommanderDoctorOptions {
 }
 
 interface CommanderInitOptions {
+  diagnosticMessages?: "contextual" | "source-free";
   eslintEngine?: "managed" | "project";
   trustProjectEslint?: boolean;
   allowProjectEslintMessages?: boolean;
@@ -270,6 +272,12 @@ export async function runCli(
     .command("init")
     .addOption(
       new Option(
+        "--diagnostic-messages <policy>",
+        "managed local message detail; source-free also omits source excerpts",
+      ).choices(["contextual", "source-free"]),
+    )
+    .addOption(
+      new Option(
         "--eslint-engine <engine>",
         "use built-in lint rules or experimental project ESLint",
       ).choices(["managed", "project"]),
@@ -370,6 +378,9 @@ export async function runCli(
             telemetry.summary(value);
           },
           profile: options.profile,
+          ...(options.diagnosticMessages === undefined
+            ? {}
+            : { diagnosticMessages: options.diagnosticMessages }),
           ...(options.workflow === undefined
             ? {}
             : { workflow: options.workflow }),
@@ -463,6 +474,12 @@ export async function runCli(
         "omit exact selected-target source excerpts",
       ).conflicts("includeSource"),
     )
+    .addOption(
+      new Option(
+        "--diagnostic-messages <policy>",
+        "managed diagnostic detail: local contextual names or source-free explanations",
+      ).choices(["contextual", "source-free"]),
+    )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
     .option("--no-service", "use a command-owned local analyzer executor")
@@ -489,6 +506,9 @@ export async function runCli(
             ? {}
             : { telemetryObserver: telemetry }),
           format: options.format,
+          ...(options.diagnosticMessages === undefined
+            ? {}
+            : { diagnosticMessages: options.diagnosticMessages }),
           service: options.service,
           color: options.color,
           animations: options.animations,

@@ -4951,6 +4951,12 @@
     "reporting": {
       "type": "object",
       "properties": {
+        "diagnosticMessages": {
+          "default": "contextual",
+          "description": "Managed diagnostic messages include reviewed source names locally, or source-free explanations for sharing. Source excerpts and project ESLint permissions are separate.",
+          "type": "string",
+          "enum": ["contextual", "source-free"]
+        },
         "projectEslintMessages": {
           "default": "redacted",
           "description": "Project ESLint diagnostic messages are redacted unless full messages are selected and separately permitted locally.",

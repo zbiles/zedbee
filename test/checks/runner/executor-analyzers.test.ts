@@ -32,6 +32,14 @@ it("runs every real analyzer through reused supervised sessions", async () => {
     },
     include: ["src"],
   });
+  await fixture.writeJson("node_modules/react/package.json", {
+    name: "react",
+    version: "19.0.0",
+  });
+  await fixture.write(
+    "node_modules/react/jsx-runtime.d.ts",
+    "export namespace JSX { interface IntrinsicElements { img: {}; main: {}; } }\nexport function jsx(...args: unknown[]): unknown;\n",
+  );
   const inspection = await inspectRepository(fixture.root);
   const config = resolveConfig({
     schemaVersion: 1,

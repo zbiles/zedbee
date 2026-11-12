@@ -1,3 +1,4 @@
+import { verifyComparisonInputs } from "../comparison-context.js";
 import { collectProjectEslint } from "./project/adapter.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
@@ -525,6 +526,7 @@ export function createLintAdapter(
       const dependencyInputs = dependencies.manifest();
       const workspace = workspaceFor(context.targetInspection, context.target);
       return {
+        comparisonContext: verifyComparisonInputs(dependencies),
         checkId: "lint",
         target: context.target,
         ...pairLocationObservations(baseline, target, context.changeSet),

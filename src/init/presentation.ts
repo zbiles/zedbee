@@ -15,6 +15,7 @@ import type { InitProposal } from "./types.js";
 export function publicProposal(proposal: InitProposal) {
   return {
     profile: proposal.profile,
+    diagnosticMessages: proposal.diagnosticMessages ?? "contextual",
     workflow: proposal.workflow ?? "none",
     workflowAvailable: proposal.workflowAvailable ?? false,
     ...(proposal.workflowMessage === undefined
@@ -89,6 +90,7 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
           ),
         ]
       : []),
+    `Managed diagnostic messages: ${proposal.diagnosticMessages ?? "contextual"}. Contextual local reports include source names with targeted redaction. For managed source-free messages, use --diagnostic-messages source-free (also omits source excerpts). Project ESLint message permissions are separate.`,
     `Formatting: ${proposal.formatting ?? "managed"}`,
     `Formatting scope: ${proposal.formattingScope === "projects" ? proposal.formattingScopeRoots?.join(", ") || "repository" : "whole repository"}`,
     ...(proposal.formattingDetection ?? []).map(

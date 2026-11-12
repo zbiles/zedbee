@@ -875,6 +875,12 @@ export function ReviewPanel({
           ; project messages: {proposal.projectEslintMessages ?? "redacted"}
         </Text>
         <Text wrap="wrap">
+          Managed messages: {proposal.diagnosticMessages ?? "contextual"}. Local
+          contextual reports can contain source names. Use init
+          --diagnostic-messages source-free for source-free messages and no
+          source excerpts.
+        </Text>
+        <Text wrap="wrap">
           Formatting scope:{" "}
           {proposal.formattingScope === "projects"
             ? proposal.formattingScopeRoots?.join(", ") || "whole repository"

@@ -478,3 +478,5 @@ versioned correction for state updates across waits and local effect helpers.
 An async wrapper does not make an immediate update safe. See
 [React analysis](react-analysis.md#state-updates-across-async-effect-helpers)
 for its scope and the distinction from native project ESLint behavior.
+
+Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.

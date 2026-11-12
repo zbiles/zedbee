@@ -1,3 +1,4 @@
+import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
@@ -229,6 +230,7 @@ function createFreshSnapshotProgram(
           ),
         ].sort();
     }
+    rememberConfiguredTypes(prepared, projectOptions.types);
     return prepared;
   };
 

@@ -1,4 +1,10 @@
 import {
+  captureDiagnosticDetails,
+  retainDiagnosticDetails,
+  hasDiagnosticDetailSession,
+  needsContextualDiagnosticDetails,
+} from "./diagnostic-details.js";
+import {
   CHECK_IDS,
   type CheckId,
   type ResolvedCheckPolicy,
@@ -108,6 +114,19 @@ export function createDispatchObservationCollector(
   runContext: CheckRunContext,
 ) => Promise<CheckObservationSet> {
   const sanitizeMessages = createDiagnosticMessageSanitizer();
+  const collect = async (
+    adapter: Extract<AdapterSnapshot, { output: "observations" }>,
+    runContext: CheckRunContext,
+  ) => {
+    const value = await sanitizeMessages(
+      await captureDiagnosticDetails(runContext, () =>
+        Reflect.apply(adapter.collect, undefined, [runContext]),
+      ),
+    );
+    retainDiagnosticDetails(value);
+    const { diagnosticDetails: _privateDetails, ...safe } = value;
+    return safe;
+  };
   const identities = new Map<string, string | undefined>();
   const engineIdentityFor =
     options.cacheEngineIdentity ??
@@ -165,15 +184,11 @@ export function createDispatchObservationCollector(
       !isCacheableObservationCheck(adapter.id) ||
       (options.cache === undefined && options.cacheEngineIdentity === undefined)
     ) {
-      return sanitizeMessages(
-        await Reflect.apply(adapter.collect, undefined, [runContext]),
-      );
+      return collect(adapter, runContext);
     }
     const engineIdentity = engineIdentityFor(adapter.id);
     if (engineIdentity === undefined) {
-      return sanitizeMessages(
-        await Reflect.apply(adapter.collect, undefined, [runContext]),
-      );
+      return collect(adapter, runContext);
     }
     let cacheKey: string | undefined;
     if (options.cache !== undefined) {
@@ -213,8 +228,22 @@ export function createDispatchObservationCollector(
         });
         const cached = await options.cache.get(cacheKey).catch(() => undefined);
         if (
+          !(
+            hasDiagnosticDetailSession() &&
+            runContext.config.reporting.diagnosticMessages === "contextual" &&
+            cached !== undefined &&
+            needsContextualDiagnosticDetails(cached) &&
+            [
+              "types",
+              "lint",
+              "reactCorrectness",
+              "reactAccessibility",
+            ].includes(adapter.id)
+          ) &&
           cached !== undefined &&
           cached.checkId === adapter.id &&
+          (!["types", "lint"].includes(adapter.id) ||
+            cached.comparisonContext?.status === "comparable") &&
           sameTarget(cached.target, runContext.target) &&
           (!requiresDependencyInputs(adapter.id) ||
             validateDependencyInputs(
@@ -223,16 +252,18 @@ export function createDispatchObservationCollector(
               adapter.id === "deadCode" ? "knip" : false,
             ))
         ) {
-          return sanitizeMessages(sanitizeCacheableObservationSet(cached));
+          const safe = await sanitizeMessages(
+            sanitizeCacheableObservationSet(cached),
+          );
+          retainDiagnosticDetails(safe);
+          return safe;
         }
       } catch {
         cacheKey = undefined;
       }
     }
 
-    const collected = await sanitizeMessages(
-      await Reflect.apply(adapter.collect, undefined, [runContext]),
-    );
+    const collected = await collect(adapter, runContext);
     if (
       cacheKey !== undefined &&
       options.cache !== undefined &&

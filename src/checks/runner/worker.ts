@@ -1,3 +1,4 @@
+import { captureDiagnosticDetails } from "../diagnostic-details.js";
 import { restoreCheckContext, markAnalyzerWorker } from "./context.js";
 import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
@@ -181,7 +182,9 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
         request.operation === "collect" &&
         adapter.output === "observations"
       )
-        result = await adapter.collect(context);
+        result = await captureDiagnosticDetails(context, () =>
+          adapter.collect(context),
+        );
       else if (
         request.operation === "runLegacy" &&
         adapter.output === "legacy-check-result"

@@ -74,6 +74,7 @@ export interface InitCommandOptions {
   readonly eslintEngine?: "managed" | "project";
   readonly trustProjectEslint?: boolean;
   readonly allowProjectEslintMessages?: boolean;
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly yes: boolean;
   readonly format: "text" | "json";
   readonly color: boolean;
@@ -329,6 +330,9 @@ export async function executeInitCommand(
       ...workflowProposalFields,
       ...(schemaReference === undefined ? {} : { schemaReference }),
       configBefore,
+      ...(options.diagnosticMessages === undefined
+        ? {}
+        : { diagnosticMessages: options.diagnosticMessages }),
     };
     const eslintRoots = inspection.workspaces.map(
       ({ relativeRoot }) => relativeRoot,

@@ -1,3 +1,7 @@
+import {
+  withDiagnosticDetailSession,
+  applyDiagnosticDetails,
+} from "../checks/diagnostic-details.js";
 import { runMergeScan } from "./merge-scan.js";
 import { freezeResult } from "../core/freeze-result.js";
 import type { SelectedIndexComparison } from "../git/selected-comparison.js";
@@ -71,6 +75,7 @@ export interface RunScanOptions {
   configPath?: string;
   reportingSurface?: ReportingSurface;
   sourceExcerpts?: SourceExcerptOverride;
+  diagnosticMessages?: "contextual" | "source-free";
   timeout?: string;
   noTimeout?: boolean;
   signal?: AbortSignal;
@@ -111,7 +116,21 @@ function dispatchOptions(
   };
 }
 
+const diagnosticPolicyForPresentation = new WeakMap<
+  object,
+  "contextual" | "source-free"
+>();
+
 export async function runScan(options: RunScanOptions): Promise<ScanReport> {
+  return withDiagnosticDetailSession(() => runScanWithDetails(options));
+}
+
+async function runScanWithDetails(
+  options: RunScanOptions,
+  deferDiagnosticRendering = false,
+): Promise<ScanReport> {
+  let diagnosticMessages: "contextual" | "source-free" =
+    options.diagnosticMessages ?? "contextual";
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
@@ -120,12 +139,21 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     const merged = await runMergeScan(
       options,
       dependencies,
-      runScan,
+      (pairOptions) => runScanWithDetails(pairOptions, true),
       (selected) => {
         selectedComparison = selected;
       },
     );
-    if (merged !== undefined) return freezeResult(merged);
+    if (merged !== undefined)
+      return freezeResult(
+        deferDiagnosticRendering
+          ? merged
+          : await applyDiagnosticDetails(
+              merged,
+              diagnosticPolicyForPresentation.get(merged.presentationPolicy) ??
+                diagnosticMessages,
+            ),
+      );
   }
   const networkDisclosures: NetworkDisclosure[] = [];
   let includeSourceExcerpts = false;
@@ -155,6 +183,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       ...(selectedComparison === undefined ? {} : { selectedComparison }),
       dependencies,
       onConfiguration(config) {
+        diagnosticMessages = config.reporting.diagnosticMessages;
         try {
           options.onConfigurationSummary?.(summarizeConfiguration(config));
         } catch {
@@ -174,6 +203,10 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           ),
           agentGuidance: config.reporting.agentGuidance,
         });
+        diagnosticPolicyForPresentation.set(
+          presentationPolicy,
+          diagnosticMessages,
+        );
       },
       dispatchOptions: () =>
         dispatchOptions(
@@ -260,5 +293,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
             durationMs,
           );
   }
-  return freezeResult(report);
+  return freezeResult(
+    deferDiagnosticRendering
+      ? report
+      : await applyDiagnosticDetails(report, diagnosticMessages),
+  );
 }

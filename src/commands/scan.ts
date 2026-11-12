@@ -59,6 +59,7 @@ export interface ScanCommandOptions {
   baseRef?: string;
   configPath?: string;
   sourceExcerpts?: SourceExcerptOverride;
+  diagnosticMessages?: "contextual" | "source-free";
   timeout?: string;
   noTimeout?: boolean;
   diagnostics?: boolean;
@@ -272,6 +273,9 @@ export async function executeScanCommand(
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
+      ...(options.diagnosticMessages === undefined
+        ? {}
+        : { diagnosticMessages: options.diagnosticMessages }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),

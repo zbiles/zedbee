@@ -5,6 +5,7 @@ import { CHECK_IDS, type CheckId } from "../../src/config/schema.js";
 describe("managed check profiles", () => {
   it("resolves version-1 reporting defaults", () => {
     expect(resolveConfig(undefined).reporting).toEqual({
+      diagnosticMessages: "contextual",
       projectEslintMessages: "redacted",
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
@@ -250,5 +251,25 @@ describe("managed check profiles", () => {
         singleAttributePerLine: false,
       },
     });
+  });
+});
+
+it("defaults managed diagnostic messages to contextual and accepts source-free independently", () => {
+  expect(resolveConfig(undefined).reporting.diagnosticMessages).toBe(
+    "contextual",
+  );
+  expect(
+    resolveConfig({
+      schemaVersion: 1,
+      reporting: {
+        diagnosticMessages: "source-free",
+        sourceExcerpts: "always",
+        projectEslintMessages: "full",
+      },
+    }).reporting,
+  ).toMatchObject({
+    diagnosticMessages: "source-free",
+    sourceExcerpts: "always",
+    projectEslintMessages: "full",
   });
 });

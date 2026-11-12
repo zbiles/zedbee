@@ -1,3 +1,4 @@
+import { verifyComparisonInputs } from "../comparison-context.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
 import {
@@ -158,6 +159,7 @@ export const typescriptAdapter: ObservationCheckAdapter = {
       );
       const dependencyInputs = dependencies.manifest();
       return {
+        comparisonContext: verifyComparisonInputs(dependencies),
         checkId: "types",
         target: context.target,
         ...pairTypescriptObservations(baseline, target, context.changeSet),

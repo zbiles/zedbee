@@ -1,3 +1,4 @@
+import { sanitizeComparisonContext } from "../checks/comparison-context.js";
 import { createHash, randomBytes } from "node:crypto";
 import {
   lstat,
@@ -40,6 +41,7 @@ export interface ObservationCacheStoreOptions {
 }
 
 interface CachePayload {
+  readonly comparisonContext?: import("../checks/comparison-context.js").ComparisonContext;
   readonly checkId: string;
   readonly target: CheckTarget;
   readonly baselineObservations: readonly Observation[];
@@ -94,6 +96,7 @@ export function sanitizeCacheableObservationSet(
     target: sanitizeCheckTarget(input.target as CheckTarget),
     baselineObservations: Object.freeze(baselineObservations),
     targetObservations: Object.freeze(targetObservations),
+    ...(input.comparisonContext === undefined ? {} : { comparisonContext: sanitizeComparisonContext(input.comparisonContext) }),
     ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
     ...(input.projectDelta === undefined
       ? {}

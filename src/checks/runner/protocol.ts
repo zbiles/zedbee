@@ -1,3 +1,5 @@
+import { sanitizeComparisonContext } from "../comparison-context.js";
+import { sanitizeDiagnosticDetails } from "../diagnostic-details.js";
 import { sanitizeEslintAnalysis } from "../sanitize-result.js";
 import type { CheckId } from "../../config/schema.js";
 import type { CheckResult, Finding, Observation } from "../../core/types.js";
@@ -164,9 +166,11 @@ export function validateAnalyzerResult<R extends AnalyzerRequest>(
       return safe;
     };
     result = {
+      ...(input.comparisonContext === undefined ? {} : { comparisonContext: sanitizeComparisonContext(input.comparisonContext) }),
       ...(input.eslintAnalysis === undefined
         ? {}
         : { eslintAnalysis: sanitizeEslintAnalysis(input.eslintAnalysis) }),
+      ...(input.diagnosticDetails === undefined ? {} : {diagnosticDetails:sanitizeDiagnosticDetails(input.diagnosticDetails)}),
       checkId: input.checkId,
       target,
       baselineObservations: input.baselineObservations.map(normalize),

@@ -59,6 +59,7 @@ describe("loadConfig", () => {
     expect(config.overrides).toEqual([]);
     expect(config.pathExclusions).toEqual([]);
     expect(config.reporting).toEqual({
+      diagnosticMessages: "contextual",
       projectEslintMessages: "redacted",
       sourceExcerpts: "interactive",
       terminalFindingLimit: 25,
@@ -104,6 +105,7 @@ describe("loadConfig", () => {
     );
 
     expect((await loadConfig(root)).reporting).toEqual({
+      diagnosticMessages: "contextual",
       projectEslintMessages: "redacted",
       sourceExcerpts: "always",
       terminalFindingLimit: "all",

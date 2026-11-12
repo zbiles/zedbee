@@ -1,3 +1,5 @@
+import { sanitizeComparisonContext } from "./comparison-context.js";
+import { CheckIncompleteError } from "./incomplete-error.js";
 import { sanitizeEslintAnalysis } from "./sanitize-result.js";
 import { pairLocationObservations } from "../attribution/pair-locations.js";
 import {
@@ -345,6 +347,9 @@ export async function observationCheckResult(
   context: CheckRunContext,
   requiresBaseline: boolean,
 ): Promise<CheckResult> {
+  const comparison = rawSet.comparisonContext === undefined ? undefined : sanitizeComparisonContext(rawSet.comparisonContext);
+  if (rawSet.projectDelta === true && (checkId === "types" || checkId === "lint") && rawSet.eslintAnalysis === undefined && comparison === undefined) throw new CheckIncompleteError({ code: "COMPARISON_INPUTS_UNVERIFIED", message: "Analysis did not provide validated snapshot comparison evidence.", remediation: "Rerun with an updated managed analyzer and a stable workspace installation." });
+  if (comparison !== undefined && comparison.status !== "comparable") throw new CheckIncompleteError({ code: "COMPARISON_INPUTS_UNVERIFIED", message: "Analysis could not verify that the snapshot comparison used stable required inputs.", remediation: "Ensure dependencies are installed and unchanged while scanning, then rerun." });
   let set = snapshotSet(rawSet, checkId, context.target, requiresBaseline);
   const hasMetrics = [...set.baseline, ...set.target].some(
     (observation) => observation.metric !== undefined,
@@ -477,6 +482,7 @@ export async function observationCheckResult(
       ? undefined
       : sanitizeEslintAnalysis(rawSet.eslintAnalysis);
   return {
+    ...(comparison === undefined ? {} : { comparisonContext: comparison }),
     ...(eslintAnalysis === undefined ? {} : { eslintAnalysis }),
     ...(eslintAnalysis?.checkedFiles === 0
       ? {

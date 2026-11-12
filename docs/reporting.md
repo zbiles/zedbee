@@ -119,3 +119,13 @@ check result: `version`, `checkedFiles`, `ignoredFiles`, `excludedFiles`, `basel
 reported target-installed toolchain. Zero checked files means skipped coverage,
 not a successful lint run. A requested full-message policy without its separate
 local permission remains `redacted` in the actual result.
+
+### Diagnostic message detail
+
+Managed diagnostics default to contextual messages so module, member and function descriptions can explain the finding. Use `zedbee scan --diagnostic-messages source-free` to request source-free explanations. Set `reporting.diagnosticMessages` in repository configuration for the default. The command-line choice overrides that default.
+
+JSON and terminal output use the same reviewed message. A finding's optional `messageRedaction` metadata explains withheld detail. This affects presentation; severity, attribution, stable finding IDs and fix selection use the underlying observation. Source excerpts have their own control. Project ESLint's full-message permission is separate.
+
+A `project-delta` finding means a diagnostic is new in a validated comparison; it is not an exact causal trace. If required installation inputs are unavailable, Swarm reports an incomplete check with setup guidance rather than claiming the commit introduced a source error. A required incomplete check prevents a misleading pass. Other completed checks still report their results.
+
+The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.

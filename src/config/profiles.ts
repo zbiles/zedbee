@@ -506,6 +506,7 @@ export function resolveConfig(
     overrides: resolveOverrides(file),
     pathExclusions: resolvePathExclusions(file),
     reporting: Object.freeze({
+      diagnosticMessages: file?.reporting?.diagnosticMessages ?? "contextual",
       projectEslintMessages:
         file?.reporting?.projectEslintMessages ?? "redacted",
       sourceExcerpts: file?.reporting?.sourceExcerpts ?? "interactive",

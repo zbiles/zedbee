@@ -1,3 +1,4 @@
+import { recordDiagnosticDetail } from "../diagnostic-details.js";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
@@ -119,7 +120,7 @@ export function convertTypescriptDiagnostic(
     location === undefined
       ? `repository:${messageIdentity.slice(0, 16)}`
       : `${location.file}:${location.startLine ?? 0}:${location.startColumn ?? 0}`;
-  return {
+  const observation: Observation = {
     check: "types",
     rule,
     identity: `${rule}:${scope}`,
@@ -128,4 +129,11 @@ export function convertTypescriptDiagnostic(
     message: sanitized,
     ...(location === undefined ? {} : { location }),
   };
+  recordDiagnosticDetail(
+    observation,
+    ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+    snapshotRoot,
+    diagnostic.file?.text,
+  );
+  return observation;
 }

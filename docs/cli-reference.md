@@ -500,3 +500,11 @@ Experimental ESLint setup options for `zedbee init`:
 Review the experimental support boundary in [Checks](checks.md#experimental-project-eslint)
 before choosing project mode. `zedbee doctor` inspects installation, flat config,
 and stored trust as data, without executing the configuration.
+
+### Managed diagnostic messages
+
+`zedbee scan --diagnostic-messages contextual` preserves reviewed module, member and function descriptions in local output. This is the default. `--diagnostic-messages source-free` requests trusted source-free explanations. Combine it with `--no-source` for a report without diagnostic names or source excerpts. The repository setting is `reporting.diagnosticMessages`; the CLI choice overrides it.
+
+Contextual output is local reporting, including temporary JSON reports, and can contain source-derived names. Sensitive or unsupported details are withheld with redaction metadata. Telemetry, ordinary progress events and persistent observation-cache prose remain source-free. Native project ESLint full messages still require their separate local permission.
+
+The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.

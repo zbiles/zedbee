@@ -47,10 +47,12 @@ export type CheckId = (typeof CHECK_IDS)[number];
 export type ProfileId = (typeof PROFILE_IDS)[number];
 export type CheckSeverity = "off" | "warn" | "error";
 export type CheckTiming = "relevant" | "always";
+export type DiagnosticMessagePolicy = "contextual" | "source-free";
 export type SourceExcerptPolicy = "never" | "interactive" | "always";
 export type TerminalFindingLimit = number | "all";
 
 export interface ResolvedReportingPolicy {
+  readonly diagnosticMessages: DiagnosticMessagePolicy;
   readonly projectEslintMessages: "redacted" | "full";
   readonly sourceExcerpts: SourceExcerptPolicy;
   readonly terminalFindingLimit: TerminalFindingLimit;
@@ -449,6 +451,11 @@ const checksSchema = z
 
 const reportingSchema = z
   .object({
+    diagnosticMessages: z.enum(["contextual", "source-free"]).optional().meta({
+      default: "contextual",
+      description:
+        "Managed diagnostic messages include reviewed source names locally, or source-free explanations for sharing. Source excerpts and project ESLint permissions are separate.",
+    }),
     projectEslintMessages: z.enum(["redacted", "full"]).optional().meta({
       default: "redacted",
       description:

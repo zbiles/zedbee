@@ -39,6 +39,7 @@ export interface ManagedAutomaticFix {
 }
 
 export interface Finding {
+  readonly messageRedaction?: {readonly redacted:true; readonly reasons: readonly import("../checks/diagnostic-details.js").DiagnosticRedactionReason[]};
   id: string;
   check: string;
   rule: string;
@@ -153,6 +154,7 @@ export interface EslintAnalysis {
 }
 
 export interface CheckResult {
+  comparisonContext?: import("../checks/comparison-context.js").ComparisonContext;
   eslintAnalysis?: EslintAnalysis;
   checkId: string;
   target?: string;

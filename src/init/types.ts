@@ -84,6 +84,7 @@ export interface InitFileChange {
 }
 
 export interface InitProposal {
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly workflow?: InitWorkflowChoice;
   readonly workflowAvailable?: boolean;
   readonly workflowMessage?: string;
@@ -128,6 +129,7 @@ export interface InitProposal {
 }
 
 export interface CreateInitProposalOptions {
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly workflow?: InitWorkflowChoice;
   readonly workflowAvailable?: boolean;
   readonly workflowMessage?: string;

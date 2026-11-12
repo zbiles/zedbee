@@ -20,6 +20,8 @@ export interface CheckTarget {
  * this contract; legacy finding adapters continue returning CheckResult meanwhile.
  */
 export interface CheckObservationSet<TObservation = Observation> {
+  readonly comparisonContext?: import("./comparison-context.js").ComparisonContext;
+  readonly diagnosticDetails?: readonly import("./diagnostic-details.js").DiagnosticDetail[];
   readonly eslintAnalysis?: import("../core/types.js").EslintAnalysis;
   readonly checkId: string;
   readonly target: CheckTarget;
