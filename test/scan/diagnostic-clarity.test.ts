@@ -70,10 +70,12 @@ describe("managed diagnostic clarity", () => {
     const cache = new ObservationCacheStore({ root });
     for (let attempt = 0; attempt < 2; attempt++) {
       const events: ScanEvent[] = [];
+      const measurements: unknown[] = [];
       const report = await runScan({
         repositoryRoot: repo.root,
         cache,
         onEvent: (e) => events.push(e),
+        onPerformanceSummary: (summary) => measurements.push(summary),
         sourceExcerpts: "exclude",
       });
       expect(report.outcome, JSON.stringify(report)).toBe("blocked");
@@ -90,6 +92,9 @@ describe("managed diagnostic clarity", () => {
         }),
       );
       expect(JSON.stringify(events)).not.toContain("MissingAccount");
+      expect(measurements).toHaveLength(1);
+      expect(JSON.stringify(measurements)).toContain('"check_id":"types"');
+      expect(JSON.stringify(measurements)).not.toContain("MissingAccount");
     }
     const files = await readdir(root);
     for (const file of files.filter((file) => file.endsWith(".json")))
