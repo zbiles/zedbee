@@ -2,8 +2,9 @@ import { parse as parseYaml } from "yaml";
 import { updateHuskyHook } from "../../src/hooks/husky.js";
 import { updateLefthookConfig } from "../../src/hooks/lefthook.js";
 import { updateSimpleGitHooksManifest } from "../../src/hooks/simple-git-hooks.js";
-import { chmod, realpath } from "node:fs/promises";
+import { chmod, realpath, rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { execa } from "execa";
 import { describe, expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
 import {
@@ -213,3 +214,166 @@ it("requires simple-git-hooks activation after refreshing its installed command"
   );
   expect(after.activation.status).toBe("active");
 });
+
+// Removing the runtime guard must fail these actual shell/commit regressions.
+it.each([".", "web", "web app's $literal `name`"])(
+  "explains a missing installed CLI in %s and stops a real commit",
+  async (root) => {
+    const repo = await createGitRepository();
+    await repo.write(".gitignore", "node_modules/\n");
+    await installed(repo, root);
+    await repo.commitAll("baseline");
+    const command = await resolveHookCommand(repo.root);
+    await repo.write(
+      ".git/hooks/pre-commit",
+      updateRawGitHook(null, command) + "touch should-not-run\n",
+    );
+    await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o755);
+    const cli = join(repo.root, root, "node_modules/zedbee/dist/cli.cjs");
+    await rm(join(repo.root, root, "node_modules"), { recursive: true });
+    await repo.write("change.txt", "staged\n");
+    await repo.git(["add", "change.txt"]);
+    const before = (await repo.git(["rev-parse", "HEAD"])).stdout;
+    const result = await repo.git(["commit", "-m", "must stop"]);
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr).toContain("No scan ran.");
+    expect(result.stderr).toContain("Restore this checkout's dependencies");
+    expect(result.stderr).not.toContain("MODULE_NOT_FOUND");
+    expect((await repo.git(["rev-parse", "HEAD"])).stdout).toBe(before);
+    await expect(repo.read("should-not-run")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const missing = await execa("sh", ["-c", command], {
+      cwd: repo.root,
+      reject: false,
+    });
+    expect(missing.exitCode).toBe(2);
+    expect(missing.stderr.split("\n")).toHaveLength(3);
+    // A directory at the entry point must also be rejected before Node starts.
+    await mkdir(cli, { recursive: true });
+    expect(
+      (await execa("sh", ["-c", command], { cwd: repo.root, reject: false }))
+        .exitCode,
+    ).toBe(2);
+    await rm(cli, { recursive: true });
+    await installed(repo, root);
+    expect((await repo.git(["hook", "run", "pre-commit"])).exitCode).toBe(0);
+    await repo.write(
+      `${root === "." ? "" : root + "/"}node_modules/zedbee/dist/cli.cjs`,
+      "process.exit(23);",
+    );
+    const failure = await execa("sh", ["-c", command], {
+      cwd: repo.root,
+      reject: false,
+    });
+    expect(failure.exitCode).toBe(23);
+    expect(failure.stderr).not.toContain("No scan ran.");
+  },
+);
+
+it.each(["raw", "husky", "lefthook", "simple-git-hooks"] as const)(
+  "refreshes guarded %s hooks without duplication and preserves merge behavior",
+  async (manager) => {
+    const repo = await createGitRepository();
+    await installed(repo, "web");
+    const { mergeHookCommand, hasZedbeeScanCommand } =
+      await import("../../src/hooks/husky.js");
+    const command = await resolveHookCommand(repo.root);
+    const merge = mergeHookCommand(command);
+    expect(hasZedbeeScanCommand(merge, "pre-merge-commit")).toBe(true);
+    for (const previous of [
+      command,
+      "(cd \"$(git rev-parse --show-toplevel)\" && node './web/node_modules/zedbee/dist/cli.cjs' scan --hook-invocation)",
+    ]) {
+      const update = (source: string) => {
+        if (manager === "lefthook")
+          return updateLefthookConfig(source, merge, "pre-merge-commit");
+        if (manager === "simple-git-hooks")
+          return updateSimpleGitHooksManifest(
+            source,
+            merge,
+            "pre-merge-commit",
+          );
+        return updateHuskyHook(source, merge, "pre-merge-commit");
+      };
+      const oldMerge = mergeHookCommand(previous);
+      const source =
+        manager === "lefthook"
+          ? `pre-merge-commit:\n  commands:\n    zedbee:\n      run: ${JSON.stringify(oldMerge)}\n`
+          : manager === "simple-git-hooks"
+            ? JSON.stringify({
+                "simple-git-hooks": { "pre-merge-commit": oldMerge },
+              })
+            : `#!/bin/sh\n${oldMerge}\n`;
+      const updated = update(source);
+      expect(update(updated)).toBe(updated);
+      const run =
+        manager === "lefthook"
+          ? parseYaml(updated)["pre-merge-commit"].commands.zedbee.run
+          : manager === "simple-git-hooks"
+            ? JSON.parse(updated)["simple-git-hooks"]["pre-merge-commit"]
+            : updated;
+      const result = await execa("sh", ["-c", run], {
+        cwd: repo.root,
+        reject: false,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(JSON.parse(await repo.read("hook-result.json")).args).toEqual([
+        "scan",
+        "--hook-invocation",
+        "--merge",
+      ]);
+      await rm(join(repo.root, "web/node_modules"), { recursive: true });
+      const absent = await execa("sh", ["-c", run], {
+        cwd: repo.root,
+        reject: false,
+      });
+      expect(absent.exitCode).toBe(2);
+      expect(absent.stderr).toContain("Retry the merge");
+      await installed(repo, "web");
+    }
+  },
+);
+
+it("uses the linked worktree's installation rather than the main checkout", async () => {
+  const repo = await createGitRepository();
+  await repo.write(".gitignore", "node_modules/\n");
+  await installed(repo, "web");
+  await repo.commitAll("baseline");
+  const command = await resolveHookCommand(repo.root);
+  const other = join(repo.root, "other-checkout");
+  expect(
+    (await repo.git(["worktree", "add", "--detach", other, "HEAD"])).exitCode,
+  ).toBe(0);
+  const result = await execa("sh", ["-c", command], {
+    cwd: other,
+    reject: false,
+  });
+  expect(result.exitCode).toBe(2);
+  expect(result.stderr).toContain("No scan ran.");
+  await expect(repo.read("hook-result.json")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});
+
+it.each(["pre-commit", "pre-merge-commit"] as const)(
+  "migrates a stock previous direct-Node %s hook while refusing custom execution",
+  async (hookName) => {
+    const repo = await createGitRepository();
+    await installed(repo, "web");
+    const { validateLocalHookMigration } =
+      await import("../../src/hooks/install.js");
+    const command = await resolveHookCommand(repo.root);
+    const legacy = `(cd "$(git rev-parse --show-toplevel)" && node './web/node_modules/zedbee/dist/cli.cjs' scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`;
+    const path = `.git/hooks/${hookName}`;
+    await repo.write(path, `#!/bin/sh\n${legacy} || exit $?\n`);
+    await chmod(join(repo.root, path), 0o755);
+    await expect(
+      validateLocalHookMigration(repo.root, command),
+    ).resolves.toBeUndefined();
+    await repo.write(path, `#!/bin/sh\nprintf custom\n${legacy} || exit $?\n`);
+    await expect(
+      validateLocalHookMigration(repo.root, command),
+    ).rejects.toThrow("custom local hook");
+  },
+);

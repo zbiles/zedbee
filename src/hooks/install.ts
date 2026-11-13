@@ -5,6 +5,7 @@ import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
 import type { InitFileChange, InitProposal } from "../init/types.js";
 import { mergeHookCommand, ZEDBEE_COMMAND } from "./husky.js";
+import { previousInstalledHookCommand } from "./installed-command.js";
 import { updateRawGitHook } from "./raw-git.js";
 
 export const TRACKED_HOOK_NAMES = Object.freeze([
@@ -121,6 +122,10 @@ export async function validateLocalHookMigration(
               ? "#!/bin/sh\nnpx --no-install zedbee scan\n"
               : "#!/bin/sh\nnpx --no-install zedbee scan --merge\n",
           ];
+    const currentCommand = hookName === "pre-commit" ? command : mergeCommand;
+    const previous = previousInstalledHookCommand(currentCommand);
+    if (hookName !== undefined && previous !== undefined)
+      stock.push(updateRawGitHook(null, previous, hookName));
     const recognized = stock.flatMap((script) => [
       script,
       script.replaceAll(" || exit $?", ""),
