@@ -132,7 +132,7 @@ describe("real scan telemetry delivery", () => {
       ]);
       expect(sent[0]?.run_id).toBe(sent[1]?.run_id);
       expect(sent[1]).toMatchObject({
-        schema_version: 2,
+        schema_version: 3,
         caller_ai_tool: "claude_code",
         detected_ai_tools: ["claude_code", "cursor"],
         finding_breakdown_status: "complete",

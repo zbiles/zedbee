@@ -1,3 +1,4 @@
+import { recordPerformance } from "../diagnostics/scan-performance.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
 import type { CheckResult } from "../core/types.js";
@@ -206,6 +207,11 @@ export async function executeDispatchTarget(
         ) ?? sanitizeCheckResult(result);
     }
   }
+  recordPerformance({
+    checkId: adapter.id,
+    kind: "elapsed",
+    durationMs: displayResult.durationMs,
+  });
   emit({
     type: "check-completed",
     checkId: adapter.id,

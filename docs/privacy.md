@@ -271,3 +271,7 @@ processes provide cancellation and failure isolation, not a sandbox for trusted
 configuration code.
 
 The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.
+
+### Performance diagnostics
+
+Completed scan telemetry can include bounded totals by check: elapsed, worker queue and execution milliseconds, cache hits/misses/bypasses, a changed-file-count bucket, execution mode, and approved incomplete-error codes. These retain everyday local usage. They contain no repository/workspace names, file paths, source, or raw error messages. Overlapping check durations are not CPU time or an additive scan-duration breakdown. Older clients may omit these details. Existing opt-out settings apply.

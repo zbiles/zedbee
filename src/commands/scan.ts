@@ -48,7 +48,7 @@ export interface ScanCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly telemetryObserver?: Pick<
     CommandTelemetry,
-    "observeRepository" | "scanReport"
+    "observeRepository" | "scanReport" | "performanceSummary"
   >;
   service?: boolean;
   executor?: AnalyzerExecutor;
@@ -282,6 +282,9 @@ export async function executeScanCommand(
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
+      onPerformanceSummary(summary) {
+        options.telemetryObserver?.performanceSummary?.(summary);
+      },
       onConfigurationSummary(summary) {
         try {
           options.telemetrySummary?.({

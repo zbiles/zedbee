@@ -2,6 +2,11 @@ import {
   withDiagnosticDetailSession,
   applyDiagnosticDetails,
 } from "../checks/diagnostic-details.js";
+import {
+  ScanPerformanceRecorder,
+  withScanPerformance,
+  type ScanPerformanceSummary,
+} from "../diagnostics/scan-performance.js";
 import { runMergeScan } from "./merge-scan.js";
 import { freezeResult } from "../core/freeze-result.js";
 import type { SelectedIndexComparison } from "../git/selected-comparison.js";
@@ -80,6 +85,7 @@ export interface RunScanOptions {
   noTimeout?: boolean;
   signal?: AbortSignal;
   onEvent?: (event: ScanEvent) => void;
+  onPerformanceSummary?: (summary: ScanPerformanceSummary) => void;
   /** Observe the actual resolved index/target-commit policy without receiving settings. */
   onConfigurationSummary?: (summary: ConfigurationSummary) => void;
   dependencies?: RunScanDependencies;
@@ -122,7 +128,38 @@ const diagnosticPolicyForPresentation = new WeakMap<
 >();
 
 export async function runScan(options: RunScanOptions): Promise<ScanReport> {
-  return withDiagnosticDetailSession(() => runScanWithDetails(options));
+  if (!options.onPerformanceSummary)
+    return withDiagnosticDetailSession(() => runScanWithDetails(options));
+  const recorder = new ScanPerformanceRecorder();
+  let phase: string | undefined,
+    phaseStarted = performance.now();
+  const observed = {
+    ...options,
+    onEvent: (event: ScanEvent) => {
+      if (event.type === "scan-phase") {
+        const now = performance.now();
+        if (phase) recorder.phase(phase, now - phaseStarted);
+        phase = event.phase;
+        phaseStarted = now;
+      }
+      options.onEvent?.(event);
+    },
+  };
+  try {
+    const report = await withScanPerformance(recorder, () =>
+      withDiagnosticDetailSession(() => runScanWithDetails(observed)),
+    );
+    if (report.outcome === "incomplete") recorder.markPartial();
+    return report;
+  } catch (error) {
+    recorder.markPartial();
+    throw error;
+  } finally {
+    if (phase) recorder.phase(phase, performance.now() - phaseStarted);
+    try {
+      options.onPerformanceSummary?.(recorder.snapshot());
+    } catch {}
+  }
 }
 
 async function runScanWithDetails(

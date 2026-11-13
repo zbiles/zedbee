@@ -53,7 +53,7 @@ describe("command telemetry", () => {
     client.finish(1);
     await client.flush(false);
     expect(sent[1]).toMatchObject({
-      schema_version: 2,
+      schema_version: 3,
       finding_count: 1,
       caller_ai_tool: "claude_code",
       finding_groups: [{ rule_id: "no-unused-vars", count: 1 }],
