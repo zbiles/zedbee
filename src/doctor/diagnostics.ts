@@ -1,3 +1,4 @@
+import { diagnoseProjectEslint } from "./project-eslint.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,6 +41,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "background-service",
   "workspace-inspection",
   "project-prettier",
+  "project-eslint",
   "secretlint-readiness",
   "lockfile-support",
   "osv-connectivity",
@@ -63,6 +65,7 @@ export interface DiagnosticContext {
   readonly configPath?: string;
   /** Explicit invocation-only consent for the project Prettier probe. */
   readonly projectPrettierTrust?: boolean;
+  readonly projectEslintTrust?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -357,6 +360,13 @@ export function createDefaultDiagnosticProbe(
             count === 1 ? "" : "s"
           }.`,
         };
+      }
+      case "project-eslint": {
+        return diagnoseProjectEslint(
+          await repositoryRoot(context.cwd),
+          context.configPath,
+          context.projectEslintTrust === true,
+        );
       }
       case "project-prettier": {
         const root = await repositoryRoot(context.cwd);

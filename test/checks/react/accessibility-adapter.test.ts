@@ -7,6 +7,7 @@ import { observationCheckResult } from "../../../src/checks/observation-result.j
 import { createReactAdapter } from "../../../src/checks/react/adapter.js";
 import { reactAccessibilityAdapter } from "../../../src/checks/react/accessibility-adapter.js";
 import { managedReactCorrectnessConfig } from "../../../src/checks/react/config.js";
+import { configFileSchema } from "../../../src/config/schema.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
@@ -152,6 +153,87 @@ describe("reactAccessibilityAdapter", () => {
         .filter(({ rule }) => rule === "jsx-a11y/alt-text")
         .map(({ location }) => location?.file),
     ).toEqual(["src/app.tsx"]);
+  });
+
+  it("applies custom component, attribute, and polymorphic settings per file", async () => {
+    const { fixtures, run } = await accessibilityContext({
+      react: "19.0.0",
+      "react-dom": "19.0.0",
+    });
+    await fixtures.staged.write(
+      "src/app.tsx",
+      "export const App = () => <main />;\n",
+    );
+    const sources = {
+      "src/image.tsx": '<Photo src="logo.png" />',
+      "src/labelled.tsx": '<Photo src="logo.png" alt="Logo" />',
+      "src/poly.tsx": '<Box as="img" src="logo.png" />',
+      "src/allowed.tsx": '<Other as="img" src="logo.png" />',
+      "src/label.tsx": '<label for="name">Name</label>',
+      "other/image.tsx": '<Photo src="logo.png" />',
+      "src/splitter.tsx":
+        '<Splitter role="separator" tabIndex={0} aria-valuenow={50} onKeyDown={() => {}} />',
+    };
+    for (const [path, source] of Object.entries(sources)) {
+      await fixtures.staged.write(
+        path,
+        `export const App = () => ${source};\n`,
+      );
+      await fixtures.baseline.write(
+        path,
+        "export const App = () => <main />;\n",
+      );
+    }
+    const config = resolveConfig(
+      configFileSchema.parse({
+        schemaVersion: 1,
+        overrides: [
+          {
+            files: ["src/**"],
+            checks: {
+              reactAccessibility: {
+                settings: {
+                  components: { Photo: "img", Splitter: "div" },
+                  attributes: { for: ["htmlFor", "for"] },
+                  polymorphicPropName: "as",
+                  polymorphicAllowList: ["Box"],
+                },
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const context: CheckRunContext = {
+      ...run,
+      config,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+      policy: config.checks.reactAccessibility,
+      policyForFile: testFilePolicyResolver(config, run.changeSet),
+    };
+    const collected = await reactAccessibilityAdapter.collect(context);
+    expect(
+      collected.targetObservations
+        .filter(({ rule }) => rule === "jsx-a11y/alt-text")
+        .map(({ location }) => location?.file)
+        .sort(),
+    ).toEqual(["src/image.tsx", "src/poly.tsx"]);
+    expect(
+      collected.targetObservations.filter(
+        ({ location }) => location?.file === "src/label.tsx",
+      ),
+    ).toEqual([]);
+    expect(
+      collected.targetObservations.filter(
+        ({ location, rule }) =>
+          location?.file === "src/splitter.tsx" &&
+          [
+            "jsx-a11y/no-noninteractive-element-interactions",
+            "jsx-a11y/no-noninteractive-tabindex",
+          ].includes(rule),
+      ),
+    ).toEqual([]);
   });
 
   it("reports a precise incomplete path without retrying a failed accessibility group", async () => {

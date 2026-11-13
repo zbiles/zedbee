@@ -1,3 +1,8 @@
+import {
+  PROJECT_ESLINT_DISCLOSURE,
+  PROJECT_ESLINT_EXECUTION_DISCLOSURE,
+  PROJECT_ESLINT_MESSAGES_DISCLOSURE,
+} from "../init/eslint-setup.js";
 import type { RefObject } from "react";
 import { Box, Text, type DOMElement } from "ink";
 import {
@@ -203,11 +208,13 @@ function SetupSummary({
 function CheckChoices({
   cursor,
   selected,
+  projectEslint = false,
   activeTargetRef,
   color,
 }: {
   readonly cursor: number;
   readonly selected: ReadonlySet<CheckId>;
+  readonly projectEslint?: boolean;
   readonly activeTargetRef: RefObject<DOMElement | null>;
   readonly color: boolean;
 }) {
@@ -225,7 +232,13 @@ function CheckChoices({
             )}
           >
             {index === cursor ? "➜" : " "} [{selected.has(check) ? "✽" : " "}]{" "}
-            {check}
+            {check === "reactAccessibility"
+              ? "Static JSX accessibility checks"
+              : check}
+            {projectEslint &&
+            ["reactCorrectness", "reactAccessibility"].includes(check)
+              ? " (controlled by project ESLint)"
+              : ""}
           </Text>
         </Box>
       ))}
@@ -649,9 +662,55 @@ export function SetupPanel({
       <CheckChoices
         cursor={focus - 1 - hookRows}
         selected={selected}
+        projectEslint={proposal.eslintEngine === "project"}
         activeTargetRef={activeTargetRef}
         color={color}
       />
+      <BrandedCommandPanelRule width={width} color={color} />
+      <Box flexDirection="column" paddingX={2}>
+        <Text bold>ESLint · L changes engine</Text>
+        <Text>
+          [{proposal.eslintEngine !== "project" ? "✽" : " "}] Use Zedbee's
+          built-in ESLint — default
+        </Text>
+        <Text>
+          [{proposal.eslintEngine === "project" ? "✽" : " "}] Use my project's
+          ESLint — experimental
+        </Text>
+        {proposal.eslintEngine === "project" ? (
+          <>
+            <Text wrap="wrap">{PROJECT_ESLINT_DISCLOSURE}</Text>
+            <Text wrap="wrap">{PROJECT_ESLINT_EXECUTION_DISCLOSURE}</Text>
+            <Text>
+              [{proposal.projectEslintTrustConfirmed ? "✽" : " "}] Trust project
+              ESLint execution · X toggles
+            </Text>
+            <Text wrap="wrap">{PROJECT_ESLINT_MESSAGES_DISCLOSURE}</Text>
+            <Text>
+              [{proposal.projectEslintMessages === "full" ? "✽" : " "}] Allow
+              full local diagnostic messages · M toggles
+            </Text>
+            <Text>
+              {proposal.projectEslintMessages === "full"
+                ? "Full messages selected."
+                : "Messages stay redacted."}
+            </Text>
+            {(proposal.eslintConflicts ?? []).map((message) => (
+              <Text key={message} wrap="wrap">
+                Configuration conflict: {message}
+              </Text>
+            ))}
+            {(proposal.eslintConflicts?.length ?? 0) > 0 ? (
+              <Text>
+                Resolve these conflicts before applying setup; existing settings
+                are preserved.
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <Text>Bundled rules and current scan optimizations.</Text>
+        )}
+      </Box>
       <NetworkDisclosures proposal={proposal} width={width} color={color} />
       {proposal.vulnerabilityScanningAvailable ? (
         <>
@@ -807,6 +866,19 @@ export function ReviewPanel({
       <Box flexDirection="column" paddingX={2}>
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Review these changes before Zedbee saves them to your repository.
+        </Text>
+        <Text wrap="wrap">
+          ESLint:{" "}
+          {proposal.eslintEngine === "project"
+            ? "project (experimental)"
+            : "built-in"}
+          ; project messages: {proposal.projectEslintMessages ?? "redacted"}
+        </Text>
+        <Text wrap="wrap">
+          Managed messages: {proposal.diagnosticMessages ?? "contextual"}. Local
+          contextual reports can contain source names. Use init
+          --diagnostic-messages source-free for source-free messages and no
+          source excerpts.
         </Text>
         <Text wrap="wrap">
           Formatting scope:{" "}

@@ -411,7 +411,7 @@ export function acceptServiceConnection(
       return null;
     }
     if (
-      value.op === "run" &&
+      (value.op === "run" || value.op === "run-measured") &&
       exactFields(value, ["id", "op", "sessionId", "request"])
     ) {
       if (jobs.size >= 8) throw new AnalyzerCapacityError("job");
@@ -419,9 +419,24 @@ export function acceptServiceConnection(
         controller = new AbortController();
       jobs.set(id, controller);
       try {
-        return await session.run(value.request as AnalyzerRequest, {
+        const timings: {
+          kind: "queue" | "worker" | "result";
+          durationMs: number;
+        }[] = [];
+        const result = await session.run(value.request as AnalyzerRequest, {
           signal: controller.signal,
+          ...(value.op === "run-measured"
+            ? {
+                onTiming: (
+                  kind: "queue" | "worker" | "result",
+                  durationMs: number,
+                ) => {
+                  timings.push({ kind, durationMs });
+                },
+              }
+            : {}),
         });
+        return value.op === "run-measured" ? { result, timings } : result;
       } finally {
         jobs.delete(id);
       }

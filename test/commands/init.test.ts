@@ -140,6 +140,37 @@ describe("executeInitCommand", () => {
     },
   );
 
+  it("requires independent ESLint execution consent and defaults diagnostic messages to redacted", async () => {
+    const repository = await createGitRepository("zedbee-init-project-eslint-");
+    await repository.write("package.json", '{"name":"fixture"}');
+    const common = {
+      cwd: repository.root,
+      profile: "recommended" as const,
+      hook: "none" as const,
+      eslintEngine: "project" as const,
+      yes: true,
+      format: "json" as const,
+      color: false,
+      animations: false,
+    };
+    const denied = terminal();
+    expect(
+      await executeInitCommand(common, denied, dependencies(repository.root)),
+    ).toBe(2);
+    expect(denied.stderr.join("")).toMatch(/trust-project-eslint/u);
+    const allowed = terminal();
+    expect(
+      await executeInitCommand(
+        { ...common, trustProjectEslint: true },
+        allowed,
+        dependencies(repository.root),
+      ),
+    ).toBe(0);
+    const result = JSON.parse(allowed.stdout.join(""));
+    expect(result.proposal.eslintEngine).toBe("project");
+    expect(result.proposal.projectEslintMessages).toBe("redacted");
+  });
+
   it.each([
     ["auto", "raw"],
     ["tracked", "husky"],

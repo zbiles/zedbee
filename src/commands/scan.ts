@@ -48,7 +48,7 @@ export interface ScanCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly telemetryObserver?: Pick<
     CommandTelemetry,
-    "observeRepository" | "scanReport"
+    "observeRepository" | "scanReport" | "performanceSummary"
   >;
   service?: boolean;
   executor?: AnalyzerExecutor;
@@ -59,6 +59,7 @@ export interface ScanCommandOptions {
   baseRef?: string;
   configPath?: string;
   sourceExcerpts?: SourceExcerptOverride;
+  diagnosticMessages?: "contextual" | "source-free";
   timeout?: string;
   noTimeout?: boolean;
   diagnostics?: boolean;
@@ -272,12 +273,18 @@ export async function executeScanCommand(
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
+      ...(options.diagnosticMessages === undefined
+        ? {}
+        : { diagnosticMessages: options.diagnosticMessages }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
+      onPerformanceSummary(summary) {
+        options.telemetryObserver?.performanceSummary?.(summary);
+      },
       onConfigurationSummary(summary) {
         try {
           options.telemetrySummary?.({

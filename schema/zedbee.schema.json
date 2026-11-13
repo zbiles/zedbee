@@ -1430,6 +1430,12 @@
                   "additionalProperties": false,
                   "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
                 },
+                "engine": {
+                  "default": "managed",
+                  "description": "Managed ESLint by default; project ESLint is experimental and requires separate trust.",
+                  "type": "string",
+                  "enum": ["managed", "project"]
+                },
                 "typeInformation": {
                   "description": "Require a TypeScript project or use basic lint when project information is unavailable. Defaults to \"required\".",
                   "default": "required",
@@ -2139,7 +2145,7 @@
           ]
         },
         "reactAccessibility": {
-          "description": "JSX accessibility validation for changed components.",
+          "description": "Static JSX accessibility checks for changed components.",
           "anyOf": [
             {
               "type": "string",
@@ -2283,6 +2289,60 @@
                   },
                   "additionalProperties": false,
                   "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
+                },
+                "settings": {
+                  "type": "object",
+                  "properties": {
+                    "components": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                      },
+                      "additionalProperties": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                      }
+                    },
+                    "attributes": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                      },
+                      "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                        }
+                      }
+                    },
+                    "polymorphicPropName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256,
+                      "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                    },
+                    "polymorphicAllowList": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 256,
+                        "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
                 }
               },
               "additionalProperties": false
@@ -3804,6 +3864,12 @@
                         "additionalProperties": false,
                         "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
                       },
+                      "engine": {
+                        "default": "managed",
+                        "description": "Managed ESLint by default; project ESLint is experimental and requires separate trust.",
+                        "type": "string",
+                        "enum": ["managed", "project"]
+                      },
                       "typeInformation": {
                         "description": "Require a TypeScript project or use basic lint when project information is unavailable. Defaults to \"required\".",
                         "default": "required",
@@ -4485,7 +4551,7 @@
                 ]
               },
               "reactAccessibility": {
-                "description": "JSX accessibility validation for changed components.",
+                "description": "Static JSX accessibility checks for changed components.",
                 "anyOf": [
                   {
                     "type": "string",
@@ -4629,6 +4695,60 @@
                         },
                         "additionalProperties": false,
                         "description": "Managed rule overrides for known core, TypeScript ESLint, React, Hooks, or JSX accessibility rule IDs."
+                      },
+                      "settings": {
+                        "type": "object",
+                        "properties": {
+                          "components": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                            }
+                          },
+                          "attributes": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                            },
+                            "additionalProperties": {
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 256,
+                                "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                              }
+                            }
+                          },
+                          "polymorphicPropName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 256,
+                            "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                          },
+                          "polymorphicAllowList": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 256,
+                              "pattern": "^[^\\p{Cc}\\p{Cf}\\s]+$"
+                            }
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -4831,6 +4951,18 @@
     "reporting": {
       "type": "object",
       "properties": {
+        "diagnosticMessages": {
+          "default": "contextual",
+          "description": "Managed diagnostic messages include reviewed source names locally, or source-free explanations for sharing. Source excerpts and project ESLint permissions are separate.",
+          "type": "string",
+          "enum": ["contextual", "source-free"]
+        },
+        "projectEslintMessages": {
+          "default": "redacted",
+          "description": "Project ESLint diagnostic messages are redacted unless full messages are selected and separately permitted locally.",
+          "type": "string",
+          "enum": ["redacted", "full"]
+        },
         "sourceExcerpts": {
           "description": "Include exact staged source excerpts never, only in Ink, or in every report format.",
           "default": "interactive",

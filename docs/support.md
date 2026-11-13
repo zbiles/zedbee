@@ -163,3 +163,26 @@ every changed and skipped file, stage intended results, and rescan.
 - an offline OSV database;
 - legacy binary `bun.lockb` vulnerability parsing;
 - automatic staging, committing, or mutation of the Git index.
+
+## Check the version actually used by a hook
+
+A dependency declaration, lockfile resolution, installed package, and executable selected by a hook can disagree. Inspect all four before diagnosing a version-specific problem. For a hook that invokes `node ./web/node_modules/zedbee/dist/cli.js`, run these from the repository root:
+
+```sh
+node ./web/node_modules/zedbee/dist/cli.js --version
+node -p "require('./web/node_modules/zedbee/package.json').version"
+```
+
+Compare those results with the dependency in `web/package.json` and the owning lockfile. Use the repository's package manager and workspace installation instructions to synchronize the installation. If the manifest and lockfile disagree, update the lockfile deliberately; a frozen or clean install alone will not reconcile conflicting declarations. Recheck the exact hook executable and repeat the scan afterward. Swarm does not install or upgrade dependencies during a scan.
+
+## Staging and deletion-only commits
+
+A commit scan inspects the Git index. “Commit allowed” describes that selected content; it does not confirm that every intended file was staged. A failed earlier `git add` is not recorded in the index. Stop the calling workflow when staging fails, for example:
+
+```sh
+git add <paths> && git commit
+```
+
+Review `git diff --cached --stat` and the scan's staged-change counts. Unstaged and untracked files are not part of the scan. Deleting documentation may require no configured checks; the result reports skipped work rather than successful execution. Deleting source can still require compiler or project checks, including checks for broken imports. Partial staging is supported.
+
+For synthetic credential fixtures, see [the narrow Secretlint annotation](checks.md#synthetic-credentials-in-fixtures).

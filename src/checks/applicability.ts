@@ -1,3 +1,4 @@
+import { resolveWorkspaceLintPolicy } from "../config/target-policy.js";
 import pLimit from "p-limit";
 import type { CheckId } from "../config/schema.js";
 import type {
@@ -138,6 +139,21 @@ export async function inspectManagedCheck(
     }
   }
   let workspaces = context.targetInspection.workspaces;
+  const projectEngine = (workspace: WorkspaceInspection) =>
+    resolveWorkspaceLintPolicy(
+      context.filePolicyConfig ?? context.config,
+      workspace,
+    ).engine === "project";
+  if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {
+    const managed = workspaces.filter((workspace) => !projectEngine(workspace));
+    if (managed.length === 0 && workspaces.length > 0)
+      return {
+        applies: false,
+        reason:
+          "Covered by the project ESLint configuration; accessibility coverage depends on its enabled rules.",
+      };
+    workspaces = managed;
+  }
   if (checkId === "dependencyArchitecture" || checkId === "deadCode") {
     const all = [...context.baselineInspection.workspaces, ...workspaces];
     const candidates = new Map(
@@ -193,7 +209,8 @@ export async function inspectManagedCheck(
               (always ||
                 (await compilerInputRelevance(context, workspace)).relevant)
             : workspace.sourceFiles.length > 0 &&
-              (always ||
+              ((projectEngine(workspace) && !context.changeSet.isEmpty) ||
+                always ||
                 (hasTypeScriptInputs(workspace) &&
                   (await compilerInputRelevance(context, workspace))
                     .relevant) ||

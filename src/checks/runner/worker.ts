@@ -1,3 +1,4 @@
+import { captureDiagnosticDetails } from "../diagnostic-details.js";
 import { restoreCheckContext, markAnalyzerWorker } from "./context.js";
 import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
@@ -125,6 +126,7 @@ async function executeAndReply(message: Record<string, unknown>) {
         execute(request, controller!),
       ),
     );
+  const executionStarted = performance.now();
   const response = capture
     ? await withAnalysisSourceCapture(capture, run)
     : await run();
@@ -132,6 +134,7 @@ async function executeAndReply(message: Record<string, unknown>) {
     ...identity,
     type: "result",
     response,
+    workerMs: Math.max(0, Math.round(performance.now() - executionStarted)),
   } as Serializable);
   return identity;
 }
@@ -181,7 +184,9 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
         request.operation === "collect" &&
         adapter.output === "observations"
       )
-        result = await adapter.collect(context);
+        result = await captureDiagnosticDetails(context, () =>
+          adapter.collect(context),
+        );
       else if (
         request.operation === "runLegacy" &&
         adapter.output === "legacy-check-result"

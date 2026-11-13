@@ -1,3 +1,4 @@
+import { summarizeChanges, type ChangeSummary } from "./change-summary.js";
 import { dirname } from "node:path";
 import {
   createLocalAnalyzerExecutor,
@@ -160,6 +161,7 @@ export interface AnalysisSessionState {
   phase: ActiveScanPhase;
   source: ScanSourceIdentity;
   changedFileCount: number | null;
+  changeSummary?: ChangeSummary;
   configuredPathExclusions: readonly PathExclusion[];
   appliedPathExclusions: readonly PathExclusion[];
 }
@@ -182,6 +184,7 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  diagnosticMessages?: "contextual" | "source-free";
   /** Internal transfer from merge preflight; this session owns its cleanup. */
   selectedComparison?: SelectedIndexComparison;
   executor?: AnalyzerExecutor;
@@ -319,6 +322,17 @@ export async function withAnalysisSession<T>(
         options.signal,
       );
     }
+    if (options.diagnosticMessages !== undefined) {
+      if (!["contextual", "source-free"].includes(options.diagnosticMessages))
+        throw new TypeError("Invalid diagnostic message policy");
+      config = Object.freeze({
+        ...config,
+        reporting: Object.freeze({
+          ...config.reporting,
+          diagnosticMessages: options.diagnosticMessages,
+        }),
+      });
+    }
     state.configuredPathExclusions = config.pathExclusions;
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
@@ -368,6 +382,7 @@ export async function withAnalysisSession<T>(
       policyForFile,
     );
     state.changedFileCount = changeSet.files.size;
+    state.changeSummary = summarizeChanges(changeSet);
     signal.throwIfAborted();
     let session: AnalysisSession;
     if (changeSet.isEmpty) {

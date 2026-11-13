@@ -110,3 +110,5 @@ without a new corrective approach, or further fixes would exceed scope. Report
 what changed, relevant test results, final snapshot and scan outcome, remaining
 findings, and incomplete or unverified coverage. Commit, push, or publish only
 when the user or repository instructions authorize those actions.
+
+A scan reviews only the selected index or committed comparison. Stop if staging fails; use `git add <paths> && git commit` rather than continuing after a failed command. Read the selected-change counts and completed/skipped/incomplete execution counts. An allowed deletion-only scan may have no applicable checks; unstaged files have not been validated. For confirmed synthetic credentials, use a rule-specific Secretlint next-line annotation with a reason; see the package's `docs/checks.md`. Verify the installed CLI used by the hook when its version differs from a dependency declaration.

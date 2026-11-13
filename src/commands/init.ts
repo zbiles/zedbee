@@ -1,3 +1,4 @@
+import { hasProjectEslintTrust } from "../checks/eslint/project/trust.js";
 import {
   resolveFormattingSetup,
   evaluateExecutableProjectConfigs,
@@ -70,6 +71,10 @@ export interface InitCommandOptions {
   readonly formatting?: InitFormattingChoice;
   readonly formattingScope?: InitFormattingScope;
   readonly trustProjectPrettier?: boolean;
+  readonly eslintEngine?: "managed" | "project";
+  readonly trustProjectEslint?: boolean;
+  readonly allowProjectEslintMessages?: boolean;
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly yes: boolean;
   readonly format: "text" | "json";
   readonly color: boolean;
@@ -325,9 +330,39 @@ export async function executeInitCommand(
       ...workflowProposalFields,
       ...(schemaReference === undefined ? {} : { schemaReference }),
       configBefore,
+      ...(options.diagnosticMessages === undefined
+        ? {}
+        : { diagnosticMessages: options.diagnosticMessages }),
     };
+    const eslintRoots = inspection.workspaces.map(
+      ({ relativeRoot }) => relativeRoot,
+    );
+    const eslintTrustStored =
+      eslintRoots.length > 0 &&
+      (
+        await Promise.all(
+          eslintRoots.map((projectRoot) =>
+            hasProjectEslintTrust(repositoryRoot, projectRoot, "execute"),
+          ),
+        )
+      ).every(Boolean);
+    const eslintMessagesStored =
+      eslintRoots.length > 0 &&
+      (
+        await Promise.all(
+          eslintRoots.map((projectRoot) =>
+            hasProjectEslintTrust(repositoryRoot, projectRoot, "messages"),
+          ),
+        )
+      ).every(Boolean);
     const initialSelection: InitSelection = {
       profile: options.profile,
+      eslintEngine: options.eslintEngine,
+      eslintTrust: options.trustProjectEslint === true || eslintTrustStored,
+      eslintMessages:
+        options.allowProjectEslintMessages === true ? true : undefined,
+      eslintMessageTrust:
+        options.allowProjectEslintMessages === true || eslintMessagesStored,
       checks: options.checks,
       osvUnavailable: options.osvUnavailable,
       formatting: options.formatting,

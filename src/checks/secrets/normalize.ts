@@ -66,7 +66,7 @@ export function normalizeSecretlintMessages(
         message: `Potential secret detected by Secretlint rule ${rule}.`,
         location,
         remediation:
-          "Remove the secret, rotate the credential, and commit only a safe reference.",
+          "Remove and rotate real credentials. For confirmed synthetic fixtures, use a rule-specific next-line annotation; see docs/checks.md.",
       });
     });
     return Object.freeze(

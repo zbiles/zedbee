@@ -1,0 +1,26 @@
+{
+  "version": "7.1.1",
+  "revision": "effect-timing-v1",
+  "referenceCommits": [
+    "d083ec1da1e5252abd3ddfdde6dfbc09701a2c51"
+  ],
+  "inputs": {
+    "development": {
+      "sha256": "d401e94560ab2660e40fe59a3408828b96d78e9929a22358386aa51acbe32e2b",
+      "regionSha256": "8e08df3504be2f1cc809bc5adba5668af338e95da9cf71d8da0cd6df682b6047"
+    },
+    "production": {
+      "sha256": "0804a982675cb73e81b870e29ec3ddcbba959ed722afc2cc42ad14d4a99cd27a",
+      "regionSha256": "8e08df3504be2f1cc809bc5adba5668af338e95da9cf71d8da0cd6df682b6047"
+    }
+  },
+  "licenseSha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+  "integrity": "sha512-f2I7Gw6JbvCexzIInuSbZpfdQ44D7iqdWX01FKLvrPgqxoE7oMj8clOfto8U6vYiz4yd5oKu39rRSVOe1zRu0g==",
+  "analysisSha256": "7f63292231ae069cb3381182e72fa6f3d4f3cc44d00e2d64094edcc2a6353e12",
+  "files": {
+    "development.cjs": "0a5b751225380d1b65ca8fe25c44af4b25125a88b1fca284d9650eae2f4e4175",
+    "production.cjs": "6b88f6e0777a4a03e2b8667c4550d780bd01dd6e471b608f6e06b260314ad8a4",
+    "index.cjs": "983808bd4288084de6223487308109b9447ada19ab81ab7782c8dc72e42c11ab",
+    "LICENSE": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+  }
+}

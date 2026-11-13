@@ -136,6 +136,8 @@ describe("staged merge comparison", () => {
     ]);
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
+    expect(report.changeSummary).toBeUndefined();
+    expect(JSON.parse(renderJson(report)).changeSummary).toBeUndefined();
     expect(JSON.parse(renderJson(report)).mergeParents).toEqual([
       main,
       incoming,

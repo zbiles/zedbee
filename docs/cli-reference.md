@@ -478,7 +478,34 @@ See [the complete check matrix](checks.md), [support matrix](support.md), [priva
 - For files intentionally outside every TypeScript project, a file override can set `checks.lint.typeInformation` to `"when-available"`. Zedbee then runs basic TypeScript lint without rules that require type information. The default is `"required"`; Zedbee never reduces coverage silently.
 - Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; use `pathExclusions` to intentionally suppress paths for specific checks.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
-- If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
+- If a hook cannot find Zedbee, restore this checkout's dependencies using the repository's package-manager instructions. Fresh worktrees need their own available installation. Current generated hooks check their selected local CLI before starting Node and explain when no scan ran; they do not download a replacement or use another checkout's copy. Missing dependencies required by a running check are reported separately as incomplete analysis.
+- Upgrading the installed package alone does not rewrite existing hooks. Run `zedbee init` to preview and apply the generated hook refresh. Custom hook commands are preserved and need a manual update. Lefthook and simple-git-hooks still require their normal activation step when setup reports activation as pending.
 - pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.
 - If a repository commits a package beneath `node_modules` and source code imports it, managed Knip analysis is incomplete. Zedbee refuses to let snapshot-controlled packages participate in analyzer module resolution; remove the committed package and restore dependencies through the package manager and lockfile.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.
+
+### Selected changes and check coverage
+
+Scan output distinguishes completed, skipped and incomplete check executions. Multiple workspace targets can contribute separate executions. Disabled checks are not counted as skipped. When every reported check is skipped, an allowed result says no applicable checks ran; when the execution list is empty, it says no checks ran for the selected changes. Neither claims that code was validated.
+
+Optional JSON `changeSummary` contains `added`, `modified`, `deleted` and `renamed` path counts from the selected index or commit comparison. Renames count once. The field is absent when change discovery failed and for combined merge comparisons. Existing `summary.passed` still counts completed executions without findings.
+
+A scan does not know whether an earlier staging command failed. Chain staging and committing with `&&` and review the selected changes; see [staging troubleshooting](support.md#staging-and-deletion-only-commits).
+
+Experimental ESLint setup options for `zedbee init`:
+
+- `--eslint-engine managed|project`: select bundled rules or the project's installed ESLint.
+- `--trust-project-eslint`: explicitly grant execution trust when applying project setup.
+- `--allow-project-eslint-messages`: separately allow source-bearing diagnostic text in local reports.
+
+Review the experimental support boundary in [Checks](checks.md#experimental-project-eslint)
+before choosing project mode. `zedbee doctor` inspects installation, flat config,
+and stored trust as data, without executing the configuration.
+
+### Managed diagnostic messages
+
+`zedbee scan --diagnostic-messages contextual` preserves reviewed module, member and function descriptions in local output. This is the default. `--diagnostic-messages source-free` requests trusted source-free explanations. Combine it with `--no-source` for a report without diagnostic names or source excerpts. The repository setting is `reporting.diagnosticMessages`; the CLI choice overrides it.
+
+Contextual output is local reporting, including temporary JSON reports, and can contain source-derived names. Sensitive or unsupported details are withheld with redaction metadata. Telemetry, ordinary progress events and persistent observation-cache prose remain source-free. Native project ESLint full messages still require their separate local permission.
+
+The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.

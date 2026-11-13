@@ -1,3 +1,7 @@
+import {
+  managedHooksRevision,
+  managedHooksProvenanceSha256,
+} from "./react/managed-hooks-identity.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,12 +33,12 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
     revision:
-      "captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1",
+      "captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
     revision:
-      "captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1",
+      "captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
@@ -65,7 +69,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: "zedbee-react-calibration-v2+diagnostic-privacy-v1",
+    revision: `zedbee-react-calibration-v2+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -74,7 +78,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
-    revision: "diagnostic-privacy-v1",
+    revision: "diagnostic-privacy-v1+focusable-separator-v2",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

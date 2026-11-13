@@ -1,3 +1,9 @@
+import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
+import { selectedChangesLine } from "../reporting/source-identity.js";
+import {
+  allowedScanDetail,
+  coverageLine,
+} from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import {
@@ -103,10 +109,7 @@ function outcomeCopy(report: ScanReport): {
   }
   return {
     heading: "COMMIT ALLOWED",
-    detail:
-      report.changedFileCount === 0
-        ? emptyChangesCopy(report)
-        : "All checks passed. Commit allowed.",
+    detail: allowedScanDetail(report),
     tone: ZEDBEE_THEME.pass,
     symbol: "✓",
   };
@@ -146,6 +149,9 @@ function ResultContent({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
         {outcome.detail}
       </Text>
+      {selectedChangesLine(report) === undefined ? null : (
+        <Text wrap="wrap">{selectedChangesLine(report)}</Text>
+      )}
       {sourceIdentity === undefined ? null : (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           {sourceIdentity}
@@ -153,6 +159,8 @@ function ResultContent({
       )}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         {countLine(report)}
+        {" · "}
+        {coverageLine(report)}
       </Text>
       {presentation.abbreviated ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
@@ -480,11 +488,17 @@ export function ScanResultDashboard({
   const callouts = buildReportCallouts(
     presentation,
     report.presentationPolicy.agentGuidance,
+    report,
   );
   return (
     <Box flexDirection="column" width={width}>
       <Callouts lines={callouts.opening} width={width} color={color} />
       <BrandedCommandFrame width={width} color={color}>
+        {projectEslintNotices(report).map((notice) => (
+          <Box key={notice} marginY={1}>
+            <Text>{notice}</Text>
+          </Box>
+        ))}
         <FindingPanel
           title="BLOCKING FINDINGS"
           findings={sections.blockingFindings}

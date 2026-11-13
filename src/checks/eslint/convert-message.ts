@@ -1,3 +1,4 @@
+import { recordDiagnosticDetail } from "../diagnostic-details.js";
 import type { Linter } from "eslint";
 import { createHash } from "node:crypto";
 import type {
@@ -107,7 +108,7 @@ export function convertEslintMessage(
   const normalizedLocation = location(repositoryPath, message);
   const automaticFix =
     message.fix === undefined ? undefined : managedAutomaticFixFor(check);
-  return {
+  const observation: Observation = {
     check,
     rule,
     identity: identity(rule, normalizedLocation),
@@ -126,4 +127,6 @@ export function convertEslintMessage(
     location: normalizedLocation,
     ...(automaticFix === undefined ? {} : { automaticFix }),
   };
+  recordDiagnosticDetail(observation, message.message, snapshotRoot);
+  return observation;
 }

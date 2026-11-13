@@ -50,7 +50,7 @@ formatting to every unchanged file.
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
 | `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic framework conventions can require future managed profiles                |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
-| `reactAccessibility`     | React DOM JSX accessibility                                 | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
+| `reactAccessibility`     | Static JSX accessibility checks                             | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
 
 ## Incomplete staged inputs
@@ -168,9 +168,15 @@ Exactly seven configurable checks expose settings beyond severity and timing:
 | `readabilityComplexity` | Positive safe-integer `max`; Boolean `blockWorsening`                                  | `max: 15`, `blockWorsening: true`; file-scoped                                 |
 | `duplication`           | Percentage `threshold`; `settings.minLines`, `settings.minTokens`, and `settings.mode` | `threshold: 5`, `minLines: 5`, `minTokens: 50`, `mode: "mild"`; workspace-wide |
 | `reactCorrectness`      | Bundled React and Hooks `rules`                                                        | File-scoped and limited to rule IDs Zedbee ships                               |
-| `reactAccessibility`    | Bundled jsx-a11y `rules`                                                               | File-scoped and limited to rule IDs Zedbee ships                               |
+| `reactAccessibility`    | Bundled jsx-a11y `rules` and custom component/attribute/polymorphic `settings`         | File-scoped and limited to rule IDs Zedbee ships                               |
 
 A target-only score above `max` and a staged score that crosses `max` are blocking. `blockWorsening: true` additionally blocks an increase when both the baseline and target were already above `max`; set it to `false` to tolerate that above-limit worsening while teams pay down existing debt. Duplication `threshold` accepts 0 through 100. `minLines` and `minTokens` are positive safe integers. Duplication mode is one of `strict`, `mild`, or `weak`.
+
+`reactAccessibility.settings` accepts only `components` (component-to-element map),
+`attributes` (DOM attribute-to-JSX-properties arrays), `polymorphicPropName`, and
+`polymorphicAllowList`. Settings are file-scoped and default to no custom mappings.
+See [static JSX accessibility examples and limitations](react-analysis.md#static-jsx-accessibility-checks).
+These checks cannot certify runtime accessibility.
 
 ### Prettier settings
 
@@ -365,3 +371,112 @@ Framework entries use Knip's entry-export exemption, so their exports are not
 checked for exact framework consumption. Reachable library exports still receive
 normal analysis. Custom `pageExtensions`, MDX/custom compilers and
 `next <command> <subdirectory>` discovery are outside these default conventions.
+
+### Synthetic credentials in fixtures
+
+Secretlint can recognize a deliberately fake database URL as a credential. For a confirmed synthetic fixture, suppress just the database rule on the next line, with a reason:
+
+```python
+# secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- Synthetic redaction fixture
+DATABASE_URL = "postgresql://fixture:fake_password@db.example.invalid/test"
+```
+
+```javascript
+// secretlint-disable-next-line @secretlint/secretlint-rule-database-connection-string -- Synthetic redaction fixture
+const databaseUrl =
+  "postgresql://fixture:fake_password@db.example.invalid/test";
+```
+
+Stage the annotation together with the fixture. It suppresses the named rule on that one line; other rules and adjacent lines remain protected. This is an intentional suppression, not verification that a credential is fake. Remove and rotate real credentials. Test directories and localhost URLs are not automatically exempt.
+
+For dedicated fixture files, an exact-file `pathExclusions` entry with `checks: ["secrets"]` and a reason is also supported. That excludes the whole file from that check and is broader than the next-line annotation.
+
+### Experimental project ESLint
+
+Swarm's default lint mode uses its bundled rules. To use your project's own
+ESLint, run `zedbee init --eslint-engine project` and review the proposal.
+Project configuration and plugins execute JavaScript with your user privileges;
+setup asks for separate ESLint execution trust. Prettier trust does not grant it.
+For an explicit noninteractive setup, use
+`zedbee init --eslint-engine project --trust-project-eslint --yes`.
+
+You can also select `checks.lint.engine: "project"` in `.zedbeerc.jsonc`.
+A workspace override must select its entire subtree, for example
+`"files": ["packages/web/**"]`; individual-file engine selection is rejected.
+Use `zedbee doctor` to inspect configuration, installation, and saved trust
+without executing your project configuration.
+
+Within a selected workspace, project ESLint supplies lint, React, and JSX
+accessibility rules. Swarm shows its separate managed React checks as covered
+by project ESLint; that does not establish that your configuration enables
+accessibility rules. Formatting, complexity, secrets, and other independent
+checks remain separate. Explicit managed rule/settings or React severity
+settings must be resolved before selecting project mode; setup preserves and
+explains conflicts instead of silently discarding them.
+
+The initial supported environment is installed **ESLint 9.39.5**, JavaScript flat
+configuration (`eslint.config.js`, `.mjs`, or `.cjs`), ordinary local node_modules,
+and an npm package-lock v2 or v3 matching the selected target's direct installed
+dependencies. Swarm does not automatically install dependencies. Legacy
+`.eslintrc`, processors, TypeScript configuration modules, Yarn PnP, and extra
+file formats are outside this initial boundary. Captured files over 32 MiB or a mirror that cannot reproduce every captured input make project analysis incomplete rather than silently omitting data. Next.js, Jest, and import-plugin
+combinations have not yet been certified by the compatibility fixtures. Plugin
+results use ESLint's standard interface; unsupported execution or a plugin crash
+is incomplete analysis, with no silent managed fallback. Project-rule automatic
+fixes are not enabled.
+
+Project mode analyzes captured source and local configuration imports. Both
+baseline and target configurations run in fresh processes using the target's
+validated installed toolchain; Swarm does not recreate historical installations.
+A newly introduced configuration can establish new coverage without a baseline
+config. A broken existing baseline remains incomplete. Configurations requiring
+external local files, live checkout paths, network state, or extra environment
+variables are not guaranteed to reproduce. The worker receives PATH, fixed locale,
+a temporary HOME/TMPDIR, and Windows system paths where needed.
+
+A project plugin can inspect files beyond the source file it reports on, so
+project mode runs its configured JS/TS scope for every nonempty repository
+change, including Markdown and deletion-only changes. It does not use persistent
+result caching. This can take longer than managed mode. An all-ignored scope is
+reported as skipped, rather than a successful lint run. JSON check results expose
+`eslintAnalysis` with the installed version, checked/ignored/excluded counts, baseline
+comparison state, and effective message policy.
+
+Project findings preserve rule IDs, severity, and locations. Messages are
+redacted by default because plugins can quote source. Setting
+`reporting.projectEslintMessages: "full"` also requires separate local permission;
+setup offers this separately, or use `--allow-project-eslint-messages` with the
+explicit project setup command. Without permission, analysis continues with
+redacted messages. Full local messages can contain source in terminal and saved
+JSON reports. Source-bearing messages and private rule identifiers are not sent
+to telemetry. Returning to managed mode does not remove reports already written.
+
+### Rule severity and focusable separators
+
+For bundled lint, React, and accessibility rules, an explicit per-rule `warn`
+remains a warning under an `error` check. Check-level `warn` limits enabled rules
+to warnings; check or rule `off` disables its applicable scope. Numeric and array
+rule forms follow the same precedence. An error from another enabled rule still
+blocks the commit.
+
+Swarm corrects jsx-a11y 6.10.2's treatment of a literal focusable
+`role="separator"` with `aria-valuenow`: that pattern is an ARIA window splitter,
+including programmatic focus through `tabIndex={-1}`. Plain unfocusable separators
+with keyboard handlers and statically missing current values still report.
+Ambiguous spread attributes do not receive the exception. This correction applies
+to Swarm's managed engine; project ESLint retains the project's own plugin version
+and behavior. It is a static check, not proof of runtime accessibility.
+
+An existing JSX interaction finding can span an entire opening element, including
+inline handlers. Swarm pairs an existing occurrence through its unchanged opening
+line even when harmless handler edits expand the diagnostic range. A replacement
+opening line or newly added occurrence is not exempt merely because it reuses a
+line number.
+
+The managed `react-hooks/set-state-in-effect` implementation includes a
+versioned correction for state updates across waits and local effect helpers.
+An async wrapper does not make an immediate update safe. See
+[React analysis](react-analysis.md#state-updates-across-async-effect-helpers)
+for its scope and the distinction from native project ESLint behavior.
+
+Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.

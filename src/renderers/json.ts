@@ -1,3 +1,5 @@
+import { sanitizeComparisonContext } from "../checks/comparison-context.js";
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { compareFindings } from "../core/summarize.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -28,6 +30,14 @@ function serializeFinding(
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
+    ...(finding.messageRedaction === undefined
+      ? {}
+      : {
+          messageRedaction: {
+            redacted: finding.messageRedaction.redacted,
+            reasons: [...finding.messageRedaction.reasons],
+          },
+        }),
     ...(finding.location === undefined ? {} : { location: finding.location }),
     ...(finding.remediation === undefined
       ? {}
@@ -85,6 +95,14 @@ function serializeCheck(
             : { remediation: check.error.remediation }),
         };
   return {
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
+    ...(check.comparisonContext === undefined
+      ? {}
+      : {
+          comparisonContext: sanitizeComparisonContext(check.comparisonContext),
+        }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
@@ -138,6 +156,9 @@ export function renderJson(report: ScanReport): string {
       ? {}
       : { requestedBase: source.requestedBase }),
     changedFileCount: report.changedFileCount,
+    ...(report.changeSummary === undefined
+      ? {}
+      : { changeSummary: report.changeSummary }),
     startedAt: report.startedAt,
     durationMs: report.durationMs,
     ...(report.configuredPathExclusions.length === 0

@@ -4,6 +4,8 @@ import { compareCodeUnits } from "../core/compare.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 
+import { installedHookCommand } from "./installed-command.js";
+
 export type ScanHookName = "pre-commit" | "pre-merge-commit";
 
 export class HookInstallationError extends Error {
@@ -21,10 +23,6 @@ function contained(root: string, path: string): boolean {
     value === "" ||
     (!isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`))
   );
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /** Read installed package metadata only; never execute packages during setup. */
@@ -58,7 +56,7 @@ async function installedCommand(
       const repositoryPath = `./${relative(repositoryRoot, path).split(sep).join("/")}`;
       if (/[\r\n\0]/u.test(repositoryPath)) return undefined;
       return {
-        command: `(cd "$(git rev-parse --show-toplevel)" && node ${shellQuote(repositoryPath)} scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`,
+        command: installedHookCommand(repositoryPath, hookName),
         packageRoot,
         cliPath: repositoryPath,
       };

@@ -1,3 +1,5 @@
+import { sanitizeComparisonContext } from "../checks/comparison-context.js";
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
 import { summarizeChecks } from "../core/summarize.js";
@@ -103,6 +105,7 @@ function copyFinding(
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
+    ...(finding.messageRedaction===undefined?{}:{messageRedaction:{redacted:true as const,reasons:[...finding.messageRedaction.reasons]}}),
     ...(finding.location === undefined
       ? {}
       : { location: Object.freeze({ ...finding.location }) }),
@@ -127,6 +130,10 @@ function copyCheck(
   findings: readonly Finding[],
 ): CheckResult {
   return Object.freeze({
+    ...(check.comparisonContext === undefined ? {} : { comparisonContext: sanitizeComparisonContext(check.comparisonContext) }),
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,

@@ -1,3 +1,4 @@
+import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { posix } from "node:path";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
@@ -117,5 +118,10 @@ export function compilerInputRelevance(
     decision = resolveRelevance(context);
     scans.set(context.changeSet, decision);
   }
+  void decision
+    .then((value) => {
+      recordChangeCategory(value.reason);
+    })
+    .catch(() => {});
   return decision;
 }

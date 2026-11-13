@@ -81,3 +81,76 @@ describe("init workflow options", () => {
     },
   );
 });
+
+it("forwards the experimental ESLint choice and separate permissions to setup", async () => {
+  let actual: unknown;
+  const code = await runCli(
+    [
+      "node",
+      "zedbee",
+      "init",
+      "--eslint-engine",
+      "project",
+      "--trust-project-eslint",
+      "--allow-project-eslint-messages",
+      "--yes",
+    ],
+    {
+      executeInitCommand: async (options) => {
+        actual = options;
+        return 0;
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(actual).toMatchObject({
+    eslintEngine: "project",
+    trustProjectEslint: true,
+    allowProjectEslintMessages: true,
+  });
+});
+
+it.each(["contextual", "source-free"] as const)(
+  "forwards --diagnostic-messages %s independently of source excerpts",
+  async (diagnosticMessages) => {
+    let actual: unknown;
+    const code = await runCli(
+      [
+        "node",
+        "zedbee",
+        "scan",
+        "--diagnostic-messages",
+        diagnosticMessages,
+        "--no-source",
+        "--format",
+        "json",
+      ],
+      {
+        executeScanCommand: async (options) => {
+          actual = options;
+          return 0;
+        },
+      },
+    );
+    expect(code).toBe(0);
+    expect(actual).toMatchObject({
+      diagnosticMessages,
+      sourceExcerpts: "exclude",
+    });
+  },
+);
+
+it("offers source-free managed messages during init", async () => {
+  let actual: unknown;
+  const code = await runCli(
+    ["node", "zedbee", "init", "--diagnostic-messages", "source-free", "--yes"],
+    {
+      executeInitCommand: async (options) => {
+        actual = options;
+        return 0;
+      },
+    },
+  );
+  expect(code).toBe(0);
+  expect(actual).toMatchObject({ diagnosticMessages: "source-free" });
+});

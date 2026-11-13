@@ -1,3 +1,12 @@
+import {
+  withDiagnosticDetailSession,
+  applyDiagnosticDetails,
+} from "../checks/diagnostic-details.js";
+import {
+  ScanPerformanceRecorder,
+  withScanPerformance,
+  type ScanPerformanceSummary,
+} from "../diagnostics/scan-performance.js";
 import { runMergeScan } from "./merge-scan.js";
 import { freezeResult } from "../core/freeze-result.js";
 import type { SelectedIndexComparison } from "../git/selected-comparison.js";
@@ -71,10 +80,12 @@ export interface RunScanOptions {
   configPath?: string;
   reportingSurface?: ReportingSurface;
   sourceExcerpts?: SourceExcerptOverride;
+  diagnosticMessages?: "contextual" | "source-free";
   timeout?: string;
   noTimeout?: boolean;
   signal?: AbortSignal;
   onEvent?: (event: ScanEvent) => void;
+  onPerformanceSummary?: (summary: ScanPerformanceSummary) => void;
   /** Observe the actual resolved index/target-commit policy without receiving settings. */
   onConfigurationSummary?: (summary: ConfigurationSummary) => void;
   dependencies?: RunScanDependencies;
@@ -111,7 +122,52 @@ function dispatchOptions(
   };
 }
 
+const diagnosticPolicyForPresentation = new WeakMap<
+  object,
+  "contextual" | "source-free"
+>();
+
 export async function runScan(options: RunScanOptions): Promise<ScanReport> {
+  if (!options.onPerformanceSummary)
+    return withDiagnosticDetailSession(() => runScanWithDetails(options));
+  const recorder = new ScanPerformanceRecorder();
+  let phase: string | undefined,
+    phaseStarted = performance.now();
+  const observed = {
+    ...options,
+    onEvent: (event: ScanEvent) => {
+      if (event.type === "scan-phase") {
+        const now = performance.now();
+        if (phase) recorder.phase(phase, now - phaseStarted);
+        phase = event.phase;
+        phaseStarted = now;
+      }
+      options.onEvent?.(event);
+    },
+  };
+  try {
+    const report = await withScanPerformance(recorder, () =>
+      withDiagnosticDetailSession(() => runScanWithDetails(observed)),
+    );
+    if (report.outcome === "incomplete") recorder.markPartial();
+    return report;
+  } catch (error) {
+    recorder.markPartial();
+    throw error;
+  } finally {
+    if (phase) recorder.phase(phase, performance.now() - phaseStarted);
+    try {
+      options.onPerformanceSummary?.(recorder.snapshot());
+    } catch {}
+  }
+}
+
+async function runScanWithDetails(
+  options: RunScanOptions,
+  deferDiagnosticRendering = false,
+): Promise<ScanReport> {
+  let diagnosticMessages: "contextual" | "source-free" =
+    options.diagnosticMessages ?? "contextual";
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
   const startedAt = dependencies.now().toISOString();
   const started = dependencies.clock();
@@ -120,12 +176,21 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     const merged = await runMergeScan(
       options,
       dependencies,
-      runScan,
+      (pairOptions) => runScanWithDetails(pairOptions, true),
       (selected) => {
         selectedComparison = selected;
       },
     );
-    if (merged !== undefined) return freezeResult(merged);
+    if (merged !== undefined)
+      return freezeResult(
+        deferDiagnosticRendering
+          ? merged
+          : await applyDiagnosticDetails(
+              merged,
+              diagnosticPolicyForPresentation.get(merged.presentationPolicy) ??
+                diagnosticMessages,
+            ),
+      );
   }
   const networkDisclosures: NetworkDisclosure[] = [];
   let includeSourceExcerpts = false;
@@ -139,6 +204,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
     repositoryRoot: options.repositoryRoot,
     source: state.source,
     changedFileCount: state.changedFileCount,
+    ...(state.changeSummary === undefined
+      ? {}
+      : { changeSummary: state.changeSummary }),
     startedAt,
     durationMs: Math.max(0, dependencies.clock() - started),
     configuredPathExclusions: state.configuredPathExclusions,
@@ -152,6 +220,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       ...(selectedComparison === undefined ? {} : { selectedComparison }),
       dependencies,
       onConfiguration(config) {
+        diagnosticMessages = config.reporting.diagnosticMessages;
         try {
           options.onConfigurationSummary?.(summarizeConfiguration(config));
         } catch {
@@ -171,6 +240,10 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
           ),
           agentGuidance: config.reporting.agentGuidance,
         });
+        diagnosticPolicyForPresentation.set(
+          presentationPolicy,
+          diagnosticMessages,
+        );
       },
       dispatchOptions: () =>
         dispatchOptions(
@@ -206,6 +279,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
         repositoryRoot: options.repositoryRoot,
         ...state.source,
         changedFileCount: state.changedFileCount,
+        ...(state.changeSummary === undefined
+          ? {}
+          : { changeSummary: state.changeSummary }),
         startedAt,
         durationMs: context.durationMs,
         configuredPathExclusions: context.configuredPathExclusions,
@@ -254,5 +330,9 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
             durationMs,
           );
   }
-  return freezeResult(report);
+  return freezeResult(
+    deferDiagnosticRendering
+      ? report
+      : await applyDiagnosticDetails(report, diagnosticMessages),
+  );
 }

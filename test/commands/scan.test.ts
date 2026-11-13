@@ -784,6 +784,7 @@ describe("executeScanCommand", () => {
         color: true,
         animations: true,
         sourceExcerpts: "exclude",
+        diagnosticMessages: "source-free",
       },
       terminal,
       deps,
@@ -793,6 +794,7 @@ describe("executeScanCommand", () => {
     expect(received).toMatchObject({
       reportingSurface: "text",
       sourceExcerpts: "exclude",
+      diagnosticMessages: "source-free",
     });
     expect(terminal.stdout.join("")).toContain("BEE-UTIFUL");
     expect(terminal.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/);

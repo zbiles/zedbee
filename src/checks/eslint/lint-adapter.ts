@@ -1,3 +1,5 @@
+import { verifyComparisonInputs } from "../comparison-context.js";
+import { collectProjectEslint } from "./project/adapter.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
 import { compilerInputRelevance } from "../compiler-inputs.js";
@@ -416,6 +418,8 @@ export function createLintAdapter(
       inspectManagedCheck("lint", context),
 
     async planFixes(context, findings) {
+      if ("engine" in context.policy && context.policy.engine === "project")
+        return [];
       const prepared = await prepareSide(
         context.snapshots.targetDir,
         context.targetInspection,
@@ -480,6 +484,8 @@ export function createLintAdapter(
     },
 
     async collect(context): Promise<CheckObservationSet> {
+      if ("engine" in context.policy && context.policy.engine === "project")
+        return collectProjectEslint(context);
       const dependencies = captureAnalysisDependencies(context);
       const coverage = createSnapshotProjectCoverage(
         context,
@@ -520,6 +526,7 @@ export function createLintAdapter(
       const dependencyInputs = dependencies.manifest();
       const workspace = workspaceFor(context.targetInspection, context.target);
       return {
+        comparisonContext: verifyComparisonInputs(dependencies),
         checkId: "lint",
         target: context.target,
         ...pairLocationObservations(baseline, target, context.changeSet),

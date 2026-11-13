@@ -1,3 +1,4 @@
+import { incompleteComparisonContext, sanitizeComparisonContext } from "./comparison-context.js";
 import type {
   Attribution,
   CheckError,
@@ -71,6 +72,8 @@ function sanitizeAttributionKind(value: unknown): Attribution["kind"] {
 // These exhaustive registries deliberately make a public result-contract change
 // fail typechecking until this trusted-boundary copier is updated as well.
 export const PUBLIC_CHECK_RESULT_FIELDS = {
+  comparisonContext: true,
+  eslintAnalysis: true,
   checkId: true,
   target: true,
   status: true,
@@ -84,6 +87,7 @@ export const PUBLIC_CHECK_RESULT_FIELDS = {
 } as const satisfies Readonly<Record<keyof CheckResult, true>>;
 
 export const PUBLIC_FINDING_FIELDS = {
+  messageRedaction: true,
   id: true,
   check: true,
   rule: true,
@@ -134,6 +138,12 @@ interface CheckResultOverrides {
   readonly target?: string;
   readonly durationMs?: number;
   readonly temporaryPath?: ValidatedSnapshotPath;
+}
+
+function sanitizeMessageRedaction(value: Finding["messageRedaction"]): NonNullable<Finding["messageRedaction"]> {
+  const allowed=new Set(["sensitive-value","context-unavailable","unsupported-template","source-free-policy"]);
+  if(!value || value.redacted!==true || !Array.isArray(value.reasons) || value.reasons.length>4 || value.reasons.some(reason=>!allowed.has(reason)))throw new TypeError("Invalid message redaction");
+  return {redacted:true,reasons:[...value.reasons]};
 }
 
 function sanitizeLocation(location: SourceLocation): SourceLocation {
@@ -250,6 +260,7 @@ function sanitizeFinding(finding: Finding): Finding {
             check === "secrets",
           ),
         }),
+    ...(finding.messageRedaction===undefined?{}:{messageRedaction:sanitizeMessageRedaction(finding.messageRedaction)}),
     attribution: sanitizeAttribution(finding.attribution),
   };
 }
@@ -393,11 +404,16 @@ export function sanitizeCheckResult(
       : displayLabel(targetValue, "result target");
   const durationMs = overrides.durationMs ?? result.durationMs;
   const status = sanitizeStatus(result.status);
+  const comparison = result.comparisonContext ?? incompleteComparisonContext(result.error?.code);
   const incompleteDisposition = sanitizeIncompleteDisposition(
     result.incompleteDisposition,
     status,
   );
   return {
+    ...(comparison === undefined ? {} : { comparisonContext: sanitizeComparisonContext(comparison) }),
+    ...(result.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(result.eslintAnalysis) }),
     checkId: displayLabel(
       overrides.checkId ?? result.checkId,
       "result check id",
@@ -460,4 +476,38 @@ export function validateReportDisplayStrings(report: {
     findings: report.summary.findings,
   });
   return { checks, summaryFindings: summary.findings };
+}
+
+export function sanitizeEslintAnalysis(
+  value: import("../core/types.js").EslintAnalysis,
+): import("../core/types.js").EslintAnalysis {
+  if (
+    !value ||
+    (value.messageNotice !== undefined &&
+      value.messageNotice !== "permission-required") ||
+    (value.excludedFiles !== undefined &&
+      (!Number.isSafeInteger(value.excludedFiles) ||
+        value.excludedFiles < 0)) ||
+    value.version !== "9.39.5" ||
+    !Number.isSafeInteger(value.checkedFiles) ||
+    value.checkedFiles < 0 ||
+    !Number.isSafeInteger(value.ignoredFiles) ||
+    value.ignoredFiles < 0 ||
+    !["compared", "new-coverage"].includes(value.baseline) ||
+    !["redacted", "full"].includes(value.messages)
+  )
+    throw new TypeError("Invalid project ESLint coverage");
+  return {
+    ...(value.messageNotice === undefined
+      ? {}
+      : { messageNotice: value.messageNotice }),
+    ...(value.excludedFiles === undefined
+      ? {}
+      : { excludedFiles: value.excludedFiles }),
+    version: value.version,
+    checkedFiles: value.checkedFiles,
+    ignoredFiles: value.ignoredFiles,
+    baseline: value.baseline,
+    messages: value.messages,
+  };
 }

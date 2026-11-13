@@ -84,6 +84,7 @@ export interface InitFileChange {
 }
 
 export interface InitProposal {
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly workflow?: InitWorkflowChoice;
   readonly workflowAvailable?: boolean;
   readonly workflowMessage?: string;
@@ -106,6 +107,12 @@ export interface InitProposal {
   readonly osvUnavailable: InitOsvUnavailable;
   readonly networkChecks: readonly InitNetworkCheck[];
   readonly limitations: readonly string[];
+  readonly eslintEngine?: "managed" | "project";
+  readonly eslintConflicts?: readonly string[];
+  readonly projectEslintMessages?: "redacted" | "full";
+  readonly projectEslintTrustRoots?: readonly string[];
+  readonly projectEslintTrustConfirmed?: boolean;
+  readonly projectEslintMessagesConfirmed?: boolean;
   readonly formatting?: InitFormattingChoice;
   readonly formattingScope?: InitFormattingScope;
   readonly formattingScopeRoots?: readonly string[];
@@ -122,6 +129,7 @@ export interface InitProposal {
 }
 
 export interface CreateInitProposalOptions {
+  readonly diagnosticMessages?: "contextual" | "source-free";
   readonly workflow?: InitWorkflowChoice;
   readonly workflowAvailable?: boolean;
   readonly workflowMessage?: string;
@@ -138,6 +146,12 @@ export interface CreateInitProposalOptions {
   readonly hooksPathChange?:
     Readonly<{ before: string | null; after: ".husky/_" }> | undefined;
   readonly hookActivation?: InitHookActivation;
+  readonly eslintEngine?: "managed" | "project";
+  readonly eslintConflicts?: readonly string[];
+  readonly projectEslintMessages?: "redacted" | "full";
+  readonly projectEslintTrustRoots?: readonly string[];
+  readonly projectEslintTrustConfirmed?: boolean;
+  readonly projectEslintMessagesConfirmed?: boolean;
   readonly formatting?: InitFormattingChoice;
   readonly formattingScope?: InitFormattingScope;
   readonly formattingScopeRoots?: readonly string[];

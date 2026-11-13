@@ -32,3 +32,37 @@ export function normalizeAgentGuidance(
     nextStep: normalize(input?.nextStep, "agent guidance next step"),
   });
 }
+
+export function resolveAgentNextStep(
+  report: import("../scan/report.js").ScanReport,
+  guidance: AgentGuidance,
+): string {
+  if (guidance.nextStep !== RECOMMENDED_AGENT_GUIDANCE.nextStep)
+    return guidance.nextStep;
+  const steps: string[] = [];
+  if (report.summary.failed > 0) steps.push("Fix every blocking finding.");
+  if (report.summary.warnings > 0) steps.push("Review warnings separately.");
+  if (
+    report.summary.incomplete > 0 ||
+    report.checks.some((check) => check.status === "incomplete")
+  )
+    steps.push("Resolve any incomplete checks.");
+  if (steps.length > 0) {
+    steps.push(
+      report.mode === "base"
+        ? "Commit any fixes and run Zedbee again."
+        : "Stage any fixes and run Zedbee again.",
+    );
+    steps.push("Do not bypass the pre-commit hook.");
+    return steps.join(" ");
+  }
+  if (
+    report.changedFileCount === 0 ||
+    !report.checks.some((check) => check.status === "completed")
+  ) {
+    const scope =
+      report.mode === "base" ? "selected committed changes" : "staged changes";
+    return `Review the ${scope}; no configured checks ran.`;
+  }
+  return "No findings require action.";
+}

@@ -1,11 +1,19 @@
 import type { ScanHookName } from "./command.js";
 
+import {
+  guardedHookInvocation,
+  installedHookCommand,
+} from "./installed-command.js";
+
 const SCAN_FAILURE_GUARD = " || exit $?";
 
 export const ZEDBEE_COMMAND = "npx --no-install zedbee scan --hook-invocation";
 
 /** The resolved command is either a direct invocation or a Git-root subshell. */
 export function mergeHookCommand(command: string): string {
+  const guarded = guardedHookInvocation(command);
+  if (guarded !== undefined)
+    return installedHookCommand(guarded.cliPath, "pre-merge-commit");
   return command.endsWith(")")
     ? `${command.slice(0, -1)} --merge)`
     : `${command} --merge`;
@@ -99,7 +107,9 @@ export function replaceManagedZedbeeCommand(
           '(cd "$(git rev-parse --show-toplevel)" && node \'',
         ) &&
           / scan --hook-invocation(?: --merge)?\)$/u.test(trimmed));
-      return plain || (installed && hasZedbeeScanCommand(trimmed))
+      return plain ||
+        guardedHookInvocation(trimmed) !== undefined ||
+        (installed && hasZedbeeScanCommand(trimmed))
         ? `${command}${guardFailure || guarded ? SCAN_FAILURE_GUARD : ""}`
         : line;
     })

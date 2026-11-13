@@ -109,6 +109,18 @@ export function InitApp({
   const liveSize = useWindowSize();
   const columns = terminalSize?.columns ?? liveSize.columns ?? width;
   const rows = terminalSize?.rows ?? liveSize.rows ?? 24;
+  const [eslintEngine, setEslintEngine] = useState<
+    "managed" | "project" | undefined
+  >();
+  const [eslintTrust, setEslintTrust] = useState(
+    proposal.projectEslintTrustConfirmed === true,
+  );
+  const [eslintMessages, setEslintMessages] = useState<boolean | undefined>();
+  const [eslintMessageTrust, setEslintMessageTrust] = useState(
+    proposal.projectEslintMessagesConfirmed === true,
+  );
+  const effectiveEslintEngine =
+    eslintEngine ?? proposal.eslintEngine ?? "managed";
   const [telemetryEnabled, setTelemetryEnabled] = useState(
     proposal.telemetryDisabledByEnvironment !== true &&
       proposal.telemetryEnabled !== false,
@@ -194,6 +206,10 @@ export function InitApp({
     () => ({
       ...proposalForSelection({
         profile: baseProfile,
+        eslintEngine,
+        eslintTrust,
+        eslintMessages,
+        eslintMessageTrust,
         checks: Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
         osvUnavailable,
         hook: hookSelection,
@@ -208,6 +224,10 @@ export function InitApp({
         proposal.telemetryDisabledByEnvironment === true,
     }),
     [
+      eslintEngine,
+      eslintTrust,
+      eslintMessages,
+      eslintMessageTrust,
       telemetryEnabled,
       proposal.telemetryDisabledByEnvironment,
       baseProfile,
@@ -226,7 +246,14 @@ export function InitApp({
     phase === "review"
       ? (preparedReview ?? selectedProposal)
       : selectedProposal;
+  const eslintReviewBlocked =
+    effectiveEslintEngine === "project" &&
+    (!eslintTrust ||
+      (selectedProposal.projectEslintMessages === "full" &&
+        !eslintMessageTrust) ||
+      (selectedProposal.eslintConflicts?.length ?? 0) > 0);
   const beginReview = () => {
+    if (eslintReviewBlocked) return;
     evaluation.cancel();
     if (prepareReview === undefined) {
       setPhase("review");
@@ -347,7 +374,21 @@ export function InitApp({
       return;
     }
 
-    if (key.return) {
+    if (normalized === "l") {
+      setEslintEngine((value) =>
+        (value ?? proposal.eslintEngine ?? "managed") === "managed"
+          ? "project"
+          : "managed",
+      );
+    } else if (normalized === "x" && effectiveEslintEngine === "project") {
+      setEslintTrust((value) => !value);
+    } else if (normalized === "m" && effectiveEslintEngine === "project") {
+      const next = !(
+        eslintMessages ?? proposal.projectEslintMessages === "full"
+      );
+      setEslintMessages(next);
+      setEslintMessageTrust(next);
+    } else if (key.return) {
       if (projectTrustRequired) {
         // The executable-code disclosure must be confirmed separately.
         return;
@@ -400,6 +441,10 @@ export function InitApp({
         ]!;
       const nextProposal = proposalForSelection({
         profile: nextProfile,
+        eslintEngine,
+        eslintTrust,
+        eslintMessages,
+        eslintMessageTrust,
         osvUnavailable,
         hook: hookSelection,
         formatting,
@@ -464,6 +509,11 @@ export function InitApp({
       }
       const check = CHECK_IDS[focus - 1 - hookRows];
       if (check !== undefined) {
+        if (
+          effectiveEslintEngine === "project" &&
+          ["reactCorrectness", "reactAccessibility"].includes(check)
+        )
+          return;
         setSelected((current) => {
           const next = new Set(current);
           if (next.has(check)) next.delete(check);

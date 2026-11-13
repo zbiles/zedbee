@@ -8,6 +8,13 @@ export interface SnapshotLocationObservations {
   readonly files: Readonly<Record<string, string>>;
 }
 
+function anchoredOpening(observation: Observation): boolean {
+  return (
+    observation.check === "reactAccessibility" &&
+    observation.rule === "jsx-a11y/no-noninteractive-element-interactions"
+  );
+}
+
 function comparisonIdentity(
   observation: Observation,
   location = observation.location,
@@ -19,8 +26,8 @@ function comparisonIdentity(
         location?.file,
         location?.startLine,
         location?.startColumn,
-        location?.endLine,
-        location?.endColumn,
+        anchoredOpening(observation) ? null : location?.endLine,
+        anchoredOpening(observation) ? null : location?.endColumn,
         observation.comparisonIdentity ?? observation.message,
       ]),
     )
@@ -49,18 +56,21 @@ export function pairLocationObservations(
       count: number;
     }[]
   >();
-  const targetLocation = (location: SourceLocation): SourceLocation => {
+  const targetLocation = (
+    location: SourceLocation,
+    anchor: boolean,
+  ): SourceLocation | undefined => {
     const targetPath = renamedPaths.get(location.file) ?? location.file;
     const unchangedPosition = { ...location, file: targetPath };
     const before = baseline.files[location.file];
     const after = target.files[targetPath];
-    if (before === after) return unchangedPosition;
+    if (before !== undefined && before === after) return unchangedPosition;
     if (
       before === undefined ||
       after === undefined ||
       location.startLine === undefined
     )
-      return unchangedPosition;
+      return anchor ? undefined : unchangedPosition;
     let lines = lineMaps.get(location.file);
     if (lines === undefined) {
       const components = diffLines(before, after, { timeout: 2_000 });
@@ -88,7 +98,9 @@ export function pairLocationObservations(
       lines = mapped;
       lineMaps.set(location.file, lines);
     }
-    const oldEnd = location.endLine ?? location.startLine;
+    const oldEnd = anchor
+      ? location.startLine
+      : (location.endLine ?? location.startLine);
     // Every line in a multiline diagnostic must still belong to the same unchanged span.
     const span = lines.find(
       (range) =>
@@ -96,12 +108,14 @@ export function pairLocationObservations(
         oldEnd < range.baselineStart + range.count,
     );
     // Harmless edits may change a whole line while leaving the diagnostic itself identical.
-    if (span === undefined) return unchangedPosition;
+    if (span === undefined) return anchor ? undefined : unchangedPosition;
     const offset = span.targetStart - span.baselineStart;
     return {
       ...unchangedPosition,
       startLine: location.startLine + offset,
-      ...(location.endLine === undefined ? {} : { endLine: oldEnd + offset }),
+      ...(location.endLine === undefined
+        ? {}
+        : { endLine: location.endLine + offset }),
     };
   };
   return {
@@ -109,10 +123,13 @@ export function pairLocationObservations(
       const location =
         observation.location === undefined
           ? undefined
-          : targetLocation(observation.location);
+          : targetLocation(observation.location, anchoredOpening(observation));
       return {
         ...observation,
-        comparisonIdentity: comparisonIdentity(observation, location),
+        comparisonIdentity:
+          anchoredOpening(observation) && location === undefined
+            ? `unmapped-baseline:${comparisonIdentity(observation)}`
+            : comparisonIdentity(observation, location),
       };
     }),
     targetObservations: target.observations.map((observation) => ({

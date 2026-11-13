@@ -254,7 +254,16 @@ function parseConfigSource(source: string, configPath: string): ResolvedConfig {
     );
   }
 
-  return resolveConfig(parsed.data, configPath);
+  try {
+    return resolveConfig(parsed.data, configPath);
+  } catch (error) {
+    if (!(error instanceof TypeError)) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Invalid Zedbee configuration at ${basename(configPath)}: ${error.message}`,
+      configPath,
+    );
+  }
 }
 
 interface IndexEntry {
