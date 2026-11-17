@@ -308,6 +308,20 @@ export async function resolveViteEntrypoints(
         }
         return false;
       };
+      const exportedPath = (node: Expression): string | undefined => {
+        if (ts.isIdentifier(node)) return node.text;
+        if (ts.isPropertyAccessExpression(node)) {
+          const owner = exportedPath(node.expression);
+          return owner === undefined ? undefined : `${owner}.${node.name.text}`;
+        }
+        if (ts.isElementAccessExpression(node)) {
+          const owner = exportedPath(node.expression);
+          return owner === undefined
+            ? undefined
+            : `${owner}.${ts.isStringLiteral(node.argumentExpression) ? node.argumentExpression.text : "[computed]"}`;
+        }
+        return undefined;
+      };
       const visit = (node: Node): void => {
         if (
           (ts.isPropertyAssignment(node) ||
@@ -340,13 +354,23 @@ export async function resolveViteEntrypoints(
         }
         if (
           ts.isBinaryExpression(node) &&
-          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          ["module.exports", "exports.default"].includes(
-            node.left.getText(ast),
-          ) &&
-          !supported(node.right)
-        )
-          custom = true;
+          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+          const path = exportedPath(node.left);
+          if (path === "module.exports" || path === "exports.default") {
+            if (
+              node.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+              !supported(node.right)
+            )
+              custom = true;
+          } else if (
+            path?.startsWith("module.exports.") ||
+            path?.startsWith("exports.")
+          ) {
+            custom = true;
+          }
+        }
         ts.forEachChild(node, visit);
       };
       visit(ast);

@@ -313,19 +313,27 @@ it.each(["raw", "url", "worker", "sharedworker", "inline"])(
   },
 );
 
-it("requires explicit source fallback for dynamic CommonJS configuration", async () => {
-  const f = await createInspectionFixture();
-  await f.writeJson("package.json", {
-    name: "web",
-    devDependencies: { vite: "7" },
-  });
-  await f.write("vite.config.cjs", "module.exports = getSettings();");
-  await f.write("src/start.ts", "console.log(1);");
-  const inspection = await inspectRepository(f.root);
-  await expect(
-    createManagedKnipConfig(inspection.snapshotRoot, inspection),
-  ).rejects.toMatchObject({
-    code: "DEAD_CODE_ENTRYPOINT_UNSUPPORTED",
-    path: "vite.config.cjs",
-  });
-});
+it.each([
+  "module.exports = getSettings();",
+  'module.exports = {}; module.exports.root = "custom";',
+  'module["exports"] = {}; module["exports"]["root"] = "custom";',
+  'exports.root = "custom";',
+])(
+  "requires explicit source fallback for CommonJS configuration: %s",
+  async (source) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", {
+      name: "web",
+      devDependencies: { vite: "7" },
+    });
+    await f.write("vite.config.cjs", source);
+    await f.write("src/start.ts", "console.log(1);");
+    const inspection = await inspectRepository(f.root);
+    await expect(
+      createManagedKnipConfig(inspection.snapshotRoot, inspection),
+    ).rejects.toMatchObject({
+      code: "DEAD_CODE_ENTRYPOINT_UNSUPPORTED",
+      path: "vite.config.cjs",
+    });
+  },
+);
