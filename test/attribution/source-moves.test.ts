@@ -261,3 +261,17 @@ it("does not use policy differences to guess between identical removed donors", 
   value.baseline["b.jsx"]!.policyIdentity = "different";
   expect(buildSourceMoveMap(value).pairs).toEqual([]);
 });
+
+it("does not erase retained occurrences when directive-like text makes a file ineligible", () => {
+  const result = buildSourceMoveMap(
+    input(
+      { "old.jsx": debt },
+      { "old.jsx": "// eslint explanation\n" + debt, "copy.jsx": debt },
+    ),
+  );
+  expect(
+    result.pairs.filter(
+      (pair) => pair.baseline.entity.file !== pair.target.entity.file,
+    ),
+  ).toEqual([]);
+});

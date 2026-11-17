@@ -97,7 +97,9 @@ export function buildSourceMoveMap(input: {
         throw new RangeError("budget");
       // Directive comments can alter analysis; arbitrary comments cannot establish equivalence.
       if (/\b(?:eslint|@ts-|@jsx|istanbul|c8\s+ignore)/u.test(value.source))
-        return [];
+        // Dropping a file would also erase retained occurrences, allowing a copy
+        // to consume their baseline. Decline the whole optional match instead.
+        throw new SyntaxError("unsupported directive context");
       const parsed = ts.createSourceFile(
         file,
         value.source,

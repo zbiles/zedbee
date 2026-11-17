@@ -279,3 +279,23 @@ describe("source move boundaries", () => {
     expect(merged.report.mergeParents).toHaveLength(2);
   });
 });
+
+it("keeps a copied function new when the retained source gains directive-like text", async () => {
+  const repo = await fixture();
+  await repo.write(
+    "old.jsx",
+    "// eslint explanation\n" + debt + other + "export const keep = 1;\n",
+  );
+  await repo.write("copy.jsx", debt);
+  await repo.git(["add", "."]);
+  const result = await scan(repo.root);
+  expect(result.code).toBe(1);
+  expect(result.findings).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        check: "cyclomaticComplexity",
+        location: expect.objectContaining({ file: "copy.jsx" }),
+      }),
+    ]),
+  );
+});
