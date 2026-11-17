@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import {
   acquireServiceExecutor,
   stopService,
@@ -31,7 +32,7 @@ it.each(["local", "service"] as const)(
       await repo.write(`src/${name}.ts`, `console.log('${name}');`);
     await repo.write("index.html", "<p>No application module yet</p>");
     await repo.commitAll("baseline");
-    const directory = await mkdtemp("/private/tmp/zv-");
+    const directory = await realpath(await mkdtemp(join(tmpdir(), "zv-")));
     const options = { directory, concurrency: 1 as const };
     const executor =
       mode === "service" ? await acquireServiceExecutor(options) : undefined;
