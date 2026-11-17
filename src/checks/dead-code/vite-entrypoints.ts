@@ -1,5 +1,5 @@
 import { posix, relative, sep } from "node:path";
-import ts from "typescript";
+import type { Expression, Node } from "typescript";
 import { compareCodeUnits } from "../../core/compare.js";
 import {
   ContainedFileSizeError,
@@ -289,9 +289,10 @@ export async function resolveViteEntrypoints(
       selectedConfig = true;
       addSource(path, path);
       const text = await readContainedFile(registry, path);
+      const ts = (await import("typescript")).default;
       const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
       let custom = false;
-      const supported = (expression: ts.Expression): boolean => {
+      const supported = (expression: Expression): boolean => {
         if (ts.isParenthesizedExpression(expression))
           return supported(expression.expression);
         if (ts.isObjectLiteralExpression(expression)) return true;
@@ -307,7 +308,7 @@ export async function resolveViteEntrypoints(
         }
         return false;
       };
-      const visit = (node: ts.Node): void => {
+      const visit = (node: Node): void => {
         if (
           (ts.isPropertyAssignment(node) ||
             ts.isShorthandPropertyAssignment(node)) &&
