@@ -1,4 +1,4 @@
-import ts from "typescript";
+import type * as Typescript from "typescript";
 import pLimit from "p-limit";
 import { parse, type ParseError } from "jsonc-parser";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
@@ -70,6 +70,7 @@ async function proveClosedProject(
     )
       return false;
     const options = config.compilerOptions;
+    const ts = await import("typescript");
     if (
       !options ||
       typeof options !== "object" ||
@@ -123,7 +124,7 @@ async function proveClosedProject(
       );
       if (!ts.isExternalModule(tree)) return false;
       let safe = true;
-      const visit = (node: ts.Node): void => {
+      const visit = (node: Typescript.Node): void => {
         if (
           ts.isModuleDeclaration(node) ||
           ts.isCallExpression(node) ||
