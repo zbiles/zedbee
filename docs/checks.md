@@ -485,7 +485,8 @@ Compiler checks conservatively include sibling workspaces when a source change
 might affect them. A bounded exception avoids an unchanged sibling project only
 when both snapshots prove it is self-contained: one local tsconfig including
 `src`, no inherited configuration or references, explicit empty `types`, and
-ordinary TypeScript modules with no imports, references, declarations, or calls.
+ordinary TypeScript modules with no imports, references, ambient augmentations,
+or calls.
 Unsupported configurations, JSX, ambient declarations, symlinks, missing data,
 and proof limits retain conservative coverage. This is deliberately narrower
 than assuming that a file outside the edited folder cannot be affected.
