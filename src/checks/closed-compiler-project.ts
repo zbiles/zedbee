@@ -1,4 +1,5 @@
 import ts from "typescript";
+import pLimit from "p-limit";
 import { parse, type ParseError } from "jsonc-parser";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import { readContainedFile } from "../inspection/read-json.js";
@@ -10,6 +11,7 @@ const proofs = new WeakMap<
   RepositoryInspection,
   WeakMap<WorkspaceInspection, Promise<boolean>>
 >();
+const acquireProof = pLimit(4);
 
 /** A deliberately narrow proof. Anything beyond a self-contained module-only
  * project retains broad compiler coverage. This is not an import-graph guess. */
@@ -24,7 +26,7 @@ export function isClosedCompilerProject(
   }
   let proof = entries.get(workspace);
   if (proof === undefined) {
-    proof = proveClosedProject(inspection, workspace);
+    proof = acquireProof(() => proveClosedProject(inspection, workspace));
     entries.set(workspace, proof);
   }
   return proof;
@@ -51,7 +53,9 @@ async function proveClosedProject(
       return false;
     const errors: ParseError[] = [];
     const config = parse(
-      await readContainedFile(registry, workspace.tsconfigPaths[0]!),
+      await readContainedFile(registry, workspace.tsconfigPaths[0]!, {
+        maxBytes: 64 * 1024,
+      }),
       errors,
       { allowTrailingComma: true },
     );
@@ -95,7 +99,12 @@ async function proveClosedProject(
         /\.d\.[cm]?ts$/u.test(path)
       )
         return false;
-      const source = await readContainedFile(registry, path);
+      const source = await readContainedFile(registry, path, {
+        maxBytes: Math.min(
+          1024 * 1024,
+          Math.floor((8 * 1024 * 1024 - bytes) / 2),
+        ),
+      });
       bytes += source.length * 2;
       if (source.length > 1024 * 1024 || bytes > 8 * 1024 * 1024) return false;
       const pre = ts.preProcessFile(source, true, true);
