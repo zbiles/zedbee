@@ -78,7 +78,24 @@ When a possible compiler input changes, both checks still conservatively check
 every discovered workspace containing TypeScript sources, including unchanged
 consumers and sibling workspaces. Both compare findings across the project,
 including unchanged files. Existing
-baseline findings remain non-blocking when unchanged source moves or is renamed.
+baseline findings remain non-blocking when their supported comparison identities
+remain unchanged. File renames and unchanged spans retain location pairing.
+For complexity and `react/no-unescaped-entities`, selected source deletions and
+extractions can also preserve baseline debt across files or workspaces, under
+equivalent effective policy. Matching reserves retained originals, then requires
+a unique removed entity and a unique destination with the same full syntax and
+lexical ownership. Ordinary comments and token spacing may change; string
+literals, JSX text, export wrappers, directives, and declaration ownership must
+remain compatible. Copies, ambiguous duplicates, modified extracted bodies, and
+policy changes receive no cross-file exemption. Parser/capture failures or move
+budgets conservatively leave findings unmatched; affected finding evidence
+identifies the fallback. This does not establish semantic equivalence: new
+missing imports, scope errors, type errors, and other lint findings still use
+their own comparison rules. Move discovery reads only selected captured source
+changes, with limits of 128 files, 4 MiB total, 512 KiB per file, 10,000 entities,
+250,000 syntax tokens, and two seconds of matching. Nested/anonymous/member
+functions require compatible syntax ownership; unsupported rearrangements may
+remain new debt.
 File policies still control which lint findings are enabled. `when: "always"`
 retains full project comparison for a nonempty changeset even when its changed
 paths would otherwise be unrelated. Other analyzers retain their own input

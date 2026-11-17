@@ -42,11 +42,11 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v6-source-identities",
+    revision: "complexity-v7-source-moves",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v6-source-identities",
+    revision: "zedbee-readability-v7-source-moves",
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
@@ -69,7 +69,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: `zedbee-react-calibration-v2+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
+    revision: `zedbee-react-calibration-v3-source-moves+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([

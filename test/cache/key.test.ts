@@ -956,7 +956,7 @@ describe("observation cache keys", () => {
 
   it("versions React correctness calibration in the engine identity", () => {
     expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
-      "zedbee-react-calibration-v2",
+      "zedbee-react-calibration-v3-source-moves",
     );
   });
 

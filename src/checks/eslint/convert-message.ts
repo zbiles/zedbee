@@ -112,10 +112,15 @@ export function convertEslintMessage(
     check,
     rule,
     identity: identity(rule, normalizedLocation),
-    ...(check === "lint"
+    ...(check === "lint" ||
+    (check === "reactCorrectness" && rule === "react/no-unescaped-entities")
       ? {
           comparisonIdentity: createHash("sha256")
-            .update(sanitizeMessage(message.message, snapshotRoot))
+            .update(
+              check === "lint"
+                ? sanitizeMessage(message.message, snapshotRoot)
+                : message.message,
+            )
             .digest("hex"),
         }
       : {}),

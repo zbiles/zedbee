@@ -187,3 +187,28 @@ describe("convertEslintMessage", () => {
     ).toBeUndefined();
   });
 });
+
+it("keeps distinct raw React escape payloads distinct even when both public messages are redacted", () => {
+  const convert = (message: string) =>
+    convertEslintMessage(
+      "file.jsx",
+      {
+        ruleId: "react/no-unescaped-entities",
+        severity: 2,
+        line: 1,
+        column: 1,
+        message,
+      },
+      "/snapshot",
+      "reactCorrectness",
+    );
+  const first = convert(
+    "Escape '/private/first' with the configured alternative.",
+  );
+  const second = convert(
+    "Escape '/private/second' with the configured alternative.",
+  );
+  expect(first.message).toBe(second.message);
+  expect(first.comparisonIdentity).not.toBe(second.comparisonIdentity);
+  expect(JSON.stringify([first, second])).not.toContain("/private/");
+});
