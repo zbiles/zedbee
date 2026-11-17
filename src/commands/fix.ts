@@ -153,6 +153,7 @@ export async function executeFixCommand(
   const started = performance.now();
   const stages: DiagnosticTimings = {};
   const diagnosticEntries: DiagnosticEntry[] = [];
+  let reportMaintenance: unknown;
   let cleanupFailed = false;
   let applying: PreparedFixPlan | undefined;
   let appliedResult: FixResult | undefined;
@@ -201,8 +202,14 @@ export async function executeFixCommand(
       ...(prepared.publicPlan.checks ?? []).flatMap((check) => check.issues),
     );
     const maintenance = await timeCommandStage(stages, "report", () =>
-      maintainPlan(prepared, dependencies.store, format === "text"),
+      maintainPlan(
+        prepared,
+        dependencies.store,
+        format === "text",
+        options.diagnostics === true,
+      ),
     );
+    reportMaintenance = maintenance.diagnostics;
     const outputPlan = (applied: boolean, result?: FixResult): void => {
       if (format === "json") {
         io.writeStdout(
@@ -394,6 +401,7 @@ export async function executeFixCommand(
         entries: diagnosticEntries,
         cancelled: options.signal?.aborted === true,
         cleanupFailed,
+        reportMaintenance,
       });
     if (cleanupFailed) return 2;
   }

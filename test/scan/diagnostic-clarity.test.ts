@@ -217,3 +217,50 @@ it("renders merge detail after source-free events and semantic intersection", as
   });
   expect(JSON.stringify(configured.summary)).not.toContain("MissingAccount");
 });
+
+it("delivers TS2591 Node hints through cold/warm local and service scans without changing IDs", async () => {
+  const repo = await fixture();
+  await repo.write("src/index.ts", "export const pid = process.pid;\n");
+  await repo.git(["add", "src/index.ts"]);
+  const scratch = await realpath(
+    await mkdtemp(join(tmpdir(), "zd-node-detail-")),
+  );
+  const options = { directory: join(scratch, "s"), concurrency: 1 as const };
+  const executor = await acquireServiceExecutor(options);
+  const cache = new ObservationCacheStore({ root: join(scratch, "cache") });
+  const ids: string[] = [];
+  try {
+    for (const engine of [undefined, executor]) {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const report = await runScan({
+          repositoryRoot: repo.root,
+          cache,
+          ...(engine ? { executor: engine } : {}),
+          sourceExcerpts: "exclude",
+        });
+        const finding = report.summary.findings.find(
+          (f) => f.rule === "typescript/TS2591",
+        );
+        expect(finding, JSON.stringify(report)).toBeDefined();
+        expect(finding!.message).toContain("Cannot find name 'process'.");
+        expect(finding!.message).toContain("npm i --save-dev @types/node");
+        ids.push(finding!.id);
+      }
+    }
+    const strict = await runScan({
+      repositoryRoot: repo.root,
+      cache,
+      executor,
+      diagnosticMessages: "source-free",
+    });
+    const finding = strict.summary.findings.find(
+      (f) => f.rule === "typescript/TS2591",
+    )!;
+    expect(finding.message).toContain("[source]");
+    expect(ids).toEqual(Array(4).fill(finding.id));
+  } finally {
+    await executor.close();
+    await stopService(options);
+    await rm(scratch, { recursive: true, force: true });
+  }
+});

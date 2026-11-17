@@ -192,3 +192,149 @@ it("rejects malformed and unbounded private detail envelopes", async () => {
     ]),
   ).toThrow();
 });
+
+it.each([
+  [
+    "typescript/TS2591",
+    "Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.",
+  ],
+  [
+    "react/no-unescaped-entities",
+    '`"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`.',
+  ],
+  [
+    "react/no-unescaped-entities",
+    "`'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`.",
+  ],
+] as const)(
+  "restores reviewed %s vocabulary and requests fresh context on cache hits",
+  async (rule, original) => {
+    const { recordDiagnosticDetail, needsContextualDiagnosticDetails } =
+      await import("../../src/checks/diagnostic-details.js");
+    const root = "/tmp/diagnostic-test";
+    const observation = {
+      check: rule.startsWith("typescript/") ? "types" : "reactCorrectness",
+      rule,
+      identity: rule,
+      severity: "error" as const,
+      message: "Problem with [source].",
+      location: { file: "value.tsx", startLine: 1 },
+    };
+    const set = await captureDiagnosticDetails(
+      {
+        snapshots: { targetDir: root },
+        signal: new AbortController().signal,
+      } as any,
+      async () => {
+        recordDiagnosticDetail(
+          observation,
+          original,
+          root,
+          'export const View = () => <div>"process"</div>;',
+        );
+        return {
+          checkId: observation.check,
+          target: { id: ".", kind: "workspace" as const, relativeRoot: "." },
+          baselineObservations: [],
+          targetObservations: [observation],
+        };
+      },
+    );
+    expect(set.diagnosticDetails?.[0]?.message).toBe(original);
+    expect(set.diagnosticDetails?.[0]?.redaction).toBeUndefined();
+    expect(needsContextualDiagnosticDetails(set)).toBe(true);
+  },
+);
+
+it.each([
+  '`"` can be escaped with `private-token`.',
+  "`private-source` can be escaped with `&quot;`.",
+  '`"` can be escaped with `&quot;`\u001b[31m.',
+])(
+  "withholds custom React entity options and control characters: %s",
+  async (original) => {
+    const { recordDiagnosticDetail } =
+      await import("../../src/checks/diagnostic-details.js");
+    const root = "/tmp/diagnostic-test";
+    const observation = {
+      check: "reactCorrectness",
+      rule: "react/no-unescaped-entities",
+      identity: "entity",
+      severity: "error" as const,
+      message: "Problem with [source].",
+    };
+    const set = await captureDiagnosticDetails(
+      {
+        snapshots: { targetDir: root },
+        signal: new AbortController().signal,
+      } as any,
+      async () => {
+        recordDiagnosticDetail(
+          observation,
+          original,
+          root,
+          "const password = 'private-token';",
+        );
+        return {
+          checkId: observation.check,
+          target: { id: ".", kind: "workspace" as const, relativeRoot: "." },
+          baselineObservations: [],
+          targetObservations: [observation],
+        };
+      },
+    );
+    expect(set.diagnosticDetails?.[0]?.message).not.toContain("private-");
+    expect(set.diagnosticDetails?.[0]?.message).not.toContain("\u001b");
+    expect(set.diagnosticDetails?.[0]?.redaction?.redacted).toBe(true);
+  },
+);
+
+it.each([
+  ["process", "export const x = process.pid;", false],
+  ["PrivateToken", "const api_key = 'PrivateToken';", true],
+  ["/private/absolute", "export {};", true],
+  ["process\u001b[31m", "export {};", true],
+] as const)(
+  "reviews TS2591 identifiers without bypassing sensitive context: %s",
+  async (name, source, redacted) => {
+    const { recordDiagnosticDetail } =
+      await import("../../src/checks/diagnostic-details.js");
+    const root = "/tmp/diagnostic-test";
+    const original = `Cannot find name '${name}'. Do you need to install type definitions for node? Try \`npm i --save-dev @types/node\` and then add 'node' to the types field in your tsconfig.`;
+    const observation = {
+      check: "types",
+      rule: "typescript/TS2591",
+      identity: "name",
+      severity: "error" as const,
+      message: "Cannot find name '[source]'.",
+    };
+    const collect = async () => {
+      recordDiagnosticDetail(observation, original, root, source);
+      return {
+        checkId: "types",
+        target: { id: ".", kind: "workspace" as const, relativeRoot: "." },
+        baselineObservations: [],
+        targetObservations: [observation],
+      };
+    };
+    const context = {
+      snapshots: { targetDir: root },
+      signal: new AbortController().signal,
+    } as any;
+    const result = await captureDiagnosticDetails(context, collect);
+    expect(result.diagnosticDetails?.[0]?.redaction?.redacted === true).toBe(
+      redacted,
+    );
+    if (redacted)
+      expect(result.diagnosticDetails?.[0]?.message).not.toContain(name);
+    const sourceFree = await captureDiagnosticDetails(
+      {
+        ...context,
+        config: { reporting: { diagnosticMessages: "source-free" } },
+      },
+      collect,
+    );
+    expect(sourceFree.diagnosticDetails).toBeUndefined();
+    expect(sourceFree.targetObservations[0]?.message).toContain("[source]");
+  },
+);

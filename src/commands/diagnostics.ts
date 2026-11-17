@@ -49,6 +49,7 @@ export function writeCommandDiagnostics(
     readonly cancelled: boolean;
     readonly cleanupFailed: boolean;
     readonly renderingFailed?: boolean;
+    readonly reportMaintenance?: unknown;
   },
 ): void {
   try {
@@ -105,6 +106,13 @@ export function writeCommandDiagnostics(
         ...(options.renderingFailed === undefined
           ? {}
           : { renderingFailed: options.renderingFailed }),
+        ...(safeReportMaintenance(options.reportMaintenance) === undefined
+          ? {}
+          : {
+              reportMaintenance: safeReportMaintenance(
+                options.reportMaintenance,
+              ),
+            }),
         analyzers,
         checks,
         stages,
@@ -113,6 +121,38 @@ export function writeCommandDiagnostics(
   } catch {
     /* Diagnostics must not replace the canonical command outcome. */
   }
+}
+
+/** Copy only bounded local maintenance facts; reject hostile or unknown metadata. */
+function safeReportMaintenance(value: unknown): object | undefined {
+  if (typeof value !== "object" || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  if (
+    v.schemaVersion !== 1 ||
+    v.protocolVersion !== 2 ||
+    !Number.isSafeInteger(v.effectiveMaxAgeMs) ||
+    (v.effectiveMaxAgeMs as number) < 0 ||
+    ![v.removedExpired, v.alreadyMissing].every(
+      (n) =>
+        Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 10000,
+    ) ||
+    !["unavailable", "new", "loaded", "migrated", "recovered"].includes(
+      v.state as string,
+    ) ||
+    !["not-requested", "written", "failed", "capacity-refused"].includes(
+      v.write as string,
+    )
+  )
+    return undefined;
+  return {
+    schemaVersion: 1,
+    protocolVersion: 2,
+    effectiveMaxAgeMs: v.effectiveMaxAgeMs,
+    removedExpired: v.removedExpired,
+    alreadyMissing: v.alreadyMissing,
+    state: v.state,
+    write: v.write,
+  };
 }
 
 export const SNAPSHOT_CLEANUP_WARNING =

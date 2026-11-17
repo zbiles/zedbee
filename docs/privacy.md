@@ -275,3 +275,16 @@ The managed source-free option does not override separately authorized full proj
 ### Performance diagnostics
 
 Completed scan telemetry can include bounded totals by check: elapsed, worker queue and execution milliseconds, cache hits/misses/bypasses, a changed-file-count bucket, execution mode, and approved incomplete-error codes. These retain everyday local usage. They contain no repository/workspace names, file paths, source, or raw error messages. Overlapping check durations are not CPU time or an additive scan-duration breakdown. Older clients may omit these details. Existing opt-out settings apply.
+
+Temporary report maintenance uses the current invocation's age policy for all
+tracked scan/fix reports at the same physical checkout. A later shorter policy
+can therefore expire an earlier report; separate checkout roots are isolated.
+OS or external cleanup may remove temporary files sooner. Use explicit JSON or
+SARIF redirection outside OS temporary storage for durable investigation files;
+see [reporting and exports](reporting.md#explicit-complete-exports).
+
+The optional `--diagnostics` maintenance record is local stderr output, not
+telemetry. It contains bounded counts, effective age policy, protocol/state
+recovery status, and write/capacity outcome, with no report contents, filenames,
+or source/repository/temporary paths. Actual expiry removals and already-missing
+tracked entries are counted separately; an external deletion's cause is unknown.

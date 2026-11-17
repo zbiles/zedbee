@@ -374,7 +374,9 @@ describe("executeScanCommand", () => {
       expect(output).toContain("Showing 25 of 26 findings.");
       expect(output).toContain("/tmp/zedbee-reports/hash/complete.json");
       expect(output).toContain("rule-25");
-      expect(output).not.toContain("rule-26");
+      expect(output.replace(/\s+/gu, " ")).toContain(
+        "1 more warning finding: formatting / rule-26.",
+      );
       if (selectedFormat === "ink") {
         expect(output).toContain("▀▀▀▀█ █▀▀▀▀");
       } else {

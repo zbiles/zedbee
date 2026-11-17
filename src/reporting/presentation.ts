@@ -1,3 +1,4 @@
+import { comparePreviewFindings } from "./finding-priority.js";
 import { compareFindings } from "../core/summarize.js";
 import type { Finding } from "../core/types.js";
 import { renderJson } from "../renderers/json.js";
@@ -11,6 +12,7 @@ import { parseTemporaryReportMaxAge } from "./report-age.js";
 import { validateTemporaryReportPath } from "./report-path.js";
 import type {
   ReportMaintenanceWarning,
+  ReportMaintenanceDiagnostics,
   TemporaryReportStore,
 } from "./temporary-reports.js";
 
@@ -18,6 +20,7 @@ export type TerminalReportStatus =
   "available" | "unavailable" | "not-requested";
 
 export interface TerminalPresentation {
+  readonly maintenanceDiagnostics?: Readonly<ReportMaintenanceDiagnostics>;
   readonly automatic: boolean;
   readonly reportStatus: TerminalReportStatus;
   readonly findings: readonly Finding[];
@@ -30,6 +33,7 @@ export interface TerminalPresentation {
 }
 
 export interface PreparePresentationOptions {
+  readonly diagnostics?: boolean;
   readonly requestedFormat: RequestedOutputFormat;
   readonly selectedFormat: OutputFormat;
   readonly store: TemporaryReportStore;
@@ -51,6 +55,7 @@ function freezeWarnings(
 }
 
 function presentation(input: {
+  readonly maintenanceDiagnostics?: Readonly<ReportMaintenanceDiagnostics>;
   readonly automatic: boolean;
   readonly reportStatus: TerminalReportStatus;
   readonly findings: readonly Finding[];
@@ -63,6 +68,13 @@ function presentation(input: {
 }): TerminalPresentation {
   return Object.freeze({
     automatic: input.automatic,
+    ...(input.maintenanceDiagnostics === undefined
+      ? {}
+      : {
+          maintenanceDiagnostics: Object.freeze({
+            ...input.maintenanceDiagnostics,
+          }),
+        }),
     reportStatus: input.reportStatus,
     findings: Object.freeze([...input.findings]),
     totalFindingCount: input.totalFindingCount,
@@ -90,13 +102,9 @@ function prioritizePreview(
   findings: readonly Finding[],
   limit: number,
 ): readonly Finding[] {
-  const blocking = findings.filter(({ severity }) => severity === "error");
-  const warnings = findings.filter(({ severity }) => severity !== "error");
-  const selectedBlocking = blocking.slice(0, limit);
-  return Object.freeze([
-    ...selectedBlocking,
-    ...warnings.slice(0, Math.max(0, limit - selectedBlocking.length)),
-  ]);
+  return Object.freeze(
+    [...findings].sort(comparePreviewFindings).slice(0, limit),
+  );
 }
 
 function writeFailureWarning(): ReportMaintenanceWarning {
@@ -126,6 +134,7 @@ export async function prepareTerminalPresentation(
     automatic || (options.requestedFormat === "ink" && abbreviated);
   const maintenanceRequest = {
     repositoryRoot: report.repositoryRoot,
+    ...(options.diagnostics === true ? { diagnostics: true } : {}),
     maxAgeMs: parseTemporaryReportMaxAge(policy.temporaryReportMaxAge),
   };
 
@@ -138,6 +147,9 @@ export async function prepareTerminalPresentation(
       totalFindingCount: orderedFindings.length,
       abbreviated: false,
       warnings: maintained.warnings,
+      ...(maintained.diagnostics === undefined
+        ? {}
+        : { maintenanceDiagnostics: maintained.diagnostics }),
     });
   }
 
@@ -171,6 +183,9 @@ export async function prepareTerminalPresentation(
       findings: orderedFindings,
       totalFindingCount: orderedFindings.length,
       abbreviated: false,
+      ...(maintained?.diagnostics === undefined
+        ? {}
+        : { maintenanceDiagnostics: maintained.diagnostics }),
       warnings:
         maintained === undefined
           ? [writeFailureWarning()]
@@ -188,6 +203,9 @@ export async function prepareTerminalPresentation(
     totalFindingCount: orderedFindings.length,
     abbreviated,
     warnings: maintained.warnings,
+    ...(maintained.diagnostics === undefined
+      ? {}
+      : { maintenanceDiagnostics: maintained.diagnostics }),
     reportPath: maintained.reportPath,
     maximumAge: policy.temporaryReportMaxAge,
   });

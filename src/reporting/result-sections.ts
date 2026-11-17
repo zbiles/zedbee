@@ -1,3 +1,4 @@
+import { omittedFindingLines, isUnresolvedModule } from "./finding-priority.js";
 import type {
   CheckResult,
   Finding,
@@ -14,6 +15,7 @@ export interface ScanResultSections {
   readonly disclosures: ScanReport["networkDisclosures"];
   readonly incompleteChecks: readonly CheckResult[];
   readonly reportWarnings: readonly ReportMaintenanceWarning[];
+  readonly previewNotes: readonly string[];
   readonly automaticFixes: readonly ManagedAutomaticFix[];
 }
 
@@ -53,6 +55,17 @@ export function buildScanResultSections(
       report.checks.filter(({ status }) => status === "incomplete"),
     ),
     reportWarnings: Object.freeze([...presentation.warnings]),
+    previewNotes: Object.freeze([
+      ...(presentation.abbreviated
+        ? omittedFindingLines(report.summary.findings, presentation.findings)
+        : []),
+      ...(report.mode === "index" &&
+      report.summary.findings.some(isUnresolvedModule)
+        ? [
+            "Review the staged diff for unresolved imports; include every affected importer.",
+          ]
+        : []),
+    ]),
     automaticFixes: automaticFixes(report, presentation),
   });
 }
