@@ -175,6 +175,14 @@ describe("real Git source move attribution", () => {
 });
 
 describe("source move boundaries", () => {
+  it("preserves syntax-local JSX and metric debt across a single-file function reorder", async () => {
+    const repo = await fixture();
+    await repo.write("old.jsx", other + debt + "export const keep = 1;\n");
+    await repo.git(["add", "."]);
+    const result = await scan(repo.root);
+    expect(result.code, JSON.stringify(result.report)).toBe(0);
+  });
+
   it("merges multiple donors into an existing receiver", async () => {
     const repo = await fixture();
     await repo.write("second.jsx", other);

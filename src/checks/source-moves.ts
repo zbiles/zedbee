@@ -28,8 +28,28 @@ type Sources = Readonly<Record<string, Omit<SourceMoveFile, "policyIdentity">>>;
 export async function sourceMoves(
   context: CheckRunContext,
   check: CheckId,
+  options: { readonly crossFileOnly?: boolean } = {},
 ): Promise<SourceMoveMap> {
   context.signal.throwIfAborted();
+  if (options.crossFileOnly === true) {
+    // One ordinary source edit cannot supply a different file with a donor.
+    // Skip optional capture before reading/parsing either side. Single-file
+    // syntax-local diagnostic mapping is deferred to result attribution.
+    let sourceChanges = 0;
+    let renamedSource = false;
+    for (const file of context.changeSet.files.values()) {
+      if (
+        !/\.(?:[cm]?[jt]sx?)$/iu.test(file.path) &&
+        !/\.(?:[cm]?[jt]sx?)$/iu.test(file.previousPath ?? "")
+      )
+        continue;
+      sourceChanges++;
+      renamedSource ||= file.status === "renamed";
+      if (renamedSource || sourceChanges > 1) break;
+    }
+    if (!renamedSource && sourceChanges < 2)
+      return { pairs: [], ambiguous: [], unmatched: [], diagnostics: [] };
+  }
   const key = analysisKey([
     context.snapshots.baselineDir,
     context.snapshots.targetDir,

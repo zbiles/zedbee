@@ -359,7 +359,7 @@ function createComplexityAdapter(
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
         context.signal.throwIfAborted();
-        const moves = await sourceMoves(context, id);
+        const moves = await sourceMoves(context, id, { crossFileOnly: true });
         const donorPaths = new Set(changedFilePaths(context, "baseline"));
         for (const pair of moves.pairs) {
           if (workspaceOwns(context, "target", pair.target.entity.file))

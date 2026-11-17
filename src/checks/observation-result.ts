@@ -369,7 +369,9 @@ export async function observationCheckResult(
     (checkId === "reactCorrectness" && observation.rule === "react/no-unescaped-entities")
   );
   const moves = supportsMoves
-    ? await sourceMoves(context, checkId as CheckId)
+    ? await sourceMoves(context, checkId as CheckId, {
+        crossFileOnly: checkId !== "reactCorrectness",
+      })
     : undefined;
   const validMoveBaselinePaths = new Set(
     moves?.pairs

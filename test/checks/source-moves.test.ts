@@ -114,3 +114,34 @@ it("reports an explicit conservative fallback for an oversized changed source", 
   expect(result.pairs).toEqual([]);
   expect(result.diagnostics).toEqual(["SOURCE_MOVE_BUDGET_EXCEEDED"]);
 });
+
+it("does no optional source capture when cross-file provenance is impossible", async () => {
+  const run = await context();
+  const { countContainedSourceReads, restoreAnalysisProbes } =
+    await import("../helpers/analysis-probes.js");
+  onTestFinished(restoreAnalysisProbes);
+  const reads = countContainedSourceReads("/old.js");
+  const result = await sourceMoves(
+    {
+      ...run,
+      changeSet: {
+        ...run.changeSet,
+        files: new Map([
+          [
+            "old.js",
+            {
+              path: "old.js",
+              status: "modified",
+              addedRanges: [{ start: 1, end: 1 }],
+            },
+          ],
+        ]),
+      },
+    },
+    "cyclomaticComplexity",
+    { crossFileOnly: true },
+  );
+  expect(result.pairs).toEqual([]);
+  expect(result.diagnostics).toEqual([]);
+  expect(reads()).toBe(0);
+});

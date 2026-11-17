@@ -341,7 +341,7 @@ export function createReactAdapter(
         );
       const extraBaseline: Observation[] = [];
       if (id === "reactCorrectness") {
-        const moves = await sourceMoves(context, id);
+        const moves = await sourceMoves(context, id, { crossFileOnly: true });
         const paths = new Set(
           moves.pairs
             .filter(
