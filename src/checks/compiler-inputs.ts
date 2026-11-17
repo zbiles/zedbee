@@ -1,4 +1,5 @@
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
+import { isClosedCompilerProject } from "./closed-compiler-project.js";
 import { posix } from "node:path";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
@@ -54,6 +55,10 @@ const decisions = new WeakMap<
     WeakMap<ChangeSet, Promise<CompilerInputRelevance>>
   >
 >();
+const scopedDecisions = new WeakMap<
+  Promise<CompilerInputRelevance>,
+  WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
+>();
 
 /** Metadata only. Known source/configuration membership takes precedence over
  * ordinary extensions. A possible input selects every compiler consumer: sibling
@@ -101,7 +106,7 @@ async function resolveRelevance(
 
 export function compilerInputRelevance(
   context: InspectionContext,
-  _workspace: WorkspaceInspection,
+  workspace: WorkspaceInspection,
 ): Promise<CompilerInputRelevance> {
   let targets = decisions.get(context.baselineInspection);
   if (targets === undefined) {
@@ -123,5 +128,44 @@ export function compilerInputRelevance(
       recordChangeCategory(value.reason);
     })
     .catch(() => {});
-  return decision;
+  let scoped = scopedDecisions.get(decision);
+  if (scoped === undefined) {
+    scoped = new WeakMap();
+    scopedDecisions.set(decision, scoped);
+  }
+  const previous = scoped.get(workspace);
+  if (previous !== undefined) return previous;
+  const narrowed = decision.then(
+    async (result): Promise<CompilerInputRelevance> => {
+      if (!result.relevant || result.reason !== "source") return result;
+      const paths = changedPaths(context.changeSet);
+      const prefix =
+        workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
+      if (
+        [...paths].some(
+          (path) =>
+            path.startsWith(prefix) ||
+            !SOURCE.test(path) ||
+            /\.d\.[cm]?ts$/iu.test(path),
+        )
+      )
+        return result;
+      for (const inspection of [
+        context.baselineInspection,
+        context.targetInspection,
+      ]) {
+        const side = inspection.workspaces.find(
+          (item) => item.relativeRoot === workspace.relativeRoot,
+        );
+        if (
+          side === undefined ||
+          !(await isClosedCompilerProject(inspection, side))
+        )
+          return result;
+      }
+      return { relevant: false, reason: "unrelated" };
+    },
+  );
+  scoped.set(workspace, narrowed);
+  return narrowed;
 }

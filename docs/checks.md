@@ -480,3 +480,12 @@ An async wrapper does not make an immediate update safe. See
 for its scope and the distinction from native project ESLint behavior.
 
 Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.
+
+Compiler checks conservatively include sibling workspaces when a source change
+might affect them. A bounded exception avoids an unchanged sibling project only
+when both snapshots prove it is self-contained: one local tsconfig including
+`src`, no inherited configuration or references, explicit empty `types`, and
+ordinary TypeScript modules with no imports, references, declarations, or calls.
+Unsupported configurations, JSX, ambient declarations, symlinks, missing data,
+and proof limits retain conservative coverage. This is deliberately narrower
+than assuming that a file outside the edited folder cannot be affected.
