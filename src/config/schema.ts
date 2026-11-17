@@ -109,7 +109,9 @@ export interface ResolvedCheckPolicies {
   readonly secrets: ResolvedCheckPolicyBase;
   readonly duplication: ResolvedDuplicationPolicy;
   readonly dependencyArchitecture: ResolvedCheckPolicyBase;
-  readonly deadCode: ResolvedCheckPolicyBase;
+  readonly deadCode: ResolvedCheckPolicyBase & {
+    readonly entryPoints?: readonly string[];
+  };
   readonly reactCorrectness: ResolvedRulePolicy;
   readonly reactAccessibility: ResolvedAccessibilityPolicy;
   readonly vulnerabilities: ResolvedCheckPolicyBase & {
@@ -121,6 +123,7 @@ export type ResolvedCheckPolicy = ResolvedCheckPolicies[CheckId];
 
 export type ResolvedCheckPolicyPatch = Readonly<
   Partial<ResolvedCheckPolicyBase> & {
+    readonly entryPoints?: readonly string[];
     readonly max?: number;
     readonly threshold?: number;
     readonly blockWorsening?: boolean;
@@ -371,6 +374,28 @@ function policySchema<T extends z.ZodType>(objectSchema: T) {
 }
 
 const simplePolicySchema = policySchema(simplePolicyObjectSchema);
+const deadCodePolicySchema = policySchema(
+  simplePolicyObjectSchema.extend({
+    entryPoints: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(1024)
+          .regex(
+            /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*[\\:*?#[\]{}\u0000-\u001f\u007f-\u009f])[^/]+(?:\/[^/]+)*$/u,
+            "Use an exact repository-relative source or HTML path without globs, URLs, or traversal.",
+          ),
+      )
+      .max(256)
+      .optional()
+      .meta({
+        description:
+          "Additional exact repository-relative source or HTML entry paths; repository scope only, no globs.",
+        default: [],
+      }),
+  }),
+);
 const lintPolicySchema = policySchema(rulePolicyObjectSchema("lint"));
 const reactCorrectnessPolicySchema = policySchema(
   rulePolicyObjectSchema("reactCorrectness"),
@@ -431,7 +456,7 @@ const checksSchema = z
       "Dependency-cruiser architecture and import-boundary validation.",
     ),
     deadCode: describedPolicy(
-      simplePolicySchema,
+      deadCodePolicySchema,
       "Unused files, exports, and dependencies reported by Knip.",
     ),
     reactCorrectness: describedPolicy(
@@ -515,6 +540,7 @@ const resourcesSchema = z
 // Availability behavior and duplication settings are repository/workspace-wide
 // because neither can vary safely for an individual file target.
 const overrideChecksSchema = checksSchema.extend({
+  deadCode: simplePolicySchema.optional(),
   duplication: simplePolicySchema.optional(),
   vulnerabilities: simplePolicySchema.optional(),
 });
@@ -672,6 +698,7 @@ const pathExclusionsSchema = z
   .max(100, "Limit path exclusions to 100 entries.");
 
 export type CheckPolicyInput =
+  | z.infer<typeof deadCodePolicySchema>
   | z.infer<typeof simplePolicySchema>
   | z.infer<typeof lintPolicySchema>
   | z.infer<typeof reactCorrectnessPolicySchema>

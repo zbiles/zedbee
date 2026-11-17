@@ -1,3 +1,5 @@
+import { join } from "node:path";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import {
   loadSnapshotAliases,
   sourceModuleSpecifiers,
@@ -84,6 +86,8 @@ async function collectSide(
   signal: AbortSignal,
   captureContext: DependencyCaptureContext,
   guards: CapturedDependencies,
+  entryPoints: readonly string[],
+  allowMissingExplicit = false,
 ): Promise<{
   observations: readonly Observation[];
   dependencyInputs?: DependencyInputManifest;
@@ -111,6 +115,11 @@ async function collectSide(
         inspection,
         workspace,
         async (path) => guards.assertMissing(path),
+        entryPoints,
+        (path) => {
+          guards.fileExists(join(canonicalRoot, path));
+        },
+        allowMissingExplicit,
       ),
       ...(sourceCapture === undefined ? {} : { sourceCapture }),
     },
@@ -151,6 +160,8 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
+        context.config.checks.deadCode.entryPoints ?? [],
+        true,
       );
       const target = await collectSide(
         context.snapshots.targetDir,
@@ -159,6 +170,7 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
+        context.config.checks.deadCode.entryPoints ?? [],
       );
       const manifests = [
         guards.manifest(),
@@ -212,9 +224,12 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         projectDelta: await projectInputsMayHaveChanged(
           context,
           context.target,
+          "all",
+          "deadCode",
         ),
       };
     } catch (error) {
+      if (error instanceof CheckIncompleteError) throw error;
       throw new Error("Dead-code analysis failed.", { cause: error });
     }
   },

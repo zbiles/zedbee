@@ -48,7 +48,7 @@ formatting to every unchanged file.
 | `secrets`                | Secretlint 13.0.5 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
 | `duplication`            | jscpd clone detection and repository duplication percentage | Compares whole workspaces and attributes new clone regions/project regressions                                                 | Large source lists can exceed an operating-system argument limit                                                 |
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
-| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic framework conventions can require future managed profiles                |
+| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; custom Vite inputs need explicit entries                                         |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
 | `reactAccessibility`     | Static JSX accessibility checks                             | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
@@ -388,6 +388,66 @@ Framework entries use Knip's entry-export exemption, so their exports are not
 checked for exact framework consumption. Reachable library exports still receive
 normal analysis. Custom `pageExtensions`, MDX/custom compilers and
 `next <command> <subdirectory>` discovery are outside these default conventions.
+
+Vite dead-code analysis recognizes captured `<workspace>/index.html` in workspaces
+that declare `vite`. Local `<script type="module" src="...">` references root
+existing, owned JavaScript/TypeScript sources (js/jsx/mjs/cjs/ts/tsx/mts/cts).
+Root-relative URLs resolve against that workspace; relative URLs resolve against
+the HTML file. HTML tag/attribute names are case-insensitive, while the module
+type value is exactly `module`, matching Vite. Attribute character references and
+one level of URL percent encoding are decoded; query strings and fragments are
+removed for file resolution. Loading modifiers such as `?raw`, `?url` and `?worker`
+require explicit source entries. Comments, inert template/noscript content,
+classic scripts and external/data URLs contribute no local entries. The first
+occurrence of a duplicate attribute wins.
+
+Additional entries belong only in the repository's root policy:
+
+```jsonc
+{
+  "checks": {
+    "deadCode": {
+      "severity": "error",
+      "entryPoints": ["web/pages/admin.html", "web/src/custom-bootstrap.ts"],
+    },
+  },
+}
+```
+
+`entryPoints` contains at most 256 exact repository-relative source or HTML paths,
+without globs, URLs or `..` components. Each path must exist in the selected target
+and belong to one discovered workspace; contained symlinks must retain the same
+canonical workspace owner. A newly added entry may be absent in the baseline.
+Explicit HTML uses the same parser and its owning workspace as the root for
+absolute URLs. Entries union with supported automatic/package entries. Root values
+and repository provenance appear in `zedbee checks`; file overrides cannot set
+`entryPoints`.
+
+Vite configuration is analyzed as inert source, following imports without
+executing it or loading Vite's Knip plugin. Only the first default configuration
+in Vite's order (js, mjs, ts, cjs, mts, cts) is rooted; shadowed configurations remain
+ordinary source. A concrete supported HTML module entry exempts only `vite` from
+unused dependency reporting. Plugins and other development dependencies retain
+normal checks. Entry exports receive Knip's entry-export exemption; unused exports
+in reachable libraries and genuinely orphaned files are still reported.
+
+Automatic support is limited to the default root and HTML module convention.
+Custom roots, build/library or multi-page inputs, inline modules, `vite-ignore`,
+HTML base URLs, virtual modules and plugin-injected entries require explicit
+source entries describing every application entry. Detected custom root/build
+properties require explicit sources, and automatic default HTML is not guessed
+for those configurations. Explicit source entries also cover inline/ignored
+modules; supported external module references still contribute entries under the
+default root. The configuration is not evaluated, so arbitrary dynamic settings
+and plugin behavior cannot be inferred. Merely declaring Vite without default
+HTML does not invent a bootstrap filename: provide entries for custom setups.
+
+Missing/unsafe module references and unsupported HTML inputs yield an actionable
+incomplete check instead of misleading unused-file findings. HTML parsing is
+limited to 256 KiB and 16,384 visited nodes per file. HTML/configuration/explicit
+inputs, including relevant absence probes, participate in captured analysis and
+cache validation. HTML-only additions, edits, renames and removals schedule
+workspace dead-code analysis; they do not schedule unrelated graph/type checks.
 
 ### Synthetic credentials in fixtures
 

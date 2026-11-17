@@ -170,7 +170,7 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
     engine: { name: "Knip", version: "6.32.2", license: "ISC" },
     executionClass: "project-analysis",
     limitation:
-      "Dynamic imports and framework conventions may need future managed profiles.",
+      "Default Vite HTML modules and Next conventions are supported; custom Vite roots, inline/plugin entries, and dynamic conventions require explicit entryPoints.",
   },
   reactCorrectness: {
     description: "Checks React and Hooks correctness.",

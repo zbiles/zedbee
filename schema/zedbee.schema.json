@@ -1708,6 +1708,18 @@
                   "enum": ["relevant", "always"],
                   "description": "Run only when staged changes are relevant, or run for every scan.",
                   "default": "relevant"
+                },
+                "entryPoints": {
+                  "description": "Additional exact repository-relative source or HTML entry paths; repository scope only, no globs.",
+                  "default": [],
+                  "maxItems": 256,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024,
+                    "pattern": "^(?!\\/)(?!.*(?:^|\\/)\\.\\.?(?:\\/|$))(?!.*[\\\\:*?#[\\]{}\\u0000-\\u001f\\u007f-\\u009f])[^/]+(?:\\/[^/]+)*$"
+                  }
                 }
               },
               "additionalProperties": false
@@ -4094,7 +4106,6 @@
                 ]
               },
               "deadCode": {
-                "description": "Unused files, exports, and dependencies reported by Knip.",
                 "anyOf": [
                   {
                     "type": "string",
