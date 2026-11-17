@@ -421,7 +421,10 @@ canonical workspace owner. A newly added entry may be absent in the baseline.
 Explicit HTML uses the same parser and its owning workspace as the root for
 absolute URLs. Entries union with supported automatic/package entries. Root values
 and repository provenance appear in `zedbee checks`; file overrides cannot set
-`entryPoints`.
+`entryPoints`. Changing only the selected policy file (including a custom
+`--config` JSONC path) schedules entry validation. Baseline and target graphs use
+their own captured policy entry lists, so removing or retargeting an entry can
+introduce a newly unused file without a source edit.
 
 Vite configuration is analyzed as inert source, following imports without
 executing it or loading Vite's Knip plugin. Only the first default configuration
@@ -435,9 +438,13 @@ Automatic support is limited to the default root and HTML module convention.
 Custom roots, build/library or multi-page inputs, inline modules, `vite-ignore`,
 HTML base URLs, virtual modules and plugin-injected entries require explicit
 source entries describing every application entry. Detected custom root/build
-properties require explicit sources, and automatic default HTML is not guessed
-for those configurations. Explicit source entries also cover inline/ignored
-modules; supported external module references still contribute entries under the
+properties, including shorthand properties, require explicit sources. Opaque
+spreads, re-exported configurations, and dynamic exports also require explicit
+sources; supported static object and `defineConfig` object exports are read
+without evaluation. Automatic default HTML is not guessed
+for custom or opaque configurations. Explicit source entries also cover inline/ignored modules and loading-modifier
+references; those unsupported references are then covered by the supplied source
+list rather than guessed from their URLs. Other supported local module references still contribute entries under the
 default root. The configuration is not evaluated, so arbitrary dynamic settings
 and plugin behavior cannot be inferred. Merely declaring Vite without default
 HTML does not invent a bootstrap filename: provide entries for custom setups.

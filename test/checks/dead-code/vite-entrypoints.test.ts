@@ -238,3 +238,94 @@ it("leaves non-module script types ordinary and diagnoses vite-ignore modules", 
     path: "index.html",
   });
 });
+
+it.each([
+  'const root="custom"; export default {root};',
+  'export default {["root"]:"custom"};',
+  'import build from "./build.js"; export default {build};',
+  'const settings={root:"custom"}; export default {...settings};',
+  'export {default} from "./custom-config.js";',
+  'import settings from "./custom-config.js"; export default settings;',
+  "export default () => computeSettings();",
+])(
+  "diagnoses statically opaque Vite configuration unless sources are explicit: %s",
+  async (source) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", {
+      name: "web",
+      devDependencies: { vite: "7" },
+    });
+    await f.write("vite.config.ts", source);
+    await f.write("src/start.ts", "console.log(1);");
+    const inspection = await inspectRepository(f.root);
+    await expect(
+      createManagedKnipConfig(inspection.snapshotRoot, inspection),
+    ).rejects.toMatchObject({
+      code: "DEAD_CODE_ENTRYPOINT_UNSUPPORTED",
+      path: "vite.config.ts",
+    });
+    expect(
+      (
+        await createManagedKnipConfig(
+          inspection.snapshotRoot,
+          inspection,
+          undefined,
+          undefined,
+          ["src/start.ts"],
+        )
+      ).workspaces["."]?.entry,
+    ).toEqual(["src/start.ts", "vite.config.ts"]);
+  },
+);
+
+it.each(["raw", "url", "worker", "sharedworker", "inline"])(
+  "uses explicit sources to cover unsupported HTML %s loading",
+  async (modifier) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", {
+      name: "web",
+      devDependencies: { vite: "7" },
+    });
+    await f.write(
+      "index.html",
+      `<script type=module src="/src/start.ts?${modifier}"></script><script type=module src="/src/other.ts"></script>`,
+    );
+    await f.write("src/start.ts", "console.log(1);");
+    await f.write("src/other.ts", "console.log(2);");
+    const inspection = await inspectRepository(f.root);
+    await expect(
+      createManagedKnipConfig(inspection.snapshotRoot, inspection),
+    ).rejects.toMatchObject({
+      code: "DEAD_CODE_ENTRYPOINT_UNSUPPORTED",
+      path: "index.html",
+    });
+    expect(
+      (
+        await createManagedKnipConfig(
+          inspection.snapshotRoot,
+          inspection,
+          undefined,
+          undefined,
+          ["src/start.ts"],
+        )
+      ).workspaces["."]?.entry,
+    ).toEqual(["src/other.ts", "src/start.ts"]);
+  },
+);
+
+it("requires explicit source fallback for dynamic CommonJS configuration", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "web",
+    devDependencies: { vite: "7" },
+  });
+  await f.write("vite.config.cjs", "module.exports = getSettings();");
+  await f.write("src/start.ts", "console.log(1);");
+  const inspection = await inspectRepository(f.root);
+  await expect(
+    createManagedKnipConfig(inspection.snapshotRoot, inspection),
+  ).rejects.toMatchObject({
+    code: "DEAD_CODE_ENTRYPOINT_UNSUPPORTED",
+    path: "vite.config.cjs",
+  });
+});

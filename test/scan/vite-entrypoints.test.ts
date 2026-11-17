@@ -96,3 +96,84 @@ it.each(["local", "service"] as const)(
     ).toBe(true);
   },
 );
+
+it.each([".zedbeerc.jsonc", "policies/custom.jsonc"])(
+  "validates policy-only entry changes through %s against each snapshot's own entries",
+  async (path) => {
+    const repo = await createGitRepository("zedbee-entry-policy-");
+    await repo.write("package.json", JSON.stringify({ name: "app" }));
+    const policy = (entries: readonly string[]) =>
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: Object.fromEntries(
+          CHECK_IDS.map((id) => [
+            id,
+            id === "deadCode"
+              ? { severity: "error", entryPoints: entries }
+              : "off",
+          ]),
+        ),
+      });
+    await repo.write(path, policy(["src/first.ts"]));
+    await repo.write("src/first.ts", "console.log('first');");
+    await repo.write("src/second.ts", "console.log('second');");
+    await repo.commitAll("baseline explicit entry");
+    const options = {
+      repositoryRoot: repo.root,
+      cache: false as const,
+      ...(path === ".zedbeerc.jsonc"
+        ? {}
+        : { configPath: join(repo.root, path) }),
+    };
+    await repo.write(path, policy(["src/missing.ts"]));
+    await repo.git(["add", path]);
+    const missing = await runScan(options);
+    expect(missing.summary.incomplete, JSON.stringify(missing)).toBe(1);
+    expect(missing.checks).toContainEqual(
+      expect.objectContaining({ checkId: "deadCode", status: "incomplete" }),
+    );
+    for (const entries of [["src/second.ts"], []]) {
+      await repo.write(path, policy(entries));
+      await repo.git(["add", path]);
+      const report = await runScan(options);
+      expect(report.checks, JSON.stringify(report)).toEqual([
+        expect.objectContaining({ checkId: "deadCode", status: "completed" }),
+      ]);
+      expect(report.summary.findings).toContainEqual(
+        expect.objectContaining({
+          rule: "files",
+          location: expect.objectContaining({ file: "src/first.ts" }),
+          attribution: expect.objectContaining({ staged: true }),
+        }),
+      );
+    }
+  },
+);
+
+it("reports unsupported baseline entry policy through the dead-code check boundary", async () => {
+  const repo = await createGitRepository("zedbee-old-entry-policy-");
+  await repo.write("package.json", '{"name":"app"}');
+  await repo.write("src/start.ts", "console.log(1);");
+  await repo.write(".zedbeerc.jsonc", "{invalid");
+  await repo.commitAll("invalid old policy");
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      checks: Object.fromEntries(
+        CHECK_IDS.map((id) => [
+          id,
+          id === "deadCode"
+            ? { severity: "error", entryPoints: ["src/start.ts"] }
+            : "off",
+        ]),
+      ),
+    }),
+  );
+  await repo.git(["add", ".zedbeerc.jsonc"]);
+  const report = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(report.summary.incomplete, JSON.stringify(report)).toBe(1);
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({ checkId: "deadCode", status: "incomplete" }),
+  );
+});

@@ -1,3 +1,7 @@
+import {
+  deadCodePolicyPath,
+  snapshotEntryPoints,
+} from "../checks/dead-code/entry-configuration.js";
 import { viteInputPathsForInspection } from "../checks/dead-code/vite-entrypoints.js";
 import { summarizeChanges, type ChangeSummary } from "./change-summary.js";
 import { dirname } from "node:path";
@@ -553,18 +557,30 @@ export async function withAnalysisSession<T>(
             ({ checkId }) => checkId === "deadCode",
           )
             ? await Promise.all(
-                [baselineInspection, targetInspection].map(async (inspection) =>
-                  (
-                    await Promise.all(
-                      inspection.workspaces.map((workspace) =>
-                        viteInputPathsForInspection(
-                          inspection,
-                          workspace,
-                          config.checks.deadCode.entryPoints ?? [],
-                        ),
-                      ),
-                    )
-                  ).flat(),
+                [baselineInspection, targetInspection].map(
+                  async (inspection, side) => {
+                    const entries = await snapshotEntryPoints(
+                      inspection,
+                      config,
+                      options.repositoryRoot,
+                      side === 0,
+                    ).catch(() => []); // The adapter reports unsupported policy per check.
+
+                    return [
+                      deadCodePolicyPath(options.repositoryRoot, config),
+                      ...(
+                        await Promise.all(
+                          inspection.workspaces.map((workspace) =>
+                            viteInputPathsForInspection(
+                              inspection,
+                              workspace,
+                              entries,
+                            ),
+                          ),
+                        )
+                      ).flat(),
+                    ];
+                  },
                 ),
               )
             : [[], []];

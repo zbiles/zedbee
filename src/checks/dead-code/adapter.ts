@@ -1,3 +1,4 @@
+import { snapshotEntryPoints } from "./entry-configuration.js";
 import { join } from "node:path";
 import { CheckIncompleteError } from "../incomplete-error.js";
 import {
@@ -160,7 +161,17 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
-        context.config.checks.deadCode.entryPoints ?? [],
+        await snapshotEntryPoints(
+          context.baselineInspection,
+          context.config,
+          context.repositoryRoot,
+          true,
+          (path) => {
+            guards.fileExists(
+              join(context.baselineInspection.snapshotRoot, path),
+            );
+          },
+        ),
         true,
       );
       const target = await collectSide(
@@ -170,7 +181,17 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
-        context.config.checks.deadCode.entryPoints ?? [],
+        await snapshotEntryPoints(
+          context.targetInspection,
+          context.config,
+          context.repositoryRoot,
+          false,
+          (path) => {
+            guards.fileExists(
+              join(context.targetInspection.snapshotRoot, path),
+            );
+          },
+        ),
       );
       const manifests = [
         guards.manifest(),

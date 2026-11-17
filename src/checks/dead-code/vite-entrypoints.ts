@@ -172,6 +172,7 @@ function sourcePath(
   html: string,
   src: string,
   workspace: WorkspaceInspection,
+  explicitSources: boolean,
 ): string | undefined {
   if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(src)) return undefined;
   const [urlPath, query] = src.split("#", 1)[0]!.split("?", 2);
@@ -180,8 +181,10 @@ function sourcePath(
     [...new URLSearchParams(query).keys()].some((key) =>
       ["raw", "url", "worker", "sharedworker", "inline"].includes(key),
     )
-  )
+  ) {
+    if (explicitSources) return undefined;
     unsupported(html, "module URL changes JavaScript loading semantics");
+  }
   let decoded: string;
   try {
     decoded = decodeURIComponent(urlPath!);
@@ -288,12 +291,59 @@ export async function resolveViteEntrypoints(
       const text = await readContainedFile(registry, path);
       const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
       let custom = false;
+      const supported = (expression: ts.Expression): boolean => {
+        if (ts.isParenthesizedExpression(expression))
+          return supported(expression.expression);
+        if (ts.isObjectLiteralExpression(expression)) return true;
+        if (
+          ts.isCallExpression(expression) &&
+          expression.expression.getText(ast) === "defineConfig" &&
+          expression.arguments.length === 1
+        ) {
+          const value = expression.arguments[0]!;
+          if (ts.isArrowFunction(value) && !ts.isBlock(value.body))
+            return supported(value.body);
+          return supported(value);
+        }
+        return false;
+      };
       const visit = (node: ts.Node): void => {
         if (
-          ts.isPropertyAssignment(node) &&
+          (ts.isPropertyAssignment(node) ||
+            ts.isShorthandPropertyAssignment(node)) &&
           ["root", "rollupOptions", "rolldownOptions", "lib"].includes(
-            node.name.getText(ast).replace(/['"]/gu, ""),
+            ts.isComputedPropertyName(node.name) &&
+              ts.isStringLiteral(node.name.expression)
+              ? node.name.expression.text
+              : node.name.getText(ast).replace(/['"]/gu, ""),
           )
+        )
+          custom = true;
+        if (
+          (ts.isShorthandPropertyAssignment(node) &&
+            node.name.text === "build") ||
+          (ts.isPropertyAssignment(node) &&
+            node.name.getText(ast).replace(/['"]/gu, "") === "build" &&
+            !ts.isObjectLiteralExpression(node.initializer))
+        )
+          custom = true;
+        // Spreads/re-exports and opaque exports can hide custom roots or build
+        // inputs. Refuse inference without evaluating the configuration.
+        if (
+          ts.isSpreadAssignment(node) ||
+          (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined)
+        )
+          custom = true;
+        if (ts.isExportAssignment(node)) {
+          if (!supported(node.expression)) custom = true;
+        }
+        if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ["module.exports", "exports.default"].includes(
+            node.left.getText(ast),
+          ) &&
+          !supported(node.right)
         )
           custom = true;
         ts.forEachChild(node, visit);
@@ -303,7 +353,7 @@ export async function resolveViteEntrypoints(
       if (custom && !selected.some((path) => !/\.html$/iu.test(path)))
         unsupported(
           path,
-          "custom Vite root or build input requires explicit entries",
+          "custom or opaque Vite configuration requires explicit source entries",
         );
     }
     const path = `${prefix(workspace)}index.html`;
@@ -332,7 +382,12 @@ export async function resolveViteEntrypoints(
       html,
       selected.some((path) => SOURCE.test(path)),
     )) {
-      const path = sourcePath(html, src, workspace);
+      const path = sourcePath(
+        html,
+        src,
+        workspace,
+        selected.some((path) => SOURCE.test(path)),
+      );
       if (path !== undefined) {
         addSource(path, html);
         moduleEntries++;

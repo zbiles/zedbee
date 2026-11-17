@@ -29,7 +29,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@emnapi/runtime",
       "prettier",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v10-vite-html-entries",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v11-vite-policy-snapshots",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),

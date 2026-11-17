@@ -1,3 +1,4 @@
+import { deadCodePolicyPath } from "./dead-code/entry-configuration.js";
 import {
   entryOwner,
   viteInputPathsForInspection,
@@ -70,6 +71,10 @@ export async function projectInputsMayHaveChanged(
     const workspace = workspaceIndex(inspection).get(target.relativeRoot);
     if (workspace === undefined) continue;
     if (entryInputs === "deadCode") {
+      if (
+        changed.has(deadCodePolicyPath(context.repositoryRoot, context.config))
+      )
+        return true;
       const explicit = (
         context.config.checks.deadCode.entryPoints ?? []
       ).filter(
