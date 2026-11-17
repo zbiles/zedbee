@@ -3912,13 +3912,13 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## @napi-rs/wasm-runtime@1.2.3
+## @napi-rs/wasm-runtime@1.2.5
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/70c149321ca4e361f6726349cf9b2258467fb24f/LICENSE
-Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/napi-rs/napi-rs/023a9f067af5d44c9a06c9a30b48fdd50ab18ac0/LICENSE
+Reviewed override text: licenses/overrides/napi-rs-wasm-runtime-1.2.5-LICENSE
 
-### licenses/overrides/napi-rs-wasm-runtime-1.2.3-LICENSE
+### licenses/overrides/napi-rs-wasm-runtime-1.2.5-LICENSE
 
 MIT License
 
@@ -5921,7 +5921,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## acorn@8.18.0
+## acorn@8.19.0
 
 License: MIT
 
@@ -9284,7 +9284,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## dependency-cruiser@18.2.0
+## dependency-cruiser@18.7.2
 
 License: MIT
 
@@ -9832,7 +9832,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## enhanced-resolve@5.24.5
+## enhanced-resolve@5.26.0
 
 License: MIT
 
@@ -12667,7 +12667,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## ignore@7.0.6
+## ignore@7.0.14
 
 License: MIT
 
@@ -13267,7 +13267,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## is-installed-globally@1.0.0
+## is-installed-globally@1.0.1
 
 License: MIT
 
@@ -13866,13 +13866,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ---
 
-## jscpd-darwin-arm64@5.3.2
+## jscpd-darwin-arm64@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13897,13 +13897,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-darwin-x64@5.3.2
+## jscpd-darwin-x64@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13928,13 +13928,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-arm64-gnu@5.3.2
+## jscpd-linux-arm64-gnu@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13959,13 +13959,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-arm64-musl@5.3.2
+## jscpd-linux-arm64-musl@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -13990,13 +13990,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-gnu@5.3.2
+## jscpd-linux-x64-gnu@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -14021,13 +14021,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-linux-x64-musl@5.3.2
+## jscpd-linux-x64-musl@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -14052,13 +14052,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-windows-arm64-msvc@5.3.2
+## jscpd-windows-arm64-msvc@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -14083,13 +14083,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd-windows-x64-msvc@5.3.2
+## jscpd-windows-x64-msvc@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -14114,13 +14114,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## jscpd@5.3.2
+## jscpd@5.4.2
 
 License: MIT
-Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/beb552864d3342241fbcca0f2c46c6248b0426df/LICENSE
-Reviewed override text: licenses/overrides/jscpd-5.3.2-LICENSE
+Reviewed override source: https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE
+Reviewed override text: licenses/overrides/jscpd-5.4.2-LICENSE
 
-### licenses/overrides/jscpd-5.3.2-LICENSE
+### licenses/overrides/jscpd-5.4.2-LICENSE
 
 The MIT License (MIT)
 
@@ -15754,35 +15754,6 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ---
 
-## picomatch@4.0.5
-
-License: MIT
-
-### node_modules/dependency-cruiser/node_modules/picomatch/LICENSE
-
-The MIT License (MIT)
-
-Copyright (c) 2017-present, Jon Schlinkert.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
----
-
 ## picomatch@4.0.7
 
 License: MIT
@@ -16557,6 +16528,29 @@ IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 License: ISC
 
 ### node_modules/semver/LICENSE
+
+The ISC License
+
+Copyright (c) Isaac Z. Schlueter and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
+IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+---
+
+## semver@7.8.6
+
+License: ISC
+
+### node_modules/dependency-cruiser/node_modules/semver/LICENSE
 
 The ISC License
 
