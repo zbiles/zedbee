@@ -44,7 +44,7 @@ export function buildSourceMoveMap(input: {
   readonly baseline: Readonly<Record<string, SourceMoveFile>>;
   readonly target: Readonly<Record<string, SourceMoveFile>>;
   readonly changes: ChangeSet["files"];
-  readonly limits?: Partial<typeof SOURCE_MOVE_LIMITS>;
+  readonly limits?: Partial<Record<keyof typeof SOURCE_MOVE_LIMITS, number>>;
   readonly signal?: AbortSignal;
 }): SourceMoveMap {
   input.signal?.throwIfAborted();
