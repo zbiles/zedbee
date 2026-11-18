@@ -545,7 +545,9 @@ describe("renderText", () => {
     expect(output).toContain("OSV UNAVAILABLE");
     expect(output).toContain("DISCLOSURES");
     expect(output).toContain("shown-rule");
-    expect(output).not.toContain("hidden-rule");
+    expect(output.replace(/\s+/gu, " ")).toContain(
+      "1 more blocking finding: formatting / hidden-rule.",
+    );
     expect(output).toContain("COMPLETE REPORT");
   });
 

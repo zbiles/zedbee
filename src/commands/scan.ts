@@ -211,6 +211,7 @@ export async function executeScanCommand(
   const started = performance.now();
   const stages: DiagnosticTimings = {};
   let diagnosticEntries: readonly DiagnosticEntry[] = [];
+  let reportMaintenance: unknown;
   let cleanupFailed = false;
   let session: InkSession | undefined;
   let renderingFailed = false;
@@ -369,8 +370,10 @@ export async function executeScanCommand(
       dependencies.preparePresentation(report, {
         requestedFormat: options.format,
         selectedFormat: format,
+        ...(options.diagnostics === true ? { diagnostics: true } : {}),
       }),
     );
+    reportMaintenance = presentation.maintenanceDiagnostics;
     options.signal?.throwIfAborted();
 
     if (format === "json") {
@@ -463,6 +466,7 @@ export async function executeScanCommand(
         cancelled: options.signal?.aborted === true,
         cleanupFailed,
         renderingFailed,
+        reportMaintenance,
       });
     if (cleanupFailed) return 2;
   }

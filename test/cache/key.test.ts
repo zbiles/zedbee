@@ -956,7 +956,7 @@ describe("observation cache keys", () => {
 
   it("versions React correctness calibration in the engine identity", () => {
     expect(observationCacheEngineIdentity("reactCorrectness")).toContain(
-      "zedbee-react-calibration-v2",
+      "zedbee-react-calibration-v3-source-moves",
     );
   });
 
@@ -1312,7 +1312,7 @@ describe("observation cache keys", () => {
   });
 });
 
-it("does not reuse a completed dead-code observation from before managed Next entries", async () => {
+it("does not reuse a completed dead-code observation from before snapshot-specific explicit entries", async () => {
   const fixture = await createInspectionFixture();
   await fixture.write("src/value.ts", "export const value=1;");
   const values = new Map<string, CheckObservationSet>();
@@ -1326,7 +1326,10 @@ it("does not reuse a completed dead-code observation from before managed Next en
     "deadCode",
   );
   if (current === undefined) throw new Error("Missing dead-code identity");
-  const legacy = current.replace("v9-next-entries", "v8-source-identities");
+  const legacy = current.replace(
+    "v11-vite-policy-snapshots",
+    "v10-vite-html-entries",
+  );
   await fixture.writeJson("package.json", {
     name: "next-app",
     dependencies: { next: "16" },

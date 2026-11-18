@@ -7,6 +7,7 @@ import {
   result,
   warning,
   type ReportMaintenanceWarning,
+  type ReportMaintenanceDiagnostics,
   type TemporaryReportRequest,
   type TemporaryReportResult,
   type TemporaryReportStore,
@@ -34,6 +35,7 @@ import {
 } from "./temporary-report-lifecycle.js";
 export type {
   ReportMaintenanceWarningCode,
+  ReportMaintenanceDiagnostics,
   ReportMaintenanceWarning,
   TemporaryReportRequest,
   TemporaryReportResult,
@@ -71,6 +73,20 @@ export function createTemporaryReportStore(options?: {
       request: TemporaryReportRequest,
     ): Promise<TemporaryReportResult> {
       const warnings: ReportMaintenanceWarning[] = [];
+      const diagnostics: ReportMaintenanceDiagnostics | undefined =
+        request.diagnostics === true &&
+        Number.isSafeInteger(request.maxAgeMs) &&
+        request.maxAgeMs >= 0
+          ? {
+              schemaVersion: 1,
+              protocolVersion: 2,
+              effectiveMaxAgeMs: request.maxAgeMs,
+              removedExpired: 0,
+              alreadyMissing: 0,
+              state: "unavailable",
+              write: request.json === undefined ? "not-requested" : "failed",
+            }
+          : undefined;
       let reportPath: string | undefined;
       let ownedLock: OwnedLock | undefined;
       try {
@@ -107,6 +123,7 @@ export function createTemporaryReportStore(options?: {
           repositoryDirectory,
           warnings,
           nowMs,
+          diagnostics,
         );
         const reports = [
           ...(await removeExpiredReports(
@@ -115,6 +132,7 @@ export function createTemporaryReportStore(options?: {
             nowMs,
             request.maxAgeMs,
             warnings,
+            diagnostics,
           )),
         ];
 
@@ -135,6 +153,7 @@ export function createTemporaryReportStore(options?: {
             serializeState(capacityProbe);
           } catch (error) {
             hasCapacity = false;
+            if (diagnostics) diagnostics.write = "capacity-refused";
             warnings.push(
               warning(
                 "TEMP_REPORT_WRITE_FAILED",
@@ -152,6 +171,7 @@ export function createTemporaryReportStore(options?: {
                 warnings,
               );
               reportPath = report.path;
+              if (diagnostics) diagnostics.write = "written";
               reports.push({
                 fileName: report.fileName,
                 createdAtMs: nowMs,
@@ -189,6 +209,7 @@ export function createTemporaryReportStore(options?: {
           if (reportPath !== undefined) {
             await rollbackReport(reportPath, warnings);
             reportPath = undefined;
+            if (diagnostics) diagnostics.write = "failed";
           }
         }
       } catch (error) {
@@ -207,7 +228,7 @@ export function createTemporaryReportStore(options?: {
           await releaseLock(ownedLock, warnings);
         }
       }
-      return result(warnings, reportPath);
+      return result(warnings, reportPath, diagnostics);
     },
   });
 }

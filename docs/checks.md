@@ -48,7 +48,7 @@ formatting to every unchanged file.
 | `secrets`                | Secretlint 13.0.5 recommended preset                        | Compares redacted baseline/target locations; an ephemeral keyed source-range digest detects same-location replacement          | Scans changed regular UTF-8 files up to 1 MiB, not Git history; pattern matches can need review                  |
 | `duplication`            | jscpd clone detection and repository duplication percentage | Compares whole workspaces and attributes new clone regions/project regressions                                                 | Large source lists can exceed an operating-system argument limit                                                 |
 | `dependencyArchitecture` | Dependency Cruiser cycles and invalid dependency edges      | Compares the workspace module graph                                                                                            | Uses managed rules, not a project's executable dependency-cruiser config                                         |
-| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; dynamic framework conventions can require future managed profiles                |
+| `deadCode`               | Knip unused files, exports, and dependency hygiene          | Compares each workspace as a project; saved findings require validated snapshot inputs and package-absence guards              | Framework plugins are disabled; custom Vite inputs need explicit entries                                         |
 | `reactCorrectness`       | React, Hooks, and JSX correctness                           | Runs only in discovered React/Ink/Next/Remix workspaces; calibrates each baseline/target workspace from staged dependency data | Uses the staged manifest, an unambiguous supported lockfile when available, then the managed React 19.2 fallback |
 | `reactAccessibility`     | Static JSX accessibility checks                             | Runs only for React DOM, Next.js, and Remix—not Ink terminal UI                                                                | Static JSX rules cannot prove runtime accessibility                                                              |
 | `vulnerabilities`        | Zedbee's bounded OSV API v1 client                          | Compares advisory/package/dependency-path state when supported lockfiles change or timing is `always`                          | Online only; discloses package name, exact version, and npm ecosystem identifier to `api.osv.dev`                |
@@ -78,7 +78,24 @@ When a possible compiler input changes, both checks still conservatively check
 every discovered workspace containing TypeScript sources, including unchanged
 consumers and sibling workspaces. Both compare findings across the project,
 including unchanged files. Existing
-baseline findings remain non-blocking when unchanged source moves or is renamed.
+baseline findings remain non-blocking when their supported comparison identities
+remain unchanged. File renames and unchanged spans retain location pairing.
+For complexity and `react/no-unescaped-entities`, selected source deletions and
+extractions can also preserve baseline debt across files or workspaces, under
+equivalent effective policy. Matching reserves retained originals, then requires
+a unique removed entity and a unique destination with the same full syntax and
+lexical ownership. Ordinary comments and token spacing may change; string
+literals, JSX text, export wrappers, directives, and declaration ownership must
+remain compatible. Copies, ambiguous duplicates, modified extracted bodies, and
+policy changes receive no cross-file exemption. Parser/capture failures or move
+budgets conservatively leave findings unmatched; affected finding evidence
+identifies the fallback. This does not establish semantic equivalence: new
+missing imports, scope errors, type errors, and other lint findings still use
+their own comparison rules. Move discovery reads only selected captured source
+changes, with limits of 128 files, 4 MiB total, 512 KiB per file, 10,000 entities,
+250,000 syntax tokens, and two seconds of matching. Nested/anonymous/member
+functions require compatible syntax ownership; unsupported rearrangements may
+remain new debt.
 File policies still control which lint findings are enabled. `when: "always"`
 retains full project comparison for a nonempty changeset even when its changed
 paths would otherwise be unrelated. Other analyzers retain their own input
@@ -372,6 +389,73 @@ checked for exact framework consumption. Reachable library exports still receive
 normal analysis. Custom `pageExtensions`, MDX/custom compilers and
 `next <command> <subdirectory>` discovery are outside these default conventions.
 
+Vite dead-code analysis recognizes captured `<workspace>/index.html` in workspaces
+that declare `vite`. Local `<script type="module" src="...">` references root
+existing, owned JavaScript/TypeScript sources (js/jsx/mjs/cjs/ts/tsx/mts/cts).
+Root-relative URLs resolve against that workspace; relative URLs resolve against
+the HTML file. HTML tag/attribute names are case-insensitive, while the module
+type value is exactly `module`, matching Vite. Attribute character references and
+one level of URL percent encoding are decoded; query strings and fragments are
+removed for file resolution. Loading modifiers such as `?raw`, `?url` and `?worker`
+require explicit source entries. Comments, inert template/noscript content,
+classic scripts and external/data URLs contribute no local entries. The first
+occurrence of a duplicate attribute wins.
+
+Additional entries belong only in the repository's root policy:
+
+```jsonc
+{
+  "checks": {
+    "deadCode": {
+      "severity": "error",
+      "entryPoints": ["web/pages/admin.html", "web/src/custom-bootstrap.ts"],
+    },
+  },
+}
+```
+
+`entryPoints` contains at most 256 exact repository-relative source or HTML paths,
+without globs, URLs or `..` components. Each path must exist in the selected target
+and belong to one discovered workspace; contained symlinks must retain the same
+canonical workspace owner. A newly added entry may be absent in the baseline.
+Explicit HTML uses the same parser and its owning workspace as the root for
+absolute URLs. Entries union with supported automatic/package entries. Root values
+and repository provenance appear in `zedbee checks`; file overrides cannot set
+`entryPoints`. Changing only the selected policy file (including a custom
+`--config` JSONC path) schedules entry validation. Baseline and target graphs use
+their own captured policy entry lists, so removing or retargeting an entry can
+introduce a newly unused file without a source edit.
+
+Vite configuration is analyzed as inert source, following imports without
+executing it or loading Vite's Knip plugin. Only the first default configuration
+in Vite's order (js, mjs, ts, cjs, mts, cts) is rooted; shadowed configurations remain
+ordinary source. A concrete supported HTML module entry exempts only `vite` from
+unused dependency reporting. Plugins and other development dependencies retain
+normal checks. Entry exports receive Knip's entry-export exemption; unused exports
+in reachable libraries and genuinely orphaned files are still reported.
+
+Automatic support is limited to the default root and HTML module convention.
+Custom roots, build/library or multi-page inputs, inline modules, `vite-ignore`,
+HTML base URLs, virtual modules and plugin-injected entries require explicit
+source entries describing every application entry. Detected custom root/build
+properties, including shorthand properties, require explicit sources. Opaque
+spreads, re-exported configurations, and dynamic exports also require explicit
+sources; supported static object and `defineConfig` object exports are read
+without evaluation. Automatic default HTML is not guessed
+for custom or opaque configurations. Explicit source entries also cover inline/ignored modules and loading-modifier
+references; those unsupported references are then covered by the supplied source
+list rather than guessed from their URLs. Other supported local module references still contribute entries under the
+default root. The configuration is not evaluated, so arbitrary dynamic settings
+and plugin behavior cannot be inferred. Merely declaring Vite without default
+HTML does not invent a bootstrap filename: provide entries for custom setups.
+
+Missing/unsafe module references and unsupported HTML inputs yield an actionable
+incomplete check instead of misleading unused-file findings. HTML parsing is
+limited to 256 KiB and 16,384 visited nodes per file. HTML/configuration/explicit
+inputs, including relevant absence probes, participate in captured analysis and
+cache validation. HTML-only additions, edits, renames and removals schedule
+workspace dead-code analysis; they do not schedule unrelated graph/type checks.
+
 ### Synthetic credentials in fixtures
 
 Secretlint can recognize a deliberately fake database URL as a credential. For a confirmed synthetic fixture, suppress just the database rule on the next line, with a reason:
@@ -480,3 +564,13 @@ An async wrapper does not make an immediate update safe. See
 for its scope and the distinction from native project ESLint behavior.
 
 Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.
+
+Compiler checks conservatively include sibling workspaces when a source change
+might affect them. A bounded exception avoids an unchanged sibling project only
+when both snapshots prove it is self-contained: one local tsconfig including
+`src`, no inherited configuration or references, explicit empty `types`, and
+ordinary TypeScript modules with no imports, references, ambient augmentations,
+or calls.
+Unsupported configurations, JSX, ambient declarations, symlinks, missing data,
+and proof limits retain conservative coverage. This is deliberately narrower
+than assuming that a file outside the edited folder cannot be affected.

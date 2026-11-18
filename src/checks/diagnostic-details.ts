@@ -6,6 +6,7 @@ import type { Observation, Finding } from "../core/types.js";
 import { fingerprintObservation } from "../attribution/fingerprint.js";
 import { capturedSourceRegistry } from "../inspection/source-capture.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
+import { managedRuleInventory } from "./eslint/rule-settings.js";
 import { readContainedFile } from "../inspection/read-json.js";
 
 export type DiagnosticRedactionReason =
@@ -108,6 +109,26 @@ function withheld(
     redaction: { redacted: true, reasons: [reason] },
   };
 }
+// Only reviewed built-in vocabulary is interpolated into package-owned templates.
+// Exact equality rejects arbitrary custom forbid/alternative options and controls.
+function reviewedReactEntityMessage(message: string): string | undefined {
+  const template = managedRuleInventory("reactCorrectness").get(
+    "react/no-unescaped-entities",
+  )?.meta?.messages?.unescapedEntityAlts;
+  if (typeof template !== "string") return undefined;
+  for (const [entity, alternatives] of [
+    [">", ["&gt;"]],
+    ['"', ["&quot;", "&ldquo;", "&#34;", "&rdquo;"]],
+    ["'", ["&apos;", "&lsquo;", "&#39;", "&rsquo;"]],
+    ["}", ["&#125;"]],
+  ] as const) {
+    const reviewed = template
+      .replace("{{entity}}", entity)
+      .replace("{{alts}}", alternatives.map((alt) => `\`${alt}\``).join(", "));
+    if (message === reviewed) return reviewed;
+  }
+  return undefined;
+}
 // Only template shapes whose substitutions are names/specifiers are supported.
 // Type representations and arbitrary compiler prose can embed source literals.
 function supported(rule: string, message: string): boolean {
@@ -143,6 +164,12 @@ function supported(rule: string, message: string): boolean {
     return /^Property '[A-Za-z_$][\w$]*' does not exist on type '[A-Za-z_$][\w$.]*'\. Did you mean '[A-Za-z_$][\w$]*'\?$/u.test(
       message,
     );
+  if (rule === "typescript/TS2591")
+    return /^Cannot find name '[A-Za-z_$][\w$]*'\. Do you need to install type definitions for node\? Try `npm i --save-dev @types\/node` and then add 'node' to the types field in your tsconfig\.$/u.test(
+      message,
+    );
+  if (rule === "react/no-unescaped-entities")
+    return reviewedReactEntityMessage(message) !== undefined;
   if (rule === "typescript/TS2304")
     return /^Cannot find name '[^'\r\n]+'\.$/u.test(message);
   return false;
@@ -170,6 +197,11 @@ async function reviewed(
     return {
       findingId: fingerprintObservation(observation),
       message: original,
+    };
+  if (observation.rule === "react/no-unescaped-entities")
+    return {
+      findingId: fingerprintObservation(observation),
+      message: reviewedReactEntityMessage(original)!,
     };
   if (source === undefined)
     return withheld(
@@ -502,6 +534,8 @@ function supportsContextualRule(rule: string): boolean {
     "@typescript-eslint/no-unused-vars",
     "no-unused-vars",
     "react/no-unknown-property",
+    "react/no-unescaped-entities",
+    "typescript/TS2591",
     "typescript/TS2305",
     "typescript/TS2875",
     "typescript/TS2307",

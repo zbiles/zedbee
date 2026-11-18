@@ -139,6 +139,7 @@ function policyPatch(
   const objectInput = input as ResolvedCheckPolicyPatch;
   const patch: {
     severity?: CheckSeverity;
+    entryPoints?: readonly string[];
     when?: CheckTiming;
     max?: number;
     threshold?: number;
@@ -149,6 +150,8 @@ function policyPatch(
     onUnavailable?: "block" | "warn";
     typeInformation?: "required" | "when-available";
   } = {};
+  if (objectInput.entryPoints !== undefined)
+    patch.entryPoints = Object.freeze([...objectInput.entryPoints]);
   if (objectInput.severity !== undefined) patch.severity = objectInput.severity;
   if (objectInput.when !== undefined) patch.when = objectInput.when;
   if (objectInput.max !== undefined) patch.max = objectInput.max;
@@ -343,6 +346,7 @@ function originForRepository(configPath: string | undefined): SettingOrigin {
 
 function defaultPolicyKeys(policy: ResolvedCheckPolicy): readonly string[] {
   const keys = ["severity", "when"];
+  if ("entryPoints" in policy) keys.push("entryPoints");
   if ("engine" in policy) keys.push("engine");
   if ("max" in policy) keys.push("max");
   if ("blockWorsening" in policy) keys.push("blockWorsening");
@@ -364,6 +368,8 @@ function recordPatchOrigins(
   origin: SettingOrigin,
 ): void {
   if (patch === undefined) return;
+  if (patch.entryPoints !== undefined)
+    recordOrigin(origins, checkId, "entryPoints", origin);
   if (patch.severity !== undefined) {
     recordOrigin(origins, checkId, "severity", origin);
   }

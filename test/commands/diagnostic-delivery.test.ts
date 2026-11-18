@@ -443,3 +443,100 @@ describe("safe diagnostic delivery", () => {
     expect(JSON.parse(io.stdout.join("")).outcome).toBe("blocked");
   });
 });
+
+it.each([false, true])(
+  "delivers source-free maintenance observations only with diagnostics=%s",
+  async (diagnostics) => {
+    const io = terminal();
+    const maintenance = {
+      schemaVersion: 1 as const,
+      protocolVersion: 2 as const,
+      effectiveMaxAgeMs: 1000,
+      removedExpired: 2,
+      alreadyMissing: 1,
+      state: "loaded" as const,
+      write: "not-requested" as const,
+    };
+    await executeScanCommand(
+      {
+        cwd: "/repo",
+        format: "json",
+        color: false,
+        animations: false,
+        diagnostics,
+      },
+      io,
+      {
+        ...scanDependencies(),
+        preparePresentation: async (_report, options) => {
+          expect((options as any).diagnostics === true).toBe(diagnostics);
+          return {
+            automatic: false,
+            reportStatus: "not-requested",
+            findings: [],
+            totalFindingCount: 0,
+            abbreviated: false,
+            warnings: [],
+            maintenanceDiagnostics: {
+              ...maintenance,
+              source: "fixture-secret-marker",
+              path: "/private/fixture-secret-marker",
+            },
+          } as any;
+        },
+      },
+    );
+    expect(JSON.parse(io.stdout.join("")).outcome).toBe("incomplete");
+    if (diagnostics)
+      expect(
+        JSON.parse(io.stderr.join("").split("\n")[1]!).reportMaintenance,
+      ).toEqual(maintenance);
+    else expect(io.stderr).toEqual([]);
+    expect(io.stderr.join("")).not.toContain("fixture-secret-marker");
+  },
+);
+
+it("includes fix maintenance observations while dropping unreviewed fields", async () => {
+  const io = terminal();
+  const maintenance = {
+    schemaVersion: 1 as const,
+    protocolVersion: 2 as const,
+    effectiveMaxAgeMs: 1000,
+    removedExpired: 0,
+    alreadyMissing: 1,
+    state: "recovered" as const,
+    write: "capacity-refused" as const,
+  };
+  await executeFixCommand(
+    {
+      cwd: "/repo",
+      format: "json",
+      color: false,
+      animations: false,
+      yes: false,
+      diagnostics: true,
+    },
+    io,
+    {
+      ...fixDependencies(),
+      store: {
+        maintain: async (request) => {
+          expect(request.diagnostics).toBe(true);
+          return {
+            warnings: [],
+            diagnostics: {
+              ...maintenance,
+              content: "fixture-secret-marker",
+            } as any,
+          };
+        },
+      },
+    },
+  );
+  expect(
+    JSON.parse(io.stderr.join("").split("\n")[1]!).reportMaintenance,
+  ).toEqual(maintenance);
+  expect(io.stdout.join("") + io.stderr.join("")).not.toContain(
+    "fixture-secret-marker",
+  );
+});

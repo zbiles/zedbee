@@ -511,6 +511,13 @@ export function ScanResultDashboard({
           width={panelWidth}
           color={color}
         />
+        {sections.previewNotes.map((note) => (
+          <Box key={note} paddingX={2} marginY={1}>
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              {note}
+            </Text>
+          </Box>
+        ))}
         <DisclosuresPanel
           disclosures={sections.disclosures}
           width={panelWidth}

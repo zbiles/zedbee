@@ -175,7 +175,12 @@ export async function inspectManagedCheck(
           workspace,
           relevant: always
             ? workspace.sourceFiles.some((path) => SOURCE.test(path))
-            : await projectInputsMayHaveChanged(context, targetFor(workspace)),
+            : await projectInputsMayHaveChanged(
+                context,
+                targetFor(workspace),
+                "all",
+                checkId === "deadCode" ? "deadCode" : undefined,
+              ),
         })),
       ),
     );

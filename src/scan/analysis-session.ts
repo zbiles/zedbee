@@ -1,3 +1,8 @@
+import {
+  deadCodePolicyPath,
+  snapshotEntryPoints,
+} from "../checks/dead-code/entry-configuration.js";
+import { viteInputPathsForInspection } from "../checks/dead-code/vite-entrypoints.js";
 import { summarizeChanges, type ChangeSummary } from "./change-summary.js";
 import { dirname } from "node:path";
 import {
@@ -548,6 +553,37 @@ export async function withAnalysisSession<T>(
             prepared.scheduledTargets.every(
               ({ checkId }) => checkId === "secrets",
             );
+          const entryCaptureInputs = prepared?.scheduledTargets.some(
+            ({ checkId }) => checkId === "deadCode",
+          )
+            ? await Promise.all(
+                [baselineInspection, targetInspection].map(
+                  async (inspection, side) => {
+                    const entries = await snapshotEntryPoints(
+                      inspection,
+                      config,
+                      options.repositoryRoot,
+                      side === 0,
+                    ).catch(() => []); // The adapter reports unsupported policy per check.
+
+                    return [
+                      deadCodePolicyPath(options.repositoryRoot, config),
+                      ...(
+                        await Promise.all(
+                          inspection.workspaces.map((workspace) =>
+                            viteInputPathsForInspection(
+                              inspection,
+                              workspace,
+                              entries,
+                            ),
+                          ),
+                        )
+                      ).flat(),
+                    ];
+                  },
+                ),
+              )
+            : [[], []];
           execution = await executor.openSession({
             sourceSelections: [baselineInspection, targetInspection].map(
               (inspection, side) => ({
@@ -569,11 +605,12 @@ export async function withAnalysisSession<T>(
                       ),
                     ]
                   : [
-                      ...new Set(
-                        inspection.workspaces.flatMap(
+                      ...new Set([
+                        ...inspection.workspaces.flatMap(
                           (workspace) => workspace.sourceFiles,
                         ),
-                      ),
+                        ...(entryCaptureInputs[side] ?? []),
+                      ]),
                     ],
               }),
             ),

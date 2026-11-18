@@ -173,7 +173,12 @@ function matchesChangedEntity(
   );
 }
 
-function toFinding(target: Observation, attribution: Attribution): Finding {
+function toFinding(
+  target: Observation,
+  attribution: Attribution,
+  policy: MetricDeltaPolicy,
+  baseline?: Observation,
+): Finding {
   const identity = findingIdentity(target);
   const entity = requireMetricEntity(target, "target");
   if (identity.scope.kind !== "entity") {
@@ -184,7 +189,11 @@ function toFinding(target: Observation, attribution: Attribution): Finding {
     check: target.check,
     rule: target.rule,
     severity: target.severity,
-    message: target.message,
+    message:
+      target.metric?.name === "cyclomatic-complexity" ||
+      target.metric?.name === "readability-complexity"
+        ? `${target.metric.name === "cyclomatic-complexity" ? "Cyclomatic" : "Readability"} complexity ${target.metric.value} (limit ${policy.limit}${baseline?.metric !== undefined && target.metric.value > baseline.metric.value ? `; baseline ${baseline.metric.value}` : ""}).`
+        : target.message,
     ...(target.location === undefined
       ? { location: Object.freeze({ file: entity.file }) }
       : { location: target.location }),
@@ -263,7 +272,7 @@ function attributePreparedMetricDelta(
 
   const changedEntity = changed.get(targetSnapshot.identity);
   if (!matchesChangedEntity(targetSnapshot, changedEntity))
-    return toFinding(targetSnapshot, NONE);
+    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
 
   const targetValue = targetSnapshot.metric!.value;
   const baselineValue = baselineSnapshot?.metric?.value;
@@ -279,7 +288,7 @@ function attributePreparedMetricDelta(
     policySnapshot.blockWorsening;
   const targetOnlyAboveLimit = baselineValue === undefined && aboveLimit;
   if (!crossesLimit && !worsensAboveLimit && !targetOnlyAboveLimit) {
-    return toFinding(targetSnapshot, NONE);
+    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
   }
 
   const evidence = [
@@ -302,5 +311,7 @@ function attributePreparedMetricDelta(
       staged: true,
       evidence: Object.freeze(evidence),
     }),
+    policySnapshot,
+    baselineSnapshot,
   );
 }

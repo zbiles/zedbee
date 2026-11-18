@@ -1,3 +1,4 @@
+import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type { ESLint } from "eslint";
@@ -96,6 +97,7 @@ async function prepareSide(
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
+  selectedPaths?: ReadonlySet<string>,
 ): Promise<PreparedSide | undefined> {
   const failure =
     id === "reactCorrectness"
@@ -108,7 +110,11 @@ async function prepareSide(
     const workspace = workspaceFor(inspection, target);
     if (workspace === undefined) return undefined;
     const files = workspace.sourceFiles
-      .filter((path) => SOURCE.test(path))
+      .filter(
+        (path) =>
+          SOURCE.test(path) &&
+          (selectedPaths === undefined || selectedPaths.has(path)),
+      )
       .sort(compareCodeUnits);
     if (files.length === 0) return undefined;
     const groups = groupFilesByRules(files, side, policyForFile, id);
@@ -333,10 +339,56 @@ export function createReactAdapter(
           context.signal,
           isAnalyzerWorker(),
         );
+      const extraBaseline: Observation[] = [];
+      if (id === "reactCorrectness") {
+        const moves = await sourceMoves(context, id, { crossFileOnly: true });
+        const paths = new Set(
+          moves.pairs
+            .filter(
+              (pair) =>
+                pair.syntaxEqual &&
+                workspaceOwns(context, "target", pair.target.entity.file) &&
+                !workspaceOwns(context, "baseline", pair.baseline.entity.file),
+            )
+            .map((pair) => pair.baseline.entity.file),
+        );
+        for (const workspace of context.baselineInspection.workspaces) {
+          const selected = new Set(
+            workspace.sourceFiles.filter((file) => paths.has(file)),
+          );
+          if (selected.size === 0) continue;
+          const prepared = await prepareSide(
+            context.snapshots.baselineDir,
+            context.baselineInspection,
+            {
+              id: workspace.relativeRoot,
+              kind: "workspace",
+              relativeRoot: workspace.relativeRoot,
+            },
+            id,
+            mode,
+            resolveBaselineReactVersion,
+            "baseline",
+            context.policyForFile,
+            context.signal,
+            selected,
+          );
+          extraBaseline.push(
+            ...(await collectPreparedSide(
+              prepared,
+              id,
+              mode,
+              reactCorrectnessConfigFactory,
+              engineFactory,
+              context.signal,
+            )),
+          );
+        }
+      }
       return {
         checkId: id,
         target: context.target,
-        baselineObservations,
+        baselineObservations: [...baselineObservations, ...extraBaseline],
         targetObservations,
       };
     },

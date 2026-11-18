@@ -504,6 +504,7 @@ function automaticTextLines(
       width,
       verbose,
     ),
+    ...sections.previewNotes.flatMap((line) => wrapWords(line, width)),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(report, width, verbose),
     ...disclosureSectionLines(sections.disclosures, width),
@@ -617,6 +618,12 @@ export function renderText(
       width,
       report.installedCliCommand,
     ),
+    ...(options.presentation === undefined
+      ? []
+      : buildScanResultSections(
+          report,
+          options.presentation,
+        ).previewNotes.flatMap((line) => wrapWords(line, width))),
     ...guidanceLines(report, options.presentation, width),
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),

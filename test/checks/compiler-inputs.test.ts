@@ -231,3 +231,96 @@ describe("compiler metadata completeness", () => {
     });
   });
 });
+
+it("skips provably closed sibling compiler projects but keeps importing projects", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "root",
+    workspaces: ["web", "isolated", "importing"],
+  });
+  for (const name of ["web", "isolated", "importing"]) {
+    await f.writeJson(`${name}/package.json`, { name, private: true });
+    await f.writeJson(`${name}/tsconfig.json`, {
+      compilerOptions: { strict: true, types: [] },
+      include: ["src"],
+    });
+    await f.write(
+      `${name}/src/value.ts`,
+      name === "importing"
+        ? 'import {value} from "../../web/src/value"; export {value};'
+        : "export const value = 1;",
+    );
+  }
+  const inspection = await inspectRepository(f.root);
+  const context = {
+    ...(await fixtureContext("web/src/value.ts")),
+    baselineInspection: inspection,
+    targetInspection: inspection,
+  };
+  for (const check of ["lint", "types"] as const) {
+    const result = await inspectManagedCheck(check, context);
+    if (!result.applies) throw new Error("Expected compiler targets");
+    expect(result.targets?.map((t) => t.relativeRoot)).toContain("web");
+    expect(result.targets?.map((t) => t.relativeRoot)).toContain("importing");
+    expect(result.targets?.map((t) => t.relativeRoot)).not.toContain(
+      "isolated",
+    );
+  }
+});
+
+it.each([
+  'import "../../web/src/value"; export const value=1;',
+  'export const value=()=>require("../../web/src/value");',
+  "declare global { const shared: number } export {};",
+  "const shared = 1;",
+  '/// <reference path="../../web/src/value.ts" />\nexport {};',
+])("retains unknown sibling coverage for %s", async (source) => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "root",
+    workspaces: ["web", "sibling"],
+  });
+  for (const name of ["web", "sibling"]) {
+    await f.writeJson(`${name}/package.json`, { name });
+    await f.writeJson(`${name}/tsconfig.json`, {
+      compilerOptions: { types: [] },
+      include: ["src"],
+    });
+    await f.write(
+      `${name}/src/value.ts`,
+      name === "sibling" ? source : "export const value=1;",
+    );
+  }
+  const inspection = await inspectRepository(f.root);
+  const context = {
+    ...(await fixtureContext("web/src/value.ts")),
+    baselineInspection: inspection,
+    targetInspection: inspection,
+  };
+  const result = await inspectManagedCheck("types", context);
+  if (!result.applies) throw new Error("Expected compiler targets");
+  expect(result.targets.map((t) => t.relativeRoot)).toContain("sibling");
+});
+
+it.each(["web/types.d.ts", "package-lock.json", "web/tsconfig.json"])(
+  "retains compiler coverage for shared or unknown input %s",
+  async (path) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { workspaces: ["sibling"] });
+    await f.writeJson("sibling/package.json", { name: "sibling" });
+    await f.writeJson("sibling/tsconfig.json", {
+      compilerOptions: { types: [] },
+      include: ["src"],
+    });
+    await f.write("sibling/src/value.ts", "export const value=1;");
+    const inspection = await inspectRepository(f.root);
+    const context = {
+      ...(await fixtureContext(path)),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    const result = await inspectManagedCheck("types", context);
+    if (!result.applies) throw new Error("Expected compiler targets");
+    expect(result.targets.map((t) => t.relativeRoot)).toContain("sibling");
+  },
+);

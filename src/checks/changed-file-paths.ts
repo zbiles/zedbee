@@ -12,8 +12,19 @@ export function changedFilePaths(
       ({ relativeRoot }) => relativeRoot === context.target.relativeRoot,
     )?.sourceFiles ?? [],
   );
+  const baselineFiles = new Set(
+    context.baselineInspection.workspaces.find(
+      ({ relativeRoot }) => relativeRoot === context.target.relativeRoot,
+    )?.sourceFiles ?? [],
+  );
   for (const file of context.changeSet.files.values()) {
-    if (!targetFiles.has(file.path)) continue;
+    if (side === "baseline") {
+      if (
+        !baselineFiles.has(file.previousPath ?? file.path) &&
+        !targetFiles.has(file.path)
+      )
+        continue;
+    } else if (!targetFiles.has(file.path)) continue;
     if (side === "baseline") {
       if (file.status !== "added") paths.add(file.previousPath ?? file.path);
     } else if (file.status !== "deleted") {

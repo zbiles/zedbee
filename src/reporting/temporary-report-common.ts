@@ -9,14 +9,27 @@ export interface ReportMaintenanceWarning {
   readonly path?: string;
 }
 
+/** Bounded, source-free local observations; never report contents, names, or paths. */
+export interface ReportMaintenanceDiagnostics {
+  readonly schemaVersion: 1;
+  readonly protocolVersion: 2;
+  readonly effectiveMaxAgeMs: number;
+  removedExpired: number;
+  alreadyMissing: number;
+  state: "unavailable" | "new" | "loaded" | "migrated" | "recovered";
+  write: "not-requested" | "written" | "failed" | "capacity-refused";
+}
+
 export interface TemporaryReportRequest {
   readonly repositoryRoot: string;
   readonly maxAgeMs: number;
+  readonly diagnostics?: boolean;
   readonly reportKind?: "scan-report" | "fix-plan";
   readonly json?: string;
 }
 
 export interface TemporaryReportResult {
+  readonly diagnostics?: Readonly<ReportMaintenanceDiagnostics>;
   readonly reportPath?: string;
   readonly warnings: readonly ReportMaintenanceWarning[];
 }
@@ -53,10 +66,14 @@ export function warning(
 export function result(
   warnings: ReportMaintenanceWarning[],
   reportPath?: string,
+  diagnostics?: ReportMaintenanceDiagnostics,
 ): TemporaryReportResult {
   return Object.freeze({
     ...(reportPath === undefined ? {} : { reportPath }),
     warnings: Object.freeze([...warnings]),
+    ...(diagnostics === undefined
+      ? {}
+      : { diagnostics: Object.freeze({ ...diagnostics }) }),
   });
 }
 

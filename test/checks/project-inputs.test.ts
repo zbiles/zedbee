@@ -480,3 +480,88 @@ describe("graph analyzer configuration applicability", () => {
     );
   });
 });
+
+it.each(["added", "modified", "deleted", "renamed"] as const)(
+  "schedules only Vite dead-code for HTML-only %s including the old path",
+  async (status) => {
+    const f = await createInspectionFixture();
+    for (const name of ["web", "other"]) {
+      await f.writeJson(`${name}/package.json`, {
+        name,
+        devDependencies: { vite: "7" },
+      });
+      await f.write(`${name}/src/main.ts`, "console.log(1);");
+    }
+    const inspection = await inspectRepository(f.root);
+    const path = status === "renamed" ? "web/old.html" : "web/index.html";
+    const context = {
+      repositoryRoot: f.root,
+      baselineInspection: inspection,
+      targetInspection: inspection,
+      config: resolveConfig({ schemaVersion: 1, profile: "thorough" }),
+      changeSet: {
+        files: new Map([
+          [
+            path,
+            {
+              path,
+              status,
+              ...(status === "renamed"
+                ? { previousPath: "web/index.html" }
+                : {}),
+              addedRanges: [],
+            },
+          ],
+        ]),
+        isEmpty: false,
+        containsAddedLine: () => false,
+      },
+    };
+    expect(await inspectManagedCheck("deadCode", context)).toMatchObject({
+      applies: true,
+      targets: [{ relativeRoot: "web" }],
+    });
+    expect(
+      await inspectManagedCheck("dependencyArchitecture", context),
+    ).toMatchObject({ applies: false });
+  },
+);
+
+it("schedules dead-code when only a canonical HTML symlink target changes", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("web/package.json", {
+    name: "web",
+    devDependencies: { vite: "7" },
+  });
+  await f.write("web/src/main.ts", "console.log(1);");
+  await f.write(
+    "web/pages/start.html",
+    '<script type=module src="/src/main.ts"></script>',
+  );
+  await f.symlink("pages/start.html", "web/index.html");
+  const inspection = await inspectRepository(f.root);
+  const context = {
+    repositoryRoot: f.root,
+    baselineInspection: inspection,
+    targetInspection: inspection,
+    config: resolveConfig({ schemaVersion: 1, profile: "thorough" }),
+    changeSet: {
+      files: new Map([
+        [
+          "web/pages/start.html",
+          {
+            path: "web/pages/start.html",
+            status: "modified" as const,
+            addedRanges: [],
+          },
+        ],
+      ]),
+      isEmpty: false,
+      containsAddedLine: () => false,
+    },
+  };
+  expect(await inspectManagedCheck("deadCode", context)).toMatchObject({
+    applies: true,
+    targets: [{ relativeRoot: "web" }],
+  });
+});

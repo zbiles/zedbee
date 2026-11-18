@@ -1,3 +1,8 @@
+import { sourceMoves, workspaceOwns } from "./source-moves.js";
+import {
+  pairSourceMoveMetrics,
+  pairSourceMoveLocations,
+} from "../attribution/pair-source-moves.js";
 import { sanitizeComparisonContext } from "./comparison-context.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
 import { sanitizeEslintAnalysis } from "./sanitize-result.js";
@@ -359,6 +364,22 @@ export async function observationCheckResult(
     : undefined;
   assertUniqueMetricFingerprints("baseline", set.baseline);
   assertUniqueMetricFingerprints("target", set.target);
+  const supportsMoves = [...set.baseline, ...set.target].some(observation =>
+    ((checkId === "cyclomaticComplexity" || checkId === "readabilityComplexity") && observation.metric !== undefined) ||
+    (checkId === "reactCorrectness" && observation.rule === "react/no-unescaped-entities")
+  );
+  const moves = supportsMoves
+    ? await sourceMoves(context, checkId as CheckId, {
+        crossFileOnly: checkId !== "reactCorrectness",
+      })
+    : undefined;
+  const validMoveBaselinePaths = new Set(
+    moves?.pairs
+      .filter((pair) =>
+        workspaceOwns(context, "target", pair.target.entity.file),
+      )
+      .map((pair) => pair.baseline.entity.file),
+  );
   const baselinePaths = observationPaths(set.baseline);
   const targetPaths = observationPaths(set.target);
   const [baselineRegistry, targetRegistry] = await Promise.all([
@@ -384,8 +405,9 @@ export async function observationCheckResult(
       context.target,
       context.baselineInspection,
       baselineRegistry,
-      new Set(
-        [...context.changeSet.files.values()].flatMap((file) =>
+      new Set([
+        ...validMoveBaselinePaths,
+        ...[...context.changeSet.files.values()].flatMap((file) =>
           file.status === "renamed" &&
           file.previousPath !== undefined &&
           mostSpecificWorkspace(context.targetInspection, file.path)
@@ -393,7 +415,7 @@ export async function observationCheckResult(
             ? [file.previousPath]
             : [],
         ),
-      ),
+      ]),
     );
   if (targetRegistry !== undefined)
     validateObservationPaths(
@@ -446,6 +468,46 @@ export async function observationCheckResult(
       ],
     };
   }
+  if (moves !== undefined) {
+    if (checkId === "reactCorrectness") {
+      const files = async (
+        paths: readonly string[],
+        registry: SnapshotRegistry | undefined,
+      ) => {
+        const result: Record<string, string> = {};
+        for (const path of paths) {
+          context.signal.throwIfAborted();
+          if (registry !== undefined)
+            result[path] = await readContainedFile(registry, path);
+        }
+        return result;
+      };
+      const paired = pairSourceMoveLocations(set.baseline, set.target, moves, {
+        baseline: await files(
+          [
+            ...new Set(moves.pairs.map((pair) => pair.baseline.entity.file)),
+          ].filter((file) => baselinePaths.includes(file)),
+          baselineRegistry,
+        ),
+        target: await files(
+          [
+            ...new Set(moves.pairs.map((pair) => pair.target.entity.file)),
+          ].filter((file) => targetPaths.includes(file)),
+          targetRegistry,
+        ),
+      });
+      set = {
+        ...set,
+        baseline: paired.baselineObservations,
+        target: paired.targetObservations,
+      };
+    } else {
+      set = {
+        ...set,
+        baseline: pairSourceMoveMetrics(set.baseline, set.target, moves),
+      };
+    }
+  }
   const entities = await changedEntities(context, set.target, targetRegistry);
   const compareAllObservations =
     checkId === "vulnerabilities" && metricPolicy === undefined;
@@ -494,6 +556,23 @@ export async function observationCheckResult(
     target: context.target.id,
     status: eslintAnalysis?.checkedFiles === 0 ? "skipped" : "completed",
     durationMs: 0,
-    findings: [...nonMetricFindings, ...metrics].sort(compareFindings),
+    findings: [...nonMetricFindings, ...metrics]
+      .map((finding) =>
+        moves === undefined ||
+        moves.diagnostics.length === 0 ||
+        !finding.attribution.staged
+          ? finding
+          : {
+              ...finding,
+              attribution: {
+                ...finding.attribution,
+                evidence: [
+                  ...finding.attribution.evidence,
+                  ...moves.diagnostics.map((code) => `source-move:${code}`),
+                ],
+              },
+            },
+      )
+      .sort(compareFindings),
   };
 }

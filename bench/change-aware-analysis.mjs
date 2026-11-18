@@ -254,6 +254,9 @@ for (const scenario of [...new Set(samples.map((s) => s.scenario))])
       p90Ms: s.map((x) => x.elapsedMs).sort((a, b) => a - b)[
         Math.ceil(s.length * 0.9) - 1
       ],
+      p95Ms: s.map((x) => x.elapsedMs).sort((a, b) => a - b)[
+        Math.ceil(s.length * 0.95) - 1
+      ],
       minMs: Math.min(...s.map((x) => x.elapsedMs)),
       maxMs: Math.max(...s.map((x) => x.elapsedMs)),
       jobs: s[0].jobs,

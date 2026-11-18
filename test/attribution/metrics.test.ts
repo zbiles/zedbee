@@ -3,6 +3,7 @@ import {
   attributeMetricDelta,
   prepareMetricAttribution,
 } from "../../src/attribution/metrics.js";
+import { fingerprintObservation } from "../../src/attribution/fingerprint.js";
 import type { ChangedEntity, Observation } from "../../src/core/types.js";
 
 const entity: ChangedEntity = {
@@ -214,4 +215,31 @@ describe("attributeMetricDelta", () => {
       }),
     ).toThrow(TypeError);
   });
+});
+
+it.each([
+  ["cyclomatic-complexity", 59, 20, "Cyclomatic complexity 59 (limit 20)."],
+  ["readability-complexity", 29, 15, "Readability complexity 29 (limit 15)."],
+] as const)(
+  "renders validated %s scores without changing observation IDs or leaking entity names",
+  (name, value, limit, message) => {
+    const target = { ...metric(value), rule: name, metric: { name, value } };
+    const finding = attributeMetricDelta(undefined, target, [entity], {
+      limit,
+      blockWorsening: true,
+    });
+    expect(finding.message).toBe(message);
+    expect(finding.id).toBe(fingerprintObservation(target));
+    expect(finding.message).not.toContain(entity.name);
+    expect(target.message).toBe("Complexity exceeds policy.");
+  },
+);
+
+it("includes the baseline score when a metric worsens", () => {
+  expect(
+    attributeMetricDelta(metric(25), metric(59), [entity], {
+      limit: 20,
+      blockWorsening: true,
+    }).message,
+  ).toBe("Cyclomatic complexity 59 (limit 20; baseline 25).");
 });
