@@ -679,6 +679,76 @@
       "license": "MIT",
       "sourceUrl": "https://raw.githubusercontent.com/facebook/yoga/v3.2.1/LICENSE",
       "textFile": "licenses/overrides/yoga-layout-3.2.1-LICENSE"
+    },
+    {
+      "name": "@napi-rs/wasm-runtime",
+      "version": "1.2.5",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/napi-rs/napi-rs/023a9f067af5d44c9a06c9a30b48fdd50ab18ac0/LICENSE",
+      "textFile": "licenses/overrides/napi-rs-wasm-runtime-1.2.5-LICENSE"
+    },
+    {
+      "name": "jscpd",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-darwin-arm64",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-darwin-x64",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-arm64-gnu",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-x64-gnu",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-arm64-musl",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-linux-x64-musl",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-windows-arm64-msvc",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
+    },
+    {
+      "name": "jscpd-windows-x64-msvc",
+      "version": "5.4.2",
+      "license": "MIT",
+      "sourceUrl": "https://raw.githubusercontent.com/kucherenko/jscpd/db415b5d7cc34d72a324fe5eae2147646dc3558b/LICENSE",
+      "textFile": "licenses/overrides/jscpd-5.4.2-LICENSE"
     }
   ]
 }

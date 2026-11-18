@@ -153,14 +153,14 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
   },
   duplication: {
     description: "Detects new and enlarged code clones.",
-    engine: { name: "jscpd", version: "5.3.2", license: "MIT" },
+    engine: { name: "jscpd", version: "5.4.2", license: "MIT" },
     executionClass: "project-analysis",
     limitation:
       "Baseline comparison runs project analysis twice and small clones below managed thresholds are omitted.",
   },
   dependencyArchitecture: {
     description: "Detects new dependency graph violations.",
-    engine: { name: "dependency-cruiser", version: "18.2.0", license: "MIT" },
+    engine: { name: "dependency-cruiser", version: "18.7.2", license: "MIT" },
     executionClass: "project-analysis",
     limitation:
       "Dynamic dependency construction can evade static graph resolution.",
