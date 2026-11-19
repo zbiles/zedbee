@@ -429,3 +429,33 @@ it("shares complete change classification only for identical captured inputs", a
     await classifyCompilerChanges({ ...context, changeSet: renamed.changeSet }),
   ).toMatchObject({ requiresBroadComparison: true });
 });
+it("bounds metadata discovery before reading oversized compiler configs", async () => {
+  const { createCompilerConfigurationInputResolver } =
+    await import("../../src/checks/typescript/configuration-paths.js");
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", { name: "metadata-budget" });
+  await f.write("src/value.ts", "export const value=1;");
+  await f.write("tsconfig.json", " ".repeat(64 * 1024) + "{}");
+  const inspection = await inspectRepository(f.root);
+  expect(
+    await createCompilerConfigurationInputResolver(inspection.snapshotRoot)(
+      inspection.workspaces[0]!,
+    ),
+  ).toMatchObject({ complete: false });
+});
+it("bounds optimization metadata graphs while retaining conservative completeness", async () => {
+  const { createCompilerConfigurationInputResolver } =
+    await import("../../src/checks/typescript/configuration-paths.js");
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", { name: "metadata-count" });
+  await f.write("src/value.ts", "export const value=1;");
+  const parents = Array.from({ length: 65 }, (_, i) => `./config/${i}.md`);
+  await f.writeJson("tsconfig.json", { extends: parents });
+  for (const path of parents) await f.writeJson(path, {});
+  const inspection = await inspectRepository(f.root);
+  expect(
+    await createCompilerConfigurationInputResolver(inspection.snapshotRoot)(
+      inspection.workspaces[0]!,
+    ),
+  ).toMatchObject({ complete: false });
+});

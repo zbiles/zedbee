@@ -72,7 +72,11 @@ function createResolver(
           if (registry === undefined) return undefined;
           const errors: ParseError[] = [];
           const data: unknown = parse(
-            await readContainedFile(registry, path),
+            await readContainedFile(
+              registry,
+              path,
+              retainMissingCandidates ? { maxBytes: 64 * 1024 } : {},
+            ),
             errors,
             {
               allowTrailingComma: true,
@@ -98,6 +102,10 @@ function createResolver(
     const parsed = new Set<string>();
     const pending = [...paths];
     while (pending.length > 0) {
+      if (retainMissingCandidates && parsed.size >= 64) {
+        complete = false;
+        break;
+      }
       const path = pending.pop()!;
       if (parsed.has(path)) continue;
       parsed.add(path);
