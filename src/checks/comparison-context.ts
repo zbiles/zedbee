@@ -5,17 +5,10 @@ import { builtinModules, createRequire } from "node:module";
 const typescriptVersion: string = createRequire(import.meta.url)(
   "typescript/package.json",
 ).version;
-import {
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
-import type { CapturedDependencies } from "../cache/captured-dependencies.js";
+import { CapturedDependencies } from "../cache/captured-dependencies.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -32,9 +25,7 @@ export interface ComparisonContext {
   readonly analyzerVersion: string;
   readonly analyzerRevision: "comparison-context-v1";
 }
-export function sanitizeComparisonContext(
-  value: unknown,
-): ComparisonContext {
+export function sanitizeComparisonContext(value: unknown): ComparisonContext {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new TypeError("Invalid comparison context");
   const v = value as Record<string, unknown>;
@@ -62,8 +53,7 @@ export function sanitizeComparisonContext(
       "unsupported-inputs",
     ].includes(String(v.reason)) ||
     ![v.swarmVersion, v.analyzerVersion].every(
-      (x) =>
-        typeof x === "string" && /^[0-9][0-9A-Za-z.+-]{0,127}$/u.test(x),
+      (x) => typeof x === "string" && /^[0-9][0-9A-Za-z.+-]{0,127}$/u.test(x),
     )
   )
     throw new TypeError("Invalid comparison context");
@@ -100,6 +90,58 @@ function packageName(specifier: string): string | undefined {
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
 }
+/** A complete positive manifest proof makes installation diagnostics impossible:
+ * the existing diagnostic path only rejects declared names whose manifests are
+ * all absent. Failed/partial probes use a separate view and leave no new input
+ * failure in the analyzer capture. Applicable lint/type analysis still runs. */
+function installationReady(
+  declared: ReadonlySet<string>,
+  repositoryRoot: string,
+  workspace: WorkspaceInspection,
+  dependencies: CapturedDependencies,
+): boolean {
+  if (declared.size === 0) return true;
+  if (
+    declared.size > 500 ||
+    resolve(repositoryRoot) !== resolve(dependencies.context.repositoryRoot)
+  )
+    return false;
+  try {
+    const probe = new CapturedDependencies({ repositoryRoot });
+    const installed: string[] = [];
+    for (const name of declared) {
+      if (
+        name.length > 214 ||
+        packageName(name) !== name ||
+        name.split("/").some((part) => part === "." || part === "..")
+      )
+        return false;
+      let directory = resolve(repositoryRoot, workspace.relativeRoot),
+        found: string | undefined;
+      for (let depth = 0; depth < 64; depth++) {
+        const part = relative(resolve(repositoryRoot), directory);
+        if (isAbsolute(part) || part === ".." || part.startsWith(`..${sep}`))
+          return false;
+        const path = join(directory, "node_modules", name, "package.json");
+        if (probe.fileExists(path)) {
+          found = path;
+          break;
+        }
+        if (directory === resolve(repositoryRoot)) break;
+        directory = dirname(directory);
+      }
+      if (found === undefined) return false;
+      installed.push(found);
+    }
+    const manifest = probe.manifest();
+    if (manifest === undefined || !probe.validate(manifest)) return false;
+    // Transfer only a complete positive proof to canonical comparison tracking.
+    // A mutation between views falls back and is caught by normal revalidation.
+    return installed.every((path) => dependencies.fileExists(path));
+  } catch {
+    return false;
+  }
+}
 /** An unresolved lookup alone does not prove a missing install. Require an
  * applicable declaration and captured absent package manifests. */
 export async function assertRequiredInstallation(options: {
@@ -122,6 +164,8 @@ export async function assertRequiredInstallation(options: {
       )
       .flatMap((w) => w.dependencyDeclarations.map((d) => d.name)),
   );
+  if (installationReady(declared, repositoryRoot, workspace, dependencies))
+    return;
   for (const program of options.programs)
     for (const diagnostic of [
       ...program.getOptionsDiagnostics(),
@@ -134,16 +178,13 @@ export async function assertRequiredInstallation(options: {
         )
         .flatMap((file) => program.getSemanticDiagnostics(file)),
     ]) {
-      if (![2307, 2591, 2688, 2875, 7016].includes(diagnostic.code))
-        continue;
+      if (![2307, 2591, 2688, 2875, 7016].includes(diagnostic.code)) continue;
       const text =
         typeof diagnostic.messageText === "string"
           ? diagnostic.messageText
           : diagnostic.messageText.messageText;
       const specifier =
-        /(?:module path|module|definition file for) '([^']+)'/u.exec(
-          text,
-        )?.[1];
+        /(?:module path|module|definition file for) '([^']+)'/u.exec(text)?.[1];
       const moduleName =
         diagnostic.code === 2591
           ? "@types/node"
@@ -190,12 +231,7 @@ export async function assertRequiredInstallation(options: {
         let installed = false;
         const searched: string[] = [];
         for (;;) {
-          const manifestPath = join(
-            path,
-            "node_modules",
-            name,
-            "package.json",
-          );
+          const manifestPath = join(path, "node_modules", name, "package.json");
           searched.push(
             path === resolve(repositoryRoot)
               ? `packages:${name}/package.json`
@@ -216,9 +252,7 @@ export async function assertRequiredInstallation(options: {
           searched.includes(p.path),
         );
         if (
-          relevant?.some(
-            (p) => p.kind === "entry" && p.entryType === "denied",
-          )
+          relevant?.some((p) => p.kind === "entry" && p.entryType === "denied")
         )
           throw new CheckIncompleteError({
             code: "COMPARISON_INPUTS_UNVERIFIED",

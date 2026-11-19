@@ -53,14 +53,10 @@ describe("captured dependency view", () => {
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     expect(view.fileExists(join(live.root, "web/source.d.ts"))).toBe(false);
     expect(
-      view.fileExists(
-        join(live.root, "web/node_modules/example/index.d.ts"),
-      ),
+      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
     ).toBe(false);
     expect(
-      view.fileExists(
-        join(live.root, "web/node_modules/external/index.d.ts"),
-      ),
+      view.fileExists(join(live.root, "web/node_modules/external/index.d.ts")),
     ).toBe(false);
   });
 
@@ -70,30 +66,19 @@ describe("captured dependency view", () => {
       "web/node_modules/example/index.d.ts",
       "export const value: number;",
     );
-    const view = new CapturedDependencies(
-      { repositoryRoot: live.root },
-      true,
-    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root }, true);
     expect(
-      view.fileExists(
-        join(live.root, "web/node_modules/example/index.d.ts"),
-      ),
+      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
     ).toBe(false);
   });
 
   it("serves the first captured bytes and rejects mutation before storage", async () => {
     const live = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const path = join(live.root, "node_modules/x/index.d.ts");
     expect(view.fileExists(path)).toBe(true);
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: string;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: string;");
     expect(view.readFile(path)).toBe("export const x: number;");
     expect(
       validateDependencyInputs(view.manifest(), {
@@ -104,18 +89,12 @@ describe("captured dependency view", () => {
 
   it("revalidates live inputs even when called on the collecting view", async () => {
     const live = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const path = join(live.root, "node_modules/x/index.d.ts");
     view.readFile(path);
     const manifest = view.manifest()!;
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: string;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: string;");
     expect(view.validate(manifest)).toBe(false);
     expect(view.readFile(path)).toBe("export const x: number;");
   });
@@ -141,14 +120,8 @@ describe("captured dependency view", () => {
 
   it("captures symlink targets and never calls a present denied file missing", async () => {
     const live = await createInspectionFixture();
-    await live.write(
-      "node_modules/a/index.d.ts",
-      "export const x: number;",
-    );
-    await live.write(
-      "node_modules/b/index.d.ts",
-      "export const x: string;",
-    );
+    await live.write("node_modules/a/index.d.ts", "export const x: number;");
+    await live.write("node_modules/b/index.d.ts", "export const x: string;");
     await live.symlink("a", "node_modules/linked");
     await live.write("outside.d.ts", "private source");
     await live.symlink("../outside.d.ts", "node_modules/denied.d.ts");
@@ -156,9 +129,9 @@ describe("captured dependency view", () => {
     expect(
       view.readFile(join(live.root, "node_modules/linked/index.d.ts")),
     ).toBe("export const x: number;");
-    expect(
-      view.fileExists(join(live.root, "node_modules/denied.d.ts")),
-    ).toBe(false);
+    expect(view.fileExists(join(live.root, "node_modules/denied.d.ts"))).toBe(
+      false,
+    );
     const manifest = view.manifest()!;
     expect(manifest.probes).toContainEqual(
       expect.objectContaining({
@@ -211,10 +184,7 @@ describe("captured dependency view", () => {
     ).toBe(false);
     expect(
       view.fileExists(
-        join(
-          live.root,
-          "../node_modules/absent-fixture-package/package.json",
-        ),
+        join(live.root, "../node_modules/absent-fixture-package/package.json"),
       ),
     ).toBe(false);
     expect(view.manifest()).toBeDefined();
@@ -222,10 +192,7 @@ describe("captured dependency view", () => {
 
   it("preserves proven truncation as input mutation rather than setup failure", async () => {
     const live = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const read = vi.spyOn(fs, "readSync").mockImplementationOnce(() => 0);
     syncBuiltinESMExports();
@@ -252,10 +219,7 @@ describe("captured dependency view", () => {
               Buffer.from(encoding === "utf16le" ? [255, 254] : [254, 255]),
               encoding === "utf16le"
                 ? Buffer.from("export const x: number;", "utf16le")
-                : Buffer.from(
-                    "export const x: number;",
-                    "utf16le",
-                  ).swap16(),
+                : Buffer.from("export const x: number;", "utf16le").swap16(),
             ]),
       );
       const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -357,10 +321,7 @@ describe("captured dependency view", () => {
 
   it("bypasses cache when modification time changes during its descriptor read", async () => {
     const live = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     const path = join(live.root, "node_modules/x/index.d.ts");
     const metadata = fs.statSync(path);
     const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -372,11 +333,7 @@ describe("captured dependency view", () => {
         fs.writeFileSync(path, "export const x: string;");
         // Equal-length rewrites can share a timestamp on a fast filesystem.
         // Explicitly exercise the modification-time change being detected.
-        fs.utimesSync(
-          path,
-          metadata.atime,
-          new Date(metadata.mtimeMs + 1000),
-        );
+        fs.utimesSync(path, metadata.atime, new Date(metadata.mtimeMs + 1000));
         return result;
       });
     syncBuiltinESMExports();
@@ -434,10 +391,7 @@ describe("captured dependency view", () => {
   it("preserves allowed external aliases when their scope requires bypassing cache", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     await external.symlink(
       join(live.root, "node_modules/x/index.d.ts"),
       "alias.d.ts",
@@ -453,10 +407,7 @@ describe("captured dependency view", () => {
   it("does not erase an outside directory alias from the input identity", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     await external.symlink(join(live.root, "node_modules/x"), "alias");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     expect(view.readFile(join(external.root, "alias/index.d.ts"))).toBe(
@@ -477,10 +428,7 @@ describe("captured dependency view", () => {
   it("does not serve an outside file swapped in between containment and open", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write(
-      "node_modules/x/index.d.ts",
-      "export const x: number;",
-    );
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
     await external.write("private.d.ts", "private-outside-source");
     const path = join(live.root, "node_modules/x/index.d.ts");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -502,4 +450,55 @@ describe("captured dependency view", () => {
       syncBuiltinESMExports();
     }
   });
+});
+
+it("normalizes repeated dependency lookups once per captured view and still validates fresh bytes", async () => {
+  const f = await createInspectionFixture();
+  const path = join(f.root, "node_modules/example/index.d.ts");
+  await f.write(
+    "node_modules/example/index.d.ts",
+    "export const value: number;",
+  );
+  const view = new CapturedDependencies({ repositoryRoot: f.root });
+  const normalize = vi.spyOn(
+    view as unknown as { identify(path: string): string },
+    "identify",
+  );
+  for (let i = 0; i < 1000; i++) {
+    expect(view.fileExists(path)).toBe(true);
+    expect(view.readFile(path)).toBe("export const value: number;");
+  }
+  // This is the expensive normalization boundary observed in the CPU profile,
+  // not a timer threshold that depends on machine load.
+  expect(normalize).toHaveBeenCalledTimes(1);
+  const manifest = view.manifest()!;
+  await f.write(
+    "node_modules/example/index.d.ts",
+    "export const value: string;",
+  );
+  expect(view.readFile(path)).toBe("export const value: number;");
+  expect(view.validate(manifest)).toBe(false);
+});
+it("evicts optional lookup acceleration before denying mandatory capture metadata", async () => {
+  const f = await createInspectionFixture();
+  await f.write("node_modules/example/index.d.ts", "export {};");
+  const view = new CapturedDependencies({ repositoryRoot: f.root });
+  expect(view.fileExists(join(f.root, "node_modules/example/index.d.ts"))).toBe(
+    true,
+  );
+  // Exercise the boundary without allocating 32 MiB of artificial probe strings.
+  const budget = view as unknown as {
+    metadataBytes: number;
+    lookupBytes: number;
+  };
+  expect(budget.lookupBytes).toBeGreaterThan(0);
+  budget.metadataBytes = DEPENDENCY_LIMITS.metadataBytes - 800;
+  expect(
+    view.fileExists(join(f.root, "node_modules/example/missing.d.ts")),
+  ).toBe(false);
+  expect(view.failure()).toBeUndefined();
+  expect(budget.metadataBytes + budget.lookupBytes).toBeLessThanOrEqual(
+    DEPENDENCY_LIMITS.metadataBytes,
+  );
+  expect(view.validate(view.manifest()!)).toBe(true);
 });

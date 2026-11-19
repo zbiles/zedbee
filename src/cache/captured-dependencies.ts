@@ -101,6 +101,9 @@ export class CapturedDependencies {
   private bytes = 0;
   private names = 0;
   private metadataBytes = 128;
+  /** Optional acceleration consumes spare metadata capacity, never probe budget. */
+  private readonly lexicalLookups = new Map<string, Entry>();
+  private lookupBytes = 0;
   private supported = true;
   private captureFailure: DependencyCaptureFailure | undefined;
 
@@ -195,17 +198,13 @@ export class CapturedDependencies {
       this.snapshotOnly === "knip" &&
       basename(real) === "package.json" &&
       contained(repository, real) &&
-      isInstalledDependencyPath(
-        relative(repository, real).split(sep).join("/"),
-      )
+      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
     )
       return ["repository", repository];
     if (
       !this.snapshotOnly &&
       contained(repository, real) &&
-      isInstalledDependencyPath(
-        relative(repository, real).split(sep).join("/"),
-      )
+      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
     )
       return ["repository", repository];
     return undefined;
@@ -279,8 +278,7 @@ export class CapturedDependencies {
             : 0
         : 0;
     for (const [name, root] of Object.entries(this.aliases).sort(
-      (a, b) =>
-        b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
+      (a, b) => b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
     )) {
       if (contained(root, absolute))
         return `${name}:${relative(root, absolute).split(sep).join("/") || "."}`;
@@ -313,22 +311,25 @@ export class CapturedDependencies {
   private path(identifier: string): string {
     const [name, path] = dependencyPathParts(identifier);
     const root = this.roots[name];
-    if (root === undefined)
-      throw new TypeError("Unavailable dependency root");
+    if (root === undefined) throw new TypeError("Unavailable dependency root");
     return resolve(root, ...path.split("/"));
   }
 
   private retain(bytes: number): boolean {
     if (!this.supported) return false;
     this.metadataBytes += bytes;
+    if (
+      this.metadataBytes + this.lookupBytes >
+      DEPENDENCY_LIMITS.metadataBytes
+    ) {
+      this.lexicalLookups.clear();
+      this.lookupBytes = 0;
+    }
     if (this.metadataBytes > DEPENDENCY_LIMITS.metadataBytes) {
       this.capacity("metadataBytes", this.metadataBytes);
       return false;
     }
-    if (
-      this.entries.size + this.listings.size >=
-      DEPENDENCY_LIMITS.probes
-    ) {
+    if (this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes) {
       this.capacity("probes", this.entries.size + this.listings.size + 1);
       return false;
     }
@@ -337,6 +338,24 @@ export class CapturedDependencies {
 
   private capture(path: string): Entry {
     const absolute = resolve(path);
+    const previous = this.lexicalLookups.get(absolute);
+    if (previous !== undefined) return previous;
+    const entry = this.captureUncached(absolute);
+    const bytes = dependencyTextBytes(absolute) + 128;
+    if (
+      this.supported &&
+      this.entries.get(entry.probe.path) === entry &&
+      this.lookupBytes + bytes <= 4 * 1024 * 1024 &&
+      this.metadataBytes + this.lookupBytes + bytes <=
+        DEPENDENCY_LIMITS.metadataBytes
+    ) {
+      this.lexicalLookups.set(absolute, entry);
+      this.lookupBytes += bytes;
+    }
+    return entry;
+  }
+
+  private captureUncached(absolute: string): Entry {
     let identifier: string;
     try {
       identifier = this.identify(absolute);
@@ -370,9 +389,7 @@ export class CapturedDependencies {
           this.bytes + bytes.length > DEPENDENCY_LIMITS.bytes
         ) {
           this.capacity(
-            bytes.length > DEPENDENCY_LIMITS.fileBytes
-              ? "fileBytes"
-              : "bytes",
+            bytes.length > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
             bytes.length > DEPENDENCY_LIMITS.fileBytes
               ? bytes.length
               : this.bytes + bytes.length,
@@ -429,9 +446,7 @@ export class CapturedDependencies {
           this.bytes + metadata.size > DEPENDENCY_LIMITS.bytes
         ) {
           this.capacity(
-            metadata.size > DEPENDENCY_LIMITS.fileBytes
-              ? "fileBytes"
-              : "bytes",
+            metadata.size > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
             metadata.size > DEPENDENCY_LIMITS.fileBytes
               ? metadata.size
               : this.bytes + metadata.size,
@@ -574,8 +589,7 @@ export class CapturedDependencies {
   }
   /** Exact captured bytes for the controlled Knip filesystem. Never passthrough. */
   readBytes(path: string, expectedCanonicalPath?: string): Buffer {
-    if (!this.snapshotOnly)
-      throw new TypeError("Snapshot capture required");
+    if (!this.snapshotOnly) throw new TypeError("Snapshot capture required");
     const entry = this.capture(path);
     if (entry.bytes === undefined)
       throw new TypeError("Unavailable snapshot bytes");
@@ -649,8 +663,7 @@ export class CapturedDependencies {
     if (previous !== undefined) return previous.names;
     const captured = this.capture(absolute);
     const entry = captured.probe;
-    if (entry.kind === "missing" || captured.unavailable === true)
-      return [];
+    if (entry.kind === "missing" || captured.unavailable === true) return [];
     if (entry.kind !== "entry" || entry.entryType !== "directory")
       throw new TypeError("Expected dependency directory");
     try {
