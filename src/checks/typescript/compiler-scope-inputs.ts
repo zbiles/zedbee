@@ -175,9 +175,19 @@ export async function loadCompilerScopeInputs(
         configPath,
         options: parsed.options,
         rootPaths,
-        sourcePaths: sources,
+        sourcePaths: rootPaths,
       });
     }
+    const covered = new Set(projects.flatMap((project) => project.rootPaths));
+    const first = projects[0];
+    if (first !== undefined)
+      projects[0] = {
+        ...first,
+        sourcePaths: [
+          ...first.sourcePaths,
+          ...sources.filter((path) => !covered.has(path)),
+        ],
+      };
     signal?.throwIfAborted();
     return { complete: true, projects, inputPaths };
   } catch (error) {

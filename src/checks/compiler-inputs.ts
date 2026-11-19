@@ -1,6 +1,6 @@
 import { classifyCompilerChanges } from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
-import { isClosedCompilerProject } from "./closed-compiler-project.js";
+import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
@@ -143,7 +143,26 @@ export function compilerInputRelevance(
     scopedDecisions.set(decision, scoped);
   }
   const previous = scoped.get(workspace);
-  if (previous !== undefined) return previous;
+  if (
+    previous !== undefined &&
+    ![...changedPaths(context.changeSet)].some((path) => SOURCE.test(path))
+  )
+    return previous;
+  if (previous !== undefined)
+    return previous.then(async (result) => {
+      if (
+        !result.relevant &&
+        result.reason === "unrelated" &&
+        (await decision!).relevant
+      ) {
+        if (
+          !(await proveCompilerWorkspaceIndependence(context, workspace))
+            .independent
+        )
+          return { relevant: true, reason: "source" };
+      }
+      return result;
+    });
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
       if (!result.relevant || result.reason !== "source") return result;
@@ -154,19 +173,11 @@ export function compilerInputRelevance(
       const prefix =
         workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
       if ([...paths].some((path) => path.startsWith(prefix))) return result;
-      for (const inspection of [
-        context.baselineInspection,
-        context.targetInspection,
-      ]) {
-        const side = inspection.workspaces.find(
-          (item) => item.relativeRoot === workspace.relativeRoot,
-        );
-        if (
-          side === undefined ||
-          !(await isClosedCompilerProject(inspection, side))
-        )
-          return result;
-      }
+      if (
+        !(await proveCompilerWorkspaceIndependence(context, workspace))
+          .independent
+      )
+        return result;
       return { relevant: false, reason: "unrelated" };
     },
   );

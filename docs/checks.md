@@ -574,3 +574,13 @@ or calls.
 Unsupported configurations, JSX, ambient declarations, symlinks, missing data,
 and proof limits retain conservative coverage. This is deliberately narrower
 than assuming that a file outside the edited folder cannot be affected.
+
+Managed lint and type checks can omit an unchanged workspace when a bounded,
+scan-local proof establishes that neither side of the comparison depends on the
+changed inputs. Ordinary documentation or Python edits do not invalidate that
+proof. Configuration, declaration, dependency and unknown input changes retain
+conservative coverage. The proof follows supported local aliases, references and
+installed declarations, then validates its input witnesses again before the scan
+finishes. Unsupported resolution, missing installations or exhausted proof bounds
+run the existing checks. Forced checks, merge comparisons and project ESLint keep
+their existing coverage.
