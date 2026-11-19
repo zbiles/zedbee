@@ -459,3 +459,19 @@ it("bounds optimization metadata graphs while retaining conservative completenes
     ),
   ).toMatchObject({ complete: false });
 });
+it("recognizes an explicitly selected Swarm policy even with an ordinary documentation extension", async () => {
+  const context = await fixtureContext("policy.md");
+  context.config = resolveConfig(
+    { schemaVersion: 1 },
+    context.repositoryRoot + "/policy.md",
+  );
+  const { classifyCompilerChanges } =
+    await import("../../src/checks/compiler-change-inputs.js");
+  expect(await classifyCompilerChanges(context)).toMatchObject({
+    complete: true,
+    requiresBroadComparison: true,
+  });
+  expect(await inspectManagedCheck("types", context)).toMatchObject({
+    applies: true,
+  });
+});

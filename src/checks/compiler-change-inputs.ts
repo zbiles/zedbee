@@ -1,4 +1,4 @@
-import { posix } from "node:path";
+import { posix, relative, resolve, sep, isAbsolute } from "node:path";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 export const COMPILER_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
@@ -7,6 +7,26 @@ export const COMPILER_DEPENDENCY =
 export const COMPILER_CONFIGURATION =
   /^(?:tsconfig(?:\.[^.]+)*\.json|jsconfig(?:\.[^.]+)*\.json|(?:zedbee|swarm)\.config\.[^.]+|\.(?:zedbee|swarm)(?:rc)?(?:\.[^.]+)?)$/iu;
 const ORDINARY = /\.(?:py|pyi|md|markdown|rst|txt)$/iu;
+export function compilerPolicyInputPaths(
+  context: InspectionContext,
+): ReadonlySet<string> {
+  const paths = new Set<string>();
+  for (const policy of [context.config, context.filePolicyConfig]) {
+    if (policy?.configPath === undefined) continue;
+    const path = relative(
+      context.repositoryRoot,
+      resolve(context.repositoryRoot, policy.configPath),
+    );
+    if (
+      path !== "" &&
+      !isAbsolute(path) &&
+      path !== ".." &&
+      !path.startsWith(`..${sep}`)
+    )
+      paths.add(path.split(sep).join("/"));
+  }
+  return paths;
+}
 export interface CompilerChangeClassification {
   readonly sourcePaths: ReadonlySet<string>;
   readonly requiresBroadComparison: boolean;
@@ -23,7 +43,7 @@ async function acquireCompilerChanges(
     ),
   );
   const sourcePaths = new Set<string>();
-  const configurations = new Set<string>();
+  const configurations = new Set<string>(compilerPolicyInputPaths(context));
   const dependencies = new Set<string>();
   let complete = true;
   for (const inspection of new Set([
@@ -66,7 +86,11 @@ async function acquireCompilerChanges(
   return { sourcePaths, requiresBroadComparison, complete };
 }
 
-const classificationOwners = new WeakMap<object, typeof classifications>();
+const classificationOwners = new WeakMap<
+  object,
+  WeakMap<object, typeof classifications>
+>();
+const classificationPolicies = new WeakMap<object, typeof classifications>();
 const classifications = new WeakMap<
   object,
   WeakMap<object, WeakMap<object, Promise<CompilerChangeClassification>>>
@@ -75,11 +99,14 @@ export function classifyCompilerChanges(
   context: InspectionContext,
 ): Promise<CompilerChangeClassification> {
   if (context.signal?.aborted) return Promise.reject(context.signal.reason);
-  let cache = classifications;
+  let policies = classificationPolicies;
   if (context.signal !== undefined) {
-    cache = classificationOwners.get(context.signal) ?? new WeakMap();
-    classificationOwners.set(context.signal, cache);
+    policies = classificationOwners.get(context.signal) ?? new WeakMap();
+    classificationOwners.set(context.signal, policies);
   }
+  const policy = context.filePolicyConfig ?? context.config;
+  const cache = policies.get(policy) ?? new WeakMap();
+  policies.set(policy, cache);
   let targets = cache.get(context.baselineInspection);
   if (targets === undefined) {
     targets = new WeakMap();

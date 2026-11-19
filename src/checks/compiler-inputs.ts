@@ -1,4 +1,7 @@
-import { classifyCompilerChanges } from "./compiler-change-inputs.js";
+import {
+  classifyCompilerChanges,
+  compilerPolicyInputPaths,
+} from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
@@ -56,7 +59,8 @@ const decisions = new WeakMap<
     WeakMap<ChangeSet, Promise<CompilerInputRelevance>>
   >
 >();
-const decisionOwners = new WeakMap<object, typeof decisions>();
+const decisionOwners = new WeakMap<object, WeakMap<object, typeof decisions>>();
+const decisionPolicies = new WeakMap<object, typeof decisions>();
 const scopedDecisions = new WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
@@ -70,6 +74,8 @@ async function resolveRelevance(
 ): Promise<CompilerInputRelevance> {
   const paths = changedPaths(context.changeSet);
   if (paths.size === 0) return { relevant: false, reason: "unrelated" };
+  if ([...compilerPolicyInputPaths(context)].some((path) => paths.has(path)))
+    return { relevant: true, reason: "configuration" };
   let complete = true;
   for (const inspection of new Set([
     context.baselineInspection,
@@ -111,11 +117,14 @@ export function compilerInputRelevance(
   workspace: WorkspaceInspection,
 ): Promise<CompilerInputRelevance> {
   if (context.signal?.aborted) return Promise.reject(context.signal.reason);
-  let cache = decisions;
+  let policies = decisionPolicies;
   if (context.signal !== undefined) {
-    cache = decisionOwners.get(context.signal) ?? new WeakMap();
-    decisionOwners.set(context.signal, cache);
+    policies = decisionOwners.get(context.signal) ?? new WeakMap();
+    decisionOwners.set(context.signal, policies);
   }
+  const policy = context.filePolicyConfig ?? context.config;
+  const cache = policies.get(policy) ?? new WeakMap();
+  policies.set(policy, cache);
   let targets = cache.get(context.baselineInspection);
   if (targets === undefined) {
     targets = new WeakMap();
