@@ -16,6 +16,7 @@ export interface CompilerChangeClassification {
 async function acquireCompilerChanges(
   context: InspectionContext,
 ): Promise<CompilerChangeClassification> {
+  context.signal?.throwIfAborted();
   const paths = new Set(
     [...context.changeSet.files.values()].flatMap((f) =>
       f.previousPath === undefined ? [f.path] : [f.path, f.previousPath],
@@ -38,6 +39,7 @@ async function acquireCompilerChanges(
         inspection,
         workspace,
       );
+      context.signal?.throwIfAborted();
       complete &&= inputs.complete;
       for (const path of inputs.paths) configurations.add(path);
     }
@@ -64,6 +66,7 @@ async function acquireCompilerChanges(
   return { sourcePaths, requiresBroadComparison, complete };
 }
 
+const classificationOwners = new WeakMap<object, typeof classifications>();
 const classifications = new WeakMap<
   object,
   WeakMap<object, WeakMap<object, Promise<CompilerChangeClassification>>>
@@ -71,10 +74,16 @@ const classifications = new WeakMap<
 export function classifyCompilerChanges(
   context: InspectionContext,
 ): Promise<CompilerChangeClassification> {
-  let targets = classifications.get(context.baselineInspection);
+  if (context.signal?.aborted) return Promise.reject(context.signal.reason);
+  let cache = classifications;
+  if (context.signal !== undefined) {
+    cache = classificationOwners.get(context.signal) ?? new WeakMap();
+    classificationOwners.set(context.signal, cache);
+  }
+  let targets = cache.get(context.baselineInspection);
   if (targets === undefined) {
     targets = new WeakMap();
-    classifications.set(context.baselineInspection, targets);
+    cache.set(context.baselineInspection, targets);
   }
   let scans = targets.get(context.targetInspection);
   if (scans === undefined) {

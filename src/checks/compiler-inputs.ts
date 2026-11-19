@@ -56,6 +56,7 @@ const decisions = new WeakMap<
     WeakMap<ChangeSet, Promise<CompilerInputRelevance>>
   >
 >();
+const decisionOwners = new WeakMap<object, typeof decisions>();
 const scopedDecisions = new WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
@@ -109,10 +110,16 @@ export function compilerInputRelevance(
   context: InspectionContext,
   workspace: WorkspaceInspection,
 ): Promise<CompilerInputRelevance> {
-  let targets = decisions.get(context.baselineInspection);
+  if (context.signal?.aborted) return Promise.reject(context.signal.reason);
+  let cache = decisions;
+  if (context.signal !== undefined) {
+    cache = decisionOwners.get(context.signal) ?? new WeakMap();
+    decisionOwners.set(context.signal, cache);
+  }
+  let targets = cache.get(context.baselineInspection);
   if (targets === undefined) {
     targets = new WeakMap();
-    decisions.set(context.baselineInspection, targets);
+    cache.set(context.baselineInspection, targets);
   }
   let scans = targets.get(context.targetInspection);
   if (scans === undefined) {
@@ -123,6 +130,7 @@ export function compilerInputRelevance(
   if (decision === undefined) {
     decision = resolveRelevance(context);
     scans.set(context.changeSet, decision);
+    void decision.catch(() => scans!.delete(context.changeSet));
   }
   void decision
     .then((value) => {
@@ -163,5 +171,6 @@ export function compilerInputRelevance(
     },
   );
   scoped.set(workspace, narrowed);
+  void narrowed.catch(() => scoped!.delete(workspace));
   return narrowed;
 }
