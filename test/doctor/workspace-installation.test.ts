@@ -14,6 +14,53 @@ async function diagnose(root: string) {
 }
 
 describe("doctor workspace installation readiness", () => {
+  it("treats an absent manifest behind a same-checkout source link as unverified", async () => {
+    const repo = await createGitRepository();
+    await repo.write("source/.keep", "");
+    await mkdir(join(repo.root, "node_modules/@types"), {
+      recursive: true,
+    });
+    await symlink(
+      join(repo.root, "source"),
+      join(repo.root, "node_modules/@types/node"),
+      "dir",
+    );
+    const result = await inspectWorkspaceInstallations(repo.root, [
+      {
+        relativeRoot: ".",
+        dependencyDeclarations: [
+          {
+            name: "@types/node",
+            specifier: "*",
+            section: "devDependencies",
+          },
+        ],
+      },
+    ]);
+    expect(result.status).toBe("warning");
+    expect(result.summary).toContain("could not verify");
+    expect(result.summary).not.toContain("Missing");
+  });
+
+  it("escapes unsafe Unicode workspace labels before display", async () => {
+    const repo = await createGitRepository();
+    const label = "pkg\u2028\u0085\u2066";
+    await mkdir(join(repo.root, label), { recursive: true });
+    const result = await inspectWorkspaceInstallations(repo.root, [
+      {
+        relativeRoot: label,
+        dependencyDeclarations: [
+          {
+            name: "@types/node",
+            specifier: "*",
+            section: "devDependencies",
+          },
+        ],
+      },
+    ]);
+    expect(result.summary).not.toMatch(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u);
+    expect(result.summary).toContain("pkg");
+  });
   // Regresses a directory-presence-only installation check: e2e's
   // node_modules exists while its explicitly declared type packages do not.
   it("reports missing declared typings in their independent project", async () => {
@@ -73,7 +120,10 @@ describe("doctor workspace installation readiness", () => {
     );
     await repo.write(".gitignore", "node_modules/\n");
     await repo.commitAll("fixture");
-    await repo.write("extension/node_modules/@types/chrome/package.json", "{}");
+    await repo.write(
+      "extension/node_modules/@types/chrome/package.json",
+      "{}",
+    );
     const linked = join(
       repo.root,
       "../",
@@ -87,7 +137,9 @@ describe("doctor workspace installation readiness", () => {
     });
 
     expect((await diagnose(linked)).status).toBe("warning");
-    await mkdir(join(linked, "extension/node_modules"), { recursive: true });
+    await mkdir(join(linked, "extension/node_modules"), {
+      recursive: true,
+    });
     await symlink(
       join(repo.root, "extension/node_modules/@types"),
       join(linked, "extension/node_modules/@types"),
@@ -126,7 +178,10 @@ describe("doctor workspace installation readiness", () => {
 
   it("checks selected staged declarations instead of unstaged manifest edits", async () => {
     const repo = await createGitRepository();
-    await repo.write("package.json", '{"devDependencies":{"@types/node":"*"}}');
+    await repo.write(
+      "package.json",
+      '{"devDependencies":{"@types/node":"*"}}',
+    );
     await repo.commitAll("fixture");
     await repo.write("package.json", "{}");
     expect((await diagnose(repo.root)).message).toContain("@types/node");
@@ -144,8 +199,13 @@ describe("doctor workspace installation readiness", () => {
 
   it("treats a dangling package link as unverified rather than absent", async () => {
     const repo = await createGitRepository();
-    await repo.write("package.json", '{"devDependencies":{"@types/node":"*"}}');
-    await mkdir(join(repo.root, "node_modules/@types"), { recursive: true });
+    await repo.write(
+      "package.json",
+      '{"devDependencies":{"@types/node":"*"}}',
+    );
+    await mkdir(join(repo.root, "node_modules/@types"), {
+      recursive: true,
+    });
     await symlink(
       join(repo.root, "missing"),
       join(repo.root, "node_modules/@types/node"),
@@ -166,7 +226,9 @@ describe("doctor workspace installation readiness", () => {
       "extension/package.json",
       '{"devDependencies":{"@types/node":"*"}}',
     );
-    await mkdir(join(repo.root, "extension/node_modules"), { recursive: true });
+    await mkdir(join(repo.root, "extension/node_modules"), {
+      recursive: true,
+    });
     await mkdir(join(outside.root, "typings/node"), { recursive: true });
     await symlink(
       join(outside.root, "typings"),
@@ -184,7 +246,10 @@ describe("doctor workspace installation readiness", () => {
   it("accepts a shared canonical root node_modules installation", async () => {
     const repo = await createGitRepository();
     const shared = await createGitRepository();
-    await repo.write("package.json", '{"devDependencies":{"@types/node":"*"}}');
+    await repo.write(
+      "package.json",
+      '{"devDependencies":{"@types/node":"*"}}',
+    );
     await shared.write("node_modules/@types/node/package.json", "{}");
     await symlink(
       join(shared.root, "node_modules"),
@@ -198,7 +263,10 @@ describe("doctor workspace installation readiness", () => {
 
   it("does not accept an oversized installed manifest as verified readiness", async () => {
     const repo = await createGitRepository();
-    await repo.write("package.json", '{"devDependencies":{"@types/node":"*"}}');
+    await repo.write(
+      "package.json",
+      '{"devDependencies":{"@types/node":"*"}}',
+    );
     await repo.write(
       "node_modules/@types/node/package.json",
       " ".repeat(1024 * 1024 + 1),

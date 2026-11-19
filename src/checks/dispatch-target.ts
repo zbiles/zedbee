@@ -1,3 +1,7 @@
+import {
+  INSTALLATION_MESSAGE,
+  INSTALLATION_REMEDIATION,
+} from "./installation-diagnostic.js";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
@@ -47,7 +51,9 @@ export async function executeDispatchTarget(
   options: {
     clock: () => number;
     emit: (event: ScanEvent) => void;
-    collectObservations: ReturnType<typeof createDispatchObservationCollector>;
+    collectObservations: ReturnType<
+      typeof createDispatchObservationCollector
+    >;
     collectFixes: boolean;
   },
 ): Promise<CheckExecutionResult> {
@@ -138,7 +144,9 @@ export async function executeDispatchTarget(
             : {
                 diagnostic: analyzerDiagnostic(
                   metadata.id,
-                  adapter.output === "observations" ? "collect" : "runLegacy",
+                  adapter.output === "observations"
+                    ? "collect"
+                    : "runLegacy",
                   "invalid-response",
                 ),
               }),
@@ -208,7 +216,9 @@ export async function executeDispatchTarget(
         ]),
         {
           checkId: adapter.id,
-          findingIds: policyDisplayResult.findings.map((finding) => finding.id),
+          findingIds: policyDisplayResult.findings.map(
+            (finding) => finding.id,
+          ),
         },
       );
     } catch (error) {
@@ -245,7 +255,18 @@ export async function executeDispatchTarget(
     checkId: adapter.id,
     target: target.id,
     timestamp: clock(),
-    result: sanitizeCheckResult(displayResult),
+    result: sanitizeCheckResult(
+      displayResult.error?.code === "COMPARISON_INSTALLATION_UNAVAILABLE"
+        ? {
+            ...displayResult,
+            error: {
+              ...displayResult.error,
+              message: INSTALLATION_MESSAGE,
+              remediation: INSTALLATION_REMEDIATION,
+            },
+          }
+        : displayResult,
+    ),
   });
   return executionResult(
     result,

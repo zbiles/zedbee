@@ -1,12 +1,20 @@
 import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  posix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import * as ts from "typescript";
 import picomatch from "picomatch";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   captureAnalysisDependencies,
   compilerPrograms,
+  isRetainedCompilerCapture,
 } from "./reuse-inputs.js";
 
 export type CompilerProgramPurpose = "types" | "lint" | "standalone";
@@ -71,7 +79,10 @@ function isBareSpecifier(specifier: string): boolean {
   );
 }
 
-function validateProjectSpecifier(sourcePath: string, specifier: string): void {
+function validateProjectSpecifier(
+  sourcePath: string,
+  specifier: string,
+): void {
   if (isBareSpecifier(specifier)) return;
   if (
     specifier.includes("\\") ||
@@ -95,10 +106,12 @@ export function createSnapshotProgram(
   const dependencies =
     input.dependencies ??
     captureAnalysisDependencies({ repositoryRoot: input.repositoryRoot });
-  const store = analysisStore<{
-    result: SnapshotProgram;
-    dependencies: CapturedDependencies;
-  }>(compilerPrograms);
+  const store = isRetainedCompilerCapture(dependencies)
+    ? analysisStore<{
+        result: SnapshotProgram;
+        dependencies: CapturedDependencies;
+      }>(compilerPrograms)
+    : undefined;
   const key =
     store === undefined
       ? undefined
@@ -120,7 +133,10 @@ export function createSnapshotProgram(
         bytes +
         program
           .getSourceFiles()
-          .reduce((size, source) => size + source.text.length * 32 + 4096, 0),
+          .reduce(
+            (size, source) => size + source.text.length * 32 + 4096,
+            0,
+          ),
       0,
     );
     store!.set(key, { result, dependencies }, estimatedBytes);
@@ -205,7 +221,8 @@ function createFreshSnapshotProgram(
           ? prepared.configFilePath
           : resolve(snapshotRoot, projectRootNames[0] ?? "index.ts"),
       );
-      const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
+      const projectPath =
+        repositoryPath(snapshotRoot, projectDirectory) ?? ".";
       let directory = resolve(repositoryRoot, projectPath);
       prepared.typeRoots = [];
       while (contained(repositoryRoot, directory)) {
@@ -223,7 +240,8 @@ function createFreshSnapshotProgram(
                 .directoryEntries(typeRoot)
                 .filter(
                   (entry) =>
-                    entry.type === "directory" && !entry.name.startsWith("."),
+                    entry.type === "directory" &&
+                    !entry.name.startsWith("."),
                 )
                 .map((entry) => entry.name),
             ),
@@ -234,7 +252,9 @@ function createFreshSnapshotProgram(
     return prepared;
   };
 
-  const createHost = (projectOptions: ts.CompilerOptions): ts.CompilerHost => {
+  const createHost = (
+    projectOptions: ts.CompilerOptions,
+  ): ts.CompilerHost => {
     const configDirectory =
       typeof projectOptions.configFilePath === "string"
         ? dirname(resolve(snapshotRoot, projectOptions.configFilePath))
@@ -246,7 +266,8 @@ function createFreshSnapshotProgram(
     const lookupDirectory = resolve(
       configDirectory,
       projectOptions.baseUrl ??
-        (projectOptions.paths !== undefined && typeof pathsBasePath === "string"
+        (projectOptions.paths !== undefined &&
+        typeof pathsBasePath === "string"
           ? pathsBasePath
           : configDirectory),
     );
@@ -316,7 +337,12 @@ function createFreshSnapshotProgram(
         }
         return undefined;
       },
-      getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile) {
+      getSourceFile(
+        path,
+        languageVersion,
+        onError,
+        shouldCreateNewSourceFile,
+      ) {
         const source = host.readFile(path);
         if (source === undefined) return undefined;
         return ts.createSourceFile(
@@ -326,14 +352,15 @@ function createFreshSnapshotProgram(
           true,
         );
       },
-      directoryExists: (path) => moduleHost.directoryExists?.(path) ?? false,
+      directoryExists: (path) =>
+        moduleHost.directoryExists?.(path) ?? false,
       getDirectories: (path) => moduleHost.getDirectories?.(path) ?? [],
       realpath: (path) => moduleHost.realpath?.(path) ?? path,
       readDirectory(rootDir, extensions, excludes, includes, depth) {
         const root = absolutePath(rootDir);
-        const includeMatchers = (includes.length > 0 ? includes : ["**/*"]).map(
-          (pattern) => picomatch(pattern, { dot: true }),
-        );
+        const includeMatchers = (
+          includes.length > 0 ? includes : ["**/*"]
+        ).map((pattern) => picomatch(pattern, { dot: true }));
         const excludeMatchers = (excludes ?? []).map((pattern) =>
           picomatch(pattern, { dot: true }),
         );
@@ -342,7 +369,8 @@ function createFreshSnapshotProgram(
           if (
             fromRoot === ".." ||
             fromRoot.startsWith("../") ||
-            (depth !== undefined && fromRoot.split("/").length - 1 > depth) ||
+            (depth !== undefined &&
+              fromRoot.split("/").length - 1 > depth) ||
             !extensions.some((extension) => path.endsWith(extension))
           ) {
             return false;
@@ -464,7 +492,9 @@ function createFreshSnapshotProgram(
           : { projectReferences: reference.commandLine.projectReferences }),
       });
       programs.push(referencedProgram);
-      addReferencedPrograms(referencedProgram.getResolvedProjectReferences());
+      addReferencedPrograms(
+        referencedProgram.getResolvedProjectReferences(),
+      );
     }
   };
   addReferencedPrograms(program.getResolvedProjectReferences());

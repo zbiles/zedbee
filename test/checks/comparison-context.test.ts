@@ -32,7 +32,7 @@ it.each(["contextual", "source-free"] as const)(
     } as unknown as import("typescript").Program;
     let failure: unknown;
     try {
-      assertRequiredInstallation({
+      await assertRequiredInstallation({
         programs: [program],
         repositoryRoot: fixture.root,
         inspection,
@@ -82,7 +82,11 @@ it("validates the exact public comparison metadata boundary", () => {
   for (const value of [
     { ...context, raw: "secret" },
     { ...context, status: "unverified" },
-    { ...context, status: "environment-incomplete", reason: "inputs-changed" },
+    {
+      ...context,
+      status: "environment-incomplete",
+      reason: "inputs-changed",
+    },
     { ...context, analyzerVersion: "/private/path" },
   ])
     expect(() => sanitizeComparisonContext(value)).toThrow();
@@ -119,7 +123,7 @@ it.each([
       getSourceFiles: () => [],
       getCompilerOptions: () => ({}),
     } as unknown as import("typescript").Program;
-    expect(() =>
+    await expect(
       assertRequiredInstallation({
         programs: [program],
         repositoryRoot: f.root,
@@ -128,8 +132,10 @@ it.each([
         dependencies: new CapturedDependencies({ repositoryRoot: f.root }),
         side: "target",
       }),
-    ).toThrow(
-      expect.objectContaining({ code: "COMPARISON_INSTALLATION_UNAVAILABLE" }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+      }),
     );
   },
 );

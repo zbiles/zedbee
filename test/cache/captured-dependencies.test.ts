@@ -53,10 +53,14 @@ describe("captured dependency view", () => {
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     expect(view.fileExists(join(live.root, "web/source.d.ts"))).toBe(false);
     expect(
-      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
+      view.fileExists(
+        join(live.root, "web/node_modules/example/index.d.ts"),
+      ),
     ).toBe(false);
     expect(
-      view.fileExists(join(live.root, "web/node_modules/external/index.d.ts")),
+      view.fileExists(
+        join(live.root, "web/node_modules/external/index.d.ts"),
+      ),
     ).toBe(false);
   });
 
@@ -66,33 +70,52 @@ describe("captured dependency view", () => {
       "web/node_modules/example/index.d.ts",
       "export const value: number;",
     );
-    const view = new CapturedDependencies({ repositoryRoot: live.root }, true);
+    const view = new CapturedDependencies(
+      { repositoryRoot: live.root },
+      true,
+    );
     expect(
-      view.fileExists(join(live.root, "web/node_modules/example/index.d.ts")),
+      view.fileExists(
+        join(live.root, "web/node_modules/example/index.d.ts"),
+      ),
     ).toBe(false);
   });
 
   it("serves the first captured bytes and rejects mutation before storage", async () => {
     const live = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const path = join(live.root, "node_modules/x/index.d.ts");
     expect(view.fileExists(path)).toBe(true);
-    await live.write("node_modules/x/index.d.ts", "export const x: string;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: string;",
+    );
     expect(view.readFile(path)).toBe("export const x: number;");
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(false);
   });
 
   it("revalidates live inputs even when called on the collecting view", async () => {
     const live = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     const path = join(live.root, "node_modules/x/index.d.ts");
     view.readFile(path);
     const manifest = view.manifest()!;
-    await live.write("node_modules/x/index.d.ts", "export const x: string;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: string;",
+    );
     expect(view.validate(manifest)).toBe(false);
     expect(view.readFile(path)).toBe("export const x: number;");
   });
@@ -110,14 +133,22 @@ describe("captured dependency view", () => {
     expect(view.fileExists(path)).toBe(false);
     expect(view.getDirectories(directory)).toEqual(["first"]);
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(false);
   });
 
   it("captures symlink targets and never calls a present denied file missing", async () => {
     const live = await createInspectionFixture();
-    await live.write("node_modules/a/index.d.ts", "export const x: number;");
-    await live.write("node_modules/b/index.d.ts", "export const x: string;");
+    await live.write(
+      "node_modules/a/index.d.ts",
+      "export const x: number;",
+    );
+    await live.write(
+      "node_modules/b/index.d.ts",
+      "export const x: string;",
+    );
     await live.symlink("a", "node_modules/linked");
     await live.write("outside.d.ts", "private source");
     await live.symlink("../outside.d.ts", "node_modules/denied.d.ts");
@@ -125,9 +156,9 @@ describe("captured dependency view", () => {
     expect(
       view.readFile(join(live.root, "node_modules/linked/index.d.ts")),
     ).toBe("export const x: number;");
-    expect(view.fileExists(join(live.root, "node_modules/denied.d.ts"))).toBe(
-      false,
-    );
+    expect(
+      view.fileExists(join(live.root, "node_modules/denied.d.ts")),
+    ).toBe(false);
     const manifest = view.manifest()!;
     expect(manifest.probes).toContainEqual(
       expect.objectContaining({
@@ -146,6 +177,67 @@ describe("captured dependency view", () => {
     ).toBe(false);
   });
 
+  it.each(["external", "source", "dangling"])(
+    "does not call an absent manifest behind a %s package link missing",
+    async (kind) => {
+      const live = await createInspectionFixture();
+      const external = await createInspectionFixture();
+      await live.write("node_modules/.keep", "");
+      await live.write("source/.keep", "");
+      const target =
+        kind === "external"
+          ? external.root
+          : kind === "source"
+            ? join(live.root, "source")
+            : join(external.root, "absent");
+      await live.symlink(target, "node_modules/pkg");
+      const view = new CapturedDependencies({ repositoryRoot: live.root });
+      expect(
+        view.fileExists(join(live.root, "node_modules/pkg/package.json")),
+      ).toBe(false);
+      expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "unreadable-input" });
+    },
+  );
+
+  it("captures negative compiler probes beneath ordinary files and trusted root ancestors", async () => {
+    const live = await createInspectionFixture();
+    await live.write("node_modules/x/index.d.ts", "export {};");
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(
+      view.fileExists(
+        join(live.root, "node_modules/x/index.d.ts/package.json"),
+      ),
+    ).toBe(false);
+    expect(
+      view.fileExists(
+        join(
+          live.root,
+          "../node_modules/absent-fixture-package/package.json",
+        ),
+      ),
+    ).toBe(false);
+    expect(view.manifest()).toBeDefined();
+  });
+
+  it("preserves proven truncation as input mutation rather than setup failure", async () => {
+    const live = await createInspectionFixture();
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    const read = vi.spyOn(fs, "readSync").mockImplementationOnce(() => 0);
+    syncBuiltinESMExports();
+    try {
+      view.readFile(join(live.root, "node_modules/x/index.d.ts"));
+      expect(view.failure()).toEqual({ reason: "inputs-changed" });
+    } finally {
+      read.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
   it.each(["utf16le", "utf16be", "utf8-bom"])(
     "preserves %s compiler decoding and validates served bytes",
     async (encoding) => {
@@ -160,7 +252,10 @@ describe("captured dependency view", () => {
               Buffer.from(encoding === "utf16le" ? [255, 254] : [254, 255]),
               encoding === "utf16le"
                 ? Buffer.from("export const x: number;", "utf16le")
-                : Buffer.from("export const x: number;", "utf16le").swap16(),
+                : Buffer.from(
+                    "export const x: number;",
+                    "utf16le",
+                  ).swap16(),
             ]),
       );
       const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -226,7 +321,10 @@ describe("captured dependency view", () => {
         roots: "a".repeat(64),
         probes: Array.from(
           { length: DEPENDENCY_LIMITS.probes + 1 },
-          (_, index) => ({ kind: "missing", path: `packages:${index}.d.ts` }),
+          (_, index) => ({
+            kind: "missing",
+            path: `packages:${index}.d.ts`,
+          }),
         ),
       }),
     ).toThrow();
@@ -251,13 +349,18 @@ describe("captured dependency view", () => {
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     view.readFile(join(live.root, "node_modules/x/index..d.ts"));
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(true);
   });
 
   it("bypasses cache when modification time changes during its descriptor read", async () => {
     const live = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     const path = join(live.root, "node_modules/x/index.d.ts");
     const metadata = fs.statSync(path);
     const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -269,7 +372,11 @@ describe("captured dependency view", () => {
         fs.writeFileSync(path, "export const x: string;");
         // Equal-length rewrites can share a timestamp on a fast filesystem.
         // Explicitly exercise the modification-time change being detected.
-        fs.utimesSync(path, metadata.atime, new Date(metadata.mtimeMs + 1000));
+        fs.utimesSync(
+          path,
+          metadata.atime,
+          new Date(metadata.mtimeMs + 1000),
+        );
         return result;
       });
     syncBuiltinESMExports();
@@ -295,6 +402,7 @@ describe("captured dependency view", () => {
       expect(view.fileExists(path)).toBe(true);
       expect(view.readFile(path)).toBeUndefined();
       expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "unreadable-input" });
     } finally {
       open.mockRestore();
       syncBuiltinESMExports();
@@ -326,7 +434,10 @@ describe("captured dependency view", () => {
   it("preserves allowed external aliases when their scope requires bypassing cache", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     await external.symlink(
       join(live.root, "node_modules/x/index.d.ts"),
       "alias.d.ts",
@@ -342,7 +453,10 @@ describe("captured dependency view", () => {
   it("does not erase an outside directory alias from the input identity", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     await external.symlink(join(live.root, "node_modules/x"), "alias");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     expect(view.readFile(join(external.root, "alias/index.d.ts"))).toBe(
@@ -363,7 +477,10 @@ describe("captured dependency view", () => {
   it("does not serve an outside file swapped in between containment and open", async () => {
     const live = await createInspectionFixture();
     const external = await createInspectionFixture();
-    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    await live.write(
+      "node_modules/x/index.d.ts",
+      "export const x: number;",
+    );
     await external.write("private.d.ts", "private-outside-source");
     const path = join(live.root, "node_modules/x/index.d.ts");
     const view = new CapturedDependencies({ repositoryRoot: live.root });
@@ -379,6 +496,7 @@ describe("captured dependency view", () => {
     try {
       expect(view.readFile(path)).toBeUndefined();
       expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "inputs-changed" });
     } finally {
       open.mockRestore();
       syncBuiltinESMExports();

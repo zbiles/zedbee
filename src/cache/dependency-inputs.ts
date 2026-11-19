@@ -55,7 +55,9 @@ export function isInstalledDependencyPath(path: string): boolean {
   );
 }
 
-export function dependencyPathParts(value: unknown): readonly [string, string] {
+export function dependencyPathParts(
+  value: unknown,
+): readonly [string, string] {
   if (typeof value !== "string" || value.length > 4096)
     throw new TypeError("Invalid dependency path");
   const separator = value.indexOf(":");
@@ -109,6 +111,11 @@ function hash(value: unknown): string {
   return value;
 }
 
+/** Charge the serialized representation, including JSON escaping and quotes. */
+export function dependencyTextBytes(value: string): number {
+  return Buffer.byteLength(JSON.stringify(value));
+}
+
 export function sanitizeDependencyInputManifest(
   value: unknown,
 ): DependencyInputManifest {
@@ -124,7 +131,7 @@ export function sanitizeDependencyInputManifest(
   let names = 0;
   let metadataBytes = 128;
   const charge = (text: string): void => {
-    metadataBytes += Buffer.byteLength(text) + 256;
+    metadataBytes += dependencyTextBytes(text) + 256;
     if (metadataBytes > DEPENDENCY_LIMITS.metadataBytes)
       throw new TypeError("Oversized dependency metadata");
   };

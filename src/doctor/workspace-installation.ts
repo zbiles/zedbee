@@ -60,7 +60,8 @@ export async function inspectWorkspaceInstallations(
     kind: InstallationGap["kind"],
   ) => {
     gapCount++;
-    if (gaps.length < MAX_REPORTED_GAPS) gaps.push({ workspace, name, kind });
+    if (gaps.length < MAX_REPORTED_GAPS)
+      gaps.push({ workspace, name, kind });
   };
   const probe = async (path: string) => {
     const cached = observed.get(path);
@@ -90,20 +91,30 @@ export async function inspectWorkspaceInstallations(
             ancestor = join(ancestor, component);
             try {
               const canonical = await realpath(ancestor);
+              const metadata = await lstat(ancestor);
+              if (
+                metadata.isSymbolicLink() &&
+                !supportedInstalledPath(checkout, rootPackages, canonical)
+              )
+                break;
               if (
                 !isContainedPath(checkout, canonical) &&
                 !supportedInstalledPath(checkout, rootPackages, canonical)
               )
                 break;
             } catch (ancestorError) {
-              if ((ancestorError as NodeJS.ErrnoException).code !== "ENOENT")
+              if (
+                (ancestorError as NodeJS.ErrnoException).code !== "ENOENT"
+              )
                 break;
               try {
                 // A dangling link exists lexically, but its target is not a
                 // supported installation. Only genuine absence is missing.
                 await lstat(ancestor);
               } catch (metadataError) {
-                if ((metadataError as NodeJS.ErrnoException).code === "ENOENT")
+                if (
+                  (metadataError as NodeJS.ErrnoException).code === "ENOENT"
+                )
                   result = "missing";
               }
               break;
@@ -134,7 +145,9 @@ export async function inspectWorkspaceInstallations(
       // Optional packages and peers may legitimately be absent. This deliberately
       // checks declared typings only, not every tool or source import.
       if (
-        !["dependencies", "devDependencies"].includes(declaration.section) ||
+        !["dependencies", "devDependencies"].includes(
+          declaration.section,
+        ) ||
         !declaration.name.startsWith("@types/")
       )
         continue;
@@ -176,7 +189,7 @@ export async function inspectWorkspaceInstallations(
     if (grouped.size > 0) {
       const locations = [...grouped].map(([workspace, names]) => {
         const label = workspace === "." ? "root" : workspace;
-        return `${/[\u0000-\u001f\u007f]/u.test(label) ? JSON.stringify(label) : label}: ${names.join(", ")}`;
+        return `${label.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`)}: ${names.join(", ")}`;
       });
       parts.push(
         `${kind === "missing" ? "Missing" : "Readiness could not verify"} declared @types packages (${locations.join("; ")}).`,

@@ -25,6 +25,7 @@ import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
   DEPENDENCY_LIMITS,
   dependencyPathParts,
+  dependencyTextBytes,
   isInstalledDependencyPath,
   sanitizeDependencyInputManifest,
   type DependencyInputManifest,
@@ -194,16 +195,77 @@ export class CapturedDependencies {
       this.snapshotOnly === "knip" &&
       basename(real) === "package.json" &&
       contained(repository, real) &&
-      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
+      isInstalledDependencyPath(
+        relative(repository, real).split(sep).join("/"),
+      )
     )
       return ["repository", repository];
     if (
       !this.snapshotOnly &&
       contained(repository, real) &&
-      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
+      isInstalledDependencyPath(
+        relative(repository, real).split(sep).join("/"),
+      )
     )
       return ["repository", repository];
     return undefined;
+  }
+
+  /** Missing leaves are trustworthy only after checking their nearest existing
+   * ancestor. A package link into live source, outside, or nowhere is denied. */
+  private supportedAbsence(absolute: string): boolean {
+    let parent = dirname(absolute);
+    for (let depth = 0; depth < 128; depth++) {
+      try {
+        const real = realpathSync(parent);
+        const metadata = statSync(real);
+        if (!metadata.isDirectory() && !metadata.isFile()) return false;
+        const mappings = [
+          ...Object.entries(this.aliases),
+          ...Object.entries(this.roots),
+        ];
+        const mapping = mappings
+          .sort((a, b) => b[1].length - a[1].length)
+          .find(([, alias]) => contained(alias, parent));
+        if (
+          mapping !== undefined &&
+          real ===
+            resolve(this.roots[mapping[0]]!, relative(mapping[1], parent))
+        )
+          return true;
+        if (
+          mappings.some(
+            ([name, alias]) =>
+              contained(parent, alias) &&
+              resolve(real, relative(parent, alias)) === this.roots[name],
+          )
+        )
+          return true;
+        return this.allowedRoot(real) !== undefined;
+      } catch (error) {
+        if (
+          !["ENOENT", "ENOTDIR"].includes(
+            (error as NodeJS.ErrnoException).code ?? "",
+          )
+        )
+          return false;
+        try {
+          lstatSync(parent);
+          return false;
+        } catch (missing) {
+          if (
+            !["ENOENT", "ENOTDIR"].includes(
+              (missing as NodeJS.ErrnoException).code ?? "",
+            )
+          )
+            return false;
+        }
+      }
+      const next = dirname(parent);
+      if (next === parent) return false;
+      parent = next;
+    }
+    return false;
   }
 
   private identify(path: string): string {
@@ -217,7 +279,8 @@ export class CapturedDependencies {
             : 0
         : 0;
     for (const [name, root] of Object.entries(this.aliases).sort(
-      (a, b) => b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
+      (a, b) =>
+        b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
     )) {
       if (contained(root, absolute))
         return `${name}:${relative(root, absolute).split(sep).join("/") || "."}`;
@@ -250,7 +313,8 @@ export class CapturedDependencies {
   private path(identifier: string): string {
     const [name, path] = dependencyPathParts(identifier);
     const root = this.roots[name];
-    if (root === undefined) throw new TypeError("Unavailable dependency root");
+    if (root === undefined)
+      throw new TypeError("Unavailable dependency root");
     return resolve(root, ...path.split("/"));
   }
 
@@ -261,7 +325,10 @@ export class CapturedDependencies {
       this.capacity("metadataBytes", this.metadataBytes);
       return false;
     }
-    if (this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes) {
+    if (
+      this.entries.size + this.listings.size >=
+      DEPENDENCY_LIMITS.probes
+    ) {
       this.capacity("probes", this.entries.size + this.listings.size + 1);
       return false;
     }
@@ -303,7 +370,9 @@ export class CapturedDependencies {
           this.bytes + bytes.length > DEPENDENCY_LIMITS.bytes
         ) {
           this.capacity(
-            bytes.length > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            bytes.length > DEPENDENCY_LIMITS.fileBytes
+              ? "fileBytes"
+              : "bytes",
             bytes.length > DEPENDENCY_LIMITS.fileBytes
               ? bytes.length
               : this.bytes + bytes.length,
@@ -324,7 +393,15 @@ export class CapturedDependencies {
           bytes,
         };
         this.bytes += bytes.length;
-        if (!this.retain(Buffer.byteLength(identifier) + 512))
+        if (
+          !this.retain(
+            dependencyTextBytes(identifier) +
+              512 +
+              dependencyTextBytes(
+                `${name}:${relative(root, real).split(sep).join("/")}`,
+              ),
+          )
+        )
           throw new RangeError("Snapshot capture capacity");
         this.entries.set(identifier, entry);
         return entry;
@@ -352,7 +429,9 @@ export class CapturedDependencies {
           this.bytes + metadata.size > DEPENDENCY_LIMITS.bytes
         ) {
           this.capacity(
-            metadata.size > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            metadata.size > DEPENDENCY_LIMITS.fileBytes
+              ? "fileBytes"
+              : "bytes",
             metadata.size > DEPENDENCY_LIMITS.fileBytes
               ? metadata.size
               : this.bytes + metadata.size,
@@ -375,8 +454,10 @@ export class CapturedDependencies {
             before.dev !== metadata.dev ||
             before.ino !== metadata.ino ||
             canonical(absolute) !== real
-          )
+          ) {
+            this.fail({ reason: "inputs-changed" });
             throw new Error("Changed dependency path");
+          }
           if (
             !before.isFile() ||
             before.size > DEPENDENCY_LIMITS.fileBytes ||
@@ -393,7 +474,10 @@ export class CapturedDependencies {
               buffer.length - offset,
               offset,
             );
-            if (count === 0) throw new Error("Changed dependency input");
+            if (count === 0) {
+              this.fail({ reason: "inputs-changed" });
+              throw new Error("Changed dependency input");
+            }
             offset += count;
           }
           const after = fstatSync(fd);
@@ -432,6 +516,8 @@ export class CapturedDependencies {
       }
     } catch (error) {
       if (fallback !== undefined) {
+        if (canonical(absolute) !== fallback.passthrough)
+          this.fail({ reason: "inputs-changed" });
         this.fail({ reason: "unreadable-input" });
         if (this.snapshotOnly) throw error;
         return fallback;
@@ -443,9 +529,10 @@ export class CapturedDependencies {
         try {
           lstatSync(absolute);
         } catch (missing) {
-          absent = ["ENOENT", "ENOTDIR"].includes(
-            (missing as NodeJS.ErrnoException).code ?? "",
-          );
+          absent =
+            ["ENOENT", "ENOTDIR"].includes(
+              (missing as NodeJS.ErrnoException).code ?? "",
+            ) && this.supportedAbsence(absolute);
         }
       }
       if (absent) entry = { probe: { kind: "missing", path: identifier } };
@@ -464,10 +551,10 @@ export class CapturedDependencies {
     }
     if (
       this.retain(
-        Buffer.byteLength(identifier) +
+        dependencyTextBytes(identifier) +
           512 +
           (entry.probe.kind === "file"
-            ? Buffer.byteLength(entry.probe.realPath)
+            ? dependencyTextBytes(entry.probe.realPath)
             : 0),
       )
     )
@@ -487,7 +574,8 @@ export class CapturedDependencies {
   }
   /** Exact captured bytes for the controlled Knip filesystem. Never passthrough. */
   readBytes(path: string, expectedCanonicalPath?: string): Buffer {
-    if (!this.snapshotOnly) throw new TypeError("Snapshot capture required");
+    if (!this.snapshotOnly)
+      throw new TypeError("Snapshot capture required");
     const entry = this.capture(path);
     if (entry.bytes === undefined)
       throw new TypeError("Unavailable snapshot bytes");
@@ -561,7 +649,8 @@ export class CapturedDependencies {
     if (previous !== undefined) return previous.names;
     const captured = this.capture(absolute);
     const entry = captured.probe;
-    if (entry.kind === "missing" || captured.unavailable === true) return [];
+    if (entry.kind === "missing" || captured.unavailable === true)
+      return [];
     if (entry.kind !== "entry" || entry.entryType !== "directory")
       throw new TypeError("Expected dependency directory");
     try {
@@ -584,10 +673,10 @@ export class CapturedDependencies {
       }
       if (
         !this.retain(
-          Buffer.byteLength(identifier) +
+          dependencyTextBytes(identifier) +
             256 +
             names.reduce(
-              (bytes, item) => bytes + Buffer.byteLength(item.name) + 256,
+              (bytes, item) => bytes + dependencyTextBytes(item.name) + 256,
               0,
             ),
         )

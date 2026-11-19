@@ -39,7 +39,8 @@ it("compares identical worktrees using their own installation through one servic
   const scratch = await realpath(await mkdtemp(join(tmpdir(), "zi-")));
   const other = join(scratch, "w");
   expect(
-    (await repo.git(["worktree", "add", "--detach", other, "HEAD"])).exitCode,
+    (await repo.git(["worktree", "add", "--detach", other, "HEAD"]))
+      .exitCode,
   ).toBe(0);
   for (const root of [repo.root, other]) {
     await writeFile(
@@ -56,7 +57,10 @@ it("compares identical worktrees using their own installation through one servic
     "node_modules/react/jsx-runtime.d.ts",
     "export namespace JSX { interface IntrinsicElements { div: {}; } }\nexport function jsx(...args: unknown[]): unknown;\n",
   );
-  const options = { directory: join(scratch, "s"), concurrency: 1 as const };
+  const options = {
+    directory: join(scratch, "s"),
+    concurrency: 1 as const,
+  };
   const executor = await acquireServiceExecutor(options);
   const cache = new ObservationCacheStore({ root: join(scratch, "cache") });
   try {
@@ -87,3 +91,133 @@ it("compares identical worktrees using their own installation through one servic
     await rm(scratch, { recursive: true, force: true });
   }
 });
+
+it.each(["local", "service"] as const)(
+  "%s completes a linked worktree upgrade with verified installations across cold and warm caches",
+  async (mode) => {
+    const repo = await createGitRepository("zedbee-upgrade-worktree-");
+    const manifest = {
+      name: "fixture",
+      version: "1.0.0",
+      devDependencies: { "@types/node": "26.0.0", zedbee: "0.1.0-beta.17" },
+    };
+    await repo.write(".gitignore", "node_modules/\n");
+    await repo.write("package.json", JSON.stringify(manifest));
+    await repo.write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true },
+        include: ["src"],
+      }),
+    );
+    await repo.write(
+      "src/value.ts",
+      "export const value = process.version;\n",
+    );
+    await repo.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: Object.fromEntries(
+          CHECK_IDS.map((id) => [
+            id,
+            ["types", "lint"].includes(id) ? "error" : "off",
+          ]),
+        ),
+      }),
+    );
+    await repo.commitAll("before upgrade");
+    const scratch = await realpath(await mkdtemp(join(tmpdir(), "zu-")));
+    const other = join(scratch, "w");
+    await repo.git(["worktree", "add", "--detach", other, "HEAD"]);
+    await writeFile(
+      join(other, "package.json"),
+      JSON.stringify({
+        ...manifest,
+        devDependencies: {
+          ...manifest.devDependencies,
+          zedbee: "0.1.0-beta.18",
+        },
+      }),
+    );
+    await execa("git", ["add", "package.json"], { cwd: other });
+    const { mkdir } = await import("node:fs/promises");
+    const install = async () => {
+      await mkdir(join(other, "node_modules/@types/node"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(other, "node_modules/@types/node/package.json"),
+        JSON.stringify({
+          name: "@types/node",
+          version: "26.0.0",
+          types: "index.d.ts",
+        }),
+      );
+      await writeFile(
+        join(other, "node_modules/@types/node/index.d.ts"),
+        "declare const process: { version: string };\n",
+      );
+    };
+    await install();
+    const options = {
+      directory: join(scratch, "s"),
+      concurrency: 1 as const,
+    };
+    const executor =
+      mode === "service"
+        ? await acquireServiceExecutor(options)
+        : undefined;
+    const cache = new ObservationCacheStore({
+      root: join(scratch, "cache"),
+    });
+    try {
+      for (const selectedCache of [false, cache, cache] as const) {
+        const report = await runScan({
+          repositoryRoot: other,
+          cache: selectedCache,
+          ...(executor ? { executor } : {}),
+        });
+        expect(report.outcome, JSON.stringify(report)).toBe("pass");
+        expect(report.checks).toHaveLength(2);
+        expect(
+          report.checks.every(
+            (check) =>
+              check.status === "completed" &&
+              check.comparisonContext?.status === "comparable",
+          ),
+        ).toBe(true);
+      }
+      await rm(join(other, "node_modules/@types/node"), {
+        recursive: true,
+      });
+      const partial = await runScan({
+        repositoryRoot: other,
+        cache,
+        ...(executor ? { executor } : {}),
+      });
+      expect(partial.outcome).toBe("incomplete");
+      expect(
+        partial.checks.every(
+          (check) =>
+            check.error?.code === "COMPARISON_INSTALLATION_UNAVAILABLE",
+        ),
+      ).toBe(true);
+      await install();
+      expect(
+        (
+          await runScan({
+            repositoryRoot: other,
+            cache,
+            ...(executor ? { executor } : {}),
+          })
+        ).outcome,
+      ).toBe("pass");
+    } finally {
+      await executor?.close();
+      if (executor) await stopService(options);
+      await repo.git(["worktree", "remove", "--force", other]);
+      await rm(scratch, { recursive: true, force: true });
+    }
+  },
+);

@@ -5,7 +5,14 @@ import { builtinModules, createRequire } from "node:module";
 const typescriptVersion: string = createRequire(import.meta.url)(
   "typescript/package.json",
 ).version;
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
 import type { CapturedDependencies } from "../cache/captured-dependencies.js";
@@ -25,7 +32,9 @@ export interface ComparisonContext {
   readonly analyzerVersion: string;
   readonly analyzerRevision: "comparison-context-v1";
 }
-export function sanitizeComparisonContext(value: unknown): ComparisonContext {
+export function sanitizeComparisonContext(
+  value: unknown,
+): ComparisonContext {
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new TypeError("Invalid comparison context");
   const v = value as Record<string, unknown>;
@@ -53,7 +62,8 @@ export function sanitizeComparisonContext(value: unknown): ComparisonContext {
       "unsupported-inputs",
     ].includes(String(v.reason)) ||
     ![v.swarmVersion, v.analyzerVersion].every(
-      (x) => typeof x === "string" && /^[0-9][0-9A-Za-z.+-]{0,127}$/u.test(x),
+      (x) =>
+        typeof x === "string" && /^[0-9][0-9A-Za-z.+-]{0,127}$/u.test(x),
     )
   )
     throw new TypeError("Invalid comparison context");
@@ -92,7 +102,7 @@ function packageName(specifier: string): string | undefined {
 }
 /** An unresolved lookup alone does not prove a missing install. Require an
  * applicable declaration and captured absent package manifests. */
-export function assertRequiredInstallation(options: {
+export async function assertRequiredInstallation(options: {
   programs: readonly ts.Program[];
   repositoryRoot: string;
   inspection: RepositoryInspection;
@@ -100,7 +110,7 @@ export function assertRequiredInstallation(options: {
   dependencies: CapturedDependencies;
   side: "baseline" | "target";
   diagnosticMessages?: DiagnosticMessagePolicy;
-}): void {
+}): Promise<void> {
   const { inspection, workspace, dependencies, repositoryRoot } = options;
   const declared = new Set(
     inspection.workspaces
@@ -124,13 +134,16 @@ export function assertRequiredInstallation(options: {
         )
         .flatMap((file) => program.getSemanticDiagnostics(file)),
     ]) {
-      if (![2307, 2591, 2688, 2875, 7016].includes(diagnostic.code)) continue;
+      if (![2307, 2591, 2688, 2875, 7016].includes(diagnostic.code))
+        continue;
       const text =
         typeof diagnostic.messageText === "string"
           ? diagnostic.messageText
           : diagnostic.messageText.messageText;
       const specifier =
-        /(?:module path|module|definition file for) '([^']+)'/u.exec(text)?.[1];
+        /(?:module path|module|definition file for) '([^']+)'/u.exec(
+          text,
+        )?.[1];
       const moduleName =
         diagnostic.code === 2591
           ? "@types/node"
@@ -177,7 +190,12 @@ export function assertRequiredInstallation(options: {
         let installed = false;
         const searched: string[] = [];
         for (;;) {
-          const manifestPath = join(path, "node_modules", name, "package.json");
+          const manifestPath = join(
+            path,
+            "node_modules",
+            name,
+            "package.json",
+          );
           searched.push(
             path === resolve(repositoryRoot)
               ? `packages:${name}/package.json`
@@ -198,7 +216,9 @@ export function assertRequiredInstallation(options: {
           searched.includes(p.path),
         );
         if (
-          relevant?.some((p) => p.kind === "entry" && p.entryType === "denied")
+          relevant?.some(
+            (p) => p.kind === "entry" && p.entryType === "denied",
+          )
         )
           throw new CheckIncompleteError({
             code: "COMPARISON_INPUTS_UNVERIFIED",
@@ -218,16 +238,29 @@ export function assertRequiredInstallation(options: {
         }
       }
       if (unavailable === undefined) continue;
+      const {
+        reviewedInstallationLabels,
+        INSTALLATION_MESSAGE,
+        INSTALLATION_REMEDIATION,
+      } = await import("./installation-diagnostic.js");
+      const labels =
+        options.diagnosticMessages === "source-free"
+          ? undefined
+          : await reviewedInstallationLabels(
+              inspection,
+              workspace,
+              unavailable,
+            );
       throw new CheckIncompleteError({
         code: "COMPARISON_INSTALLATION_UNAVAILABLE",
         message:
-          options.diagnosticMessages === "source-free"
-            ? "Analysis is incomplete because a package required by this workspace's declared dependencies is unavailable. Installation prerequisites could not be verified."
-            : `Analysis is incomplete because declared package '${unavailable}' is unavailable to workspace '${workspace.relativeRoot}' in the ${options.side} snapshot.`,
+          labels === undefined
+            ? INSTALLATION_MESSAGE
+            : `Analysis is incomplete because declared package '${labels.name}' is unavailable to workspace '${labels.workspace}' in the ${options.side} snapshot.`,
         remediation:
-          options.diagnosticMessages === "source-free"
-            ? "Install this workspace's declared dependencies using its package manager and rerun the scan."
-            : `Restore '${unavailable}' using this workspace's package-manager and lockfile workflow, then rerun the scan.`,
+          labels === undefined
+            ? INSTALLATION_REMEDIATION
+            : `Restore '${labels.name}' using this workspace's package-manager and lockfile workflow, then rerun the scan.`,
         path: workspace.manifestPath,
         snapshot: options.side === "baseline" ? "last-commit" : "staged",
       });
