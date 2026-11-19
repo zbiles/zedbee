@@ -365,7 +365,7 @@ export async function proveCompilerWorkspaceIndependence(
               visit(tree);
               if (unsafe) return unknown;
             }
-            continue;
+            // Static source closure still needs the normal library witnesses.
           }
           if (
             options.plugins !== undefined ||
@@ -537,6 +537,8 @@ export async function proveCompilerWorkspaceIndependence(
               ? texts.get(path)
               : dependencies.readFile(path);
             if (source === undefined) return unknown;
+            if (local && /@jsx(?:ImportSource|Runtime|Frag)?\b/iu.test(source))
+              return unknown;
             const pre = ts.preProcessFile(source, true, true);
             edges +=
               pre.importedFiles.length * 2 +
@@ -549,7 +551,7 @@ export async function proveCompilerWorkspaceIndependence(
               source,
               ts.ScriptTarget.Latest,
               true,
-              path.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+              /x$/iu.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
             );
             // Nonliteral module loaders and shadowed require are not a closed graph.
             let unsafe = false;
@@ -618,7 +620,7 @@ export async function proveCompilerWorkspaceIndependence(
             }
             if (
               local &&
-              /x$/u.test(path) &&
+              /x$/iu.test(path) &&
               (options.jsx === ts.JsxEmit.ReactJSX ||
                 options.jsx === ts.JsxEmit.ReactJSXDev)
             ) {

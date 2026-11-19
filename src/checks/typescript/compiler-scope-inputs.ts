@@ -144,6 +144,19 @@ export async function loadCompilerScopeInputs(
       workspace.relativeRoot === "."
         ? "tsconfig.json"
         : `${workspace.relativeRoot}/tsconfig.json`;
+    // Root discovery uses the full captured names, without loading foreign
+    // source text. A reference/include outside our bounded source view cannot
+    // silently become an empty, supposedly covered project.
+    const inventory = new Map(files);
+    let inventoryBytes = 0;
+    for (const side of inspection.workspaces)
+      for (const path of side.sourceFiles) {
+        inventoryBytes += path.length * 2 + 128;
+        if (inventory.size >= 20000 || inventoryBytes > 4 * 1024 * 1024)
+          throw new ProofLimit();
+        const absolute = resolve(inspection.snapshotRoot, path);
+        if (!inventory.has(absolute)) inventory.set(absolute, "");
+      }
     const projects: ScopeProject[] = [];
     for (const [configPath, config] of configs) {
       if (
@@ -159,7 +172,7 @@ export async function loadCompilerScopeInputs(
       const absolute = resolve(inspection.snapshotRoot, configPath);
       const parsed = typescript.parseJsonConfigFileContent(
         config,
-        configHost(inspection.snapshotRoot, files),
+        configHost(inspection.snapshotRoot, inventory),
         resolve(absolute, ".."),
         undefined,
         absolute,

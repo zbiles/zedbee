@@ -237,3 +237,22 @@ it("does not reuse cancelled change classifications or another owner", async () 
     name: "AbortError",
   });
 });
+it("does not declare external referenced roots covered by a workspace-only source inventory", async () => {
+  const { f, workspace } = await fixture();
+  await f.writeJson("package.json", { workspaces: ["extension", "web"] });
+  await f.writeJson("web/package.json", { name: "web" });
+  await f.writeJson("web/tsconfig.json", {
+    compilerOptions: { types: [] },
+    include: ["src"],
+  });
+  await f.write("web/src/shared.ts", "export const shared=1;");
+  await f.writeJson("extension/tsconfig.json", {
+    compilerOptions: { types: [] },
+    include: ["src"],
+    references: [{ path: "../web/tsconfig.json" }],
+  });
+  const inspection = await inspectRepository(f.root);
+  expect((await loadCompilerScopeInputs(inspection, workspace)).complete).toBe(
+    false,
+  );
+});

@@ -476,3 +476,67 @@ it("follows builtin ambient types and standard library references without assumi
     (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
   ).toBe(false);
 });
+it("retains cross-workspace project references even when no direct import names the changed source", async () => {
+  const { f, context, workspace } = await fixture();
+  await f.writeJson("extension/tsconfig.json", {
+    compilerOptions: {
+      types: [],
+      module: "ESNext",
+      moduleResolution: "Bundler",
+    },
+    include: ["src"],
+    references: [{ path: "../web/tsconfig.json" }],
+  });
+  expect(
+    (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
+  ).toBe(false);
+});
+it("keeps per-file JSX runtime pragmas outside the optimization proof", async () => {
+  const { f, context, workspace } = await fixture(
+    "/** @jsxImportSource custom */\nexport const Popup=()=> <div/>;",
+  );
+  await f.writeJson("extension/tsconfig.json", {
+    compilerOptions: {
+      types: [],
+      jsx: "react-jsx",
+      module: "ESNext",
+      moduleResolution: "Bundler",
+      baseUrl: ".",
+      paths: { "custom/jsx-runtime": ["../web/src/local.ts"] },
+    },
+    include: ["src"],
+  });
+  await f.writeJson("extension/node_modules/react/package.json", {
+    name: "react",
+    types: "index.d.ts",
+  });
+  await f.write(
+    "extension/node_modules/react/jsx-runtime.d.ts",
+    "export declare const jsx: unknown;",
+  );
+  expect(
+    (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
+  ).toBe(false);
+});
+it("keeps default library replacements in the proof for import-free NodeNext projects", async () => {
+  const { f, context, workspace } = await fixture("export const value=1;");
+  await f.writeJson("extension/tsconfig.json", {
+    compilerOptions: {
+      types: [],
+      module: "NodeNext",
+      moduleResolution: "NodeNext",
+    },
+    include: ["src"],
+  });
+  await f.writeJson("extension/node_modules/@typescript/lib-dom/package.json", {
+    name: "@typescript/lib-dom",
+    types: "index.d.ts",
+  });
+  await f.write(
+    "extension/node_modules/@typescript/lib-dom/index.d.ts",
+    'export {value} from "../../../web/src/local";',
+  );
+  expect(
+    (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
+  ).toBe(false);
+});
