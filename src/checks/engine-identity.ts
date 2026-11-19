@@ -70,7 +70,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: `zedbee-react-calibration-v3-source-moves+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
+    revision: `zedbee-react-calibration-v3-source-moves+changed-local-files-v1+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -79,7 +79,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
-    revision: "diagnostic-privacy-v1+focusable-separator-v2",
+    revision: "diagnostic-privacy-v1+focusable-separator-v2+changed-local-files-v1",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

@@ -156,7 +156,7 @@ describe("reactAccessibilityAdapter", () => {
   });
 
   it("applies custom component, attribute, and polymorphic settings per file", async () => {
-    const { fixtures, run } = await accessibilityContext({
+    const { fixtures, run, changedFiles } = await accessibilityContext({
       react: "19.0.0",
       "react-dom": "19.0.0",
     });
@@ -175,6 +175,11 @@ describe("reactAccessibilityAdapter", () => {
         '<Splitter role="separator" tabIndex={0} aria-valuenow={50} onKeyDown={() => {}} />',
     };
     for (const [path, source] of Object.entries(sources)) {
+      changedFiles.set(path, {
+        path,
+        status: "modified",
+        addedRanges: [{ start: 1, end: 1 }],
+      });
       await fixtures.staged.write(
         path,
         `export const App = () => ${source};\n`,
