@@ -275,7 +275,11 @@ function dependencyNames(
   return names;
 }
 
-async function autoChoice(root: string): Promise<ResolvedHookChoice> {
+/** Data-only selection shared by setup and read-only hook maintenance advice. */
+export async function detectHookChoice(
+  root: string,
+  inspected?: { readonly manifest: Record<string, unknown> | undefined },
+): Promise<ResolvedHookChoice> {
   try {
     const custom = await customGitHookPath(root);
     if (
@@ -287,7 +291,8 @@ async function autoChoice(root: string): Promise<ResolvedHookChoice> {
   } catch {
     return "none";
   }
-  const manifest = await packageData(root);
+  const manifest =
+    inspected === undefined ? await packageData(root) : inspected.manifest;
   const dependencies = dependencyNames(manifest);
   if (
     (
@@ -344,7 +349,7 @@ export async function detectHookIntegration(
 ): Promise<DetectedHookIntegration> {
   repositoryRoot = await realpath(repositoryRoot);
   if (requested === "tracked") {
-    const existing = await autoChoice(repositoryRoot);
+    const existing = await detectHookChoice(repositoryRoot);
     if (existing !== "raw" && existing !== "none")
       return detectHookIntegration(
         repositoryRoot,
@@ -423,7 +428,7 @@ export async function detectHookIntegration(
     });
   }
   const hook =
-    requested === "auto" ? await autoChoice(repositoryRoot) : requested;
+    requested === "auto" ? await detectHookChoice(repositoryRoot) : requested;
   if (hook === "none") {
     return Object.freeze({
       hook,

@@ -22,6 +22,7 @@ import { hasZedbeeScanCommand } from "../hooks/husky.js";
 import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
+import { getHookUpdateNotice } from "../hooks/update-notice.js";
 import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
@@ -124,6 +125,15 @@ async function regularFileContents(path: string): Promise<string | undefined> {
 }
 
 async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
+  const hookUpdate = await getHookUpdateNotice(root);
+  if (hookUpdate !== undefined) {
+    return {
+      id: "hook-state",
+      status: "warning",
+      message: hookUpdate.message,
+      remediation: hookUpdate.remediation,
+    };
+  }
   const hookOutput = await new GitClient(root).run([
     "rev-parse",
     "--git-path",

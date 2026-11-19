@@ -8,6 +8,7 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
+import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 
 function serializeFinding(
   finding: Finding,
@@ -145,6 +146,9 @@ export function renderJson(report: ScanReport): string {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
+    ...(hookUpdateNotice(report) === undefined
+      ? {}
+      : { hookUpdate: hookUpdateNotice(report) }),
     repositoryRoot: ".",
     mode: source.mode,
     baseline: source.baseline,

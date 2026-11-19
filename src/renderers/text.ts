@@ -1,4 +1,8 @@
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
+import {
+  hookUpdateNotice,
+  HOOK_UPDATE_TITLE,
+} from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
@@ -58,6 +62,7 @@ const PRIMARY_TEXT_HEADINGS = new Set([
   "REPORT DELIVERY WARNING",
   "INCOMPLETE CHECKS",
   "SCAN RESULT",
+  HOOK_UPDATE_TITLE,
   "NEXT STEP",
   "COMPLETE REPORT",
 ]);
@@ -469,6 +474,19 @@ function skippedReasonLines(
     );
 }
 
+function hookUpdateLines(report: ScanReport, width: number): string[] {
+  const notice = hookUpdateNotice(report);
+  return notice === undefined
+    ? []
+    : [
+        "",
+        HOOK_UPDATE_TITLE,
+        ...wrapWords(notice.message, width),
+        ...wrapWords(notice.remediation, width),
+        "",
+      ];
+}
+
 function automaticTextLines(
   report: ScanReport,
   sanitized: ReturnType<typeof validateReportDisplayStrings>,
@@ -515,6 +533,7 @@ function automaticTextLines(
     ...automaticHeadline(report, presentation).flatMap((line) =>
       wrapWords(line, width),
     ),
+    ...hookUpdateLines(report, width),
     "",
     ...calloutLines(
       callouts.closing,
@@ -608,6 +627,7 @@ export function renderText(
         }).summaryFindings;
   const lines = [
     ...headline(report).flatMap((line) => wrapWords(line, width)),
+    ...hookUpdateLines(report, width),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(report, width, options.verbose === true),
     ...incompleteSectionLines(sanitized.checks, width),

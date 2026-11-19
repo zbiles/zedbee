@@ -3,6 +3,7 @@ import type { CheckResult, RunSummary } from "../core/types.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
 import type { ScanMode } from "./source-mode.js";
 import type { PathExclusion } from "../config/schema.js";
+import type { HookUpdateNotice } from "../reporting/hook-update-notice.js";
 
 export interface NetworkDisclosure {
   readonly checkId: string;
@@ -25,6 +26,8 @@ export interface ScanReport {
   repositoryRoot: string;
   /** Host-resolved output guidance only; analyzer/cache commands stay canonical. */
   readonly installedCliCommand?: readonly string[];
+  /** Local hook maintenance advice, independent of analyzer findings/outcome. */
+  readonly hookUpdate?: HookUpdateNotice;
   readonly mode: ScanMode;
   readonly mergeParents?: readonly string[];
   readonly baseline: "HEAD" | string | null;

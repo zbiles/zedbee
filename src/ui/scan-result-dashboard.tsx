@@ -1,4 +1,8 @@
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
+import {
+  hookUpdateNotice,
+  HOOK_UPDATE_TITLE,
+} from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
@@ -484,6 +488,7 @@ export function ScanResultDashboard({
   readonly color: boolean;
 }) {
   const panelWidth = brandedCommandContentWidth(width);
+  const hookUpdate = hookUpdateNotice(report);
   const sections = buildScanResultSections(report, presentation);
   const callouts = buildReportCallouts(
     presentation,
@@ -545,6 +550,26 @@ export function ScanResultDashboard({
             color={color}
           />
         </BrandedCommandPanel>
+        {hookUpdate === undefined ? null : (
+          <BrandedCommandPanel
+            title={HOOK_UPDATE_TITLE}
+            width={panelWidth}
+            color={color}
+          >
+            <Box flexDirection="column" paddingX={2} marginY={1}>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                {hookUpdate.message}
+              </Text>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                Run{" "}
+                <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+                  zedbee init
+                </Text>{" "}
+                to refresh them.
+              </Text>
+            </Box>
+          </BrandedCommandPanel>
+        )}
         {callouts.closing.length === 0 ? null : (
           <BrandedCommandPanel
             title="NEXT STEPS"
