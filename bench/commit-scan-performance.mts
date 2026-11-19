@@ -263,20 +263,26 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
         ...(options.cache === "uncached" ? ["--no-cache"] : []),
       ];
       const roots: number[] = [];
+      let serviceOwnershipKnown = options.execution !== "service";
       if (options.execution === "service") {
         try {
           const status = JSON.parse(
             (await invoke(["service", "status", "--format", "json"])).stdout,
           );
-          if (status.state === "running" && Number.isSafeInteger(status.pid))
+          if (status.state === "running" && Number.isSafeInteger(status.pid)) {
             roots.push(status.pid);
+            serviceOwnershipKnown = true;
+          }
         } catch {
           /* A stopped service has no seed. */
         }
       }
       const processes = new Map<string, ProcessRow>();
       let pending: Promise<void> | undefined,
-        partial = process.platform === "win32" || !options.processSampling;
+        partial =
+          process.platform === "win32" ||
+          !options.processSampling ||
+          !serviceOwnershipKnown;
       const observe = () => {
         if (pending) return;
         pending = ownedProcesses(roots)

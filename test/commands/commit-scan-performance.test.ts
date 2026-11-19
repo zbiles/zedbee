@@ -110,10 +110,20 @@ it("runs the explicit CLI with isolated state and saves individual canonical rep
   if (process.platform !== "win32") {
     const bin = join(scratch, "bin");
     await mkdir(bin);
-    await writeFile(join(bin, "ps"), "#!/bin/sh\nexit 1\n");
+    await writeFile(join(bin, "ps"), "#!/bin/sh\nexit 0\n");
     await chmod(join(bin, "ps"), 0o755);
     vi.stubEnv("PATH", `${bin}:${process.env.PATH}`);
     try {
+      const service = await runCommitScanBenchmark({
+        ...args,
+        execution: "service",
+        samples: 1,
+        cache: "fresh",
+        processSampling: true,
+        output: join(scratch, "unknown-service-ownership"),
+      });
+      expect(service.samples[0]!.processSamplingPartial).toBe(true);
+      await writeFile(join(bin, "ps"), "#!/bin/sh\nexit 1\n");
       const unavailable = await runCommitScanBenchmark({
         ...args,
         samples: 1,
