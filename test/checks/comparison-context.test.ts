@@ -167,6 +167,10 @@ it.each([false, true])(
       getSemanticDiagnostics: diagnostics,
     } as unknown as import("typescript").Program;
     const dependencies = new CapturedDependencies({ repositoryRoot: f.root });
+    if (installed)
+      expect(
+        dependencies.fileExists(f.root + "/node_modules/example/package.json"),
+      ).toBe(true);
     await assertRequiredInstallation({
       programs: [program],
       repositoryRoot: f.root,
@@ -222,4 +226,37 @@ it("does not pollute the canonical capture when an unused declaration has an uns
   });
   expect(diagnostics).toHaveBeenCalledOnce();
   expect(verifyComparisonInputs(dependencies).status).toBe("comparable");
+});
+it("does not spend mandatory capture capacity on an optional unused-declaration shortcut", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "unused",
+    dependencies: { example: "1.0.0" },
+  });
+  await f.writeJson("node_modules/example/package.json", {
+    name: "example",
+    version: "1.0.0",
+  });
+  const { inspectRepository } =
+    await import("../../src/inspection/inspect-repository.js");
+  const inspection = await inspectRepository(f.root);
+  const semantic = vi.fn(() => []);
+  const program = {
+    getOptionsDiagnostics: () => [],
+    getSourceFiles: () => [{ fileName: f.root + "/src/value.ts" }],
+    isSourceFileFromExternalLibrary: () => false,
+    isSourceFileDefaultLibrary: () => false,
+    getSemanticDiagnostics: semantic,
+  } as unknown as import("typescript").Program;
+  const dependencies = new CapturedDependencies({ repositoryRoot: f.root });
+  await assertRequiredInstallation({
+    programs: [program],
+    repositoryRoot: f.root,
+    inspection,
+    workspace: inspection.workspaces[0]!,
+    dependencies,
+    side: "target",
+  });
+  expect(semantic).toHaveBeenCalledOnce();
+  expect(dependencies.manifest()!.probes).toHaveLength(0);
 });

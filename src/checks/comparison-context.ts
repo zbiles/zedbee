@@ -8,7 +8,7 @@ const typescriptVersion: string = createRequire(import.meta.url)(
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
-import { CapturedDependencies } from "../cache/captured-dependencies.js";
+import type { CapturedDependencies } from "../cache/captured-dependencies.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -90,10 +90,9 @@ function packageName(specifier: string): string | undefined {
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
 }
-/** A complete positive manifest proof makes installation diagnostics impossible:
- * the existing diagnostic path only rejects declared names whose manifests are
- * all absent. Failed/partial probes use a separate view and leave no new input
- * failure in the analyzer capture. Applicable lint/type analysis still runs. */
+/** Only already-observed positive package witnesses can avoid installation-only
+ * semantic work. Optional readiness must never spend mandatory capture capacity.
+ * Missing, unused or unsupported declarations retain the original diagnostic path. */
 function installationReady(
   declared: ReadonlySet<string>,
   repositoryRoot: string,
@@ -107,8 +106,15 @@ function installationReady(
   )
     return false;
   try {
-    const probe = new CapturedDependencies({ repositoryRoot });
-    const installed: string[] = [];
+    const manifest = dependencies.manifest();
+    if (manifest === undefined) return false;
+    const files = new Map(
+      manifest.probes
+        .filter((probe) => probe.kind === "file")
+        .map((probe) => [probe.path, probe]),
+    );
+    const selected: import("../cache/dependency-inputs.js").DependencyProbe[] =
+      [];
     for (const name of declared) {
       if (
         name.length > 214 ||
@@ -117,27 +123,40 @@ function installationReady(
       )
         return false;
       let directory = resolve(repositoryRoot, workspace.relativeRoot),
-        found: string | undefined;
+        found = false;
       for (let depth = 0; depth < 64; depth++) {
         const part = relative(resolve(repositoryRoot), directory);
         if (isAbsolute(part) || part === ".." || part.startsWith(`..${sep}`))
           return false;
-        const path = join(directory, "node_modules", name, "package.json");
-        if (probe.fileExists(path)) {
-          found = path;
+        const path = relative(
+          resolve(repositoryRoot),
+          join(directory, "node_modules", name, "package.json"),
+        )
+          .split(sep)
+          .join("/");
+        const witness =
+          files.get(`repository:${path}`) ??
+          (directory === resolve(repositoryRoot)
+            ? files.get(`packages:${name}/package.json`)
+            : undefined);
+        if (witness !== undefined) {
+          selected.push(witness);
+          found = true;
           break;
         }
         if (directory === resolve(repositoryRoot)) break;
         directory = dirname(directory);
       }
-      if (found === undefined) return false;
-      installed.push(found);
+      if (!found) return false;
     }
-    const manifest = probe.manifest();
-    if (manifest === undefined || !probe.validate(manifest)) return false;
-    // Transfer only a complete positive proof to canonical comparison tracking.
-    // A mutation between views falls back and is caught by normal revalidation.
-    return installed.every((path) => dependencies.fileExists(path));
+    selected.sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+    );
+    return dependencies.validate({
+      version: 1,
+      roots: manifest.roots,
+      probes: selected,
+    });
   } catch {
     return false;
   }
