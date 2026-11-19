@@ -2,7 +2,6 @@ import { setImmediate as yieldTurn } from "node:timers/promises";
 import { builtinModules } from "node:module";
 import { createHash } from "node:crypto";
 import { dirname, resolve, relative, sep, isAbsolute } from "node:path";
-import pLimit from "p-limit";
 import type * as Typescript from "typescript";
 import type { InspectionContext } from "../adapter.js";
 import type {
@@ -27,7 +26,7 @@ export interface WorkspaceIndependenceProof {
 interface Witness {
   root: string;
   path: string;
-  digest: string;
+  digest?: string;
   limit: number;
 }
 interface ProofRecord {
@@ -46,7 +45,39 @@ interface Owner {
 const owners = new WeakMap<RepositoryInspection, Owner>();
 // A proof may temporarily own a full dependency capture. Serialize acquisition
 // and cap retained witness metadata separately, below the reuse owner's budget.
-const acquire = pLimit(1);
+let activeProof = false;
+const waiting: Array<() => void> = [];
+async function acquire<T>(
+  signal: AbortSignal | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  signal?.throwIfAborted();
+  await new Promise<void>((accept, reject) => {
+    const start = () => {
+      signal?.removeEventListener("abort", cancel);
+      activeProof = true;
+      accept();
+    };
+    const cancel = () => {
+      const index = waiting.indexOf(start);
+      if (index !== -1) waiting.splice(index, 1);
+      reject(signal!.reason);
+    };
+    if (!activeProof) start();
+    else {
+      waiting.push(start);
+      signal?.addEventListener("abort", cancel, { once: true });
+    }
+  });
+  try {
+    signal?.throwIfAborted();
+    return await run();
+  } finally {
+    activeProof = false;
+    waiting.shift()?.();
+  }
+}
+class ProofLimit extends Error {}
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const unknown: WorkspaceIndependenceProof = {
   independent: false,
@@ -77,9 +108,14 @@ async function valid(record: ProofRecord, signal?: AbortSignal) {
   signal?.throwIfAborted();
   if (!CapturedDependencies.validate(record.manifest, record.context))
     return false;
-  for (const w of record.witnesses)
-    if (hash(await read(w.root, w.path, w.limit, signal)) !== w.digest)
+  for (const w of record.witnesses) {
+    if (w.digest === undefined) {
+      const registry = await captureSnapshotRegistry(w.root, [w.path]);
+      signal?.throwIfAborted();
+      if (registry.resolve(w.path) !== undefined) return false;
+    } else if (hash(await read(w.root, w.path, w.limit, signal)) !== w.digest)
       return false;
+  }
   signal?.throwIfAborted();
   return true;
 }
@@ -149,7 +185,7 @@ export async function proveCompilerWorkspaceIndependence(
     workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
   if ([...changes.sourcePaths].some((path) => path.startsWith(prefix)))
     return { independent: false, reason: "changed-input" };
-  return acquire(async () => {
+  return acquire(context.signal, async () => {
     context.signal?.throwIfAborted();
     let owner = owners.get(context.targetInspection);
     if (owner === undefined) {
@@ -187,9 +223,21 @@ export async function proveCompilerWorkspaceIndependence(
     try {
       const dependencyContext = { repositoryRoot: context.repositoryRoot };
       const dependencies = new CapturedDependencies(dependencyContext);
+      const captured = <T>(operation: () => T): T => {
+        if (dependencies.failure() !== undefined)
+          throw Error("Incomplete proof capture");
+        const value = operation();
+        if (dependencies.failure() !== undefined)
+          throw Error("Incomplete proof capture");
+        return value;
+      };
       const witnesses: Witness[] = [];
       const signatures: Map<string, string>[] = [];
       let edges = 0;
+      const charge = (count = 1) => {
+        edges += count;
+        if (edges > 4096) throw new ProofLimit();
+      };
       const librarySeen = new Set<string>();
       const ts = await import("typescript");
       for (const inspection of [
@@ -253,6 +301,47 @@ export async function proveCompilerWorkspaceIndependence(
           if (!texts.has(resolve(inspection.snapshotRoot, w.manifestPath)))
             await add(w.manifestPath, 64 * 1024);
         }
+        // TypeScript may prefer a nested directory's package.json to index.ts.
+        // Inventory its possible presence before treating index files as a closed
+        // graph. Unsupported nested manifests retain full analyzer coverage.
+        const manifests = new Set<string>();
+        for (const path of inventory) {
+          let directory = dirname(path);
+          while (within(inspection.snapshotRoot, directory)) {
+            manifests.add(
+              relative(
+                inspection.snapshotRoot,
+                resolve(directory, "package.json"),
+              )
+                .split(sep)
+                .join("/"),
+            );
+            if (manifests.size > 4096) throw new ProofLimit();
+            if (directory === inspection.snapshotRoot) break;
+            directory = dirname(directory);
+          }
+        }
+        const knownManifests = new Set(
+          inspection.workspaces.map((w) => w.manifestPath),
+        );
+        for (const path of manifests) {
+          if (knownManifests.has(path)) continue;
+          context.signal?.throwIfAborted();
+          const registry = await captureSnapshotRegistry(
+            inspection.snapshotRoot,
+            [path],
+          );
+          if (
+            registry.resolve(path) !== undefined ||
+            registry.entries().some((e) => e.kind === "symlink")
+          )
+            return unknown;
+          witnesses.push({
+            root: inspection.snapshotRoot,
+            path,
+            limit: 64 * 1024,
+          });
+        }
         for (const path of texts.keys()) inventory.add(path);
         const directories = new Set<string>();
         for (const path of inventory) {
@@ -276,38 +365,49 @@ export async function proveCompilerWorkspaceIndependence(
         const host: Typescript.ModuleResolutionHost = {
           fileExists: (path) =>
             inventory.has(resolve(path)) ||
-            (dependencyPath(path) && dependencies.fileExists(path)),
+            (dependencyPath(path) &&
+              captured(() => dependencies.fileExists(path))),
           readFile: (path) =>
             texts.get(resolve(path)) ??
-            (dependencyPath(path) ? dependencies.readFile(path) : undefined),
+            (dependencyPath(path)
+              ? captured(() => dependencies.readCapturedFile(path))
+              : undefined),
           directoryExists: (path) =>
             directories.has(resolve(path)) ||
             within(context.repositoryRoot, resolve(path)) ||
             (within(libraryRoot, resolve(path)) &&
-              dependencies.directoryExists(path)),
+              captured(() => dependencies.directoryExists(path))),
           getDirectories: (path) =>
-            dependencyPath(path) ? dependencies.getDirectories(path) : [],
+            dependencyPath(path)
+              ? captured(() => dependencies.getDirectories(path))
+              : [],
           realpath: (path) =>
             inventory.has(resolve(path))
               ? resolve(path)
-              : dependencies.realpath(path),
+              : captured(() => dependencies.realpath(path)),
         };
         // Missing declared installs must not disappear behind an optimization. This
         // is intentionally stricter than the analyzer's usage-based diagnosis.
         for (const w of inspection.workspaces.filter(
-          (w) => w.relativeRoot === "." || w.relativeRoot === side.relativeRoot,
+          (w) =>
+            w.relativeRoot === "." ||
+            w.relativeRoot === side.relativeRoot ||
+            side.relativeRoot.startsWith(`${w.relativeRoot}/`),
         ))
           for (const declaration of w.dependencyDeclarations) {
             let directory = resolve(context.repositoryRoot, side.relativeRoot),
               found = false;
             while (within(context.repositoryRoot, directory)) {
+              charge();
               if (
-                dependencies.fileExists(
-                  resolve(
-                    directory,
-                    "node_modules",
-                    declaration.name,
-                    "package.json",
+                captured(() =>
+                  dependencies.fileExists(
+                    resolve(
+                      directory,
+                      "node_modules",
+                      declaration.name,
+                      "package.json",
+                    ),
                   ),
                 )
               ) {
@@ -372,7 +472,9 @@ export async function proveCompilerWorkspaceIndependence(
             options.moduleSuffixes ||
             options.rootDirs ||
             options.noResolve ||
-            options.typeRoots
+            options.typeRoots ||
+            options.allowJs ||
+            options.importHelpers
           )
             return unknown;
           const typeRoots: string[] = [];
@@ -388,8 +490,7 @@ export async function proveCompilerWorkspaceIndependence(
           const typeNames = options.types ?? [
             ...new Set(
               typeRoots.flatMap((root) =>
-                dependencies
-                  .directoryEntries(root)
+                captured(() => dependencies.directoryEntries(root))
                   .filter(
                     (e) => e.type === "directory" && !e.name.startsWith("."),
                   )
@@ -406,6 +507,7 @@ export async function proveCompilerWorkspaceIndependence(
             if (!seen.has(path)) pending.push(path);
           };
           const library = (fileName: string) => {
+            charge();
             if (!/^lib\.[a-z0-9.]+\.d\.ts$/u.test(fileName)) return undefined;
             const name = fileName.slice(4, -5);
             let directory = resolve(
@@ -414,12 +516,14 @@ export async function proveCompilerWorkspaceIndependence(
             );
             while (within(context.repositoryRoot, directory)) {
               if (
-                dependencies.fileExists(
-                  resolve(
-                    directory,
-                    "node_modules",
-                    `@typescript/lib-${name.split(".")[0]}`,
-                    "package.json",
+                captured(() =>
+                  dependencies.fileExists(
+                    resolve(
+                      directory,
+                      "node_modules",
+                      `@typescript/lib-${name.split(".")[0]}`,
+                      "package.json",
+                    ),
                   ),
                 )
               )
@@ -428,7 +532,9 @@ export async function proveCompilerWorkspaceIndependence(
               directory = dirname(directory);
             }
             const file = resolve(libraryRoot, fileName);
-            return dependencies.fileExists(file) ? file : undefined;
+            return captured(() => dependencies.fileExists(file))
+              ? file
+              : undefined;
           };
           if (!options.noLib)
             for (const name of options.lib ?? [
@@ -439,6 +545,7 @@ export async function proveCompilerWorkspaceIndependence(
               push(file);
             }
           for (const name of typeNames) {
+            charge();
             const resolved = ts.resolveTypeReferenceDirective(
               name,
               resolve(context.repositoryRoot, project.configPath),
@@ -453,20 +560,13 @@ export async function proveCompilerWorkspaceIndependence(
             from: string,
             mode: Typescript.ResolutionMode,
           ) => {
-            if (
+            charge();
+            const builtin =
               builtinModules.includes(specifier) ||
-              builtinModules.includes(specifier.replace(/^node:/u, ""))
-            ) {
-              return ts.resolveTypeReferenceDirective(
-                "node",
-                resolve(context.repositoryRoot, project.configPath),
-                prepared,
-                host,
-              ).resolvedTypeReferenceDirective?.resolvedFileName;
-            }
+              builtinModules.includes(specifier.replace(/^node:/u, ""));
             if (
               specifier.includes("\\") ||
-              /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier) ||
+              (!builtin && /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier)) ||
               isAbsolute(specifier)
             )
               return undefined;
@@ -480,6 +580,15 @@ export async function proveCompilerWorkspaceIndependence(
               mode,
             ).resolvedModule;
             if (local !== undefined) return local.resolvedFileName;
+            if (builtin) {
+              charge();
+              return ts.resolveTypeReferenceDirective(
+                "node",
+                resolve(context.repositoryRoot, project.configPath),
+                prepared,
+                host,
+              ).resolvedTypeReferenceDirective?.resolvedFileName;
+            }
             if (specifier.startsWith(".")) return undefined;
             const relativeContaining = within(inspection.snapshotRoot, from)
               ? relative(inspection.snapshotRoot, from)
@@ -498,7 +607,9 @@ export async function proveCompilerWorkspaceIndependence(
               mode,
             ).resolvedModule;
             return installed !== undefined &&
-              dependencies.packageFileExists(installed.resolvedFileName)
+              captured(() =>
+                dependencies.packageFileExists(installed.resolvedFileName),
+              )
               ? installed.resolvedFileName
               : undefined;
           };
@@ -535,23 +646,23 @@ export async function proveCompilerWorkspaceIndependence(
             if (!local && !/\.d\.[cm]?ts$/iu.test(path)) return unknown;
             const source = local
               ? texts.get(path)
-              : dependencies.readFile(path);
+              : captured(() => dependencies.readCapturedFile(path));
             if (source === undefined) return unknown;
+            if (local && /\.[cm]?jsx?$/iu.test(path)) return unknown;
             if (local && /@jsx(?:ImportSource|Runtime|Frag)?\b/iu.test(source))
               return unknown;
             const pre = ts.preProcessFile(source, true, true);
-            edges +=
+            charge(
               pre.importedFiles.length * 2 +
-              pre.referencedFiles.length +
-              pre.typeReferenceDirectives.length +
-              pre.libReferenceDirectives.length;
-            if (edges > 4096) return { independent: false, reason: "limit" };
+                pre.referencedFiles.length +
+                pre.typeReferenceDirectives.length +
+                pre.libReferenceDirectives.length,
+            );
             const tree = ts.createSourceFile(
               path,
               source,
               ts.ScriptTarget.Latest,
               true,
-              /x$/iu.test(path) ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
             );
             // Nonliteral module loaders and shadowed require are not a closed graph.
             let unsafe = false;
@@ -596,20 +707,29 @@ export async function proveCompilerWorkspaceIndependence(
               if (
                 local
                   ? !inventory.has(target)
-                  : !dependencies.packageFileExists(target)
+                  : !captured(() => dependencies.packageFileExists(target))
               )
                 return unknown;
               push(target);
             }
             for (const item of pre.typeReferenceDirectives) {
-              const found = ts.resolveTypeReferenceDirective(
-                item.fileName,
-                path,
-                prepared,
-                host,
-              ).resolvedTypeReferenceDirective;
-              if (!found?.resolvedFileName) return unknown;
-              push(found.resolvedFileName);
+              for (const mode of [
+                ts.ModuleKind.ESNext,
+                ts.ModuleKind.CommonJS,
+              ] as const) {
+                charge();
+                const found = ts.resolveTypeReferenceDirective(
+                  item.fileName,
+                  path,
+                  prepared,
+                  host,
+                  undefined,
+                  undefined,
+                  mode,
+                ).resolvedTypeReferenceDirective;
+                if (!found?.resolvedFileName) return unknown;
+                push(found.resolvedFileName);
+              }
             }
             for (const reference of pre.libReferenceDirectives) {
               const name = reference.fileName.toLowerCase();
@@ -620,7 +740,6 @@ export async function proveCompilerWorkspaceIndependence(
             }
             if (
               local &&
-              /x$/iu.test(path) &&
               (options.jsx === ts.JsxEmit.ReactJSX ||
                 options.jsx === ts.JsxEmit.ReactJSXDev)
             ) {
@@ -659,8 +778,10 @@ export async function proveCompilerWorkspaceIndependence(
         owner.bytes += bytes;
       }
       return { independent: true, reason: "disjoint-inputs" };
-    } catch {
+    } catch (error) {
       context.signal?.throwIfAborted();
+      if (error instanceof ProofLimit)
+        return { independent: false, reason: "limit" };
       return unknown;
     }
   });

@@ -298,11 +298,14 @@ export function createReactAdapter(
         }
       : {}),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
-      const changes = await classifyCompilerChanges(context);
+      const changes =
+        !context.mergeComparison && context.policy.when !== "always"
+          ? await classifyCompilerChanges(context)
+          : undefined;
       const local =
         !context.mergeComparison &&
         context.policy.when !== "always" &&
-        changes.complete &&
+        changes?.complete === true &&
         !changes.requiresBroadComparison;
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,

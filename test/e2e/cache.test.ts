@@ -42,6 +42,10 @@ function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
     ...report,
     startedAt: "<time>",
     durationMs: 0,
+    diagnostics:
+      report.diagnostics === undefined
+        ? undefined
+        : { ...report.diagnostics, performance: undefined },
     checks: report.checks.map((check) => ({ ...check, durationMs: 0 })),
   };
 }

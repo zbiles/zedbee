@@ -43,6 +43,12 @@ async function acquireCompilerChanges(
     ),
   );
   const sourcePaths = new Set<string>();
+  if (
+    [context.baselineInspection, context.targetInspection].some(
+      (i) => i.workspaces.length > 32,
+    )
+  )
+    return { sourcePaths, complete: false, requiresBroadComparison: true };
   const configurations = new Set<string>(compilerPolicyInputPaths(context));
   const dependencies = new Set<string>();
   let complete = true;
@@ -52,15 +58,19 @@ async function acquireCompilerChanges(
   ])) {
     for (const path of inspection.lockfiles) dependencies.add(path);
     for (const workspace of inspection.workspaces) {
+      context.signal?.throwIfAborted();
       for (const path of workspace.sourceFiles)
         if (paths.has(path)) sourcePaths.add(path);
       dependencies.add(workspace.manifestPath);
       const inputs = await compilerConfigurationInputsForInspection(
         inspection,
         workspace,
+        context.signal,
       );
       context.signal?.throwIfAborted();
       complete &&= inputs.complete;
+      if (!complete)
+        return { sourcePaths, complete: false, requiresBroadComparison: true };
       for (const path of inputs.paths) configurations.add(path);
     }
   }

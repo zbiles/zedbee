@@ -613,6 +613,15 @@ export class CapturedDependencies {
           )))
     );
   }
+  /** Optional proofs may only consume bounded captured bytes, never analyzer
+   * passthrough data after a capacity or trust-boundary failure. */
+  readCapturedFile(path: string): string | undefined {
+    if (this.failure() !== undefined) return undefined;
+    const entry = this.capture(path);
+    return this.failure() === undefined && entry.passthrough === undefined
+      ? entry.text
+      : undefined;
+  }
   readFile(path: string): string | undefined {
     const entry = this.capture(path);
     if (entry.passthrough === undefined) return entry.text;

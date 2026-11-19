@@ -384,7 +384,7 @@ it("actual index scans skip independent targets, preserve new errors and match b
     );
   expect(canonical(selected)).toEqual(canonical(broad));
   expect(broad.outcome).toBe(selected.outcome);
-}, 60000);
+});
 it("retains conditional require exports that reconnect to repository source", async () => {
   const { f, context, workspace } = await fixture(
     'export const load=()=>require("fixture-package");',

@@ -102,7 +102,11 @@ export async function projectInputsMayHaveChanged(
     if (
       [
         ...(
-          await compilerConfigurationInputsForInspection(inspection, workspace)
+          await compilerConfigurationInputsForInspection(
+            inspection,
+            workspace,
+            context.signal,
+          )
         ).paths,
       ].some((path) => changed.has(path))
     )

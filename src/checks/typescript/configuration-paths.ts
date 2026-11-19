@@ -22,7 +22,11 @@ export type CompilerConfigurationInputs = Readonly<{
 function createResolver(
   snapshotRoot: string,
   retainMissingCandidates: boolean,
+  signal?: AbortSignal,
 ) {
+  let exhausted = false;
+  let parsedCount = 0;
+  let retainedBytes = 0;
   const files = new Map<string, Promise<SnapshotRegistry | undefined>>();
   const configurations = new Map<string, Promise<unknown>>();
   const workspaces = new WeakMap<
@@ -34,11 +38,17 @@ function createResolver(
   const fileRegistry = (
     path: string,
   ): Promise<SnapshotRegistry | undefined> => {
+    signal?.throwIfAborted();
     let pending = files.get(path);
     if (pending === undefined) {
+      if (retainMissingCandidates && files.size >= 192) {
+        exhausted = true;
+        return Promise.resolve(undefined);
+      }
       pending = (async () => {
         try {
           const registry = await captureSnapshotRegistry(snapshotRoot, [path]);
+          signal?.throwIfAborted();
           if (
             registry
               .entries()
@@ -53,6 +63,7 @@ function createResolver(
             ? registry
             : undefined;
         } catch {
+          signal?.throwIfAborted();
           // Missing, invalid and uncontained inputs cannot contribute metadata.
           // Selected analyzers remain responsible for configuration validation.
           return undefined;
@@ -71,19 +82,23 @@ function createResolver(
           const registry = await fileRegistry(path);
           if (registry === undefined) return undefined;
           const errors: ParseError[] = [];
-          const data: unknown = parse(
-            await readContainedFile(
-              registry,
-              path,
-              retainMissingCandidates ? { maxBytes: 64 * 1024 } : {},
-            ),
-            errors,
-            {
-              allowTrailingComma: true,
-            },
+          const text = await readContainedFile(
+            registry,
+            path,
+            retainMissingCandidates ? { maxBytes: 64 * 1024 } : {},
           );
+          signal?.throwIfAborted();
+          retainedBytes += text.length * 2;
+          if (retainMissingCandidates && retainedBytes > 4 * 1024 * 1024) {
+            exhausted = true;
+            return undefined;
+          }
+          const data: unknown = parse(text, errors, {
+            allowTrailingComma: true,
+          });
           return errors.length === 0 ? data : undefined;
         } catch {
+          signal?.throwIfAborted();
           return undefined;
         }
       })();
@@ -96,19 +111,24 @@ function createResolver(
     workspace: WorkspaceInspection,
   ): Promise<CompilerConfigurationInputs> => {
     let complete = true;
+    signal?.throwIfAborted();
+    if (retainMissingCandidates && workspace.tsconfigPaths.length > 64)
+      return Object.freeze({ paths: new Set<string>(), complete: false });
     const paths = new Set<string>(workspace.tsconfigPaths);
     // Only lexical requests are parsed: relative extends are based on the
     // requested alias, not on the canonical target's directory.
     const parsed = new Set<string>();
     const pending = [...paths];
     while (pending.length > 0) {
-      if (retainMissingCandidates && parsed.size >= 64) {
+      signal?.throwIfAborted();
+      if (retainMissingCandidates && (parsedCount >= 64 || exhausted)) {
         complete = false;
         break;
       }
       const path = pending.pop()!;
       if (parsed.has(path)) continue;
       parsed.add(path);
+      parsedCount++;
       const registry = await fileRegistry(path);
       for (const entry of registry?.entries() ?? []) {
         if (entry.kind === "symlink") paths.add(entry.repositoryPath);
@@ -162,6 +182,11 @@ function createResolver(
         ...references,
       ];
       for (const request of requests) {
+        signal?.throwIfAborted();
+        if (exhausted) {
+          complete = false;
+          break;
+        }
         if (
           typeof request !== "string" ||
           request.length === 0 ||
@@ -184,6 +209,7 @@ function createResolver(
         ];
         let found = false;
         for (const candidate of candidates) {
+          signal?.throwIfAborted();
           if ((await fileRegistry(candidate)) === undefined) continue;
           found = true;
           paths.add(candidate);
@@ -197,7 +223,7 @@ function createResolver(
         }
       }
     }
-    return Object.freeze({ paths, complete });
+    return Object.freeze({ paths, complete: complete && !exhausted });
   };
   return (
     workspace: WorkspaceInspection,
@@ -211,8 +237,11 @@ function createResolver(
   };
 }
 
-export function createCompilerConfigurationInputResolver(snapshotRoot: string) {
-  return createResolver(snapshotRoot, true);
+export function createCompilerConfigurationInputResolver(
+  snapshotRoot: string,
+  signal?: AbortSignal,
+) {
+  return createResolver(snapshotRoot, true, signal);
 }
 
 // Cache by immutable selected inspection, never by reusable filesystem path.
@@ -220,16 +249,25 @@ const resolvers = new WeakMap<
   RepositoryInspection,
   ReturnType<typeof createCompilerConfigurationInputResolver>
 >();
+const signalResolvers = new WeakMap<AbortSignal, typeof resolvers>();
 export function compilerConfigurationInputsForInspection(
   inspection: RepositoryInspection,
   workspace: WorkspaceInspection,
+  signal?: AbortSignal,
 ): Promise<CompilerConfigurationInputs> {
-  let resolver = resolvers.get(inspection);
+  signal?.throwIfAborted();
+  const cache =
+    signal === undefined
+      ? resolvers
+      : (signalResolvers.get(signal) ?? new WeakMap());
+  if (signal !== undefined) signalResolvers.set(signal, cache);
+  let resolver = cache.get(inspection);
   if (resolver === undefined) {
     resolver = createCompilerConfigurationInputResolver(
       inspection.snapshotRoot,
+      signal,
     );
-    resolvers.set(inspection, resolver);
+    cache.set(inspection, resolver);
   }
   return resolver(workspace);
 }

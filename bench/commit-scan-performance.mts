@@ -164,7 +164,11 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
   const cli = await realpath(options.cli),
     repository = await realpath(options.repository),
     installation = dirname(dirname(cli));
-  const output = resolve(options.output);
+  const requestedOutput = resolve(options.output);
+  const output = join(
+    await realpath(dirname(requestedOutput)),
+    basename(requestedOutput),
+  );
   if (within(repository, output) || within(installation, output))
     throw Error(
       "Benchmark output must be outside the measured repository and CLI installation.",

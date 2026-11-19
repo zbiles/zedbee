@@ -565,16 +565,6 @@ for its scope and the distinction from native project ESLint behavior.
 
 Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.
 
-Compiler checks conservatively include sibling workspaces when a source change
-might affect them. A bounded exception avoids an unchanged sibling project only
-when both snapshots prove it is self-contained: one local tsconfig including
-`src`, no inherited configuration or references, explicit empty `types`, and
-ordinary TypeScript modules with no imports, references, ambient augmentations,
-or calls.
-Unsupported configurations, JSX, ambient declarations, symlinks, missing data,
-and proof limits retain conservative coverage. This is deliberately narrower
-than assuming that a file outside the edited folder cannot be affected.
-
 Managed lint and type checks can omit an unchanged workspace when a bounded,
 scan-local proof establishes that neither side of the comparison depends on the
 changed inputs. Ordinary documentation or Python edits do not invalidate that
@@ -584,3 +574,11 @@ installed declarations, then validates its input witnesses again before the scan
 finishes. Unsupported resolution, missing installations or exhausted proof bounds
 run the existing checks. Forced checks, merge comparisons and project ESLint keep
 their existing coverage.
+
+The proof accounts for conditional import/require type branches, automatic JSX
+runtime imports in ordinary TypeScript modules, and aliases that shadow Node
+builtins. JavaScript/JSDoc inputs, `importHelpers`, nested package manifests and
+other unsupported inputs retain the full checks. Missing ancestor-workspace
+installations also retain analysis. Configuration metadata, resolution work and
+captured dependency reads have independent limits; reaching one falls back to
+the existing analyzers rather than reading or parsing additional proof inputs.

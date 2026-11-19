@@ -98,6 +98,8 @@ function installationReady(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
   dependencies: CapturedDependencies,
+  programs: readonly ts.Program[],
+  snapshotRoot: string,
 ): boolean {
   if (declared.size === 0) return true;
   if (
@@ -149,6 +151,29 @@ function installationReady(
       }
       if (!found) return false;
     }
+    const rootOnly = selected.every(
+      (witness) =>
+        witness.path.startsWith("packages:") ||
+        witness.path.startsWith("repository:node_modules/"),
+    );
+    if (!rootOnly) {
+      // A workspace-local installation says nothing about a sibling source imported
+      // into its program. Keep the existing diagnostic path for those programs.
+      for (const program of programs)
+        for (const file of program.getSourceFiles()) {
+          if (
+            program.isSourceFileFromExternalLibrary(file) ||
+            program.isSourceFileDefaultLibrary(file)
+          )
+            continue;
+          const path = relative(
+            resolve(snapshotRoot, workspace.relativeRoot),
+            resolve(file.fileName),
+          );
+          if (isAbsolute(path) || path === ".." || path.startsWith(`..${sep}`))
+            return false;
+        }
+    }
     selected.sort((left, right) =>
       left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
     );
@@ -183,7 +208,16 @@ export async function assertRequiredInstallation(options: {
       )
       .flatMap((w) => w.dependencyDeclarations.map((d) => d.name)),
   );
-  if (installationReady(declared, repositoryRoot, workspace, dependencies))
+  if (
+    installationReady(
+      declared,
+      repositoryRoot,
+      workspace,
+      dependencies,
+      options.programs,
+      inspection.snapshotRoot,
+    )
+  )
     return;
   for (const program of options.programs)
     for (const diagnostic of [

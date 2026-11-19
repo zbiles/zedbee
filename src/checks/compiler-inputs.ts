@@ -81,6 +81,9 @@ async function resolveRelevance(
     context.baselineInspection,
     context.targetInspection,
   ])) {
+    context.signal?.throwIfAborted();
+    if (inspection.workspaces.length > 32)
+      return { relevant: true, reason: "unknown" };
     if (inspection.lockfiles.some((path) => paths.has(path)))
       return { relevant: true, reason: "dependency" };
     for (const workspace of inspection.workspaces) {
@@ -91,10 +94,12 @@ async function resolveRelevance(
       const inputs = await compilerConfigurationInputsForInspection(
         inspection,
         workspace,
+        context.signal,
       );
       if ([...inputs.paths].some((path) => paths.has(path)))
         return { relevant: true, reason: "configuration" };
       complete &&= inputs.complete;
+      if (!complete) return { relevant: true, reason: "unknown" };
     }
   }
   for (const path of paths) {

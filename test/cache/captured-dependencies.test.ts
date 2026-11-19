@@ -14,6 +14,21 @@ import {
 import { createInspectionFixture } from "../inspection/fixture.js";
 
 describe("captured dependency view", () => {
+  it("strict optional reads refuse an oversized dependency without passthrough", async () => {
+    const live = await createInspectionFixture();
+    const path = join(live.root, "node_modules/huge/index.d.ts");
+    await live.write(
+      "node_modules/huge/index.d.ts",
+      "x".repeat(DEPENDENCY_LIMITS.fileBytes + 1),
+    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(view.readCapturedFile(path)).toBeUndefined();
+    expect(view.failure()).toMatchObject({
+      reason: "capacity",
+      resource: "fileBytes",
+    });
+    expect(view.readCapturedFile(path)).toBeUndefined();
+  });
   it("captures nested installations and invalidates reuse when their declarations change", async () => {
     const live = await createInspectionFixture();
     const file = "web/node_modules/example/index.d.ts";

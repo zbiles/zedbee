@@ -6,6 +6,7 @@ import {
   writeFile,
   rm,
   chmod,
+  symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,39 @@ it("rejects incomplete, unknown and unbounded benchmark options", () => {
     ["--unknown", "value"],
   ])
     expect(() => parseBenchmarkArguments(args)).toThrow();
+});
+
+it("rejects output inside the measured tree through a parent directory alias", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"fixture"}');
+  await repo.commitAll("baseline");
+  const baseline = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  const scratch = await mkdtemp(join(tmpdir(), "zcb-alias-"));
+  onTestFinished(() => rm(scratch, { recursive: true, force: true }));
+  const cliRoot = join(scratch, "install");
+  await mkdir(join(cliRoot, "dist"), { recursive: true });
+  await writeFile(join(cliRoot, "package.json"), '{"version":"0.1.0-fixture"}');
+  const cli = join(cliRoot, "dist/cli.js");
+  await writeFile(cli, "console.log('{}');");
+  await symlink(
+    repo.root,
+    join(scratch, "alias"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await expect(
+    runCommitScanBenchmark({
+      cli,
+      repository: repo.root,
+      baseline,
+      target: baseline,
+      execution: "local",
+      cache: "fresh",
+      samples: 1,
+      output: join(scratch, "alias/results"),
+      processSampling: false,
+      loadLabel: "idle",
+    }),
+  ).rejects.toThrow("Benchmark output must be outside");
 });
 
 it("runs the explicit CLI with isolated state and saves individual canonical reports", async () => {
