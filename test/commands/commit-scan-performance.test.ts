@@ -73,6 +73,11 @@ it("runs the explicit CLI with isolated state and saves individual canonical rep
   const result = await runCommitScanBenchmark(args);
   expect(result.samples).toHaveLength(2);
   expect(result.version).toBe("0.1.0-fixture");
+  expect(result.runKind).toBe("commit-scan-performance");
+  expect(result.driverPid).toBe(process.pid);
+  expect(Date.parse(result.finishedAt)).toBeGreaterThanOrEqual(
+    Date.parse(result.startedAt),
+  );
   expect(
     result.samples.every(
       (sample) => sample.exitCode === 0 && sample.wallMs > 0,

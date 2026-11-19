@@ -188,3 +188,20 @@ git add <paths> && git commit
 Review `git diff --cached --stat` and the scan's staged-change counts. Unstaged and untracked files are not part of the scan. Deleting documentation may require no configured checks; the result reports skipped work rather than successful execution. Deleting source can still require compiler or project checks, including checks for broken imports. Partial staging is supported.
 
 For synthetic credential fixtures, see [the narrow Secretlint annotation](checks.md#synthetic-credentials-in-fixtures).
+
+## Package-manager processes during a scan
+
+An ordinary managed scan does not install dependencies. Missing required packages
+produce an incomplete check with installation guidance. Restore them deliberately
+using the repository's package-manager workflow, then rerun the scan.
+
+When investigating an apparent install during a scan, record process ancestry and
+the scan's local timing report. Swarm's release tests deliberately install packed
+fixtures with npm, pnpm, Yarn and Bun; those test processes can overlap another
+terminal's scan. A matching process name alone does not establish ownership.
+Trusted executable project configurations run with the permissions you grant them;
+the managed-scan installer guard is not an operating-system sandbox for that code.
+
+Elapsed check time can include waiting for a worker. Local JSON report diagnostics
+separate queue and worker wall time so a long queued check is not mistaken for a
+CPU-heavy analyzer. See [reporting](reporting.md) for scope and privacy details.

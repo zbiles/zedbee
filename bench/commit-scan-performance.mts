@@ -160,6 +160,7 @@ async function ownedProcesses(roots: readonly number[]): Promise<ProcessRow[]> {
   return rows.slice(0, 4096);
 }
 export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
+  const startedAt = new Date().toISOString();
   const cli = await realpath(options.cli),
     repository = await realpath(options.repository),
     installation = dirname(dirname(cli));
@@ -354,6 +355,10 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
       middle = Math.floor(ordered.length / 2);
     const result = {
       schemaVersion: 1,
+      runKind: "commit-scan-performance",
+      driverPid: process.pid,
+      startedAt,
+      finishedAt: new Date().toISOString(),
       version: manifest.version,
       installationDigest: digest,
       baseline,
