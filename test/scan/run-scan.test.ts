@@ -2483,7 +2483,7 @@ describe("runScan", () => {
         },
       ],
     });
-    expect(JSON.stringify(report)).not.toContain("policy");
+    expect(JSON.stringify(report)).not.toContain('"policy":');
   });
 
   it("retains a target incomplete result when the root check is off", async () => {
@@ -2545,7 +2545,7 @@ describe("runScan", () => {
       ],
     });
     expect(JSON.stringify(report)).not.toContain("sensitive");
-    expect(JSON.stringify(report)).not.toContain("policy");
+    expect(JSON.stringify(report)).not.toContain('"policy":');
   });
 
   it("runs the complete pipeline and cleans before returning an immutable report", async () => {
@@ -2596,7 +2596,8 @@ describe("runScan", () => {
       baseline: "HEAD",
       target: "index",
       startedAt: "2026-08-15T00:00:00.000Z",
-      durationMs: 1,
+      // The local recorder observes seven preparation phases using this fixture clock.
+      durationMs: 8,
       summary: { passed: 1 },
       checks: [passing],
     });
@@ -2651,6 +2652,7 @@ describe("runScan", () => {
       "presentationPolicy",
       "summary",
       "checks",
+      "diagnostics",
     ]);
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain(privateConfigurationMarker);

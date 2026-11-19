@@ -447,6 +447,10 @@ Ordinary `git rebase` and `git cherry-pick` operations do not run Zedbee's pre-c
 
 ## Cache and performance
 
+Use `zedbee scan --no-cache` for a diagnostic run without observation-cache reads or writes. It preserves analysis and input validation; service reuse remains separately controlled by `--no-service`. The default cache policy is unchanged.
+
+Saved JSON reports include bounded local scan timing metadata when available. See [local timing diagnostics](reporting.md#local-scan-timing-diagnostics) for the distinction between elapsed, queue and worker time.
+
 Zedbee may cache content-addressed, normalized observations for audited local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript and lint capture their dependency files and resolution state; Knip captures its permitted snapshot inputs and package-absence guards. These inputs are checked again before saved findings are reused. Incomplete metadata prevents saving or reusing a result, and unknown checks default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never stored in the observation cache. Cached and uncached reports are required to remain semantically identical.
 
 Scan time depends on project size, enabled checks, baseline comparison, and validated cache reuse. A running service does not mean every analyzer remains loaded: some engines retire after a session or snapshot side. These lifecycle choices do not guarantee faster scans. See [safe analyzer diagnostics](reporting.md#safe-analyzer-diagnostics) to investigate a slow or incomplete job.

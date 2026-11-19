@@ -540,3 +540,30 @@ it("includes fix maintenance observations while dropping unreviewed fields", asy
     "fixture-secret-marker",
   );
 });
+
+it("delivers safe scan timings to diagnostics stderr without changing the canonical outcome", async () => {
+  const io = terminal();
+  const { ScanPerformanceRecorder } = await import("../../src/diagnostics/scan-performance.js");
+  const { ZEDBEE_VERSION } = await import("../../src/core/package-version.js");
+  const recorder = new ScanPerformanceRecorder();
+  recorder.record({ checkId: "types", kind: "elapsed", durationMs: 150 });
+  recorder.record({ checkId: "types", kind: "queue", durationMs: 100 });
+  recorder.record({ checkId: "types", kind: "worker", durationMs: 20 });
+  const code = await executeScanCommand({ cwd: "/repo", format: "json", color: false, animations: false, diagnostics: true }, io, {
+    ...scanDependencies(),
+    scan: async options => { options.onPerformanceSummary?.(recorder.snapshot()); return report; },
+  });
+  expect(code).toBe(report.exitCode);
+  const metadata = JSON.parse(io.stderr.join("").split("\n")[1]!);
+  expect(metadata.scan).toMatchObject({ scope: "scan-run", swarmVersion: ZEDBEE_VERSION, performance: { checks: [expect.objectContaining({ elapsed_sum_ms: 150, queue_sum_ms: 100, worker_sum_ms: 20 })] } });
+  expect(JSON.stringify(metadata.scan)).not.toContain("fixture-secret-marker");
+});
+
+it("forwards an explicit no-cache scan request to the existing controller option", async () => {
+  let cache: unknown = "not-called";
+  const code = await executeScanCommand({ cwd: "/repo", format: "json", color: false, animations: false, cache: false }, terminal(), {
+    ...scanDependencies(), scan: async options => { cache = options.cache; return report; },
+  });
+  expect(code).toBe(report.exitCode);
+  expect(cache).toBe(false);
+});

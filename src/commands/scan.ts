@@ -1,3 +1,8 @@
+import {
+  localScanDiagnostics,
+  type LocalScanDiagnostics,
+} from "../diagnostics/local-scan-diagnostics.js";
+import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
 import type {
   TelemetrySummary,
@@ -65,6 +70,7 @@ export interface ScanCommandOptions {
   timeout?: string;
   noTimeout?: boolean;
   diagnostics?: boolean;
+  cache?: false;
   signal?: AbortSignal;
   /** Invocation-only consent for project Prettier execution. */
   projectPrettierTrust?: boolean;
@@ -90,7 +96,10 @@ export interface InkRenderOptions {
 export interface ScanCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   scan(options: RunScanOptions): Promise<ScanReport>;
-  openInk(options: InkRenderOptions, onError: () => void): Promise<InkSession>;
+  openInk(
+    options: InkRenderOptions,
+    onError: () => void,
+  ): Promise<InkSession>;
   preparePresentation(
     report: ScanReport,
     options: Omit<PreparePresentationOptions, "store">,
@@ -100,7 +109,10 @@ export interface ScanCommandDependencies {
 /** Presentation observes controller-owned analysis and never prepares reports. */
 export interface InkSession {
   update(event: ScanEvent): void;
-  finish(report: ScanReport, presentation: TerminalPresentation): Promise<void>;
+  finish(
+    report: ScanReport,
+    presentation: TerminalPresentation,
+  ): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -146,7 +158,9 @@ export function selectOutputFormat(
   if (requested !== "auto") {
     return requested;
   }
-  return usesLinearAutomaticOutput(stdoutIsTTY, width, env) ? "text" : "ink";
+  return usesLinearAutomaticOutput(stdoutIsTTY, width, env)
+    ? "text"
+    : "ink";
 }
 
 function positiveTerminalWidth(value: unknown): number | undefined {
@@ -213,11 +227,13 @@ export async function executeScanCommand(
   const started = performance.now();
   const stages: DiagnosticTimings = {};
   let diagnosticEntries: readonly DiagnosticEntry[] = [];
+  let scanDiagnostics: LocalScanDiagnostics | undefined;
   let reportMaintenance: unknown;
   let cleanupFailed = false;
   let session: InkSession | undefined;
   let renderingFailed = false;
-  const executor = options.executor ?? createCommandExecutor(options.service);
+  const executor =
+    options.executor ?? createCommandExecutor(options.service);
   const closeExecutor = () =>
     options.executor === undefined ? executor.close() : Promise.resolve();
   const close = async (): Promise<void> => {
@@ -231,8 +247,10 @@ export async function executeScanCommand(
   };
   try {
     options.signal?.throwIfAborted();
-    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
-      dependencies.resolveRepositoryRoot(options.cwd),
+    const repositoryRoot = await timeCommandStage(
+      stages,
+      "repository",
+      () => dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -271,7 +289,10 @@ export async function executeScanCommand(
           }
         : {}),
       reportingSurface: format,
-      ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
+      ...(options.cache === false ? { cache: false as const } : {}),
+      ...(options.baseRef === undefined
+        ? {}
+        : { baseRef: options.baseRef }),
       ...(options.sourceExcerpts === undefined
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
@@ -280,12 +301,20 @@ export async function executeScanCommand(
         ? {}
         : { diagnosticMessages: options.diagnosticMessages }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+      ...(options.timeout === undefined
+        ? {}
+        : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
       onPerformanceSummary(summary) {
+        scanDiagnostics = localScanDiagnostics({
+          schemaVersion: 1,
+          scope: "scan-run",
+          swarmVersion: ZEDBEE_VERSION,
+          performance: summary,
+        });
         options.telemetryObserver?.performanceSummary?.(summary);
       },
       onConfigurationSummary(summary) {
@@ -398,7 +427,11 @@ export async function executeScanCommand(
       io.writeStdout(
         renderText(report, {
           width: io.width,
-          color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+          color: terminalColorEnabled(
+            options.color,
+            io.stdoutIsTTY,
+            io.env,
+          ),
           presentation,
         }),
       );
@@ -417,7 +450,11 @@ export async function executeScanCommand(
         io.writeStdout(
           renderText(report, {
             width: io.width,
-            color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+            color: terminalColorEnabled(
+              options.color,
+              io.stdoutIsTTY,
+              io.env,
+            ),
             presentation: {
               ...presentation,
               automatic: false,
@@ -477,6 +514,7 @@ export async function executeScanCommand(
         cleanupFailed,
         renderingFailed,
         reportMaintenance,
+        scanDiagnostics,
       });
     if (cleanupFailed) return 2;
   }

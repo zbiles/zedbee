@@ -262,3 +262,15 @@ After building both packages, run `node bench/change-aware-analysis.mjs --refere
 `--scenario type-regression` selects one scenario; `--diagnostics` captures candidate timing summaries for each sample. Warm-cache uses an isolated fixture/package-specific observation store and records hit/miss counts, rather than relying on a user cache. Package hashes cover the compiled dist tree and package manifest.
 
 `--parallel 2` stages the same change in two separate linked worktrees and scans them through one executor. `elapsedMs` covers the whole group, `scanDurationsMs` contains individual scan durations, and `durationMs` retains the first report's duration for compatibility. Every sample asserts the expected outcome; source regressions must include an actual TypeScript assignment finding. Candidate non-source scenarios reject irrelevant compiler jobs.
+
+## Committed-change CLI experiments
+
+`commit-scan-performance.mts` invokes an explicit built CLI against a disposable repository whose HEAD is the requested baseline and whose index equals the requested target commit. It refuses mismatched Git state, output inside the measured repository/installation, or an existing output directory. It never fetches a CLI or runs an installer.
+
+```sh
+node --experimental-strip-types bench/commit-scan-performance.mts --cli /path/to/installation/dist/cli.js --repository /private/disposable-copy --baseline BASE_SHA --target TARGET_SHA --execution local --cache fresh --samples 3 --output /private/evidence/new-run
+```
+
+Execution is `local` or `service`; cache mode is `uncached`, `fresh` or `warm`. Uncached mode requires the selected CLI's `--no-cache` option; historical installations without it must be measured in supported modes. Fresh/uncached samples start a fresh private service and cache state. Warm measurements share state after an excluded priming run; this does not guarantee that every analyzer stays loaded. Process-local telemetry/update requests are disabled for synthetic measurements, without changing saved user preferences.
+
+Reports, safe CLI diagnostics, individual wall times, medians and bounded owned-process ancestry are saved only to the explicit private output directory. Process sampling records executable roles rather than arguments, can miss short-lived/reparented children, and is marked partial when unavailable (including Windows); use `--process-sampling off` to disable it. `--load-label idle|controlled` labels an experiment, not a guarantee about other sessions. Compare findings/outcomes separately from elapsed time, and keep full-suite/package-installation tests out of timing intervals.
