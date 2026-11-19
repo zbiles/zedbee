@@ -324,3 +324,108 @@ it.each(["web/types.d.ts", "package-lock.json", "web/tsconfig.json"])(
     expect(result.targets.map((t) => t.relativeRoot)).toContain("sibling");
   },
 );
+
+it.each(
+  [
+    [],
+    ["README.md"],
+    ["api/value.py"],
+    ["api/value.py", "README.md"],
+    ["README.md", "web/src/value.ts"],
+  ].map((extra) => ({ extra })),
+)(
+  "keeps independent compiler selection for mixed changes $extra",
+  async ({ extra }) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { workspaces: ["web", "sibling"] });
+    for (const name of ["web", "sibling"]) {
+      await f.writeJson(`${name}/package.json`, { name });
+      await f.writeJson(`${name}/tsconfig.json`, {
+        compilerOptions: { types: [] },
+        include: ["src"],
+      });
+      await f.write(`${name}/src/value.ts`, "export const value=1;");
+    }
+    const inspection = await inspectRepository(f.root);
+    const context = {
+      ...(await fixtureContext("web/src/value.ts")),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    const paths = [...extra, "web/src/value.ts"];
+    context.changeSet = {
+      ...context.changeSet,
+      files: new Map(
+        paths.map((path) => [
+          path,
+          { path, status: "modified" as const, addedRanges: [] },
+        ]),
+      ),
+    };
+    for (const check of ["types", "lint"] as const) {
+      const result = await inspectManagedCheck(check, context);
+      if (!result.applies) throw Error("Missing web analysis");
+      expect(result.targets.map((t) => t.relativeRoot)).toEqual(["web"]);
+    }
+  },
+);
+
+it.each([
+  "compiler.md",
+  "compiler.py",
+  "package-lock.json",
+  "web/types.d.ts",
+  "values.json",
+  "unknown.file",
+])(
+  "does not narrow when a later mixed input is relevant: %s",
+  async (extra) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", { workspaces: ["web", "sibling"] });
+    for (const name of ["web", "sibling"]) {
+      await f.writeJson(`${name}/package.json`, { name });
+      await f.writeJson(`${name}/tsconfig.json`, {
+        extends: "../compiler.md",
+        compilerOptions: { types: [] },
+        include: ["src"],
+      });
+      await f.write(`${name}/src/value.ts`, "export const value=1;");
+    }
+    await f.writeJson("compiler.md", { extends: "./compiler.py" });
+    await f.writeJson("compiler.py", {});
+    const inspection = await inspectRepository(f.root);
+    const context = {
+      ...(await fixtureContext("web/src/value.ts")),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    context.changeSet = {
+      ...context.changeSet,
+      files: new Map(
+        ["web/src/value.ts", extra].map((path) => [
+          path,
+          { path, status: "modified" as const, addedRanges: [] },
+        ]),
+      ),
+    };
+    const result = await inspectManagedCheck("types", context);
+    if (!result.applies) throw Error("Missing analysis");
+    expect(result.targets.map((t) => t.relativeRoot)).toContain("sibling");
+  },
+);
+
+it("shares complete change classification only for identical captured inputs", async () => {
+  const { classifyCompilerChanges } =
+    await import("../../src/checks/compiler-change-inputs.js");
+  const context = await fixtureContext("README.md");
+  const first = classifyCompilerChanges(context);
+  expect(classifyCompilerChanges({ ...context })).toBe(first);
+  expect(await first).toMatchObject({
+    complete: true,
+    requiresBroadComparison: false,
+  });
+  const renamed = await fixtureContext("README.md", "types.d.ts");
+  expect(
+    await classifyCompilerChanges({ ...context, changeSet: renamed.changeSet }),
+  ).toMatchObject({ requiresBroadComparison: true });
+});

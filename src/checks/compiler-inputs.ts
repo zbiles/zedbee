@@ -1,3 +1,4 @@
+import { classifyCompilerChanges } from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { isClosedCompilerProject } from "./closed-compiler-project.js";
 import { posix } from "node:path";
@@ -138,18 +139,13 @@ export function compilerInputRelevance(
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
       if (!result.relevant || result.reason !== "source") return result;
-      const paths = changedPaths(context.changeSet);
+      const classification = await classifyCompilerChanges(context);
+      if (!classification.complete || classification.requiresBroadComparison)
+        return result;
+      const paths = classification.sourcePaths;
       const prefix =
         workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-      if (
-        [...paths].some(
-          (path) =>
-            path.startsWith(prefix) ||
-            !SOURCE.test(path) ||
-            /\.d\.[cm]?ts$/iu.test(path),
-        )
-      )
-        return result;
+      if ([...paths].some((path) => path.startsWith(prefix))) return result;
       for (const inspection of [
         context.baselineInspection,
         context.targetInspection,
