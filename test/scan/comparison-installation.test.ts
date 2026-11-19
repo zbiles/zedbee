@@ -40,6 +40,80 @@ async function fixture(reactDeclared: boolean, jsxImportSource = "react") {
   return repo;
 }
 describe("comparison installation evidence", () => {
+  it("explains a partially installed upgrade-only commit and completes after its required typings are installed", async () => {
+    const repo = await createGitRepository("zedbee-partial-install-");
+    const manifest = {
+      name: "fixture",
+      private: true,
+      version: "1.0.0",
+      devDependencies: { "@types/node": "26.0.0" },
+    };
+    await repo.write(".gitignore", "node_modules/\n");
+    await repo.write("package.json", JSON.stringify(manifest));
+    await repo.write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { strict: true, noEmit: true },
+        include: ["src"],
+      }),
+    );
+    await repo.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: Object.fromEntries(
+          CHECK_IDS.map((id) => [id, id === "types" ? "error" : "off"]),
+        ),
+      }),
+    );
+    await repo.write("src/value.ts", "export const value = process.version;\n");
+    await repo.commitAll("baseline with declared types");
+    await repo.write(
+      "node_modules/.installation-present",
+      "directory exists\n",
+    );
+    await repo.write(
+      "package.json",
+      JSON.stringify({ ...manifest, version: "1.0.1" }),
+    );
+    await repo.git(["add", "package.json"]);
+    const scan = () => runScan({ repositoryRoot: repo.root, cache: false });
+    const missing = await scan();
+    expect(missing.outcome).toBe("incomplete");
+    expect(missing.checks).toContainEqual(
+      expect.objectContaining({
+        checkId: "types",
+        error: expect.objectContaining({
+          code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+          message: expect.stringContaining("@types/node"),
+          path: "package.json",
+        }),
+      }),
+    );
+    await repo.write(
+      "node_modules/@types/node/package.json",
+      JSON.stringify({
+        name: "@types/node",
+        version: "26.0.0",
+        types: "index.d.ts",
+      }),
+    );
+    await repo.write(
+      "node_modules/@types/node/index.d.ts",
+      "declare const process: { version: string };\n",
+    );
+    expect((await scan()).outcome).toBe("pass");
+    await repo.write(
+      "src/value.ts",
+      'export const value: number = "new error";\n',
+    );
+    await repo.git(["add", "src/value.ts"]);
+    const broken = await scan();
+    expect(broken.outcome).toBe("blocked");
+    expect(broken.summary.findings).toContainEqual(
+      expect.objectContaining({ rule: "typescript/TS2322" }),
+    );
+  });
   it("reports a declared missing JSX runtime as an incomplete prerequisite", async () => {
     const repo = await fixture(true);
     const report = await runScan({ repositoryRoot: repo.root, cache: false });

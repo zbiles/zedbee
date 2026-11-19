@@ -234,10 +234,13 @@ describe("captured dependency view", () => {
       sanitizeDependencyInputManifest({
         version: 1,
         roots: "a".repeat(64),
-        probes: Array.from({ length: 1600 }, (_, index) => ({
-          kind: "missing",
-          path: `packages:${"x".repeat(3000)}${index}.d.ts`,
-        })),
+        probes: Array.from(
+          { length: Math.ceil(DEPENDENCY_LIMITS.metadataBytes / 3000) },
+          (_, index) => ({
+            kind: "missing",
+            path: `packages:${"x".repeat(3000)}${index}.d.ts`,
+          }),
+        ),
       }),
     ).toThrow();
   });

@@ -1,3 +1,4 @@
+import { inspectWorkspaceInstallations } from "./workspace-installation.js";
 import { diagnoseProjectEslint } from "./project-eslint.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -358,17 +359,25 @@ export function createDefaultDiagnosticProbe(
         }
       }
       case "workspace-inspection": {
-        const count = await withSnapshots(
+        const root = await repositoryRoot(context.cwd);
+        const { count, readiness } = await withSnapshots(
           context.cwd,
-          async (targetDir) =>
-            (await inspectRepository(targetDir)).workspaces.length,
+          async (targetDir) => {
+            const inspection = await inspectRepository(targetDir);
+            return {
+              count: inspection.workspaces.length,
+              readiness: await inspectWorkspaceInstallations(
+                root,
+                inspection.workspaces,
+              ),
+            };
+          },
         );
         return {
           id,
-          status: "pass",
-          message: `Workspace inspection found ${count} workspace${
-            count === 1 ? "" : "s"
-          }.`,
+          status: readiness.status,
+          message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}. ${readiness.summary} Readiness inspected staged declarations and local installation metadata as data only; no project code was executed. The selected HEAD/index compiler comparison was not run.`,
+          remediation: `${readiness.status === "warning" ? "Restore the reported workspace's declared typings using its package manager and review any unsupported installation layout. " : ""}Run zedbee scan to verify the selected HEAD/index comparison; readiness does not establish which typings a scan requires.`,
         };
       }
       case "project-eslint": {

@@ -15,7 +15,8 @@ import { observationCheckResult } from "./observation-result.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { incompleteResult } from "./incomplete-result.js";
 import { CheckIncompleteError } from "./incomplete-error.js";
-import { AnalyzerJobError } from "./diagnostics.js";
+import { AnalyzerJobError, analyzerDiagnostic } from "./diagnostics.js";
+import { managedCheckMetadata } from "./metadata.js";
 import { scopedContext, type DispatchContext } from "./dispatch-context.js";
 import type { AdapterSnapshot } from "./dispatch-adapter.js";
 import type { createDispatchObservationCollector } from "./dispatch-cache.js";
@@ -62,6 +63,7 @@ export async function executeDispatchTarget(
   let runContext: CheckRunContext | undefined;
   const durationMs = (): number => Math.max(0, clock() - started);
   const label = checkLabel(adapter.id);
+  const metadata = managedCheckMetadata(adapter.id);
   try {
     adapterContext.signal.throwIfAborted();
     runContext = scopedContext(
@@ -85,7 +87,13 @@ export async function executeDispatchTarget(
           attributionContext,
           requiresBaseline,
         );
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof CheckIncompleteError ||
+          error instanceof AnalyzerJobError
+        ) {
+          throw error;
+        }
         adapterResult = undefined;
       }
     } else {
@@ -99,8 +107,18 @@ export async function executeDispatchTarget(
         target: target.id,
         durationMs: durationMs(),
         code: "ADAPTER_RESULT_INVALID",
+        ...(metadata === undefined
+          ? {}
+          : {
+              diagnostic: analyzerDiagnostic(
+                metadata.id,
+                adapter.output === "observations" ? "collect" : "runLegacy",
+                "invalid-response",
+              ),
+            }),
         message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
-        remediation: "Run zedbee doctor and update Zedbee before retrying.",
+        remediation:
+          "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
       });
     } else {
       try {
@@ -115,8 +133,18 @@ export async function executeDispatchTarget(
           target: target.id,
           durationMs: durationMs(),
           code: "ADAPTER_RESULT_INVALID",
+          ...(metadata === undefined
+            ? {}
+            : {
+                diagnostic: analyzerDiagnostic(
+                  metadata.id,
+                  adapter.output === "observations" ? "collect" : "runLegacy",
+                  "invalid-response",
+                ),
+              }),
           message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
-          remediation: "Run zedbee doctor and update Zedbee before retrying.",
+          remediation:
+            "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
         });
       }
     }

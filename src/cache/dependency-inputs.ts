@@ -30,11 +30,11 @@ export interface DependencyInputManifest {
 }
 
 export const DEPENDENCY_LIMITS = Object.freeze({
-  probes: 20_000,
+  probes: 50_000,
   bytes: 64 * 1024 * 1024,
   fileBytes: 8 * 1024 * 1024,
   names: 20_000,
-  metadataBytes: 4 * 1024 * 1024,
+  metadataBytes: 32 * 1024 * 1024,
 });
 const HASH = /^[a-f0-9]{64}$/u;
 const ROOTS = new Set([

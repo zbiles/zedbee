@@ -35,6 +35,20 @@ export interface DependencyCaptureContext {
   readonly repositoryRoot: string;
   readonly snapshots?: Readonly<{ baselineDir: string; targetDir: string }>;
 }
+export type DependencyCaptureFailure =
+  | Readonly<{
+      reason: "capacity";
+      resource: keyof typeof DEPENDENCY_LIMITS;
+      observed: number;
+      limit: number;
+    }>
+  | Readonly<{
+      reason:
+        | "unsupported-scope"
+        | "unreadable-input"
+        | "inputs-changed"
+        | "invalid-manifest";
+    }>;
 type Entry = {
   readonly probe: Exclude<DependencyProbe, { kind: "directory" }>;
   readonly text?: string;
@@ -87,6 +101,29 @@ export class CapturedDependencies {
   private names = 0;
   private metadataBytes = 128;
   private supported = true;
+  private captureFailure: DependencyCaptureFailure | undefined;
+
+  /** Source-free, bounded first cause; never include paths or input contents. */
+  failure(): DependencyCaptureFailure | undefined {
+    return this.captureFailure;
+  }
+
+  private fail(failure: DependencyCaptureFailure): void {
+    this.supported = false;
+    this.captureFailure ??= Object.freeze(failure);
+  }
+
+  private capacity(
+    resource: keyof typeof DEPENDENCY_LIMITS,
+    observed: number,
+  ): void {
+    this.fail({
+      reason: "capacity",
+      resource,
+      observed: Math.min(observed, Number.MAX_SAFE_INTEGER),
+      limit: DEPENDENCY_LIMITS[resource],
+    });
+  }
 
   constructor(
     readonly context: DependencyCaptureContext,
@@ -218,12 +255,14 @@ export class CapturedDependencies {
   }
 
   private retain(bytes: number): boolean {
+    if (!this.supported) return false;
     this.metadataBytes += bytes;
-    if (
-      this.metadataBytes > DEPENDENCY_LIMITS.metadataBytes ||
-      this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes
-    ) {
-      this.supported = false;
+    if (this.metadataBytes > DEPENDENCY_LIMITS.metadataBytes) {
+      this.capacity("metadataBytes", this.metadataBytes);
+      return false;
+    }
+    if (this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes) {
+      this.capacity("probes", this.entries.size + this.listings.size + 1);
       return false;
     }
     return true;
@@ -235,7 +274,7 @@ export class CapturedDependencies {
     try {
       identifier = this.identify(absolute);
     } catch {
-      this.supported = false;
+      this.fail({ reason: "unsupported-scope" });
       identifier = `unsupported:${absolute}`;
     }
     const previous = this.entries.get(identifier);
@@ -255,12 +294,22 @@ export class CapturedDependencies {
         )
           continue;
         const bytes = Buffer.from(input.text, "utf8");
+        if (digest(bytes) !== input.digest) {
+          this.fail({ reason: "inputs-changed" });
+          throw new RangeError("Unsupported captured snapshot bytes");
+        }
         if (
-          digest(bytes) !== input.digest ||
           bytes.length > DEPENDENCY_LIMITS.fileBytes ||
           this.bytes + bytes.length > DEPENDENCY_LIMITS.bytes
-        )
+        ) {
+          this.capacity(
+            bytes.length > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            bytes.length > DEPENDENCY_LIMITS.fileBytes
+              ? bytes.length
+              : this.bytes + bytes.length,
+          );
           throw new RangeError("Unsupported captured snapshot bytes");
+        }
         const real = input.entry.canonicalPath;
         if (!contained(root, real))
           throw new TypeError("Invalid captured snapshot path");
@@ -302,7 +351,12 @@ export class CapturedDependencies {
           metadata.size > DEPENDENCY_LIMITS.fileBytes ||
           this.bytes + metadata.size > DEPENDENCY_LIMITS.bytes
         ) {
-          this.supported = false;
+          this.capacity(
+            metadata.size > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            metadata.size > DEPENDENCY_LIMITS.fileBytes
+              ? metadata.size
+              : this.bytes + metadata.size,
+          );
           if (this.snapshotOnly)
             throw new RangeError("Snapshot capture capacity");
           // Leave exceptional large reads to the analyzer, without retaining them.
@@ -349,7 +403,7 @@ export class CapturedDependencies {
             before.ctimeMs !== after.ctimeMs ||
             canonical(absolute) !== real
           )
-            this.supported = false;
+            this.fail({ reason: "inputs-changed" });
         } finally {
           closeSync(fd);
         }
@@ -378,7 +432,7 @@ export class CapturedDependencies {
       }
     } catch (error) {
       if (fallback !== undefined) {
-        this.supported = false;
+        this.fail({ reason: "unreadable-input" });
         if (this.snapshotOnly) throw error;
         return fallback;
       }
@@ -396,7 +450,7 @@ export class CapturedDependencies {
       }
       if (absent) entry = { probe: { kind: "missing", path: identifier } };
       else {
-        this.supported = false;
+        this.fail({ reason: "unreadable-input" });
         entry = {
           probe: {
             kind: "entry",
@@ -524,8 +578,11 @@ export class CapturedDependencies {
         }))
         .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       this.names += names.length;
+      if (this.names > DEPENDENCY_LIMITS.names) {
+        this.capacity("names", this.names);
+        return names;
+      }
       if (
-        this.names > DEPENDENCY_LIMITS.names ||
         !this.retain(
           Buffer.byteLength(identifier) +
             256 +
@@ -535,7 +592,6 @@ export class CapturedDependencies {
             ),
         )
       ) {
-        this.supported = false;
         return names;
       }
       const probe = {
@@ -547,7 +603,7 @@ export class CapturedDependencies {
       this.listings.set(identifier, probe);
       return probe.names;
     } catch (error) {
-      this.supported = false;
+      this.fail({ reason: "unreadable-input" });
       throw error;
     }
   }
@@ -579,7 +635,7 @@ export class CapturedDependencies {
         ),
       });
     } catch {
-      this.supported = false;
+      this.fail({ reason: "invalid-manifest" });
       return undefined;
     }
   }

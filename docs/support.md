@@ -2,6 +2,8 @@
 
 This document distinguishes implemented coverage from unsupported or deferred behavior. `zedbee checks --format json` is the machine-readable view of the current repository's configured checks and applicability.
 
+`zedbee doctor` warns when declared workspace `@types/*` packages in staged `dependencies` or `devDependencies` have no available installed manifest, or when its bounded metadata inspection cannot verify their installation layout. It supports hoisting within the current checkout and reports independent nested projects separately. These local, data-only readiness checks do not execute project code, access the network, or establish compiler comparability. A healthy result does not prove the selected HEAD/index comparison completed; use `zedbee scan` for that verification.
+
 ## Runtime and project support
 
 | Area              | Supported                                                                                                     | Notes                                                                                                                                                                                                                              |

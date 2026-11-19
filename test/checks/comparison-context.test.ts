@@ -2,10 +2,61 @@ import { expect, it } from "vitest";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { CapturedDependencies } from "../../src/cache/captured-dependencies.js";
 import {
+  assertRequiredInstallation,
   comparisonContext,
   sanitizeComparisonContext,
   verifyComparisonInputs,
 } from "../../src/checks/comparison-context.js";
+
+it.each(["contextual", "source-free"] as const)(
+  "identifies a missing declared package according to the %s message policy",
+  async (diagnosticMessages) => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "fixture",
+      devDependencies: { "@types/node": "26.0.0" },
+    });
+    await fixture.write(
+      "node_modules/.installation-present",
+      "directory exists\n",
+    );
+    const { inspectRepository } =
+      await import("../../src/inspection/inspect-repository.js");
+    const inspection = await inspectRepository(fixture.root);
+    const program = {
+      getOptionsDiagnostics: () => [
+        { code: 2591, messageText: "Cannot find name 'process'." },
+      ],
+      getSourceFiles: () => [],
+      getCompilerOptions: () => ({}),
+    } as unknown as import("typescript").Program;
+    let failure: unknown;
+    try {
+      assertRequiredInstallation({
+        programs: [program],
+        repositoryRoot: fixture.root,
+        inspection,
+        workspace: inspection.workspaces[0]!,
+        dependencies: new CapturedDependencies({
+          repositoryRoot: fixture.root,
+        }),
+        side: "baseline",
+        diagnosticMessages,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+      path: "package.json",
+      snapshot: "last-commit",
+    });
+    const text = `${(failure as Error).message} ${(failure as { remediation: string }).remediation}`;
+    if (diagnosticMessages === "contextual")
+      expect(text).toContain("@types/node");
+    else expect(text).not.toContain("@types/node");
+  },
+);
 it("refuses attribution evidence after dependency bytes change", async () => {
   const f = await createInspectionFixture();
   await f.write(

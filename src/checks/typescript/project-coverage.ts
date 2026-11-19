@@ -67,6 +67,7 @@ export function createSnapshotProjectCoverage(
               workspace,
               dependencies,
               side,
+              diagnosticMessages: context.config.reporting.diagnosticMessages,
             });
           return project;
         })
