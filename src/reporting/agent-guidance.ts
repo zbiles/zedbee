@@ -1,4 +1,5 @@
 import { displayProse } from "../core/display-text.js";
+import { hookUpdateNotice } from "./hook-update-notice.js";
 
 export interface AgentGuidance {
   readonly opening: string;
@@ -34,6 +35,16 @@ export function normalizeAgentGuidance(
 }
 
 export function resolveAgentNextStep(
+  report: import("../scan/report.js").ScanReport,
+  guidance: AgentGuidance,
+): string {
+  const nextStep = resolveScanNextStep(report, guidance);
+  if (nextStep === "" || hookUpdateNotice(report) === undefined)
+    return nextStep;
+  return `${nextStep} Recommend updating Swarm’s hooks and offer to run zedbee init for the user.`;
+}
+
+function resolveScanNextStep(
   report: import("../scan/report.js").ScanReport,
   guidance: AgentGuidance,
 ): string {

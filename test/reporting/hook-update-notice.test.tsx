@@ -10,6 +10,7 @@ import { renderSarif } from "../../src/renderers/sarif.js";
 import { terminalCellWidth } from "../../src/renderers/terminal-cells.js";
 import { ScanResultDashboard } from "../../src/ui/scan-result-dashboard.js";
 import { executeScanCommand } from "../../src/commands/scan.js";
+import { RECOMMENDED_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 
 const presentation = {
   automatic: true,
@@ -24,9 +25,15 @@ const presentation = {
 it.each([40, 80, 120])(
   "shows the setup notice after SCAN RESULT inside the %s-column frame",
   (width) => {
-    const report = Object.assign(createReport(), {
+    const base = createReport();
+    const report = {
+      ...base,
       hookUpdate: HOOK_UPDATE_NOTICE,
-    });
+      presentationPolicy: {
+        ...base.presentationPolicy,
+        agentGuidance: RECOMMENDED_AGENT_GUIDANCE,
+      },
+    };
     const output = renderToString(
       createElement(ScanResultDashboard, {
         report,
@@ -49,6 +56,12 @@ it.each([40, 80, 120])(
     expect(noticeLine.trim().startsWith("██")).toBe(true);
     expect(noticeLine.trim().endsWith("██")).toBe(true);
     expect(output).toContain("zedbee init");
+    expect(output).toContain("AGENT NEXT STEP");
+    expect(
+      renderText(report, { width: 240, color: false, presentation }),
+    ).toContain(
+      "Recommend updating Swarm’s hooks and offer to run zedbee init for the user.",
+    );
     expect(
       Math.max(...output.split("\n").map(terminalCellWidth)),
     ).toBeLessThanOrEqual(width);
