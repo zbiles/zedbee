@@ -371,7 +371,10 @@ it("actual index scans skip independent targets, preserve new errors and match b
   expect(selected.outcome).toBe("blocked");
   expect(
     selected.checks.filter(
-      (c) => ["lint", "types"].includes(c.checkId) && c.target === "extension",
+      (c) =>
+        ["lint", "types"].includes(c.checkId) &&
+        c.target === "extension" &&
+        c.status !== "skipped",
     ),
   ).toHaveLength(0);
   expect(

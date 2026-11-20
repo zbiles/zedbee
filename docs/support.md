@@ -192,7 +192,8 @@ For synthetic credential fixtures, see [the narrow Secretlint annotation](checks
 ## Package-manager processes during a scan
 
 An ordinary managed scan does not install dependencies. Missing required packages
-produce an incomplete check with installation guidance. Restore them deliberately
+produce an incomplete check with installation guidance when they affect the scan.
+Independent workspaces can be skipped even when their install is stale. Restore required packages
 using the repository's package-manager workflow, then rerun the scan.
 
 When investigating an apparent install during a scan, record process ancestry and
@@ -205,3 +206,20 @@ the managed-scan installer guard is not an operating-system sandbox for that cod
 Elapsed check time can include waiting for a worker. Local JSON report diagnostics
 separate queue and worker wall time so a long queued check is not mistaken for a
 CPU-heavy analyzer. See [reporting](reporting.md) for scope and privacy details.
+
+## Rehearsing a Swarm release
+
+Prepare the release commit and dispatch the [Release check workflow](../.github/workflows/release-check.yml)
+on that commit. The workflow installs the preceding pinned npm releases in a consumer fixture and stages
+an upgrade with the candidate. It runs the generated Husky hook on the upgrade, an independent web edit
+with missing e2e dependencies, and two e2e edits that exercise passing and blocking behavior.
+
+Download the tested npm archive and its `upgrade-verification.json` from the successful run. From the
+same clean commit, run `npm run release:tag -- /path/to/the/downloaded/artifact`. This checks the Git
+commit, npm version and tarball SHA-256 before creating the annotated tag. The tag workflow verifies
+that annotation against the artifact from the exact pre-tag run. Publish the archive from that run.
+
+For a local rehearsal, run `npm run artifact:prepare -- --smoke-only`. For a clean release checkout,
+`npm run artifact:prepare` puts the verified archive and upgrade evidence in `release-artifacts/`.
+Update the prior-release versions and npm integrity values in the upgrade fixture when preparing a
+new release.

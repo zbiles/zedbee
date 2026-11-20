@@ -72,11 +72,13 @@ export async function inspectManagedCheck(
     files.filter((file) => file.status !== "deleted").map((file) => file.path),
   );
   const always = context.config.checks[checkId].when === "always";
+  let independentTargets: readonly CheckTarget[] | undefined;
   const applicable = (targets: readonly CheckTarget[]): CheckApplicability => ({
     applies: true,
     executionClass: executionClassFor(checkId),
     requiresBaseline: checkId !== "formatting",
     targets,
+    ...(independentTargets === undefined ? {} : { independentTargets }),
   });
   if (checkId === "formatting") {
     const policyForFile = createFilePolicyResolver(
@@ -206,22 +208,36 @@ export async function inspectManagedCheck(
       .map(({ workspace }) => workspace);
   } else if (checkId === "lint" || checkId === "types") {
     const selected = await Promise.all(
-      workspaces.map(async (workspace) => ({
-        workspace,
-        relevant:
+      workspaces.map(async (workspace) => {
+        const supportsTypes = hasTypeScriptInputs(workspace);
+        const forced =
+          always ||
+          (checkId === "lint" &&
+            projectEngine(workspace) &&
+            !context.changeSet.isEmpty);
+        const hasInputs =
           checkId === "types"
-            ? hasTypeScriptInputs(workspace) &&
-              (always ||
-                (await compilerInputRelevance(context, workspace)).relevant)
-            : workspace.sourceFiles.length > 0 &&
-              ((projectEngine(workspace) && !context.changeSet.isEmpty) ||
-                always ||
-                (hasTypeScriptInputs(workspace) &&
-                  (await compilerInputRelevance(context, workspace))
-                    .relevant) ||
-                workspace.sourceFiles.some((path) => changed.has(path))),
-      })),
+            ? supportsTypes
+            : workspace.sourceFiles.length > 0;
+        const changedSource =
+          checkId === "lint" &&
+          workspace.sourceFiles.some((path) => changed.has(path));
+        const relevance =
+          hasInputs && supportsTypes && !forced && !changedSource
+            ? await compilerInputRelevance(context, workspace)
+            : undefined;
+        return {
+          workspace,
+          relevant:
+            hasInputs &&
+            (forced || changedSource || relevance?.relevant === true),
+          independent: relevance?.reason === "independent",
+        };
+      }),
     );
+    independentTargets = selected
+      .filter(({ independent }) => independent)
+      .map(({ workspace }) => targetFor(workspace));
     workspaces = selected
       .filter(({ relevant }) => relevant)
       .map(({ workspace }) => workspace);
@@ -255,6 +271,7 @@ export async function inspectManagedCheck(
     ? applicable(workspaces.map(targetFor))
     : {
         applies: false,
+        ...(independentTargets === undefined ? {} : { independentTargets }),
         reason:
           checkId === "types"
             ? "No supported changed TypeScript source files"

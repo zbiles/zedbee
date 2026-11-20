@@ -34,7 +34,8 @@ export type CompilerInputRelevance = Readonly<{
     | "dependency"
     | "data"
     | "unknown"
-    | "unrelated";
+    | "unrelated"
+    | "independent";
 }>;
 
 const changes = new WeakMap<ChangeSet, ReadonlySet<string>>();
@@ -159,40 +160,42 @@ export function compilerInputRelevance(
   const previous = scoped.get(workspace);
   if (
     previous !== undefined &&
-    ![...changedPaths(context.changeSet)].some((path) => SOURCE.test(path))
+    ![...changedPaths(context.changeSet)].some(
+      (path) => SOURCE.test(path) || DEPENDENCY.test(posix.basename(path)),
+    )
   )
     return previous;
   if (previous !== undefined)
     return previous.then(async (result) => {
-      if (
-        !result.relevant &&
-        result.reason === "unrelated" &&
-        (await decision!).relevant
-      ) {
+      if (result.reason === "independent") {
         if (
           !(await proveCompilerWorkspaceIndependence(context, workspace))
             .independent
         )
-          return { relevant: true, reason: "source" };
+          return await decision!;
       }
       return result;
     });
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
-      if (!result.relevant || result.reason !== "source") return result;
+      if (!result.relevant || !["source", "dependency"].includes(result.reason))
+        return result;
       const classification = await classifyCompilerChanges(context);
       if (!classification.complete || classification.requiresBroadComparison)
         return result;
-      const paths = classification.sourcePaths;
+      const paths = [
+        ...classification.sourcePaths,
+        ...classification.localNpmInputs,
+      ];
       const prefix =
         workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-      if ([...paths].some((path) => path.startsWith(prefix))) return result;
+      if (paths.some((path) => path.startsWith(prefix))) return result;
       if (
         !(await proveCompilerWorkspaceIndependence(context, workspace))
           .independent
       )
         return result;
-      return { relevant: false, reason: "unrelated" };
+      return { relevant: false, reason: "independent" };
     },
   );
   scoped.set(workspace, narrowed);

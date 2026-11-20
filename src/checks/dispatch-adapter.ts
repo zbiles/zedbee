@@ -105,6 +105,17 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
   }
   const candidate = value as Record<string, unknown>;
   const applies = candidate.applies;
+  const independentTargets = candidate.independentTargets;
+  if (independentTargets !== undefined && !Array.isArray(independentTargets))
+    throw new TypeError("Adapter returned invalid independent targets");
+  const independent =
+    independentTargets === undefined
+      ? {}
+      : {
+          independentTargets: Object.freeze(
+            independentTargets.map(sanitizeCheckTarget),
+          ),
+        };
   if (applies === false) {
     const reason = candidate.reason;
     if (
@@ -118,6 +129,7 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
     return Object.freeze({
       applies,
       reason: displayProse(reason, "skip reason"),
+      ...independent,
     });
   }
   if (applies !== true) {
@@ -182,6 +194,7 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
     executionClass,
     requiresBaseline,
     targets,
+    ...independent,
     ...(networkDisclosure === undefined ? {} : { networkDisclosure }),
   });
 }

@@ -1,3 +1,4 @@
+import { dependencyResolutionContainingFile } from "./dependency-resolution-path.js";
 import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import {
@@ -192,8 +193,13 @@ function createFreshSnapshotProgram(
     composite: false,
   };
   const typescriptLibraryRoot = dirname(ts.getDefaultLibFilePath(options));
+  // A materialized snapshot is represented by the captured input map. A
+  // speculative alias lookup (including a Node builtin such as node:events)
+  // is an inventory miss, not a lookup in the live installation.
+  const isSnapshotPath = (candidate: string): boolean =>
+    snapshotRoot !== repositoryRoot && contained(snapshotRoot, candidate);
   const dependencyFileAllowed = (candidate: string): boolean =>
-    dependencies.fileExists(candidate);
+    !isSnapshotPath(candidate) && dependencies.fileExists(candidate);
   const prepareProjectOptions = (
     projectOptions: ts.CompilerOptions,
     projectRootNames: readonly string[],
@@ -303,7 +309,7 @@ function createFreshSnapshotProgram(
           ? dependencies.getDirectories(absolutePath(path))
           : [],
       realpath: (path) =>
-        files.has(absolutePath(path))
+        files.has(absolutePath(path)) || isSnapshotPath(absolutePath(path))
           ? absolutePath(path)
           : dependencies.realpath(absolutePath(path)),
     };
@@ -412,11 +418,10 @@ function createFreshSnapshotProgram(
           if (localResolution.resolvedModule !== undefined)
             return localResolution;
           if (!isBareSpecifier(specifier)) return localResolution;
-          const relativeContaining =
-            repositoryPath(snapshotRoot, containingFile) ?? "src/index.ts";
-          const syntheticContaining = resolve(
+          const syntheticContaining = dependencyResolutionContainingFile(
             repositoryRoot,
-            ...relativeContaining.split("/"),
+            snapshotRoot,
+            containingFile,
           );
           const resolved = ts.resolveModuleName(
             specifier,
