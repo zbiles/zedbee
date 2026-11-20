@@ -1,6 +1,27 @@
-import { describe, expect, it } from "vitest";
-import { runCli, scanTimeoutOverrides } from "../src/cli.js";
+import { describe, expect, it, vi } from "vitest";
+import { main, runCli, scanTimeoutOverrides } from "../src/cli.js";
+import { ZEDBEE_VERSION } from "../src/core/package-version.js";
 import { resolveScanResourcePolicy } from "../src/scan/resource-policy.js";
+
+it.each(["--version", "-V"])(
+  "prints the running package version for %s",
+  async (flag) => {
+    const stdout = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(() => true);
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      expect(await main(["node", "zedbee", flag])).toBe(0);
+      expect(stdout).toHaveBeenCalledExactlyOnceWith(`${ZEDBEE_VERSION}\n`);
+      expect(stderr).not.toHaveBeenCalled();
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+  },
+);
 
 describe("scanTimeoutOverrides", () => {
   it.each(["scan", "fix"] as const)(
@@ -158,9 +179,14 @@ it("offers source-free managed messages during init", async () => {
 it("supports explicit uncached CLI scans without changing default cache policy", async () => {
   const values: (boolean | undefined)[] = [];
   for (const flags of [[], ["--no-cache"]]) {
-    expect(await runCli(["node", "zedbee", "scan", "--format", "json", ...flags], {
-      executeScanCommand: async options => { values.push(options.cache); return 0; },
-    })).toBe(0);
+    expect(
+      await runCli(["node", "zedbee", "scan", "--format", "json", ...flags], {
+        executeScanCommand: async (options) => {
+          values.push(options.cache);
+          return 0;
+        },
+      }),
+    ).toBe(0);
   }
   expect(values).toEqual([undefined, false]);
 });

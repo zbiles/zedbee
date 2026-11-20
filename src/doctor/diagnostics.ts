@@ -23,7 +23,7 @@ import { hasZedbeeScanCommand } from "../hooks/husky.js";
 import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
-import { getHookUpdateNotice } from "../hooks/update-notice.js";
+import { inspectHookMaintenance } from "../hooks/update-notice.js";
 import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
@@ -126,7 +126,7 @@ async function regularFileContents(path: string): Promise<string | undefined> {
 }
 
 async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
-  const hookUpdate = await getHookUpdateNotice(root);
+  const { hookUpdate, sharedHuskyPreCommit } = await inspectHookMaintenance(root);
   if (hookUpdate !== undefined) {
     return {
       id: "hook-state",
@@ -134,6 +134,14 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
       message: hookUpdate.message,
       remediation: hookUpdate.remediation,
     };
+  }
+  if (sharedHuskyPreCommit !== undefined) {
+    return sharedHuskyPreCommit
+      ? { id: "hook-state", status: "pass", message: "The shared Husky pre-commit hook invokes Zedbee." }
+      : { id: "hook-state", status: "warning",
+          message: "The shared Husky pre-commit hook does not invoke Zedbee.",
+          remediation: "Run zedbee init in the main checkout to add Zedbee to the shared hook.",
+        };
   }
   const hookOutput = await new GitClient(root).run([
     "rev-parse",

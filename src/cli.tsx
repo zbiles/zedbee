@@ -123,6 +123,7 @@ export async function runCli(
 ): Promise<number> {
   const program = new Command()
     .name("zedbee")
+    .version(ZEDBEE_VERSION)
     .description("Diff-aware pre-commit scanning for JavaScript and TypeScript")
     .showHelpAfterError()
     .exitOverride();
