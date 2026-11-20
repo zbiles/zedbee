@@ -1,6 +1,9 @@
 import { posix, relative, sep } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
-import { readContainedFile } from "../../inspection/read-json.js";
+import {
+  readContainedFile,
+  ContainedFileSizeError,
+} from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
   IGNORED_DIRECTORY_NAMES,
@@ -17,6 +20,7 @@ import type {
 export type CompilerConfigurationInputs = Readonly<{
   paths: ReadonlySet<string>;
   complete: boolean;
+  limited?: true;
 }>;
 
 function createResolver(
@@ -62,7 +66,12 @@ function createResolver(
           return registry.resolve(path)?.targetKind === "file"
             ? registry
             : undefined;
-        } catch {
+        } catch (error) {
+          if (
+            retainMissingCandidates &&
+            error instanceof ContainedFileSizeError
+          )
+            exhausted = true;
           signal?.throwIfAborted();
           // Missing, invalid and uncontained inputs cannot contribute metadata.
           // Selected analyzers remain responsible for configuration validation.
@@ -97,7 +106,12 @@ function createResolver(
             allowTrailingComma: true,
           });
           return errors.length === 0 ? data : undefined;
-        } catch {
+        } catch (error) {
+          if (
+            retainMissingCandidates &&
+            error instanceof ContainedFileSizeError
+          )
+            exhausted = true;
           signal?.throwIfAborted();
           return undefined;
         }
@@ -113,7 +127,11 @@ function createResolver(
     let complete = true;
     signal?.throwIfAborted();
     if (retainMissingCandidates && workspace.tsconfigPaths.length > 64)
-      return Object.freeze({ paths: new Set<string>(), complete: false });
+      return Object.freeze({
+        paths: new Set<string>(),
+        complete: false,
+        limited: true,
+      });
     const paths = new Set<string>(workspace.tsconfigPaths);
     // Only lexical requests are parsed: relative extends are based on the
     // requested alias, not on the canonical target's directory.
@@ -122,6 +140,7 @@ function createResolver(
     while (pending.length > 0) {
       signal?.throwIfAborted();
       if (retainMissingCandidates && (parsedCount >= 64 || exhausted)) {
+        exhausted = true;
         complete = false;
         break;
       }
@@ -223,7 +242,11 @@ function createResolver(
         }
       }
     }
-    return Object.freeze({ paths, complete: complete && !exhausted });
+    return Object.freeze({
+      paths,
+      complete: complete && !exhausted,
+      ...(exhausted ? { limited: true as const } : {}),
+    });
   };
   return (
     workspace: WorkspaceInspection,

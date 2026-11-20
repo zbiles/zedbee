@@ -132,6 +132,28 @@ it("follows installed declarations and revalidates their bytes even with restore
   });
   releaseCompilerScopeProofs(context);
 });
+it("invalidates a proof when a previously absent baseUrl candidate appears", async () => {
+  const { f, context, workspace } = await fixture(
+    'export {value} from "fixture-package";',
+  );
+  await f.writeJson("extension/node_modules/fixture-package/package.json", {
+    name: "fixture-package",
+    types: "index.d.ts",
+  });
+  await f.write(
+    "extension/node_modules/fixture-package/index.d.ts",
+    "export declare const value:number;",
+  );
+  expect(
+    (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
+  ).toBe(true);
+  await f.writeJson("extension/fixture-package/package.json", {
+    types: "../../web/src/local.ts",
+  });
+  await expect(validateCompilerScopeProofs(context)).rejects.toMatchObject({
+    code: "COMPARISON_INPUTS_CHANGED",
+  });
+});
 it.each([
   "automatic",
   "explicit",

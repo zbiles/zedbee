@@ -27,6 +27,7 @@ interface Witness {
   root: string;
   path: string;
   digest?: string;
+  directory?: true;
   limit: number;
 }
 interface ProofRecord {
@@ -78,6 +79,11 @@ async function acquire<T>(
   }
 }
 class ProofLimit extends Error {}
+class SnapshotLookup extends Error {
+  constructor(readonly path: string) {
+    super("Uninventoried resolution input");
+  }
+}
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const unknown: WorkspaceIndependenceProof = {
   independent: false,
@@ -112,7 +118,13 @@ async function valid(record: ProofRecord, signal?: AbortSignal) {
     if (w.digest === undefined) {
       const registry = await captureSnapshotRegistry(w.root, [w.path]);
       signal?.throwIfAborted();
-      if (registry.resolve(w.path) !== undefined) return false;
+      if (registry.entries().some((e) => e.kind === "symlink")) return false;
+      if (
+        w.directory
+          ? registry.resolve(w.path)?.targetKind !== "directory"
+          : registry.resolve(w.path) !== undefined
+      )
+        return false;
     } else if (hash(await read(w.root, w.path, w.limit, signal)) !== w.digest)
       return false;
   }
@@ -324,6 +336,7 @@ export async function proveCompilerWorkspaceIndependence(
         const knownManifests = new Set(
           inspection.workspaces.map((w) => w.manifestPath),
         );
+        const absentPaths = new Set<string>();
         for (const path of manifests) {
           if (knownManifests.has(path)) continue;
           context.signal?.throwIfAborted();
@@ -341,6 +354,7 @@ export async function proveCompilerWorkspaceIndependence(
             path,
             limit: 64 * 1024,
           });
+          absentPaths.add(resolve(inspection.snapshotRoot, path));
         }
         for (const path of texts.keys()) inventory.add(path);
         const directories = new Set<string>();
@@ -352,10 +366,82 @@ export async function proveCompilerWorkspaceIndependence(
             directory = dirname(directory);
           }
         }
+        const snapshotFile = (path: string): boolean | undefined => {
+          const absolute = resolve(path);
+          if (inventory.has(absolute)) return true;
+          if (
+            !within(inspection.snapshotRoot, absolute) ||
+            relative(inspection.snapshotRoot, absolute)
+              .split(sep)
+              .includes("node_modules")
+          )
+            return undefined;
+          if (!absentPaths.has(absolute)) throw new SnapshotLookup(absolute);
+          return false;
+        };
+        const snapshotDirectory = (path: string): boolean | undefined => {
+          const absolute = resolve(path);
+          if (directories.has(absolute)) return true;
+          if (absentPaths.has(absolute)) return false;
+          if (
+            within(inspection.snapshotRoot, absolute) &&
+            !relative(inspection.snapshotRoot, absolute)
+              .split(sep)
+              .includes("node_modules")
+          )
+            throw new SnapshotLookup(absolute);
+          return undefined;
+        };
+        const snapshotRead = (path: string) => {
+          snapshotFile(path);
+          return texts.get(resolve(path));
+        };
+        const resolveSnapshotMetadata = async <T>(
+          operation: () => T,
+        ): Promise<T> => {
+          for (;;) {
+            context.signal?.throwIfAborted();
+            try {
+              return operation();
+            } catch (error) {
+              if (!(error instanceof SnapshotLookup)) throw error;
+              charge();
+              const path = relative(inspection.snapshotRoot, error.path)
+                .split(sep)
+                .join("/");
+              const registry = await captureSnapshotRegistry(
+                inspection.snapshotRoot,
+                [path],
+              );
+              context.signal?.throwIfAborted();
+              if (registry.entries().some((e) => e.kind === "symlink"))
+                throw Error("Unsupported resolution alias");
+              const entry = registry.resolve(path);
+              if (entry?.targetKind === "file")
+                throw Error("Unsupported resolution metadata");
+              if (entry?.targetKind === "directory") {
+                directories.add(error.path);
+                witnesses.push({
+                  root: inspection.snapshotRoot,
+                  path,
+                  limit: 0,
+                  directory: true,
+                });
+              } else {
+                absentPaths.add(error.path);
+                witnesses.push({
+                  root: inspection.snapshotRoot,
+                  path,
+                  limit: 0,
+                });
+              }
+            }
+          }
+        };
         const snapshotHost: Typescript.ModuleResolutionHost = {
-          fileExists: (path) => inventory.has(resolve(path)),
-          readFile: (path) => texts.get(resolve(path)),
-          directoryExists: (path) => directories.has(resolve(path)),
+          fileExists: (path) => snapshotFile(path) ?? false,
+          readFile: snapshotRead,
+          directoryExists: (path) => snapshotDirectory(path) ?? false,
           realpath: (path) => resolve(path),
         };
         const libraryRoot = dirname(ts.getDefaultLibFilePath({}));
@@ -364,19 +450,19 @@ export async function proveCompilerWorkspaceIndependence(
           within(libraryRoot, resolve(path));
         const host: Typescript.ModuleResolutionHost = {
           fileExists: (path) =>
-            inventory.has(resolve(path)) ||
+            snapshotFile(path) ??
             (dependencyPath(path) &&
               captured(() => dependencies.fileExists(path))),
           readFile: (path) =>
-            texts.get(resolve(path)) ??
+            snapshotRead(path) ??
             (dependencyPath(path)
               ? captured(() => dependencies.readCapturedFile(path))
               : undefined),
           directoryExists: (path) =>
-            directories.has(resolve(path)) ||
-            within(context.repositoryRoot, resolve(path)) ||
-            (within(libraryRoot, resolve(path)) &&
-              captured(() => dependencies.directoryExists(path))),
+            snapshotDirectory(path) ??
+            (within(context.repositoryRoot, resolve(path)) ||
+              (within(libraryRoot, resolve(path)) &&
+                captured(() => dependencies.directoryExists(path)))),
           getDirectories: (path) =>
             dependencyPath(path)
               ? captured(() => dependencies.getDirectories(path))
@@ -546,11 +632,15 @@ export async function proveCompilerWorkspaceIndependence(
             }
           for (const name of typeNames) {
             charge();
-            const resolved = ts.resolveTypeReferenceDirective(
-              name,
-              resolve(context.repositoryRoot, project.configPath),
-              prepared,
-              host,
+            const resolved = (
+              await resolveSnapshotMetadata(() =>
+                ts.resolveTypeReferenceDirective(
+                  name,
+                  resolve(context.repositoryRoot, project.configPath),
+                  prepared,
+                  host,
+                ),
+              )
             ).resolvedTypeReferenceDirective;
             if (!resolved?.resolvedFileName) return unknown;
             push(resolved.resolvedFileName);
@@ -613,12 +703,12 @@ export async function proveCompilerWorkspaceIndependence(
               ? installed.resolvedFileName
               : undefined;
           };
-          const resolveModule = (specifier: string, from: string) => {
-            const imports = resolveOne(specifier, from, ts.ModuleKind.ESNext);
-            const requires = resolveOne(
-              specifier,
-              from,
-              ts.ModuleKind.CommonJS,
+          const resolveModule = async (specifier: string, from: string) => {
+            const imports = await resolveSnapshotMetadata(() =>
+              resolveOne(specifier, from, ts.ModuleKind.ESNext),
+            );
+            const requires = await resolveSnapshotMetadata(() =>
+              resolveOne(specifier, from, ts.ModuleKind.CommonJS),
             );
             return imports !== undefined && requires !== undefined
               ? [...new Set([imports, requires])]
@@ -698,7 +788,7 @@ export async function proveCompilerWorkspaceIndependence(
             visit(tree);
             if (unsafe) return unknown;
             for (const item of pre.importedFiles) {
-              const resolved = resolveModule(item.fileName, path);
+              const resolved = await resolveModule(item.fileName, path);
               if (!resolved) return unknown;
               for (const path of resolved) push(path);
             }
@@ -718,14 +808,18 @@ export async function proveCompilerWorkspaceIndependence(
                 ts.ModuleKind.CommonJS,
               ] as const) {
                 charge();
-                const found = ts.resolveTypeReferenceDirective(
-                  item.fileName,
-                  path,
-                  prepared,
-                  host,
-                  undefined,
-                  undefined,
-                  mode,
+                const found = (
+                  await resolveSnapshotMetadata(() =>
+                    ts.resolveTypeReferenceDirective(
+                      item.fileName,
+                      path,
+                      prepared,
+                      host,
+                      undefined,
+                      undefined,
+                      mode,
+                    ),
+                  )
                 ).resolvedTypeReferenceDirective;
                 if (!found?.resolvedFileName) return unknown;
                 push(found.resolvedFileName);
@@ -743,7 +837,7 @@ export async function proveCompilerWorkspaceIndependence(
               (options.jsx === ts.JsxEmit.ReactJSX ||
                 options.jsx === ts.JsxEmit.ReactJSXDev)
             ) {
-              const runtime = resolveModule(
+              const runtime = await resolveModule(
                 `${options.jsxImportSource ?? "react"}/${options.jsx === ts.JsxEmit.ReactJSXDev ? "jsx-dev-runtime" : "jsx-runtime"}`,
                 path,
               );

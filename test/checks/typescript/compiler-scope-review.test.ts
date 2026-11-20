@@ -58,6 +58,12 @@ async function comparison(kind: string) {
       paths.fs = ["../web/shared"];
       source = 'import {v} from "fs"; export const n:number=v;';
       shared = `export const v=${index === 2 ? '"s"' : "3"};`;
+    } else if (kind === "manifest-fallback") {
+      source = 'import {v} from "cross"; export const n:number=v;';
+      shared = `export const v=${index === 2 ? '"s"' : "3"};`;
+      paths.cross = ["../web/impl", "./fallback"];
+      await f.write("extension/fallback.ts", "export const v=3;");
+      await f.writeJson("web/impl/package.json", { types: "../shared.ts" });
     } else if (kind === "manifest") {
       source = 'import {v} from "./impl"; export const n:number=v;';
       shared = `export const v=${index === 2 ? '"s"' : "3"};`;
@@ -136,7 +142,15 @@ async function comparison(kind: string) {
   return { live, before, after, workspace, context };
 }
 
-it.each(["jsdoc", "helpers", "jsx", "builtin", "manifest", "references"])(
+it.each([
+  "jsdoc",
+  "helpers",
+  "jsx",
+  "builtin",
+  "manifest",
+  "manifest-fallback",
+  "references",
+])(
   "retains the broad compiler's new assignment error through %s",
   async (kind) => {
     const { live, before, after, workspace, context } = await comparison(kind);
