@@ -61,6 +61,8 @@ Intent-to-add records supply no staged file content, so Zedbee excludes them as 
 
 Complete JSON, text, and SARIF exports report every attributed finding. Automatic terminal output and explicit Ink show 25 findings by default, with blockers first, while keeping counts, disclosures, incomplete checks, warnings, guidance, and report paths complete. Automatic scans always write a complete versioned temporary JSON report, including a pass with zero findings; explicit Ink writes one only when its finding preview overflows. Explicit text, JSON, and SARIF write no sidecar. Use explicit JSON or SARIF output/redirection for a durable export.
 
+When structural security cannot parse selected source, the incomplete check lists its file versions with snapshot labels, one-based positions and parser reasons. The terminal previews up to 10 entries per check. Use `--format json` for the recorded entries in `error.parseFailures.files`. The report records up to 256 entries per check and counts any additional failures in `error.parseFailures.omitted`.
+
 ## TypeScript diagnostics
 
 `types` and typed `lint` inspect changed paths against source and configuration

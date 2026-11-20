@@ -80,7 +80,7 @@ describe("managed check cache metadata", () => {
       "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v7-source-moves",
     );
     expect(identity("structuralSecurity")).toBe(
-      "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v3",
+      "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v4",
     );
   });
 

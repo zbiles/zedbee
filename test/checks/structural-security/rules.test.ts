@@ -6,6 +6,57 @@ import {
 } from "../../../src/checks/structural-security/rules.js";
 
 describe("collectStructuralSecurityObservations", () => {
+  it.each([
+    [
+      "fixture.ts",
+      "export function flag() {\n  const using = true;\n  return using;\n}",
+    ],
+    [
+      "fixture.tsx",
+      "const [using, setUsing] = useState(false);\nconst view = <p>🐝 & {using}</p>;",
+    ],
+    [
+      "fixture.ts",
+      'using resource = open();\nconst z____ = 1;\nfunction f(using: number) { return { using, text: "using" }.using; }',
+    ],
+  ])("keeps analyzing contextual identifiers in %s", (file, source) => {
+    expect(collectStructuralSecurityObservations(file, source)).toEqual([]);
+    expect(
+      collectStructuralSecurityObservations(file, source + "\neval(input);"),
+    ).toEqual(
+      collectStructuralSecurityObservations(
+        file,
+        source.replace(/\busing\b(?! resource)/gu, "other") + "\neval(input);",
+      ),
+    );
+  });
+
+  it("accepts contextual identifiers and import types in declarations", () => {
+    expect(
+      collectStructuralSecurityObservations(
+        "fixture.d.ts",
+        'declare function f(using: number): import("./fixture").Result;',
+      ),
+    ).toEqual([]);
+  });
+
+  it("retains original names for import and shadowing checks after a retry", () => {
+    const source = [
+      'import { request as using } from "node:http";',
+      "function f(z____: unknown) { return z____; }",
+      'using("http://example.test", { headers: { authorization: token } });',
+    ].join("\n");
+    expect(collectStructuralSecurityObservations("fixture.ts", source)).toEqual(
+      [expect.objectContaining({ rule: "credential-over-insecure-http" })],
+    );
+    expect(
+      collectStructuralSecurityObservations(
+        "fixture.ts",
+        source.replace("f(z____:", "f(using:"),
+      ),
+    ).toEqual([]);
+  });
+
   it("keeps AST work linear as repeated imported requests grow", () => {
     const countWork = (requests: number) => {
       const source =

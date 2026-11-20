@@ -1,3 +1,4 @@
+import { parseFailureFields } from "../renderers/incomplete.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
   hookUpdateNotice,
@@ -326,7 +327,8 @@ function IncompleteChecksPanel({
                       width={contentWidth}
                       color={color}
                     />
-                    {error.path === undefined ? null : (
+                    {error.path === undefined ||
+                    error.parseFailures !== undefined ? null : (
                       <LabeledValue
                         label="Path"
                         value={error.path}
@@ -361,7 +363,20 @@ function IncompleteChecksPanel({
                         tone={ZEDBEE_THEME.secondary}
                       />
                     )}
-                    {error.paths === undefined ? null : (
+                    {error.parseFailures !== undefined ? (
+                      parseFailureFields(error.parseFailures).map(
+                        ({ label, value }, index) => (
+                          <LabeledValue
+                            key={index}
+                            label={label}
+                            value={value}
+                            width={contentWidth}
+                            color={color}
+                            tone={ZEDBEE_THEME.secondary}
+                          />
+                        ),
+                      )
+                    ) : error.paths === undefined ? null : (
                       <>
                         <LabeledValue
                           label="Affected files"

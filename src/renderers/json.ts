@@ -87,6 +87,9 @@ function serializeCheck(
           ...(check.error.path === undefined
             ? {}
             : { path: check.error.path }),
+          ...(check.error.parseFailures === undefined
+            ? {}
+            : { parseFailures: check.error.parseFailures }),
           ...(check.error.paths === undefined
             ? {}
             : { paths: [...check.error.paths] }),

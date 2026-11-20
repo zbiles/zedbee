@@ -51,7 +51,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
-    revision: "zedbee-structural-rules-v3",
+    revision: "zedbee-structural-rules-v4",
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),

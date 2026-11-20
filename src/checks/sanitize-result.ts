@@ -1,3 +1,4 @@
+import { sanitizeStructuralParseFailures } from "./structural-security/parse-failures.js";
 import { incompleteComparisonContext, sanitizeComparisonContext } from "./comparison-context.js";
 import type {
   Attribution,
@@ -129,6 +130,7 @@ export const PUBLIC_CHECK_ERROR_FIELDS = {
   paths: true,
   snapshot: true,
   projectPaths: true,
+  parseFailures: true,
   temporaryPath: true,
   remediation: true,
 } as const satisfies Readonly<Record<keyof CheckError, true>>;
@@ -286,6 +288,11 @@ function sanitizeError(
     ...(error.path === undefined
       ? {}
       : { path: normalizeRepositoryRelativePath(error.path) }),
+    ...(error.parseFailures === undefined
+      ? {}
+      : {
+          parseFailures: sanitizeStructuralParseFailures(error.parseFailures),
+        }),
     ...(error.paths === undefined
       ? {}
       : {

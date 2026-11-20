@@ -1,6 +1,6 @@
 import { extname } from "node:path";
-import { Lang, parse, type SgNode, type SgRoot } from "@ast-grep/napi";
-import * as ts from "typescript";
+import { Lang, type SgNode, type SgRoot } from "@ast-grep/napi";
+import { parseStructuralSource, structuralNodes } from "./parser.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation, SourceLocation } from "../../core/types.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
@@ -15,6 +15,7 @@ export interface StructuralRule {
 
 interface RuleContext {
   readonly nodes: readonly SgNode[];
+  text(node: SgNode | undefined): string | undefined;
   readonly nonImportBindings: Map<string, boolean>;
 }
 
@@ -22,18 +23,20 @@ interface ContextualStructuralRule extends Omit<StructuralRule, "matches"> {
   matches(context: RuleContext): readonly SgNode[];
 }
 
-function createRuleContext(root: SgRoot): RuleContext {
-  return { nodes: nodes(root), nonImportBindings: new Map() };
-}
-
-function nodes(root: SgRoot): readonly SgNode[] {
-  const found: SgNode[] = [];
-  const visit = (node: SgNode): void => {
-    found.push(node);
-    for (const child of node.children()) visit(child);
+function createRuleContext(
+  nodes: readonly SgNode[],
+  original?: string,
+): RuleContext {
+  return {
+    nodes,
+    nonImportBindings: new Map(),
+    text(node) {
+      if (node === undefined) return undefined;
+      if (original === undefined) return node.text();
+      const { start, end } = node.range();
+      return original.slice(start.index, end.index);
+    },
   };
-  visit(root.root());
-  return found;
 }
 
 function namedChildren(node: SgNode): readonly SgNode[] {
@@ -51,29 +54,35 @@ function callArguments(node: SgNode): readonly SgNode[] {
   return args === undefined ? [] : namedChildren(args);
 }
 
-function propertyName(node: SgNode): string | undefined {
+function propertyName(context: RuleContext, node: SgNode): string | undefined {
   const children = namedChildren(node);
   if (node.kind() !== "pair" || children.length < 2) return undefined;
-  return children[0]?.text().replace(/^['"]|['"]$/gu, "");
+  return context.text(children[0])?.replace(/^['"]|['"]$/gu, "");
 }
 
 function propertyValue(node: SgNode): SgNode | undefined {
   return node.kind() === "pair" ? namedChildren(node)[1] : undefined;
 }
 
-function identifierNames(node: SgNode): ReadonlySet<string> {
+function identifierNames(
+  context: RuleContext,
+  node: SgNode,
+): ReadonlySet<string> {
   const names = new Set<string>();
   const visit = (candidate: SgNode): void => {
-    if (candidate.kind() === "identifier") names.add(candidate.text());
+    if (candidate.kind() === "identifier") names.add(context.text(candidate)!);
     for (const child of candidate.children()) visit(child);
   };
   visit(node);
   return names;
 }
 
-function importLocalNames(node: SgNode): ReadonlySet<string> {
+function importLocalNames(
+  context: RuleContext,
+  node: SgNode,
+): ReadonlySet<string> {
   const locals = new Set<string>();
-  const text = node.text();
+  const text = context.text(node)!;
   const namespace = text.match(
     /import\s+\*\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)/u,
   )?.[1];
@@ -98,14 +107,19 @@ function hasNonImportBinding(context: RuleContext, name: string): boolean {
   if (cached !== undefined) return cached;
   const result = context.nodes.some((node) => {
     const kind = node.kind();
-    if (kind === "formal_parameters") return identifierNames(node).has(name);
+    if (kind === "formal_parameters")
+      return identifierNames(context, node).has(name);
     if (kind === "arrow_function") {
       const parameter = namedChildren(node)[0];
-      return parameter?.kind() === "identifier" && parameter.text() === name;
+      return (
+        parameter?.kind() === "identifier" && context.text(parameter) === name
+      );
     }
     if (kind === "variable_declarator") {
       const binding = namedChildren(node)[0];
-      return binding !== undefined && identifierNames(binding).has(name);
+      return (
+        binding !== undefined && identifierNames(context, binding).has(name)
+      );
     }
     if (
       kind === "function_declaration" ||
@@ -116,14 +130,17 @@ function hasNonImportBinding(context: RuleContext, name: string): boolean {
       kind === "class"
     ) {
       return namedChildren(node).some(
-        (child) => child.kind() === "identifier" && child.text() === name,
+        (child) =>
+          child.kind() === "identifier" && context.text(child) === name,
       );
     }
     if (kind === "catch_clause") {
       const binding = namedChildren(node).find(
         (child) => child.kind() !== "statement_block",
       );
-      return binding !== undefined && identifierNames(binding).has(name);
+      return (
+        binding !== undefined && identifierNames(context, binding).has(name)
+      );
     }
     return false;
   });
@@ -136,7 +153,8 @@ function hasAnyBinding(context: RuleContext, name: string): boolean {
     hasNonImportBinding(context, name) ||
     context.nodes.some(
       (node) =>
-        node.kind() === "import_statement" && importLocalNames(node).has(name),
+        node.kind() === "import_statement" &&
+        importLocalNames(context, node).has(name),
     )
   );
 }
@@ -152,7 +170,7 @@ function moduleBindings(
     .join("|");
   for (const node of context.nodes) {
     if (node.kind() === "import_statement") {
-      const text = node.text();
+      const text = context.text(node)!;
       if (!new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u").test(text))
         continue;
       const namespace = text.match(
@@ -177,7 +195,7 @@ function moduleBindings(
       node.kind() === "lexical_declaration" ||
       node.kind() === "variable_declaration"
     ) {
-      const text = node.text();
+      const text = context.text(node)!;
       const required = new RegExp(
         `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
         "u",
@@ -210,7 +228,7 @@ function importedCalls(
 ): readonly SgNode[] {
   const bindings = moduleBindings(context, modules);
   return context.nodes.filter((node) => {
-    const callee = callCallee(node)?.text();
+    const callee = context.text(callCallee(node));
     if (callee === undefined) return false;
     const direct = bindings.named.get(callee);
     if (
@@ -241,7 +259,7 @@ const directEval: ContextualStructuralRule = {
       : context.nodes.filter(
           (node) =>
             node.kind() === "call_expression" &&
-            callCallee(node)?.text() === "eval",
+            context.text(callCallee(node)) === "eval",
         ),
 };
 
@@ -256,10 +274,10 @@ const functionConstructor: ContextualStructuralRule = {
       : context.nodes.filter((node) => {
           const kind = node.kind();
           if (kind === "call_expression")
-            return callCallee(node)?.text() === "Function";
+            return context.text(callCallee(node)) === "Function";
           return (
             kind === "new_expression" &&
-            namedChildren(node)[0]?.text() === "Function"
+            context.text(namedChildren(node)[0]) === "Function"
           );
         }),
 };
@@ -298,7 +316,7 @@ const tlsDisabled: ContextualStructuralRule = {
   matches: (context) =>
     context.nodes.filter(
       (node) =>
-        propertyName(node) === "rejectUnauthorized" &&
+        propertyName(context, node) === "rejectUnauthorized" &&
         propertyValue(node)?.kind() === "false",
     ),
 };
@@ -311,7 +329,7 @@ function isWeakHashCall(
   node: SgNode,
   bindings: ReturnType<typeof moduleBindings>,
 ): boolean {
-  const callee = callCallee(node)?.text();
+  const callee = context.text(callCallee(node));
   if (callee === undefined) return false;
   const direct =
     bindings.named.get(callee) === "createHash" &&
@@ -325,7 +343,7 @@ function isWeakHashCall(
     !hasNonImportBinding(context, member[1]);
   return (
     (direct || namespaced) &&
-    WEAK_HASH.test(callArguments(node)[0]?.text() ?? "")
+    WEAK_HASH.test(context.text(callArguments(node)[0]) ?? "")
   );
 }
 
@@ -341,12 +359,12 @@ const weakPasswordHash: ContextualStructuralRule = {
       const callee = callCallee(node);
       if (callee?.kind() !== "member_expression") return false;
       const parts = namedChildren(callee);
-      if (parts.at(-1)?.text() !== "update") return false;
+      if (context.text(parts.at(-1)) !== "update") return false;
       const receiver = parts[0];
       return (
         receiver !== undefined &&
         isWeakHashCall(context, receiver, bindings) &&
-        PASSWORD_VALUE.test(callArguments(node)[0]?.text() ?? "")
+        PASSWORD_VALUE.test(context.text(callArguments(node)[0]) ?? "")
       );
     });
   },
@@ -355,9 +373,12 @@ const weakPasswordHash: ContextualStructuralRule = {
 const CREDENTIAL_PROPERTY =
   /^(?:authorization|cookie|api[-_]?key|token|auth)$/iu;
 
-function staticString(node: SgNode | undefined): string | undefined {
+function staticString(
+  context: RuleContext,
+  node: SgNode | undefined,
+): string | undefined {
   if (node?.kind() !== "string") return undefined;
-  const text = node.text();
+  const text = context.text(node)!;
   return text.length >= 2 ? text.slice(1, -1) : undefined;
 }
 
@@ -370,7 +391,7 @@ function isRequestOptions(
   const call = args?.parent();
   if (args?.kind() !== "arguments" || call?.kind() !== "call_expression")
     return false;
-  const callee = callCallee(call)?.text() ?? "";
+  const callee = context.text(callCallee(call)) ?? "";
   const direct =
     (bindings.namespaces.has(callee) ||
       bindings.named.get(callee) === "request") &&
@@ -385,9 +406,10 @@ function isRequestOptions(
   return direct || namespaced;
 }
 
-function hasCredentialValue(node: SgNode): boolean {
-  if (!CREDENTIAL_PROPERTY.test(propertyName(node) ?? "")) return false;
-  const value = propertyValue(node)?.text().trim();
+function hasCredentialValue(context: RuleContext, node: SgNode): boolean {
+  if (!CREDENTIAL_PROPERTY.test(propertyName(context, node) ?? ""))
+    return false;
+  const value = context.text(propertyValue(node))?.trim();
   return (
     value !== undefined &&
     !new Set(["undefined", "null", "false", '""', "''", "``", "void 0"]).has(
@@ -396,13 +418,13 @@ function hasCredentialValue(node: SgNode): boolean {
   );
 }
 
-function callHasStaticHttpUrl(node: SgNode): boolean {
+function callHasStaticHttpUrl(context: RuleContext, node: SgNode): boolean {
   const args = node.parent();
   const call = args?.parent();
   return (
     call?.kind() === "call_expression" &&
     callArguments(call).some((argument) =>
-      staticString(argument)?.startsWith("http://"),
+      staticString(context, argument)?.startsWith("http://"),
     )
   );
 }
@@ -429,13 +451,17 @@ const insecureCredentialRequest: ContextualStructuralRule = {
       const descendants = [node, ...node.findAll({ rule: { kind: "pair" } })];
       const insecureUrl =
         descendants.some((candidate) => {
-          const key = propertyName(candidate);
+          const key = propertyName(context, candidate);
           return (
             (key === "url" || key === "uri" || key === "href") &&
-            staticString(propertyValue(candidate))?.startsWith("http://")
+            staticString(context, propertyValue(candidate))?.startsWith(
+              "http://",
+            )
           );
-        }) || callHasStaticHttpUrl(node);
-      const hasCredentials = descendants.some(hasCredentialValue);
+        }) || callHasStaticHttpUrl(context, node);
+      const hasCredentials = descendants.some((candidate) =>
+        hasCredentialValue(context, candidate),
+      );
       return insecureUrl && hasCredentials;
     });
   },
@@ -456,7 +482,8 @@ const contextualRules: readonly ContextualStructuralRule[] = Object.freeze([
 export const structuralRules: readonly StructuralRule[] = Object.freeze(
   contextualRules.map((rule) => ({
     ...rule,
-    matches: (root: SgRoot) => rule.matches(createRuleContext(root)),
+    matches: (root: SgRoot) =>
+      rule.matches(createRuleContext(structuralNodes(root))),
   })),
 );
 
@@ -489,92 +516,34 @@ function location(file: string, node: SgNode): SourceLocation {
   };
 }
 
-function hasParseErrors(context: RuleContext): boolean {
-  return context.nodes.some(
-    (node, index) =>
-      node.kind() === "ERROR" ||
-      (index > 0 && node.range().start.index === node.range().end.index),
-  );
-}
-
-function compatibleJsxTextSource(file: string, source: string): string {
-  const validation = ts.transpileModule(source, {
-    fileName: file,
-    reportDiagnostics: true,
-    compilerOptions: {
-      jsx: ts.JsxEmit.Preserve,
-      target: ts.ScriptTarget.Latest,
-    },
-  });
-  if (
-    validation.diagnostics?.some(
-      ({ category }) => category === ts.DiagnosticCategory.Error,
-    )
-  ) {
-    throw new Error("parse failed");
-  }
-
-  const parsed = ts.createSourceFile(
-    file,
-    source,
-    ts.ScriptTarget.Latest,
-    false,
-    ts.ScriptKind.TSX,
-  );
-  const parts: string[] = [];
-  let offset = 0;
-  const visit = (node: ts.Node): void => {
-    if (ts.isJsxText(node)) {
-      // ast-grep rejects bare ampersands in otherwise valid JSX text. Change
-      // only confirmed text, preserving UTF-16/byte offsets and all code.
-      parts.push(source.slice(offset, node.pos));
-      parts.push(source.slice(node.pos, node.end).replace(/&/g, " "));
-      offset = node.end;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(parsed);
-  parts.push(source.slice(offset));
-  const compatible = parts.join("");
-  if (compatible === source) throw new Error("parse failed");
-  return compatible;
-}
-
 export function collectStructuralSecurityObservations(
   file: string,
   source: string,
 ): readonly Observation[] {
-  try {
-    const normalizedFile = normalizeRepositoryRelativePath(file);
-    const language = languageFor(normalizedFile);
-    let context = createRuleContext(parse(language, source));
-    if (hasParseErrors(context)) {
-      if (language !== Lang.Tsx) throw new Error("parse failed");
-      context = createRuleContext(
-        parse(language, compatibleJsxTextSource(normalizedFile, source)),
-      );
-      if (hasParseErrors(context)) throw new Error("parse failed");
-    }
-    const observations = contextualRules.flatMap((rule) =>
-      rule.matches(context).map((match): Observation => {
-        const normalizedLocation = location(normalizedFile, match);
-        return {
-          check: "structuralSecurity",
-          rule: rule.id,
-          identity: structuralSecurityIdentity(rule.id, normalizedLocation),
-          severity: "error",
-          message: rule.message,
-          remediation: rule.remediation,
-          location: normalizedLocation,
-        };
-      }),
-    );
-    return Object.freeze(
-      observations.sort((left, right) =>
-        compareCodeUnits(left.identity, right.identity),
-      ),
-    );
-  } catch {
-    throw new Error("Structural security analysis failed.");
-  }
+  const normalizedFile = normalizeRepositoryRelativePath(file);
+  const { nodes, normalized } = parseStructuralSource(
+    languageFor(normalizedFile),
+    normalizedFile,
+    source,
+  );
+  const context = createRuleContext(nodes, normalized ? source : undefined);
+  const observations = contextualRules.flatMap((rule) =>
+    rule.matches(context).map((match): Observation => {
+      const normalizedLocation = location(normalizedFile, match);
+      return {
+        check: "structuralSecurity",
+        rule: rule.id,
+        identity: structuralSecurityIdentity(rule.id, normalizedLocation),
+        severity: "error",
+        message: rule.message,
+        remediation: rule.remediation,
+        location: normalizedLocation,
+      };
+    }),
+  );
+  return Object.freeze(
+    observations.sort((left, right) =>
+      compareCodeUnits(left.identity, right.identity),
+    ),
+  );
 }

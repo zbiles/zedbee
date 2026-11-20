@@ -220,6 +220,9 @@ export async function prepareCheckDispatch(
                     : { diagnostic: error.diagnostic }),
                   ...(error.path === undefined ? {} : { path: error.path }),
                   ...(error.paths === undefined ? {} : { paths: error.paths }),
+                  ...(error.parseFailures === undefined
+                    ? {}
+                    : { parseFailures: error.parseFailures }),
                   ...(error.snapshot === undefined
                     ? {}
                     : { snapshot: error.snapshot }),

@@ -75,6 +75,7 @@ function wireError(error: unknown): object {
       paths,
       snapshot,
       projectPaths,
+      parseFailures,
       disposition,
       diagnostic,
     } = error;
@@ -88,6 +89,7 @@ function wireError(error: unknown): object {
         paths,
         snapshot,
         projectPaths,
+        parseFailures,
         disposition,
         diagnostic,
       },
