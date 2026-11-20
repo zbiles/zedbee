@@ -99,12 +99,14 @@ export async function projectInputsMayHaveChanged(
       )
     )
       return true;
+    const configuration = await compilerConfigurationInputsForInspection(
+      inspection,
+      workspace,
+      context.signal,
+    );
     if (
-      [
-        ...(
-          await compilerConfigurationInputsForInspection(inspection, workspace)
-        ).paths,
-      ].some((path) => changed.has(path))
+      configuration.limited === true ||
+      [...configuration.paths].some((path) => changed.has(path))
     )
       return true;
   }

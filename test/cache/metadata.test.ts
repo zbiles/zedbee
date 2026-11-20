@@ -80,7 +80,7 @@ describe("managed check cache metadata", () => {
       "eslint@101.2.3+typescript-eslint@102.3.4+typescript@103.4.5+zedbee-readability-v7-source-moves",
     );
     expect(identity("structuralSecurity")).toBe(
-      "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v3",
+      "@ast-grep/napi@104.5.6+typescript@103.4.5+zedbee-structural-rules-v4",
     );
   });
 
@@ -103,12 +103,12 @@ describe("managed check cache metadata", () => {
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("types"),
     ).toBe(
-      "typescript@6.0.3+captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
+      "typescript@6.0.3+captured-inputs-v5-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
     );
     expect(
       createObservationCacheEngineIdentityResolver(() => "6.0.3")("lint"),
     ).toBe(
-      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
+      "eslint@6.0.3+typescript-eslint@6.0.3+typescript@6.0.3+captured-inputs-v4-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
     );
   });
 

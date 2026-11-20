@@ -1,12 +1,20 @@
 import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import {
+  dirname,
+  isAbsolute,
+  posix,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import * as ts from "typescript";
 import picomatch from "picomatch";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   captureAnalysisDependencies,
   compilerPrograms,
+  isRetainedCompilerCapture,
 } from "./reuse-inputs.js";
 
 export type CompilerProgramPurpose = "types" | "lint" | "standalone";
@@ -71,7 +79,10 @@ function isBareSpecifier(specifier: string): boolean {
   );
 }
 
-function validateProjectSpecifier(sourcePath: string, specifier: string): void {
+function validateProjectSpecifier(
+  sourcePath: string,
+  specifier: string,
+): void {
   if (isBareSpecifier(specifier)) return;
   if (
     specifier.includes("\\") ||
@@ -95,10 +106,12 @@ export function createSnapshotProgram(
   const dependencies =
     input.dependencies ??
     captureAnalysisDependencies({ repositoryRoot: input.repositoryRoot });
-  const store = analysisStore<{
-    result: SnapshotProgram;
-    dependencies: CapturedDependencies;
-  }>(compilerPrograms);
+  const store = isRetainedCompilerCapture(dependencies)
+    ? analysisStore<{
+        result: SnapshotProgram;
+        dependencies: CapturedDependencies;
+      }>(compilerPrograms)
+    : undefined;
   const key =
     store === undefined
       ? undefined
@@ -120,7 +133,10 @@ export function createSnapshotProgram(
         bytes +
         program
           .getSourceFiles()
-          .reduce((size, source) => size + source.text.length * 32 + 4096, 0),
+          .reduce(
+            (size, source) => size + source.text.length * 32 + 4096,
+            0,
+          ),
       0,
     );
     store!.set(key, { result, dependencies }, estimatedBytes);
@@ -205,7 +221,8 @@ function createFreshSnapshotProgram(
           ? prepared.configFilePath
           : resolve(snapshotRoot, projectRootNames[0] ?? "index.ts"),
       );
-      const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
+      const projectPath =
+        repositoryPath(snapshotRoot, projectDirectory) ?? ".";
       let directory = resolve(repositoryRoot, projectPath);
       prepared.typeRoots = [];
       while (contained(repositoryRoot, directory)) {
@@ -223,7 +240,8 @@ function createFreshSnapshotProgram(
                 .directoryEntries(typeRoot)
                 .filter(
                   (entry) =>
-                    entry.type === "directory" && !entry.name.startsWith("."),
+                    entry.type === "directory" &&
+                    !entry.name.startsWith("."),
                 )
                 .map((entry) => entry.name),
             ),
@@ -234,57 +252,79 @@ function createFreshSnapshotProgram(
     return prepared;
   };
 
-  const moduleHost: ts.ModuleResolutionHost = {
-    fileExists: (path) => {
-      const absolute = resolve(path);
-      return files.has(absolute) || dependencyFileAllowed(absolute);
-    },
-    readFile: (path) => {
-      const absolute = resolve(path);
-      const local = files.get(absolute);
-      if (local !== undefined) return local;
-      return dependencyFileAllowed(absolute)
-        ? dependencies.readFile(absolute)
-        : undefined;
-    },
-    directoryExists: (path) => {
-      const absolute = resolve(path);
-      if (snapshotDirectories.has(directoryKey(absolute))) return true;
-      if (contained(repositoryRoot, absolute)) return true;
-      return (
-        (contained(packageRoot, absolute) ||
-          contained(typescriptLibraryRoot, absolute)) &&
-        dependencies.directoryExists(absolute)
-      );
-    },
-    getDirectories: (path) =>
-      contained(repositoryRoot, resolve(path)) ||
-      contained(typescriptLibraryRoot, resolve(path))
-        ? dependencies.getDirectories(resolve(path))
-        : [],
-    realpath: (path) =>
-      files.has(resolve(path)) ? resolve(path) : dependencies.realpath(path),
-  };
-
-  // Resolve project aliases and relative imports in the captured tree first.
-  // Installed packages are resolved separately from the original project path,
-  // so a snapshot's temporary location cannot select a different installation.
-  const snapshotModuleHost: ts.ModuleResolutionHost = {
-    fileExists: (path) => files.has(resolve(path)),
-    readFile: (path) => files.get(resolve(path)),
-    directoryExists: (path) =>
-      snapshotDirectories.has(directoryKey(resolve(path))),
-    realpath: (path) => resolve(path),
-  };
-
-  const createHost = (projectOptions: ts.CompilerOptions): ts.CompilerHost => {
+  const createHost = (
+    projectOptions: ts.CompilerOptions,
+  ): ts.CompilerHost => {
+    const configDirectory =
+      typeof projectOptions.configFilePath === "string"
+        ? dirname(resolve(snapshotRoot, projectOptions.configFilePath))
+        : snapshotRoot;
+    // TS's diagnostic module-specifier generation probes paths relative to its
+    // alias base (including pathsBasePath inherited from another config).
+    // Keep this context per program: referenced projects can use different bases.
+    const pathsBasePath = projectOptions.pathsBasePath;
+    const lookupDirectory = resolve(
+      configDirectory,
+      projectOptions.baseUrl ??
+        (projectOptions.paths !== undefined &&
+        typeof pathsBasePath === "string"
+          ? pathsBasePath
+          : configDirectory),
+    );
+    const absolutePath = (path: string): string =>
+      resolve(lookupDirectory, path);
     const defaultHost = ts.createCompilerHost(projectOptions, true);
+    const moduleHost: ts.ModuleResolutionHost = {
+      fileExists: (path) => {
+        const absolute = absolutePath(path);
+        return files.has(absolute) || dependencyFileAllowed(absolute);
+      },
+      readFile: (path) => {
+        const absolute = absolutePath(path);
+        const local = files.get(absolute);
+        if (local !== undefined) return local;
+        return dependencyFileAllowed(absolute)
+          ? dependencies.readFile(absolute)
+          : undefined;
+      },
+      directoryExists: (path) => {
+        const absolute = absolutePath(path);
+        if (snapshotDirectories.has(directoryKey(absolute))) return true;
+        if (contained(repositoryRoot, absolute)) return true;
+        return (
+          (contained(packageRoot, absolute) ||
+            contained(typescriptLibraryRoot, absolute)) &&
+          dependencies.directoryExists(absolute)
+        );
+      },
+      getDirectories: (path) =>
+        contained(repositoryRoot, absolutePath(path)) ||
+        contained(typescriptLibraryRoot, absolutePath(path))
+          ? dependencies.getDirectories(absolutePath(path))
+          : [],
+      realpath: (path) =>
+        files.has(absolutePath(path))
+          ? absolutePath(path)
+          : dependencies.realpath(absolutePath(path)),
+    };
+
+    // Resolve project aliases and relative imports in the captured tree first.
+    // Installed packages are resolved separately from the original project path,
+    // so a snapshot's temporary location cannot select a different installation.
+    const snapshotModuleHost: ts.ModuleResolutionHost = {
+      fileExists: (path) => files.has(absolutePath(path)),
+      readFile: (path) => files.get(absolutePath(path)),
+      directoryExists: (path) =>
+        snapshotDirectories.has(directoryKey(absolutePath(path))),
+      realpath: (path) => absolutePath(path),
+    };
+
     const host: ts.CompilerHost = {
       ...defaultHost,
-      getCurrentDirectory: () => snapshotRoot,
+      getCurrentDirectory: () => lookupDirectory,
       fileExists: moduleHost.fileExists,
       readFile(path) {
-        const absolute = resolve(path);
+        const absolute = absolutePath(path);
         const local = files.get(absolute);
         if (local !== undefined) {
           const relativePath = repositoryPath(snapshotRoot, absolute);
@@ -297,19 +337,30 @@ function createFreshSnapshotProgram(
         }
         return undefined;
       },
-      getSourceFile(path, languageVersion, onError, shouldCreateNewSourceFile) {
+      getSourceFile(
+        path,
+        languageVersion,
+        onError,
+        shouldCreateNewSourceFile,
+      ) {
         const source = host.readFile(path);
         if (source === undefined) return undefined;
-        return ts.createSourceFile(path, source, languageVersion, true);
+        return ts.createSourceFile(
+          absolutePath(path),
+          source,
+          languageVersion,
+          true,
+        );
       },
-      directoryExists: (path) => moduleHost.directoryExists?.(path) ?? false,
+      directoryExists: (path) =>
+        moduleHost.directoryExists?.(path) ?? false,
       getDirectories: (path) => moduleHost.getDirectories?.(path) ?? [],
       realpath: (path) => moduleHost.realpath?.(path) ?? path,
       readDirectory(rootDir, extensions, excludes, includes, depth) {
-        const root = resolve(rootDir);
-        const includeMatchers = (includes.length > 0 ? includes : ["**/*"]).map(
-          (pattern) => picomatch(pattern, { dot: true }),
-        );
+        const root = absolutePath(rootDir);
+        const includeMatchers = (
+          includes.length > 0 ? includes : ["**/*"]
+        ).map((pattern) => picomatch(pattern, { dot: true }));
         const excludeMatchers = (excludes ?? []).map((pattern) =>
           picomatch(pattern, { dot: true }),
         );
@@ -318,7 +369,8 @@ function createFreshSnapshotProgram(
           if (
             fromRoot === ".." ||
             fromRoot.startsWith("../") ||
-            (depth !== undefined && fromRoot.split("/").length - 1 > depth) ||
+            (depth !== undefined &&
+              fromRoot.split("/").length - 1 > depth) ||
             !extensions.some((extension) => path.endsWith(extension))
           ) {
             return false;
@@ -350,7 +402,7 @@ function createFreshSnapshotProgram(
             specifier,
             containingFile,
             resolutionOptions,
-            files.has(resolve(containingFile))
+            files.has(absolutePath(containingFile))
               ? snapshotModuleHost
               : moduleHost,
             undefined,
@@ -440,7 +492,9 @@ function createFreshSnapshotProgram(
           : { projectReferences: reference.commandLine.projectReferences }),
       });
       programs.push(referencedProgram);
-      addReferencedPrograms(referencedProgram.getResolvedProjectReferences());
+      addReferencedPrograms(
+        referencedProgram.getResolvedProjectReferences(),
+      );
     }
   };
   addReferencedPrograms(program.getResolvedProjectReferences());

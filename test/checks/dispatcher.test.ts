@@ -24,6 +24,8 @@ import {
 import type { ScanEvent } from "../../src/checks/events.js";
 import { evaluatePolicy } from "../../src/policy/evaluate.js";
 import { CheckIncompleteError } from "../../src/checks/incomplete-error.js";
+import { executeDispatchTarget } from "../../src/checks/dispatch-target.js";
+import { comparisonContext } from "../../src/checks/comparison-context.js";
 import {
   AnalyzerJobError,
   analyzerDiagnostic,
@@ -212,7 +214,194 @@ function observationAdapter(
   };
 }
 
+describe("observation result preparation failures", () => {
+  // Use the real preparation step, with a supplied observation set so its
+  // getters are read at that boundary rather than during collection sanitizing.
+  async function prepareFailure(error: Error, checkId = "types") {
+    const context = createContext(createConfig({ [checkId]: "error" }));
+    const events: ScanEvent[] = [];
+    const adapter = observationAdapter(async () => {
+      throw new Error("Collection must use the supplied observation set");
+    });
+    const execution = await executeDispatchTarget(
+      { ...adapter, id: checkId },
+      context,
+      context.target,
+      context.config.checks.types,
+      true,
+      {
+        clock: () => 1,
+        emit: (event) => events.push(event),
+        collectFixes: false,
+        collectObservations: async () => ({
+          checkId,
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+          get comparisonContext(): never {
+            throw error;
+          },
+        }),
+      },
+    );
+    const completedEvent = events.find(
+      (event) => event.type === "check-completed",
+    );
+    expect(completedEvent?.type).toBe("check-completed");
+    if (completedEvent?.type !== "check-completed")
+      throw new Error("Missing completion event");
+    expect(completedEvent.result).toEqual(execution.result);
+    return { execution, events };
+  }
+
+  it.each([false, true])(
+    "preserves typed incomplete details thrown during preparation with diagnostic=%s",
+    async (withDiagnostic) => {
+      const diagnostic = {
+        checkId: "types" as const,
+        operation: "collect" as const,
+        category: "execution" as const,
+        engine: { name: "typescript", version: "1.2.3" },
+        snapshot: "baseline" as const,
+      };
+      const { execution } = await prepareFailure(
+        new CheckIncompleteError({
+          code: "COMPARISON_INPUTS_CHANGED",
+          message: "Comparison inputs changed during analysis.",
+          remediation: "Keep dependencies stable and retry.",
+          ...(withDiagnostic ? { diagnostic } : {}),
+          path: "apps/web/package.json",
+          paths: ["apps/web/package.json", "package-lock.json"],
+          snapshot: "last-commit",
+          projectPaths: ["apps/web/tsconfig.json"],
+          disposition: "warn",
+        }),
+      );
+      expect(execution.result).toMatchObject({
+        checkId: "types",
+        target: ".",
+        status: "incomplete",
+        incompleteDisposition: "warn",
+        findings: [],
+        error: {
+          code: "COMPARISON_INPUTS_CHANGED",
+          message: "Comparison inputs changed during analysis.",
+          remediation: "Keep dependencies stable and retry.",
+          path: "apps/web/package.json",
+          paths: ["apps/web/package.json", "package-lock.json"],
+          snapshot: "last-commit",
+          projectPaths: ["apps/web/tsconfig.json"],
+        },
+      });
+      expect(execution.result.error?.diagnostic).toEqual(
+        withDiagnostic ? diagnostic : undefined,
+      );
+      expect(
+        evaluatePolicy([execution], createConfig({ types: "error" })).exitCode,
+      ).toBe(0);
+    },
+  );
+
+  it("preserves an analyzer job diagnostic thrown during preparation", async () => {
+    const diagnostic = {
+      checkId: "types" as const,
+      operation: "collect" as const,
+      category: "abnormal-exit" as const,
+      engine: { name: "typescript", version: "1.2.3" },
+      snapshot: "target" as const,
+      exitCode: 7,
+      signal: "SIGTERM",
+    };
+    const { execution } = await prepareFailure(
+      new AnalyzerJobError(diagnostic),
+    );
+    expect(execution.result.error).toEqual({
+      code: "ADAPTER_EXECUTION_FAILED",
+      message: "TypeScript could not analyze the repository root.",
+      remediation:
+        "Check the analyzer installation and selected input, then retry.",
+      diagnostic,
+    });
+  });
+
+  it.each(["types", "custom-analyzer"])(
+    "keeps malformed %s preparation exceptions private with only managed phase metadata",
+    async (checkId) => {
+      const { execution, events } = await prepareFailure(
+        new TypeError("private-token-123 /private/project/source.ts"),
+        checkId,
+      );
+      expect(execution.result.error?.code).toBe("ADAPTER_RESULT_INVALID");
+      if (checkId === "types") {
+        expect(execution.result.error?.diagnostic).toMatchObject({
+          checkId: "types",
+          operation: "collect",
+          category: "invalid-response",
+          engine: { name: "typescript" },
+        });
+        expect(execution.result.error?.diagnostic?.snapshot).toBeUndefined();
+      } else {
+        expect(execution.result.error?.diagnostic).toBeUndefined();
+      }
+      expect(execution.result.error?.snapshot).toBeUndefined();
+      expect(JSON.stringify({ execution, events })).not.toContain(
+        "private-token-123",
+      );
+      expect(JSON.stringify({ execution, events })).not.toContain(
+        "/private/project",
+      );
+    },
+  );
+});
+
 describe("dispatchChecks", () => {
+  it.each([undefined, "unverified", "environment-incomplete"] as const)(
+    "preserves the native comparison guard for %s evidence",
+    async (status) => {
+      const events: ScanEvent[] = [];
+      const adapter: ObservationCheckAdapter = {
+        ...observationAdapter(async (context) => ({
+          checkId: "types",
+          target: context.target,
+          baselineObservations: [],
+          targetObservations: [],
+          projectDelta: true,
+          ...(status === undefined
+            ? {}
+            : {
+                comparisonContext: comparisonContext(
+                  status,
+                  status === "unverified"
+                    ? "unsupported-inputs"
+                    : "required-installation-unavailable",
+                ),
+              }),
+        })),
+        id: "types",
+      };
+      const [execution] = await dispatchChecks(
+        [adapter],
+        createContext(createConfig({ types: "error" })),
+        { onEvent: (event) => events.push(event) },
+      );
+      expect(execution?.result).toMatchObject({
+        status: "incomplete",
+        findings: [],
+        error: {
+          code: "COMPARISON_INPUTS_UNVERIFIED",
+          message: expect.stringContaining("comparison"),
+          remediation: expect.stringMatching(/Rerun|rerun/),
+        },
+      });
+      expect(execution?.result.error?.diagnostic).toBeUndefined();
+      expect(
+        events.find((event) => event.type === "check-completed"),
+      ).toMatchObject({
+        result: execution?.result,
+      });
+    },
+  );
+
   it.each([false, true])(
     "checks source-bearing messages before events/cache even for an unsafe cache hit=%s",
     async (unsafeHit) => {
@@ -552,9 +741,17 @@ describe("dispatchChecks", () => {
           code: "ADAPTER_RESULT_INVALID",
           message:
             "Formatting returned an invalid result for the repository root.",
-          remediation: "Run zedbee doctor and update Zedbee before retrying.",
+          remediation:
+            "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
         },
       });
+      expect(results[0]?.result.error?.diagnostic).toMatchObject({
+        checkId: "formatting",
+        operation: "runLegacy",
+        category: "invalid-response",
+        engine: { name: "prettier" },
+      });
+      expect(results[0]?.result.error?.diagnostic?.snapshot).toBeUndefined();
       expect(JSON.stringify(results)).not.toContain("unsafe enum payload");
     },
   );
@@ -651,7 +848,8 @@ describe("dispatchChecks", () => {
       error: {
         code: "ADAPTER_RESULT_INVALID",
         message: "Lint returned an invalid result for apps/web.",
-        remediation: "Run zedbee doctor and update Zedbee before retrying.",
+        remediation:
+          "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
       },
     });
     expect(JSON.stringify(results)).not.toContain("Must not be attributed");
@@ -688,7 +886,8 @@ describe("dispatchChecks", () => {
           code: "ADAPTER_RESULT_INVALID",
           message:
             "Formatting returned an invalid result for the repository root.",
-          remediation: "Run zedbee doctor and update Zedbee before retrying.",
+          remediation:
+            "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
         },
       });
       expect(JSON.stringify(results)).not.toContain("Fixture observation");
@@ -728,7 +927,8 @@ describe("dispatchChecks", () => {
       error: {
         code: "ADAPTER_RESULT_INVALID",
         message: "Lint returned an invalid result for the repository root.",
-        remediation: "Run zedbee doctor and update Zedbee before retrying.",
+        remediation:
+          "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
       },
     });
     expect(JSON.stringify(results)).not.toContain("private-token-123");

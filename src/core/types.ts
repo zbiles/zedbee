@@ -117,7 +117,23 @@ export interface FindingIdentity {
   readonly metricName?: string;
 }
 
+export interface StructuralParseFailure {
+  readonly path: string;
+  readonly snapshot: "baseline" | "staged" | "target";
+  readonly line: number;
+  readonly column: number;
+  readonly typescriptCode?: number;
+  readonly expectedToken?: string;
+  readonly reason: string;
+}
+
+export interface StructuralParseFailures {
+  readonly files: readonly StructuralParseFailure[];
+  readonly omitted: number;
+}
+
 export interface CheckError {
+  readonly parseFailures?: StructuralParseFailures;
   readonly diagnostic?: import("../checks/diagnostics.js").AnalyzerDiagnostic;
   code: string;
   message: string;

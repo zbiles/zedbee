@@ -1,0 +1,198 @@
+import { chmod, mkdir, realpath, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { expect, it } from "vitest";
+import { createGitRepository } from "../helpers/git-repository.js";
+import { resolveHookCommand } from "../../src/hooks/command.js";
+import { mergeHookCommand, updateHuskyHook } from "../../src/hooks/husky.js";
+import { getHookUpdateNotice } from "../../src/hooks/update-notice.js";
+import { defaultDiagnosticProbe } from "../../src/doctor/diagnostics.js";
+
+const old = "npx --no-install zedbee scan --hook-invocation";
+
+async function fixture() {
+  const repo = await createGitRepository();
+  await repo.write(".gitignore", "node_modules/\n");
+  await repo.write("web/package.json", '{"devDependencies":{"zedbee":"*"}}');
+  await repo.write(
+    "web/node_modules/zedbee/package.json",
+    '{"name":"zedbee","bin":"dist/cli.js"}',
+  );
+  await repo.write(
+    "web/node_modules/zedbee/dist/cli.js",
+    "throw new Error('must never run');",
+  );
+  return repo;
+}
+
+it.each(["pre-commit", "pre-merge-commit"])(
+  "detects an old %s command until refreshed without changing files",
+  async (hook) => {
+    const repo = await fixture();
+    const before = `#!/bin/sh\nnpm test\n${old}${hook === "pre-merge-commit" ? " --merge" : ""} || exit $?\n`;
+    await repo.write(`.git/hooks/${hook}`, before);
+    expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+      code: "HOOK_UPDATE_NEEDED",
+      remediation: "Run zedbee init to refresh them.",
+    });
+    expect(await repo.read(`.git/hooks/${hook}`)).toBe(before);
+    expect(await getHookUpdateNotice(repo.root)).toBeDefined();
+    const current = await resolveHookCommand(repo.root);
+    await repo.write(
+      `.git/hooks/${hook}`,
+      updateHuskyHook(
+        before,
+        hook === "pre-commit" ? current : mergeHookCommand(current),
+        hook as "pre-commit" | "pre-merge-commit",
+      ),
+    );
+    expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  },
+);
+
+it.each(["husky", "custom", "lefthook", "simple-git-hooks"])(
+  "finds stale generated commands in %s",
+  async (manager) => {
+    const repo = await fixture();
+    const current = await resolveHookCommand(repo.root);
+    if (manager === "husky" || manager === "custom") {
+      const path = manager === "husky" ? ".husky" : ".hooks";
+      await repo.git(["config", "core.hooksPath", path]);
+      await repo.write(`${path}/pre-commit`, old + "\n");
+      expect(await getHookUpdateNotice(repo.root)).toBeDefined();
+      await repo.write(`${path}/pre-commit`, current + "\n");
+    } else if (manager === "lefthook") {
+      await repo.write(
+        "lefthook.yml",
+        `pre-commit:\n  commands:\n    scan:\n      run: ${JSON.stringify(old)}\n`,
+      );
+      expect(await getHookUpdateNotice(repo.root)).toBeDefined();
+      await repo.write(
+        "lefthook.yml",
+        `pre-commit:\n  commands:\n    scan:\n      run: ${JSON.stringify(current)}\n`,
+      );
+    } else {
+      await repo.write(
+        "package.json",
+        JSON.stringify({ "simple-git-hooks": { "pre-commit": old } }),
+      );
+      expect(await getHookUpdateNotice(repo.root)).toBeDefined();
+      await repo.write(
+        "package.json",
+        JSON.stringify({ "simple-git-hooks": { "pre-commit": current } }),
+      );
+    }
+    expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  },
+);
+
+it("finds a stale installed simple-git-hooks copy even when its configuration is current", async () => {
+  const repo = await fixture();
+  await repo.write(
+    "package.json",
+    JSON.stringify({
+      "simple-git-hooks": { "pre-commit": await resolveHookCommand(repo.root) },
+    }),
+  );
+  await repo.write(".git/hooks/pre-commit", old + "\n");
+  expect(await getHookUpdateNotice(repo.root)).toBeDefined();
+});
+
+it("ignores unused manager configs when init selects a custom hooks path", async () => {
+  const repo = await fixture();
+  await repo.git(["config", "core.hooksPath", ".hooks"]);
+  await repo.write(
+    ".hooks/pre-commit",
+    (await resolveHookCommand(repo.root)) + "\n",
+  );
+  await repo.write(
+    "lefthook.yml",
+    `pre-commit:\n  commands:\n    scan:\n      run: ${JSON.stringify(old)}\n`,
+  );
+  await repo.write(
+    "package.json",
+    JSON.stringify({ "simple-git-hooks": { "pre-commit": old } }),
+  );
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+});
+
+it("follows init's preferred Lefthook filename rather than inspecting an unused second config", async () => {
+  const repo = await fixture();
+  await repo.write(
+    "lefthook.yaml",
+    `pre-commit:\n  commands:\n    scan:\n      run: ${JSON.stringify(await resolveHookCommand(repo.root))}\n`,
+  );
+  await repo.write(
+    "lefthook.yml",
+    `pre-commit:\n  commands:\n    scan:\n      run: ${JSON.stringify(old)}\n`,
+  );
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+});
+
+it.each([
+  "",
+  "# npx --no-install zedbee scan\n",
+  "node ./custom-hook.js\n",
+  "npx --no-install zedbee scan --config team.jsonc\n",
+])(
+  "does not classify missing, commented or customized commands as stale: %s",
+  async (source) => {
+    const repo = await fixture();
+    await repo.write(".git/hooks/pre-commit", source);
+    expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  },
+);
+
+it("ignores unsupported external hook paths, symlinks, oversized files and malformed manager data", async () => {
+  const repo = await fixture();
+  await repo.write("oversized", old + "\n" + "#".repeat(70_000));
+  await symlink(
+    join(repo.root, "oversized"),
+    join(repo.root, ".git/hooks/pre-commit"),
+  );
+  await repo.write("lefthook.yml", "pre-commit: [");
+  await repo.write("package.json", "broken");
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  await repo.git(["config", "core.hooksPath", "/external/unsupported/hooks"]);
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+});
+
+it("does not fail when Swarm's selected installation is missing", async () => {
+  const repo = await createGitRepository();
+  await repo.write(".git/hooks/pre-commit", old);
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+});
+
+it("inspects shared raw hooks from a linked worktree", async () => {
+  const repo = await fixture();
+  await repo.commitAll("baseline");
+  const linked = join(repo.root, "linked");
+  expect(
+    (await repo.git(["worktree", "add", "-b", "linked", linked])).exitCode,
+  ).toBe(0);
+  await mkdir(join(linked, "web/node_modules"), { recursive: true });
+  await symlink(
+    await realpath(join(repo.root, "web/node_modules/zedbee")),
+    join(linked, "web/node_modules/zedbee"),
+  );
+  await repo.write(".git/hooks/pre-commit", old + "\n");
+  expect(await getHookUpdateNotice(linked)).toBeDefined();
+});
+
+it("doctor reports an outdated hook as a warning rather than healthy", async () => {
+  const repo = await fixture();
+  await repo.write(".git/hooks/pre-commit", old + "\n");
+  await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o755);
+  const context = { cwd: repo.root, environment: {} };
+  expect(await defaultDiagnosticProbe("hook-state", context)).toMatchObject({
+    status: "warning",
+    message: "Swarm’s hooks need updating.",
+    remediation: "Run zedbee init to refresh them.",
+  });
+  await repo.write(
+    ".git/hooks/pre-commit",
+    (await resolveHookCommand(repo.root)) + "\n",
+  );
+  expect((await defaultDiagnosticProbe("hook-state", context)).status).toBe(
+    "pass",
+  );
+});

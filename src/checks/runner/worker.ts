@@ -229,6 +229,9 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
                 }),
             ...(error.path === undefined ? {} : { path: error.path }),
             ...(error.paths === undefined ? {} : { paths: error.paths }),
+            ...(error.parseFailures === undefined
+              ? {}
+              : { parseFailures: error.parseFailures }),
             ...(error.snapshot === undefined
               ? {}
               : { snapshot: error.snapshot }),

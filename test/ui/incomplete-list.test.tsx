@@ -145,3 +145,57 @@ describe("IncompleteList", () => {
     expect(fix).toContain("\u001b[38;2;231;233;239m");
   });
 });
+
+it("renders parse locations and both omission counts in a narrow terminal", async () => {
+  const React = await import("react");
+  const { render } = await import("ink-testing-library");
+  const { IncompleteList } = await import("../../src/ui/incomplete-list.js");
+  const { incompleteDiagnosticLines } =
+    await import("../../src/renderers/incomplete.js");
+  const check: CheckResult = {
+    checkId: "structuralSecurity",
+    status: "incomplete",
+    durationMs: 1,
+    findings: [],
+    error: {
+      code: "STRUCTURAL_SECURITY_PARSE_FAILED",
+      message: "Could not parse selected files.",
+      path: "src/file-0.ts",
+      parseFailures: {
+        files: Array.from({ length: 11 }, (_, index) => ({
+          path: `src/file-${index}.ts`,
+          snapshot: index === 0 ? "baseline" : "staged",
+          line: 3,
+          column: 7,
+          reason: "Expression expected.",
+        })),
+        omitted: 2,
+      },
+    },
+  };
+  const width = 40;
+  const frame = render(
+    React.createElement(IncompleteList, {
+      checks: [check],
+      width,
+      color: false,
+    }),
+  ).lastFrame()!;
+  for (const output of [
+    visible(frame),
+    incompleteDiagnosticLines(check, width).join("\n"),
+  ]) {
+    expect(
+      Math.max(...output.split("\n").map((line) => [...line.trimEnd()].length)),
+      output,
+    ).toBeLessThanOrEqual(width);
+    expect(output).toContain("Baseline: src/file-0.ts:3:7");
+    expect(output).toContain("Staged: src/file-9.ts:3:7");
+    expect(output.replaceAll(/\s+/gu, " ")).toContain(
+      "1 more. Use --format json for all recorded failures.",
+    );
+    expect(output.replaceAll(/\s+/gu, " ")).toContain(
+      "2 additional parse failures exceeded the report limit.",
+    );
+  }
+});

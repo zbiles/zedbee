@@ -1,3 +1,5 @@
+import { sanitizeStructuralParseFailures } from "./structural-security/parse-failures.js";
+import type { StructuralParseFailures } from "../core/types.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { displayLabel, displayProse } from "../core/display-text.js";
 import type { IncompleteDisposition } from "../core/types.js";
@@ -12,6 +14,7 @@ export interface CheckIncompleteErrorOptions {
   readonly message: string;
   readonly remediation: string;
   readonly path?: string;
+  readonly parseFailures?: StructuralParseFailures;
   readonly paths?: readonly string[];
   readonly snapshot?: "last-commit" | "staged";
   readonly projectPaths?: readonly string[];
@@ -24,6 +27,7 @@ export class CheckIncompleteError extends Error {
   readonly code: string;
   readonly remediation: string;
   readonly path?: string;
+  readonly parseFailures?: StructuralParseFailures;
   readonly paths?: readonly string[];
   readonly snapshot?: "last-commit" | "staged";
   readonly projectPaths?: readonly string[];
@@ -46,6 +50,10 @@ export class CheckIncompleteError extends Error {
     if (options.path !== undefined) {
       this.path = normalizeRepositoryRelativePath(options.path);
     }
+    if (options.parseFailures !== undefined)
+      this.parseFailures = sanitizeStructuralParseFailures(
+        options.parseFailures,
+      );
     if (options.paths !== undefined) {
       this.paths = Object.freeze(
         [...new Set(options.paths.map(normalizeRepositoryRelativePath))].sort(),

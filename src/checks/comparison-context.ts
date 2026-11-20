@@ -1,5 +1,6 @@
 import { configuredTypesForProgram } from "./typescript/compiler-options-provenance.js";
 import type * as ts from "typescript";
+import type { DiagnosticMessagePolicy } from "../config/schema.js";
 import { builtinModules, createRequire } from "node:module";
 const typescriptVersion: string = createRequire(import.meta.url)(
   "typescript/package.json",
@@ -89,16 +90,113 @@ function packageName(specifier: string): string | undefined {
     ? specifier.split("/").slice(0, 2).join("/")
     : specifier.split("/")[0];
 }
+/** Only already-observed positive package witnesses can avoid installation-only
+ * semantic work. Optional readiness must never spend mandatory capture capacity.
+ * Missing, unused or unsupported declarations retain the original diagnostic path. */
+function installationReady(
+  declared: ReadonlySet<string>,
+  repositoryRoot: string,
+  workspace: WorkspaceInspection,
+  dependencies: CapturedDependencies,
+  programs: readonly ts.Program[],
+  snapshotRoot: string,
+): boolean {
+  if (declared.size === 0) return true;
+  if (
+    declared.size > 500 ||
+    resolve(repositoryRoot) !== resolve(dependencies.context.repositoryRoot)
+  )
+    return false;
+  try {
+    const manifest = dependencies.manifest();
+    if (manifest === undefined) return false;
+    const files = new Map(
+      manifest.probes
+        .filter((probe) => probe.kind === "file")
+        .map((probe) => [probe.path, probe]),
+    );
+    const selected: import("../cache/dependency-inputs.js").DependencyProbe[] =
+      [];
+    for (const name of declared) {
+      if (
+        name.length > 214 ||
+        packageName(name) !== name ||
+        name.split("/").some((part) => part === "." || part === "..")
+      )
+        return false;
+      let directory = resolve(repositoryRoot, workspace.relativeRoot),
+        found = false;
+      for (let depth = 0; depth < 64; depth++) {
+        const part = relative(resolve(repositoryRoot), directory);
+        if (isAbsolute(part) || part === ".." || part.startsWith(`..${sep}`))
+          return false;
+        const path = relative(
+          resolve(repositoryRoot),
+          join(directory, "node_modules", name, "package.json"),
+        )
+          .split(sep)
+          .join("/");
+        const witness =
+          files.get(`repository:${path}`) ??
+          (directory === resolve(repositoryRoot)
+            ? files.get(`packages:${name}/package.json`)
+            : undefined);
+        if (witness !== undefined) {
+          selected.push(witness);
+          found = true;
+          break;
+        }
+        if (directory === resolve(repositoryRoot)) break;
+        directory = dirname(directory);
+      }
+      if (!found) return false;
+    }
+    const rootOnly = selected.every(
+      (witness) =>
+        witness.path.startsWith("packages:") ||
+        witness.path.startsWith("repository:node_modules/"),
+    );
+    if (!rootOnly) {
+      // A workspace-local installation says nothing about a sibling source imported
+      // into its program. Keep the existing diagnostic path for those programs.
+      for (const program of programs)
+        for (const file of program.getSourceFiles()) {
+          if (
+            program.isSourceFileFromExternalLibrary(file) ||
+            program.isSourceFileDefaultLibrary(file)
+          )
+            continue;
+          const path = relative(
+            resolve(snapshotRoot, workspace.relativeRoot),
+            resolve(file.fileName),
+          );
+          if (isAbsolute(path) || path === ".." || path.startsWith(`..${sep}`))
+            return false;
+        }
+    }
+    selected.sort((left, right) =>
+      left.path < right.path ? -1 : left.path > right.path ? 1 : 0,
+    );
+    return dependencies.validate({
+      version: 1,
+      roots: manifest.roots,
+      probes: selected,
+    });
+  } catch {
+    return false;
+  }
+}
 /** An unresolved lookup alone does not prove a missing install. Require an
  * applicable declaration and captured absent package manifests. */
-export function assertRequiredInstallation(options: {
+export async function assertRequiredInstallation(options: {
   programs: readonly ts.Program[];
   repositoryRoot: string;
   inspection: RepositoryInspection;
   workspace: WorkspaceInspection;
   dependencies: CapturedDependencies;
   side: "baseline" | "target";
-}): void {
+  diagnosticMessages?: DiagnosticMessagePolicy;
+}): Promise<void> {
   const { inspection, workspace, dependencies, repositoryRoot } = options;
   const declared = new Set(
     inspection.workspaces
@@ -110,6 +208,17 @@ export function assertRequiredInstallation(options: {
       )
       .flatMap((w) => w.dependencyDeclarations.map((d) => d.name)),
   );
+  if (
+    installationReady(
+      declared,
+      repositoryRoot,
+      workspace,
+      dependencies,
+      options.programs,
+      inspection.snapshotRoot,
+    )
+  )
+    return;
   for (const program of options.programs)
     for (const diagnostic of [
       ...program.getOptionsDiagnostics(),
@@ -158,7 +267,7 @@ export function assertRequiredInstallation(options: {
           ? [typesName]
           : []),
       ].filter((name) => declared.has(name));
-      let unavailable = false;
+      let unavailable: string | undefined;
       for (const name of candidates) {
         const sourcePath =
           diagnostic.file === undefined
@@ -211,17 +320,34 @@ export function assertRequiredInstallation(options: {
             relevant.some((p) => p.path === path && p.kind === "missing"),
           );
         if (absent) {
-          unavailable = true;
+          unavailable = name;
           break;
         }
       }
-      if (!unavailable) continue;
+      if (unavailable === undefined) continue;
+      const {
+        reviewedInstallationLabels,
+        INSTALLATION_MESSAGE,
+        INSTALLATION_REMEDIATION,
+      } = await import("./installation-diagnostic.js");
+      const labels =
+        options.diagnosticMessages === "source-free"
+          ? undefined
+          : await reviewedInstallationLabels(
+              inspection,
+              workspace,
+              unavailable,
+            );
       throw new CheckIncompleteError({
         code: "COMPARISON_INSTALLATION_UNAVAILABLE",
         message:
-          "Analysis is incomplete because a package required by this workspace's declared dependencies is unavailable. Installation prerequisites could not be verified.",
+          labels === undefined
+            ? INSTALLATION_MESSAGE
+            : `Analysis is incomplete because declared package '${labels.name}' is unavailable to workspace '${labels.workspace}' in the ${options.side} snapshot.`,
         remediation:
-          "Install this workspace's declared dependencies using its package manager and rerun the scan.",
+          labels === undefined
+            ? INSTALLATION_REMEDIATION
+            : `Restore '${labels.name}' using this workspace's package-manager and lockfile workflow, then rerun the scan.`,
         path: workspace.manifestPath,
         snapshot: options.side === "baseline" ? "last-commit" : "staged",
       });
@@ -232,6 +358,42 @@ export function verifyComparisonInputs(
   dependencies: CapturedDependencies,
 ): ComparisonContext {
   const manifest = dependencies.manifest();
+  const failure = dependencies.failure();
+  if (failure?.reason === "capacity") {
+    const labels = {
+      metadataBytes: "metadata bytes",
+      probes: "dependency probes",
+      bytes: "retained file bytes",
+      fileBytes: "bytes per dependency file",
+      names: "directory entry names",
+    };
+    throw new CheckIncompleteError({
+      code: "COMPARISON_INPUTS_LIMIT_EXCEEDED",
+      message: `Dependency tracking exceeded its ${labels[failure.resource]} limit (observed ${failure.observed}; limit ${failure.limit}).`,
+      remediation:
+        "Share this capacity diagnostic with the Swarm maintainer so the supported project size can be reviewed.",
+    });
+  }
+  if (failure !== undefined) {
+    throw new CheckIncompleteError({
+      code:
+        failure.reason === "inputs-changed"
+          ? "COMPARISON_INPUTS_CHANGED"
+          : "COMPARISON_INPUTS_UNVERIFIED",
+      message:
+        failure.reason === "unsupported-scope"
+          ? "Analysis could not track a dependency lookup within the supported project and installation boundaries."
+          : failure.reason === "inputs-changed"
+            ? "Required dependency inputs changed during this scan."
+            : failure.reason === "unreadable-input"
+              ? "A required dependency input could not be read safely."
+              : "Dependency tracking could not produce validated comparison metadata.",
+      remediation:
+        failure.reason === "inputs-changed"
+          ? "Wait for dependency installation or updates to finish, then rerun the scan."
+          : "Verify the workspace installation and supported layout. Include this diagnostic in a Swarm issue if normal project lookups cannot be verified.",
+    });
+  }
   if (manifest === undefined)
     return comparisonContext("unverified", "unsupported-inputs");
   if (!dependencies.validate(manifest))
@@ -255,7 +417,10 @@ export function incompleteComparisonContext(
     );
   if (code === "COMPARISON_INPUTS_CHANGED")
     return comparisonContext("unverified", "inputs-changed");
-  if (code === "COMPARISON_INPUTS_UNVERIFIED")
+  if (
+    code === "COMPARISON_INPUTS_UNVERIFIED" ||
+    code === "COMPARISON_INPUTS_LIMIT_EXCEEDED"
+  )
     return comparisonContext("unverified", "unsupported-inputs");
   return undefined;
 }

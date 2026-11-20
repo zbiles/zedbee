@@ -163,3 +163,11 @@ JSON and terminal output use the same reviewed message. A finding's optional `me
 A `project-delta` finding means a diagnostic is new in a validated comparison; it is not an exact causal trace. If required installation inputs are unavailable, Swarm reports an incomplete check with setup guidance rather than claiming the commit introduced a source error. A required incomplete check prevents a misleading pass. Other completed checks still report their results.
 
 The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.
+
+## Local scan timing diagnostics
+
+JSON reports can include an optional `diagnostics` object with its own `schemaVersion: 1`, `scope: "scan-run"`, the actual installed Swarm version, and bounded performance statistics. Older reports without this object remain valid. `zedbee scan --diagnostics` also writes these statistics to stderr.
+
+Elapsed check time can include worker waiting. Queue time measures waiting for a worker; worker time measures execution wall time, including operating-system scheduling. These values overlap and are not analyzer CPU measurements. The scope ends with scan-run cleanup; later CLI rendering and shutdown are separate command-stage timings. Missing measurements stay absent, and `partial` identifies incomplete measurement.
+
+This metadata contains only allowlisted check identities, numeric phase/cache/queue/worker statistics and execution-mode information. It contains no source, workspace names, process arguments or environment values, and does not add fields to telemetry. Optional diagnostic failures do not alter findings or the scan outcome.

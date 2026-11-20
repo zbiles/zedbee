@@ -178,3 +178,137 @@ it("manages a default reused CLI service without starting it during read-only st
     if (stopped.exitCode === 0) await rm(scratch, { recursive: true });
   }
 });
+
+it("preserves every structural parse failure through local and service hook scans", async () => {
+  const scratch = await realpath(await mkdtemp(join(tmpdir(), "zc-")));
+  const repository = await createGitRepository();
+  const run = (args: string[]) =>
+    execa(process.execPath, [cli, ...args], {
+      cwd: repository.root,
+      env: {
+        TMPDIR: scratch,
+        TMP: scratch,
+        TEMP: scratch,
+        ZEDBEE_TELEMETRY_DISABLED: "1",
+      },
+      reject: false,
+      stdin: "ignore",
+    });
+  const configure = (failOnIncomplete: boolean) =>
+    repository.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        profile: "fast",
+        failOnIncomplete,
+        checks: {
+          structuralSecurity: "error",
+          lint: "off",
+          formatting: "off",
+          cyclomaticComplexity: "off",
+          readabilityComplexity: "off",
+          reactCorrectness: "off",
+          reactAccessibility: "off",
+        },
+      }),
+    );
+  try {
+    await repository.write(
+      "package.json",
+      '{"name":"parse-fixture","private":true}',
+    );
+    await configure(true);
+    await repository.commitAll("baseline");
+    await repository.write(
+      "a.ts",
+      "export function flag() {\n  const using = true;\n  return using;\n}",
+    );
+    await repository.write(
+      "b.tsx",
+      "const [using, setUsing] = useState(false);",
+    );
+    await repository.git(["add", "--", "a.ts", "b.tsx"]);
+    const scan = (...args: string[]) =>
+      run(["scan", "--hook-invocation", "--format", "json", ...args]);
+    const safe = await scan("--no-service");
+    expect(safe.exitCode, safe.stdout + safe.stderr).toBe(0);
+
+    await repository.write("a.ts", "eval(input);");
+    await repository.git(["add", "--", "a.ts"]);
+    expect((await scan("--no-service")).exitCode).toBe(1);
+
+    await repository.write("a.ts", 'const label = "🐝";\r\nconst value = ;');
+    await repository.write("b.tsx", 'export type * as example from "fixture";');
+    await repository.write("c.ts", "function broken() {\n");
+    await repository.git(["add", "--", "a.ts", "b.tsx", "c.ts"]);
+    const local = await scan("--no-service");
+    const service = await scan();
+    expect(local.exitCode, local.stderr).toBe(2);
+    expect(service.exitCode, service.stderr).toBe(2);
+    const structural = (stdout: string) =>
+      JSON.parse(stdout).checks.find(
+        (check: { checkId: string }) => check.checkId === "structuralSecurity",
+      );
+    expect(
+      structural(service.stdout),
+      service.stdout + service.stderr,
+    ).toBeDefined();
+    const error = structural(service.stdout).error;
+    expect(error).toStrictEqual(structural(local.stdout).error);
+    expect(error.parseFailures).toEqual({
+      files: [
+        {
+          path: "a.ts",
+          snapshot: "staged",
+          line: 2,
+          column: 15,
+          typescriptCode: 1109,
+          reason: "Expression expected.",
+        },
+        {
+          path: "b.tsx",
+          snapshot: "staged",
+          line: 1,
+          column: 8,
+          reason: "The structural parser could not recognize this syntax.",
+        },
+        {
+          path: "c.ts",
+          snapshot: "staged",
+          line: 2,
+          column: 1,
+          typescriptCode: 1005,
+          expectedToken: "}",
+          reason: "'}' expected.",
+        },
+      ],
+      omitted: 0,
+    });
+    expect(
+      JSON.parse((await run(["service", "status", "--format", "json"])).stdout)
+        .state,
+    ).toBe("running");
+    const text = await run([
+      "scan",
+      "--hook-invocation",
+      "--format",
+      "text",
+      "--no-color",
+    ]);
+    expect(text.exitCode).toBe(2);
+    expect(text.stdout).toContain("a.ts:2:15");
+    expect(text.stdout).toContain("b.tsx:1:8");
+    await configure(false);
+    await repository.git(["add", "--", ".zedbeerc.jsonc"]);
+    const warned = await scan();
+    expect(warned.exitCode, warned.stdout + warned.stderr).toBe(0);
+    expect(structural(warned.stdout)).toMatchObject({
+      status: "incomplete",
+      incompleteDisposition: "warn",
+      error: { parseFailures: error.parseFailures },
+    });
+  } finally {
+    const stopped = await run(["service", "stop", "--format", "json"]);
+    if (stopped.exitCode === 0) await rm(scratch, { recursive: true });
+  }
+});

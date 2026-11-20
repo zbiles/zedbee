@@ -172,6 +172,7 @@ export function decodeWorkerResponse<R extends AnalyzerRequest>(
       "remediation",
       "path",
       "paths",
+      "parseFailures",
       "snapshot",
       "projectPaths",
       "disposition",

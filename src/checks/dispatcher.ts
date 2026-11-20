@@ -1,3 +1,7 @@
+import {
+  validateCompilerScopeProofs,
+  releaseCompilerScopeProofs,
+} from "./typescript/compiler-scope-graph.js";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import pLimit from "p-limit";
 import {
@@ -216,6 +220,9 @@ export async function prepareCheckDispatch(
                     : { diagnostic: error.diagnostic }),
                   ...(error.path === undefined ? {} : { path: error.path }),
                   ...(error.paths === undefined ? {} : { paths: error.paths }),
+                  ...(error.parseFailures === undefined
+                    ? {}
+                    : { parseFailures: error.parseFailures }),
                   ...(error.snapshot === undefined
                     ? {}
                     : { snapshot: error.snapshot }),
@@ -375,16 +382,20 @@ export async function prepareCheckDispatch(
     hasJobs: jobs.length > 0,
     scheduledTargets: Object.freeze(scheduledTargets),
   });
-  preparedExecutions.set(plan, async () =>
-    (
-      await Promise.all([
+  preparedExecutions.set(plan, async () => {
+    try {
+      const results = await Promise.all([
         ...scheduled,
         ...jobs.map((job) => {
           const queuedAt = performance.now();
           return limit(() => job(queuedAt));
         }),
-      ])
-    ).sort(compareResults),
-  );
+      ]);
+      await validateCompilerScopeProofs(adapterContext);
+      return results.sort(compareResults);
+    } finally {
+      releaseCompilerScopeProofs(adapterContext);
+    }
+  });
   return plan;
 }

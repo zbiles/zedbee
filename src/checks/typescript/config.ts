@@ -79,7 +79,7 @@ function stringList(configPath: string, value: unknown): void {
   }
 }
 
-function validateConfigPaths(configPath: string, value: unknown): void {
+export function validateConfigPaths(configPath: string, value: unknown): void {
   const config = record(value);
   for (const field of ["files", "include", "exclude"] as const) {
     stringList(configPath, config[field]);
@@ -149,7 +149,7 @@ function preferredConfig(workspace: WorkspaceInspection): string {
   );
 }
 
-function configHost(
+export function configHost(
   snapshotRoot: string,
   files: ReadonlyMap<string, string>,
 ): ts.ParseConfigHost {

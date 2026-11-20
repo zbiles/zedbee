@@ -168,6 +168,70 @@ describe("structuralSecurityAdapter", () => {
     });
   });
 
+  it("collects parse failures from both snapshots and every selected file", async () => {
+    const { fixtures, run } = await structuralSecurityContext();
+    await fixtures.baseline.write("src/deleted.ts", "const bad = ;\n");
+    await fixtures.staged.write("src/security.ts", "const bad = ;\n");
+    await fixtures.staged.write(
+      "src/another.d.ts",
+      "// 🐝\r\ndeclare const bad: ;\r\n",
+    );
+    const added: ChangedFile = {
+      path: "src/another.d.ts",
+      status: "added",
+      addedRanges: [{ start: 1, end: 2 }],
+    };
+    const deleted: ChangedFile = {
+      path: "src/deleted.ts",
+      status: "deleted",
+      addedRanges: [],
+    };
+    await expect(
+      structuralSecurityAdapter.collect({
+        ...run,
+        changeSet: {
+          ...run.changeSet,
+          files: new Map([
+            ...run.changeSet.files,
+            [added.path, added],
+            [deleted.path, deleted],
+          ]),
+        },
+        baselineInspection: await inspectRepository(fixtures.baseline.root),
+        targetInspection: await inspectRepository(fixtures.staged.root),
+      }),
+    ).rejects.toMatchObject({
+      code: "STRUCTURAL_SECURITY_PARSE_FAILED",
+      paths: ["src/another.d.ts", "src/deleted.ts", "src/security.ts"],
+      parseFailures: {
+        files: [
+          {
+            path: "src/deleted.ts",
+            snapshot: "baseline",
+            line: 1,
+            column: 13,
+            reason: "Expression expected.",
+          },
+          {
+            path: "src/another.d.ts",
+            snapshot: "staged",
+            line: 2,
+            column: 20,
+            reason: "Type expected.",
+          },
+          {
+            path: "src/security.ts",
+            snapshot: "staged",
+            line: 1,
+            column: 13,
+            reason: "Expression expected.",
+          },
+        ],
+        omitted: 0,
+      },
+    });
+  });
+
   it("analyzes valid import-type syntax while retaining structural rule coverage", async () => {
     const { fixtures, run } = await structuralSecurityContext();
     const source = [

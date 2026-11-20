@@ -925,3 +925,149 @@ describe("reactCorrectnessAdapter", () => {
     expect(serialized).not.toContain('"suggestions"');
   });
 });
+
+it.each([
+  { id: "reactCorrectness" as const, mode: "react-correctness" as const },
+  { id: "reactAccessibility" as const, mode: "react-accessibility" as const },
+])(
+  "runs file-local $id rules only on changed files for an ordinary source commit",
+  async ({ id, mode }) => {
+    const { fixtures, run } = await reactContext("react");
+    for (const f of [fixtures.baseline, fixtures.staged])
+      await f.write("src/untouched.tsx", "export const Untouched=()=> <img/>;");
+    const base = {
+      ...run,
+      baselineInspection: await inspectRepository(fixtures.baseline.root),
+      targetInspection: await inspectRepository(fixtures.staged.root),
+      policy: run.config.checks[id],
+    };
+    const observed: string[][] = [];
+    const adapter = createReactAdapter(
+      id,
+      mode,
+      managedReactCorrectnessConfig,
+      () => ({
+        lintFiles: async (patterns) => {
+          observed.push(
+            typeof patterns === "string" ? [patterns] : [...patterns],
+          );
+          return [];
+        },
+      }),
+    );
+    await adapter.collect(base);
+    expect(observed).toEqual([["src/app.tsx"], ["src/app.tsx"]]);
+  },
+);
+it.each([
+  "always",
+  "merge",
+  "dependency",
+  "configuration",
+  "declaration",
+] as const)("keeps broad React coverage for %s comparisons", async (reason) => {
+  const { fixtures, run, changedFiles } = await reactContext("react");
+  for (const f of [fixtures.baseline, fixtures.staged])
+    await f.write("src/untouched.tsx", "export const Untouched=()=> <img/>;");
+  if (["dependency", "configuration", "declaration"].includes(reason)) {
+    const path =
+      reason === "dependency"
+        ? "package.json"
+        : reason === "configuration"
+          ? ".zedbeerc.jsonc"
+          : "shared.d.ts";
+    changedFiles.set(path, { path, status: "modified", addedRanges: [] });
+  }
+  const config =
+    reason === "always"
+      ? resolveConfig({
+          schemaVersion: 1,
+          checks: { reactCorrectness: { when: "always" } },
+        })
+      : run.config;
+  const context = {
+    ...run,
+    config,
+    policy: config.checks.reactCorrectness,
+    policyForFile: testFilePolicyResolver(config, run.changeSet),
+    baselineInspection: await inspectRepository(fixtures.baseline.root),
+    targetInspection: await inspectRepository(fixtures.staged.root),
+    ...(reason === "merge" ? { mergeComparison: true } : {}),
+  };
+  const observed: string[][] = [];
+  const adapter = createReactAdapter(
+    "reactCorrectness",
+    "react-correctness",
+    managedReactCorrectnessConfig,
+    () => ({
+      lintFiles: async (patterns) => {
+        observed.push(
+          typeof patterns === "string" ? [patterns] : [...patterns],
+        );
+        return [];
+      },
+    }),
+  );
+  await adapter.collect(context);
+  expect(observed).toEqual([
+    ["src/app.tsx", "src/untouched.tsx"],
+    ["src/app.tsx", "src/untouched.tsx"],
+  ]);
+});
+it("preserves canonical React findings against broad analysis, including unchanged debt", async () => {
+  const { fixtures, run } = await reactContext("react");
+  for (const f of [fixtures.baseline, fixtures.staged])
+    await f.write(
+      "src/old-debt.tsx",
+      "export const Debt=()=>[1,2].map(n=><span>{n}</span>);",
+    );
+  const context = {
+    ...run,
+    baselineInspection: await inspectRepository(fixtures.baseline.root),
+    targetInspection: await inspectRepository(fixtures.staged.root),
+  };
+  const selected = await reactCorrectnessAdapter.collect(context);
+  const broadPolicy = resolveConfig({
+    schemaVersion: 1,
+    checks: { reactCorrectness: { when: "always" } },
+  }).checks.reactCorrectness;
+  const broadContext = { ...context, policy: broadPolicy };
+  const broad = await reactCorrectnessAdapter.collect(broadContext);
+  expect(
+    broad.targetObservations.some(
+      (o) => o.location?.file === "src/old-debt.tsx",
+    ),
+  ).toBe(true);
+  expect(
+    selected.targetObservations.some(
+      (o) => o.location?.file === "src/old-debt.tsx",
+    ),
+  ).toBe(false);
+  const selectedResult = await observationCheckResult(
+    "reactCorrectness",
+    selected,
+    context,
+    true,
+  );
+  const broadResult = await observationCheckResult(
+    "reactCorrectness",
+    broad,
+    broadContext,
+    true,
+  );
+  const { displayResultForPolicy } =
+    await import("../../../src/policy/evaluate.js");
+  expect(
+    displayResultForPolicy(
+      selectedResult,
+      context.policy,
+      context.policyForFile,
+    )?.findings,
+  ).toEqual(
+    displayResultForPolicy(
+      broadResult,
+      broadContext.policy,
+      broadContext.policyForFile,
+    )?.findings,
+  );
+});

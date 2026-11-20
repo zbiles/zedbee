@@ -55,9 +55,9 @@ export function createSnapshotProjectCoverage(
         dependencies,
         checkId,
       )
-        .then((project) => {
+        .then(async (project) => {
           if (dependencies !== undefined)
-            assertRequiredInstallation({
+            await assertRequiredInstallation({
               programs: project.programs,
               repositoryRoot: context.repositoryRoot,
               inspection:
@@ -67,6 +67,8 @@ export function createSnapshotProjectCoverage(
               workspace,
               dependencies,
               side,
+              diagnosticMessages:
+                context.config.reporting.diagnosticMessages,
             });
           return project;
         })

@@ -37,6 +37,7 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  cache: boolean;
   diagnosticMessages?: "contextual" | "source-free";
   merge?: boolean;
   hookInvocation?: boolean;
@@ -482,6 +483,7 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
+    .option("--no-cache", "run analysis without observation-cache reads or writes")
     .option("--no-service", "use a command-owned local analyzer executor")
     .option(
       "--diagnostics",
@@ -510,6 +512,7 @@ export async function runCli(
             ? {}
             : { diagnosticMessages: options.diagnosticMessages }),
           service: options.service,
+          ...(options.cache === false ? { cache: false as const } : {}),
           color: options.color,
           animations: options.animations,
           ...(options.merge === true ? { merge: true } : {}),

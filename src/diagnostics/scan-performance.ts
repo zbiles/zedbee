@@ -44,8 +44,29 @@ export interface ScanPerformanceSummary {
   phases: Record<string, number>;
   overhead: Record<string, number>;
 }
+export const SCAN_PERFORMANCE_PHASES = [
+  "configuration",
+  "baseline-resolution",
+  "change-discovery",
+  "snapshot-construction",
+  "baseline-inspection",
+  "target-inspection",
+  "project-inspection",
+  "source-capture",
+  "dispatch",
+  "policy-evaluation",
+  "cleanup",
+] as const;
+export const SCAN_PERFORMANCE_OVERHEADS = [
+  "cache_lookup",
+  "cache_prepare",
+  "service",
+  "dispatcher",
+  "result",
+] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
-const bounded = (v: number) => Math.min(604800000, Math.max(0, Math.round(v)));
+const bounded = (v: number) =>
+  Math.min(604800000, Math.max(0, Math.round(v)));
 export class ScanPerformanceRecorder {
   private readonly checks = new Map<string, CheckPerformance>();
   private partial = false;
@@ -78,26 +99,14 @@ export class ScanPerformanceRecorder {
     this.workerCount = workers;
   }
   phase(name: string, duration: number): void {
-    if (
-      [
-        "configuration",
-        "baseline-resolution",
-        "change-discovery",
-        "snapshot-construction",
-        "baseline-inspection",
-        "target-inspection",
-        "project-inspection",
-        "source-capture",
-        "dispatch",
-        "policy-evaluation",
-        "cleanup",
-      ].includes(name)
-    )
+    if ((SCAN_PERFORMANCE_PHASES as readonly string[]).includes(name))
       this.phases[name] = bounded((this.phases[name] ?? 0) + duration);
   }
   record(sample: PerformanceSample): void {
     if (
-      !(TELEMETRY_CHECK_IDS as readonly string[]).includes(sample.checkId) ||
+      !(TELEMETRY_CHECK_IDS as readonly string[]).includes(
+        sample.checkId,
+      ) ||
       !Number.isFinite(sample.durationMs) ||
       sample.durationMs < 0
     ) {
@@ -120,13 +129,9 @@ export class ScanPerformanceRecorder {
     if (sample.durationMs > 604800000) this.partial = true;
     const ms = bounded(sample.durationMs);
     if (
-      [
-        "cache_lookup",
-        "cache_prepare",
-        "service",
-        "dispatcher",
-        "result",
-      ].includes(sample.kind)
+      (SCAN_PERFORMANCE_OVERHEADS as readonly string[]).includes(
+        sample.kind,
+      )
     ) {
       this.overhead[sample.kind] = bounded(
         (this.overhead[sample.kind] ?? 0) + ms,

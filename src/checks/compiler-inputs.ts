@@ -1,5 +1,9 @@
+import {
+  classifyCompilerChanges,
+  compilerPolicyInputPaths,
+} from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
-import { isClosedCompilerProject } from "./closed-compiler-project.js";
+import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
@@ -55,6 +59,8 @@ const decisions = new WeakMap<
     WeakMap<ChangeSet, Promise<CompilerInputRelevance>>
   >
 >();
+const decisionOwners = new WeakMap<object, WeakMap<object, typeof decisions>>();
+const decisionPolicies = new WeakMap<object, typeof decisions>();
 const scopedDecisions = new WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
@@ -68,11 +74,16 @@ async function resolveRelevance(
 ): Promise<CompilerInputRelevance> {
   const paths = changedPaths(context.changeSet);
   if (paths.size === 0) return { relevant: false, reason: "unrelated" };
+  if ([...compilerPolicyInputPaths(context)].some((path) => paths.has(path)))
+    return { relevant: true, reason: "configuration" };
   let complete = true;
   for (const inspection of new Set([
     context.baselineInspection,
     context.targetInspection,
   ])) {
+    context.signal?.throwIfAborted();
+    if (inspection.workspaces.length > 32)
+      return { relevant: true, reason: "unknown" };
     if (inspection.lockfiles.some((path) => paths.has(path)))
       return { relevant: true, reason: "dependency" };
     for (const workspace of inspection.workspaces) {
@@ -83,10 +94,12 @@ async function resolveRelevance(
       const inputs = await compilerConfigurationInputsForInspection(
         inspection,
         workspace,
+        context.signal,
       );
       if ([...inputs.paths].some((path) => paths.has(path)))
         return { relevant: true, reason: "configuration" };
       complete &&= inputs.complete;
+      if (!complete) return { relevant: true, reason: "unknown" };
     }
   }
   for (const path of paths) {
@@ -108,10 +121,19 @@ export function compilerInputRelevance(
   context: InspectionContext,
   workspace: WorkspaceInspection,
 ): Promise<CompilerInputRelevance> {
-  let targets = decisions.get(context.baselineInspection);
+  if (context.signal?.aborted) return Promise.reject(context.signal.reason);
+  let policies = decisionPolicies;
+  if (context.signal !== undefined) {
+    policies = decisionOwners.get(context.signal) ?? new WeakMap();
+    decisionOwners.set(context.signal, policies);
+  }
+  const policy = context.filePolicyConfig ?? context.config;
+  const cache = policies.get(policy) ?? new WeakMap();
+  policies.set(policy, cache);
+  let targets = cache.get(context.baselineInspection);
   if (targets === undefined) {
     targets = new WeakMap();
-    decisions.set(context.baselineInspection, targets);
+    cache.set(context.baselineInspection, targets);
   }
   let scans = targets.get(context.targetInspection);
   if (scans === undefined) {
@@ -122,6 +144,7 @@ export function compilerInputRelevance(
   if (decision === undefined) {
     decision = resolveRelevance(context);
     scans.set(context.changeSet, decision);
+    void decision.catch(() => scans!.delete(context.changeSet));
   }
   void decision
     .then((value) => {
@@ -134,38 +157,45 @@ export function compilerInputRelevance(
     scopedDecisions.set(decision, scoped);
   }
   const previous = scoped.get(workspace);
-  if (previous !== undefined) return previous;
+  if (
+    previous !== undefined &&
+    ![...changedPaths(context.changeSet)].some((path) => SOURCE.test(path))
+  )
+    return previous;
+  if (previous !== undefined)
+    return previous.then(async (result) => {
+      if (
+        !result.relevant &&
+        result.reason === "unrelated" &&
+        (await decision!).relevant
+      ) {
+        if (
+          !(await proveCompilerWorkspaceIndependence(context, workspace))
+            .independent
+        )
+          return { relevant: true, reason: "source" };
+      }
+      return result;
+    });
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
       if (!result.relevant || result.reason !== "source") return result;
-      const paths = changedPaths(context.changeSet);
+      const classification = await classifyCompilerChanges(context);
+      if (!classification.complete || classification.requiresBroadComparison)
+        return result;
+      const paths = classification.sourcePaths;
       const prefix =
         workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
+      if ([...paths].some((path) => path.startsWith(prefix))) return result;
       if (
-        [...paths].some(
-          (path) =>
-            path.startsWith(prefix) ||
-            !SOURCE.test(path) ||
-            /\.d\.[cm]?ts$/iu.test(path),
-        )
+        !(await proveCompilerWorkspaceIndependence(context, workspace))
+          .independent
       )
         return result;
-      for (const inspection of [
-        context.baselineInspection,
-        context.targetInspection,
-      ]) {
-        const side = inspection.workspaces.find(
-          (item) => item.relativeRoot === workspace.relativeRoot,
-        );
-        if (
-          side === undefined ||
-          !(await isClosedCompilerProject(inspection, side))
-        )
-          return result;
-      }
       return { relevant: false, reason: "unrelated" };
     },
   );
   scoped.set(workspace, narrowed);
+  void narrowed.catch(() => scoped!.delete(workspace));
   return narrowed;
 }

@@ -1,3 +1,4 @@
+import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
 import {
   sanitizeAnalyzerDiagnostic,
   type AnalyzerDiagnostic,
@@ -43,6 +44,7 @@ export function writeCommandDiagnostics(
   io: { writeStderr(value: string): void },
   options: {
     readonly command: "scan" | "fix";
+    readonly scanDiagnostics?: unknown;
     readonly durationMs: number;
     readonly stages: DiagnosticTimings;
     readonly entries: readonly DiagnosticEntry[];
@@ -93,6 +95,9 @@ export function writeCommandDiagnostics(
     io.writeStderr(
       `ZEDBEE DIAGNOSTICS\n${JSON.stringify({
         command: options.command,
+        ...(localScanDiagnostics(options.scanDiagnostics) === undefined
+          ? {}
+          : { scan: localScanDiagnostics(options.scanDiagnostics) }),
         runtime: {
           node: process.versions.node,
           platform: process.platform,
@@ -134,7 +139,9 @@ function safeReportMaintenance(value: unknown): object | undefined {
     (v.effectiveMaxAgeMs as number) < 0 ||
     ![v.removedExpired, v.alreadyMissing].every(
       (n) =>
-        Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 10000,
+        Number.isSafeInteger(n) &&
+        (n as number) >= 0 &&
+        (n as number) <= 10000,
     ) ||
     !["unavailable", "new", "loaded", "migrated", "recovered"].includes(
       v.state as string,

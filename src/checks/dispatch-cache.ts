@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import {
   captureDiagnosticDetails,
@@ -142,6 +143,7 @@ export function createDispatchObservationCollector(
     ReturnType<typeof createEffectiveBehaviorFingerprint> | undefined;
   let changeSetDigest: string | undefined;
   let preparationFailed = false;
+  let checkoutScope: Promise<string> | undefined;
   function prepareCache() {
     if (preparationFailed) throw new Error("Cache preparation unavailable");
     try {
@@ -228,6 +230,15 @@ export function createDispatchObservationCollector(
                 )
               : undefined,
             changeSetDigest: prepared.changeSetDigest,
+            // Dependency witnesses already bind to the physical checkout.
+            // Keep identical trees in different checkouts from evicting one another.
+            ...(requiresDependencyInputs(adapter.id)
+              ? {
+                  checkout: await (checkoutScope ??= realpath(
+                    context.repositoryRoot,
+                  )),
+                }
+              : {}),
             baseline: cacheInspection(
               runContext.baselineInspection,
               runContext.target,

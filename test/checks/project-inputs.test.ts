@@ -12,6 +12,38 @@ import type { ChangeSet } from "../../src/git/change-set.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 
+it("retains project analysis when bounded config metadata cannot establish relevance", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "root" });
+  await fixture.writeJson("tsconfig.json", {
+    extends: Array.from({ length: 1024 }, (_, i) => `./config-${i}.md`),
+    include: ["src"],
+  });
+  await fixture.write("src/main.ts", "export const value=1;");
+  const inspection = await inspectRepository(fixture.root);
+  const path = "config-1023.md";
+  const context = {
+    repositoryRoot: fixture.root,
+    baselineInspection: inspection,
+    targetInspection: inspection,
+    config: resolveConfig({ schemaVersion: 1 }),
+    changeSet: {
+      files: new Map([
+        [path, { path, status: "modified" as const, addedRanges: [] }],
+      ]),
+      isEmpty: false,
+      containsAddedLine: () => false,
+    },
+  };
+  expect(
+    await projectInputsMayHaveChanged(context, {
+      id: ".",
+      relativeRoot: ".",
+      kind: "workspace",
+    }),
+  ).toBe(true);
+});
+
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {

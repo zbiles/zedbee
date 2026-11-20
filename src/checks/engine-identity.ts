@@ -34,12 +34,12 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
     revision:
-      "captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
+      "captured-inputs-v4-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
     revision:
-      "captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1+comparison-context-v1",
+      "captured-inputs-v5-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
@@ -51,7 +51,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
-    revision: "zedbee-structural-rules-v3",
+    revision: "zedbee-structural-rules-v4",
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),
@@ -70,7 +70,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: `zedbee-react-calibration-v3-source-moves+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
+    revision: `zedbee-react-calibration-v3-source-moves+changed-local-files-v1+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -79,7 +79,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
-    revision: "diagnostic-privacy-v1+focusable-separator-v2",
+    revision: "diagnostic-privacy-v1+focusable-separator-v2+changed-local-files-v1",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

@@ -1,3 +1,4 @@
+import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
 import { sanitizeComparisonContext } from "../checks/comparison-context.js";
 import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
@@ -8,6 +9,7 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
+import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 
 function serializeFinding(
   finding: Finding,
@@ -38,7 +40,9 @@ function serializeFinding(
             reasons: [...finding.messageRedaction.reasons],
           },
         }),
-    ...(finding.location === undefined ? {} : { location: finding.location }),
+    ...(finding.location === undefined
+      ? {}
+      : { location: finding.location }),
     ...(finding.remediation === undefined
       ? {}
       : { remediation: finding.remediation }),
@@ -48,7 +52,10 @@ function serializeFinding(
           automaticFix: {
             available: true,
             command: [
-              ...fixCommandArguments(finding.automaticFix, installedCliCommand),
+              ...fixCommandArguments(
+                finding.automaticFix,
+                installedCliCommand,
+              ),
             ],
             scope: finding.automaticFix.scope,
             writes: finding.automaticFix.writes,
@@ -77,7 +84,12 @@ function serializeCheck(
             ? {}
             : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
-          ...(check.error.path === undefined ? {} : { path: check.error.path }),
+          ...(check.error.path === undefined
+            ? {}
+            : { path: check.error.path }),
+          ...(check.error.parseFailures === undefined
+            ? {}
+            : { parseFailures: check.error.parseFailures }),
           ...(check.error.paths === undefined
             ? {}
             : { paths: [...check.error.paths] }),
@@ -101,7 +113,9 @@ function serializeCheck(
     ...(check.comparisonContext === undefined
       ? {}
       : {
-          comparisonContext: sanitizeComparisonContext(check.comparisonContext),
+          comparisonContext: sanitizeComparisonContext(
+            check.comparisonContext,
+          ),
         }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
@@ -111,7 +125,9 @@ function serializeCheck(
       .sort(compareFindings)
       .map((finding) => serializeFinding(finding, installedCliCommand)),
     ...(error === undefined ? {} : { error }),
-    ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
+    ...(check.skipReason === undefined
+      ? {}
+      : { skipReason: check.skipReason }),
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
@@ -145,6 +161,12 @@ export function renderJson(report: ScanReport): string {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
+    ...(localScanDiagnostics(report.diagnostics) === undefined
+      ? {}
+      : { diagnostics: localScanDiagnostics(report.diagnostics) }),
+    ...(hookUpdateNotice(report) === undefined
+      ? {}
+      : { hookUpdate: hookUpdateNotice(report) }),
     repositoryRoot: ".",
     mode: source.mode,
     baseline: source.baseline,

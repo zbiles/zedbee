@@ -14,6 +14,21 @@ import {
 import { createInspectionFixture } from "../inspection/fixture.js";
 
 describe("captured dependency view", () => {
+  it("strict optional reads refuse an oversized dependency without passthrough", async () => {
+    const live = await createInspectionFixture();
+    const path = join(live.root, "node_modules/huge/index.d.ts");
+    await live.write(
+      "node_modules/huge/index.d.ts",
+      "x".repeat(DEPENDENCY_LIMITS.fileBytes + 1),
+    );
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(view.readCapturedFile(path)).toBeUndefined();
+    expect(view.failure()).toMatchObject({
+      reason: "capacity",
+      resource: "fileBytes",
+    });
+    expect(view.readCapturedFile(path)).toBeUndefined();
+  });
   it("captures nested installations and invalidates reuse when their declarations change", async () => {
     const live = await createInspectionFixture();
     const file = "web/node_modules/example/index.d.ts";
@@ -81,7 +96,9 @@ describe("captured dependency view", () => {
     await live.write("node_modules/x/index.d.ts", "export const x: string;");
     expect(view.readFile(path)).toBe("export const x: number;");
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(false);
   });
 
@@ -110,7 +127,9 @@ describe("captured dependency view", () => {
     expect(view.fileExists(path)).toBe(false);
     expect(view.getDirectories(directory)).toEqual(["first"]);
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(false);
   });
 
@@ -144,6 +163,61 @@ describe("captured dependency view", () => {
     expect(
       validateDependencyInputs(manifest, { repositoryRoot: live.root }),
     ).toBe(false);
+  });
+
+  it.each(["external", "source", "dangling"])(
+    "does not call an absent manifest behind a %s package link missing",
+    async (kind) => {
+      const live = await createInspectionFixture();
+      const external = await createInspectionFixture();
+      await live.write("node_modules/.keep", "");
+      await live.write("source/.keep", "");
+      const target =
+        kind === "external"
+          ? external.root
+          : kind === "source"
+            ? join(live.root, "source")
+            : join(external.root, "absent");
+      await live.symlink(target, "node_modules/pkg");
+      const view = new CapturedDependencies({ repositoryRoot: live.root });
+      expect(
+        view.fileExists(join(live.root, "node_modules/pkg/package.json")),
+      ).toBe(false);
+      expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "unreadable-input" });
+    },
+  );
+
+  it("captures negative compiler probes beneath ordinary files and trusted root ancestors", async () => {
+    const live = await createInspectionFixture();
+    await live.write("node_modules/x/index.d.ts", "export {};");
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    expect(
+      view.fileExists(
+        join(live.root, "node_modules/x/index.d.ts/package.json"),
+      ),
+    ).toBe(false);
+    expect(
+      view.fileExists(
+        join(live.root, "../node_modules/absent-fixture-package/package.json"),
+      ),
+    ).toBe(false);
+    expect(view.manifest()).toBeDefined();
+  });
+
+  it("preserves proven truncation as input mutation rather than setup failure", async () => {
+    const live = await createInspectionFixture();
+    await live.write("node_modules/x/index.d.ts", "export const x: number;");
+    const view = new CapturedDependencies({ repositoryRoot: live.root });
+    const read = vi.spyOn(fs, "readSync").mockImplementationOnce(() => 0);
+    syncBuiltinESMExports();
+    try {
+      view.readFile(join(live.root, "node_modules/x/index.d.ts"));
+      expect(view.failure()).toEqual({ reason: "inputs-changed" });
+    } finally {
+      read.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it.each(["utf16le", "utf16be", "utf8-bom"])(
@@ -226,7 +300,10 @@ describe("captured dependency view", () => {
         roots: "a".repeat(64),
         probes: Array.from(
           { length: DEPENDENCY_LIMITS.probes + 1 },
-          (_, index) => ({ kind: "missing", path: `packages:${index}.d.ts` }),
+          (_, index) => ({
+            kind: "missing",
+            path: `packages:${index}.d.ts`,
+          }),
         ),
       }),
     ).toThrow();
@@ -234,10 +311,13 @@ describe("captured dependency view", () => {
       sanitizeDependencyInputManifest({
         version: 1,
         roots: "a".repeat(64),
-        probes: Array.from({ length: 1600 }, (_, index) => ({
-          kind: "missing",
-          path: `packages:${"x".repeat(3000)}${index}.d.ts`,
-        })),
+        probes: Array.from(
+          { length: Math.ceil(DEPENDENCY_LIMITS.metadataBytes / 3000) },
+          (_, index) => ({
+            kind: "missing",
+            path: `packages:${"x".repeat(3000)}${index}.d.ts`,
+          }),
+        ),
       }),
     ).toThrow();
   });
@@ -248,7 +328,9 @@ describe("captured dependency view", () => {
     const view = new CapturedDependencies({ repositoryRoot: live.root });
     view.readFile(join(live.root, "node_modules/x/index..d.ts"));
     expect(
-      validateDependencyInputs(view.manifest(), { repositoryRoot: live.root }),
+      validateDependencyInputs(view.manifest(), {
+        repositoryRoot: live.root,
+      }),
     ).toBe(true);
   });
 
@@ -292,6 +374,7 @@ describe("captured dependency view", () => {
       expect(view.fileExists(path)).toBe(true);
       expect(view.readFile(path)).toBeUndefined();
       expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "unreadable-input" });
     } finally {
       open.mockRestore();
       syncBuiltinESMExports();
@@ -376,9 +459,61 @@ describe("captured dependency view", () => {
     try {
       expect(view.readFile(path)).toBeUndefined();
       expect(view.manifest()).toBeUndefined();
+      expect(view.failure()).toEqual({ reason: "inputs-changed" });
     } finally {
       open.mockRestore();
       syncBuiltinESMExports();
     }
   });
+});
+
+it("normalizes repeated dependency lookups once per captured view and still validates fresh bytes", async () => {
+  const f = await createInspectionFixture();
+  const path = join(f.root, "node_modules/example/index.d.ts");
+  await f.write(
+    "node_modules/example/index.d.ts",
+    "export const value: number;",
+  );
+  const view = new CapturedDependencies({ repositoryRoot: f.root });
+  const normalize = vi.spyOn(
+    view as unknown as { identify(path: string): string },
+    "identify",
+  );
+  for (let i = 0; i < 1000; i++) {
+    expect(view.fileExists(path)).toBe(true);
+    expect(view.readFile(path)).toBe("export const value: number;");
+  }
+  // This is the expensive normalization boundary observed in the CPU profile,
+  // not a timer threshold that depends on machine load.
+  expect(normalize).toHaveBeenCalledTimes(1);
+  const manifest = view.manifest()!;
+  await f.write(
+    "node_modules/example/index.d.ts",
+    "export const value: string;",
+  );
+  expect(view.readFile(path)).toBe("export const value: number;");
+  expect(view.validate(manifest)).toBe(false);
+});
+it("evicts optional lookup acceleration before denying mandatory capture metadata", async () => {
+  const f = await createInspectionFixture();
+  await f.write("node_modules/example/index.d.ts", "export {};");
+  const view = new CapturedDependencies({ repositoryRoot: f.root });
+  expect(view.fileExists(join(f.root, "node_modules/example/index.d.ts"))).toBe(
+    true,
+  );
+  // Exercise the boundary without allocating 32 MiB of artificial probe strings.
+  const budget = view as unknown as {
+    metadataBytes: number;
+    lookupBytes: number;
+  };
+  expect(budget.lookupBytes).toBeGreaterThan(0);
+  budget.metadataBytes = DEPENDENCY_LIMITS.metadataBytes - 800;
+  expect(
+    view.fileExists(join(f.root, "node_modules/example/missing.d.ts")),
+  ).toBe(false);
+  expect(view.failure()).toBeUndefined();
+  expect(budget.metadataBytes + budget.lookupBytes).toBeLessThanOrEqual(
+    DEPENDENCY_LIMITS.metadataBytes,
+  );
+  expect(view.validate(view.manifest()!)).toBe(true);
 });

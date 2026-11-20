@@ -1,3 +1,5 @@
+import { changedFilePaths } from "../changed-file-paths.js";
+import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
@@ -113,7 +115,9 @@ async function prepareSide(
       .filter(
         (path) =>
           SOURCE.test(path) &&
-          (selectedPaths === undefined || selectedPaths.has(path)),
+          (selectedPaths === undefined ||
+            selectedPaths.has(path) ||
+            policyForFile(id, path, side).when === "always"),
       )
       .sort(compareCodeUnits);
     if (files.length === 0) return undefined;
@@ -294,6 +298,15 @@ export function createReactAdapter(
         }
       : {}),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
+      const changes =
+        !context.mergeComparison && context.policy.when !== "always"
+          ? await classifyCompilerChanges(context)
+          : undefined;
+      const local =
+        !context.mergeComparison &&
+        context.policy.when !== "always" &&
+        changes?.complete === true &&
+        !changes.requiresBroadComparison;
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
@@ -304,6 +317,7 @@ export function createReactAdapter(
         "baseline",
         context.policyForFile,
         context.signal,
+        local ? changedFilePaths(context, "baseline") : undefined,
       );
       const collectTarget = await prepareSide(
         context.snapshots.targetDir,
@@ -315,6 +329,7 @@ export function createReactAdapter(
         "target",
         context.policyForFile,
         context.signal,
+        local ? changedFilePaths(context, "target") : undefined,
       );
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(

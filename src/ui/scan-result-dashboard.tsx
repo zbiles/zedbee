@@ -1,4 +1,9 @@
+import { parseFailureFields } from "../renderers/incomplete.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
+import {
+  hookUpdateNotice,
+  HOOK_UPDATE_TITLE,
+} from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
@@ -322,7 +327,8 @@ function IncompleteChecksPanel({
                       width={contentWidth}
                       color={color}
                     />
-                    {error.path === undefined ? null : (
+                    {error.path === undefined ||
+                    error.parseFailures !== undefined ? null : (
                       <LabeledValue
                         label="Path"
                         value={error.path}
@@ -357,7 +363,20 @@ function IncompleteChecksPanel({
                         tone={ZEDBEE_THEME.secondary}
                       />
                     )}
-                    {error.paths === undefined ? null : (
+                    {error.parseFailures !== undefined ? (
+                      parseFailureFields(error.parseFailures).map(
+                        ({ label, value }, index) => (
+                          <LabeledValue
+                            key={index}
+                            label={label}
+                            value={value}
+                            width={contentWidth}
+                            color={color}
+                            tone={ZEDBEE_THEME.secondary}
+                          />
+                        ),
+                      )
+                    ) : error.paths === undefined ? null : (
                       <>
                         <LabeledValue
                           label="Affected files"
@@ -484,6 +503,7 @@ export function ScanResultDashboard({
   readonly color: boolean;
 }) {
   const panelWidth = brandedCommandContentWidth(width);
+  const hookUpdate = hookUpdateNotice(report);
   const sections = buildScanResultSections(report, presentation);
   const callouts = buildReportCallouts(
     presentation,
@@ -545,6 +565,26 @@ export function ScanResultDashboard({
             color={color}
           />
         </BrandedCommandPanel>
+        {hookUpdate === undefined ? null : (
+          <BrandedCommandPanel
+            title={HOOK_UPDATE_TITLE}
+            width={panelWidth}
+            color={color}
+          >
+            <Box flexDirection="column" paddingX={2} marginY={1}>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                {hookUpdate.message}
+              </Text>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                Run{" "}
+                <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+                  zedbee init
+                </Text>{" "}
+                to refresh them.
+              </Text>
+            </Box>
+          </BrandedCommandPanel>
+        )}
         {callouts.closing.length === 0 ? null : (
           <BrandedCommandPanel
             title="NEXT STEPS"

@@ -222,6 +222,7 @@ export function inspectionContext(
       ...context.config,
       checks: { ...context.config.checks, [checkId]: policy },
     }),
+    signal: context.signal,
     filePolicyConfig: context.config,
     baselineInspection: context.baselineInspection,
     targetInspection: context.targetInspection,

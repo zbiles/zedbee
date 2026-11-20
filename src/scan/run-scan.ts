@@ -1,3 +1,5 @@
+import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
+import { ZEDBEE_VERSION } from "../core/package-version.js";
 import {
   withDiagnosticDetailSession,
   applyDiagnosticDetails,
@@ -42,7 +44,10 @@ import {
   shouldIncludeSourceExcerpts,
   shouldPersistSourceExcerpts,
 } from "./reporting-options.js";
-import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
+import {
+  enrichSourceExcerpts,
+  omitSourceExcerpts,
+} from "./source-excerpts.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -127,9 +132,9 @@ const diagnosticPolicyForPresentation = new WeakMap<
   "contextual" | "source-free"
 >();
 
-export async function runScan(options: RunScanOptions): Promise<ScanReport> {
-  if (!options.onPerformanceSummary)
-    return withDiagnosticDetailSession(() => runScanWithDetails(options));
+export async function runScan(
+  options: RunScanOptions,
+): Promise<ScanReport> {
   const recorder = new ScanPerformanceRecorder();
   let phase: string | undefined,
     phaseStarted = performance.now();
@@ -145,21 +150,31 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       options.onEvent?.(event);
     },
   };
+  let report: ScanReport | undefined;
   try {
-    const report = await withScanPerformance(recorder, () =>
+    report = await withScanPerformance(recorder, () =>
       withDiagnosticDetailSession(() => runScanWithDetails(observed)),
     );
     if (report.outcome === "incomplete") recorder.markPartial();
-    return report;
   } catch (error) {
     recorder.markPartial();
     throw error;
   } finally {
     if (phase) recorder.phase(phase, performance.now() - phaseStarted);
+    const summary = recorder.snapshot();
+    const diagnostics = localScanDiagnostics({
+      schemaVersion: 1,
+      scope: "scan-run",
+      swarmVersion: ZEDBEE_VERSION,
+      performance: summary,
+    });
+    if (report !== undefined && diagnostics !== undefined)
+      report = freezeResult({ ...report, diagnostics });
     try {
-      options.onPerformanceSummary?.(recorder.snapshot());
+      options.onPerformanceSummary?.(summary);
     } catch {}
   }
+  return report;
 }
 
 async function runScanWithDetails(
@@ -187,8 +202,9 @@ async function runScanWithDetails(
           ? merged
           : await applyDiagnosticDetails(
               merged,
-              diagnosticPolicyForPresentation.get(merged.presentationPolicy) ??
-                diagnosticMessages,
+              diagnosticPolicyForPresentation.get(
+                merged.presentationPolicy,
+              ) ?? diagnosticMessages,
             ),
       );
   }
@@ -200,7 +216,9 @@ async function runScanWithDetails(
     persistSourceExcerpts: false,
     agentGuidance: EMPTY_AGENT_GUIDANCE,
   });
-  const reportContext = (state: AnalysisSessionState): ScanReportContext => ({
+  const reportContext = (
+    state: AnalysisSessionState,
+  ): ScanReportContext => ({
     repositoryRoot: options.repositoryRoot,
     source: state.source,
     changedFileCount: state.changedFileCount,
@@ -256,7 +274,10 @@ async function runScanWithDetails(
     },
     async (session, state): Promise<ScanReport> => {
       if (session.kind === "unsupported")
-        return createIncompleteReport(reportContext(state), session.failures);
+        return createIncompleteReport(
+          reportContext(state),
+          session.failures,
+        );
       const decision =
         session.kind === "empty"
           ? undefined
@@ -297,14 +318,17 @@ async function runScanWithDetails(
     if (outcome.cleanupFailure !== undefined) {
       throw retainCleanupFailure(
         outcome.error,
-        new AnalysisSessionCleanupError(outcome.cleanupFailure.temporaryPath, {
-          cause: outcome.error,
-          primaryFailure: phaseFailure(
-            outcome.error,
-            outcome.state.phase,
-            outcome.state.source.mode,
-          ),
-        }),
+        new AnalysisSessionCleanupError(
+          outcome.cleanupFailure.temporaryPath,
+          {
+            cause: outcome.error,
+            primaryFailure: phaseFailure(
+              outcome.error,
+              outcome.state.phase,
+              outcome.state.source.mode,
+            ),
+          },
+        ),
       );
     }
     throw outcome.error;

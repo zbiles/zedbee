@@ -4,6 +4,35 @@ import {
   resolveAgentNextStep,
 } from "../../src/reporting/agent-guidance.js";
 import { createReport } from "../helpers/scan-report.js";
+import { HOOK_UPDATE_NOTICE } from "../../src/reporting/hook-update-notice.js";
+
+it.each(["pass", "blocked", "incomplete"] as const)(
+  "recommends a hook update and offers agent help when a %s scan detects stale hooks",
+  (outcome) => {
+    const report = createReport({ outcome, hookUpdate: HOOK_UPDATE_NOTICE });
+    const guidance = resolveAgentNextStep(report, RECOMMENDED_AGENT_GUIDANCE);
+    expect(guidance).toContain(
+      "Recommend updating Swarm’s hooks and offer to run zedbee init for the user.",
+    );
+    expect(report.summary.warnings).toBe(0);
+  },
+);
+
+it("preserves custom guidance and opt-outs when adding hook-update advice", () => {
+  const report = createReport({ hookUpdate: HOOK_UPDATE_NOTICE });
+  expect(
+    resolveAgentNextStep(report, {
+      opening: "",
+      nextStep: "Review team policy.",
+    }),
+  ).toBe(
+    "Review team policy. Recommend updating Swarm’s hooks and offer to run zedbee init for the user.",
+  );
+  expect(resolveAgentNextStep(report, { opening: "", nextStep: "" })).toBe("");
+  expect(
+    resolveAgentNextStep(createReport(), RECOMMENDED_AGENT_GUIDANCE),
+  ).not.toContain("hooks");
+});
 it("replaces generated repair guidance on clean scans and preserves custom opt-outs", () => {
   const report = createReport();
   expect(resolveAgentNextStep(report, RECOMMENDED_AGENT_GUIDANCE)).toBe(

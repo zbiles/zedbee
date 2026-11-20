@@ -103,3 +103,10 @@ checks continue to run.
 
 Project ESLint mode uses the project's installed Hooks plugin and its native
 behavior. Swarm's managed correction does not modify that installation.
+
+For ordinary source edits, managed React correctness and accessibility rules run
+on changed files and their baseline names. These rules use file-local syntax;
+they do not need to lint every unchanged component to evaluate an edit. Files
+configured with `when: always` remain included. Merge comparisons and changes to
+configuration, dependencies, declarations or unknown inputs retain broad coverage.
+This does not narrow project ESLint or TypeScript analysis.

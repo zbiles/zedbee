@@ -56,7 +56,11 @@ function lint(
   return new Linter().verify(
     source,
     [
-      ...managedConfig({ mode, managedIgnores: [], typeInformation: "basic" }),
+      ...managedConfig({
+        mode,
+        managedIgnores: [],
+        typeInformation: "basic",
+      }),
       { rules },
     ],
     { filename: file },
@@ -183,7 +187,9 @@ describe("owned analysis reuse", () => {
         mode: "complexity",
         managedIgnores: [],
       });
-    const expectedCanonical = await canonical().lintFiles(["src/branch.ts"]);
+    const expectedCanonical = await canonical().lintFiles([
+      "src/branch.ts",
+    ]);
     const owner = createAnalysisReuseSession();
     try {
       await withAnalysisReuseSession(owner, async () => {
@@ -260,9 +266,9 @@ describe("owned analysis reuse", () => {
     const parses = countSyntaxParses();
     try {
       await withAnalysisReuseSession(owner, async () => {
-        expect(lint("export const value: number = 1;", "src/file.ts")).toEqual(
-          [],
-        );
+        expect(
+          lint("export const value: number = 1;", "src/file.ts"),
+        ).toEqual([]);
         expect(
           lint("const unused: number = 1;", "src/file.ts").map(
             ({ ruleId }) => ruleId,
@@ -289,9 +295,13 @@ describe("owned analysis reuse", () => {
     const parses = countSyntaxParses();
     const source = "/** @deprecated old */\nexport const value = 1;";
     const hidden = (mode: "all" | "none") =>
-      Object.defineProperty({ filePath: "src/file.ts" }, "jsDocParsingMode", {
-        value: mode,
-      });
+      Object.defineProperty(
+        { filePath: "src/file.ts" },
+        "jsDocParsingMode",
+        {
+          value: mode,
+        },
+      );
     try {
       await withAnalysisReuseSession(owner, async () => {
         for (const mode of ["none", "all"] as const) {
@@ -330,15 +340,19 @@ describe("owned analysis reuse", () => {
         const firstRoot = first.services.esTreeNodeToTSNodeMap.get(
           first.ast,
         ) as ts.SourceFile;
-        const declaration = (firstRoot.statements[0] as ts.VariableStatement)
-          .declarationList.declarations[0]!;
+        const declaration = (
+          firstRoot.statements[0] as ts.VariableStatement
+        ).declarationList.declarations[0]!;
         Object.defineProperty(declaration.name, "escapedText", {
           value: "polluted",
         });
         firstRoot.text = "polluted";
         first.ast.body.splice(0, 1);
         first.scopeManager.scopes[1]!.variables[0]!.eslintUsed = true;
-        const second = reuseTypescriptParser.parseForESLint(source, options);
+        const second = reuseTypescriptParser.parseForESLint(
+          source,
+          options,
+        );
         const root = second.services.esTreeNodeToTSNodeMap.get(
           second.ast,
         ) as ts.SourceFile;
@@ -382,7 +396,10 @@ describe("owned analysis reuse", () => {
         private: true,
         dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
       });
-    await baseline.write("src/app.tsx", "export const App = () => <main />;\n");
+    await baseline.write(
+      "src/app.tsx",
+      "export const App = () => <main />;\n",
+    );
     await target.write(
       "src/app.tsx",
       "import { useState } from 'react';\nexport function App({ready}: {ready: boolean}) {\n if (ready) useState(0);\n const unused = 1;\n return <img />;\n}\n",
@@ -445,15 +462,15 @@ describe("owned analysis reuse", () => {
     >[] = [];
     for (const adapter of adapters) standalone.push(await collect(adapter));
     expect(parses()).toBe(10);
-    expect(standalone[0]!.targetObservations.map(({ rule }) => rule)).toContain(
-      "@typescript-eslint/no-unused-vars",
-    );
-    expect(standalone[1]!.targetObservations.map(({ rule }) => rule)).toContain(
-      "react-hooks/rules-of-hooks",
-    );
-    expect(standalone[2]!.targetObservations.map(({ rule }) => rule)).toContain(
-      "jsx-a11y/alt-text",
-    );
+    expect(
+      standalone[0]!.targetObservations.map(({ rule }) => rule),
+    ).toContain("@typescript-eslint/no-unused-vars");
+    expect(
+      standalone[1]!.targetObservations.map(({ rule }) => rule),
+    ).toContain("react-hooks/rules-of-hooks");
+    expect(
+      standalone[2]!.targetObservations.map(({ rule }) => rule),
+    ).toContain("jsx-a11y/alt-text");
     expect(standalone[3]!.targetObservations[0]?.metric).toEqual({
       name: "cyclomatic-complexity",
       value: 2,
@@ -469,10 +486,13 @@ describe("owned analysis reuse", () => {
     try {
       await withAnalysisReuseSession(owner, async () => {
         for (let index = 0; index < adapters.length; index += 1)
-          expect(await collect(adapters[index]!)).toEqual(standalone[index]);
+          expect(await collect(adapters[index]!)).toEqual(
+            standalone[index],
+          );
         expect(parses()).toBe(12);
         expect(reads()).toBe(11);
-        for (const adapter of [...adapters].reverse()) await collect(adapter);
+        for (const adapter of [...adapters].reverse())
+          await collect(adapter);
         expect(parses()).toBe(12);
         expect(reads()).toBe(22);
         const cancelled = new AbortController();
@@ -485,7 +505,9 @@ describe("owned analysis reuse", () => {
           "utf8",
         );
         await target.write("src/app.tsx", "export function App(");
-        await expect(collect(cyclomaticComplexityAdapter)).rejects.toThrow();
+        await expect(
+          collect(cyclomaticComplexityAdapter),
+        ).rejects.toThrow();
         await target.write("src/app.tsx", originalSource);
         expect(await collect(lintAdapter)).toEqual(standalone[0]);
       });
@@ -536,7 +558,10 @@ describe("owned analysis reuse", () => {
       "src/value.ts",
       "declare const supplied: any;\nexport const result: number = supplied;\nexport const wrong: number = 'wrong';\n",
     );
-    const config = resolveConfig({ schemaVersion: 1, profile: "recommended" });
+    const config = resolveConfig({
+      schemaVersion: 1,
+      profile: "recommended",
+    });
     const context: CheckRunContext = {
       repositoryRoot: target.root,
       snapshots: {
@@ -646,12 +671,18 @@ describe("owned analysis reuse", () => {
         const ca = captureAnalysisDependencies(a);
         const cb = captureAnalysisDependencies(b);
         expect(ca).not.toBe(cb);
-        const pa = createSnapshotProgram({ ...a, dependencies: ca }).program;
-        const pb = createSnapshotProgram({ ...b, dependencies: cb }).program;
+        const pa = createSnapshotProgram({
+          ...a,
+          dependencies: ca,
+        }).program;
+        const pb = createSnapshotProgram({
+          ...b,
+          dependencies: cb,
+        }).program;
         expect(pa).not.toBe(pb);
-        expect(pa.getSemanticDiagnostics().map(({ code }) => code)).toEqual([
-          2322,
-        ]);
+        expect(pa.getSemanticDiagnostics().map(({ code }) => code)).toEqual(
+          [2322],
+        );
         expect(pb.getSemanticDiagnostics()).toEqual([]);
         expect(validateDependencyInputs(ca.manifest(), a)).toBe(true);
         expect(validateDependencyInputs(cb.manifest(), b)).toBe(true);
@@ -662,12 +693,57 @@ describe("owned analysis reuse", () => {
             dependencies: captureAnalysisDependencies(a),
           }).program,
         ).toBe(pa);
+        // Full capture reservations may exhaust the session budget. A second
+        // repository must remain isolated and correct when reuse is bypassed.
+        const nextCapture = captureAnalysisDependencies(b);
+        const next = createSnapshotProgram({
+          ...b,
+          dependencies: nextCapture,
+        }).program;
+        expect(next).not.toBe(pa);
+        expect(next.getSemanticDiagnostics()).toEqual([]);
+        expect(validateDependencyInputs(nextCapture.manifest(), b)).toBe(
+          true,
+        );
+      });
+    } finally {
+      await owner.close();
+    }
+  });
+
+  it("does not retain a compiler program whose capture could not reserve session memory", async () => {
+    const fixture = await createInspectionFixture();
+    const input = {
+      repositoryRoot: fixture.root,
+      files: { "a.ts": "export const value = 1;" },
+      rootNames: ["a.ts"],
+      options: { noLib: true, types: [] },
+    };
+    const owner = createAnalysisReuseSession();
+    try {
+      await withAnalysisReuseSession(owner, async () => {
+        // Reserve budget without allocating source-sized data. The remaining
+        // space fits this tiny program but not its full dependency capture.
+        analysisStore(Symbol("other retained analysis"))!.set(
+          "reserved",
+          {},
+          300 * 1024 * 1024,
+        );
+        const dependencies = captureAnalysisDependencies(input);
+        expect(captureAnalysisDependencies(input)).not.toBe(dependencies);
+        const first = createSnapshotProgram({
+          ...input,
+          dependencies,
+        }).program;
+        const second = createSnapshotProgram({
+          ...input,
+          dependencies,
+        }).program;
+        expect(second).not.toBe(first);
+        expect(second.getSemanticDiagnostics()).toEqual([]);
         expect(
-          createSnapshotProgram({
-            ...b,
-            dependencies: captureAnalysisDependencies(b),
-          }).program,
-        ).toBe(pb);
+          validateDependencyInputs(dependencies.manifest(), input),
+        ).toBe(true);
       });
     } finally {
       await owner.close();
@@ -706,7 +782,8 @@ describe("owned analysis reuse", () => {
         ).toEqual([2322]);
         expect(captureAnalysisDependencies(input)).toBe(capture);
         expect(
-          createSnapshotProgram({ ...input, dependencies: capture }).program,
+          createSnapshotProgram({ ...input, dependencies: capture })
+            .program,
         ).toBe(first.program);
         expect(capture.manifest()?.probes).toContainEqual(
           expect.objectContaining({
@@ -714,7 +791,9 @@ describe("owned analysis reuse", () => {
             path: "packages:x/index.d.ts",
           }),
         );
-        expect(validateDependencyInputs(capture.manifest(), input)).toBe(true);
+        expect(validateDependencyInputs(capture.manifest(), input)).toBe(
+          true,
+        );
         const before = await stat(path);
         await fixture.write(
           "node_modules/x/index.d.ts",
@@ -729,10 +808,12 @@ describe("owned analysis reuse", () => {
             dependencies: changedCapture,
           }).program.getSemanticDiagnostics(),
         ).toEqual([]);
-        expect(validateDependencyInputs(changedCapture.manifest(), input)).toBe(
-          true,
+        expect(
+          validateDependencyInputs(changedCapture.manifest(), input),
+        ).toBe(true);
+        expect(validateDependencyInputs(capture.manifest(), input)).toBe(
+          false,
         );
-        expect(validateDependencyInputs(capture.manifest(), input)).toBe(false);
       });
     } finally {
       await owner.close();
@@ -839,8 +920,10 @@ describe("owned analysis reuse", () => {
           }).program,
         ).not.toBe(first.program);
         expect(
-          createSnapshotProgram({ ...input, snapshotRoot: "/tmp/zedbee-other" })
-            .program,
+          createSnapshotProgram({
+            ...input,
+            snapshotRoot: "/tmp/zedbee-other",
+          }).program,
         ).not.toBe(first.program);
         expect(
           createSnapshotProgram({ ...input, rootNames: [] }).program,

@@ -154,3 +154,13 @@ it("offers source-free managed messages during init", async () => {
   expect(code).toBe(0);
   expect(actual).toMatchObject({ diagnosticMessages: "source-free" });
 });
+
+it("supports explicit uncached CLI scans without changing default cache policy", async () => {
+  const values: (boolean | undefined)[] = [];
+  for (const flags of [[], ["--no-cache"]]) {
+    expect(await runCli(["node", "zedbee", "scan", "--format", "json", ...flags], {
+      executeScanCommand: async options => { values.push(options.cache); return 0; },
+    })).toBe(0);
+  }
+  expect(values).toEqual([undefined, false]);
+});

@@ -1,11 +1,62 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import { CapturedDependencies } from "../../src/cache/captured-dependencies.js";
 import {
+  assertRequiredInstallation,
   comparisonContext,
   sanitizeComparisonContext,
   verifyComparisonInputs,
 } from "../../src/checks/comparison-context.js";
+
+it.each(["contextual", "source-free"] as const)(
+  "identifies a missing declared package according to the %s message policy",
+  async (diagnosticMessages) => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", {
+      name: "fixture",
+      devDependencies: { "@types/node": "26.0.0" },
+    });
+    await fixture.write(
+      "node_modules/.installation-present",
+      "directory exists\n",
+    );
+    const { inspectRepository } =
+      await import("../../src/inspection/inspect-repository.js");
+    const inspection = await inspectRepository(fixture.root);
+    const program = {
+      getOptionsDiagnostics: () => [
+        { code: 2591, messageText: "Cannot find name 'process'." },
+      ],
+      getSourceFiles: () => [],
+      getCompilerOptions: () => ({}),
+    } as unknown as import("typescript").Program;
+    let failure: unknown;
+    try {
+      await assertRequiredInstallation({
+        programs: [program],
+        repositoryRoot: fixture.root,
+        inspection,
+        workspace: inspection.workspaces[0]!,
+        dependencies: new CapturedDependencies({
+          repositoryRoot: fixture.root,
+        }),
+        side: "baseline",
+        diagnosticMessages,
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toMatchObject({
+      code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+      path: "package.json",
+      snapshot: "last-commit",
+    });
+    const text = `${(failure as Error).message} ${(failure as { remediation: string }).remediation}`;
+    if (diagnosticMessages === "contextual")
+      expect(text).toContain("@types/node");
+    else expect(text).not.toContain("@types/node");
+  },
+);
 it("refuses attribution evidence after dependency bytes change", async () => {
   const f = await createInspectionFixture();
   await f.write(
@@ -31,7 +82,11 @@ it("validates the exact public comparison metadata boundary", () => {
   for (const value of [
     { ...context, raw: "secret" },
     { ...context, status: "unverified" },
-    { ...context, status: "environment-incomplete", reason: "inputs-changed" },
+    {
+      ...context,
+      status: "environment-incomplete",
+      reason: "inputs-changed",
+    },
     { ...context, analyzerVersion: "/private/path" },
   ])
     expect(() => sanitizeComparisonContext(value)).toThrow();
@@ -68,7 +123,7 @@ it.each([
       getSourceFiles: () => [],
       getCompilerOptions: () => ({}),
     } as unknown as import("typescript").Program;
-    expect(() =>
+    await expect(
       assertRequiredInstallation({
         programs: [program],
         repositoryRoot: f.root,
@@ -77,8 +132,131 @@ it.each([
         dependencies: new CapturedDependencies({ repositoryRoot: f.root }),
         side: "target",
       }),
-    ).toThrow(
-      expect.objectContaining({ code: "COMPARISON_INSTALLATION_UNAVAILABLE" }),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+      }),
     );
   },
 );
+
+it.each([false, true])(
+  "keeps semantic diagnostics lazy when complete installation readiness is proved (%s)",
+  async (installed) => {
+    const f = await createInspectionFixture();
+    await f.writeJson("package.json", {
+      name: "ready",
+      ...(installed ? { dependencies: { example: "1.0.0" } } : {}),
+    });
+    if (installed)
+      await f.writeJson("node_modules/example/package.json", {
+        name: "example",
+        version: "1.0.0",
+      });
+    const { inspectRepository } =
+      await import("../../src/inspection/inspect-repository.js");
+    const inspection = await inspectRepository(f.root);
+    const diagnostics = vi.fn(() => {
+      throw Error("Eager semantic work");
+    });
+    const program = {
+      getOptionsDiagnostics: () => [],
+      getSourceFiles: () => [{ fileName: f.root + "/src/value.ts" }],
+      isSourceFileFromExternalLibrary: () => false,
+      isSourceFileDefaultLibrary: () => false,
+      getSemanticDiagnostics: diagnostics,
+    } as unknown as import("typescript").Program;
+    const dependencies = new CapturedDependencies({ repositoryRoot: f.root });
+    if (installed)
+      expect(
+        dependencies.fileExists(f.root + "/node_modules/example/package.json"),
+      ).toBe(true);
+    await assertRequiredInstallation({
+      programs: [program],
+      repositoryRoot: f.root,
+      inspection,
+      workspace: inspection.workspaces[0]!,
+      dependencies,
+      side: "target",
+    });
+    expect(diagnostics).not.toHaveBeenCalled();
+    expect(verifyComparisonInputs(dependencies).status).toBe("comparable");
+    if (installed) {
+      await f.writeJson("node_modules/example/package.json", {
+        name: "example",
+        version: "2.0.0",
+      });
+      expect(() => verifyComparisonInputs(dependencies)).toThrow(
+        expect.objectContaining({ code: "COMPARISON_INPUTS_CHANGED" }),
+      );
+    }
+  },
+);
+it("does not pollute the canonical capture when an unused declaration has an unsupported installation", async () => {
+  const f = await createInspectionFixture(),
+    outside = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "fallback",
+    dependencies: { example: "1.0.0" },
+  });
+  await outside.writeJson("package.json", {
+    name: "example",
+    version: "1.0.0",
+  });
+  await f.symlink(outside.root, "node_modules/example");
+  const { inspectRepository } =
+    await import("../../src/inspection/inspect-repository.js");
+  const inspection = await inspectRepository(f.root);
+  const diagnostics = vi.fn(() => []);
+  const program = {
+    getOptionsDiagnostics: () => [],
+    getSourceFiles: () => [{ fileName: f.root + "/src/value.ts" }],
+    isSourceFileFromExternalLibrary: () => false,
+    isSourceFileDefaultLibrary: () => false,
+    getSemanticDiagnostics: diagnostics,
+  } as unknown as import("typescript").Program;
+  const dependencies = new CapturedDependencies({ repositoryRoot: f.root });
+  await assertRequiredInstallation({
+    programs: [program],
+    repositoryRoot: f.root,
+    inspection,
+    workspace: inspection.workspaces[0]!,
+    dependencies,
+    side: "target",
+  });
+  expect(diagnostics).toHaveBeenCalledOnce();
+  expect(verifyComparisonInputs(dependencies).status).toBe("comparable");
+});
+it("does not spend mandatory capture capacity on an optional unused-declaration shortcut", async () => {
+  const f = await createInspectionFixture();
+  await f.writeJson("package.json", {
+    name: "unused",
+    dependencies: { example: "1.0.0" },
+  });
+  await f.writeJson("node_modules/example/package.json", {
+    name: "example",
+    version: "1.0.0",
+  });
+  const { inspectRepository } =
+    await import("../../src/inspection/inspect-repository.js");
+  const inspection = await inspectRepository(f.root);
+  const semantic = vi.fn(() => []);
+  const program = {
+    getOptionsDiagnostics: () => [],
+    getSourceFiles: () => [{ fileName: f.root + "/src/value.ts" }],
+    isSourceFileFromExternalLibrary: () => false,
+    isSourceFileDefaultLibrary: () => false,
+    getSemanticDiagnostics: semantic,
+  } as unknown as import("typescript").Program;
+  const dependencies = new CapturedDependencies({ repositoryRoot: f.root });
+  await assertRequiredInstallation({
+    programs: [program],
+    repositoryRoot: f.root,
+    inspection,
+    workspace: inspection.workspaces[0]!,
+    dependencies,
+    side: "target",
+  });
+  expect(semantic).toHaveBeenCalledOnce();
+  expect(dependencies.manifest()!.probes).toHaveLength(0);
+});

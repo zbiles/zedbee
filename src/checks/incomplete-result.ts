@@ -8,6 +8,7 @@ export interface IncompleteResultInput {
   readonly message: string;
   readonly target?: string;
   readonly path?: string;
+  readonly parseFailures?: import("../core/types.js").StructuralParseFailures;
   readonly paths?: readonly string[];
   readonly snapshot?: "last-commit" | "staged";
   readonly projectPaths?: readonly string[];
@@ -32,6 +33,9 @@ export function incompleteResult(input: IncompleteResultInput): CheckResult {
       code: input.code,
       message: input.message,
       ...(input.path === undefined ? {} : { path: input.path }),
+      ...(input.parseFailures === undefined
+        ? {}
+        : { parseFailures: input.parseFailures }),
       ...(input.paths === undefined ? {} : { paths: input.paths }),
       ...(input.snapshot === undefined ? {} : { snapshot: input.snapshot }),
       ...(input.projectPaths === undefined
