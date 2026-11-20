@@ -260,3 +260,31 @@ it("does not spend mandatory capture capacity on an optional unused-declaration 
   expect(semantic).toHaveBeenCalledOnce();
   expect(dependencies.manifest()!.probes).toHaveLength(0);
 });
+
+it.each(["contextual", "source-free"] as const)(
+  "describes invalid dependency lookup metadata under %s reporting",
+  async (policy) => {
+    const fixture = await createInspectionFixture();
+    const snapshots = {
+      baselineDir: fixture.root + "/baseline",
+      targetDir: fixture.root + "/target",
+    };
+    await fixture.write("baseline/e2e/package.json", "{}");
+    await fixture.write("target/e2e/package.json", "{}");
+    const capture = new CapturedDependencies({
+      repositoryRoot: fixture.root,
+      snapshots,
+    });
+    capture.fileExists(snapshots.baselineDir + "/e2e/fixture:input.ts");
+    expect(() => verifyComparisonInputs(capture, policy)).toThrow(
+      expect.objectContaining({
+        code: "COMPARISON_INPUTS_UNVERIFIED",
+        snapshot: "last-commit",
+        message:
+          policy === "contextual"
+            ? expect.stringContaining("e2e/fixture:input.ts")
+            : "Dependency tracking could not validate a file lookup record.",
+      }),
+    );
+  },
+);

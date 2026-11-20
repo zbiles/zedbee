@@ -526,7 +526,10 @@ export function createLintAdapter(
       const dependencyInputs = dependencies.manifest();
       const workspace = workspaceFor(context.targetInspection, context.target);
       return {
-        comparisonContext: verifyComparisonInputs(dependencies),
+        comparisonContext: verifyComparisonInputs(
+          dependencies,
+          context.config.reporting.diagnosticMessages,
+        ),
         checkId: "lint",
         target: context.target,
         ...pairLocationObservations(baseline, target, context.changeSet),

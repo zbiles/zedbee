@@ -250,7 +250,27 @@ export async function prepareCheckDispatch(
       continue;
     }
 
+    for (const target of applicability.independentTargets ?? []) {
+      scheduled.push(
+        Promise.resolve(
+          executionResult(
+            {
+              checkId: adapter.id,
+              target: target.id,
+              status: "skipped",
+              durationMs: 0,
+              findings: [],
+              skipReason:
+                "Workspace compiler inputs are independent of the selected changes",
+            },
+            inspectExecutionPolicy,
+          ),
+        ),
+      );
+    }
+
     if (!applicability.applies) {
+      if (applicability.independentTargets?.length) continue;
       scheduled.push(
         Promise.resolve(
           executionResult(

@@ -63,18 +63,22 @@ export interface CheckExecutionResult {
   readonly fixCandidates?: readonly CheckFixCandidate[];
 }
 
-export type CheckApplicability =
-  | { applies: false; reason: string }
-  | {
-      applies: true;
-      executionClass: ExecutionClass;
-      requiresBaseline: boolean;
-      targets: readonly CheckTarget[];
-      networkDisclosure?: {
-        readonly services: readonly string[];
-        readonly metadata: readonly string[];
-      };
-    };
+export type CheckApplicability = Readonly<{
+  independentTargets?: readonly CheckTarget[];
+}> &
+  (
+    | { applies: false; reason: string }
+    | {
+        applies: true;
+        executionClass: ExecutionClass;
+        requiresBaseline: boolean;
+        targets: readonly CheckTarget[];
+        networkDisclosure?: {
+          readonly services: readonly string[];
+          readonly metadata: readonly string[];
+        };
+      }
+  );
 
 export interface CheckRunContext extends InspectionContext {
   /** Read-only paths only; adapters never receive snapshot cleanup authority. */

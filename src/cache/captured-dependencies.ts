@@ -44,12 +44,9 @@ export type DependencyCaptureFailure =
       limit: number;
     }>
   | Readonly<{
-      reason:
-        | "unsupported-scope"
-        | "unreadable-input"
-        | "inputs-changed"
-        | "invalid-manifest";
-    }>;
+      reason: "unsupported-scope" | "unreadable-input" | "inputs-changed";
+    }>
+  | Readonly<{ reason: "invalid-manifest"; lookup?: string }>;
 type Entry = {
   readonly probe: Exclude<DependencyProbe, { kind: "directory" }>;
   readonly text?: string;
@@ -362,6 +359,21 @@ export class CapturedDependencies {
     } catch {
       this.fail({ reason: "unsupported-scope" });
       identifier = `unsupported:${absolute}`;
+    }
+    if (this.supported) {
+      try {
+        dependencyPathParts(identifier);
+      } catch {
+        this.fail({ reason: "invalid-manifest", lookup: identifier });
+        return {
+          probe: {
+            kind: "entry",
+            path: identifier,
+            entryType: "denied",
+            identity: digest("unsupported"),
+          },
+        };
+      }
     }
     const previous = this.entries.get(identifier);
     if (previous !== undefined) return previous;

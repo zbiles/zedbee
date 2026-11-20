@@ -1,11 +1,16 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
+  copyFileSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
+  rmdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -13,6 +18,8 @@ import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { commandInvocation } from "./command-invocation.mjs";
+
+import { smokeConsumerUpgrades } from "./smoke-consumer-upgrade.mjs";
 
 const TEMPORARY_PREFIX = "zedbee-release-smoke-";
 const MAX_COMMAND_OUTPUT = 16 * 1024 * 1024;
@@ -32,7 +39,7 @@ function run(command, args, options) {
     const detail = (result.stderr || result.stdout || "No output").trim();
     throw new Error(`${options.label} failed.\n${detail}`);
   }
-  return result.stdout;
+  return options.combinedOutput ? result.stderr + result.stdout : result.stdout;
 }
 
 export function assertReleaseBaseScanReport(report, expected) {
@@ -323,61 +330,129 @@ function smokeReleaseArtifact(artifactPath, manifest) {
   }
 }
 
-export function prepareReleaseArtifact(cwd = process.cwd()) {
+function releaseHead(root) {
+  return run("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    label: "Release commit identity",
+  }).trim();
+}
+
+export function releaseArtifactIdentity(root, archivePath) {
+  const commit = releaseHead(root);
+  const { version } = parseJson(
+    readFileSync(join(root, "package.json"), "utf8"),
+    "Release manifest",
+  );
+  const sha256 = createHash("sha256")
+    .update(readFileSync(archivePath))
+    .digest("hex");
+  return { commit, version, sha256 };
+}
+
+export function assertCleanReleaseCheckout(root) {
+  const status = run("git", ["status", "--porcelain"], {
+    cwd: root,
+    label: "Release checkout status",
+  }).trim();
+  if (status)
+    throw new Error(
+      "Commit the candidate before preparing or tagging the release.",
+    );
+}
+
+export function prepareReleaseArtifact(
+  cwd = process.cwd(),
+  { smokeOnly = false } = {},
+) {
   const root = realpathSync(cwd);
   const artifactDirectory = join(root, "release-artifacts");
-  if (!readdirSync(root).includes("release-artifacts")) {
-    mkdirSync(artifactDirectory);
-  } else {
-    const metadata = lstatSync(artifactDirectory);
-    if (metadata.isSymbolicLink() || !metadata.isDirectory()) {
-      throw new Error("Release artifact destination must be a real directory.");
-    }
+  if (!smokeOnly) {
+    assertCleanReleaseCheckout(root);
+    if (
+      existsSync(artifactDirectory) &&
+      (!lstatSync(artifactDirectory).isDirectory() ||
+        readdirSync(artifactDirectory).length !== 0)
+    )
+      throw new Error(
+        "The release artifact directory already contains a candidate.",
+      );
   }
-  if (readdirSync(artifactDirectory).length !== 0) {
-    throw new Error(
-      "Release artifact destination is not empty; remove its previous contents and retry.",
-    );
-  }
-
   const manifest = parseJson(
     readFileSync(join(root, "package.json"), "utf8"),
     "Release manifest",
   );
-  const packTemp = mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX));
-  let filename;
+  const startingCommit = smokeOnly ? undefined : releaseHead(root);
+  const scratch = mkdtempSync(join(tmpdir(), TEMPORARY_PREFIX));
   try {
-    const output = run(
-      "npm",
-      [
-        "pack",
-        "--json",
-        "--ignore-scripts",
-        "--pack-destination",
-        artifactDirectory,
-      ],
+    smokeConsumerUpgrades({ root, version: manifest.version, scratch, run });
+    run(
+      process.execPath,
+      [join(root, "scripts", "check-package-contents.mjs")],
       {
         cwd: root,
-        env: { ...process.env, npm_config_cache: join(packTemp, "npm-cache") },
+        label: "Release package contents",
+      },
+    );
+    const output = run(
+      "npm",
+      ["pack", "--json", "--ignore-scripts", "--pack-destination", scratch],
+      {
+        cwd: root,
+        env: { ...process.env, npm_config_cache: join(scratch, "npm-cache") },
         label: "Release artifact packing",
       },
     );
-    filename = releaseArtifactFilename(output, manifest);
+    const filename = releaseArtifactFilename(output, manifest);
+    const archive = join(scratch, filename);
+    if (!lstatSync(archive).isFile())
+      throw new Error("Expected a regular npm archive.");
+    smokeReleaseArtifact(archive, manifest);
+    const installedSmoke = join(scratch, "installed");
+    mkdirSync(installedSmoke);
+    const upgradedFrom = smokeConsumerUpgrades({
+      root,
+      version: manifest.version,
+      scratch: installedSmoke,
+      archive,
+      run,
+    });
+    if (smokeOnly) {
+      process.stdout.write(
+        `Smoke-tested ${filename} including the consumer upgrade.\n`,
+      );
+      return undefined;
+    }
+
+    assertCleanReleaseCheckout(root);
+    const identity = releaseArtifactIdentity(root, archive);
+    if (
+      identity.commit !== startingCommit ||
+      identity.version !== manifest.version
+    )
+      throw new Error("The release checkout changed during verification.");
+    const promotion = mkdtempSync(join(root, "release-artifacts-pending-"));
+    try {
+      copyFileSync(archive, join(promotion, filename));
+      const runId = process.env.GITHUB_RUN_ID;
+      const hostedRun =
+        process.env.GITHUB_ACTIONS === "true" && /^[0-9]+$/u.test(runId ?? "")
+          ? { runId }
+          : {};
+      writeFileSync(
+        join(promotion, "upgrade-verification.json"),
+        JSON.stringify({ ...identity, upgradedFrom, ...hostedRun }, null, 2) +
+          "\n",
+      );
+      if (existsSync(artifactDirectory)) rmdirSync(artifactDirectory);
+      renameSync(promotion, artifactDirectory);
+    } finally {
+      rmSync(promotion, { recursive: true, force: true });
+    }
+    process.stdout.write(`Prepared and smoke-tested ${filename}.\n`);
+    return join(artifactDirectory, filename);
   } finally {
-    rmSync(validateTemporaryRoot(packTemp), { recursive: true, force: false });
+    rmSync(validateTemporaryRoot(scratch), { recursive: true, force: false });
   }
-  const artifactPath = resolve(artifactDirectory, filename);
-  const artifactMetadata = lstatSync(artifactPath);
-  if (
-    artifactMetadata.isSymbolicLink() ||
-    !artifactMetadata.isFile() ||
-    dirname(artifactPath) !== artifactDirectory
-  ) {
-    throw new Error("npm produced an unsafe release artifact path.");
-  }
-  smokeReleaseArtifact(artifactPath, manifest);
-  process.stdout.write(`Prepared and smoke-tested ${filename}.\n`);
-  return artifactPath;
 }
 
 const entryPoint = process.argv[1]
@@ -385,7 +460,9 @@ const entryPoint = process.argv[1]
   : undefined;
 if (entryPoint === import.meta.url) {
   try {
-    prepareReleaseArtifact();
+    prepareReleaseArtifact(process.cwd(), {
+      smokeOnly: process.argv.includes("--smoke-only"),
+    });
   } catch (error) {
     process.stderr.write(
       `${error instanceof Error ? error.message : "Release artifact preparation failed."}\n`,

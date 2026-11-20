@@ -356,6 +356,7 @@ export async function assertRequiredInstallation(options: {
 
 export function verifyComparisonInputs(
   dependencies: CapturedDependencies,
+  diagnosticMessages?: DiagnosticMessagePolicy,
 ): ComparisonContext {
   const manifest = dependencies.manifest();
   const failure = dependencies.failure();
@@ -374,6 +375,41 @@ export function verifyComparisonInputs(
         "Share this capacity diagnostic with the Swarm maintainer so the supported project size can be reviewed.",
     });
   }
+  if (failure?.reason === "invalid-manifest" && failure.lookup !== undefined) {
+    const separator = failure.lookup.indexOf(":");
+    const scope = failure.lookup.slice(0, separator);
+    const lookup = failure.lookup.slice(separator + 1);
+    const label =
+      diagnosticMessages !== "source-free" &&
+      ["baseline", "target", "repository", "packages"].includes(scope) &&
+      lookup.length <= 240 &&
+      lookup
+        .split("/")
+        .every(
+          (part) =>
+            /^[a-z0-9_@.-][a-z0-9_@.:-]*$/iu.test(part) &&
+            part !== "." &&
+            part !== "..",
+        )
+        ? scope === "packages"
+          ? `node_modules/${lookup}`
+          : lookup
+        : undefined;
+    throw new CheckIncompleteError({
+      code: "COMPARISON_INPUTS_UNVERIFIED",
+      message:
+        label === undefined
+          ? "Dependency tracking could not validate a file lookup record."
+          : `Dependency tracking could not validate the file lookup '${label}'.`,
+      remediation:
+        "Include this lookup diagnostic in a Swarm issue so the resolver can be reviewed.",
+      ...(scope === "baseline"
+        ? { snapshot: "last-commit" }
+        : scope === "target"
+          ? { snapshot: "staged" }
+          : {}),
+    });
+  }
   if (failure !== undefined) {
     throw new CheckIncompleteError({
       code:
@@ -387,7 +423,7 @@ export function verifyComparisonInputs(
             ? "Required dependency inputs changed during this scan."
             : failure.reason === "unreadable-input"
               ? "A required dependency input could not be read safely."
-              : "Dependency tracking could not produce validated comparison metadata.",
+              : "Dependency tracking produced invalid comparison records.",
       remediation:
         failure.reason === "inputs-changed"
           ? "Wait for dependency installation or updates to finish, then rerun the scan."

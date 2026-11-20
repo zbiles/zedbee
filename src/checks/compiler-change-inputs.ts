@@ -29,6 +29,8 @@ export function compilerPolicyInputPaths(
 }
 export interface CompilerChangeClassification {
   readonly sourcePaths: ReadonlySet<string>;
+  readonly localNpmInputs: ReadonlySet<string>;
+  readonly separateNpmRoots: ReadonlySet<string>;
   readonly requiresBroadComparison: boolean;
   readonly complete: boolean;
 }
@@ -43,12 +45,42 @@ async function acquireCompilerChanges(
     ),
   );
   const sourcePaths = new Set<string>();
-  if (
-    [context.baselineInspection, context.targetInspection].some(
-      (i) => i.workspaces.length > 32,
-    )
-  )
-    return { sourcePaths, complete: false, requiresBroadComparison: true };
+  const localNpmInputs = new Set<string>();
+  const inspections = [context.baselineInspection, context.targetInspection];
+  if (inspections.some((inspection) => inspection.workspaces.length > 32)) {
+    return {
+      sourcePaths,
+      localNpmInputs,
+      separateNpmRoots: new Set(),
+      complete: false,
+      requiresBroadComparison: true,
+    };
+  }
+  const separateNpmRoots = new Set(
+    context.targetInspection.workspaces
+      .map((workspace) => workspace.relativeRoot)
+      .filter(
+        (root) =>
+          root !== "." &&
+          !root.includes("/") &&
+          inspections.every(
+            (inspection) =>
+              !inspection.workspaces.some(
+                (workspace) => workspace.relativeRoot === ".",
+              ) &&
+              !inspection.lockfiles.some((path) => !path.includes("/")) &&
+              inspection.lockfiles.includes(`${root}/package-lock.json`) &&
+              inspection.workspaces.some(
+                (workspace) =>
+                  workspace.relativeRoot === root &&
+                  workspace.dependencyDeclarations.every(
+                    ({ specifier }) =>
+                      !/^(?:workspace:|file:|link:|[./\\])/iu.test(specifier),
+                  ),
+              ),
+          ),
+      ),
+  );
   const configurations = new Set<string>(compilerPolicyInputPaths(context));
   const dependencies = new Set<string>();
   let complete = true;
@@ -70,7 +102,13 @@ async function acquireCompilerChanges(
       context.signal?.throwIfAborted();
       complete &&= inputs.complete;
       if (!complete)
-        return { sourcePaths, complete: false, requiresBroadComparison: true };
+        return {
+          sourcePaths,
+          localNpmInputs,
+          separateNpmRoots,
+          complete: false,
+          requiresBroadComparison: true,
+        };
       for (const path of inputs.paths) configurations.add(path);
     }
   }
@@ -79,6 +117,12 @@ async function acquireCompilerChanges(
     const name = posix.basename(path);
     if (COMPILER_SOURCE.test(path)) sourcePaths.add(path);
     if (
+      !configurations.has(path) &&
+      (name === "package.json" || name === "package-lock.json") &&
+      separateNpmRoots.has(posix.dirname(path))
+    ) {
+      localNpmInputs.add(path);
+    } else if (
       configurations.has(path) ||
       dependencies.has(path) ||
       COMPILER_DEPENDENCY.test(name) ||
@@ -93,7 +137,13 @@ async function acquireCompilerChanges(
     )
       requiresBroadComparison = true;
   }
-  return { sourcePaths, requiresBroadComparison, complete };
+  return {
+    sourcePaths,
+    localNpmInputs,
+    separateNpmRoots,
+    requiresBroadComparison,
+    complete,
+  };
 }
 
 const classificationOwners = new WeakMap<

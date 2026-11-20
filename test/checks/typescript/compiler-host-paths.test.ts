@@ -128,20 +128,18 @@ describe("compiler lookup path context", () => {
         expect(rawProbes.some((raw) => !path.isAbsolute(raw))).toBe(true);
         expect(probes.mock.calls.map(([probe]) => probe)).toEqual(
           expect.arrayContaining(
-            rawProbes.map((raw) => path.resolve(base, raw)),
+            rawProbes.filter(
+              (raw) =>
+                path.isAbsolute(raw) &&
+                !raw.startsWith(snapshotRoot + path.sep),
+            ),
           ),
         );
         expect(
-          probes.mock.calls
-            .map(([probe]) => probe)
-            .filter((probe) =>
-              probe.includes(`${path.sep}@types${path.sep}react.`),
-            ),
-        ).toEqual(
-          rawProbes
-            .filter((raw) => !path.isAbsolute(raw))
-            .map((raw) => path.resolve(base, raw)),
-        );
+          probes.mock.calls.every(
+            ([probe]) => !probe.startsWith(snapshotRoot + path.sep),
+          ),
+        ).toBe(true);
         expect(probes.mock.calls.map(([probe]) => probe)).toContain(
           path.resolve(path.dirname(target), "../react.ts"),
         );

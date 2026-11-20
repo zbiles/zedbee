@@ -1,5 +1,6 @@
+import { dependencyResolutionContainingFile } from "./dependency-resolution-path.js";
 import { setImmediate as yieldTurn } from "node:timers/promises";
-import { builtinModules } from "node:module";
+import { isBuiltin } from "node:module";
 import { createHash } from "node:crypto";
 import { dirname, resolve, relative, sep, isAbsolute } from "node:path";
 import type * as Typescript from "typescript";
@@ -89,6 +90,12 @@ const unknown: WorkspaceIndependenceProof = {
   independent: false,
   reason: "unknown",
 };
+function isPackageSpecifier(specifier: string): boolean {
+  return (
+    /^(?:@[\w.-]+\/)?[\w-][\w./-]*$/u.test(specifier) &&
+    specifier.split("/").every((part) => part && part !== "." && part !== "..")
+  );
+}
 function within(root: string, path: string) {
   const part = relative(root, path);
   return (
@@ -187,15 +194,18 @@ export async function proveCompilerWorkspaceIndependence(
   )
     return unknown;
   const changes = await classifyCompilerChanges(context);
+  const separateInstall = changes.separateNpmRoots.has(workspace.relativeRoot);
+  const changedPaths = [...changes.sourcePaths, ...changes.localNpmInputs];
   if (
     !changes.complete ||
     changes.requiresBroadComparison ||
-    changes.sourcePaths.size === 0
+    changedPaths.length === 0 ||
+    (changes.localNpmInputs.size !== 0 && !separateInstall)
   )
     return unknown;
   const prefix =
     workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-  if ([...changes.sourcePaths].some((path) => path.startsWith(prefix)))
+  if (changedPaths.some((path) => path.startsWith(prefix)))
     return { independent: false, reason: "changed-input" };
   return acquire(context.signal, async () => {
     context.signal?.throwIfAborted();
@@ -287,7 +297,8 @@ export async function proveCompilerWorkspaceIndependence(
           );
           textBytes += text.length * 2;
           texts.set(resolve(inspection.snapshotRoot, path), text);
-          signature.set(path, hash(text));
+          if (!changes.localNpmInputs.has(path))
+            signature.set(path, hash(text));
           witnesses.push({
             root: inspection.snapshotRoot,
             path,
@@ -312,6 +323,52 @@ export async function proveCompilerWorkspaceIndependence(
           inventory.add(resolve(inspection.snapshotRoot, w.manifestPath));
           if (!texts.has(resolve(inspection.snapshotRoot, w.manifestPath)))
             await add(w.manifestPath, 64 * 1024);
+        }
+        if (separateInstall) {
+          const roots = new Set([
+            side.relativeRoot,
+            ...changedPaths.map((path) => path.split("/")[0]!),
+          ]);
+          for (const root of roots) {
+            if (!changes.separateNpmRoots.has(root)) return unknown;
+            const packageText = texts.get(
+              resolve(inspection.snapshotRoot, root, "package.json"),
+            );
+            const packageManifest = JSON.parse(packageText ?? "null");
+            if (
+              packageManifest === null ||
+              packageManifest.workspaces !== undefined
+            )
+              return unknown;
+            const lock = JSON.parse(
+              await add(`${root}/package-lock.json`, 2 * 1024 * 1024),
+            );
+            if (
+              !lock?.packages ||
+              ![2, 3].includes(lock.lockfileVersion) ||
+              Array.isArray(lock.packages) ||
+              typeof lock.packages !== "object"
+            )
+              return unknown;
+            for (const [path, entry] of Object.entries(lock.packages)) {
+              if (
+                path !== "" &&
+                (!path.startsWith("node_modules/") ||
+                  path.includes("\\") ||
+                  path.split("/").some((part) => part === ".." || part === "."))
+              )
+                return unknown;
+              if (
+                typeof entry !== "object" ||
+                entry === null ||
+                ("link" in entry && entry.link === true) ||
+                ("resolved" in entry &&
+                  typeof entry.resolved === "string" &&
+                  /^(?:file:|link:|workspace:|[.\/])/iu.test(entry.resolved))
+              )
+                return unknown;
+            }
+          }
         }
         // TypeScript may prefer a nested directory's package.json to index.ts.
         // Inventory its possible presence before treating index files as a closed
@@ -393,6 +450,14 @@ export async function proveCompilerWorkspaceIndependence(
           return undefined;
         };
         const snapshotRead = (path: string) => {
+          if (
+            changes.localNpmInputs.has(
+              relative(inspection.snapshotRoot, resolve(path))
+                .split(sep)
+                .join("/"),
+            )
+          )
+            throw Error("Resolution uses a changed package manifest");
           snapshotFile(path);
           return texts.get(resolve(path));
         };
@@ -472,14 +537,17 @@ export async function proveCompilerWorkspaceIndependence(
               ? resolve(path)
               : captured(() => dependencies.realpath(path)),
         };
-        // Missing declared installs must not disappear behind an optimization. This
-        // is intentionally stricter than the analyzer's usage-based diagnosis.
-        for (const w of inspection.workspaces.filter(
-          (w) =>
-            w.relativeRoot === "." ||
-            w.relativeRoot === side.relativeRoot ||
-            side.relativeRoot.startsWith(`${w.relativeRoot}/`),
-        ))
+        // Separately locked projects can prove their captured graph disjoint
+        // even if a package is absent. Shared installation layouts still
+        // require positive witnesses for all declared packages.
+        for (const w of separateInstall
+          ? []
+          : inspection.workspaces.filter(
+              (w) =>
+                w.relativeRoot === "." ||
+                w.relativeRoot === side.relativeRoot ||
+                side.relativeRoot.startsWith(`${w.relativeRoot}/`),
+            ))
           for (const declaration of w.dependencyDeclarations) {
             let directory = resolve(context.repositoryRoot, side.relativeRoot),
               found = false;
@@ -620,15 +688,17 @@ export async function proveCompilerWorkspaceIndependence(
             const file = resolve(libraryRoot, fileName);
             return captured(() => dependencies.fileExists(file))
               ? file
-              : undefined;
+              : separateInstall
+                ? false
+                : undefined;
           };
           if (!options.noLib)
             for (const name of options.lib ?? [
               ts.getDefaultLibFileName(options),
             ]) {
               const file = library(name);
-              if (!file) return unknown;
-              push(file);
+              if (file === undefined) return unknown;
+              if (file !== false) push(file);
             }
           for (const name of typeNames) {
             charge();
@@ -642,8 +712,9 @@ export async function proveCompilerWorkspaceIndependence(
                 ),
               )
             ).resolvedTypeReferenceDirective;
-            if (!resolved?.resolvedFileName) return unknown;
-            push(resolved.resolvedFileName);
+            if (!resolved?.resolvedFileName) {
+              if (!separateInstall || !isPackageSpecifier(name)) return unknown;
+            } else push(resolved.resolvedFileName);
           }
           const resolveOne = (
             specifier: string,
@@ -651,9 +722,7 @@ export async function proveCompilerWorkspaceIndependence(
             mode: Typescript.ResolutionMode,
           ) => {
             charge();
-            const builtin =
-              builtinModules.includes(specifier) ||
-              builtinModules.includes(specifier.replace(/^node:/u, ""));
+            const builtin = isBuiltin(specifier);
             if (
               specifier.includes("\\") ||
               (!builtin && /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier)) ||
@@ -680,13 +749,11 @@ export async function proveCompilerWorkspaceIndependence(
               ).resolvedTypeReferenceDirective?.resolvedFileName;
             }
             if (specifier.startsWith(".")) return undefined;
-            const relativeContaining = within(inspection.snapshotRoot, from)
-              ? relative(inspection.snapshotRoot, from)
-              : undefined;
-            const synthetic =
-              relativeContaining === undefined
-                ? from
-                : resolve(context.repositoryRoot, relativeContaining);
+            const synthetic = dependencyResolutionContainingFile(
+              context.repositoryRoot,
+              inspection.snapshotRoot,
+              from,
+            );
             const installed = ts.resolveModuleName(
               specifier,
               synthetic,
@@ -710,9 +777,16 @@ export async function proveCompilerWorkspaceIndependence(
             const requires = await resolveSnapshotMetadata(() =>
               resolveOne(specifier, from, ts.ModuleKind.CommonJS),
             );
-            return imports !== undefined && requires !== undefined
-              ? [...new Set([imports, requires])]
-              : undefined;
+            if (imports !== undefined && requires !== undefined)
+              return [...new Set([imports, requires])];
+            if (
+              separateInstall &&
+              imports === undefined &&
+              requires === undefined &&
+              (isBuiltin(specifier) || isPackageSpecifier(specifier))
+            )
+              return [];
+            return undefined;
           };
           while (pending.length) {
             context.signal?.throwIfAborted();
@@ -738,7 +812,8 @@ export async function proveCompilerWorkspaceIndependence(
               ? texts.get(path)
               : captured(() => dependencies.readCapturedFile(path));
             if (source === undefined) return unknown;
-            if (local && /\.[cm]?jsx?$/iu.test(path)) return unknown;
+            if (local && !separateInstall && /\.[cm]?jsx?$/iu.test(path))
+              return unknown;
             if (local && /@jsx(?:ImportSource|Runtime|Frag)?\b/iu.test(source))
               return unknown;
             const pre = ts.preProcessFile(source, true, true);
@@ -821,16 +896,18 @@ export async function proveCompilerWorkspaceIndependence(
                     ),
                   )
                 ).resolvedTypeReferenceDirective;
-                if (!found?.resolvedFileName) return unknown;
-                push(found.resolvedFileName);
+                if (!found?.resolvedFileName) {
+                  if (!separateInstall || !isPackageSpecifier(item.fileName))
+                    return unknown;
+                } else push(found.resolvedFileName);
               }
             }
             for (const reference of pre.libReferenceDirectives) {
               const name = reference.fileName.toLowerCase();
               if (!/^[a-z0-9.]+$/u.test(name)) return unknown;
               const file = library(`lib.${name}.d.ts`);
-              if (!file) return unknown;
-              push(file);
+              if (file === undefined) return unknown;
+              if (file !== false) push(file);
             }
             if (
               local &&
@@ -857,6 +934,36 @@ export async function proveCompilerWorkspaceIndependence(
         return { independent: false, reason: "changed-input" };
       const manifest = dependencies.manifest();
       if (!manifest || !dependencies.validate(manifest)) return unknown;
+      const changedInstallPrefixes = [...changes.localNpmInputs].map(
+        (path) => `repository:${dirname(path)}/node_modules/`,
+      );
+      const changedSourceInstallPrefixes = [
+        ...new Set(
+          [...changes.sourcePaths].map(
+            (path) => `repository:${path.split("/")[0]}/node_modules/`,
+          ),
+        ),
+      ];
+      if (
+        separateInstall &&
+        manifest.probes.some(
+          (probe) =>
+            (probe.kind === "entry" &&
+              probe.entryType === "denied" &&
+              probe.path.includes("node_modules/")) ||
+            changedInstallPrefixes.some((prefix) =>
+              probe.path.startsWith(prefix),
+            ) ||
+            (probe.kind === "file" &&
+              [probe.path, probe.realPath].some((path) =>
+                [
+                  ...changedInstallPrefixes,
+                  ...changedSourceInstallPrefixes,
+                ].some((prefix) => path.startsWith(prefix)),
+              )),
+        )
+      )
+        return unknown;
       const record: ProofRecord = {
         key: key ?? "",
         manifest,

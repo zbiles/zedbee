@@ -1,6 +1,6 @@
 {
   "name": "zedbee",
-  "version": "0.1.0-beta.18",
+  "version": "0.1.0-beta.19",
   "description": "Diff-aware pre-commit scanning for JavaScript and TypeScript",
   "type": "module",
   "bin": {
@@ -74,13 +74,14 @@
     "licenses:generate": "node scripts/generate-production-licenses.mjs",
     "licenses:check": "node scripts/check-production-licenses.mjs",
     "notices:generate": "node scripts/generate-third-party-notices.mjs",
-    "artifact:prepare": "npm run package:check && node scripts/run-with-deadline.mjs scripts/prepare-release-artifact.mjs",
+    "artifact:prepare": "npm run build && npm run telemetry:catalog:check && node scripts/run-with-deadline.mjs scripts/prepare-release-artifact.mjs",
     "package:check": "npm run build && npm run telemetry:catalog:check && node scripts/check-package-contents.mjs",
     "prepack": "npm run build && npm run licenses:check",
     "schema:generate": "npm run build && node dist/config/json-schema.js --write",
     "schema:check": "npm run build && node dist/config/json-schema.js --check",
     "verify": "node scripts/run-with-deadline.mjs scripts/release-check.mjs --verify",
     "release:check": "node scripts/run-with-deadline.mjs scripts/release-check.mjs --release",
+    "release:tag": "node scripts/tag-tested-release.mjs",
     "test": "npm run build && node scripts/run-with-deadline.mjs node_modules/vitest/vitest.mjs run",
     "test:watch": "npm run build && node scripts/run-with-deadline.mjs node_modules/vitest/vitest.mjs",
     "typecheck": "node node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",

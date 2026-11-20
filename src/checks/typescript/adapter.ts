@@ -159,7 +159,10 @@ export const typescriptAdapter: ObservationCheckAdapter = {
       );
       const dependencyInputs = dependencies.manifest();
       return {
-        comparisonContext: verifyComparisonInputs(dependencies),
+        comparisonContext: verifyComparisonInputs(
+          dependencies,
+          context.config.reporting.diagnosticMessages,
+        ),
         checkId: "types",
         target: context.target,
         ...pairTypescriptObservations(baseline, target, context.changeSet),
