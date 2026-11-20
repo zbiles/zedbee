@@ -579,8 +579,8 @@ export function ScanResultDashboard({
                 Run{" "}
                 <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
                   zedbee init
-                </Text>{" "}
-                to refresh them.
+                </Text>
+                {hookUpdate.remediation.slice("Run zedbee init".length)}
               </Text>
             </Box>
           </BrandedCommandPanel>

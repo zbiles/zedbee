@@ -1,3 +1,5 @@
+import { chmod, mkdir, realpath, symlink } from "node:fs/promises";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToString } from "ink";
 import { expect, it } from "vitest";
@@ -9,6 +11,9 @@ import { renderJson } from "../../src/renderers/json.js";
 import { renderSarif } from "../../src/renderers/sarif.js";
 import { terminalCellWidth } from "../../src/renderers/terminal-cells.js";
 import { ScanResultDashboard } from "../../src/ui/scan-result-dashboard.js";
+import { defaultDiagnosticProbe } from "../../src/doctor/diagnostics.js";
+import { GitClient } from "../../src/git/client.js";
+import { resolveHookCommand } from "../../src/hooks/command.js";
 import { executeScanCommand } from "../../src/commands/scan.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../../src/reporting/agent-guidance.js";
 
@@ -169,3 +174,118 @@ it.each([0, 1, 2] as const)(
     expect(stderr).toEqual([]);
   },
 );
+
+it("reports the same shared Husky update from scan and doctor in a linked worktree", async () => {
+  const repo = await createGitRepository();
+  await repo.write(".gitignore", "node_modules/\n.husky/_/\n");
+  await repo.write("web/package.json", '{"devDependencies":{"zedbee":"*"}}');
+  await repo.write(
+    "web/node_modules/zedbee/package.json",
+    '{"name":"zedbee","bin":"dist/cli.js"}',
+  );
+  await repo.write(
+    "web/node_modules/zedbee/dist/cli.js",
+    "throw Error('not executed');",
+  );
+  await repo.write(
+    ".husky/_/pre-commit",
+    '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n',
+  );
+  await repo.write(
+    ".husky/_/h",
+    '#!/usr/bin/env sh\ns=$(dirname "$(dirname "$0")")/$(basename "$0")\nsh -e "$s" "$@"\n',
+  );
+  await chmod(join(repo.root, ".husky/_/pre-commit"), 0o755);
+  const command = await resolveHookCommand(repo.root);
+  await repo.write(".husky/pre-commit", command + "\n");
+  await repo.commitAll("consumer with a current tracked hook");
+
+  const linked = join(await realpath(repo.root), "linked");
+  expect(
+    (await repo.git(["worktree", "add", "-b", "shared-hooks", linked]))
+      .exitCode,
+  ).toBe(0);
+  await mkdir(join(linked, "web/node_modules"), { recursive: true });
+  await symlink(
+    await realpath(join(repo.root, "web/node_modules/zedbee")),
+    join(linked, "web/node_modules/zedbee"),
+    "junction",
+  );
+  await repo.write(
+    ".husky/pre-commit",
+    "npx --no-install zedbee scan --hook-invocation\n",
+  );
+  expect(
+    (
+      await repo.git([
+        "config",
+        "core.hooksPath",
+        join(await realpath(repo.root), ".husky/_"),
+      ])
+    ).exitCode,
+  ).toBe(0);
+
+  const context = { cwd: join(linked, "web"), environment: {} };
+  async function inspectBoth() {
+    const stdout: string[] = [];
+    const exitCode = await executeScanCommand(
+      { cwd: context.cwd, format: "json", color: false, animations: false },
+      {
+        stdinIsTTY: false,
+        stdoutIsTTY: false,
+        width: 120,
+        env: {},
+        writeStdout: (value) => stdout.push(value),
+        writeStderr: () => {},
+      },
+      {
+        resolveRepositoryRoot: async (cwd) =>
+          (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
+            .stdout,
+        scan: async () => createReport({ repositoryRoot: linked }),
+        openInk: async () => {
+          throw Error("JSON must not render Ink");
+        },
+        preparePresentation: async () => ({
+          ...presentation,
+          automatic: false,
+          reportStatus: "not-requested",
+        }),
+      },
+    );
+    expect(exitCode).toBe(0);
+    return {
+      scan: JSON.parse(stdout.join("")).hookUpdate,
+      doctor: await defaultDiagnosticProbe("hook-state", context),
+    };
+  }
+
+  const stale = await inspectBoth();
+  expect(stale.scan).toMatchObject({
+    code: "HOOK_UPDATE_NEEDED",
+    remediation: expect.stringContaining("main checkout"),
+  });
+  expect(stale.doctor).toMatchObject({
+    status: "warning",
+    message: stale.scan.message,
+    remediation: stale.scan.remediation,
+  });
+  await repo.write(".husky/pre-commit", command + "\n");
+  await repo.write(
+    "linked/.husky/pre-commit",
+    "npx --no-install zedbee scan --hook-invocation\n",
+  );
+  const current = await inspectBoth();
+  expect(current.scan).toBeUndefined();
+  expect(current.doctor).toMatchObject({
+    status: "pass",
+    message: expect.stringContaining("shared Husky"),
+  });
+  await repo.write(".husky/pre-commit", "npm test\n");
+  const inactive = await inspectBoth();
+  expect(inactive.scan).toBeUndefined();
+  expect(inactive.doctor).toMatchObject({
+    status: "warning",
+    message: "The shared Husky pre-commit hook does not invoke Zedbee.",
+  });
+});

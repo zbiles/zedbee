@@ -5,12 +5,12 @@ import { verifyUpgradeEvidence } from "../../scripts/tag-tested-release.mjs";
 describe("release upgrade evidence", () => {
   const identity = {
     commit: "a".repeat(40),
-    version: "0.1.0-beta.19",
+    version: "0.1.0-beta.20",
     sha256: "b".repeat(64),
   };
   const evidence = {
     ...identity,
-    upgradedFrom: ["0.1.0-beta.15", "0.1.0-beta.18"],
+    upgradedFrom: ["0.1.0-beta.15", "0.1.0-beta.18", "0.1.0-beta.19"],
   };
   it("accepts the tested commit and archive", () => {
     expect(() => verifyUpgradeEvidence(evidence, identity)).not.toThrow();

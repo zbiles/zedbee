@@ -25,9 +25,7 @@ import {
 } from "../reporting/temporary-reports.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
-import { resolveInstalledCliCommand } from "../hooks/command.js";
-import { getHookUpdateNotice } from "../hooks/update-notice.js";
-import { installedHookCommand } from "../hooks/installed-command.js";
+import { inspectHookMaintenance } from "../hooks/update-notice.js";
 import { withUnreportableCleanupFailure } from "../scan/incomplete-report.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
@@ -389,21 +387,9 @@ export async function executeScanCommand(
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    // Resolving metadata never executes the installed package. Missing or
-    // unreadable installations retain the canonical no-install guidance.
-    const installedCliCommand = await resolveInstalledCliCommand(
-      report.repositoryRoot,
-    ).catch(() => undefined);
-    if (installedCliCommand !== undefined) {
+    const { installedCliCommand, hookUpdate } = await inspectHookMaintenance(repositoryRoot);
+    if (installedCliCommand !== undefined)
       report = { ...report, installedCliCommand };
-    }
-    const hookUpdate =
-      installedCliCommand === undefined
-        ? undefined
-        : await getHookUpdateNotice(
-            report.repositoryRoot,
-            installedHookCommand(installedCliCommand[1]!),
-          );
     if (hookUpdate !== undefined) report = { ...report, hookUpdate };
     const presentation = await timeCommandStage(stages, "report", () =>
       dependencies.preparePresentation(report, {

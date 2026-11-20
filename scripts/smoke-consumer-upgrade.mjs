@@ -8,6 +8,8 @@ const previousReleases = {
     "sha512-fMFVnN6GA4ACYQNyNcSYANnq37aZxBmWV0/P0xGa7tVDzdYQxSQqpTdxl8lG8LxWy099IMTfu2G6nx+tquRIbg==",
   "0.1.0-beta.18":
     "sha512-OFs3AP8RuF2Yu/XOsapCv1PfnWeAVjMYR/bT3osmL8WyUFpwpeN8wC208OtVleb1z8BTiXkymF1CZJK7SSBPlA==",
+  "0.1.0-beta.19":
+    "sha512-0DRp50E7OVIsoLZOu++PlsyAMSYmHu7avihtH936j5hCXCv9cN4+ks08iNKktLm6jLF2EGW9buGk48Whjj7CHQ==",
 };
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"));
 const writeJson = (file, value) =>
