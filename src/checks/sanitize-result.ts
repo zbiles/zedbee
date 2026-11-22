@@ -1,5 +1,9 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./eslint/project/supported-version.js";
 import { sanitizeStructuralParseFailures } from "./structural-security/parse-failures.js";
-import { incompleteComparisonContext, sanitizeComparisonContext } from "./comparison-context.js";
+import {
+  incompleteComparisonContext,
+  sanitizeComparisonContext,
+} from "./comparison-context.js";
 import type {
   Attribution,
   CheckError,
@@ -142,10 +146,24 @@ interface CheckResultOverrides {
   readonly temporaryPath?: ValidatedSnapshotPath;
 }
 
-function sanitizeMessageRedaction(value: Finding["messageRedaction"]): NonNullable<Finding["messageRedaction"]> {
-  const allowed=new Set(["sensitive-value","context-unavailable","unsupported-template","source-free-policy"]);
-  if(!value || value.redacted!==true || !Array.isArray(value.reasons) || value.reasons.length>4 || value.reasons.some(reason=>!allowed.has(reason)))throw new TypeError("Invalid message redaction");
-  return {redacted:true,reasons:[...value.reasons]};
+function sanitizeMessageRedaction(
+  value: Finding["messageRedaction"],
+): NonNullable<Finding["messageRedaction"]> {
+  const allowed = new Set([
+    "sensitive-value",
+    "context-unavailable",
+    "unsupported-template",
+    "source-free-policy",
+  ]);
+  if (
+    !value ||
+    value.redacted !== true ||
+    !Array.isArray(value.reasons) ||
+    value.reasons.length > 4 ||
+    value.reasons.some((reason) => !allowed.has(reason))
+  )
+    throw new TypeError("Invalid message redaction");
+  return { redacted: true, reasons: [...value.reasons] };
 }
 
 function sanitizeLocation(location: SourceLocation): SourceLocation {
@@ -262,7 +280,11 @@ function sanitizeFinding(finding: Finding): Finding {
             check === "secrets",
           ),
         }),
-    ...(finding.messageRedaction===undefined?{}:{messageRedaction:sanitizeMessageRedaction(finding.messageRedaction)}),
+    ...(finding.messageRedaction === undefined
+      ? {}
+      : {
+          messageRedaction: sanitizeMessageRedaction(finding.messageRedaction),
+        }),
     attribution: sanitizeAttribution(finding.attribution),
   };
 }
@@ -411,13 +433,16 @@ export function sanitizeCheckResult(
       : displayLabel(targetValue, "result target");
   const durationMs = overrides.durationMs ?? result.durationMs;
   const status = sanitizeStatus(result.status);
-  const comparison = result.comparisonContext ?? incompleteComparisonContext(result.error?.code);
+  const comparison =
+    result.comparisonContext ?? incompleteComparisonContext(result.error?.code);
   const incompleteDisposition = sanitizeIncompleteDisposition(
     result.incompleteDisposition,
     status,
   );
   return {
-    ...(comparison === undefined ? {} : { comparisonContext: sanitizeComparisonContext(comparison) }),
+    ...(comparison === undefined
+      ? {}
+      : { comparisonContext: sanitizeComparisonContext(comparison) }),
     ...(result.eslintAnalysis === undefined
       ? {}
       : { eslintAnalysis: sanitizeEslintAnalysis(result.eslintAnalysis) }),
@@ -495,7 +520,7 @@ export function sanitizeEslintAnalysis(
     (value.excludedFiles !== undefined &&
       (!Number.isSafeInteger(value.excludedFiles) ||
         value.excludedFiles < 0)) ||
-    value.version !== "9.39.5" ||
+    value.version !== SUPPORTED_PROJECT_ESLINT_VERSION ||
     !Number.isSafeInteger(value.checkedFiles) ||
     value.checkedFiles < 0 ||
     !Number.isSafeInteger(value.ignoredFiles) ||

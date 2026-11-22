@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
 import { posix } from "node:path";
 import {
   ProjectEslintFailureError,
@@ -33,7 +34,7 @@ export function parseProjectEslintResult(
     return invalid();
   const result = value as Record<string, unknown>;
   if (
-    result.version !== "9.39.5" ||
+    result.version !== SUPPORTED_PROJECT_ESLINT_VERSION ||
     !Array.isArray(result.diagnostics) ||
     !Array.isArray(result.checkedFiles) ||
     !Array.isArray(result.ignoredFiles)
@@ -84,7 +85,7 @@ export function parseProjectEslintResult(
   }
   // Copy only protocol-owned fields; project code cannot attach arbitrary payloads.
   return {
-    version: "9.39.5",
+    version: SUPPORTED_PROJECT_ESLINT_VERSION,
     messages: "redacted",
     checkedFiles: result.checkedFiles as string[],
     ignoredFiles: result.ignoredFiles as string[],

@@ -36,50 +36,29 @@ export async function reviewedInstallationLabels(
       await import("../inspection/source-capture.js");
     const { captureSnapshotRegistry } =
       await import("../inspection/snapshot-registry.js");
-    const { readContainedFile } =
-      await import("../inspection/read-json.js");
+    const { readContainedFile } = await import("../inspection/read-json.js");
     const paths = owners.map((w) => w.manifestPath);
     const registry =
       capturedSourceRegistry(inspection.snapshotRoot, paths) ??
       (await captureSnapshotRegistry(inspection.snapshotRoot, paths));
-    const { lintSource } = await import("@secretlint/core");
-    const { SECRET_LINT_CONFIG } = await import("./secrets/config.js");
+    const { detectDiagnosticSecrets, diagnosticCredentialValues } =
+      await import("./diagnostic-secret-review.js");
     const labels = `${name} ${workspace.relativeRoot}`;
     for (const path of paths) {
       const source = await readContainedFile(registry, path, {
         maxBytes: 64 * 1024,
       });
-      const result = await lintSource({
-        source: { content: source, filePath: path, contentType: "text" },
-        options: {
-          config: SECRET_LINT_CONFIG,
-          maskSecrets: true,
-          noPhysicFilePath: true,
-        },
-      });
-      for (const message of result.messages) {
-        if (!message.range) return undefined;
-        const value = source.slice(message.range[0], message.range[1]);
+      const messages = await detectDiagnosticSecrets(source, path);
+      for (const range of messages) {
+        if (!range) return undefined;
+        const value = source.slice(range[0], range[1]);
         if (!value || labels.includes(value)) return undefined;
       }
-      for (const match of source.matchAll(
-        /(?:secret|password|token|credential|api[_-]?key|access[_-]?key)[\w-]*["']?\s*[:=]\s*["']([^"'\r\n]+)["']/giu,
-      ))
-        if (match[1] && labels.includes(match[1])) return undefined;
+      for (const value of diagnosticCredentialValues(source))
+        if (labels.includes(value)) return undefined;
     }
-    const direct = await lintSource({
-      source: {
-        content: labels,
-        filePath: "diagnostic.txt",
-        contentType: "text",
-      },
-      options: {
-        config: SECRET_LINT_CONFIG,
-        maskSecrets: true,
-        noPhysicFilePath: true,
-      },
-    });
-    return direct.messages.length === 0
+    const direct = await detectDiagnosticSecrets(labels, "diagnostic.txt");
+    return direct.length === 0
       ? { name, workspace: workspace.relativeRoot }
       : undefined;
   } catch {

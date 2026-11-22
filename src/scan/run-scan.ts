@@ -44,10 +44,7 @@ import {
   shouldIncludeSourceExcerpts,
   shouldPersistSourceExcerpts,
 } from "./reporting-options.js";
-import {
-  enrichSourceExcerpts,
-  omitSourceExcerpts,
-} from "./source-excerpts.js";
+import { enrichSourceExcerpts, omitSourceExcerpts } from "./source-excerpts.js";
 import {
   defaultObservationCacheRoot,
   ObservationCacheStore,
@@ -132,9 +129,7 @@ const diagnosticPolicyForPresentation = new WeakMap<
   "contextual" | "source-free"
 >();
 
-export async function runScan(
-  options: RunScanOptions,
-): Promise<ScanReport> {
+export async function runScan(options: RunScanOptions): Promise<ScanReport> {
   const recorder = new ScanPerformanceRecorder();
   let phase: string | undefined,
     phaseStarted = performance.now();
@@ -179,8 +174,9 @@ export async function runScan(
 
 async function runScanWithDetails(
   options: RunScanOptions,
-  deferDiagnosticRendering = false,
+  scanContext: { readonly comparison: "merge-parent" } | undefined = undefined,
 ): Promise<ScanReport> {
+  const mergeComparison = scanContext?.comparison === "merge-parent";
   let diagnosticMessages: "contextual" | "source-free" =
     options.diagnosticMessages ?? "contextual";
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
@@ -191,20 +187,20 @@ async function runScanWithDetails(
     const merged = await runMergeScan(
       options,
       dependencies,
-      (pairOptions) => runScanWithDetails(pairOptions, true),
+      (pairOptions) =>
+        runScanWithDetails(pairOptions, { comparison: "merge-parent" }),
       (selected) => {
         selectedComparison = selected;
       },
     );
     if (merged !== undefined)
       return freezeResult(
-        deferDiagnosticRendering
+        mergeComparison
           ? merged
           : await applyDiagnosticDetails(
               merged,
-              diagnosticPolicyForPresentation.get(
-                merged.presentationPolicy,
-              ) ?? diagnosticMessages,
+              diagnosticPolicyForPresentation.get(merged.presentationPolicy) ??
+                diagnosticMessages,
             ),
       );
   }
@@ -216,9 +212,7 @@ async function runScanWithDetails(
     persistSourceExcerpts: false,
     agentGuidance: EMPTY_AGENT_GUIDANCE,
   });
-  const reportContext = (
-    state: AnalysisSessionState,
-  ): ScanReportContext => ({
+  const reportContext = (state: AnalysisSessionState): ScanReportContext => ({
     repositoryRoot: options.repositoryRoot,
     source: state.source,
     changedFileCount: state.changedFileCount,
@@ -235,6 +229,7 @@ async function runScanWithDetails(
   const outcome = await withAnalysisSession(
     {
       ...options,
+      mergeComparison,
       ...(selectedComparison === undefined ? {} : { selectedComparison }),
       dependencies,
       onConfiguration(config) {
@@ -274,10 +269,7 @@ async function runScanWithDetails(
     },
     async (session, state): Promise<ScanReport> => {
       if (session.kind === "unsupported")
-        return createIncompleteReport(
-          reportContext(state),
-          session.failures,
-        );
+        return createIncompleteReport(reportContext(state), session.failures);
       const decision =
         session.kind === "empty"
           ? undefined
@@ -318,17 +310,14 @@ async function runScanWithDetails(
     if (outcome.cleanupFailure !== undefined) {
       throw retainCleanupFailure(
         outcome.error,
-        new AnalysisSessionCleanupError(
-          outcome.cleanupFailure.temporaryPath,
-          {
-            cause: outcome.error,
-            primaryFailure: phaseFailure(
-              outcome.error,
-              outcome.state.phase,
-              outcome.state.source.mode,
-            ),
-          },
-        ),
+        new AnalysisSessionCleanupError(outcome.cleanupFailure.temporaryPath, {
+          cause: outcome.error,
+          primaryFailure: phaseFailure(
+            outcome.error,
+            outcome.state.phase,
+            outcome.state.source.mode,
+          ),
+        }),
       );
     }
     throw outcome.error;
@@ -355,7 +344,7 @@ async function runScanWithDetails(
           );
   }
   return freezeResult(
-    deferDiagnosticRendering
+    mergeComparison
       ? report
       : await applyDiagnosticDetails(report, diagnosticMessages),
   );

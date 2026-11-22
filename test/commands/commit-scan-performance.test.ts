@@ -26,6 +26,72 @@ it("rejects incomplete, unknown and unbounded benchmark options", () => {
     expect(() => parseBenchmarkArguments(args)).toThrow();
 });
 
+it("benchmarks the same staged tree against one parent or all merge parents", async () => {
+  const repo = await createGitRepository();
+  await repo.write("base.txt", "base");
+  await repo.commitAll("base");
+  await repo.git(["branch", "incoming"]);
+  await repo.write("main.txt", "main");
+  await repo.commitAll("main");
+  const baseline = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  await repo.git(["switch", "incoming"]);
+  await repo.write("incoming.txt", "incoming");
+  await repo.commitAll("incoming");
+  await repo.git(["switch", "main"]);
+  const merge = await repo.git(["merge", "--no-edit", "--no-ff", "incoming"]);
+  expect(merge.exitCode, merge.stderr).toBe(0);
+  const target = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  await repo.git(["reset", "--soft", baseline]);
+  const scratch = await mkdtemp(join(tmpdir(), "zcb-merge-"));
+  onTestFinished(() => rm(scratch, { recursive: true, force: true }));
+  const install = join(scratch, "install");
+  await mkdir(join(install, "dist"), { recursive: true });
+  await writeFile(join(install, "package.json"), '{"version":"0.1.0-fixture"}');
+  const cli = join(install, "dist/cli.js");
+  await writeFile(
+    cli,
+    `
+    if (process.argv.includes("--help")) console.log("--merge");
+    else {
+      const incoming = Object.keys(process.env).filter((key) => key.startsWith("GITHEAD_")).map((key) => key.slice(8));
+      if (process.argv.includes("--merge") !== (incoming.length > 0)) process.exit(3);
+      const mergeParents = incoming.length === 0 ? undefined : ["${baseline}", ...incoming];
+      console.log(JSON.stringify({ outcome: "pass", checks: [{ status: "completed" }], mergeParents }));
+    }
+  `,
+  );
+  vi.stubEnv("GITHEAD_unrelated", "ignored");
+  try {
+    for (const comparison of ["commit", "merge"] as const) {
+      const measurements = await runCommitScanBenchmark({
+        cli,
+        repository: repo.root,
+        baseline,
+        target,
+        comparison,
+        execution: "local",
+        cache: "fresh",
+        samples: 1,
+        output: join(scratch, comparison),
+        processSampling: false,
+        loadLabel: "idle",
+      });
+      expect(measurements.parentChangedPathCounts).toEqual(
+        comparison === "merge" ? [1, 1] : [1],
+      );
+      expect(measurements.unionChangedPathCount).toBe(
+        comparison === "merge" ? 2 : 1,
+      );
+      expect(measurements.samples[0]).toMatchObject({
+        completedChecks: 1,
+        incompleteChecks: 0,
+      });
+    }
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
 it("rejects output inside the measured tree through a parent directory alias", async () => {
   const repo = await createGitRepository();
   await repo.write("package.json", '{"name":"fixture"}');

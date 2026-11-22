@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -12,10 +13,7 @@ import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { digestContainedLineRange } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
 import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import type {
   CheckObservationSet,
   CheckRunContext,
@@ -90,15 +88,6 @@ export async function createFallbackTokenHashes(
 
 const JSCPD_REPORT = "jscpd-report.json";
 
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
-
 function threshold(policyThreshold: number | undefined): number {
   if (
     typeof policyThreshold !== "number" ||
@@ -129,7 +118,7 @@ async function collectSide(
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new Error("Duplication analysis failed.");
   }
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined)
     return {
       report: { percentage: 0, clones: [] },

@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { verifyComparisonInputs } from "../comparison-context.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
@@ -15,10 +16,7 @@ import type {
   CheckTarget,
   ObservationCheckAdapter,
 } from "../adapter.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import { createSnapshotProgram } from "./compiler-host.js";
 import {
   createSnapshotProjectCoverage,
@@ -38,15 +36,6 @@ import {
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    (workspace) => workspace.relativeRoot === target.relativeRoot,
-  );
-}
-
 async function collectSide(
   repositoryRoot: string,
   inspection: RepositoryInspection,
@@ -57,7 +46,7 @@ async function collectSide(
   signal: AbortSignal,
   requestedPaths?: ReadonlySet<string>,
 ): Promise<TypescriptSnapshotObservations> {
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined || !hasTypeScriptInputs(workspace)) {
     return { observations: Object.freeze([]), files: {} };
   }
@@ -173,7 +162,10 @@ export const typescriptAdapter: ObservationCheckAdapter = {
             (
               await compilerInputRelevance(
                 context,
-                workspaceFor(context.targetInspection, context.target)!,
+                findWorkspace(
+                  context.targetInspection,
+                  context.target.relativeRoot,
+                )!,
               )
             ).relevant),
         ...(dependencyInputs === undefined ? {} : { dependencyInputs }),

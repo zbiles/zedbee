@@ -1,3 +1,5 @@
+import { CHECK_IDS, type CheckId } from "../core/check-ids.js";
+export { CHECK_IDS, type CheckId } from "../core/check-ids.js";
 import {
   accessibilitySettingsSchema,
   type AccessibilitySettings,
@@ -26,24 +28,8 @@ import type {
   ResolvedConfigurationOrigins,
 } from "./settings-definition.js";
 
-export const CHECK_IDS = [
-  "formatting",
-  "lint",
-  "types",
-  "cyclomaticComplexity",
-  "readabilityComplexity",
-  "structuralSecurity",
-  "secrets",
-  "duplication",
-  "dependencyArchitecture",
-  "deadCode",
-  "reactCorrectness",
-  "reactAccessibility",
-  "vulnerabilities",
-] as const;
 export const PROFILE_IDS = ["fast", "recommended", "thorough"] as const;
 
-export type CheckId = (typeof CHECK_IDS)[number];
 export type ProfileId = (typeof PROFILE_IDS)[number];
 export type CheckSeverity = "off" | "warn" | "error";
 export type CheckTiming = "relevant" | "always";

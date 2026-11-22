@@ -60,7 +60,7 @@ export interface BuildFixPlanDependencies extends WorkingPreviewDependencies {
     signal?: AbortSignal,
   ): Promise<SnapshotPair>;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
-  dispatch: typeof dispatchChecks;
+  dispatch?: typeof dispatchChecks | undefined;
   evaluate(
     results: readonly CheckExecutionResult[],
     config: ResolvedConfig,
@@ -100,7 +100,6 @@ const DEFAULT_DEPENDENCIES: BuildFixPlanDependencies = {
   addLineRanges: DEFAULT_ANALYSIS_SESSION_DEPENDENCIES.addIndexLineRanges,
   buildSnapshots: buildSnapshotPair,
   inspectRepository,
-  dispatch: dispatchChecks,
   evaluate: evaluatePolicy,
   adapters: DEFAULT_CHECK_ADAPTERS,
   changedWorkingFiles,

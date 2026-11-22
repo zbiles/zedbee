@@ -1,8 +1,7 @@
+import { launchBackgroundNode } from "../runtime/background-node.js";
 import { summarizeScanPerformance } from "./performance-summary.js";
 import type { ScanPerformanceSummary } from "../diagnostics/scan-performance.js";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import {
   telemetryContext,
@@ -60,18 +59,7 @@ export interface CommandTelemetry {
 }
 const NOOP: CommandTelemetry = { summary() {}, finish() {}, async flush() {} };
 export function launchTelemetrySender(env: TelemetryEnvironment): void {
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(new URL("./worker.js", import.meta.url))],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: { ...env },
-    },
-  );
-  child.on("error", () => {});
-  child.unref();
+  launchBackgroundNode(new URL("./worker.js", import.meta.url), env);
 }
 export interface StartTelemetryOptions {
   /** Monotonic command start when collection is deferred until setup applies. */

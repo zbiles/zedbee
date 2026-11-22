@@ -1,3 +1,4 @@
+import type { WorkspaceInspection } from "./types.js";
 import { posix, relative } from "node:path";
 import picomatch from "picomatch";
 import { parse as parseYaml } from "yaml";
@@ -426,5 +427,14 @@ export async function discoverWorkspaces(
   }
   return workspaces.sort((left, right) =>
     compareCodeUnits(left.relativeRoot, right.relativeRoot),
+  );
+}
+
+export function findWorkspace(
+  inspection: import("./types.js").RepositoryInspection,
+  relativeRoot: string,
+): WorkspaceInspection | undefined {
+  return inspection.workspaces.find(
+    (workspace) => workspace.relativeRoot === relativeRoot,
   );
 }

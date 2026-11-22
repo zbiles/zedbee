@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { changedFilePaths } from "../changed-file-paths.js";
@@ -11,10 +12,7 @@ import {
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -40,15 +38,6 @@ import {
 } from "./pair-class-metrics.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -282,7 +271,7 @@ async function collectSide(
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Complexity analysis failed.");
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   const candidates = new Set(workspace?.sourceFiles ?? []);
   if (side === "baseline") {
     for (const owner of inspection.workspaces) {

@@ -114,6 +114,59 @@ function expectPanelsTouch(
   ).toBe(upperBottomIndex + 1);
 }
 
+function dashboardWithFindingsAndDisclosures(): string {
+  const blocking = createFinding({ id: "blocking", rule: "blocking" });
+  const warning = createFinding({
+    id: "warning",
+    severity: "warning",
+    rule: "warning",
+  });
+  return dashboard(
+    createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 0,
+        warnings: 1,
+        failed: 1,
+        incomplete: 1,
+        findings: [blocking, warning],
+      },
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["package names"],
+        },
+      ],
+      checks: [
+        {
+          checkId: "vulnerabilities",
+          status: "incomplete",
+          durationMs: 3,
+          findings: [],
+          error: {
+            code: "OSV_UNAVAILABLE",
+            message: "OSV is unavailable.",
+            remediation: "Restore network access, then scan again.",
+          },
+        },
+      ],
+    }),
+    presentation({
+      findings: [blocking, warning],
+      totalFindingCount: 2,
+      warnings: [
+        {
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          message: "An expired report remains.",
+        },
+      ],
+    }),
+  );
+}
+
 describe("ScanResultDashboard", () => {
   it("renders committed source identity and empty-base copy", () => {
     const output = dashboard(
@@ -392,56 +445,7 @@ describe("ScanResultDashboard", () => {
   });
 
   it("orders disclosures, incomplete checks, and report warnings after findings", () => {
-    const blocking = createFinding({ id: "blocking", rule: "blocking" });
-    const warning = createFinding({
-      id: "warning",
-      severity: "warning",
-      rule: "warning",
-    });
-    const output = dashboard(
-      createReport({
-        outcome: "incomplete",
-        exitCode: 2,
-        summary: {
-          passed: 0,
-          warnings: 1,
-          failed: 1,
-          incomplete: 1,
-          findings: [blocking, warning],
-        },
-        networkDisclosures: [
-          {
-            checkId: "vulnerabilities",
-            target: ".",
-            services: ["api.osv.dev"],
-            metadata: ["package names"],
-          },
-        ],
-        checks: [
-          {
-            checkId: "vulnerabilities",
-            status: "incomplete",
-            durationMs: 3,
-            findings: [],
-            error: {
-              code: "OSV_UNAVAILABLE",
-              message: "OSV is unavailable.",
-              remediation: "Restore network access, then scan again.",
-            },
-          },
-        ],
-      }),
-      presentation({
-        findings: [blocking, warning],
-        totalFindingCount: 2,
-        warnings: [
-          {
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            message: "An expired report remains.",
-          },
-        ],
-      }),
-    );
+    const output = dashboardWithFindingsAndDisclosures();
 
     expectOrder(output, [
       "BLOCKING FINDINGS",
@@ -517,56 +521,7 @@ describe("ScanResultDashboard", () => {
   });
 
   it("balances every result panel with a blank row above its content", () => {
-    const blocking = createFinding({ id: "blocking", rule: "blocking" });
-    const warning = createFinding({
-      id: "warning",
-      severity: "warning",
-      rule: "warning",
-    });
-    const output = dashboard(
-      createReport({
-        outcome: "incomplete",
-        exitCode: 2,
-        summary: {
-          passed: 0,
-          warnings: 1,
-          failed: 1,
-          incomplete: 1,
-          findings: [blocking, warning],
-        },
-        networkDisclosures: [
-          {
-            checkId: "vulnerabilities",
-            target: ".",
-            services: ["api.osv.dev"],
-            metadata: ["package names"],
-          },
-        ],
-        checks: [
-          {
-            checkId: "vulnerabilities",
-            status: "incomplete",
-            durationMs: 3,
-            findings: [],
-            error: {
-              code: "OSV_UNAVAILABLE",
-              message: "OSV is unavailable.",
-              remediation: "Restore network access, then scan again.",
-            },
-          },
-        ],
-      }),
-      presentation({
-        findings: [blocking, warning],
-        totalFindingCount: 2,
-        warnings: [
-          {
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            message: "An expired report remains.",
-          },
-        ],
-      }),
-    );
+    const output = dashboardWithFindingsAndDisclosures();
 
     for (const heading of [
       "SCAN RESULT",

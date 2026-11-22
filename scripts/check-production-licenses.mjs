@@ -1,3 +1,4 @@
+import { formatLicenseDenials } from "./production-license-inventory.mjs";
 import { generateManagedHooks } from "./generate-managed-react-hooks.mjs";
 import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -383,13 +384,7 @@ async function main() {
   }
 
   process.stderr.write("Production license check failed:\n");
-  for (const denial of denied) {
-    const { packageMetadata, reason } = denial;
-    process.stderr.write(
-      `- ${packageMetadata.name ?? "unknown"}@${packageMetadata.version ?? "unknown"}: ${reason}\n` +
-        `  path: ${packageMetadata.dependencyPath.join(" > ")}\n`,
-    );
-  }
+  process.stderr.write(formatLicenseDenials(denied));
   process.exitCode = 1;
 }
 

@@ -89,6 +89,23 @@ function dependencies(root: string): InitCommandDependencies {
   };
 }
 
+async function stagePrettierWorkspace(
+  repository: Awaited<ReturnType<typeof createGitRepository>>,
+) {
+  await repository.git([
+    "add",
+    "--",
+    "package.json",
+    "packages/app/package.json",
+  ]);
+  await mkdir(join(repository.root, "node_modules"), { recursive: true });
+  await cp(
+    join(packageRoot(), "node_modules", "prettier"),
+    join(repository.root, "node_modules", "prettier"),
+    { recursive: true },
+  );
+}
+
 describe("executeInitCommand", () => {
   it.each(["disable", "enable", "cancel", "environment", "failure"] as const)(
     "persists setup usage tracking only after apply: %s",
@@ -492,7 +509,7 @@ describe("executeInitCommand", () => {
     expect(written).toContain('"lint": "error"');
     expect(written).toContain('"formatting": "off"');
     expect(io.stdout.join("")).toBe(
-      "Zedbee initialized successfully\nStage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.\n",
+      "Zedbee initialized successfully\nCreated .zedbeerc.jsonc.\nStage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.\n",
     );
   });
 
@@ -584,6 +601,7 @@ describe("executeInitCommand", () => {
     expect(io.stdout.join("")).toBe(
       [
         "Zedbee initialized successfully",
+        "Created .zedbeerc.jsonc.",
         "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
         "Next step: After reviewing the project tooling, run lefthook install to activate both configured hooks.",
         "",
@@ -1208,18 +1226,7 @@ describe("executeInitCommand", () => {
       "prettier.config.mjs",
       "export default { singleQuote: true };\n",
     );
-    await repository.git([
-      "add",
-      "--",
-      "package.json",
-      "packages/app/package.json",
-    ]);
-    await mkdir(join(repository.root, "node_modules"), { recursive: true });
-    await cp(
-      join(packageRoot(), "node_modules", "prettier"),
-      join(repository.root, "node_modules", "prettier"),
-      { recursive: true },
-    );
+    await stagePrettierWorkspace(repository);
     const io = terminal(false);
 
     const exitCode = await executeInitCommand(
@@ -1276,18 +1283,7 @@ describe("executeInitCommand", () => {
       "packages/app/prettier.config.mjs",
       "export default { semi: false, tabWidth: 3 };\n",
     );
-    await repository.git([
-      "add",
-      "--",
-      "package.json",
-      "packages/app/package.json",
-    ]);
-    await mkdir(join(repository.root, "node_modules"), { recursive: true });
-    await cp(
-      join(packageRoot(), "node_modules", "prettier"),
-      join(repository.root, "node_modules", "prettier"),
-      { recursive: true },
-    );
+    await stagePrettierWorkspace(repository);
     const io = terminal(false);
 
     const exitCode = await executeInitCommand(

@@ -1,4 +1,4 @@
-import { renderFixPlanJson } from "../fixes/build-plan.js";
+import { projectPublicFixPlan } from "../fixes/public-plan.js";
 import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
 import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
@@ -164,66 +164,12 @@ export function publicPlan(
   result?: FixResult,
   cleanupFailure?: CleanupFailureDetails,
 ) {
-  const rendered = JSON.parse(renderFixPlanJson(plan)) as FixPlan;
+  const rendered = projectPublicFixPlan(plan);
   return {
     applied,
-    schemaVersion: rendered.schemaVersion,
-    target: rendered.target,
-    selectedChecks: [...rendered.selectedChecks],
+    ...rendered,
     exitCode: cleanupFailure === undefined ? rendered.exitCode : 2,
     ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
-    ...(rendered.checks === undefined
-      ? {}
-      : {
-          checks: rendered.checks.map((check) => ({
-            checkId: check.checkId,
-            status: check.status,
-            fixes: check.fixes,
-            issues: check.issues.map((issue) => ({
-              code: issue.code,
-              ...(issue.diagnostic === undefined
-                ? {}
-                : { diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic) }),
-              message: issue.message,
-              ...(issue.path === undefined ? {} : { path: issue.path }),
-              ...(issue.remediation === undefined
-                ? {}
-                : { remediation: issue.remediation }),
-            })),
-            ...(check.reason === undefined ? {} : { reason: check.reason }),
-          })),
-        }),
-    summary: {
-      fixes: rendered.summary.fixes,
-      files: rendered.summary.files,
-      blocking: rendered.summary.blocking,
-      warnings: rendered.summary.warnings,
-      skipped: rendered.summary.skipped,
-    },
-    files: rendered.files.map((file) => ({
-      path: file.path,
-      fixes: file.fixes,
-      ...(file.applicableFixes === undefined
-        ? {}
-        : { applicableFixes: file.applicableFixes }),
-      ...(file.skippedFixes === undefined
-        ? {}
-        : { skippedFixes: file.skippedFixes }),
-      ...(file.status === undefined ? {} : { status: file.status }),
-      ...(file.reasons === undefined ? {} : { reasons: [...file.reasons] }),
-      hasUnstagedChanges: file.hasUnstagedChanges,
-    })),
-    items: rendered.items.map((item) => ({
-      checkId: item.checkId,
-      file: item.file,
-      findingIds: [...item.findingIds],
-      scope: item.scope,
-      ...(item.fixes === undefined ? {} : { fixes: item.fixes }),
-      blocking: item.blocking,
-      warnings: item.warnings,
-      ...(item.status === undefined ? {} : { status: item.status }),
-      ...(item.reason === undefined ? {} : { reason: item.reason }),
-    })),
     ...(result === undefined
       ? {}
       : {

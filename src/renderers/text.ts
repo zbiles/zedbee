@@ -1,13 +1,14 @@
+import {
+  scanOutcomeDetail,
+  scanResultCountLine,
+} from "../reporting/check-coverage.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
   hookUpdateNotice,
   HOOK_UPDATE_TITLE,
 } from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
-import {
-  allowedScanDetail,
-  coverageLine,
-} from "../reporting/check-coverage.js";
+import { coverageLine } from "../reporting/check-coverage.js";
 import type { Finding, ManagedAutomaticFix } from "../core/types.js";
 import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
@@ -160,18 +161,6 @@ function opaquePathLines(
   );
 }
 
-function countLine(report: ScanReport): string {
-  const { passed, warnings, failed } = report.summary;
-  const warningLabel = warnings === 1 ? "warning" : "warnings";
-  if (report.outcome === "blocked") {
-    return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`;
-  }
-  if (report.outcome === "incomplete") {
-    return `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`;
-  }
-  return `${passed} passed · ${warnings} ${warningLabel}`;
-}
-
 function automaticCountLine(report: ScanReport): string {
   const { passed, warnings, failed } = report.summary;
   const checkLabel = passed === 1 ? "check" : "checks";
@@ -180,40 +169,24 @@ function automaticCountLine(report: ScanReport): string {
   return `${passed} ${checkLabel} passed · ${failed} blocking ${blockingLabel} · ${warnings} warning ${warningLabel}`;
 }
 
+function resultIdentityLines(report: ScanReport): string[] {
+  return [scanSourceIdentityLine(report), selectedChangesLine(report)].filter(
+    (line): line is string => line !== undefined,
+  );
+}
+
 function headline(report: ScanReport): string[] {
-  const sourceIdentity = scanSourceIdentityLine(report);
-  if (report.outcome === "blocked") {
-    return [
-      "THAT STINGS",
-      "A check failed. Commit blocked.",
-      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-      ...(selectedChangesLine(report) === undefined
-        ? []
-        : [selectedChangesLine(report)!]),
-      countLine(report),
-      coverageLine(report),
-    ];
-  }
-  if (report.outcome === "incomplete") {
-    return [
-      "SCAN INCOMPLETE",
-      "A required check could not finish. Commit blocked.",
-      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-      ...(selectedChangesLine(report) === undefined
-        ? []
-        : [selectedChangesLine(report)!]),
-      countLine(report),
-      coverageLine(report),
-    ];
-  }
+  const title =
+    report.outcome === "pass"
+      ? "BEE-UTIFUL"
+      : report.outcome === "blocked"
+        ? "THAT STINGS"
+        : "SCAN INCOMPLETE";
   return [
-    "BEE-UTIFUL",
-    allowedScanDetail(report),
-    ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-    ...(selectedChangesLine(report) === undefined
-      ? []
-      : [selectedChangesLine(report)!]),
-    countLine(report),
+    title,
+    scanOutcomeDetail(report),
+    ...resultIdentityLines(report),
+    scanResultCountLine(report, report.outcome !== "pass"),
     coverageLine(report),
   ];
 }
@@ -413,45 +386,23 @@ function automaticHeadline(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): string[] {
-  const sourceIdentity = scanSourceIdentityLine(report);
   const previewLine = presentation.abbreviated
     ? [
         `Showing ${presentation.findings.length} of ${presentation.totalFindingCount} findings.`,
       ]
     : [];
-  if (report.outcome === "blocked") {
-    return [
-      "COMMIT BLOCKED",
-      "A check failed. Commit blocked.",
-      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-      ...(selectedChangesLine(report) === undefined
-        ? []
-        : [selectedChangesLine(report)!]),
-      automaticCountLine(report),
-      coverageLine(report),
-      ...previewLine,
-    ];
-  }
-  if (report.outcome === "incomplete") {
-    return [
-      "SCAN INCOMPLETE",
-      "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
-      ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-      ...(selectedChangesLine(report) === undefined
-        ? []
-        : [selectedChangesLine(report)!]),
-      automaticCountLine(report),
-      coverageLine(report),
-      ...previewLine,
-    ];
-  }
+  const title =
+    report.outcome === "pass"
+      ? "COMMIT ALLOWED"
+      : report.outcome === "blocked"
+        ? "COMMIT BLOCKED"
+        : "SCAN INCOMPLETE";
   return [
-    "COMMIT ALLOWED",
-    allowedScanDetail(report),
-    ...(sourceIdentity === undefined ? [] : [sourceIdentity]),
-    ...(selectedChangesLine(report) === undefined
-      ? []
-      : [selectedChangesLine(report)!]),
+    title,
+    report.outcome === "incomplete"
+      ? "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked."
+      : scanOutcomeDetail(report),
+    ...resultIdentityLines(report),
     automaticCountLine(report),
     coverageLine(report),
     ...previewLine,

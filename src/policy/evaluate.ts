@@ -1,3 +1,4 @@
+import { isConfigurableRuleCheckId } from "../config/settings-registry.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -21,9 +22,7 @@ function applySeverity(
   finding: Finding,
   policy: ResolvedCheckPolicy,
 ): Finding | undefined {
-  const ruleOwned = ["lint", "reactCorrectness", "reactAccessibility"].includes(
-    finding.check,
-  );
+  const ruleOwned = isConfigurableRuleCheckId(finding.check);
   const configured =
     ruleOwned && "rules" in policy ? policy.rules?.[finding.rule] : undefined;
   const level = Array.isArray(configured) ? configured[0] : configured;
@@ -117,11 +116,18 @@ export function evaluatePolicy(
       result.incompleteDisposition === "block",
   );
 
-  if (hasBlockingIncomplete) {
-    return { exitCode: 2, outcome: "incomplete", results: evaluated, summary };
-  }
-  if (summary.failed > 0) {
-    return { exitCode: 1, outcome: "blocked", results: evaluated, summary };
-  }
-  return { exitCode: 0, outcome: "pass", results: evaluated, summary };
+  return {
+    ...scanOutcome(summary, hasBlockingIncomplete),
+    results: evaluated,
+    summary,
+  };
+}
+
+export function scanOutcome(
+  summary: Pick<RunSummary, "failed">,
+  blockingIncomplete: boolean,
+): Pick<PolicyDecision, "outcome" | "exitCode"> {
+  if (blockingIncomplete) return { exitCode: 2, outcome: "incomplete" };
+  if (summary.failed > 0) return { exitCode: 1, outcome: "blocked" };
+  return { exitCode: 0, outcome: "pass" };
 }

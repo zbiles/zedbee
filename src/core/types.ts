@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 export type Severity = "info" | "warning" | "error";
 export type CheckStatus = "completed" | "skipped" | "incomplete";
 export type IncompleteDisposition = "block" | "warn";
@@ -39,7 +40,10 @@ export interface ManagedAutomaticFix {
 }
 
 export interface Finding {
-  readonly messageRedaction?: {readonly redacted:true; readonly reasons: readonly import("../checks/diagnostic-details.js").DiagnosticRedactionReason[]};
+  readonly messageRedaction?: {
+    readonly redacted: true;
+    readonly reasons: readonly import("../checks/diagnostic-details.js").DiagnosticRedactionReason[];
+  };
   id: string;
   check: string;
   rule: string;
@@ -162,7 +166,7 @@ export interface FormattingCoverage {
 export interface EslintAnalysis {
   readonly excludedFiles?: number;
   readonly messageNotice?: "permission-required";
-  readonly version: "9.39.5";
+  readonly version: typeof SUPPORTED_PROJECT_ESLINT_VERSION;
   readonly checkedFiles: number;
   readonly ignoredFiles: number;
   readonly baseline: "compared" | "new-coverage";

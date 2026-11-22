@@ -1,3 +1,6 @@
+import { scanOutcome } from "../policy/evaluate.js";
+import { changeSetFromMap } from "../git/change-set.js";
+import type { SnapshotPair } from "../git/snapshot.js";
 import { resolveScanResourcePolicy } from "./resource-policy.js";
 import type { RunScanDependencies, RunScanOptions } from "./run-scan.js";
 import type { ScanReport } from "./report.js";
@@ -39,19 +42,7 @@ function comparisonChanges(
         },
       );
     }
-  return {
-    files,
-    isEmpty: files.size === 0,
-    containsAddedLine(file, line) {
-      return (
-        files
-          .get(file)
-          ?.addedRanges.some(
-            (range) => range.start <= line && line <= range.end,
-          ) ?? false
-      );
-    },
-  };
+  return changeSetFromMap(files);
 }
 
 function findingKey(finding: Finding): string {
@@ -153,6 +144,22 @@ export async function runMergeScan(
   let completed: ScanReport | undefined;
   let primaryError: unknown;
   let cleanupFailed = false;
+  let sharedTarget: SnapshotPair | undefined;
+  let targetMayBeInUse = false;
+  const borrowTarget = (
+    pair: SnapshotPair,
+    cleanup: () => Promise<void>,
+  ): SnapshotPair => {
+    targetMayBeInUse = true;
+    return {
+      ...pair,
+      async cleanup() {
+        // The pair calls this only after its analyzer session settles.
+        targetMayBeInUse = false;
+        await cleanup();
+      },
+    };
+  };
   const failureReport = (error: unknown): ScanReport => {
     return {
       ...createIncompleteReport(
@@ -240,9 +247,22 @@ export async function runMergeScan(
       ),
     );
     const reports: ScanReport[] = [];
-    const progress = new Set<string>();
+    let targetInspection:
+      Awaited<ReturnType<typeof dependencies.inspectRepository>> | undefined;
     for (const [index, parent] of parents.entries()) {
       options.signal?.throwIfAborted();
+      try {
+        options.onEvent?.({
+          type: "merge-parent",
+          checkId: "zedbee",
+          target: ".",
+          timestamp: dependencies.clock(),
+          parent: index + 1,
+          total: parents.length,
+        });
+      } catch {
+        // Display observers cannot interrupt merge analysis.
+      }
       const changeSet = comparisonChanges(changes[index]!, changes);
       const pairDependencies: RunScanDependencies = {
         ...dependencies,
@@ -263,22 +283,38 @@ export async function runMergeScan(
         discoverIndexChangeSet: async () => changeSet,
         readIndexChangeSet: async () => changeSet,
         addIndexLineRanges: async () => changeSet,
-        buildIndexSnapshots: async (root, client, signal) => ({
-          ...(await dependencies.buildCommitSnapshots(
+        buildIndexSnapshots: async (root, client, signal) => {
+          if (
+            sharedTarget !== undefined &&
+            dependencies.buildMergeBaseline !== undefined
+          ) {
+            const pair = await dependencies.buildMergeBaseline(
+              root,
+              client,
+              parent,
+              sharedTarget,
+              signal,
+            );
+            return borrowTarget(pair, () => pair.cleanup());
+          }
+          const pair = await dependencies.buildCommitSnapshots(
             root,
             client,
             parent,
             comparison.tree,
             signal,
-          )),
-          targetRef: "index",
-        }),
-        dispatch: (adapters, context, dispatchOptions) =>
-          dependencies.dispatch(
-            adapters,
-            { ...context, mergeComparison: true },
-            dispatchOptions,
-          ),
+          );
+          if (dependencies.buildMergeBaseline === undefined)
+            return { ...pair, targetRef: "index" };
+          sharedTarget = { ...pair, targetRef: "index" };
+          return borrowTarget(sharedTarget, async () => {});
+        },
+        async inspectRepository(root) {
+          if (root !== sharedTarget?.targetDir)
+            return dependencies.inspectRepository(root);
+          return (targetInspection ??=
+            await dependencies.inspectRepository(root));
+        },
       };
       const {
         merge: _merge,
@@ -290,24 +326,38 @@ export async function runMergeScan(
           ...pairOptions,
           dependencies: pairDependencies,
           onEvent(event) {
-            // Parent results are provisional; only the combined result is final.
-            if (event.type === "check-completed") return;
-            if (
-              event.type === "check-queued" ||
-              event.type === "check-running"
-            ) {
-              const key = JSON.stringify([
-                event.type,
-                event.checkId,
-                event.target,
-              ]);
-              if (progress.has(key)) return;
-              progress.add(key);
-            }
-            options.onEvent?.(event);
+            if (event.type === "check-completed") {
+              const { checkId, target, timestamp } = event;
+              options.onEvent?.({
+                type: "parent-check-settled",
+                checkId,
+                target,
+                timestamp,
+              });
+            } else options.onEvent?.(event);
           },
         }),
       );
+      const report = reports.at(-1)!;
+      if (
+        report.checks.some(
+          (check) => check.error?.code === "SNAPSHOT_CLEANUP_FAILED",
+        )
+      ) {
+        // Parent findings stay provisional until every comparison has settled.
+        const checks = report.checks.filter(
+          ({ status }) => status === "incomplete",
+        );
+        return (completed = {
+          ...report,
+          baseline: parents[0]!,
+          exitCode: 2,
+          outcome: "incomplete",
+          mergeParents: parents,
+          checks,
+          summary: summarizeChecks(checks),
+        });
+      }
     }
     const checks = mergeChecks(reports);
     for (const result of checks) {
@@ -324,23 +374,20 @@ export async function runMergeScan(
       }
     }
     const summary = summarizeChecks(checks);
-    const blockingIncomplete = checks.some(
-      (check) =>
-        check.status === "incomplete" &&
-        check.incompleteDisposition === "block",
-    );
+    const blockingIncomplete =
+      reports.some((report) => report.exitCode === 2) ||
+      checks.some(
+        (check) =>
+          check.status === "incomplete" &&
+          check.incompleteDisposition === "block",
+      );
     const { changeSummary: _pairwiseSummary, ...firstReport } = reports[0]!;
     return (completed = {
       ...firstReport,
       mergeParents: parents,
       checks,
       summary,
-      exitCode: blockingIncomplete ? 2 : summary.failed > 0 ? 1 : 0,
-      outcome: blockingIncomplete
-        ? "incomplete"
-        : summary.failed > 0
-          ? "blocked"
-          : "pass",
+      ...scanOutcome(summary, blockingIncomplete),
       startedAt,
       durationMs: Math.max(0, dependencies.clock() - started),
       networkDisclosures: reports.flatMap(
@@ -357,6 +404,13 @@ export async function runMergeScan(
     completed = failureReport(error);
     return completed;
   } finally {
+    if (!targetMayBeInUse) {
+      try {
+        await sharedTarget?.cleanup();
+      } catch {
+        cleanupFailed = true;
+      }
+    }
     try {
       await selected?.cleanup();
     } catch {

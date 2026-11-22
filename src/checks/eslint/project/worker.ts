@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
 import { writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -27,7 +28,7 @@ process.once("message", (raw: ProjectEslintRequest) => {
       const { ESLint } = require(
         raw.installation.entry,
       ) as typeof import("eslint");
-      if (ESLint.version !== "9.39.5") {
+      if (ESLint.version !== SUPPORTED_PROJECT_ESLINT_VERSION) {
         failureCode = "PROJECT_ESLINT_VERSION_UNSUPPORTED";
         throw new Error("Wrong version");
       }
@@ -89,7 +90,12 @@ process.once("message", (raw: ProjectEslintRequest) => {
       }
       send({
         ok: true,
-        result: { version: "9.39.5", diagnostics, checkedFiles, ignoredFiles },
+        result: {
+          version: SUPPORTED_PROJECT_ESLINT_VERSION,
+          diagnostics,
+          checkedFiles,
+          ignoredFiles,
+        },
       });
     } catch {
       send({ ok: false, code: failureCode });

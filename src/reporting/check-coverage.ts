@@ -41,3 +41,18 @@ export function allowedScanDetail(report: ScanReport): string {
   }
   return "All checks passed. Commit allowed.";
 }
+
+export function scanOutcomeDetail(report: ScanReport): string {
+  if (report.outcome === "blocked") return "A check failed. Commit blocked.";
+  if (report.outcome === "incomplete")
+    return "A required check could not finish. Commit blocked.";
+  return allowedScanDetail(report);
+}
+
+export function scanResultCountLine(
+  report: ScanReport,
+  includeFailed: boolean,
+): string {
+  const { passed, warnings, failed } = report.summary;
+  return `${passed} passed · ${warnings} ${warnings === 1 ? "warning" : "warnings"}${includeFailed ? ` · ${failed} failed` : ""}`;
+}

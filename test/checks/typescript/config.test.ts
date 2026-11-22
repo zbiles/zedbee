@@ -1,9 +1,11 @@
+import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { stat, unlink, utimes } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  configHost,
   loadSnapshotProgramInput,
   loadSnapshotProgramProjects,
 } from "../../../src/checks/typescript/config.js";
@@ -42,6 +44,32 @@ async function fixture() {
 }
 
 describe("validated compiler input preparation", () => {
+  it("matches native config directory selection for captured source files", async () => {
+    const value = await createInspectionFixture();
+    const files = [
+      "src/value.ts",
+      "src/nested/entry.ts",
+      "src/generated/ignored.ts",
+      "src/data.json",
+      "outside.ts",
+    ];
+    for (const file of files) await value.write(file, "");
+    const captured = new Map(files.map((file) => [join(value.root, file), ""]));
+    const options = { include: ["src"], exclude: ["src/generated"] };
+    const expected = ts.parseJsonConfigFileContent(
+      options,
+      ts.sys,
+      value.root,
+    ).fileNames;
+    const actual = ts.parseJsonConfigFileContent(
+      options,
+      configHost(value.root, captured),
+      value.root,
+    ).fileNames;
+    expect(actual.sort()).toEqual(expected.sort());
+    expect(actual).toHaveLength(2);
+  });
+
   it("never substitutes workspace roots into an empty solution project", async () => {
     const { fixture: value, workspace } = await fixture();
     await value.writeJson("tsconfig.json", {

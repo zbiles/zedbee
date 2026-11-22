@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 import { lstat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadConfig } from "../config/load-config.js";
@@ -108,7 +109,7 @@ export async function diagnoseProjectEslint(
   return {
     id: "project-eslint",
     status: failed ? "fail" : untrusted ? "warning" : "pass",
-    message: `Project ESLint currently supports ESLint 9.39.5, JavaScript flat config, local dependencies, and npm lockfile v2/v3. ${descriptions.join("; ")}. Configuration was inspected as data only and was not executed.`,
+    message: `Project ESLint currently supports ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION}, JavaScript flat config, local dependencies, and npm lockfile v2/v3. ${descriptions.join("; ")}. Configuration was inspected as data only and was not executed.`,
     ...(failed || untrusted
       ? {
           remediation:

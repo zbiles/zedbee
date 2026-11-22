@@ -1,3 +1,4 @@
+import { canonicalTrustRoot } from "../../git/common-directory.js";
 import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { posix, resolve } from "node:path";
@@ -61,18 +62,6 @@ export async function canonicalCheckoutRoot(
   repositoryRoot: string,
 ): Promise<string> {
   return realpath(resolve(repositoryRoot));
-}
-
-/** Shared by all worktrees, but distinct for independent clones. */
-export async function canonicalTrustRoot(
-  repositoryRoot: string,
-): Promise<string> {
-  const result = await new GitClient(repositoryRoot).run([
-    "rev-parse",
-    "--path-format=absolute",
-    "--git-common-dir",
-  ]);
-  return realpath(result.stdout);
 }
 
 /** Include old checkout-scoped grants without writing during inspection. */

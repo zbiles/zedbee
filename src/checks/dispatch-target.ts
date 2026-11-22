@@ -18,7 +18,10 @@ import type {
 import { observationCheckResult } from "./observation-result.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { incompleteResult } from "./incomplete-result.js";
-import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "./incomplete-error.js";
 import { AnalyzerJobError, analyzerDiagnostic } from "./diagnostics.js";
 import { managedCheckMetadata } from "./metadata.js";
 import { scopedContext, type DispatchContext } from "./dispatch-context.js";
@@ -51,9 +54,7 @@ export async function executeDispatchTarget(
   options: {
     clock: () => number;
     emit: (event: ScanEvent) => void;
-    collectObservations: ReturnType<
-      typeof createDispatchObservationCollector
-    >;
+    collectObservations: ReturnType<typeof createDispatchObservationCollector>;
     collectFixes: boolean;
   },
 ): Promise<CheckExecutionResult> {
@@ -144,9 +145,7 @@ export async function executeDispatchTarget(
             : {
                 diagnostic: analyzerDiagnostic(
                   metadata.id,
-                  adapter.output === "observations"
-                    ? "collect"
-                    : "runLegacy",
+                  adapter.output === "observations" ? "collect" : "runLegacy",
                   "invalid-response",
                 ),
               }),
@@ -163,26 +162,7 @@ export async function executeDispatchTarget(
             checkId: adapter.id,
             target: target.id,
             durationMs: durationMs(),
-            code: error.code,
-            message: error.message,
-            remediation: error.remediation,
-            ...(error.diagnostic === undefined
-              ? {}
-              : { diagnostic: error.diagnostic }),
-            ...(error.path === undefined ? {} : { path: error.path }),
-            ...(error.paths === undefined ? {} : { paths: error.paths }),
-            ...(error.parseFailures === undefined
-              ? {}
-              : { parseFailures: error.parseFailures }),
-            ...(error.snapshot === undefined
-              ? {}
-              : { snapshot: error.snapshot }),
-            ...(error.projectPaths === undefined
-              ? {}
-              : { projectPaths: error.projectPaths }),
-            ...(error.disposition === undefined
-              ? {}
-              : { disposition: error.disposition }),
+            ...incompleteErrorDetails(error),
           })
         : incompleteResult({
             checkId: adapter.id,
@@ -219,9 +199,7 @@ export async function executeDispatchTarget(
         ]),
         {
           checkId: adapter.id,
-          findingIds: policyDisplayResult.findings.map(
-            (finding) => finding.id,
-          ),
+          findingIds: policyDisplayResult.findings.map((finding) => finding.id),
         },
       );
     } catch (error) {
