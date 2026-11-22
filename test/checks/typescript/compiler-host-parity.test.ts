@@ -248,6 +248,34 @@ describe("snapshot compiler parity with native TypeScript", () => {
     expect(snapshot.localReads).not.toContain("parent-value.ts");
   });
 
+  it("loads directory includes and excludes from a referenced project", async () => {
+    const fixture = await createInspectionFixture();
+    const snapshotRoot = path.join(fixture.root, "snapshot");
+    const snapshot = createSnapshotProgram({
+      repositoryRoot: fixture.root,
+      snapshotRoot,
+      files: {
+        "app/tsconfig.json": JSON.stringify({
+          compilerOptions: { composite: true, strict: true, types: [] },
+          include: ["src"],
+          exclude: ["src/generated"],
+        }),
+        "app/src/index.ts": "export const value: string = 7;",
+        "app/src/generated/ignored.ts": "export const ignored: string = 7;",
+      },
+      rootNames: [],
+      options,
+      projectReferences: [{ path: path.join(snapshotRoot, "app") }],
+    });
+    expect(snapshot.programs).toHaveLength(2);
+    expect(snapshot.programs[1]!.getRootFileNames()).toEqual([
+      path.join(snapshotRoot, "app", "src", "index.ts"),
+    ]);
+    expect(diagnostics(snapshot.programs[1]!).map(({ code }) => code)).toEqual([
+      2322,
+    ]);
+  });
+
   it.each(["inferred", "explicit", "compiler-default"])(
     "uses a referenced project's own %s installed type roots",
     async (typeRootsMode) => {

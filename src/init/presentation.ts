@@ -1,3 +1,5 @@
+import { parse } from "jsonc-parser";
+import { isDeepStrictEqual } from "node:util";
 import {
   ProjectEslintSetupError,
   PROJECT_ESLINT_DISCLOSURE,
@@ -66,6 +68,42 @@ export function publicProposal(proposal: InitProposal) {
   };
 }
 
+function configChangeMessage(
+  proposal: InitProposal,
+  applied: boolean,
+): string | undefined {
+  const config = proposal.files.find(
+    ({ relativePath }) => relativePath === ".zedbeerc.jsonc",
+  );
+  if (config === undefined || config.before === config.after) return undefined;
+  function generated(source: string | null): unknown {
+    const parsed = source === null ? undefined : parse(source);
+    const isManagedFormatting = (entry: { generated?: string } | null) =>
+      ["prettier-copy", "prettier-engine", "prettier-scope"].includes(
+        entry?.generated ?? "",
+      );
+    return {
+      overrides: Array.isArray(parsed?.overrides)
+        ? parsed.overrides.filter(isManagedFormatting)
+        : [],
+      exclusions: Array.isArray(parsed?.pathExclusions)
+        ? parsed.pathExclusions.filter(isManagedFormatting)
+        : [],
+      settings: isManagedFormatting(parsed?.checks?.formatting)
+        ? parsed.checks.formatting
+        : undefined,
+    };
+  }
+  if (config.before === null)
+    return applied
+      ? "Created .zedbeerc.jsonc."
+      : "Will create .zedbeerc.jsonc.";
+  const verb = applied ? "Updated" : "Will update";
+  return isDeepStrictEqual(generated(config.before), generated(config.after))
+    ? `${verb} .zedbeerc.jsonc.`
+    : `${verb} generated formatting settings in .zedbeerc.jsonc.`;
+}
+
 export function renderText(proposal: InitProposal, applied: boolean): string {
   const lines = [
     applied
@@ -117,7 +155,10 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
       `Hook activation required: ${proposal.hookActivation.remediation}`,
     );
   }
-  for (const file of proposal.files) lines.push("", file.diff);
+  const configUpdate = configChangeMessage(proposal, applied);
+  if (configUpdate !== undefined) lines.push(configUpdate);
+  for (const file of proposal.files)
+    if (file.before !== file.after) lines.push("", file.diff);
   if (proposal.hooksPathChange !== undefined)
     lines.push(
       `Git configuration: core.hooksPath → ${proposal.hooksPathChange.after}`,
@@ -187,8 +228,10 @@ export function renderInteractiveResult(
   proposal: InitProposal,
 ): string {
   if (!confirmed) return "Zedbee initialization cancelled\n";
+  const configUpdate = configChangeMessage(proposal, true);
   const lines = [
     "Zedbee initialized successfully",
+    ...(configUpdate === undefined ? [] : [configUpdate]),
     "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
   ];
   if (proposal.hookActivation.remediation !== undefined) {

@@ -495,12 +495,10 @@ async function targetTreeEntry(
   return singleTreeEntry(result.stdout, repositoryPath, configPath);
 }
 
-export async function loadConfigFromIndex(
+function selectGitConfigPath(
   repositoryRoot: string,
-  git: GitClient,
   explicitConfigPath?: string,
-  signal?: AbortSignal,
-): Promise<ResolvedConfig> {
+) {
   const configPath =
     explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
   const repositoryPath = repositoryConfigPath(repositoryRoot, configPath);
@@ -511,7 +509,65 @@ export async function loadConfigFromIndex(
       configPath,
     );
   }
+  return { configPath, repositoryPath };
+}
 
+async function readGitConfigBlob(
+  git: GitClient,
+  objectId: string,
+  configPath: string,
+  location: "the Git index" | "the target Git commit",
+  signal?: AbortSignal,
+): Promise<ResolvedConfig> {
+  let source: Awaited<ReturnType<GitClient["run"]>>;
+  try {
+    source = await git.run(["cat-file", "blob", objectId], {
+      maxOutputBytes: CONFIG_CONTENT_LIMIT_BYTES,
+      ...(signal === undefined ? {} : { signal }),
+    });
+  } catch (error) {
+    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from ${location}.`,
+      configPath,
+    );
+  }
+  return parseConfigSource(source.stdout, configPath);
+}
+
+function missingExplicitGitConfig(
+  configPath: string,
+  location: "the Git index" | "the target Git commit",
+): ConfigError {
+  return new ConfigError(
+    "CONFIG_INVALID",
+    `Zedbee configuration file ${basename(configPath)} does not exist in ${location}.`,
+    configPath,
+  );
+}
+
+function unsupportedGitConfig(
+  repositoryRoot: string,
+  filename: string,
+): ConfigError {
+  return new ConfigError(
+    "CONFIG_UNSUPPORTED",
+    `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
+    join(repositoryRoot, filename),
+  );
+}
+
+export async function loadConfigFromIndex(
+  repositoryRoot: string,
+  git: GitClient,
+  explicitConfigPath?: string,
+  signal?: AbortSignal,
+): Promise<ResolvedConfig> {
+  const { configPath, repositoryPath } = selectGitConfigPath(
+    repositoryRoot,
+    explicitConfigPath,
+  );
   const candidatePaths =
     explicitConfigPath === undefined
       ? [CONFIG_FILENAME, ...UNSUPPORTED_CONFIG_FILENAMES]
@@ -536,40 +592,24 @@ export async function loadConfigFromIndex(
   const selectedEntries = entries.get(repositoryPath) ?? [];
   if (selectedEntries.length === 0) {
     if (explicitConfigPath !== undefined) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee configuration file ${basename(configPath)} does not exist in the Git index.`,
-        configPath,
-      );
+      throw missingExplicitGitConfig(configPath, "the Git index");
     }
     for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
       if ((entries.get(filename) ?? []).length > 0) {
-        throw new ConfigError(
-          "CONFIG_UNSUPPORTED",
-          `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
-          join(repositoryRoot, filename),
-        );
+        throw unsupportedGitConfig(repositoryRoot, filename);
       }
     }
     return resolveConfig(undefined);
   }
 
   const entry = singleRegularEntry(selectedEntries, configPath);
-  let source: Awaited<ReturnType<GitClient["run"]>>;
-  try {
-    source = await git.run(["cat-file", "blob", entry.objectId], {
-      maxOutputBytes: CONFIG_CONTENT_LIMIT_BYTES,
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch (error) {
-    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the Git index.`,
-      configPath,
-    );
-  }
-  return parseConfigSource(source.stdout, configPath);
+  return readGitConfigBlob(
+    git,
+    entry.objectId,
+    configPath,
+    "the Git index",
+    signal,
+  );
 }
 
 export async function loadConfigFromCommit(
@@ -579,16 +619,10 @@ export async function loadConfigFromCommit(
   explicitConfigPath?: string,
   signal?: AbortSignal,
 ): Promise<ResolvedConfig> {
-  const configPath =
-    explicitConfigPath ?? join(repositoryRoot, CONFIG_FILENAME);
-  const repositoryPath = repositoryConfigPath(repositoryRoot, configPath);
-  if (repositoryPath === undefined) {
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      "Selected configuration must be inside the repository.",
-      configPath,
-    );
-  }
+  const { configPath, repositoryPath } = selectGitConfigPath(
+    repositoryRoot,
+    explicitConfigPath,
+  );
 
   const entry = await targetTreeEntry(
     git,
@@ -599,11 +633,7 @@ export async function loadConfigFromCommit(
   );
   if (entry === undefined) {
     if (explicitConfigPath !== undefined) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee configuration file ${basename(configPath)} does not exist in the target Git commit.`,
-        configPath,
-      );
+      throw missingExplicitGitConfig(configPath, "the target Git commit");
     }
     for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
       const unsupported = await targetTreeEntry(
@@ -614,30 +644,18 @@ export async function loadConfigFromCommit(
         signal,
       );
       if (unsupported !== undefined) {
-        throw new ConfigError(
-          "CONFIG_UNSUPPORTED",
-          `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
-          join(repositoryRoot, filename),
-        );
+        throw unsupportedGitConfig(repositoryRoot, filename);
       }
     }
     return resolveConfig(undefined);
   }
 
   const regularEntry = singleRegularTreeEntry(entry, configPath);
-  let source: Awaited<ReturnType<GitClient["run"]>>;
-  try {
-    source = await git.run(["cat-file", "blob", regularEntry.objectId], {
-      maxOutputBytes: CONFIG_CONTENT_LIMIT_BYTES,
-      ...(signal === undefined ? {} : { signal }),
-    });
-  } catch (error) {
-    if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the target Git commit.`,
-      configPath,
-    );
-  }
-  return parseConfigSource(source.stdout, configPath);
+  return readGitConfigBlob(
+    git,
+    regularEntry.objectId,
+    configPath,
+    "the target Git commit",
+    signal,
+  );
 }

@@ -1,7 +1,6 @@
-import { spawn } from "node:child_process";
+import { launchBackgroundNode } from "../runtime/background-node.js";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { terminalText } from "../renderers/terminal-style.js";
 import {
   readUpdateCache,
@@ -14,18 +13,7 @@ import { updateFromMetadata, type UpdateNotice } from "./metadata.js";
 type Environment = Readonly<Record<string, string | undefined>>;
 
 function scheduleRefresh(env: Environment): void {
-  const child = spawn(
-    process.execPath,
-    [fileURLToPath(new URL("./worker.js", import.meta.url))],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      env: { ...env },
-    },
-  );
-  child.on("error", () => {});
-  child.unref();
+  launchBackgroundNode(new URL("./worker.js", import.meta.url), env);
 }
 
 export function getUpdateNotice(options: {

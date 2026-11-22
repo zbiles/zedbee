@@ -1,14 +1,29 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from "node:path";
 import { parseDocument } from "yaml";
 import { GitClient } from "../git/client.js";
-import { resolveHookCommand } from "./command.js";
+import { resolveInstalledCliCommand } from "./command.js";
+import { installedHookCommand } from "./installed-command.js";
 import { detectHookChoice } from "./detect.js";
-import { mergeHookCommand, replaceManagedZedbeeCommand } from "./husky.js";
+import { hasHookExecutePermission } from "./install.js";
+import {
+  hasZedbeeScanCommand,
+  mergeHookCommand,
+  replaceManagedZedbeeCommand,
+} from "./husky.js";
 
 import {
   HOOK_UPDATE_NOTICE,
+  SHARED_HUSKY_UPDATE_NOTICE,
   type HookUpdateNotice,
 } from "../reporting/hook-update-notice.js";
 export { HOOK_UPDATE_NOTICE } from "../reporting/hook-update-notice.js";
@@ -21,7 +36,10 @@ function contained(root: string, path: string): boolean {
 }
 
 /** Optional, bounded, data-only reads. Never follow a hook symlink. */
-async function readHookData(path: string): Promise<string | undefined> {
+async function readHookData(
+  path: string,
+  requireExecutable = false,
+): Promise<string | undefined> {
   try {
     if ((await realpath(path)) !== path) return undefined;
     const before = await lstat(path);
@@ -34,7 +52,12 @@ async function readHookData(path: string): Promise<string | undefined> {
     );
     try {
       const state = await file.stat();
-      if (!state.isFile() || state.size > MAX_BYTES) return undefined;
+      if (
+        !state.isFile() ||
+        state.size > MAX_BYTES ||
+        (requireExecutable && !hasHookExecutePermission(state.mode))
+      )
+        return undefined;
       const bytes = Buffer.alloc(MAX_BYTES + 1);
       let length = 0;
       while (length < bytes.length) {
@@ -84,45 +107,100 @@ function managerCommands(source: string, yaml: boolean): readonly string[] {
   }
 }
 
-/** The same managed-command recognition as init; no version or timestamp guess. */
-export async function getHookUpdateNotice(
+interface HookMaintenance {
+  readonly installedCliCommand?: readonly string[];
+  readonly hookUpdate?: HookUpdateNotice;
+  readonly sharedHuskyPreCommit?: boolean;
+}
+
+function needsManagedUpdate(source: string, command: string): boolean {
+  // Check each hook kind against its own command, including its merge flags.
+  return source.split("\n").some((line) => {
+    const value = line.trim();
+    const expected = /(?:^|\s)--merge(?:\s|\)|$)/u.test(value)
+      ? mergeHookCommand(command)
+      : command;
+    return replaceManagedZedbeeCommand(value, expected) !== value;
+  });
+}
+
+/** Share installation selection and bounded hook inspection across scan and doctor. */
+export async function inspectHookMaintenance(
   repositoryRoot: string,
-  hookCommand?: string,
-): Promise<HookUpdateNotice | undefined> {
+): Promise<HookMaintenance> {
+  const installedCliCommand = await resolveInstalledCliCommand(
+    repositoryRoot,
+  ).catch(() => undefined);
+  if (installedCliCommand === undefined) return {};
+  const result = { installedCliCommand };
+
   try {
     const root = await realpath(repositoryRoot);
-    const command = hookCommand ?? (await resolveHookCommand(root));
+    const command = installedHookCommand(installedCliCommand[1]!);
     const git = new GitClient(root);
-    const [commonResult, ...hookResults] = await Promise.all([
-      git.run(["rev-parse", "--git-common-dir"]),
-      git.run(["rev-parse", "--git-path", "hooks/pre-commit"]),
-      git.run(["rev-parse", "--git-path", "hooks/pre-merge-commit"]),
+    const hookNames = ["pre-commit", "pre-merge-commit"] as const;
+    const [gitDirs, ...hookResults] = await Promise.all([
+      git.run(["rev-parse", "--git-common-dir", "--absolute-git-dir"]),
+      ...hookNames.map((name) =>
+        git.run(["rev-parse", "--git-path", `hooks/${name}`]),
+      ),
     ]);
-    const common = await realpath(resolve(root, commonResult.stdout));
+    const [commonPath, checkoutGitPath] = gitDirs.stdout.split(/\r?\n/u);
+    const common = await realpath(resolve(root, commonPath!));
+    const mainCheckout = dirname(common);
+    const sharedOwner =
+      basename(common) === ".git" &&
+      mainCheckout !== root &&
+      dirname(await realpath(resolve(root, checkoutGitPath!))) ===
+        join(common, "worktrees")
+        ? mainCheckout
+        : undefined;
     const scripts = new Set<string>();
-    for (const result of hookResults) {
-      const path = resolve(root, result.stdout);
+    const sharedScripts = new Map<(typeof hookNames)[number], string>();
+    for (const [index, hook] of hookResults.entries()) {
+      const name = hookNames[index]!;
+      const path = resolve(root, hook.stdout);
       if (contained(root, path) || contained(join(common, "hooks"), path))
         scripts.add(path);
-      // Husky's generated dispatcher delegates to its tracked sibling scripts.
+      // Husky 9's dispatcher delegates to its tracked sibling script, even
+      // when core.hooksPath points from a linked worktree to the main checkout.
+      if (path === join(root, ".husky", "_", name))
+        scripts.add(join(root, ".husky", name));
       if (
-        path ===
-        join(
-          root,
-          ".husky/_",
-          path.endsWith("pre-merge-commit") ? "pre-merge-commit" : "pre-commit",
-        )
+        sharedOwner !== undefined &&
+        path === join(sharedOwner, ".husky", "_", name)
       ) {
-        scripts.add(
-          join(
-            root,
-            ".husky",
-            path.endsWith("pre-merge-commit")
-              ? "pre-merge-commit"
-              : "pre-commit",
-          ),
-        );
+        const [dispatcher, handler] = await Promise.all([
+          readHookData(path, true),
+          readHookData(join(sharedOwner, ".husky", "_", "h")),
+        ]);
+        if (
+          dispatcher?.split(/\r?\n/u).includes('. "$(dirname "$0")/h"') &&
+          handler !== undefined
+        ) {
+          const source = await readHookData(join(sharedOwner, ".husky", name));
+          sharedScripts.set(name, source ?? "");
+        }
       }
+    }
+    if (sharedScripts.size > 0) {
+      const preCommit = sharedScripts.get("pre-commit");
+      return {
+        ...result,
+        ...(preCommit === undefined
+          ? {}
+          : {
+              sharedHuskyPreCommit: hasZedbeeScanCommand(
+                preCommit,
+                "pre-commit",
+              ),
+            }),
+        ...([...sharedScripts.values()].some((source) =>
+          needsManagedUpdate(source, command),
+        )
+          ? { hookUpdate: SHARED_HUSKY_UPDATE_NOTICE }
+          : {}),
+      };
     }
     const managers = await Promise.all(
       ["package.json", "lefthook.yml", "lefthook.yaml"].map((name) =>
@@ -133,12 +211,12 @@ export async function getHookUpdateNotice(
       manifest:
         managers[0] === undefined ? undefined : record(JSON.parse(managers[0])),
     });
-    if (choice === "none") return undefined;
+    if (choice === "none") return result;
     if (choice === "husky") {
       scripts.add(join(root, ".husky/pre-commit"));
       scripts.add(join(root, ".husky/pre-merge-commit"));
     }
-    const sources = await Promise.all([...scripts].map(readHookData));
+    const sources = await Promise.all([...scripts].map((path) => readHookData(path)));
     let managerSources: readonly string[] = [];
     if (choice === "simple-git-hooks" && managers[0] !== undefined) {
       managerSources = managerCommands(managers[0], false);
@@ -155,21 +233,11 @@ export async function getHookUpdateNotice(
       ...sources.filter((source): source is string => source !== undefined),
       ...managerSources,
     ];
-    for (const source of commands) {
-      // Evaluate one hook kind at a time so an up-to-date merge command does
-      // not look stale merely because its arguments differ from pre-commit.
-      for (const line of source.split("\n")) {
-        const value = line.trim();
-        const desired = /(?:^|\s)--merge(?:\s|\)|$)/u.test(value)
-          ? mergeHookCommand(command)
-          : command;
-        if (replaceManagedZedbeeCommand(value, desired) !== value)
-          return HOOK_UPDATE_NOTICE;
-      }
-    }
-    return undefined;
+    return commands.some((source) => needsManagedUpdate(source, command))
+      ? { ...result, hookUpdate: HOOK_UPDATE_NOTICE }
+      : result;
   } catch {
     // Setup advice must never change analysis outcomes or prevent a scan.
-    return undefined;
+    return result;
   }
 }

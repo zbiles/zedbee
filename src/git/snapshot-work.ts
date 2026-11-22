@@ -71,3 +71,14 @@ export async function settleSnapshotWork<T, U>(
     if (!options.owner) owner.dispose();
   }
 }
+
+/** Join every reader before reporting a failed read to the snapshot owner. */
+export async function joinSnapshotReaders<T>(
+  reads: Iterable<Promise<T>>,
+): Promise<T[]> {
+  const settled = await Promise.allSettled(reads);
+  return settled.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
+  });
+}

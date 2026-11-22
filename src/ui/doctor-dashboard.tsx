@@ -3,6 +3,8 @@ import type { Diagnostic } from "../doctor/diagnostics.js";
 import {
   brandedCommandContentWidth,
   BrandedCommandFrame,
+  BrandedCommandPanel,
+  BrandedCommandPanelRule,
 } from "./branded-command-frame.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -18,18 +20,6 @@ function diagnosticIcon(status: Diagnostic["status"]): string {
   return "×";
 }
 
-function HorizontalRule({ width, color }: { width: number; color: boolean }) {
-  return (
-    <Box marginX={-1}>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>├</Text>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>
-        {"─".repeat(Math.max(1, width - 2))}
-      </Text>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>┤</Text>
-    </Box>
-  );
-}
-
 function DoctorPanel({
   diagnostics,
   width,
@@ -40,21 +30,7 @@ function DoctorPanel({
   color: boolean;
 }) {
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.border,
-            borderBackgroundColor: "#000000",
-          }
-        : {})}
-    >
-      <Box paddingX={2}>
-        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>DOCTOR</Text>
-      </Box>
-      <HorizontalRule width={width} color={color} />
+    <BrandedCommandPanel title="DOCTOR" width={width} color={color}>
       {diagnostics.map((diagnostic, index) => {
         const tone = diagnosticTone(diagnostic.status);
         return (
@@ -88,13 +64,13 @@ function DoctorPanel({
               </Box>
             )}
             {index < diagnostics.length - 1 ? (
-              <HorizontalRule width={width} color={color} />
+              <BrandedCommandPanelRule width={width} color={color} />
             ) : null}
           </Box>
         );
       })}
       <Text> </Text>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 

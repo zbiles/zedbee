@@ -1,3 +1,4 @@
+import { reconcileGeneratedOverrides } from "./generated-formatting-overrides.js";
 import {
   configureInitEslint,
   PROJECT_ESLINT_DISCLOSURE,
@@ -497,9 +498,6 @@ function applyFormattingChoice(
 
   // Repeat setup replaces exactly the entries Zedbee generated and preserves
   // every unmarked, hand-authored override.
-  const existingOverrides = Array.isArray(root.overrides)
-    ? (root.overrides as readonly unknown[])
-    : [];
   const existingExclusions = Array.isArray(root.pathExclusions)
     ? root.pathExclusions
     : [];
@@ -518,18 +516,12 @@ function applyFormattingChoice(
       modify(next, ["pathExclusions"], finalExclusions, options),
     );
   }
-  for (let index = existingOverrides.length - 1; index >= 0; index--) {
-    if (isGeneratedOverrideEntry(existingOverrides[index])) {
-      next = applyEdits(
-        next,
-        modify(next, ["overrides", index], undefined, options),
-      );
-    }
-  }
-  for (const entry of generatedEntries) {
-    next = applyEdits(next, modify(next, ["overrides", -1], entry, options));
-  }
-  return next;
+  return reconcileGeneratedOverrides(
+    next,
+    isGeneratedOverrideEntry,
+    generatedEntries,
+    options,
+  );
 }
 
 function existingVulnerabilitySeverity(
@@ -663,43 +655,27 @@ export function createInitProposal(
     0o644,
   );
   if (options.formattingScope !== undefined) {
-    const source = parse(config.after) as Record<string, unknown>;
-    const existing = Array.isArray(source.overrides) ? source.overrides : [];
-    const editOptions = {
-      formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-    };
-    let after = config.after;
-    // Scope owns only its marked entries. Removing individual array elements
-    // preserves comments and bytes inside every handwritten override.
-    for (let index = existing.length - 1; index >= 0; index--) {
-      if (existing[index]?.generated === "prettier-scope") {
-        after = applyEdits(
-          after,
-          modify(after, ["overrides", index], undefined, editOptions),
-        );
-      }
-    }
     const roots = options.formattingScopeRoots ?? [];
-    if (
+    const after = reconcileGeneratedOverrides(
+      config.after,
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as Record<string, unknown>).generated === "prettier-scope",
       options.formattingScope === "projects" &&
-      roots.length > 0 &&
-      !roots.includes(".")
-    ) {
-      after = applyEdits(
-        after,
-        modify(
-          after,
-          ["overrides", -1],
-          {
-            files: ["**"],
-            excludeFiles: roots.map((root) => `${root}/**`),
-            checks: { formatting: "off" },
-            generated: "prettier-scope",
-          },
-          editOptions,
-        ),
-      );
-    }
+        roots.length > 0 &&
+        !roots.includes(".")
+        ? [
+            {
+              files: ["**"],
+              excludeFiles: roots.map((root) => `${root}/**`),
+              checks: { formatting: "off" },
+              generated: "prettier-scope",
+            },
+          ]
+        : [],
+      { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+    );
     if (after !== config.after) {
       config = initFileChange(
         config.relativePath,

@@ -109,6 +109,17 @@ export function scanTimeoutOverrides(
   return typeof timeout === "string" ? { timeout } : {};
 }
 
+function commandTerminalIO() {
+  return {
+    stdinIsTTY: process.stdin.isTTY === true,
+    stdoutIsTTY: process.stdout.isTTY === true,
+    width: normalizeTerminalWidth(process.stdout.columns),
+    env: process.env,
+    writeStdout: (value: string) => process.stdout.write(value),
+    writeStderr: (value: string) => process.stderr.write(value),
+  };
+}
+
 export interface CliDependencies {
   readonly startTelemetry?: typeof startTelemetry;
   readonly executeInitCommand?: typeof executeInitCommand;
@@ -123,6 +134,7 @@ export async function runCli(
 ): Promise<number> {
   const program = new Command()
     .name("zedbee")
+    .version(ZEDBEE_VERSION)
     .description("Diff-aware pre-commit scanning for JavaScript and TypeScript")
     .showHelpAfterError()
     .exitOverride();
@@ -483,7 +495,10 @@ export async function runCli(
     )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
-    .option("--no-cache", "run analysis without observation-cache reads or writes")
+    .option(
+      "--no-cache",
+      "run analysis without observation-cache reads or writes",
+    )
     .option("--no-service", "use a command-owned local analyzer executor")
     .option(
       "--diagnostics",
@@ -532,14 +547,7 @@ export async function runCli(
             : {}),
           signal: controller.signal,
         },
-        {
-          stdinIsTTY: process.stdin.isTTY === true,
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: normalizeTerminalWidth(process.stdout.columns),
-          env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        },
+        commandTerminalIO(),
       );
     });
 
@@ -594,14 +602,7 @@ export async function runCli(
               : { configPath: options.config }),
             signal: controller.signal,
           },
-          {
-            stdinIsTTY: process.stdin.isTTY === true,
-            stdoutIsTTY: process.stdout.isTTY === true,
-            width: normalizeTerminalWidth(process.stdout.columns),
-            env: process.env,
-            writeStdout: (value) => process.stdout.write(value),
-            writeStderr: (value) => process.stderr.write(value),
-          },
+          commandTerminalIO(),
         );
       },
     );

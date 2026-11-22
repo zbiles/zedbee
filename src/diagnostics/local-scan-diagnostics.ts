@@ -1,4 +1,4 @@
-import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
+import { CHECK_IDS } from "../core/check-ids.js";
 import {
   SCAN_PERFORMANCE_OVERHEADS,
   SCAN_PERFORMANCE_PHASES,
@@ -105,7 +105,7 @@ export function sanitizeLocalScanDiagnostics(
       p.executionMode as string,
     ) ||
     !Array.isArray(p.checks) ||
-    p.checks.length > TELEMETRY_CHECK_IDS.length ||
+    p.checks.length > CHECK_IDS.length ||
     (p.workerCount !== undefined &&
       ![1, 2, 4].includes(p.workerCount as number)) ||
     (p.changeCategory !== undefined &&
@@ -139,7 +139,7 @@ export function sanitizeLocalScanDiagnostics(
     keys(row, required, optional);
     if (
       typeof row.check_id !== "string" ||
-      !(TELEMETRY_CHECK_IDS as readonly string[]).includes(row.check_id) ||
+      !(CHECK_IDS as readonly string[]).includes(row.check_id) ||
       seen.has(row.check_id)
     )
       throw new TypeError("Invalid diagnostic check identity");
@@ -165,8 +165,7 @@ export function sanitizeLocalScanDiagnostics(
     performance: Object.freeze({
       checks: Object.freeze(checks) as unknown as CheckPerformance[],
       partial: p.partial,
-      executionMode:
-        p.executionMode as ScanPerformanceSummary["executionMode"],
+      executionMode: p.executionMode as ScanPerformanceSummary["executionMode"],
       ...(p.changeCategory === undefined
         ? {}
         : {

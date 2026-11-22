@@ -194,6 +194,10 @@ function smokeReleaseArtifact(artifactPath, manifest) {
     const cli = join(fixture, "node_modules", "zedbee", "dist", "cli.js");
     const cliCommand = (args, label) =>
       run(process.execPath, [cli, ...args], { cwd: fixture, label });
+    const version = cliCommand(["--version"], "Installed CLI version");
+    if (version.trim() !== manifest.version) {
+      throw new Error("Installed CLI reported the wrong version.");
+    }
     const help = cliCommand(["--help"], "Installed CLI help");
     for (const command of ["init", "scan", "checks", "doctor"]) {
       if (!help.includes(command)) {

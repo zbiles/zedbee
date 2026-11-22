@@ -1,3 +1,11 @@
+import { memoizeCompilerDecision } from "./compiler-decision-cache.js";
+import {
+  COMPILER_SOURCE,
+  COMPILER_DEPENDENCY,
+  COMPILER_CONFIGURATION,
+  COMPILER_ORDINARY,
+  changedCompilerPaths,
+} from "./compiler-paths.js";
 import {
   classifyCompilerChanges,
   compilerPolicyInputPaths,
@@ -5,22 +13,12 @@ import {
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
-import type { ChangeSet } from "../git/change-set.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../inspection/types.js";
+import type { WorkspaceInspection } from "../inspection/types.js";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const DATA = /\.jsonc?$/iu;
-const ORDINARY_UNRELATED = /\.(?:py|pyi|md|markdown|rst|txt)$/iu;
-const DEPENDENCY =
-  /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lockb?|\.pnp\.(?:cjs|js|data\.json)|\.npmrc|\.yarnrc(?:\.yml)?)$/iu;
-const CONFIGURATION =
-  /^(?:tsconfig(?:\.[^.]+)*\.json|jsconfig(?:\.[^.]+)*\.json|(?:zedbee|swarm)\.config\.[^.]+|\.(?:zedbee|swarm)(?:rc)?(?:\.[^.]+)?)$/iu;
 
 export function hasTypeScriptInputs(workspace: WorkspaceInspection): boolean {
   return workspace.sourceFiles.some((path) => TYPESCRIPT_SOURCE.test(path));
@@ -38,30 +36,6 @@ export type CompilerInputRelevance = Readonly<{
     | "independent";
 }>;
 
-const changes = new WeakMap<ChangeSet, ReadonlySet<string>>();
-function changedPaths(changeSet: ChangeSet): ReadonlySet<string> {
-  let paths = changes.get(changeSet);
-  if (paths === undefined) {
-    const result = new Set<string>();
-    for (const file of changeSet.files.values()) {
-      result.add(file.path);
-      if (file.previousPath !== undefined) result.add(file.previousPath);
-    }
-    paths = result;
-    changes.set(changeSet, paths);
-  }
-  return paths;
-}
-
-const decisions = new WeakMap<
-  RepositoryInspection,
-  WeakMap<
-    RepositoryInspection,
-    WeakMap<ChangeSet, Promise<CompilerInputRelevance>>
-  >
->();
-const decisionOwners = new WeakMap<object, WeakMap<object, typeof decisions>>();
-const decisionPolicies = new WeakMap<object, typeof decisions>();
 const scopedDecisions = new WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
@@ -73,7 +47,7 @@ const scopedDecisions = new WeakMap<
 async function resolveRelevance(
   context: InspectionContext,
 ): Promise<CompilerInputRelevance> {
-  const paths = changedPaths(context.changeSet);
+  const paths = changedCompilerPaths(context.changeSet);
   if (paths.size === 0) return { relevant: false, reason: "unrelated" };
   if ([...compilerPolicyInputPaths(context)].some((path) => paths.has(path)))
     return { relevant: true, reason: "configuration" };
@@ -105,12 +79,13 @@ async function resolveRelevance(
   }
   for (const path of paths) {
     const name = posix.basename(path);
-    if (SOURCE.test(path)) return { relevant: true, reason: "source" };
-    if (DEPENDENCY.test(name)) return { relevant: true, reason: "dependency" };
-    if (CONFIGURATION.test(name))
+    if (COMPILER_SOURCE.test(path)) return { relevant: true, reason: "source" };
+    if (COMPILER_DEPENDENCY.test(name))
+      return { relevant: true, reason: "dependency" };
+    if (COMPILER_CONFIGURATION.test(name))
       return { relevant: true, reason: "configuration" };
     if (DATA.test(path)) return { relevant: true, reason: "data" };
-    if (name.toLowerCase() !== ".gitignore" && !ORDINARY_UNRELATED.test(path))
+    if (name.toLowerCase() !== ".gitignore" && !COMPILER_ORDINARY.test(path))
       return { relevant: true, reason: "unknown" };
   }
   return complete
@@ -118,35 +93,14 @@ async function resolveRelevance(
     : { relevant: true, reason: "unknown" };
 }
 
+const memoizedRelevance = memoizeCompilerDecision(resolveRelevance);
+
 export function compilerInputRelevance(
   context: InspectionContext,
   workspace: WorkspaceInspection,
 ): Promise<CompilerInputRelevance> {
   if (context.signal?.aborted) return Promise.reject(context.signal.reason);
-  let policies = decisionPolicies;
-  if (context.signal !== undefined) {
-    policies = decisionOwners.get(context.signal) ?? new WeakMap();
-    decisionOwners.set(context.signal, policies);
-  }
-  const policy = context.filePolicyConfig ?? context.config;
-  const cache = policies.get(policy) ?? new WeakMap();
-  policies.set(policy, cache);
-  let targets = cache.get(context.baselineInspection);
-  if (targets === undefined) {
-    targets = new WeakMap();
-    cache.set(context.baselineInspection, targets);
-  }
-  let scans = targets.get(context.targetInspection);
-  if (scans === undefined) {
-    scans = new WeakMap();
-    targets.set(context.targetInspection, scans);
-  }
-  let decision = scans.get(context.changeSet);
-  if (decision === undefined) {
-    decision = resolveRelevance(context);
-    scans.set(context.changeSet, decision);
-    void decision.catch(() => scans!.delete(context.changeSet));
-  }
+  const decision = memoizedRelevance(context);
   void decision
     .then((value) => {
       recordChangeCategory(value.reason);
@@ -160,8 +114,10 @@ export function compilerInputRelevance(
   const previous = scoped.get(workspace);
   if (
     previous !== undefined &&
-    ![...changedPaths(context.changeSet)].some(
-      (path) => SOURCE.test(path) || DEPENDENCY.test(posix.basename(path)),
+    ![...changedCompilerPaths(context.changeSet)].some(
+      (path) =>
+        COMPILER_SOURCE.test(path) ||
+        COMPILER_DEPENDENCY.test(posix.basename(path)),
     )
   )
     return previous;

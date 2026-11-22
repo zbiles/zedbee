@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
 import { loadConfig } from "../../../config/load-config.js";
 import { resolveConfig } from "../../../config/profiles.js";
 import { resolveWorkspaceLintPolicy } from "../../../config/target-policy.js";
@@ -160,7 +161,7 @@ export async function collectProjectEslint(
       },
       context.changeSet,
     );
-    if (target.version !== "9.39.5")
+    if (target.version !== SUPPORTED_PROJECT_ESLINT_VERSION)
       throw new ProjectEslintFailureError("PROJECT_ESLINT_VERSION_UNSUPPORTED");
     return {
       checkId: "lint",
@@ -195,8 +196,7 @@ export async function collectProjectEslint(
         error instanceof ProjectEslintFailureError
           ? error.message
           : "Project ESLint could not complete analysis of the captured configuration and source.",
-      remediation:
-        "Verify the selected project's ESLint 9.39.5 installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.",
+      remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
     });
   }
 }

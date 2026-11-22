@@ -273,6 +273,81 @@ describe("normalizeTerminalWidth", () => {
 });
 
 describe("executeScanCommand", () => {
+  it.each(["auto", "text", "json", "sarif", "ink"] as const)(
+    "limits periodic progress to linear human output (%s)",
+    async (format) => {
+      vi.useFakeTimers();
+      try {
+        const terminal = io(false);
+        const deps = dependencies();
+        deps.scan = async ({ onEvent }) => {
+          const event = { checkId: "types", target: "web", timestamp: 0 };
+          onEvent?.({ ...event, type: "check-running" });
+          await vi.advanceTimersByTimeAsync(29_999);
+          expect(terminal.stderr).toEqual([]);
+          await vi.advanceTimersByTimeAsync(1);
+          if (format === "auto" || format === "text")
+            expect(terminal.stderr).toEqual([
+              expect.stringMatching(/still scanning.*TypeScript \(web\)/u),
+            ]);
+          else expect(terminal.stderr).toEqual([]);
+          const lines = terminal.stderr.length;
+          await vi.advanceTimersByTimeAsync(30_000);
+          expect(terminal.stderr).toHaveLength(lines * 2);
+          return createReport();
+        };
+        expect(
+          await executeScanCommand(
+            { cwd: "/repo", format, color: false, animations: false },
+            terminal,
+            deps,
+          ),
+        ).toBe(0);
+        const output = terminal.stderr.slice();
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(terminal.stderr).toEqual(output);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("shows the current merge parent and clears stale check activity on failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminal = io(false);
+      const deps = dependencies();
+      deps.scan = async ({ onEvent }) => {
+        const scan = { checkId: "zedbee", target: ".", timestamp: 0 };
+        const check = { checkId: "types", target: "web", timestamp: 1 };
+        onEvent?.({ ...scan, type: "merge-parent", parent: 1, total: 2 });
+        onEvent?.({ ...check, type: "check-running" });
+        await vi.advanceTimersByTimeAsync(30_000);
+        onEvent?.({ ...check, type: "parent-check-settled" });
+        onEvent?.({ ...scan, type: "merge-parent", parent: 2, total: 2 });
+        onEvent?.({ ...scan, type: "scan-phase", phase: "cleanup" });
+        await vi.advanceTimersByTimeAsync(30_000);
+        throw new Error("simulated failure");
+      };
+      expect(
+        await executeScanCommand(
+          { cwd: "/repo", format: "text", color: false, animations: false },
+          terminal,
+          deps,
+        ),
+      ).toBe(2);
+      expect(terminal.stderr).toEqual([
+        expect.stringContaining("parent 1 of 2 · TypeScript (web)"),
+        expect.stringContaining("parent 2 of 2 · Cleaning up scan resources"),
+        "Zedbee could not complete the scan.\n",
+      ]);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(terminal.stderr).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("passes the requested base unchanged into the scan", async () => {
     const terminal = io(false);
     let receivedBase: string | undefined;

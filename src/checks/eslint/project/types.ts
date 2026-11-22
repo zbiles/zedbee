@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
 import type { ProjectEslintPermit } from "./trust.js";
 
 export type ProjectEslintFailureCode =
@@ -24,8 +25,7 @@ const messages: Record<ProjectEslintFailureCode, string> = {
     "A dependency required by the selected project is not installed in this checkout.",
   PROJECT_ESLINT_INSTALL_INCONSISTENT:
     "The installed dependencies do not match the selected target manifests and npm lockfile.",
-  PROJECT_ESLINT_VERSION_UNSUPPORTED:
-    "Project ESLint currently requires installed ESLint 9.39.5.",
+  PROJECT_ESLINT_VERSION_UNSUPPORTED: `Project ESLint currently requires installed ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION}.`,
   PROJECT_ESLINT_CONFIG_UNSUPPORTED:
     "Project ESLint requires a JavaScript flat configuration without processors.",
   PROJECT_ESLINT_CONFIG_INVALID:
@@ -84,7 +84,7 @@ export interface ProjectEslintInput {
 }
 export interface ProjectEslintInstallation {
   readonly entry: string;
-  readonly version: "9.39.5";
+  readonly version: typeof SUPPORTED_PROJECT_ESLINT_VERSION;
 }
 export interface ProjectEslintRequest {
   readonly type: "run";

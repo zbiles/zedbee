@@ -1,8 +1,12 @@
-import type {
-  CheckAdapter,
-  ExecutionClass,
-  InspectionContext,
-} from "../checks/adapter.js";
+import { inspectionContext } from "../checks/dispatch-context.js";
+import { useStaticDashboard } from "../reporting/static-dashboard.js";
+import {
+  joinSnapshotReaders,
+  settleSnapshotWork,
+} from "../git/snapshot-work.js";
+import { readInstalledPackageVersion } from "../checks/engine-identity.js";
+import { executionClassFor } from "../checks/applicability.js";
+import type { CheckAdapter, InspectionContext } from "../checks/adapter.js";
 import { configurationTextLines } from "../checks/configuration-presentation.js";
 import type {
   CheckApplicabilityDescription,
@@ -94,81 +98,91 @@ export interface ChecksCommandDependencies {
 
 interface CatalogEntry {
   readonly description: string;
-  readonly engine: CheckDescription["engine"];
-  readonly executionClass: ExecutionClass;
+  readonly engine: Omit<CheckDescription["engine"], "version"> &
+    ({ readonly packages: readonly string[] } | { readonly version: string });
   readonly limitation: string;
   readonly automaticFix?: string;
 }
 
-const eslint = { name: "ESLint", version: "9.39.5", license: "MIT" } as const;
+const eslint = {
+  name: "ESLint",
+  packages: ["eslint"],
+  license: "MIT",
+} as const;
 const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
   formatting: {
     description: "Checks staged formatting.",
-    engine: { name: "Prettier", version: "3.9.6", license: "MIT" },
-    executionClass: "lightweight",
+    engine: { name: "Prettier", packages: ["prettier"], license: "MIT" },
     limitation: "Reports formatting differences; scans do not modify files.",
     automaticFix: "zedbee fix formatting",
   },
   lint: {
     description: "Checks JavaScript and TypeScript correctness rules.",
     engine: eslint,
-    executionClass: "project-analysis",
     limitation:
       "Uses Zedbee's managed rules and never loads project ESLint configuration.",
   },
   types: {
     description: "Checks TypeScript diagnostics in the staged workspace.",
-    engine: { name: "TypeScript", version: "6.0.3", license: "Apache-2.0" },
-    executionClass: "project-analysis",
+    engine: {
+      name: "TypeScript",
+      packages: ["typescript"],
+      license: "Apache-2.0",
+    },
     limitation:
       "Requires a contained tsconfig.json and does not invent compiler settings.",
   },
   cyclomaticComplexity: {
     description: "Detects worsened cyclomatic complexity.",
     engine: eslint,
-    executionClass: "lightweight",
     limitation:
       "Measures syntax-level branch complexity, not runtime behavior.",
   },
   readabilityComplexity: {
     description: "Detects worsened readability complexity.",
-    engine: { name: "ESLint + Zedbee rule", version: "9.39.5", license: "MIT" },
-    executionClass: "lightweight",
+    engine: {
+      name: "ESLint + Zedbee rule",
+      packages: ["eslint"],
+      license: "MIT",
+    },
     limitation:
       "This managed heuristic is intentionally not a Sonar Cognitive Complexity implementation.",
   },
   structuralSecurity: {
     description: "Finds high-confidence insecure JavaScript structures.",
-    engine: { name: "ast-grep", version: "0.45.1", license: "MIT" },
-    executionClass: "lightweight",
+    engine: { name: "ast-grep", packages: ["@ast-grep/napi"], license: "MIT" },
     limitation:
       "The built-in rules do not provide Semgrep-style taint, inter-file, or framework analysis.",
   },
   secrets: {
     description: "Finds secrets in the exact staged snapshot.",
-    engine: { name: "Secretlint", version: "13.0.4", license: "MIT" },
-    executionClass: "project-analysis",
+    engine: {
+      name: "Secretlint",
+      packages: ["@secretlint/core"],
+      license: "MIT",
+    },
     limitation:
       "Scans changed regular UTF-8 files up to 1 MiB, not repository history; pattern matches can require human confirmation.",
   },
   duplication: {
     description: "Detects new and enlarged code clones.",
-    engine: { name: "jscpd", version: "5.4.2", license: "MIT" },
-    executionClass: "project-analysis",
+    engine: { name: "jscpd", packages: ["jscpd"], license: "MIT" },
     limitation:
       "Baseline comparison runs project analysis twice and small clones below managed thresholds are omitted.",
   },
   dependencyArchitecture: {
     description: "Detects new dependency graph violations.",
-    engine: { name: "dependency-cruiser", version: "18.7.2", license: "MIT" },
-    executionClass: "project-analysis",
+    engine: {
+      name: "dependency-cruiser",
+      packages: ["dependency-cruiser"],
+      license: "MIT",
+    },
     limitation:
       "Dynamic dependency construction can evade static graph resolution.",
   },
   deadCode: {
     description: "Detects newly unused code and dependency hygiene issues.",
-    engine: { name: "Knip", version: "6.32.2", license: "ISC" },
-    executionClass: "project-analysis",
+    engine: { name: "Knip", packages: ["knip"], license: "ISC" },
     limitation:
       "Default Vite HTML modules and Next conventions are supported; custom Vite roots, inline/plugin entries, and dynamic conventions require explicit entryPoints.",
   },
@@ -176,10 +190,9 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
     description: "Checks React and Hooks correctness.",
     engine: {
       name: "ESLint React plugins",
-      version: "7.37.5 / 7.1.1",
+      packages: ["eslint-plugin-react", "eslint-plugin-react-hooks"],
       license: "MIT",
     },
-    executionClass: "lightweight",
     limitation:
       "Calibrates from staged React dependency data and falls back to managed React 19.2 settings.",
   },
@@ -187,10 +200,9 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
     description: "Checks JSX accessibility for DOM React workspaces.",
     engine: {
       name: "eslint-plugin-jsx-a11y",
-      version: "6.10.2",
+      packages: ["eslint-plugin-jsx-a11y"],
       license: "MIT",
     },
-    executionClass: "lightweight",
     limitation:
       "Static JSX rules cannot prove the accessibility of runtime interaction.",
   },
@@ -201,11 +213,28 @@ const CATALOG: Readonly<Record<CheckId, CatalogEntry>> = Object.freeze({
       version: "v1",
       license: "PolyForm-Small-Business-1.0.0",
     },
-    executionClass: "network",
     limitation:
       "Online-only results depend on OSV availability, advisory freshness, and supported JavaScript lockfile data.",
   },
 });
+
+function describeManagedEngine(
+  checkId: CheckId,
+  versions: Map<string, string>,
+): CheckDescription["engine"] {
+  const { engine } = CATALOG[checkId];
+  if ("version" in engine) return Object.freeze({ ...engine });
+  const version = engine.packages
+    .map((name) => {
+      const cached = versions.get(name);
+      if (cached !== undefined) return cached;
+      const installed = readInstalledPackageVersion(name) ?? "Unavailable";
+      versions.set(name, installed);
+      return installed;
+    })
+    .join(" / ");
+  return Object.freeze({ name: engine.name, license: engine.license, version });
+}
 
 async function inspectConfiguredChecks(
   repositoryRoot: string,
@@ -215,10 +244,10 @@ async function inspectConfiguredChecks(
   const changeSet = await readStagedChangeSet(git);
   const snapshots = await buildSnapshotPair(repositoryRoot, git);
   try {
-    const [baselineInspection, targetInspection] = await Promise.all([
-      inspectRepository(snapshots.baselineDir),
-      inspectRepository(snapshots.targetDir),
-    ]);
+    const [baselineInspection, targetInspection] = await settleSnapshotWork(
+      () => inspectRepository(snapshots.baselineDir),
+      () => inspectRepository(snapshots.targetDir),
+    );
     const context: InspectionContext = {
       repositoryRoot,
       changeSet,
@@ -227,22 +256,15 @@ async function inspectConfiguredChecks(
       targetInspection,
     };
     const policyForFile = createFilePolicyResolver(config, changeSet);
-    const entries = await Promise.all(
+    const entries = await joinSnapshotReaders(
       DEFAULT_CHECK_ADAPTERS.map(async (adapter: CheckAdapter) => {
         const id = adapter.id as CheckId;
-        const inspectionConfig = immutableConfigurationSnapshot({
-          ...config,
-          checks: {
-            ...config.checks,
-            [id]: resolveInspectionPolicy(config, id),
-          },
-        }) as ResolvedConfig;
         const applicability = await adapter.inspect(
-          Object.freeze({ ...context, config: inspectionConfig }),
+          inspectionContext(context, id, resolveInspectionPolicy(config, id)),
         );
         const targets = applicability.applies
           ? (
-              await Promise.all(
+              await joinSnapshotReaders(
                 applicability.targets.map(async (target) =>
                   (await resolveScheduledTargetPolicy(
                     config,
@@ -270,7 +292,7 @@ async function inspectConfiguredChecks(
             : {
                 applicable: false,
                 targets: [],
-                executionClass: CATALOG[id].executionClass,
+                executionClass: executionClassFor(id),
                 reason: applicability.applies
                   ? "No applicable targets under the configured check policy"
                   : applicability.reason,
@@ -319,8 +341,6 @@ async function inspectSelectedChecks(
     await selected?.cleanup();
   }
 }
-
-const MINIMUM_DASHBOARD_WIDTH = 80;
 
 async function renderDashboard(
   checks: readonly CheckDescription[],
@@ -549,13 +569,14 @@ export async function executeChecksCommand(
       config.overrides.some(
         (override) => override.checks.formatting?.engine === "managed",
       );
+    const engineVersions = new Map<string, string>();
     const effectiveFormattingEngines = Object.freeze([
       ...(formattingUsesManaged
         ? [
             Object.freeze({
               kind: "managed" as const,
               projectRoot: ".",
-              ...CATALOG.formatting.engine,
+              ...describeManagedEngine("formatting", engineVersions),
             }),
           ]
         : []),
@@ -597,7 +618,7 @@ export async function executeChecksCommand(
         const runtime = applicability.get(id) ?? {
           applicable: false,
           targets: [],
-          executionClass: CATALOG[id].executionClass,
+          executionClass: executionClassFor(id),
           reason: "Check applicability was not reported.",
         };
         const policy = config.checks[id];
@@ -614,7 +635,7 @@ export async function executeChecksCommand(
           engine:
             id === "formatting"
               ? formattingEngine
-              : Object.freeze({ ...CATALOG[id].engine }),
+              : describeManagedEngine(id, engineVersions),
           ...(id === "formatting"
             ? { effectiveEngines: effectiveFormattingEngines }
             : {}),
@@ -633,12 +654,7 @@ export async function executeChecksCommand(
       }),
     );
     const result = Object.freeze({ exitCode: 0 as const, checks });
-    const dashboard =
-      options.format === "auto" &&
-      io.stdoutIsTTY &&
-      io.width >= MINIMUM_DASHBOARD_WIDTH &&
-      io.env.TERM !== "dumb" &&
-      io.env.CI === undefined;
+    const dashboard = useStaticDashboard(options.format, io);
     if (options.format === "json") {
       io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
     } else if (dashboard) {

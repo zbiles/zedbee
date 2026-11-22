@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { snapshotEntryPoints } from "./entry-configuration.js";
 import { join } from "node:path";
 import { CheckIncompleteError } from "../incomplete-error.js";
@@ -40,15 +41,6 @@ import { createKnipImportValidator } from "./import-boundary.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
-
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
 
 async function validateSnapshotInputs(
   snapshotRoot: string,
@@ -98,7 +90,7 @@ async function collectSide(
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
   }
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined)
     return {
       observations: Object.freeze([]),

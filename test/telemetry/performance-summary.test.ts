@@ -1,3 +1,5 @@
+import { CHECK_IDS } from "../../src/core/check-ids.js";
+import { TELEMETRY_CHECK_IDS } from "../../src/telemetry/schema.js";
 import { expect, test } from "vitest";
 import { summarizeScanPerformance } from "../../src/telemetry/performance-summary.js";
 import { ScanPerformanceRecorder } from "../../src/diagnostics/scan-performance.js";
@@ -32,4 +34,8 @@ test("failed discovery reports an unknown count rather than a large workload", (
     summarizeScanPerformance(undefined, { changedFileCount: null, checks: [] })
       .changed_file_count_bucket,
   ).toBe("unknown");
+});
+
+test("accounts explicitly for every current local check in the external allowlist", () => {
+  expect(new Set(CHECK_IDS)).toEqual(new Set(TELEMETRY_CHECK_IDS));
 });

@@ -6,6 +6,30 @@ import { runMergeScan } from "../../src/scan/merge-scan.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { createReport } from "../helpers/scan-report.js";
 
+const advisory: CheckResult = {
+  checkId: "types",
+  target: ".",
+  status: "incomplete",
+  durationMs: 0,
+  findings: [],
+  incompleteDisposition: "warn",
+  error: {
+    code: "ENGINE_FAILED",
+    message: "The advisory check could not run.",
+  },
+};
+
+const infrastructureFailure: CheckResult = {
+  checkId: "zedbee",
+  status: "incomplete",
+  durationMs: 0,
+  findings: [],
+  error: {
+    code: "CHECK_DISPATCH_FAILED",
+    message: "The parent scan could not dispatch checks.",
+  },
+};
+
 const skipped: CheckResult = {
   checkId: "types",
   target: ".",
@@ -16,7 +40,14 @@ const skipped: CheckResult = {
 };
 
 it.each([
-  { name: "missing", checks: [], code: "MERGE_COMPARISON_INCOMPLETE" },
+  { name: "missing", checks: [], code: "MERGE_COMPARISON_INCOMPLETE", exit: 2 },
+  { name: "advisory", checks: [advisory], code: "ENGINE_FAILED", exit: 0 },
+  {
+    name: "infrastructure",
+    checks: [infrastructureFailure],
+    code: "CHECK_DISPATCH_FAILED",
+    exit: 2,
+  },
   {
     name: "failed",
     checks: [
@@ -34,10 +65,11 @@ it.each([
       },
     ] satisfies CheckResult[],
     code: "ENGINE_FAILED",
+    exit: 2,
   },
 ])(
-  "does not treat a skipped comparison as proof that a $name parent analysis passed",
-  async ({ checks, code }) => {
+  "preserves the $name parent check disposition in the merge",
+  async ({ name, checks, code, exit }) => {
     const repo = await createGitRepository("zedbee-merge-failure-");
     await repo.write("base.txt", "base\n");
     await repo.commitAll("base");
@@ -56,7 +88,13 @@ it.each([
     ).toBe(0);
     const reports = [
       createReport({ baseline: main, checks: [skipped] }),
-      createReport({ baseline: incoming, checks }),
+      createReport({
+        baseline: incoming,
+        checks,
+        ...(name === "infrastructure"
+          ? { outcome: "incomplete", exitCode: 2 }
+          : {}),
+      }),
     ];
     let calls = 0;
     const report = await runMergeScan(
@@ -69,10 +107,12 @@ it.each([
       async () => reports[calls++]!,
     );
     expect(report).toMatchObject({
-      outcome: "incomplete",
-      exitCode: 2,
+      outcome: exit === 0 ? "pass" : "incomplete",
+      exitCode: exit,
       mergeParents: [main, incoming],
-      checks: [{ error: { code } }],
+      checks: expect.arrayContaining([
+        expect.objectContaining({ error: expect.objectContaining({ code }) }),
+      ]),
     });
   },
 );

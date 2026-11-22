@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import semver from "semver";
@@ -149,7 +150,7 @@ export async function resolveProjectEslintInstallation(
     if (!engineDeclared)
       throw new ProjectEslintFailureError("PROJECT_ESLINT_INSTALL_MISSING");
     const engine = await installed(root, projectRoot, "eslint");
-    if (engine.manifest.version !== "9.39.5")
+    if (engine.manifest.version !== SUPPORTED_PROJECT_ESLINT_VERSION)
       throw new ProjectEslintFailureError("PROJECT_ESLINT_VERSION_UNSUPPORTED");
     if (packages[engine.link]?.version !== engine.manifest.version)
       throw new ProjectEslintFailureError(
@@ -163,7 +164,7 @@ export async function resolveProjectEslintInstallation(
       throw new ProjectEslintFailureError(
         "PROJECT_ESLINT_INSTALL_INCONSISTENT",
       );
-    return { entry, version: "9.39.5" };
+    return { entry, version: SUPPORTED_PROJECT_ESLINT_VERSION };
   } catch (error) {
     if (error instanceof ProjectEslintFailureError) throw error;
     throw new ProjectEslintFailureError("PROJECT_ESLINT_INSTALL_INCONSISTENT");

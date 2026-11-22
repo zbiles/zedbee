@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
 import { chmod, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -546,7 +547,15 @@ describe("executeChecksCommand", () => {
           id: "secrets",
           engine: expect.objectContaining({
             name: "Secretlint",
-            version: "13.0.4",
+            version: JSON.parse(
+              readFileSync(
+                new URL(
+                  "../../node_modules/@secretlint/core/package.json",
+                  import.meta.url,
+                ),
+                "utf8",
+              ),
+            ).version,
             license: "MIT",
           }),
         }),

@@ -13,14 +13,16 @@ import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 
 function serializeFinding(
   finding: Finding,
-  installedCliCommand?: readonly string[],
+  installedCliCommand: readonly string[] | undefined,
+  includeSourceExcerpts: boolean,
 ): Record<string, unknown> {
   const sourceExcerpt =
-    finding.sourceExcerpt === undefined
+    finding.sourceExcerpt === undefined ||
+    (!includeSourceExcerpts && !finding.sourceExcerpt.redacted)
       ? undefined
       : {
           line: finding.sourceExcerpt.line,
-          ...(finding.sourceExcerpt.text === undefined
+          ...(!includeSourceExcerpts || finding.sourceExcerpt.text === undefined
             ? {}
             : { text: finding.sourceExcerpt.text }),
           redacted: finding.sourceExcerpt.redacted,
@@ -40,9 +42,7 @@ function serializeFinding(
             reasons: [...finding.messageRedaction.reasons],
           },
         }),
-    ...(finding.location === undefined
-      ? {}
-      : { location: finding.location }),
+    ...(finding.location === undefined ? {} : { location: finding.location }),
     ...(finding.remediation === undefined
       ? {}
       : { remediation: finding.remediation }),
@@ -52,10 +52,7 @@ function serializeFinding(
           automaticFix: {
             available: true,
             command: [
-              ...fixCommandArguments(
-                finding.automaticFix,
-                installedCliCommand,
-              ),
+              ...fixCommandArguments(finding.automaticFix, installedCliCommand),
             ],
             scope: finding.automaticFix.scope,
             writes: finding.automaticFix.writes,
@@ -73,7 +70,8 @@ function serializeFinding(
 
 function serializeCheck(
   check: CheckResult,
-  installedCliCommand?: readonly string[],
+  installedCliCommand: readonly string[] | undefined,
+  includeSourceExcerpts: boolean,
 ): Record<string, unknown> {
   const error =
     check.error === undefined
@@ -84,9 +82,7 @@ function serializeCheck(
             ? {}
             : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
-          ...(check.error.path === undefined
-            ? {}
-            : { path: check.error.path }),
+          ...(check.error.path === undefined ? {} : { path: check.error.path }),
           ...(check.error.parseFailures === undefined
             ? {}
             : { parseFailures: check.error.parseFailures }),
@@ -113,9 +109,7 @@ function serializeCheck(
     ...(check.comparisonContext === undefined
       ? {}
       : {
-          comparisonContext: sanitizeComparisonContext(
-            check.comparisonContext,
-          ),
+          comparisonContext: sanitizeComparisonContext(check.comparisonContext),
         }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
@@ -123,11 +117,11 @@ function serializeCheck(
     durationMs: check.durationMs,
     findings: [...check.findings]
       .sort(compareFindings)
-      .map((finding) => serializeFinding(finding, installedCliCommand)),
+      .map((finding) =>
+        serializeFinding(finding, installedCliCommand, includeSourceExcerpts),
+      ),
     ...(error === undefined ? {} : { error }),
-    ...(check.skipReason === undefined
-      ? {}
-      : { skipReason: check.skipReason }),
+    ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
     ...(check.incompleteDisposition === undefined
       ? {}
       : { incompleteDisposition: check.incompleteDisposition }),
@@ -154,7 +148,10 @@ function serializeCheck(
   };
 }
 
-export function renderJson(report: ScanReport): string {
+export function renderJson(
+  report: ScanReport,
+  { includeSourceExcerpts = true }: { includeSourceExcerpts?: boolean } = {},
+): string {
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
   const payload = {
@@ -207,7 +204,13 @@ export function renderJson(report: ScanReport): string {
           compareCodeUnits(left.checkId, right.checkId) ||
           compareCodeUnits(left.target ?? "", right.target ?? ""),
       )
-      .map((check) => serializeCheck(check, report.installedCliCommand)),
+      .map((check) =>
+        serializeCheck(
+          check,
+          report.installedCliCommand,
+          includeSourceExcerpts,
+        ),
+      ),
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }

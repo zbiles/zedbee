@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import type { FilePolicyResolver } from "../../config/file-policy.js";
@@ -13,10 +14,7 @@ import {
   capturedSourceRegistry,
   hasAnalysisSourceCapture,
 } from "../../inspection/source-capture.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import type {
   CheckObservationSet,
   CheckRunContext,
@@ -38,15 +36,6 @@ interface FailureCollection {
 }
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
-
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -60,7 +49,7 @@ async function collectSide(
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Structural security analysis failed.");
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   const candidates = new Set(workspace?.sourceFiles ?? []);
   if (side === "baseline") {
     for (const owner of inspection.workspaces) {

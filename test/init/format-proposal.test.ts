@@ -92,7 +92,7 @@ describe("setup formatting", () => {
     {
       /* Keep the tests policy rationale. */
       "files": ["tests/**"],
-      "checks": { "lint": "warn" }
+      "checks": { "formatting": "warn" }
     }
   ]
 }\n`;
@@ -111,13 +111,17 @@ describe("setup formatting", () => {
       expect(after).toContain("// Keep the docs policy rationale.");
       expect(after).toContain("/* Keep the tests policy rationale. */");
       const overrides = parse(after).overrides;
-      expect(overrides.slice(0, 2)).toEqual([
+      expect(
+        overrides.filter((entry: { generated?: string }) => !entry.generated),
+      ).toEqual([
         { files: ["docs/**"], checks: { secrets: "warn" } },
-        { files: ["tests/**"], checks: { lint: "warn" } },
+        { files: ["tests/**"], checks: { formatting: "warn" } },
       ]);
       const generated = overrides.filter(
         (entry: { generated?: string }) => entry.generated === "prettier-scope",
       );
+      if (formattingScope === "projects")
+        expect(overrides[1]).toBe(generated[0]);
       expect(generated).toEqual(
         formattingScope === "projects"
           ? [
@@ -130,12 +134,83 @@ describe("setup formatting", () => {
             ]
           : [],
       );
+      expect(
+        policy(after)("formatting", "tests/example.ts", "target").severity,
+      ).toBe("warn");
       const repeated = await formatInitProposal(
         createInitProposal(inspection, { ...selected, configBefore: after }),
       );
       expect(repeated.files[0]!.after).toBe(after);
     },
   );
+  it("keeps a standalone comment above a handwritten override when generated scope is removed", async () => {
+    const before = `{
+      "schemaVersion": 1,
+      "overrides": [
+        {"files":["**"],"excludeFiles":["web/**"],"checks":{"formatting":"off"},"generated":"prettier-scope"},
+        // Explanation for the handwritten override.
+        {"files":["docs/**"],"checks":{"formatting":"warn"}}
+      ]
+    }\n`;
+    const proposal = await formatInitProposal(
+      createInitProposal(inspection, {
+        ...options,
+        configBefore: before,
+        formatting: "managed",
+        formattingScope: "repository",
+      }),
+    );
+    expect(proposal.files[0]!.after).toContain(
+      "// Explanation for the handwritten override.",
+    );
+  });
+
+  it("respects updated Prettier import precedence inside the generated slots", () => {
+    const specific = {
+      files: ["src/**"],
+      excludeFiles: [],
+      settings: { tabWidth: 4 },
+    };
+    const general = {
+      files: ["**/*.ts"],
+      excludeFiles: [],
+      settings: { tabWidth: 6 },
+    };
+    const copied = {
+      ...options,
+      formatting: "copy" as const,
+      configBefore:
+        '{"schemaVersion":1,"overrides":[{"files":["docs/**"],"checks":{"lint":"warn"}}]}',
+      formattingImport: {
+        settings: {},
+        overrides: [specific, general],
+        limitations: [],
+      },
+    };
+    const initial = createInitProposal(inspection, copied).files[0]!.after;
+    const overrides = parse(initial).overrides;
+    const before = JSON.stringify({
+      ...parse(initial),
+      overrides: [overrides[1], overrides[0], overrides[2]],
+    });
+    const after = createInitProposal(inspection, {
+      ...copied,
+      configBefore: before,
+      formattingImport: {
+        ...copied.formattingImport,
+        overrides: [general, specific],
+      },
+    }).files[0]!.after;
+    expect(
+      parse(after).overrides.map(
+        (entry: { files: string[] }) => entry.files[0],
+      ),
+    ).toEqual(["**/*.ts", "docs/**", "src/**"]);
+    expect(
+      policy(after)("formatting", "src/example.ts", "target"),
+    ).toMatchObject({ settings: { tabWidth: 4 } });
+  });
+
   it("formats nested generated configuration before its exact preview and hashes", async () => {
     const proposal = await formatInitProposal(
       createInitProposal(inspection, options),

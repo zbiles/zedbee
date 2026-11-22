@@ -1,3 +1,4 @@
+import { changeSetFromMap } from "../git/change-set.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -54,19 +55,7 @@ function snapshotChangeSet(changeSet: ChangeSet): ChangeSet {
       ([path, file]) => [path, snapshotChangedFile(file)] as const,
     ),
   );
-  return Object.freeze({
-    files,
-    isEmpty: changeSet.isEmpty,
-    containsAddedLine(file: string, line: number) {
-      return (
-        files
-          .get(file.replaceAll("\\", "/"))
-          ?.addedRanges.some(
-            (range) => line >= range.start && line <= range.end,
-          ) ?? false
-      );
-    },
-  });
+  return Object.freeze(changeSetFromMap(files, changeSet.isEmpty));
 }
 
 function snapshotOverride(
@@ -211,7 +200,7 @@ export function adapterBaseContext(context: DispatchContext): DispatchContext {
 }
 
 export function inspectionContext(
-  context: DispatchContext,
+  context: InspectionContext,
   checkId: string,
   policy: ResolvedCheckPolicy,
 ): InspectionContext {
@@ -222,8 +211,8 @@ export function inspectionContext(
       ...context.config,
       checks: { ...context.config.checks, [checkId]: policy },
     }),
-    signal: context.signal,
-    filePolicyConfig: context.config,
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+    filePolicyConfig: context.filePolicyConfig ?? context.config,
     baselineInspection: context.baselineInspection,
     targetInspection: context.targetInspection,
     ...(context.mergeComparison === true ? { mergeComparison: true } : {}),

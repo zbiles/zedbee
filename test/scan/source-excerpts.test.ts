@@ -1,3 +1,4 @@
+import { renderJson } from "../../src/renderers/json.js";
 import * as fsPromises from "node:fs/promises";
 import {
   mkdir,
@@ -67,10 +68,7 @@ vi.mock("../../src/inspection/read-json.js", async (importOriginal) => {
 });
 
 import { shouldIncludeSourceExcerpts } from "../../src/scan/reporting-options.js";
-import {
-  enrichSourceExcerpts,
-  omitReportSourceExcerpts,
-} from "../../src/scan/source-excerpts.js";
+import { enrichSourceExcerpts } from "../../src/scan/source-excerpts.js";
 
 function finding(
   overrides: Omit<Partial<Finding>, "location"> & {
@@ -144,7 +142,7 @@ describe("shouldIncludeSourceExcerpts", () => {
   );
 });
 
-describe("omitReportSourceExcerpts", () => {
+describe("source-free JSON", () => {
   it("immutably removes ordinary source while preserving redaction markers and report metadata", () => {
     const ordinary = finding({
       sourceExcerpt: {
@@ -213,86 +211,32 @@ describe("omitReportSourceExcerpts", () => {
       },
     });
     const inputJson = JSON.stringify(report);
-    const omitted = omitReportSourceExcerpts(report);
-
-    expect(
-      omitted.checks[0]?.findings.map(({ sourceExcerpt }) => sourceExcerpt),
-    ).toEqual([undefined, { line: 8, redacted: true, truncated: false }]);
-    expect(
-      omitted.summary.findings.map(({ sourceExcerpt }) => sourceExcerpt),
-    ).toEqual([undefined, { line: 8, redacted: true, truncated: false }]);
-    expect(omitted.summary.findings[0]).toBe(omitted.checks[0]?.findings[0]);
-    expect(omitted.summary.findings[1]).toBe(omitted.checks[0]?.findings[1]);
-
-    const withoutSource = ({
-      sourceExcerpt: _sourceExcerpt,
-      ...rest
-    }: Finding): Omit<Finding, "sourceExcerpt"> => rest;
-    expect(omitted.checks[0]).toMatchObject({
-      checkId: "lint",
-      target: "workspace",
-      status: "incomplete",
-      durationMs: 7,
-      error: {
-        code: "LINT_FAILED",
-        message: "Lint could not complete.",
-        remediation: "Run lint directly.",
-      },
-      incompleteDisposition: "warn",
-    });
-    expect(omitted.checks[0]?.findings.map(withoutSource)).toEqual(
-      report.checks[0]?.findings.map(withoutSource),
+    const direct = JSON.parse(renderJson(report));
+    const omitted = JSON.parse(
+      renderJson(report, { includeSourceExcerpts: false }),
     );
-    expect({
-      schemaVersion: omitted.schemaVersion,
-      outcome: omitted.outcome,
-      exitCode: omitted.exitCode,
-      repositoryRoot: omitted.repositoryRoot,
-      mode: omitted.mode,
-      baseline: omitted.baseline,
-      target: omitted.target,
-      requestedBase: omitted.requestedBase,
-      changedFileCount: omitted.changedFileCount,
-      startedAt: omitted.startedAt,
-      durationMs: omitted.durationMs,
-      networkDisclosures: omitted.networkDisclosures,
-      presentationPolicy: omitted.presentationPolicy,
-    }).toEqual({
-      schemaVersion: 1,
-      outcome: "incomplete",
-      exitCode: 2,
-      repositoryRoot: "/repo",
-      mode: "base",
-      baseline: "1111111111111111111111111111111111111111",
-      target: "2222222222222222222222222222222222222222",
-      requestedBase: "origin/main",
-      changedFileCount: 2,
-      startedAt: "2026-08-15T00:00:00.000Z",
-      durationMs: 15,
-      networkDisclosures: [
+    expect(omitted).toEqual({
+      ...direct,
+      checks: [
         {
-          checkId: "vulnerabilities",
-          target: ".",
-          services: ["api.osv.dev"],
-          metadata: ["exact versions"],
+          ...direct.checks[0],
+          findings: direct.checks[0].findings.map(
+            ({ sourceExcerpt, ...finding }: Finding) =>
+              sourceExcerpt?.redacted === true
+                ? { ...finding, sourceExcerpt }
+                : finding,
+          ),
         },
       ],
-      presentationPolicy: {
-        terminalFindingLimit: "all",
-        temporaryReportMaxAge: "7d",
-        persistSourceExcerpts: true,
-        agentGuidance: EMPTY_AGENT_GUIDANCE,
-      },
     });
+    expect(JSON.stringify(omitted)).not.toContain("export const visible");
+    expect(JSON.stringify(omitted)).not.toContain("SECRET-MUST-NOT-SURVIVE");
+    expect(omitted.checks[0].findings).toContainEqual(
+      expect.objectContaining({
+        sourceExcerpt: { line: 8, redacted: true, truncated: false },
+      }),
+    );
     expect(JSON.stringify(report)).toBe(inputJson);
-    expect(Object.isFrozen(report.presentationPolicy)).toBe(false);
-    expect(Object.isFrozen(report.checks[0]?.findings[0])).toBe(false);
-    expect(omitted).not.toBe(report);
-    expect(Object.isFrozen(omitted)).toBe(true);
-    expect(Object.isFrozen(omitted.presentationPolicy)).toBe(true);
-    expect(Object.isFrozen(omitted.networkDisclosures[0]?.services)).toBe(true);
-    expect(Object.isFrozen(omitted.checks[0]?.error)).toBe(true);
-    expect(Object.isFrozen(omitted.summary.findings)).toBe(true);
   });
 });
 

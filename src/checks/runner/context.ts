@@ -1,3 +1,4 @@
+import { changeSetFromMap } from "../../git/change-set.js";
 import type { CheckRunContext } from "../adapter.js";
 import type { ChangedFile } from "../../git/change-set.js";
 import { createFilePolicyResolver } from "../../config/file-policy.js";
@@ -36,19 +37,7 @@ export function restoreCheckContext(
 ): CheckRunContext {
   const { filePolicyConfig, ...rest } = input;
   const files = new Map(input.changeSet.files);
-  const changeSet = {
-    files,
-    isEmpty: input.changeSet.isEmpty,
-    containsAddedLine(file: string, line: number) {
-      return (
-        files
-          .get(file.replaceAll("\\", "/"))
-          ?.addedRanges.some(
-            (range) => line >= range.start && line <= range.end,
-          ) ?? false
-      );
-    },
-  };
+  const changeSet = changeSetFromMap(files, input.changeSet.isEmpty);
   return {
     ...rest,
     changeSet,

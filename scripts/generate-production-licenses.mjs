@@ -1,3 +1,4 @@
+import { formatLicenseDenials } from "./production-license-inventory.mjs";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,12 +14,7 @@ export async function generateProductionLicenseArtifacts(root) {
 
 function reportDenials(denied) {
   process.stderr.write("Production license generation failed:\n");
-  for (const { packageMetadata, reason } of denied) {
-    process.stderr.write(
-      `- ${packageMetadata.name ?? "unknown"}@${packageMetadata.version ?? "unknown"}: ${reason}\n` +
-        `  path: ${packageMetadata.dependencyPath.join(" > ")}\n`,
-    );
-  }
+  process.stderr.write(formatLicenseDenials(denied));
 }
 
 async function main() {

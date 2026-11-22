@@ -84,7 +84,7 @@ export function managedSettingKeys(checkId: CheckId): readonly string[] {
 }
 
 export function isConfigurableRuleCheckId(
-  checkId: CheckId,
+  checkId: string,
 ): checkId is ConfigurableRuleCheckId {
   return CONFIGURABLE_RULE_CHECK_IDS.includes(
     checkId as ConfigurableRuleCheckId,

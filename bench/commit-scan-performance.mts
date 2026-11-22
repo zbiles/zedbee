@@ -26,6 +26,7 @@ export interface CommitBenchmarkOptions {
   repository: string;
   baseline: string;
   target: string;
+  comparison?: "commit" | "merge";
   output: string;
   execution: "local" | "service";
   cache: "uncached" | "fresh" | "warm";
@@ -42,6 +43,7 @@ export function parseBenchmarkArguments(
     "repository",
     "baseline",
     "target",
+    "comparison",
     "output",
     "execution",
     "cache",
@@ -65,12 +67,14 @@ export function parseBenchmarkArguments(
   }
   for (const key of ["cli", "repository", "baseline", "target", "output"])
     if (!fields.has(key)) throw Error(`Missing benchmark option: ${key}`);
+  const comparison = fields.get("comparison") ?? "commit";
   const execution = fields.get("execution") ?? "local",
     cache = fields.get("cache") ?? "fresh";
   const samples = Number(fields.get("samples") ?? "3"),
     sampling = fields.get("process-sampling") ?? "on",
     loadLabel = fields.get("load-label") ?? "idle";
   if (
+    !["commit", "merge"].includes(comparison) ||
     !["local", "service"].includes(execution) ||
     !["uncached", "fresh", "warm"].includes(cache) ||
     !Number.isSafeInteger(samples) ||
@@ -86,6 +90,7 @@ export function parseBenchmarkArguments(
     baseline: fields.get("baseline")!,
     target: fields.get("target")!,
     output: resolve(fields.get("output")!),
+    comparison: comparison === "merge" ? "merge" : "commit",
     execution: execution as CommitBenchmarkOptions["execution"],
     cache: cache as CommitBenchmarkOptions["cache"],
     samples,
@@ -159,8 +164,7 @@ async function ownedProcesses(roots: readonly number[]): Promise<ProcessRow[]> {
   }
   return rows.slice(0, 4096);
 }
-export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
-  const startedAt = new Date().toISOString();
+async function validateBenchmarkFixture(options: CommitBenchmarkOptions) {
   const cli = await realpath(options.cli),
     repository = await realpath(options.repository),
     installation = dirname(dirname(cli));
@@ -194,7 +198,214 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
       "The disposable repository HEAD must be the requested baseline.",
     );
   await git(["diff", "--cached", "--quiet", target, "--"]);
+  const comparison = options.comparison ?? "commit";
+  const parents = (await git(["show", "-s", "--format=%P", target])).split(" ");
+  if (comparison === "merge" && (parents.length < 2 || parents[0] !== baseline))
+    throw Error(
+      "The target must be a merge commit whose first parent is the baseline.",
+    );
+  const mergeHeadPath = resolve(
+    repository,
+    await git(["rev-parse", "--git-path", "MERGE_HEAD"]),
+  );
+  const noMergeHead = async () => {
+    try {
+      await readFile(mergeHeadPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    throw Error("The benchmark checkout must have no active merge.");
+  };
+  await noMergeHead();
+  const comparisonParents = comparison === "merge" ? parents : [baseline];
+  const parentPaths = await Promise.all(
+    comparisonParents.map(async (parent) =>
+      (await git(["diff", "--name-only", "-z", parent, target, "--"]))
+        .split("\0")
+        .filter(Boolean),
+    ),
+  );
   const indexBefore = await git(["diff", "--cached", "--raw"]);
+  return {
+    cli,
+    repository,
+    installation,
+    output,
+    git,
+    baseline,
+    target,
+    comparison,
+    parents,
+    noMergeHead,
+    comparisonParents,
+    parentPaths,
+    indexBefore,
+  };
+}
+
+async function runBenchmarkSample(
+  label: string,
+  {
+    options,
+    invoke,
+    stop,
+    cacheRoot,
+    sourceFreeMessages,
+    comparison,
+    comparisonParents,
+    output,
+  }: {
+    options: CommitBenchmarkOptions;
+    invoke: (
+      args: string[],
+      scan?: boolean,
+    ) => Promise<{
+      stdout: string;
+      stderr: string;
+      exitCode?: number | undefined;
+    }> & { pid?: number | undefined };
+    stop: () => Promise<void>;
+    cacheRoot: string;
+    sourceFreeMessages: boolean;
+    comparison: "commit" | "merge";
+    comparisonParents: readonly string[];
+    output: string;
+  },
+) {
+  if (options.cache !== "warm") {
+    await stop();
+    await rm(cacheRoot, { recursive: true, force: true });
+  }
+  const args = [
+    "scan",
+    "--hook-invocation",
+    ...(comparison === "merge" ? ["--merge"] : []),
+    "--format",
+    "json",
+    "--diagnostics",
+    "--no-source",
+    ...(sourceFreeMessages ? ["--diagnostic-messages", "source-free"] : []),
+    "--no-color",
+    ...(options.execution === "local" ? ["--no-service"] : []),
+    ...(options.cache === "uncached" ? ["--no-cache"] : []),
+  ];
+  const roots: number[] = [];
+  let serviceOwnershipKnown = options.execution !== "service";
+  if (options.execution === "service") {
+    try {
+      const status = JSON.parse(
+        (await invoke(["service", "status", "--format", "json"])).stdout,
+      );
+      if (status.state === "running" && Number.isSafeInteger(status.pid)) {
+        roots.push(status.pid);
+        serviceOwnershipKnown = true;
+      }
+    } catch {
+      /* A stopped service has no seed. */
+    }
+  }
+  const processes = new Map<string, ProcessRow>();
+  let pending: Promise<void> | undefined,
+    partial =
+      process.platform === "win32" ||
+      !options.processSampling ||
+      !serviceOwnershipKnown;
+  const observe = () => {
+    if (pending) return;
+    pending = ownedProcesses(roots)
+      .then((rows) => {
+        for (const row of rows) {
+          if (processes.size >= 4096) {
+            partial = true;
+            break;
+          }
+          processes.set(`${row.pid}:${row.parent}:${row.role}`, row);
+        }
+      })
+      .catch(() => {
+        partial = true;
+      })
+      .finally(() => {
+        pending = undefined;
+      });
+  };
+  const started = performance.now(),
+    child = invoke(args, true);
+  if (child.pid !== undefined) roots.push(child.pid);
+  const timer = options.processSampling
+    ? setInterval(observe, 1000)
+    : undefined;
+  if (options.processSampling) observe();
+  let result: Awaited<typeof child>;
+  let finished = started;
+  try {
+    result = await child;
+    finished = performance.now();
+  } finally {
+    if (timer) clearInterval(timer);
+    await pending;
+  }
+  const wallMs = finished - started;
+  let report: {
+    durationMs?: number;
+    outcome?: string;
+    checks?: { status?: string }[];
+    mergeParents?: string[];
+  };
+  try {
+    report = JSON.parse(result.stdout);
+  } catch {
+    throw Error("Selected CLI did not produce a canonical JSON report.");
+  }
+  if (
+    !["pass", "blocked", "incomplete"].includes(report.outcome ?? "") ||
+    !Array.isArray(report.checks)
+  )
+    throw Error("Invalid benchmark scan report.");
+  if (
+    (comparison === "merge" &&
+      JSON.stringify(report.mergeParents) !==
+        JSON.stringify(comparisonParents)) ||
+    (comparison === "commit" && report.mergeParents !== undefined)
+  ) {
+    throw Error("Benchmark scan selected the wrong comparison parents.");
+  }
+  await writeFile(join(output, `${label}.json`), result.stdout);
+  await writeFile(join(output, `${label}-diagnostics.txt`), result.stderr);
+  return {
+    wallMs,
+    scanMs: typeof report.durationMs === "number" ? report.durationMs : null,
+    exitCode: result.exitCode ?? null,
+    outcome: report.outcome!,
+    completedChecks: report.checks.filter(
+      (check) => check.status === "completed",
+    ).length,
+    incompleteChecks: report.checks.filter(
+      (check) => check.status === "incomplete",
+    ).length,
+    processes: [...processes.values()],
+    processSamplingPartial: partial,
+  };
+}
+
+export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
+  const startedAt = new Date().toISOString();
+  const {
+    cli,
+    repository,
+    installation,
+    output,
+    git,
+    baseline,
+    target,
+    comparison,
+    parents,
+    noMergeHead,
+    comparisonParents,
+    parentPaths,
+    indexBefore,
+  } = await validateBenchmarkFixture(options);
   const digest = await installationDigest(installation);
   const manifest = JSON.parse(
     await readFile(join(installation, "package.json"), "utf8"),
@@ -215,10 +426,21 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
     TEMP: runtime,
     XDG_CACHE_HOME: join(runtime, "cache"),
   };
-  const invoke = (args: string[]) =>
+  for (const key of Object.keys(env))
+    if (key.startsWith("GITHEAD_")) delete env[key as keyof typeof env];
+  const invoke = (args: string[], scan = false) =>
     execa(process.execPath, [cli, ...args], {
       cwd: repository,
-      env,
+      extendEnv: false,
+      env:
+        scan && comparison === "merge"
+          ? {
+              ...env,
+              ...Object.fromEntries(
+                parents.slice(1).map((parent) => [`GITHEAD_${parent}`, parent]),
+              ),
+            }
+          : env,
       reject: false,
       stdin: "ignore",
       timeout: 600_000,
@@ -237,6 +459,8 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
     scanMs: number | null;
     exitCode: number | null;
     outcome: string;
+    completedChecks: number;
+    incompleteChecks: number;
     processes: ProcessRow[];
     processSamplingPartial: boolean;
   }[] = [];
@@ -249,107 +473,17 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
       throw Error(
         "This CLI installation does not support uncached CLI measurements; use fresh/warm mode for the historical reference.",
       );
-    const run = async (label: string) => {
-      if (options.cache !== "warm") {
-        await stop();
-        await rm(env.XDG_CACHE_HOME, { recursive: true, force: true });
-      }
-      const args = [
-        "scan",
-        "--hook-invocation",
-        "--format",
-        "json",
-        "--diagnostics",
-        "--no-source",
-        ...(sourceFreeMessages ? ["--diagnostic-messages", "source-free"] : []),
-        "--no-color",
-        ...(options.execution === "local" ? ["--no-service"] : []),
-        ...(options.cache === "uncached" ? ["--no-cache"] : []),
-      ];
-      const roots: number[] = [];
-      let serviceOwnershipKnown = options.execution !== "service";
-      if (options.execution === "service") {
-        try {
-          const status = JSON.parse(
-            (await invoke(["service", "status", "--format", "json"])).stdout,
-          );
-          if (status.state === "running" && Number.isSafeInteger(status.pid)) {
-            roots.push(status.pid);
-            serviceOwnershipKnown = true;
-          }
-        } catch {
-          /* A stopped service has no seed. */
-        }
-      }
-      const processes = new Map<string, ProcessRow>();
-      let pending: Promise<void> | undefined,
-        partial =
-          process.platform === "win32" ||
-          !options.processSampling ||
-          !serviceOwnershipKnown;
-      const observe = () => {
-        if (pending) return;
-        pending = ownedProcesses(roots)
-          .then((rows) => {
-            for (const row of rows) {
-              if (processes.size >= 4096) {
-                partial = true;
-                break;
-              }
-              processes.set(`${row.pid}:${row.parent}:${row.role}`, row);
-            }
-          })
-          .catch(() => {
-            partial = true;
-          })
-          .finally(() => {
-            pending = undefined;
-          });
-      };
-      const started = performance.now(),
-        child = invoke(args);
-      if (child.pid !== undefined) roots.push(child.pid);
-      const timer = options.processSampling
-        ? setInterval(observe, 1000)
-        : undefined;
-      if (options.processSampling) observe();
-      let result: Awaited<typeof child>;
-      let finished = started;
-      try {
-        result = await child;
-        finished = performance.now();
-      } finally {
-        if (timer) clearInterval(timer);
-        await pending;
-      }
-      const wallMs = finished - started;
-      let report: {
-        durationMs?: number;
-        outcome?: string;
-        checks?: unknown[];
-      };
-      try {
-        report = JSON.parse(result.stdout);
-      } catch {
-        throw Error("Selected CLI did not produce a canonical JSON report.");
-      }
-      if (
-        !["pass", "blocked", "incomplete"].includes(report.outcome ?? "") ||
-        !Array.isArray(report.checks)
-      )
-        throw Error("Invalid benchmark scan report.");
-      await writeFile(join(output, `${label}.json`), result.stdout);
-      await writeFile(join(output, `${label}-diagnostics.txt`), result.stderr);
-      return {
-        wallMs,
-        scanMs:
-          typeof report.durationMs === "number" ? report.durationMs : null,
-        exitCode: result.exitCode ?? null,
-        outcome: report.outcome!,
-        processes: [...processes.values()],
-        processSamplingPartial: partial,
-      };
-    };
+    const run = (label: string) =>
+      runBenchmarkSample(label, {
+        options,
+        invoke,
+        stop,
+        cacheRoot: env.XDG_CACHE_HOME,
+        sourceFreeMessages,
+        comparison,
+        comparisonParents,
+        output,
+      });
     if (options.cache === "warm") await run("prime");
     for (let i = 0; i < options.samples; i++)
       samples.push(await run(`sample-${i + 1}`));
@@ -361,6 +495,7 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
       throw Error(
         "Benchmark source/index or installation changed during measurement; discard this run.",
       );
+    await noMergeHead();
     const ordered = samples.map((x) => x.wallMs).sort((a, b) => a - b),
       middle = Math.floor(ordered.length / 2);
     const result = {
@@ -374,6 +509,9 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
       baseline,
       target,
       runtime: { node: process.version, platform: process.platform },
+      comparison,
+      parentChangedPathCounts: parentPaths.map((paths) => paths.length),
+      unionChangedPathCount: new Set(parentPaths.flat()).size,
       execution: options.execution,
       cache: options.cache,
       loadLabel: options.loadLabel,

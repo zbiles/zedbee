@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { isAbsolute, posix } from "node:path";
 import { GitClient } from "../../../git/client.js";
-import { canonicalTrustRoot } from "../../prettier/project-trust.js";
+import { canonicalTrustRoot } from "../../../git/common-directory.js";
 import { ProjectEslintFailureError } from "./types.js";
 
 export const PROJECT_ESLINT_PERMIT_BRAND: unique symbol = Symbol(

@@ -4,8 +4,11 @@ import { expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { resolveHookCommand } from "../../src/hooks/command.js";
 import { mergeHookCommand, updateHuskyHook } from "../../src/hooks/husky.js";
-import { getHookUpdateNotice } from "../../src/hooks/update-notice.js";
+import { inspectHookMaintenance } from "../../src/hooks/update-notice.js";
 import { defaultDiagnosticProbe } from "../../src/doctor/diagnostics.js";
+
+const getHookUpdateNotice = async (root: string) =>
+  (await inspectHookMaintenance(root)).hookUpdate;
 
 const old = "npx --no-install zedbee scan --hook-invocation";
 

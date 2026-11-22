@@ -39,9 +39,10 @@ export function resolveAgentNextStep(
   guidance: AgentGuidance,
 ): string {
   const nextStep = resolveScanNextStep(report, guidance);
-  if (nextStep === "" || hookUpdateNotice(report) === undefined)
-    return nextStep;
-  return `${nextStep} Recommend updating Swarm’s hooks and offer to run zedbee init for the user.`;
+  const notice = hookUpdateNotice(report);
+  if (nextStep === "" || notice === undefined) return nextStep;
+  const checkout = "hookOwner" in notice ? " in the main checkout" : "";
+  return `${nextStep} Recommend updating Swarm’s hooks and offer to run zedbee init${checkout} for the user.`;
 }
 
 function resolveScanNextStep(

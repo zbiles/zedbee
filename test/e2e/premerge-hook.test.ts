@@ -292,6 +292,46 @@ describe("installed pre-merge-commit hooks", () => {
     expect(await setup.observedHooks()).toBe("pre-commit:MERGE_HEAD=present\n");
   });
 
+  it("blocks an invalid staged config and preserves both versions through ordinary and merge hooks", async () => {
+    const { repository, git, commitFixture, invoke } = await fixture();
+    await git(["switch", "incoming"]);
+    await repository.write("incoming.ts", "export const incoming = 1;\n");
+    await commitFixture("incoming");
+    await git(["switch", "main"]);
+    const config = ".zedbeerc.jsonc";
+    const valid = await readFile(join(repository.root, config), "utf8");
+    await repository.write(config, "invalid staged config\n");
+    await git(["add", config]);
+    await repository.write(config, valid);
+    const staged = (await git(["rev-parse", `:${config}`])).stdout;
+    const ordinary = await invoke([
+      "scan",
+      "--hook-invocation",
+      "--format",
+      "json",
+    ]);
+    expect(ordinary.exitCode).toBe(2);
+    expect(JSON.parse(ordinary.stdout).checks[0].error.code).toBe(
+      "CONFIG_INVALID",
+    );
+    expect((await git(["rev-parse", `:${config}`])).stdout).toBe(staged);
+    expect(await readFile(join(repository.root, config), "utf8")).toBe(valid);
+
+    await git(["add", config]);
+    const merge = await git(["merge", "--no-ff", "--no-commit", "incoming"]);
+    expect(merge.exitCode, merge.stderr).toBe(0);
+    await repository.write(config, "invalid staged config\n");
+    await git(["add", config]);
+    await repository.write(config, valid);
+    const head = (await git(["rev-parse", "HEAD"])).stdout;
+    const committed = await git(["commit", "-m", "merge"]);
+    expect(committed.exitCode).not.toBe(0);
+    expect(committed.stderr + committed.stdout).toContain("CONFIG INVALID");
+    expect((await git(["rev-parse", "HEAD"])).stdout).toBe(head);
+    expect((await git(["rev-parse", `:${config}`])).stdout).toBe(staged);
+    expect(await readFile(join(repository.root, config), "utf8")).toBe(valid);
+  });
+
   it("allows inherited incoming debt when a conflict is resolved with git commit", async () => {
     const setup = await fixture();
     const { repository, git, commitFixture } = setup;
