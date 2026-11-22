@@ -169,6 +169,26 @@ describe("prepareTerminalPresentation", () => {
     });
   });
 
+  it("preserves public metadata in a saved report with excerpts disabled", async () => {
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/complete.json",
+      warnings: [],
+    });
+    const report = reportWithFindings(0, {
+      hookUpdate: {
+        code: "HOOK_UPDATE_NEEDED",
+        message: "Swarm’s hooks need updating.",
+        remediation: "Run zedbee init to refresh them.",
+      },
+      changeSummary: { added: 0, modified: 0, deleted: 1, renamed: 0 },
+    });
+    await prepareTerminalPresentation(report, options(store, "auto", "text"));
+    const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
+    expect(JSON.parse(request.json ?? "")).toEqual(
+      JSON.parse(renderJson(report)),
+    );
+  });
+
   it("stores complete canonical JSON before selecting the ordered preview", async () => {
     const { store, maintain } = recordingStore({
       reportPath: "/tmp/zedbee/complete.json",
@@ -260,11 +280,13 @@ describe("prepareTerminalPresentation", () => {
       reportPath: "/tmp/zedbee/complete.json",
       warnings: [],
     });
-    const report = reportWithFindings(26);
+    const mergeParents = ["a".repeat(40), "b".repeat(40)];
+    const report = reportWithFindings(26, { mergeParents });
 
     await prepareTerminalPresentation(report, options(store, "auto", "ink"));
 
     const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
+    expect(JSON.parse(request.json!)).toMatchObject({ mergeParents });
     expect(request.json).not.toContain("const value");
     expect(request.json).not.toContain('"text"');
   });

@@ -17,7 +17,10 @@ import type {
 import type { ScanEvent } from "./events.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { incompleteResult } from "./incomplete-result.js";
-import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "./incomplete-error.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { checkLabel } from "../core/check-label.js";
 import type { ObservationCache } from "../cache/store.js";
@@ -212,26 +215,7 @@ export async function prepareCheckDispatch(
               ? incompleteResult({
                   checkId: adapter.id,
                   durationMs: 0,
-                  code: error.code,
-                  message: error.message,
-                  remediation: error.remediation,
-                  ...(error.diagnostic === undefined
-                    ? {}
-                    : { diagnostic: error.diagnostic }),
-                  ...(error.path === undefined ? {} : { path: error.path }),
-                  ...(error.paths === undefined ? {} : { paths: error.paths }),
-                  ...(error.parseFailures === undefined
-                    ? {}
-                    : { parseFailures: error.parseFailures }),
-                  ...(error.snapshot === undefined
-                    ? {}
-                    : { snapshot: error.snapshot }),
-                  ...(error.projectPaths === undefined
-                    ? {}
-                    : { projectPaths: error.projectPaths }),
-                  ...(error.disposition === undefined
-                    ? {}
-                    : { disposition: error.disposition }),
+                  ...incompleteErrorDetails(error),
                 })
               : incompleteResult({
                   checkId: adapter.id,

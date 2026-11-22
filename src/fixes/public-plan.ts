@@ -13,6 +13,10 @@ import type {
   WorkingFilePreview,
 } from "./types.js";
 
+function fixesFor(item: FixPlanItem): number {
+  return item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
+}
+
 export function publicPlan(
   selected: readonly FixableCheckId[],
   items: readonly FixPlanItem[],
@@ -20,8 +24,6 @@ export function publicPlan(
   checks: readonly FixPlanCheck[],
   decision?: PolicyDecision,
 ): FixPlan {
-  const fixesFor = (item: FixPlanItem): number =>
-    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const applicableFindingIds = new Set(
     items
       .filter((item) => item.status !== "skipped")
@@ -104,8 +106,6 @@ export function planChecks(
   executions: readonly CheckExecutionResult[],
   items: readonly FixPlanItem[],
 ): readonly FixPlanCheck[] {
-  const fixesFor = (item: FixPlanItem): number =>
-    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   return Object.freeze(
     selected.map((checkId): FixPlanCheck => {
       const checkExecutions = executions.filter(
@@ -178,69 +178,69 @@ export function planChecks(
 }
 
 /** Serializes only the public, source-free plan projection. */
-export function renderFixPlanJson(plan: FixPlan): string {
-  return `${JSON.stringify(
-    {
-      schemaVersion: plan.schemaVersion,
-      target: plan.target,
-      selectedChecks: [...plan.selectedChecks],
-      exitCode: plan.exitCode,
-      ...(plan.checks === undefined
-        ? {}
-        : {
-            checks: plan.checks.map((check) => ({
-              checkId: check.checkId,
-              status: check.status,
-              fixes: check.fixes,
-              issues: check.issues.map((issue) => ({
-                code: issue.code,
-                ...(issue.diagnostic === undefined
-                  ? {}
-                  : {
-                      diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic),
-                    }),
-                message: issue.message,
-                ...(issue.path === undefined ? {} : { path: issue.path }),
-                ...(issue.remediation === undefined
-                  ? {}
-                  : { remediation: issue.remediation }),
-              })),
-              ...(check.reason === undefined ? {} : { reason: check.reason }),
+export function projectPublicFixPlan(plan: FixPlan): FixPlan {
+  return {
+    schemaVersion: plan.schemaVersion,
+    target: plan.target,
+    selectedChecks: [...plan.selectedChecks],
+    exitCode: plan.exitCode,
+    ...(plan.checks === undefined
+      ? {}
+      : {
+          checks: plan.checks.map((check) => ({
+            checkId: check.checkId,
+            status: check.status,
+            fixes: check.fixes,
+            issues: check.issues.map((issue) => ({
+              code: issue.code,
+              ...(issue.diagnostic === undefined
+                ? {}
+                : {
+                    diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic),
+                  }),
+              message: issue.message,
+              ...(issue.path === undefined ? {} : { path: issue.path }),
+              ...(issue.remediation === undefined
+                ? {}
+                : { remediation: issue.remediation }),
             })),
-          }),
-      summary: {
-        fixes: plan.summary.fixes,
-        files: plan.summary.files,
-        blocking: plan.summary.blocking,
-        warnings: plan.summary.warnings,
-        skipped: plan.summary.skipped,
-      },
-      files: plan.files.map((file) => ({
-        path: file.path,
-        fixes: file.fixes,
-        ...(file.applicableFixes === undefined
-          ? {}
-          : { applicableFixes: file.applicableFixes }),
-        ...(file.skippedFixes === undefined
-          ? {}
-          : { skippedFixes: file.skippedFixes }),
-        ...(file.status === undefined ? {} : { status: file.status }),
-        ...(file.reasons === undefined ? {} : { reasons: [...file.reasons] }),
-        hasUnstagedChanges: file.hasUnstagedChanges,
-      })),
-      items: plan.items.map((item) => ({
-        checkId: item.checkId,
-        file: item.file,
-        findingIds: [...item.findingIds],
-        scope: item.scope,
-        ...(item.fixes === undefined ? {} : { fixes: item.fixes }),
-        blocking: item.blocking,
-        warnings: item.warnings,
-        ...(item.status === undefined ? {} : { status: item.status }),
-        ...(item.reason === undefined ? {} : { reason: item.reason }),
-      })),
+            ...(check.reason === undefined ? {} : { reason: check.reason }),
+          })),
+        }),
+    summary: {
+      fixes: plan.summary.fixes,
+      files: plan.summary.files,
+      blocking: plan.summary.blocking,
+      warnings: plan.summary.warnings,
+      skipped: plan.summary.skipped,
     },
-    null,
-    2,
-  )}\n`;
+    files: plan.files.map((file) => ({
+      path: file.path,
+      fixes: file.fixes,
+      ...(file.applicableFixes === undefined
+        ? {}
+        : { applicableFixes: file.applicableFixes }),
+      ...(file.skippedFixes === undefined
+        ? {}
+        : { skippedFixes: file.skippedFixes }),
+      ...(file.status === undefined ? {} : { status: file.status }),
+      ...(file.reasons === undefined ? {} : { reasons: [...file.reasons] }),
+      hasUnstagedChanges: file.hasUnstagedChanges,
+    })),
+    items: plan.items.map((item) => ({
+      checkId: item.checkId,
+      file: item.file,
+      findingIds: [...item.findingIds],
+      scope: item.scope,
+      ...(item.fixes === undefined ? {} : { fixes: item.fixes }),
+      blocking: item.blocking,
+      warnings: item.warnings,
+      ...(item.status === undefined ? {} : { status: item.status }),
+      ...(item.reason === undefined ? {} : { reason: item.reason }),
+    })),
+  };
+}
+
+export function renderFixPlanJson(plan: FixPlan): string {
+  return `${JSON.stringify(projectPublicFixPlan(plan), null, 2)}\n`;
 }

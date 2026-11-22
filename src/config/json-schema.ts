@@ -1,3 +1,4 @@
+import { CONFIGURABLE_RULE_CHECK_IDS } from "./settings-registry.js";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,11 +17,6 @@ const schemaPath = resolve(
   "../../schema/zedbee.schema.json",
 );
 
-const RULE_CHECK_IDS = [
-  "lint",
-  "reactCorrectness",
-  "reactAccessibility",
-] as const satisfies readonly RuleCheckId[];
 const RULE_CONFIGURATION_DEFINITION = "managedEslintRuleConfiguration";
 
 function ruleSeverityJsonSchema(): ConfigJsonSchema {
@@ -79,7 +75,7 @@ function patchRuleSettingsSchema(
 ): void {
   if (checksProperties === undefined) return;
 
-  for (const checkId of RULE_CHECK_IDS) {
+  for (const checkId of CONFIGURABLE_RULE_CHECK_IDS) {
     const policySchema = checksProperties[checkId] as
       { anyOf?: unknown[] } | undefined;
     const objectSchema = policySchema?.anyOf?.find(

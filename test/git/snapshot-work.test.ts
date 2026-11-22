@@ -1,3 +1,4 @@
+import { joinSnapshotReaders } from "../../src/git/snapshot-work.js";
 import { describe, expect, it } from "vitest";
 import { settleSnapshotWork } from "../../src/git/snapshot-work.js";
 
@@ -38,4 +39,24 @@ describe("snapshot construction work", () => {
     close.resolve();
     expect(await observed).toBe(original);
   });
+});
+
+it("does not release a snapshot when a sibling reader is still active", async () => {
+  const failure = new Error("first reader rejected");
+  let finishReader!: (value: string) => void;
+  const reader = new Promise<string>((resolve) => {
+    finishReader = resolve;
+  });
+  let settled = false;
+  const result = joinSnapshotReaders([Promise.reject(failure), reader]).finally(
+    () => {
+      settled = true;
+    },
+  );
+  const expectation = expect(result).rejects.toBe(failure);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(settled).toBe(false);
+  finishReader("last reader completed");
+  await expectation;
+  expect(settled).toBe(true);
 });

@@ -7,7 +7,6 @@ import type {
   ReportingSurface as OutputFormat,
   RequestedOutputFormat,
 } from "../scan/reporting-options.js";
-import { omitReportSourceExcerpts } from "../scan/source-excerpts.js";
 import { parseTemporaryReportMaxAge } from "./report-age.js";
 import { validateTemporaryReportPath } from "./report-path.js";
 import type {
@@ -155,9 +154,9 @@ export async function prepareTerminalPresentation(
 
   let json: string;
   try {
-    json = renderJson(
-      policy.persistSourceExcerpts ? report : omitReportSourceExcerpts(report),
-    );
+    json = renderJson(report, {
+      includeSourceExcerpts: policy.persistSourceExcerpts,
+    });
   } catch {
     const maintained = await options.store
       .maintain(maintenanceRequest)

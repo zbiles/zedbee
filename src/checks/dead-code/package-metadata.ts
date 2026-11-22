@@ -3,7 +3,7 @@ import type { CapturedDependencies } from "../../cache/captured-dependencies.js"
 
 /** Only Knip's manifest reader gets this JSON-only replacement for require. */
 export function createPackageMetadataReader(
-  capture: CapturedDependencies,
+  capture: Pick<CapturedDependencies, "context" | "readFile">,
 ): (path: string) => { bin?: string | Record<string, string> } {
   return (path) => {
     // Virtual paths are POSIX on every host. No traversal, code, or arbitrary JSON.

@@ -30,6 +30,7 @@ import { withUnreportableCleanupFailure } from "../scan/incomplete-report.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import type { ScanReport } from "../scan/report.js";
+import { createTextScanProgress } from "../reporting/text-scan-progress.js";
 import type { ScanEvent } from "../checks/events.js";
 import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
 import {
@@ -94,10 +95,7 @@ export interface InkRenderOptions {
 export interface ScanCommandDependencies {
   resolveRepositoryRoot(cwd: string): Promise<string>;
   scan(options: RunScanOptions): Promise<ScanReport>;
-  openInk(
-    options: InkRenderOptions,
-    onError: () => void,
-  ): Promise<InkSession>;
+  openInk(options: InkRenderOptions, onError: () => void): Promise<InkSession>;
   preparePresentation(
     report: ScanReport,
     options: Omit<PreparePresentationOptions, "store">,
@@ -107,10 +105,7 @@ export interface ScanCommandDependencies {
 /** Presentation observes controller-owned analysis and never prepares reports. */
 export interface InkSession {
   update(event: ScanEvent): void;
-  finish(
-    report: ScanReport,
-    presentation: TerminalPresentation,
-  ): Promise<void>;
+  finish(report: ScanReport, presentation: TerminalPresentation): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -156,9 +151,7 @@ export function selectOutputFormat(
   if (requested !== "auto") {
     return requested;
   }
-  return usesLinearAutomaticOutput(stdoutIsTTY, width, env)
-    ? "text"
-    : "ink";
+  return usesLinearAutomaticOutput(stdoutIsTTY, width, env) ? "text" : "ink";
 }
 
 function positiveTerminalWidth(value: unknown): number | undefined {
@@ -230,8 +223,7 @@ export async function executeScanCommand(
   let cleanupFailed = false;
   let session: InkSession | undefined;
   let renderingFailed = false;
-  const executor =
-    options.executor ?? createCommandExecutor(options.service);
+  const executor = options.executor ?? createCommandExecutor(options.service);
   const closeExecutor = () =>
     options.executor === undefined ? executor.close() : Promise.resolve();
   const close = async (): Promise<void> => {
@@ -245,10 +237,8 @@ export async function executeScanCommand(
   };
   try {
     options.signal?.throwIfAborted();
-    const repositoryRoot = await timeCommandStage(
-      stages,
-      "repository",
-      () => dependencies.resolveRepositoryRoot(options.cwd),
+    const repositoryRoot = await timeCommandStage(stages, "repository", () =>
+      dependencies.resolveRepositoryRoot(options.cwd),
     );
     const configPath =
       options.configPath === undefined
@@ -274,6 +264,10 @@ export async function executeScanCommand(
       io.width,
       io.env,
     );
+    const textProgress =
+      format === "text"
+        ? createTextScanProgress((line) => io.writeStderr(line))
+        : undefined;
     const scanOptions: RunScanOptions = {
       executor,
       repositoryRoot,
@@ -288,9 +282,7 @@ export async function executeScanCommand(
         : {}),
       reportingSurface: format,
       ...(options.cache === false ? { cache: false as const } : {}),
-      ...(options.baseRef === undefined
-        ? {}
-        : { baseRef: options.baseRef }),
+      ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
       ...(options.sourceExcerpts === undefined
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
@@ -299,9 +291,7 @@ export async function executeScanCommand(
         ? {}
         : { diagnosticMessages: options.diagnosticMessages }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.timeout === undefined
-        ? {}
-        : { timeout: options.timeout }),
+      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
@@ -330,6 +320,7 @@ export async function executeScanCommand(
       onEvent(event) {
         // Event observers must never change the analyzer outcome.
         try {
+          textProgress?.update(event);
           if (format === "ink" && !renderingFailed) session?.update(event);
           else if (event.type === "git-soft-timeout")
             writeGitSoftTimeoutWarning(io);
@@ -359,9 +350,14 @@ export async function executeScanCommand(
       }
     }
 
-    let report = await timeCommandStage(stages, "analysis", () =>
-      dependencies.scan(scanOptions),
-    );
+    let report = await timeCommandStage(stages, "analysis", async () => {
+      const stop = textProgress?.start();
+      try {
+        return await dependencies.scan(scanOptions);
+      } finally {
+        stop?.();
+      }
+    });
     try {
       await closeExecutor();
     } catch {
@@ -387,7 +383,8 @@ export async function executeScanCommand(
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    const { installedCliCommand, hookUpdate } = await inspectHookMaintenance(repositoryRoot);
+    const { installedCliCommand, hookUpdate } =
+      await inspectHookMaintenance(repositoryRoot);
     if (installedCliCommand !== undefined)
       report = { ...report, installedCliCommand };
     if (hookUpdate !== undefined) report = { ...report, hookUpdate };
@@ -413,11 +410,7 @@ export async function executeScanCommand(
       io.writeStdout(
         renderText(report, {
           width: io.width,
-          color: terminalColorEnabled(
-            options.color,
-            io.stdoutIsTTY,
-            io.env,
-          ),
+          color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
           presentation,
         }),
       );
@@ -436,11 +429,7 @@ export async function executeScanCommand(
         io.writeStdout(
           renderText(report, {
             width: io.width,
-            color: terminalColorEnabled(
-              options.color,
-              io.stdoutIsTTY,
-              io.env,
-            ),
+            color: terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
             presentation: {
               ...presentation,
               automatic: false,

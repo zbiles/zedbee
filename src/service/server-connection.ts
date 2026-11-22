@@ -16,7 +16,10 @@ import {
 } from "../checks/runner/envelope.js";
 import type { AnalyzerRequest } from "../checks/runner/protocol.js";
 import { AnalyzerJobError } from "../checks/diagnostics.js";
-import { CheckIncompleteError } from "../checks/incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "../checks/incomplete-error.js";
 import {
   type ByteBudget,
   HEX,
@@ -66,35 +69,8 @@ export interface ServiceConnectionHost {
 function wireError(error: unknown): object {
   if (error instanceof AnalyzerCapacityError)
     return { code: error.code, scope: error.scope };
-  if (error instanceof CheckIncompleteError) {
-    const {
-      code,
-      message,
-      remediation,
-      path,
-      paths,
-      snapshot,
-      projectPaths,
-      parseFailures,
-      disposition,
-      diagnostic,
-    } = error;
-    return {
-      code: "incomplete",
-      incomplete: {
-        code,
-        message,
-        remediation,
-        path,
-        paths,
-        snapshot,
-        projectPaths,
-        parseFailures,
-        disposition,
-        diagnostic,
-      },
-    };
-  }
+  if (error instanceof CheckIncompleteError)
+    return { code: "incomplete", incomplete: incompleteErrorDetails(error) };
   if (error instanceof AnalyzerJobError)
     return { code: "analyzer", diagnostic: error.diagnostic };
   return { code: "unavailable" };

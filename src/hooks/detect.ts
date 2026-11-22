@@ -1,13 +1,6 @@
+import { resolveRawGitHookPath } from "./raw-hook-path.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ScanHookName } from "./command.js";
 import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
@@ -136,34 +129,11 @@ async function existingAbsoluteFile(
   }
 }
 
-export async function rawGitHookPath(
+export function rawGitHookPath(
   root: string,
   hookName: ScanHookName = "pre-commit",
 ): Promise<string> {
-  if (hookName !== "pre-commit" && hookName !== "pre-merge-commit")
-    throw new Error("Zedbee refused an unsafe hook target.");
-  const git = new GitClient(root);
-  const [hookOutput, commonOutput] = await Promise.all([
-    git.run(["rev-parse", "--git-path", `hooks/${hookName}`]),
-    git.run(["rev-parse", "--git-common-dir"]),
-  ]);
-  const hook = isAbsolute(hookOutput.stdout)
-    ? resolve(hookOutput.stdout)
-    : resolve(root, hookOutput.stdout);
-  const common = isAbsolute(commonOutput.stdout)
-    ? resolve(commonOutput.stdout)
-    : resolve(root, commonOutput.stdout);
-  const canonicalCommon = await realpath(common);
-  const hooksDirectory = resolve(canonicalCommon, "hooks");
-  const hooksState = await lstat(hooksDirectory);
-  if (hooksState.isSymbolicLink() || !hooksState.isDirectory()) {
-    throw new Error("Zedbee refused an unsafe hook target.");
-  }
-  const canonicalHook = resolve(await realpath(dirname(hook)), basename(hook));
-  if (canonicalHook !== resolve(hooksDirectory, hookName)) {
-    throw new Error("Zedbee refused an unsafe hook target.");
-  }
-  return canonicalHook;
+  return resolveRawGitHookPath(root, hookName, false);
 }
 
 export async function customGitHookPath(

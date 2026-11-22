@@ -1,3 +1,4 @@
+import { resolveRawGitHookPath } from "../hooks/raw-hook-path.js";
 import {
   hasProjectEslintTrust,
   persistProjectEslintTrust,
@@ -139,34 +140,8 @@ async function validatedRawGitPath(
   ) {
     throw unsafeTarget();
   }
-  const git = new GitClient(root);
-  const [hookOutput, commonOutput] = await Promise.all([
-    git.run(["rev-parse", "--git-path", `hooks/${hookName}`]),
-    git.run(["rev-parse", "--git-common-dir"]),
-  ]);
-  const hook = isAbsolute(hookOutput.stdout)
-    ? resolve(hookOutput.stdout)
-    : resolve(root, hookOutput.stdout);
-  const common = isAbsolute(commonOutput.stdout)
-    ? resolve(commonOutput.stdout)
-    : resolve(root, commonOutput.stdout);
-  const commonState = await lstat(common);
-  if (commonState.isSymbolicLink() || !commonState.isDirectory()) {
-    throw unsafeTarget();
-  }
-  const canonicalCommon = await realpath(common);
-  const hooksDirectory = resolve(canonicalCommon, "hooks");
-  const hooksState = await lstat(hooksDirectory);
-  if (hooksState.isSymbolicLink() || !hooksState.isDirectory()) {
-    throw unsafeTarget();
-  }
-  const canonicalHook = resolve(await realpath(dirname(hook)), basename(hook));
-  if (
-    canonicalHook !== resolve(hooksDirectory, hookName) ||
-    canonicalHook !== change.absolutePath
-  ) {
-    throw unsafeTarget();
-  }
+  const canonicalHook = await resolveRawGitHookPath(root, hookName, true);
+  if (canonicalHook !== change.absolutePath) throw unsafeTarget();
   return canonicalHook;
 }
 
@@ -320,6 +295,7 @@ export async function applyInitProposal(
     validated.push({ change, ...state });
   }
 
+  const updatedFiles: string[] = [];
   const applied: Array<{ path: string; before: string | null; mode: number }> =
     [];
   const eslintGrants: Array<{
@@ -341,7 +317,13 @@ export async function applyInitProposal(
       const mode = item.change.relativePath.startsWith(".husky/_/")
         ? item.change.mode
         : refreshed.mode;
+      if (
+        item.change.relativePath === ".zedbeerc.jsonc" &&
+        refreshed.before === item.change.after
+      )
+        continue;
       await atomicReplace(item.path, item.change.after, mode);
+      updatedFiles.push(item.change.relativePath);
       applied.push({ path: item.path, before: item.before, mode: item.mode });
     }
     if (proposal.hooksPathChange !== undefined) {
@@ -421,9 +403,7 @@ export async function applyInitProposal(
   }
   return Object.freeze({
     applied: true,
-    files: Object.freeze(
-      proposal.files.map(({ relativePath }) => relativePath),
-    ),
+    files: Object.freeze(updatedFiles),
     rolledBack: false,
   });
 }

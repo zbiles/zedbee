@@ -430,3 +430,13 @@ export async function buildProductionInventory(root) {
 
   return { schemaVersion: 1, packages: inventoryPackages };
 }
+
+export function formatLicenseDenials(denied) {
+  return denied
+    .map(
+      ({ packageMetadata, reason }) =>
+        `- ${packageMetadata.name ?? "unknown"}@${packageMetadata.version ?? "unknown"}: ${reason}\n` +
+        `  path: ${packageMetadata.dependencyPath.join(" > ")}\n`,
+    )
+    .join("");
+}

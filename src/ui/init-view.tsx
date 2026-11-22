@@ -1,3 +1,4 @@
+import { ActionButtonFace } from "./action-button-face.js";
 import {
   PROJECT_ESLINT_DISCLOSURE,
   PROJECT_ESLINT_EXECUTION_DISCLOSURE,
@@ -556,30 +557,7 @@ export function InitActionButton({
       justifyContent="center"
       paddingX={2}
     >
-      <Box
-        borderStyle="single"
-        paddingX={2}
-        {...(color
-          ? {
-              borderColor: ZEDBEE_THEME.yellow,
-              borderBackgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-              backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-            }
-          : {})}
-      >
-        <Text
-          bold
-          inverse={!color && focused}
-          {...(color
-            ? {
-                color: focused ? ZEDBEE_THEME.beeBlack : ZEDBEE_THEME.wordmark,
-                backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-              }
-            : {})}
-        >
-          {label}
-        </Text>
-      </Box>
+      <ActionButtonFace label={label} focused={focused} color={color} />
     </Box>
   );
 }

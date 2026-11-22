@@ -1,3 +1,4 @@
+import { ActionButtonFace } from "./action-button-face.js";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   Box,
@@ -99,30 +100,12 @@ function FixActionButton({
 }) {
   return (
     <Box ref={focused ? activeTargetRef : undefined}>
-      <Box
-        borderStyle="single"
-        paddingX={compact ? 1 : 2}
-        {...(color
-          ? {
-              borderColor: ZEDBEE_THEME.yellow,
-              borderBackgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-              backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-            }
-          : {})}
-      >
-        <Text
-          bold
-          inverse={!color && focused}
-          {...(color
-            ? {
-                color: focused ? ZEDBEE_THEME.beeBlack : ZEDBEE_THEME.wordmark,
-                backgroundColor: focused ? ZEDBEE_THEME.yellow : "#000000",
-              }
-            : {})}
-        >
-          {label}
-        </Text>
-      </Box>
+      <ActionButtonFace
+        label={label}
+        focused={focused}
+        padding={compact ? 1 : 2}
+        color={color}
+      />
     </Box>
   );
 }

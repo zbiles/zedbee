@@ -1,6 +1,9 @@
+import {
+  isProjectPrettierVersionAccepted,
+  manifestPrettierDeclaration,
+} from "../checks/prettier/project-version.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
-import semver from "semver";
 import { parse as parseYaml } from "yaml";
 import { compareCodeUnits } from "../core/compare.js";
 import {
@@ -12,8 +15,6 @@ import {
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 import type { SnapshotRegistry } from "../inspection/snapshot-registry.js";
-
-export const SUPPORTED_PROJECT_PRETTIER_RANGE = ">=3.0.0 <4.0.0";
 
 const PRETTIER_PACKAGE_NAME = "prettier";
 const NODE_MODULES = "node_modules";
@@ -64,36 +65,6 @@ const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
   ".cts",
   ".mts",
 ]);
-
-export function isSupportedProjectPrettierVersion(version: string): boolean {
-  const normalized = semver.valid(version);
-  return (
-    normalized !== null &&
-    semver.satisfies(normalized, SUPPORTED_PROJECT_PRETTIER_RANGE)
-  );
-}
-
-/**
- * An installed version is accepted only when it satisfies the supported
- * engine range and, when the project declares a semver range, that exact
- * declaration. Non-semver declarations (URLs, tags, `workspace:*`) do not
- * restrict the installed version here; the engine revalidates against the
- * selected snapshot before executing anything.
- */
-export function isProjectPrettierVersionAccepted(
-  version: string,
-  declaredRange: string | undefined,
-): boolean {
-  if (!isSupportedProjectPrettierVersion(version)) return false;
-  if (declaredRange === undefined) return true;
-  const normalizedRange = semver.validRange(declaredRange);
-  if (normalizedRange === null) return true;
-  try {
-    return semver.satisfies(semver.valid(version)!, normalizedRange);
-  } catch {
-    return false;
-  }
-}
 
 function executableConfigPath(path: string): boolean {
   const extension = path.slice(path.lastIndexOf("."));
@@ -169,22 +140,6 @@ async function findInstalledPrettier(
   return undefined;
 }
 
-function manifestPrettierRange(value: unknown): string | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  for (const section of [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-  ]) {
-    const dependencies = (value as Record<string, unknown>)[section];
-    if (typeof dependencies !== "object" || dependencies === null) continue;
-    const specifier = (dependencies as Record<string, unknown>).prettier;
-    if (typeof specifier === "string") return specifier;
-  }
-  return undefined;
-}
-
 async function declaredPrettierRangeForProject(
   registry: SnapshotRegistry,
   projectRoot: string,
@@ -206,7 +161,7 @@ async function declaredPrettierRangeForProject(
         value = undefined;
       }
     }
-    const declaredRange = manifestPrettierRange(value);
+    const declaredRange = manifestPrettierDeclaration(value)?.range;
     if (declaredRange !== undefined) return declaredRange;
     if (current === ".") return undefined;
     current = posix.dirname(current);

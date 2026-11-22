@@ -63,7 +63,10 @@ export function summarizeScanPerformance(
     ...(summary?.workerCount === undefined
       ? {}
       : { worker_count: summary.workerCount }),
-    check_performance: summary?.checks ?? [],
+    check_performance:
+      summary?.checks.filter(({ check_id }) =>
+        (TELEMETRY_CHECK_IDS as readonly string[]).includes(check_id),
+      ) ?? [],
     incomplete_reasons: [...reasons.values()].slice(0, 26),
     incomplete_reasons_omitted: Math.max(0, reasons.size - 26),
   });

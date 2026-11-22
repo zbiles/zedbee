@@ -1,5 +1,6 @@
 import { Box, Text } from "ink";
 import type { ScanEvent, ScanPhase } from "../checks/events.js";
+import { SCAN_PHASE_LABELS } from "../reporting/scan-phase-labels.js";
 import type { CheckResult } from "../core/types.js";
 import { PixelBee, pixelBeeWidth } from "./pixel-bee.js";
 import {
@@ -31,20 +32,6 @@ export interface ScanProgress {
   readonly activity: { key: string; text: string; color: string }[];
   phase?: { name: ScanPhase; startedAt: number };
 }
-
-const PHASE_LABELS: Record<ScanPhase, string> = {
-  configuration: "Reading scan configuration",
-  "baseline-resolution": "Resolving comparison baseline",
-  "change-discovery": "Reading changed files and lines",
-  "snapshot-construction": "Building scan snapshots",
-  "baseline-inspection": "Inspecting previous project snapshot",
-  "target-inspection": "Inspecting changed project snapshot",
-  "project-inspection": "Inspecting project snapshots",
-  "source-capture": "Preparing analyzer inputs",
-  dispatch: "Planning checks",
-  "policy-evaluation": "Preparing scan results",
-  cleanup: "Cleaning up scan resources",
-};
 
 export function createScanProgress(
   events: readonly ScanEvent[] = [],
@@ -90,7 +77,7 @@ export function updateScanProgress(
   const text = activityText(event);
   if (text !== undefined) {
     activity.push({
-      key: `${event.checkId}-${event.target}-${event.type}`,
+      key: `${event.checkId}-${event.target}-${event.type}-${event.timestamp}`,
       text,
       color: activityColor(event),
     });
@@ -107,6 +94,14 @@ export function updateScanProgress(
     return;
   }
   const key = `${event.checkId}\u0000${event.target}`;
+  if (event.type === "merge-parent") {
+    states.clear();
+    return;
+  }
+  if (event.type === "parent-check-settled") {
+    states.delete(key);
+    return;
+  }
   const existing = states.get(key);
   if (event.type === "check-queued") {
     states.set(key, {
@@ -172,7 +167,10 @@ function statusText(
 }
 
 function activityText(event: ScanEvent): string | undefined {
-  if (event.type === "scan-phase") return PHASE_LABELS[event.phase];
+  if (event.type === "scan-phase") return SCAN_PHASE_LABELS[event.phase];
+  if (event.type === "merge-parent")
+    return `Comparing merge parent ${event.parent} of ${event.total}`;
+  if (event.type === "parent-check-settled") return undefined;
   const label = stateLabel(event.checkId, event.target);
   if (event.type === "check-queued") return undefined;
   if (event.type === "network-disclosure") {
@@ -550,7 +548,7 @@ export function LiveDashboard({
         label:
           progress.phase === undefined
             ? "Starting scan…"
-            : PHASE_LABELS[progress.phase.name],
+            : SCAN_PHASE_LABELS[progress.phase.name],
         elapsedMs:
           progress.phase === undefined
             ? elapsedMs

@@ -731,6 +731,45 @@ export async function buildCommitSnapshotPairOptimized(
 
 export const buildCommitSnapshotPair = buildCommitSnapshotPairOptimized;
 
+/** Build a fresh baseline alongside an already materialized, merge-owned target. */
+export async function buildMergeBaselineSnapshot(
+  repositoryRoot: string,
+  git: GitClient,
+  baselineRef: string,
+  target: SnapshotPair,
+  signal?: AbortSignal,
+): Promise<SnapshotPair> {
+  const entries = await readCommitEntries(
+    repositoryRoot,
+    git,
+    baselineRef,
+    signal,
+  );
+  const root = await createOwnedSnapshotRoot();
+  try {
+    await verifyDirectory(target.targetDir);
+    const baselineUnsupportedEntries = await materializeEntries(
+      git,
+      entries,
+      root.baselineDir,
+      true,
+      signal,
+    );
+    return {
+      ...target,
+      baselineDir: root.baselineDir,
+      baselineRef,
+      baselineUnsupportedEntries,
+      baselineSymlinkPaths: entries
+        .filter(({ mode }) => mode === "120000")
+        .map(({ path }) => path),
+      cleanup: root.cleanup,
+    };
+  } catch (error) {
+    return cleanupConstructionFailure(root, error);
+  }
+}
+
 export async function buildSnapshotPairOptimized(
   repositoryRoot: string,
   git: GitClient,

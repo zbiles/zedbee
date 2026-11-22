@@ -235,34 +235,21 @@ async function reviewed(
     return quoted;
   });
   try {
-    const { lintSource } = await import("@secretlint/core");
-    const { SECRET_LINT_CONFIG } = await import("./secrets/config.js");
+    const { detectDiagnosticSecrets, diagnosticCredentialValues } =
+      await import("./diagnostic-secret-review.js");
     const secretKey = (observation.location?.file ?? "") + "\0" + source;
     let values = secretCache.get(secretKey);
     if (values === undefined) {
       values = (async () => {
-        const result = await lintSource({
-          source: {
-            content: source,
-            filePath: observation.location?.file ?? "diagnostic.ts",
-            contentType: "text",
-          },
-          options: {
-            config: SECRET_LINT_CONFIG,
-            maskSecrets: true,
-            noPhysicFilePath: true,
-          },
-        });
-        const found = result.messages.flatMap((message) =>
-          message.range
-            ? [source.slice(message.range[0], message.range[1])]
-            : [],
+        const messages = await detectDiagnosticSecrets(
+          source,
+          observation.location?.file ?? "diagnostic.ts",
+        );
+        const found = messages.flatMap((range) =>
+          range ? [source.slice(range[0], range[1])] : [],
         );
         // Context-only credentials may not have an independently recognizable token shape.
-        for (const match of source.matchAll(
-          /(?:secret|password|token|credential|api[_-]?key|access[_-]?key)[\w-]*["']?\s*[:=]\s*["']([^"'\r\n]+)["']/giu,
-        ))
-          if (match[1]) found.push(match[1]);
+        found.push(...diagnosticCredentialValues(source));
         return found.filter((value) => value.length > 0);
       })();
       secretCache.set(secretKey, values);
@@ -272,21 +259,10 @@ async function reviewed(
         rendered = rendered.replaceAll(value, "[redacted value]");
         redacted = true;
       }
-    const direct = await lintSource({
-      source: {
-        content: original,
-        filePath: "diagnostic.txt",
-        contentType: "text",
-      },
-      options: {
-        config: SECRET_LINT_CONFIG,
-        maskSecrets: true,
-        noPhysicFilePath: true,
-      },
-    });
-    for (const message of direct.messages) {
-      if (!message.range) return withheld(observation, "sensitive-value");
-      const value = original.slice(message.range[0], message.range[1]);
+    const direct = await detectDiagnosticSecrets(original, "diagnostic.txt");
+    for (const range of direct) {
+      if (!range) return withheld(observation, "sensitive-value");
+      const value = original.slice(range[0], range[1]);
       if (!value) return withheld(observation, "sensitive-value");
       if (rendered.includes(value)) {
         rendered = rendered.replaceAll(value, "[redacted value]");

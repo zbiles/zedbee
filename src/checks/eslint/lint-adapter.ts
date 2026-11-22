@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { verifyComparisonInputs } from "../comparison-context.js";
 import { collectProjectEslint } from "./project/adapter.js";
 import { inspectManagedCheck } from "../applicability.js";
@@ -14,10 +15,7 @@ import type {
 } from "../adapter.js";
 import type { Observation } from "../../core/types.js";
 import { compareCodeUnits } from "../../core/compare.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import {
   canonicalizeSnapshotRoot,
   readContainedFile,
@@ -82,15 +80,6 @@ function lintBatches(
       ? []
       : [{ files: Object.freeze(basicFiles), basic: true }]),
   ]);
-}
-
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    (workspace) => workspace.relativeRoot === target.relativeRoot,
-  );
 }
 
 function snapshotLabel(side: SnapshotSide, ref?: string | null): string {
@@ -183,7 +172,7 @@ async function prepareSide(
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new Error("Managed lint analysis failed.");
   }
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return undefined;
   const files = workspace.sourceFiles
     .filter((path) => requestedPaths === undefined || requestedPaths.has(path))
@@ -524,7 +513,10 @@ export function createLintAdapter(
         isAnalyzerWorker(),
       );
       const dependencyInputs = dependencies.manifest();
-      const workspace = workspaceFor(context.targetInspection, context.target);
+      const workspace = findWorkspace(
+        context.targetInspection,
+        context.target.relativeRoot,
+      );
       return {
         comparisonContext: verifyComparisonInputs(
           dependencies,

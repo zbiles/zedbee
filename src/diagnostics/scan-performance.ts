@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
+import { CHECK_IDS } from "../core/check-ids.js";
 export type PerformanceKind =
   | "dispatcher"
   | "result"
@@ -18,7 +18,7 @@ export interface PerformanceSample {
   durationMs: number;
 }
 export interface CheckPerformance {
-  check_id: (typeof TELEMETRY_CHECK_IDS)[number];
+  check_id: (typeof CHECK_IDS)[number];
   task_count: number;
   elapsed_sum_ms: number;
   elapsed_max_ms: number;
@@ -65,8 +65,7 @@ export const SCAN_PERFORMANCE_OVERHEADS = [
   "result",
 ] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
-const bounded = (v: number) =>
-  Math.min(604800000, Math.max(0, Math.round(v)));
+const bounded = (v: number) => Math.min(604800000, Math.max(0, Math.round(v)));
 export class ScanPerformanceRecorder {
   private readonly checks = new Map<string, CheckPerformance>();
   private partial = false;
@@ -104,9 +103,7 @@ export class ScanPerformanceRecorder {
   }
   record(sample: PerformanceSample): void {
     if (
-      !(TELEMETRY_CHECK_IDS as readonly string[]).includes(
-        sample.checkId,
-      ) ||
+      !(CHECK_IDS as readonly string[]).includes(sample.checkId) ||
       !Number.isFinite(sample.durationMs) ||
       sample.durationMs < 0
     ) {
@@ -129,9 +126,7 @@ export class ScanPerformanceRecorder {
     if (sample.durationMs > 604800000) this.partial = true;
     const ms = bounded(sample.durationMs);
     if (
-      (SCAN_PERFORMANCE_OVERHEADS as readonly string[]).includes(
-        sample.kind,
-      )
+      (SCAN_PERFORMANCE_OVERHEADS as readonly string[]).includes(sample.kind)
     ) {
       this.overhead[sample.kind] = bounded(
         (this.overhead[sample.kind] ?? 0) + ms,

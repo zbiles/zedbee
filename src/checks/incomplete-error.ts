@@ -87,3 +87,33 @@ export class CheckIncompleteError extends Error {
     Object.freeze(this);
   }
 }
+
+/** Public fields of a deliberate analyzer failure. Exception internals stay local. */
+export function incompleteErrorDetails(
+  error: CheckIncompleteError,
+  diagnostic = error.diagnostic,
+): CheckIncompleteErrorOptions {
+  const {
+    code,
+    message,
+    remediation,
+    path,
+    paths,
+    snapshot,
+    projectPaths,
+    parseFailures,
+    disposition,
+  } = error;
+  return {
+    code,
+    message,
+    remediation,
+    ...(path === undefined ? {} : { path }),
+    ...(paths === undefined ? {} : { paths }),
+    ...(snapshot === undefined ? {} : { snapshot }),
+    ...(projectPaths === undefined ? {} : { projectPaths }),
+    ...(parseFailures === undefined ? {} : { parseFailures }),
+    ...(disposition === undefined ? {} : { disposition }),
+    ...(diagnostic === undefined ? {} : { diagnostic }),
+  };
+}

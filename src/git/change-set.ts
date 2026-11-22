@@ -170,16 +170,22 @@ function changeSetFromFiles(changedFiles: readonly ChangedFile[]): ChangeSet {
     [...files].sort(([left], [right]) => compareCodeUnits(left, right)),
   );
 
+  return changeSetFromMap(orderedFiles);
+}
+
+export function changeSetFromMap(
+  files: ReadonlyMap<string, ChangedFile>,
+  isEmpty = files.size === 0,
+): ChangeSet {
   return {
-    files: orderedFiles,
-    isEmpty: orderedFiles.size === 0,
+    files,
+    isEmpty,
     containsAddedLine(file, line) {
-      const normalized = file.replaceAll("\\", "/");
       return (
-        orderedFiles
-          .get(normalized)
+        files
+          .get(file.replaceAll("\\", "/"))
           ?.addedRanges.some(
-            (range) => line >= range.start && line <= range.end,
+            ({ start, end }) => start <= line && line <= end,
           ) ?? false
       );
     },
@@ -270,12 +276,17 @@ const COMMON_DIFF_OPTIONS = [
   "--no-color",
   "--no-ext-diff",
   "--no-textconv",
+] as const;
+
+const PATCH_ALGORITHM = [
   "--diff-algorithm=myers",
   "--indent-heuristic",
 ] as const;
 
 const COMMIT_DIFF_OPTIONS = [
   ...COMMON_DIFF_OPTIONS,
+  "--text",
+  ...PATCH_ALGORITHM,
   "--find-renames=50%",
   "-l0",
   "--src-prefix=a/",
@@ -284,9 +295,20 @@ const COMMIT_DIFF_OPTIONS = [
 
 const STAGED_DIFF_OPTIONS = [
   ...COMMON_DIFF_OPTIONS,
+  ...PATCH_ALGORITHM,
   "--find-renames",
   "--src-prefix=a/",
   "--dst-prefix=b/",
+] as const;
+
+const NAME_STATUS_DIFF_OPTIONS = [
+  "--name-status",
+  "-z",
+  "--no-relative",
+  "--ignore-submodules=none",
+  "--submodule=short",
+  "--no-ext-diff",
+  "--no-textconv",
 ] as const;
 
 export async function discoverStagedChangeSet(
@@ -300,13 +322,7 @@ export async function discoverStagedChangeSet(
       ...(git.selectedComparison === undefined
         ? []
         : [git.selectedComparison.diffBase]),
-      "--name-status",
-      "-z",
-      "--no-relative",
-      "--ignore-submodules=none",
-      "--submodule=short",
-      "--no-ext-diff",
-      "--no-textconv",
+      ...NAME_STATUS_DIFF_OPTIONS,
       "--find-renames",
     ],
     signal === undefined ? {} : { signal },
@@ -323,13 +339,7 @@ export async function discoverCommitChangeSet(
   const metadata = await git.run(
     [
       "diff",
-      "--name-status",
-      "-z",
-      "--no-relative",
-      "--ignore-submodules=none",
-      "--submodule=short",
-      "--no-ext-diff",
-      "--no-textconv",
+      ...NAME_STATUS_DIFF_OPTIONS,
       "--find-renames=50%",
       "-l0",
       "--end-of-options",
@@ -404,7 +414,6 @@ export async function addCommitLineRanges(
     [
       "diff",
       ...COMMIT_DIFF_OPTIONS,
-      "--text",
       baselineCommit,
       targetCommit,
       "--",
@@ -445,20 +454,7 @@ export async function readCommitChangeSet(
   const patch = await git.run(
     [
       "diff",
-      "--no-relative",
-      "--ignore-submodules=none",
-      "--submodule=short",
-      "--unified=0",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-textconv",
-      "--text",
-      "--diff-algorithm=myers",
-      "--indent-heuristic",
-      "--find-renames=50%",
-      "-l0",
-      "--src-prefix=a/",
-      "--dst-prefix=b/",
+      ...COMMIT_DIFF_OPTIONS,
       "--end-of-options",
       baselineCommit,
       targetCommit,

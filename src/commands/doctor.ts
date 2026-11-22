@@ -1,3 +1,4 @@
+import { useStaticDashboard } from "../reporting/static-dashboard.js";
 import {
   defaultDiagnosticProbe,
   runDiagnostics,
@@ -51,7 +52,6 @@ const DEFAULT_DEPENDENCIES: DoctorCommandDependencies = {
   renderDashboard,
 };
 
-const MINIMUM_DASHBOARD_WIDTH = 80;
 const INIT_COMMAND = "zedbee init";
 
 function renderRemediation(diagnostic: Diagnostic, color: boolean): string {
@@ -83,8 +83,8 @@ function renderText(result: DoctorCommandResult, color: boolean): string {
         diagnostic.status === "pass"
           ? "pass"
           : diagnostic.status === "warning"
-          ? "warning"
-          : "failure";
+            ? "warning"
+            : "failure";
       return `${terminalText(
         diagnostic.status.toUpperCase(),
         statusTone,
@@ -121,12 +121,7 @@ export async function executeDoctorCommand(
       ? (2 as const)
       : (0 as const);
     const result = Object.freeze({ exitCode, diagnostics });
-    const dashboard =
-      options.format === "auto" &&
-      io.stdoutIsTTY &&
-      io.width >= MINIMUM_DASHBOARD_WIDTH &&
-      io.env.TERM !== "dumb" &&
-      io.env.CI === undefined;
+    const dashboard = useStaticDashboard(options.format, io);
     if (options.format === "json") {
       io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
     } else if (dashboard) {

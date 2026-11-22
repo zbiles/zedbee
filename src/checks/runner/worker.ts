@@ -2,7 +2,10 @@ import { captureDiagnosticDetails } from "../diagnostic-details.js";
 import { restoreCheckContext, markAnalyzerWorker } from "./context.js";
 import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
-import { CheckIncompleteError } from "../incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "../incomplete-error.js";
 import { AnalyzerJobError, type AnalyzerDiagnostic } from "../diagnostics.js";
 import { sendWorkerReply } from "./send-worker-reply.js";
 import { exactFields } from "./envelope.js";
@@ -213,35 +216,12 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
     // Exception stacks, causes and dependency stderr are never copied.
     const incomplete =
       error instanceof CheckIncompleteError
-        ? {
-            code: error.code,
-            message: error.message,
-            remediation: error.remediation,
-            ...(error.diagnostic === undefined
-              ? {}
-              : {
-                  diagnostic: {
-                    ...error.diagnostic,
-                    ...(controller.signal.aborted
-                      ? { category: "cancellation" as const }
-                      : {}),
-                  },
-                }),
-            ...(error.path === undefined ? {} : { path: error.path }),
-            ...(error.paths === undefined ? {} : { paths: error.paths }),
-            ...(error.parseFailures === undefined
-              ? {}
-              : { parseFailures: error.parseFailures }),
-            ...(error.snapshot === undefined
-              ? {}
-              : { snapshot: error.snapshot }),
-            ...(error.projectPaths === undefined
-              ? {}
-              : { projectPaths: error.projectPaths }),
-            ...(error.disposition === undefined
-              ? {}
-              : { disposition: error.disposition }),
-          }
+        ? incompleteErrorDetails(
+            error,
+            error.diagnostic !== undefined && controller.signal.aborted
+              ? { ...error.diagnostic, category: "cancellation" }
+              : error.diagnostic,
+          )
         : undefined;
     return {
       version: 1,

@@ -1,3 +1,4 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
@@ -80,15 +81,6 @@ function reactAnalysisFailure(
   });
 }
 
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
-
 async function prepareSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -109,7 +101,7 @@ async function prepareSide(
   try {
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
     if (canonicalRoot !== inspection.snapshotRoot) throw new Error(failure);
-    const workspace = workspaceFor(inspection, target);
+    const workspace = findWorkspace(inspection, target.relativeRoot);
     if (workspace === undefined) return undefined;
     const files = workspace.sourceFiles
       .filter(

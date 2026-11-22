@@ -1,6 +1,8 @@
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
+  scanOutcomeDetail,
+  scanResultCountLine,
   coverageLine,
 } from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
@@ -17,22 +19,20 @@ function copyFor(
   report: ScanReport,
   narrow: boolean,
 ): readonly [string, string, string] {
-  const { passed, warnings, failed } = report.summary;
+  const { passed, warnings } = report.summary;
   const warningLabel = warnings === 1 ? "warning" : "warnings";
   if (report.outcome === "blocked") {
     return [
       "THAT STINGS",
-      narrow ? "Commit blocked." : "A check failed. Commit blocked.",
-      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
+      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      scanResultCountLine(report, true),
     ];
   }
   if (report.outcome === "incomplete") {
     return [
       "SCAN INCOMPLETE",
-      narrow
-        ? "Commit blocked."
-        : "A required check could not finish. Commit blocked.",
-      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
+      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      scanResultCountLine(report, true),
     ];
   }
   if (report.changedFileCount === 0) {

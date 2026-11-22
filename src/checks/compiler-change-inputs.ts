@@ -1,12 +1,14 @@
+import { memoizeCompilerDecision } from "./compiler-decision-cache.js";
+import {
+  COMPILER_SOURCE,
+  COMPILER_DEPENDENCY,
+  COMPILER_CONFIGURATION,
+  COMPILER_ORDINARY,
+  changedCompilerPaths,
+} from "./compiler-paths.js";
 import { posix, relative, resolve, sep, isAbsolute } from "node:path";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
-export const COMPILER_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-export const COMPILER_DEPENDENCY =
-  /^(?:package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|yarn\.lock|bun\.lockb?|\.pnp\.(?:cjs|js|data\.json)|\.npmrc|\.yarnrc(?:\.yml)?)$/iu;
-export const COMPILER_CONFIGURATION =
-  /^(?:tsconfig(?:\.[^.]+)*\.json|jsconfig(?:\.[^.]+)*\.json|(?:zedbee|swarm)\.config\.[^.]+|\.(?:zedbee|swarm)(?:rc)?(?:\.[^.]+)?)$/iu;
-const ORDINARY = /\.(?:py|pyi|md|markdown|rst|txt)$/iu;
 export function compilerPolicyInputPaths(
   context: InspectionContext,
 ): ReadonlySet<string> {
@@ -39,11 +41,7 @@ async function acquireCompilerChanges(
   context: InspectionContext,
 ): Promise<CompilerChangeClassification> {
   context.signal?.throwIfAborted();
-  const paths = new Set(
-    [...context.changeSet.files.values()].flatMap((f) =>
-      f.previousPath === undefined ? [f.path] : [f.path, f.previousPath],
-    ),
-  );
+  const paths = changedCompilerPaths(context.changeSet);
   const sourcePaths = new Set<string>();
   const localNpmInputs = new Set<string>();
   const inspections = [context.baselineInspection, context.targetInspection];
@@ -133,7 +131,7 @@ async function acquireCompilerChanges(
     else if (
       !sourcePaths.has(path) &&
       name.toLowerCase() !== ".gitignore" &&
-      !ORDINARY.test(path)
+      !COMPILER_ORDINARY.test(path)
     )
       requiresBroadComparison = true;
   }
@@ -146,44 +144,6 @@ async function acquireCompilerChanges(
   };
 }
 
-const classificationOwners = new WeakMap<
-  object,
-  WeakMap<object, typeof classifications>
->();
-const classificationPolicies = new WeakMap<object, typeof classifications>();
-const classifications = new WeakMap<
-  object,
-  WeakMap<object, WeakMap<object, Promise<CompilerChangeClassification>>>
->();
-export function classifyCompilerChanges(
-  context: InspectionContext,
-): Promise<CompilerChangeClassification> {
-  if (context.signal?.aborted) return Promise.reject(context.signal.reason);
-  let policies = classificationPolicies;
-  if (context.signal !== undefined) {
-    policies = classificationOwners.get(context.signal) ?? new WeakMap();
-    classificationOwners.set(context.signal, policies);
-  }
-  const policy = context.filePolicyConfig ?? context.config;
-  const cache = policies.get(policy) ?? new WeakMap();
-  policies.set(policy, cache);
-  let targets = cache.get(context.baselineInspection);
-  if (targets === undefined) {
-    targets = new WeakMap();
-    cache.set(context.baselineInspection, targets);
-  }
-  let scans = targets.get(context.targetInspection);
-  if (scans === undefined) {
-    scans = new WeakMap();
-    targets.set(context.targetInspection, scans);
-  }
-  let pending = scans.get(context.changeSet);
-  if (pending === undefined) {
-    pending = acquireCompilerChanges(context);
-    scans.set(context.changeSet, pending);
-    void pending.catch(() => {
-      scans!.delete(context.changeSet);
-    });
-  }
-  return pending;
-}
+export const classifyCompilerChanges = memoizeCompilerDecision(
+  acquireCompilerChanges,
+);

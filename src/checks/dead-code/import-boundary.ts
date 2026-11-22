@@ -1,3 +1,8 @@
+import {
+  isContainedImportSpecifier,
+  WINDOWS_PATH,
+  URL_SCHEME,
+} from "../project/import-specifier.js";
 import { managedKnipEntry } from "./managed-knip.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
@@ -6,8 +11,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonData } from "../../inspection/read-json.js";
 import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
 
-const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
-const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const NODE_CONDITIONS = new Set(["require", "import", "node", "default"]);
 const BROWSER_CONDITIONS = new Set(["require", "import", "browser", "default"]);
 const MAX_TARGET_DEPTH = 32;
@@ -17,20 +20,8 @@ function unsafeImport(): never {
 }
 
 function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (
-    specifier.includes("\\") ||
-    posix.isAbsolute(specifier) ||
-    WINDOWS_PATH.test(specifier) ||
-    (URL.test(specifier) &&
-      !specifier.startsWith("node:") &&
-      !specifier.startsWith("bun:"))
-  )
-    unsafeImport();
-  if (!specifier.startsWith(".")) return;
-  const resolved = posix.normalize(
-    posix.join(posix.dirname(sourcePath), specifier),
-  );
-  if (resolved === ".." || resolved.startsWith("../")) unsafeImport();
+  if (!isContainedImportSpecifier(sourcePath, specifier))
+    throw new TypeError("Dead-code import escaped the snapshot");
 }
 
 async function assertMissing(path: string): Promise<void> {
@@ -257,7 +248,7 @@ export async function createKnipImportValidator(
       if (
         posix.isAbsolute(main) ||
         WINDOWS_PATH.test(main) ||
-        URL.test(main) ||
+        URL_SCHEME.test(main) ||
         /%(?:2e|2f|5c)/iu.test(main)
       )
         unsafeImport();
