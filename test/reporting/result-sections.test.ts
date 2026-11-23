@@ -128,7 +128,18 @@ describe("buildScanResultSections", () => {
       "warning-two",
     ]);
     expect(sections.disclosures).toEqual(report.networkDisclosures);
-    expect(sections.incompleteChecks).toEqual([report.checks[1]]);
+    expect(sections.incompleteChecks).toEqual([
+      {
+        title: "OSV UNAVAILABLE",
+        fields: [
+          { label: "Issue", value: "OSV is unavailable." },
+          {
+            label: "Availability",
+            value: "commit blocked (onUnavailable: block)",
+          },
+        ],
+      },
+    ]);
     expect(sections.reportWarnings).toEqual([
       {
         code: "TEMP_REPORT_CLEANUP_FAILED",

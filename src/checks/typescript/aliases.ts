@@ -157,7 +157,7 @@ export interface SnapshotAliases {
 }
 
 /** Select only one TS paths key: exact first, then longest wildcard prefix. */
-function selectedMapping(
+export function selectedTypeScriptPathMapping(
   paths: ts.MapLike<string[]>,
   specifier: string,
 ): { targets: readonly string[]; capture?: string } | undefined {
@@ -261,7 +261,7 @@ export async function loadSnapshotAliases(
         /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier)
       )
         return undefined;
-      const mapping = selectedMapping(paths, specifier);
+      const mapping = selectedTypeScriptPathMapping(paths, specifier);
       if (mapping === undefined) return undefined;
       const candidates = mapping.targets.map((target) => {
         const expanded =

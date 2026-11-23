@@ -144,6 +144,8 @@ export interface CheckError {
   path?: string;
   paths?: readonly string[];
   snapshot?: "last-commit" | "staged";
+  /** Baseline commit selected for a failed merge-parent comparison. */
+  comparisonParent?: string;
   projectPaths?: readonly string[];
   temporaryPath?: string;
   remediation?: string;

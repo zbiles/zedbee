@@ -22,6 +22,15 @@ messages can still identify affected repository-relative files in the report.
 Use diagnostics to investigate an incomplete result; they do not make that result
 a pass. Check the report's source-excerpt settings before sharing the report itself.
 
+An installation error describes what the local checkout could not resolve.
+Its JSON `diagnostic.snapshot` identifies the analyzer role (`baseline` or
+`target`). The legacy `error.snapshot` value `last-commit` points to the
+baseline and `staged` points to the target, including in a committed comparison.
+For a failed baseline within a merge, `error.comparisonParent` identifies the
+parent commit when available. The terminal combines matching installation
+problems across checks and names the affected checks. JSON retains the individual
+records and exit status.
+
 ## Managed fix plans
 
 A managed fix JSON preview remains schema version 1, is source-free, and
@@ -42,6 +51,11 @@ age. Redirect explicit JSON when durable fix-plan metadata is required.
 An automatic scan (`zedbee scan` or `zedbee scan --format auto`) always writes a complete versioned JSON report to operating-system temporary storage. A pass with zero findings still receives a report. Its complete report path appears before the final output and after the final result; the path is printed only after a complete report exists. A wide ordinary TTY uses branded Ink. A narrow terminal, redirected output, CI, `TERM=dumb`, or screen-reader output uses a linear ANSI-free result.
 
 Automatic output shows up to 25 findings by default, with blockers first. Blocking parse, unresolved-input, and supported compiler-configuration failures precede unsafe/implicit-any findings; independent secrets and structural-security blockers also take priority. Omitted findings are counted by check and rule, with complete details in the full report. This ordering does not establish that one finding caused another, and the JSON/SARIF ordering and every finding remain unchanged. In staged mode, unresolved imports receive general staged-diff guidance; it does not assert that an importer has unstaged edits or that a previous staging command failed. That preview limit applies only to findings. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths remain complete. Explicit `--format ink` is a bounded preview using the same limit, but writes a temporary report only when its finding preview overflows. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
+
+The result names skipped checks and groups them by reason. Repository settings
+can exclude every eligible file for a check, or the selected changes can have no
+supported inputs for it. A check that applies but cannot finish appears under
+incomplete checks. JSON retains each check's status and reason.
 
 Configure the limit and maximum report age without making any lockfile changes:
 

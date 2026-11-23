@@ -383,8 +383,10 @@ export async function executeScanCommand(
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    const { installedCliCommand, hookUpdate } =
-      await inspectHookMaintenance(repositoryRoot);
+    const { installedCliCommand, hookUpdate } = await inspectHookMaintenance(
+      repositoryRoot,
+      io.env.HUSKY === "0",
+    );
     if (installedCliCommand !== undefined)
       report = { ...report, installedCliCommand };
     if (hookUpdate !== undefined) report = { ...report, hookUpdate };

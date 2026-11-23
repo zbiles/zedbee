@@ -1,3 +1,5 @@
+import type { CheckResult } from "../core/types.js";
+import { checkLabel } from "./check-label.js";
 import type { ScanReport } from "../scan/report.js";
 import { emptyChangesCopy } from "./source-identity.js";
 
@@ -16,6 +18,30 @@ export function coverageLine(report: ScanReport): string {
   const { completed, skipped, incomplete } = checkCoverage(report);
   return `${completed} ${completed === 1 ? "check" : "checks"} run · ${skipped} skipped · ${incomplete} incomplete`;
 }
+export function skippedCheckSummaries(
+  checks: readonly CheckResult[],
+): readonly string[] {
+  const groups = new Map<string, Set<string>>();
+  for (const check of checks) {
+    if (check.status !== "skipped") continue;
+    const reason = check.skipReason ?? "Not applicable";
+    const label = checkLabel(check.checkId);
+    const name =
+      check.target === undefined || check.target === "."
+        ? label
+        : `${label} (${check.target})`;
+    let checksForReason = groups.get(reason);
+    if (checksForReason === undefined) {
+      checksForReason = new Set();
+      groups.set(reason, checksForReason);
+    }
+    checksForReason.add(name);
+  }
+  return [...groups].map(
+    ([reason, names]) => `${reason} — ${[...names].join(", ")}`,
+  );
+}
+
 export function allowedScanDetail(report: ScanReport): string {
   if (report.changedFileCount === 0) return emptyChangesCopy(report);
   const coverage = checkCoverage(report);

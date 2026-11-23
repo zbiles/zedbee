@@ -21,11 +21,14 @@ import { updateLefthookConfig } from "./lefthook.js";
 import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
 import { hasLefthookRunCommand } from "./state.js";
+import { readHuskyHook } from "./husky-state.js";
 import {
   hasHookExecutePermission,
   hookFile,
   hooksPathValue,
+  huskyLineEndingChange,
   TRACKED_HOOK_NAMES,
+  TRACKED_HUSKY_STAGING,
   TRACKED_INSTALL_SCRIPT,
   trackedRuntimeChanges,
   validateLocalHookMigration,
@@ -178,20 +181,14 @@ async function huskyActivation(root: string): Promise<InitHookActivation> {
     const active = await Promise.all(
       (["pre-commit", "pre-merge-commit"] as const).map(async (name) => {
         const path = await customGitHookPath(root, name);
-        const direct = resolve(root, `.husky/${name}`);
-        const dispatcher = resolve(root, `.husky/_/${name}`);
-        if (path === direct) {
-          const file = await existingFile(root, `.husky/${name}`);
-          return file === undefined || hasHookExecutePermission(file.mode);
-        }
-        const installed =
-          path === undefined ? undefined : await existingAbsoluteFile(path);
+        if (path === undefined) return false;
+        const state = await readHuskyHook(root, path, name);
+        // A direct path for a new hook becomes executable when applied.
         return (
-          path === dispatcher &&
-          installed !== undefined &&
-          hasHookExecutePermission(installed.mode) &&
-          installed.contents.includes('/h"') &&
-          (await existingFile(root, ".husky/_/h")) !== undefined
+          state?.reachable === true ||
+          (state?.dispatcher === false &&
+            state.source === undefined &&
+            (await existingFile(root, `.husky/${name}`)) === undefined)
         );
       }),
     );
@@ -378,12 +375,20 @@ export async function detectHookIntegration(
         await changedFile(
           repositoryRoot,
           `.husky/${name}`,
-          (before) => updateHuskyHook(before, hookCommand, name),
+          (before) =>
+            updateHuskyHook(
+              before?.replaceAll("\r\n", "\n"),
+              hookCommand,
+              name,
+            ),
           0o755,
         ),
       );
     }
-    changes.push(...(await trackedRuntimeChanges(repositoryRoot)));
+    const runtime = await trackedRuntimeChanges(repositoryRoot);
+    if (runtime === undefined)
+      throw new Error("Zedbee will not replace a customized Husky dispatcher.");
+    changes.push(await huskyLineEndingChange(repositoryRoot), ...runtime);
     return Object.freeze({
       hook: "husky",
       changes,
@@ -392,8 +397,7 @@ export async function detectHookIntegration(
         status: "active" as const,
         message:
           "Applying this proposal activates the tracked pre-commit and pre-merge-commit hooks for this checkout.",
-        remediation:
-          "Commit the tracked .husky files and package.json. Teammates activate hooks during normal dependency installation; CI and production-only installs skip activation when Zedbee is unavailable.",
+        remediation: `${TRACKED_HUSKY_STAGING} Commit the prepare script in package.json too. Teammates activate hooks during normal dependency installation.`,
       },
     });
   }
@@ -409,6 +413,11 @@ export async function detectHookIntegration(
     });
   }
   if (hook === "husky") {
+    const existingPath = await hooksPathValue(repositoryRoot);
+    const runtime =
+      existingPath === ".husky/_"
+        ? await trackedRuntimeChanges(repositoryRoot).catch(() => undefined)
+        : undefined;
     const changes = await Promise.all(
       (["pre-commit", "pre-merge-commit"] as const).map((name) =>
         changedFile(
@@ -416,7 +425,7 @@ export async function detectHookIntegration(
           `.husky/${name}`,
           (before) =>
             updateHuskyHook(
-              before,
+              runtime === undefined ? before : before?.replaceAll("\r\n", "\n"),
               name === "pre-commit" ? command : mergeCommand,
               name,
             ),
@@ -426,9 +435,22 @@ export async function detectHookIntegration(
     );
     return Object.freeze({
       hook,
-      activation: await huskyActivation(repositoryRoot),
+      activation:
+        runtime === undefined
+          ? await huskyActivation(repositoryRoot)
+          : {
+              status: "active" as const,
+              message:
+                "Applying this proposal installs the stock Husky dispatchers for both hooks.",
+              remediation: TRACKED_HUSKY_STAGING,
+            },
       change: changes[0]!,
-      changes: changes.slice(1),
+      changes: [
+        ...changes.slice(1),
+        ...(runtime === undefined
+          ? []
+          : [await huskyLineEndingChange(repositoryRoot), ...runtime]),
+      ],
     });
   }
   if (hook === "custom" || hook === "raw") {

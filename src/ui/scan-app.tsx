@@ -231,6 +231,7 @@ export function ScanApp(props: ScanAppProps) {
       />
       <IncompleteList
         checks={props.report.checks}
+        comparison={props.report}
         width={props.width}
         color={props.color}
       />

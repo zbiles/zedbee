@@ -292,6 +292,7 @@ export async function prepareCheckDispatch(
       );
       continue;
     }
+    let excludedTargets = 0;
     for (const target of targets) {
       let policy: ResolvedCheckPolicy;
       try {
@@ -302,7 +303,10 @@ export async function prepareCheckDispatch(
           context,
           adapterContext.policyForFile,
         );
-        if (scheduledPolicy === undefined) continue;
+        if (scheduledPolicy === undefined) {
+          excludedTargets += 1;
+          continue;
+        }
         policy = scheduledPolicy;
       } catch {
         const label = checkLabel(adapter.id);
@@ -379,6 +383,22 @@ export async function prepareCheckDispatch(
           },
         );
       });
+    }
+    if (excludedTargets === targets.length) {
+      scheduled.push(
+        Promise.resolve(
+          executionResult(
+            {
+              checkId: adapter.id,
+              status: "skipped",
+              durationMs: 0,
+              findings: [],
+              skipReason: "No applicable targets enabled by configuration",
+            },
+            null,
+          ),
+        ),
+      );
     }
   }
 

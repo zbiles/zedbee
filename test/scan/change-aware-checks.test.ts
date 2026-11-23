@@ -161,3 +161,70 @@ describe("check exclusions", () => {
     );
   });
 });
+
+describe("coverage for a scoped formatting policy", () => {
+  it.each([
+    {
+      markdown: false,
+      webMarkdown: false,
+      reason: "No supported changed files",
+    },
+    {
+      markdown: true,
+      webMarkdown: false,
+      reason: "No applicable targets enabled by configuration",
+    },
+    { markdown: true, webMarkdown: true, reason: undefined },
+  ])(
+    "reports formatting coverage when markdown is $markdown and webMarkdown is $webMarkdown",
+    async ({ markdown, webMarkdown, reason }) => {
+      const repo = await fixture("recommended");
+      await repo.write(
+        ".zedbeerc.jsonc",
+        JSON.stringify({
+          schemaVersion: 1,
+          profile: "recommended",
+          overrides: [
+            {
+              files: ["**"],
+              excludeFiles: ["web/**"],
+              checks: { formatting: "off" },
+            },
+          ],
+        }),
+      );
+      await repo.commitAll("Scope formatting to web");
+      for (const path of ["api/one.py", "api/two.py", "api/test_three.py"]) {
+        await repo.write(path, "print('updated')\n");
+      }
+      if (markdown) {
+        for (const path of ["api/four.py", "api/AGENTS.md", "AGENTS.md"]) {
+          await repo.write(path, "Synthetic test file\n");
+        }
+      }
+      if (webMarkdown) await repo.write("web/README.md", "# Web notes\n");
+      expect((await repo.git(["add", "."])).exitCode).toBe(0);
+      const events: ScanEvent[] = [];
+      const report = await runScan({
+        repositoryRoot: repo.root,
+        cache: false,
+        onEvent: (event) => events.push(event),
+      });
+      expect(report.outcome).toBe("pass");
+      expect(report.changedFileCount).toBe(webMarkdown ? 7 : markdown ? 6 : 3);
+      expect(
+        report.checks.filter(({ checkId }) => checkId === "formatting"),
+      ).toEqual([
+        webMarkdown
+          ? expect.objectContaining({ status: "completed" })
+          : expect.objectContaining({ status: "skipped", skipReason: reason }),
+      ]);
+      expect(
+        events
+          .filter(({ type }) => type === "check-running")
+          .map(({ checkId }) => checkId)
+          .sort(),
+      ).toEqual(webMarkdown ? ["formatting", "secrets"] : ["secrets"]);
+    },
+  );
+});

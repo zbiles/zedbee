@@ -430,6 +430,30 @@ The installer skips CI, `HUSKY=0`, and directories without Git metadata; the
 tracked prepare script also skips when Zedbee is absent in a production-only
 install. Setup itself does not download dependencies or run project scripts.
 
+### Fresh worktrees with Husky
+
+Git resolves a relative `core.hooksPath=.husky/_` within each worktree. With
+the stock Husky 9.1.7 setup, run `zedbee init --hook husky` after activating Husky.
+Review the generated dispatchers and bundled Husky license, then run the
+staging commands printed by setup. The force flag stages the listed runtime
+files even when Husky's generated ignore rules apply. The dispatcher command
+records executable mode even when `core.filemode` is false. Stage and commit
+the hook bodies and `.husky/.gitattributes` too. The attributes keep the
+shell scripts at LF line endings even when `core.autocrlf` is enabled. Keep
+the existing project prepare script.
+
+A new linked worktree on a branch containing these files uses them immediately
+when its effective Git hook path is `.husky/_`. Install the project
+dependencies in that worktree before committing or merging. A managed hook
+reports a missing Zedbee installation before running the existing hook
+commands. Run the project’s usual hook setup for a fresh clone or a branch
+created before the tracked dispatchers landed. If the repository uses a
+customized dispatcher or a different hook path, follow its own hook setup
+instructions. Check the effective hook path and installation with
+`zedbee doctor`.
+
+### Setup options
+
 New tracked setup requires a root `package.json` and refuses to replace custom
 local hooks whose execution cannot be preserved. Interactive setup keeps Local
 and No available when tracked setup is unavailable. Automatic edits of non-shell

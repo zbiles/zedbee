@@ -3,13 +3,10 @@ import {
   COMPILER_SOURCE,
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
-  COMPILER_ORDINARY,
+  isOrdinaryCompilerPath,
   changedCompilerPaths,
 } from "./compiler-paths.js";
-import {
-  classifyCompilerChanges,
-  compilerPolicyInputPaths,
-} from "./compiler-change-inputs.js";
+import { compilerPolicyInputPaths } from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
@@ -36,10 +33,12 @@ export type CompilerInputRelevance = Readonly<{
     | "independent";
 }>;
 
-const scopedDecisions = new WeakMap<
+type ScopedDecisions = WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
->();
+>;
+const scopedDecisions: ScopedDecisions = new WeakMap();
+const scopedMergeDecisions: ScopedDecisions = new WeakMap();
 
 /** Metadata only. Known source/configuration membership takes precedence over
  * ordinary extensions. A possible input selects every compiler consumer: sibling
@@ -85,7 +84,7 @@ async function resolveRelevance(
     if (COMPILER_CONFIGURATION.test(name))
       return { relevant: true, reason: "configuration" };
     if (DATA.test(path)) return { relevant: true, reason: "data" };
-    if (name.toLowerCase() !== ".gitignore" && !COMPILER_ORDINARY.test(path))
+    if (!isOrdinaryCompilerPath(path))
       return { relevant: true, reason: "unknown" };
   }
   return complete
@@ -106,14 +105,18 @@ export function compilerInputRelevance(
       recordChangeCategory(value.reason);
     })
     .catch(() => {});
-  let scoped = scopedDecisions.get(decision);
+  const decisions = context.mergeComparison
+    ? scopedMergeDecisions
+    : scopedDecisions;
+  let scoped = decisions.get(decision);
   if (scoped === undefined) {
     scoped = new WeakMap();
-    scopedDecisions.set(decision, scoped);
+    decisions.set(decision, scoped);
   }
   const previous = scoped.get(workspace);
   if (
     previous !== undefined &&
+    !context.mergeComparison &&
     ![...changedCompilerPaths(context.changeSet)].some(
       (path) =>
         COMPILER_SOURCE.test(path) ||
@@ -134,18 +137,13 @@ export function compilerInputRelevance(
     });
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
-      if (!result.relevant || !["source", "dependency"].includes(result.reason))
+      if (
+        !result.relevant ||
+        result.reason === "configuration" ||
+        (!context.mergeComparison &&
+          !["source", "dependency"].includes(result.reason))
+      )
         return result;
-      const classification = await classifyCompilerChanges(context);
-      if (!classification.complete || classification.requiresBroadComparison)
-        return result;
-      const paths = [
-        ...classification.sourcePaths,
-        ...classification.localNpmInputs,
-      ];
-      const prefix =
-        workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-      if (paths.some((path) => path.startsWith(prefix))) return result;
       if (
         !(await proveCompilerWorkspaceIndependence(context, workspace))
           .independent

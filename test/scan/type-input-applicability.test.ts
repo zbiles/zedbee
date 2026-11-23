@@ -150,3 +150,31 @@ describe("relevant TypeScript project inputs", () => {
     });
   });
 });
+
+it("still checks an edited workspace with a declared missing dependency", async () => {
+  const { createSeparateCompilerWorkspaces } =
+    await import("../helpers/separate-compiler-workspaces.js");
+  const repo = await createSeparateCompilerWorkspaces();
+  await repo.write(
+    "extension/src/index.ts",
+    'export { value } from "fixture-package";\nexport const edited = 1;\n',
+  );
+  expect((await repo.git(["add", "extension/src/index.ts"])).exitCode).toBe(0);
+
+  const report = await scan(repo.root);
+  expect(report.outcome).toBe("incomplete");
+  expect(report.checks).toEqual(
+    expect.arrayContaining(
+      ["lint", "types"].map((checkId) =>
+        expect.objectContaining({
+          checkId,
+          target: "extension",
+          status: "incomplete",
+          error: expect.objectContaining({
+            code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+          }),
+        }),
+      ),
+    ),
+  );
+});

@@ -173,3 +173,25 @@ describe("tracked hook installation", () => {
     expect(await outside.read("h")).toBe("private runtime");
   });
 });
+
+describe("stock Husky adoption", () => {
+  it("preserves a customized dispatcher without staging or replacing it", async () => {
+    const repo = await createGitRepository("zedbee-custom-dispatcher-");
+    await repo.git(["config", "core.hooksPath", ".husky/_"]);
+    await repo.write(".husky/_/pre-commit", "#!/bin/sh\nexit 17\n");
+    await repo.write(".husky/pre-commit", "#!/bin/sh\nexit 0\n");
+
+    const integration = await detectHookIntegration(repo.root, "husky");
+    expect(integration.activation.status).toBe("pending");
+    expect(integration.changes?.map((change) => change.relativePath)).toEqual([
+      ".husky/pre-merge-commit",
+    ]);
+    await expect(installTrackedHooks(repo.root)).rejects.toThrow(
+      "customized Husky dispatcher",
+    );
+    expect(await repo.read(".husky/_/pre-commit")).toBe("#!/bin/sh\nexit 17\n");
+    expect((await repo.git(["diff", "--cached", "--name-only"])).stdout).toBe(
+      "",
+    );
+  });
+});

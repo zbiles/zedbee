@@ -1555,7 +1555,15 @@ describe("dispatchChecks", () => {
     const executions = await dispatchChecks([adapter], context);
 
     expect(runs).toBe(0);
-    expect(executions).toEqual([]);
+    expect(executions).toEqual([
+      expect.objectContaining({
+        result: expect.objectContaining({
+          checkId: "lint",
+          status: "skipped",
+          skipReason: "No applicable targets enabled by configuration",
+        }),
+      }),
+    ]);
   });
 
   it("schedules an enabled matching always override without staged files", async () => {
@@ -1655,7 +1663,15 @@ describe("dispatchChecks", () => {
     const executions = await dispatchChecks([adapter], context);
 
     expect(runs).toBe(0);
-    expect(executions).toEqual([]);
+    expect(executions).toEqual([
+      expect.objectContaining({
+        result: expect.objectContaining({
+          checkId: "duplication",
+          status: "skipped",
+          skipReason: "No applicable targets enabled by configuration",
+        }),
+      }),
+    ]);
   });
 
   it("runs formatting when a supported staged Markdown path is enabled by override", async () => {
@@ -1736,7 +1752,15 @@ describe("dispatchChecks", () => {
     const executions = await dispatchChecks([adapter], context);
 
     expect(runs).toBe(0);
-    expect(executions).toEqual([]);
+    expect(executions).toEqual([
+      expect.objectContaining({
+        result: expect.objectContaining({
+          checkId: "formatting",
+          status: "skipped",
+          skipReason: "No applicable targets enabled by configuration",
+        }),
+      }),
+    ]);
   });
 
   it("uses metric entity paths for identical live and final file policy", async () => {

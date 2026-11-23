@@ -577,8 +577,19 @@ async function captureWorkspaceSignature(
         imports === undefined &&
         requires === undefined &&
         (isBuiltin(specifier) || isPackageSpecifier(specifier))
-      )
+      ) {
+        if (options.paths !== undefined) {
+          charge(Object.keys(options.paths).length);
+          const { selectedTypeScriptPathMapping } =
+            await import("./aliases.js");
+          if (
+            selectedTypeScriptPathMapping(options.paths, specifier) !==
+            undefined
+          )
+            return undefined;
+        }
         return [];
+      }
       return undefined;
     };
     while (pending.length) {
@@ -717,13 +728,41 @@ async function captureWorkspaceSignature(
   return signature;
 }
 
+/** An installed merge can reuse ordinary observation-cache results. Only pay
+ * for the extra merge proof if independent inputs could avoid a missing install. */
+function mergeMayNeedInstallation(
+  repositoryRoot: string,
+  workspace: WorkspaceInspection,
+): boolean {
+  const declarations = workspace.dependencyDeclarations;
+  if (declarations.length === 0 || declarations.length > 128) return false;
+  const dependencies = new CapturedDependencies({ repositoryRoot });
+  return declarations.some(
+    ({ name, section }) =>
+      section !== "optionalDependencies" &&
+      isPackageSpecifier(name) &&
+      !dependencies.fileExists(
+        resolve(
+          repositoryRoot,
+          workspace.relativeRoot,
+          "node_modules",
+          name,
+          "package.json",
+        ),
+      ) &&
+      !dependencies.fileExists(
+        resolve(repositoryRoot, "node_modules", name, "package.json"),
+      ) &&
+      dependencies.failure() === undefined,
+  );
+}
+
 export async function proveCompilerWorkspaceIndependence(
   context: InspectionContext,
   workspace: WorkspaceInspection,
 ): Promise<WorkspaceIndependenceProof> {
   context.signal?.throwIfAborted();
   if (
-    context.mergeComparison ||
     context.config.checks.lint.when === "always" ||
     context.config.checks.types.when === "always" ||
     context.config.checks.lint.engine === "project"
@@ -732,17 +771,31 @@ export async function proveCompilerWorkspaceIndependence(
   const changes = await classifyCompilerChanges(context);
   const separateInstall = changes.separateNpmRoots.has(workspace.relativeRoot);
   const changedPaths = [...changes.sourcePaths, ...changes.localNpmInputs];
+  // On each merge parent, only separately locked installations can omit
+  // unchanged siblings. Unclassified paths still require a closed resolution
+  // graph. A probe into a changed asset or its metadata leaves the check active.
   if (
     !changes.complete ||
     changes.requiresBroadComparison ||
-    changedPaths.length === 0 ||
+    (context.mergeComparison && !separateInstall) ||
+    (changes.unclassifiedPaths.size > 0 && !context.mergeComparison) ||
+    changedPaths.length + changes.unclassifiedPaths.size === 0 ||
     (changes.localNpmInputs.size !== 0 && !separateInstall)
   )
     return unknown;
   const prefix =
     workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-  if (changedPaths.some((path) => path.startsWith(prefix)))
+  if (
+    [...changedPaths, ...changes.unclassifiedPaths].some((path) =>
+      path.startsWith(prefix),
+    )
+  )
     return { independent: false, reason: "changed-input" };
+  if (
+    context.mergeComparison &&
+    !mergeMayNeedInstallation(context.repositoryRoot, workspace)
+  )
+    return unknown;
   return acquireCompilerProof(context.signal, async () => {
     context.signal?.throwIfAborted();
     const slot = compilerProofSlot(context, workspace.relativeRoot);

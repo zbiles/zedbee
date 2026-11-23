@@ -1,6 +1,8 @@
 import {
+  coverageLine,
   scanOutcomeDetail,
   scanResultCountLine,
+  skippedCheckSummaries,
 } from "../reporting/check-coverage.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
@@ -8,8 +10,7 @@ import {
   HOOK_UPDATE_TITLE,
 } from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
-import { coverageLine } from "../reporting/check-coverage.js";
-import type { Finding, ManagedAutomaticFix } from "../core/types.js";
+import type { CheckResult, Finding, ManagedAutomaticFix } from "../core/types.js";
 import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
@@ -31,6 +32,7 @@ import {
 import { buildScanResultSections } from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
+import { presentIncompleteChecks } from "../reporting/incomplete-checks.js";
 import { incompleteSectionLines } from "./incomplete.js";
 import { terminalText, type TerminalTextTone } from "./terminal-style.js";
 import {
@@ -62,6 +64,7 @@ const PRIMARY_TEXT_HEADINGS = new Set([
   "REPORT MAINTENANCE WARNING",
   "REPORT DELIVERY WARNING",
   "INCOMPLETE CHECKS",
+  "SKIPPED CHECKS",
   "SCAN RESULT",
   HOOK_UPDATE_TITLE,
   "NEXT STEP",
@@ -410,19 +413,17 @@ function automaticHeadline(
 }
 
 function skippedReasonLines(
-  report: ScanReport,
+  checks: readonly CheckResult[],
   width: number,
-  verbose: boolean,
 ): string[] {
-  if (!verbose) return [];
-  return report.checks
-    .filter((check) => check.status === "skipped")
-    .flatMap((check) =>
-      wrapWords(
-        `${check.checkId}: skipped — ${check.skipReason ?? "Not applicable"}`,
-        width,
-      ),
-    );
+  const summaries = skippedCheckSummaries(checks);
+  return summaries.length === 0
+    ? []
+    : [
+        "",
+        "SKIPPED CHECKS",
+        ...summaries.flatMap((line) => wrapWords(line, width)),
+      ];
 }
 
 function hookUpdateLines(report: ScanReport, width: number): string[] {
@@ -475,7 +476,7 @@ function automaticTextLines(
     ),
     ...sections.previewNotes.flatMap((line) => wrapWords(line, width)),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
-    ...skippedReasonLines(report, width, verbose),
+    ...skippedReasonLines(sanitized.checks, width),
     ...disclosureSectionLines(sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
     ...incompleteSectionLines(sections.incompleteChecks, width),
@@ -580,8 +581,8 @@ export function renderText(
     ...headline(report).flatMap((line) => wrapWords(line, width)),
     ...hookUpdateLines(report, width),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
-    ...skippedReasonLines(report, width, options.verbose === true),
-    ...incompleteSectionLines(sanitized.checks, width),
+    ...skippedReasonLines(sanitized.checks, width),
+    ...incompleteSectionLines(presentIncompleteChecks(sanitized.checks, report), width),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
     ...completeManagedFixLines(

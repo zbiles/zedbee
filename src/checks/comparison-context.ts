@@ -328,6 +328,7 @@ export async function assertRequiredInstallation(options: {
       const {
         reviewedInstallationLabels,
         INSTALLATION_MESSAGE,
+        INSTALLATION_CONTEXTUAL_PREFIX,
         INSTALLATION_REMEDIATION,
       } = await import("./installation-diagnostic.js");
       const labels =
@@ -337,17 +338,18 @@ export async function assertRequiredInstallation(options: {
               inspection,
               workspace,
               unavailable,
+              repositoryRoot,
             );
       throw new CheckIncompleteError({
         code: "COMPARISON_INSTALLATION_UNAVAILABLE",
         message:
           labels === undefined
             ? INSTALLATION_MESSAGE
-            : `Analysis is incomplete because declared package '${labels.name}' is unavailable to workspace '${labels.workspace}' in the ${options.side} snapshot.`,
+            : `${INSTALLATION_CONTEXTUAL_PREFIX}${labels.name}' for workspace '${labels.workspace}'.`,
         remediation:
-          labels === undefined
+          labels?.npmInstallRoot === undefined
             ? INSTALLATION_REMEDIATION
-            : `Restore '${labels.name}' using this workspace's package-manager and lockfile workflow, then rerun the scan.`,
+            : `Run npm${labels.npmInstallRoot === "." ? "" : ` --prefix ${labels.npmInstallRoot}`} ci from the repository root, then rerun the scan.`,
         path: workspace.manifestPath,
         snapshot: options.side === "baseline" ? "last-commit" : "staged",
       });

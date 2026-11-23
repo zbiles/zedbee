@@ -3,7 +3,7 @@ import {
   COMPILER_SOURCE,
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
-  COMPILER_ORDINARY,
+  isOrdinaryCompilerPath,
   changedCompilerPaths,
 } from "./compiler-paths.js";
 import { posix, relative, resolve, sep, isAbsolute } from "node:path";
@@ -31,6 +31,7 @@ export function compilerPolicyInputPaths(
 }
 export interface CompilerChangeClassification {
   readonly sourcePaths: ReadonlySet<string>;
+  readonly unclassifiedPaths: ReadonlySet<string>;
   readonly localNpmInputs: ReadonlySet<string>;
   readonly separateNpmRoots: ReadonlySet<string>;
   readonly requiresBroadComparison: boolean;
@@ -43,11 +44,13 @@ async function acquireCompilerChanges(
   context.signal?.throwIfAborted();
   const paths = changedCompilerPaths(context.changeSet);
   const sourcePaths = new Set<string>();
+  const unclassifiedPaths = new Set<string>();
   const localNpmInputs = new Set<string>();
   const inspections = [context.baselineInspection, context.targetInspection];
   if (inspections.some((inspection) => inspection.workspaces.length > 32)) {
     return {
       sourcePaths,
+      unclassifiedPaths,
       localNpmInputs,
       separateNpmRoots: new Set(),
       complete: false,
@@ -102,6 +105,7 @@ async function acquireCompilerChanges(
       if (!complete)
         return {
           sourcePaths,
+          unclassifiedPaths,
           localNpmInputs,
           separateNpmRoots,
           complete: false,
@@ -128,15 +132,12 @@ async function acquireCompilerChanges(
       /\.d\.[cm]?ts$/iu.test(path)
     )
       requiresBroadComparison = true;
-    else if (
-      !sourcePaths.has(path) &&
-      name.toLowerCase() !== ".gitignore" &&
-      !COMPILER_ORDINARY.test(path)
-    )
-      requiresBroadComparison = true;
+    else if (!sourcePaths.has(path) && !isOrdinaryCompilerPath(path))
+      unclassifiedPaths.add(path);
   }
   return {
     sourcePaths,
+    unclassifiedPaths,
     localNpmInputs,
     separateNpmRoots,
     requiresBroadComparison,

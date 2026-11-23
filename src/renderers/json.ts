@@ -92,6 +92,9 @@ function serializeCheck(
           ...(check.error.snapshot === undefined
             ? {}
             : { snapshot: check.error.snapshot }),
+          ...(check.error.comparisonParent === undefined
+            ? {}
+            : { comparisonParent: check.error.comparisonParent }),
           ...(check.error.projectPaths === undefined
             ? {}
             : { projectPaths: [...check.error.projectPaths] }),

@@ -125,8 +125,14 @@ async function regularFileContents(path: string): Promise<string | undefined> {
   }
 }
 
-async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
-  const { hookUpdate, sharedHuskyPreCommit } = await inspectHookMaintenance(root);
+async function hookStateDiagnostic(
+  root: string,
+  huskyOptedOut: boolean,
+): Promise<Diagnostic> {
+  const { hookUpdate, huskyPreCommit } = await inspectHookMaintenance(
+    root,
+    huskyOptedOut,
+  );
   if (hookUpdate !== undefined) {
     return {
       id: "hook-state",
@@ -135,12 +141,27 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
       remediation: hookUpdate.remediation,
     };
   }
-  if (sharedHuskyPreCommit !== undefined) {
-    return sharedHuskyPreCommit
-      ? { id: "hook-state", status: "pass", message: "The shared Husky pre-commit hook invokes Zedbee." }
-      : { id: "hook-state", status: "warning",
-          message: "The shared Husky pre-commit hook does not invoke Zedbee.",
-          remediation: "Run zedbee init in the main checkout to add Zedbee to the shared hook.",
+  if (huskyPreCommit !== undefined) {
+    const owner = huskyPreCommit.shared ? "shared Husky" : "Husky";
+    return huskyPreCommit.active
+      ? {
+          id: "hook-state",
+          status: "pass",
+          message: `The ${owner} pre-commit hook invokes Zedbee.`,
+        }
+      : {
+          id: "hook-state",
+          status: "warning",
+          message: huskyOptedOut
+            ? "Husky is explicitly disabled in this environment."
+            : `The ${owner} pre-commit hook does not invoke Zedbee.`,
+          ...(huskyOptedOut
+            ? {}
+            : {
+                remediation: huskyPreCommit.shared
+                  ? "Run zedbee init in the main checkout to add Zedbee to the shared hook."
+                  : "Run zedbee init to add Zedbee to the existing hook.",
+              }),
         };
   }
   const hookOutput = await new GitClient(root).run([
@@ -159,10 +180,7 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
       regularFileContents(join(root, "lefthook.yml")),
       regularFileContents(join(root, "package.json")),
     ]);
-  if (
-    (installedHook !== undefined && hasZedbeeScanCommand(installedHook)) ||
-    (huskyHook !== undefined && hasZedbeeScanCommand(huskyHook))
-  ) {
+  if (installedHook !== undefined && hasZedbeeScanCommand(installedHook)) {
     return {
       id: "hook-state",
       status: "pass",
@@ -635,7 +653,7 @@ export function createDefaultDiagnosticProbe(
             };
       case "hook-state": {
         const root = await repositoryRoot(context.cwd);
-        return hookStateDiagnostic(root);
+        return hookStateDiagnostic(root, context.environment.HUSKY === "0");
       }
       case "online-service-disclosure": {
         const root = await repositoryRoot(context.cwd);

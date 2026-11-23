@@ -1,4 +1,4 @@
-import { chmod, mkdir, realpath, symlink } from "node:fs/promises";
+import { chmod, mkdir, realpath, symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
@@ -61,6 +61,7 @@ it.each(["husky", "custom", "lefthook", "simple-git-hooks"])(
       const path = manager === "husky" ? ".husky" : ".hooks";
       await repo.git(["config", "core.hooksPath", path]);
       await repo.write(`${path}/pre-commit`, old + "\n");
+      await chmod(join(repo.root, path, "pre-commit"), 0o755);
       expect(await getHookUpdateNotice(repo.root)).toBeDefined();
       await repo.write(`${path}/pre-commit`, current + "\n");
     } else if (manager === "lefthook") {
@@ -198,4 +199,77 @@ it("doctor reports an outdated hook as a warning rather than healthy", async () 
   expect((await defaultDiagnosticProbe("hook-state", context)).status).toBe(
     "pass",
   );
+});
+
+it("diagnoses an unreachable Husky body and its installation independently", async () => {
+  const repo = await fixture();
+  await repo.git(["config", "core.hooksPath", ".husky/_"]);
+  const command = await resolveHookCommand(repo.root);
+  await repo.write(".husky/pre-commit", updateHuskyHook(null, command));
+  const context = { cwd: repo.root, environment: {} };
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HUSKY_DISPATCHER_INACTIVE",
+  });
+  expect(await defaultDiagnosticProbe("hook-state", context)).toMatchObject({
+    status: "warning",
+    message: expect.stringContaining("dispatcher is missing or inactive"),
+  });
+  expect(
+    (await inspectHookMaintenance(repo.root, true)).hookUpdate,
+  ).toBeUndefined();
+  expect(
+    await defaultDiagnosticProbe("hook-state", {
+      ...context,
+      environment: { HUSKY: "0" },
+    }),
+  ).toMatchObject({
+    status: "warning",
+    message: "Husky is explicitly disabled in this environment.",
+  });
+  await repo.write(
+    ".husky/_/pre-commit",
+    '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n',
+  );
+  await chmod(join(repo.root, ".husky/_/pre-commit"), 0o755);
+  // A linked helper must not be mistaken for a reachable trusted dispatcher.
+  await symlink(
+    join(repo.root, ".husky/pre-commit"),
+    join(repo.root, ".husky/_/h"),
+  );
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HUSKY_DISPATCHER_INACTIVE",
+  });
+  await unlink(join(repo.root, ".husky/_/h"));
+  await repo.write(".husky/_/h", "#!/bin/sh\n");
+  const beta21 = `#!/bin/sh\nnpm test\n${command} || exit $?\n`;
+  await repo.write(".husky/pre-commit", beta21);
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HOOK_UPDATE_NEEDED",
+  });
+  await repo.write(".husky/pre-commit", updateHuskyHook(beta21, command));
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  await unlink(join(repo.root, "web/node_modules/zedbee/dist/cli.js"));
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HUSKY_CLI_UNAVAILABLE",
+  });
+  expect(await defaultDiagnosticProbe("hook-state", context)).toMatchObject({
+    status: "warning",
+    message: expect.stringContaining("usable installation in this checkout"),
+  });
+});
+
+it("lets an active raw hook take precedence over a leftover Husky body", async () => {
+  const repo = await fixture();
+  const command = await resolveHookCommand(repo.root);
+  await repo.write(".husky/pre-commit", old + "\n");
+  await repo.write(".git/hooks/pre-commit", command + "\n");
+  await chmod(join(repo.root, ".git/hooks/pre-commit"), 0o755);
+
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
+  expect(
+    await defaultDiagnosticProbe("hook-state", {
+      cwd: repo.root,
+      environment: {},
+    }),
+  ).toMatchObject({ status: "pass" });
 });

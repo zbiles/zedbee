@@ -298,7 +298,8 @@ export function createReactAdapter(
         !context.mergeComparison &&
         context.policy.when !== "always" &&
         changes?.complete === true &&
-        !changes.requiresBroadComparison;
+        !changes.requiresBroadComparison &&
+        changes.unclassifiedPaths.size === 0;
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
         context.baselineInspection,

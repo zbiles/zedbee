@@ -565,7 +565,7 @@ export function InitActionButton({
 function initFileDescription(file: InitFileChange): string {
   const action = file.before === null ? "Create" : "Update";
   if (file.relativePath.startsWith(".husky/_/"))
-    return `${action} the local, ignored dispatcher used to activate Git hooks.`;
+    return `${action} Husky activation files. Review the staging command to share the dispatcher with linked worktrees.`;
   switch (file.relativePath) {
     case ".zedbeerc.jsonc":
       return `${action} Zedbee's repository configuration with the selected profile, checks, and reporting settings.`;
@@ -575,6 +575,8 @@ function initFileDescription(file: InitFileChange): string {
       return `${action} the Git pre-commit hook so Zedbee runs before each commit.`;
     case ".git/hooks/pre-merge-commit":
       return `${action} the Git pre-merge-commit hook so Zedbee checks changes from every parent before an automatic merge commit.`;
+    case ".husky/.gitattributes":
+      return `${action} Git attributes that keep the hook scripts at LF line endings in each worktree.`;
     case ".husky/pre-merge-commit":
       return `${action} the tracked pre-merge-commit hook so Zedbee checks changes from every parent before an automatic merge commit.`;
     case ".husky/pre-commit":

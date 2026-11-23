@@ -1,4 +1,4 @@
-import { parseFailureFields } from "../renderers/incomplete.js";
+import type { IncompleteCheckPresentation } from "../reporting/incomplete-checks.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
   hookUpdateNotice,
@@ -8,9 +8,9 @@ import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
   coverageLine,
+  skippedCheckSummaries,
 } from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
-import { findingCheckLabel } from "../reporting/check-label.js";
 import {
   buildReportCallouts,
   type ReportCalloutLine,
@@ -140,6 +140,7 @@ function ResultContent({
 }) {
   const outcome = outcomeCopy(report);
   const sourceIdentity = scanSourceIdentityLine(report);
+  const skipped = skippedCheckSummaries(report.checks);
   return (
     <Box
       flexDirection="column"
@@ -167,6 +168,18 @@ function ResultContent({
         {" · "}
         {coverageLine(report)}
       </Text>
+      {skipped.length === 0 ? null : (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            SKIPPED CHECKS
+          </Text>
+          {skipped.map((line) => (
+            <Text key={line} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              {line}
+            </Text>
+          ))}
+        </Box>
+      )}
       {presentation.abbreviated ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           Showing {presentation.findings.length} of{" "}
@@ -281,7 +294,7 @@ function IncompleteChecksPanel({
   width,
   color,
 }: {
-  readonly checks: ScanReport["checks"];
+  readonly checks: readonly IncompleteCheckPresentation[];
   readonly width: number;
   readonly color: boolean;
 }) {
@@ -300,134 +313,32 @@ function IncompleteChecksPanel({
           paddingTop={1}
           paddingBottom={1}
         >
-          {checks.map((check, index) => {
-            const error = check.error;
-            const title =
-              error?.code.replaceAll("_", " ") ??
-              `${findingCheckLabel(check.checkId).toUpperCase()} INCOMPLETE`;
-            return (
-              <Box
-                key={`${check.checkId}:${error?.code ?? "incomplete"}:${index}`}
-                flexDirection="column"
-                width={contentWidth}
-                marginTop={index === 0 ? 0 : 1}
-              >
-                <Text
-                  bold
-                  wrap="wrap"
-                  {...colorProp(color, ZEDBEE_THEME.warning)}
-                >
-                  ! {title}
-                </Text>
-                {error === undefined ? null : (
-                  <>
-                    <LabeledValue
-                      label="Issue"
-                      value={error.message}
-                      width={contentWidth}
-                      color={color}
-                    />
-                    {error.path === undefined ||
-                    error.parseFailures !== undefined ? null : (
-                      <LabeledValue
-                        label="Path"
-                        value={error.path}
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.snapshot === undefined ? null : (
-                      <LabeledValue
-                        label="Checked version"
-                        value={
-                          error.snapshot === "last-commit"
-                            ? "Previous commit"
-                            : "Staged files"
-                        }
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.projectPaths === undefined ? null : (
-                      <LabeledValue
-                        label={
-                          error.projectPaths.length === 1
-                            ? "Loaded project"
-                            : "Loaded projects"
-                        }
-                        value={error.projectPaths.join(", ")}
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.parseFailures !== undefined ? (
-                      parseFailureFields(error.parseFailures).map(
-                        ({ label, value }, index) => (
-                          <LabeledValue
-                            key={index}
-                            label={label}
-                            value={value}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        ),
-                      )
-                    ) : error.paths === undefined ? null : (
-                      <>
-                        <LabeledValue
-                          label="Affected files"
-                          value={String(error.paths.length)}
-                          width={contentWidth}
-                          color={color}
-                          tone={ZEDBEE_THEME.secondary}
-                        />
-                        {error.paths.slice(0, 10).map((path) => (
-                          <LabeledValue
-                            key={path}
-                            label="File"
-                            value={path}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        ))}
-                        {error.paths.length <= 10 ? null : (
-                          <LabeledValue
-                            label="More files"
-                            value={String(error.paths.length - 10)}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        )}
-                      </>
-                    )}
-                    {error.temporaryPath === undefined ? null : (
-                      <LabeledValue
-                        label="Cleanup"
-                        value={error.temporaryPath}
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.remediation === undefined ? null : (
-                      <LabeledValue
-                        label="Fix"
-                        value={error.remediation}
-                        width={contentWidth}
-                        color={color}
-                      />
-                    )}
-                  </>
-                )}
-              </Box>
-            );
-          })}
+          {checks.map(({ title, fields }, index) => (
+            <Box
+              key={index}
+              flexDirection="column"
+              width={contentWidth}
+              marginTop={index === 0 ? 0 : 1}
+            >
+              <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+                ! {title}
+              </Text>
+              {fields.map(({ label, value }, fieldIndex) => (
+                <LabeledValue
+                  key={fieldIndex}
+                  label={label}
+                  value={value}
+                  width={contentWidth}
+                  color={color}
+                  tone={
+                    label === "Issue" || label === "Fix"
+                      ? ZEDBEE_THEME.primary
+                      : ZEDBEE_THEME.secondary
+                  }
+                />
+              ))}
+            </Box>
+          ))}
         </Box>
       </BrandedCommandPanel>
     </Box>

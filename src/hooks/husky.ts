@@ -3,6 +3,8 @@ import type { ScanHookName } from "./command.js";
 import {
   guardedHookInvocation,
   installedHookCommand,
+  installedHookPreflight,
+  isInstalledHookPreflight,
 } from "./installed-command.js";
 
 const SCAN_FAILURE_GUARD = " || exit $?";
@@ -116,6 +118,24 @@ export function replaceManagedZedbeeCommand(
     .join("\n");
 }
 
+function addManagedPreflight(
+  source: string,
+  command: string,
+  hookName: ScanHookName,
+): string {
+  const installed = guardedHookInvocation(command);
+  if (installed === undefined) return source;
+  const lines = source.split("\n");
+  if (!lines.includes(`${command}${SCAN_FAILURE_GUARD}`)) return source;
+  const body = lines.filter((line) => !isInstalledHookPreflight(line));
+  body.splice(
+    body[0]?.startsWith("#!") ? 1 : 0,
+    0,
+    installedHookPreflight(installed.cliPath, hookName),
+  );
+  return body.join("\n");
+}
+
 export function updateHuskyHook(
   before: string | null | undefined,
   command = ZEDBEE_COMMAND,
@@ -127,7 +147,8 @@ export function updateHuskyHook(
     command,
     true,
   );
-  if (hasZedbeeScanCommand(source, hookName)) return source;
+  if (hasZedbeeScanCommand(source, hookName))
+    return addManagedPreflight(source, command, hookName);
   if (
     hookName === "pre-merge-commit" &&
     delegatesToPreCommit(source, preCommitPath)
@@ -143,5 +164,5 @@ export function updateHuskyHook(
     insertion -= 1;
   }
   lines.splice(insertion, 0, `${command}${SCAN_FAILURE_GUARD}`);
-  return `${lines.join("\n")}\n`;
+  return addManagedPreflight(`${lines.join("\n")}\n`, command, hookName);
 }

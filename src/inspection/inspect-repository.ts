@@ -17,7 +17,7 @@ import type {
 } from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
 
-const LOCKFILE_MANAGERS = {
+export const LOCKFILE_MANAGERS = {
   "package-lock.json": "npm",
   "npm-shrinkwrap.json": "npm",
   "pnpm-lock.yaml": "pnpm",

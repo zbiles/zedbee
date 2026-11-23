@@ -33,6 +33,7 @@ async function fixtureContext(path: string, previousPath?: string) {
 describe("compiler input scheduling", () => {
   it.each([
     "script.py",
+    "api/pyproject.toml",
     "types.pyi",
     "README.md",
     "guide.markdown",
@@ -58,6 +59,7 @@ describe("compiler input scheduling", () => {
     "package-lock.json",
     "tsconfig.json",
     "input.custom",
+    "api/other.toml",
   ])("keeps conservative compiler coverage for %s", async (path) => {
     const context = await fixtureContext(path);
     for (const check of ["types", "lint"] as const)
@@ -68,6 +70,7 @@ describe("compiler input scheduling", () => {
 
   it.each([
     ["removed.md", "src/old.ts"],
+    ["api/pyproject.toml", "src/old.ts"],
     ["src/new.ts", "old.md"],
   ])("checks both rename names: %s from %s", async (path, previousPath) => {
     const context = await fixtureContext(path!, previousPath);
@@ -91,25 +94,27 @@ describe("compiler input scheduling", () => {
 });
 
 describe("compiler configuration metadata boundaries", () => {
-  it.each(["config/compiler.md", "config/compiler.py", "config/compiler.txt"])(
-    "does not classify inherited %s as unrelated",
-    async (path) => {
-      const fixture = await createInspectionFixture();
-      await fixture.writeJson("package.json", { name: "synthetic" });
-      await fixture.write("src/index.ts", "export const value = 1;\n");
-      await fixture.writeJson("tsconfig.json", { extends: `./${path}` });
-      await fixture.writeJson(path, {});
-      const inspection = await inspectRepository(fixture.root);
-      const context = {
-        ...(await fixtureContext(path)),
-        baselineInspection: inspection,
-        targetInspection: inspection,
-      };
-      expect(await inspectManagedCheck("types", context)).toMatchObject({
-        applies: true,
-      });
-    },
-  );
+  it.each([
+    "config/compiler.md",
+    "config/compiler.py",
+    "config/compiler.txt",
+    "api/pyproject.toml",
+  ])("does not classify inherited %s as unrelated", async (path) => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "synthetic" });
+    await fixture.write("src/index.ts", "export const value = 1;\n");
+    await fixture.writeJson("tsconfig.json", { extends: `./${path}` });
+    await fixture.writeJson(path, {});
+    const inspection = await inspectRepository(fixture.root);
+    const context = {
+      ...(await fixtureContext(path)),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    expect(await inspectManagedCheck("types", context)).toMatchObject({
+      applies: true,
+    });
+  });
 
   it.each([
     "{ broken",

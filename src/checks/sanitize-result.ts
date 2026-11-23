@@ -1,3 +1,4 @@
+import { isGitObjectId } from "../git/base-ref.js";
 import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./eslint/project/supported-version.js";
 import { sanitizeStructuralParseFailures } from "./structural-security/parse-failures.js";
 import {
@@ -133,6 +134,7 @@ export const PUBLIC_CHECK_ERROR_FIELDS = {
   path: true,
   paths: true,
   snapshot: true,
+  comparisonParent: true,
   projectPaths: true,
   parseFailures: true,
   temporaryPath: true,
@@ -299,7 +301,16 @@ function sanitizeError(
   ) {
     throw new TypeError("Adapter returned an untrusted temporary path");
   }
+  if (
+    error.comparisonParent !== undefined &&
+    (error.snapshot !== "last-commit" || !isGitObjectId(error.comparisonParent))
+  ) {
+    throw new TypeError("Invalid merge comparison parent");
+  }
   return {
+    ...(error.comparisonParent === undefined
+      ? {}
+      : { comparisonParent: error.comparisonParent }),
     code: displayLabel(error.code, "error code"),
     ...(error.diagnostic === undefined
       ? {}

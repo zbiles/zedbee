@@ -138,6 +138,7 @@ describe("public result sanitizer contract", () => {
       "path",
       "paths",
       "snapshot",
+      "comparisonParent",
       "projectPaths",
       "parseFailures",
       "temporaryPath",

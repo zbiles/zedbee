@@ -150,8 +150,10 @@ it("renders parse locations and both omission counts in a narrow terminal", asyn
   const React = await import("react");
   const { render } = await import("ink-testing-library");
   const { IncompleteList } = await import("../../src/ui/incomplete-list.js");
-  const { incompleteDiagnosticLines } =
+  const { incompleteSectionLines } =
     await import("../../src/renderers/incomplete.js");
+  const { presentIncompleteChecks } =
+    await import("../../src/reporting/incomplete-checks.js");
   const check: CheckResult = {
     checkId: "structuralSecurity",
     status: "incomplete",
@@ -183,7 +185,7 @@ it("renders parse locations and both omission counts in a narrow terminal", asyn
   ).lastFrame()!;
   for (const output of [
     visible(frame),
-    incompleteDiagnosticLines(check, width).join("\n"),
+    incompleteSectionLines(presentIncompleteChecks([check]), width).join("\n"),
   ]) {
     expect(
       Math.max(...output.split("\n").map((line) => [...line.trimEnd()].length)),
@@ -198,4 +200,59 @@ it("renders parse locations and both omission counts in a narrow terminal", asyn
       "2 additional parse failures exceeded the report limit.",
     );
   }
+});
+
+it("groups matching installation failures in the final Ink dashboard", async () => {
+  const React = await import("react");
+  const { render } = await import("ink-testing-library");
+  const { ScanResultDashboard } =
+    await import("../../src/ui/scan-result-dashboard.js");
+  const { createReport } = await import("../helpers/scan-report.js");
+  const incomplete: CheckResult[] = ["e2e", "extension"].flatMap((target) =>
+    ["lint", "types"].map((checkId) => ({
+      checkId,
+      target,
+      status: "incomplete",
+      incompleteDisposition: "block",
+      durationMs: 1,
+      findings: [],
+      error: {
+        code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+        message: `This checkout cannot resolve 'fixture' for workspace '${target}'.`,
+        path: `${target}/package.json`,
+        remediation: `Run npm --prefix ${target} ci, then rerun the scan.`,
+        snapshot: "last-commit",
+      },
+    })),
+  );
+  const frame = render(
+    React.createElement(ScanResultDashboard, {
+      report: createReport({
+        checks: incomplete,
+        outcome: "incomplete",
+        exitCode: 2,
+      }),
+      presentation: {
+        automatic: true,
+        reportStatus: "available",
+        findings: [],
+        totalFindingCount: 0,
+        abbreviated: false,
+        reportPath: "/private/tmp/zedbee-reports/complete.json",
+        maximumAge: "24h",
+        warnings: [],
+      },
+      width: 80,
+      color: false,
+    }),
+  ).lastFrame()!;
+  expect(frame.match(/COMPARISON INSTALLATION UNAVAILABLE/gu)).toHaveLength(2);
+  expect(
+    visible(frame).match(/Checks:\s+Lint, TypeScript/gu),
+    frame,
+  ).toHaveLength(2);
+  expect(frame).toContain("npm --prefix e2e ci");
+  expect(frame).toContain("npm --prefix extension ci");
+  expect(frame).toContain("4 incomplete");
+  expect(frame).toContain("/private/tmp/zedbee-reports/complete.json");
 });

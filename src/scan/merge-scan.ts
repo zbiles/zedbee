@@ -1,3 +1,4 @@
+import { isGitObjectId } from "../git/base-ref.js";
 import { scanOutcome } from "../policy/evaluate.js";
 import { changeSetFromMap } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
@@ -70,11 +71,17 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
           check.status === "incomplete" &&
           check.incompleteDisposition === "block",
       ) ?? present.find((check) => check.status === "incomplete");
-    if (incomplete !== undefined)
+    if (incomplete !== undefined) {
+      const parent = reports[checks.indexOf(incomplete)]?.baseline;
+      const { error } = incomplete;
       return {
         ...incomplete,
+        ...(error?.snapshot === "last-commit" && isGitObjectId(parent)
+          ? { error: { ...error, comparisonParent: parent } }
+          : {}),
         durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
       };
+    }
     const first =
       present.find((check) => check.status === "completed") ?? present[0]!;
     if (checks.some((check) => check === undefined))

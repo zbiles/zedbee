@@ -80,6 +80,108 @@ export function previousUpgradeVersions(version) {
   );
 }
 
+function smokeFreshLinkedWorktree({ hook, linked, git, cliRun }) {
+  const setup = JSON.parse(
+    cliRun([
+      "init",
+      "--hook",
+      "husky",
+      "--workflow",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ]),
+  );
+  assert.equal(setup.applied, true);
+  assert.equal(setup.proposal.hookActivation.status, "active");
+  const runtime = setup.proposal.files.filter(({ relativePath }) =>
+    relativePath.startsWith(".husky/_/"),
+  );
+  const executable = runtime.filter(({ mode }) => (mode & 0o111) !== 0);
+  const data = runtime.filter(
+    ({ relativePath, mode }) =>
+      (mode & 0o111) === 0 && relativePath !== ".husky/_/.gitignore",
+  );
+  assert.ok(
+    executable.some(
+      ({ relativePath }) => relativePath === ".husky/_/pre-commit",
+    ),
+  );
+  assert.ok(
+    executable.some(
+      ({ relativePath }) => relativePath === ".husky/_/pre-merge-commit",
+    ),
+  );
+  assert.ok(data.some(({ relativePath }) => relativePath === ".husky/_/h"));
+  const body = readFileSync(hook, "utf8");
+  assert.match(body, /Zedbee could not start/u);
+  writeFileSync(
+    hook,
+    body.replace(
+      "scan --hook-invocation",
+      "scan --hook-invocation --format json --no-color --no-animations --no-service",
+    ),
+  );
+  git(["add", "--all"]);
+  git([
+    "add",
+    "--force",
+    "--chmod=+x",
+    "--",
+    ...executable.map(({ relativePath }) => relativePath),
+  ]);
+  git([
+    "add",
+    "--force",
+    "--",
+    ...data.map(({ relativePath }) => relativePath),
+  ]);
+  git(["commit", "--no-gpg-sign", "-m", "Track worktree hook activation"]);
+  const base = git(["rev-parse", "HEAD"]);
+  git(["worktree", "add", "--detach", linked, base]);
+  const linkedGit = (args, options) => git(args, { cwd: linked, ...options });
+  try {
+    const assertSetupBlocked = (args) => {
+      const output = linkedGit(args, {
+        expectedStatuses: [1],
+        combinedOutput: true,
+      });
+      assert.match(output, /Zedbee could not start/u);
+      assert.match(output, /web\/node_modules\/zedbee/u);
+      assert.equal(linkedGit(["rev-parse", "HEAD"]), base);
+    };
+    assertSetupBlocked([
+      "commit",
+      "--allow-empty",
+      "--no-gpg-sign",
+      "-m",
+      "Uninstalled commit",
+    ]);
+    writeFileSync(join(linked, "incoming.md"), "Incoming worktree change.\n");
+    linkedGit(["add", "incoming.md"]);
+    linkedGit([
+      "commit",
+      "--no-gpg-sign",
+      "--no-verify",
+      "-m",
+      "Incoming change",
+    ]);
+    const incoming = linkedGit(["rev-parse", "HEAD"]);
+    linkedGit(["checkout", "--detach", base]);
+    assertSetupBlocked([
+      "merge",
+      "--no-ff",
+      "--no-edit",
+      "--no-gpg-sign",
+      incoming,
+    ]);
+  } finally {
+    // The blocked merge intentionally leaves an in-progress merge in this fixture.
+    git(["worktree", "remove", "--force", linked]);
+  }
+}
+
 export function smokeConsumerUpgrades({
   root,
   version,
@@ -282,7 +384,39 @@ export function smokeConsumerUpgrades({
     renameSync(installation, removedInstallation);
     writeFileSync(join(web, "value.ts"), "export const value = 2;\n");
     commit(["web/value.ts"], { workspace: "web", skipped: "e2e" });
+    mkdirSync(join(fixture, "api"));
+    writeFileSync(
+      join(fixture, "api", "pyproject.toml"),
+      '[project]\nname = "fixture"\n',
+    );
+    git(["add", "api/pyproject.toml"]);
+    const apiOutput = git(
+      ["commit", "--no-gpg-sign", "-m", "API manifest only"],
+      { combinedOutput: true },
+    );
+    const apiReport = JSON.parse(
+      apiOutput.slice(apiOutput.indexOf("{"), apiOutput.lastIndexOf("}") + 1),
+    );
+    assert.equal(apiReport.outcome, "pass");
+    assert.equal(apiReport.changedFileCount, 1);
+    for (const id of ["lint", "types"]) {
+      const checks = apiReport.checks.filter((check) => check.checkId === id);
+      assert.ok(
+        checks.length > 0 &&
+          checks.every((check) => check.status === "skipped"),
+      );
+    }
     renameSync(removedInstallation, installation);
+    if (archive !== undefined && previous === versions[0]) {
+      // Restore the stock previous hook before testing managed-hook migration.
+      writeFileSync(hook, hookContents);
+      smokeFreshLinkedWorktree({
+        hook,
+        linked: join(scratch, "fresh-linked-worktree"),
+        git,
+        cliRun,
+      });
+    }
     writeFileSync(e2eTest, goodTest.replace("toBe(1)", "toEqual(1)"));
     commit(["e2e/example.spec.ts"], { workspace: "e2e" });
     writeFileSync(e2eTest, goodTest + "export const broken: string = 1;\n");

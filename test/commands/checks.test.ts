@@ -398,7 +398,9 @@ describe("executeChecksCommand", () => {
       const lint = described.checks.find(({ id }) => id === "lint");
 
       expect(dispatchedRuns).toBe(expectedRuns);
-      expect(executions).toHaveLength(expectedRuns);
+      expect(executions.map(({ result }) => result.status)).toEqual([
+        expectedRuns > 0 ? "completed" : "skipped",
+      ]);
       expect(lint?.applicability).toBe(expectedApplicability);
       expect(lint?.targets).toEqual(expectedTargets);
       expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);

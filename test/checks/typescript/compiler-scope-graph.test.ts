@@ -565,3 +565,63 @@ it("keeps default library replacements in the proof for import-free NodeNext pro
     (await proveCompilerWorkspaceIndependence(context, workspace)).independent,
   ).toBe(false);
 });
+
+it.each([
+  {
+    path: "web/src/value.ts",
+    extension: 'export { value } from "cross/missing";',
+  },
+  {
+    path: "web/src/globals.d.ts",
+    extension: "export const value = 1;",
+  },
+])(
+  "retains separate merge compiler coverage for $path and unresolved aliases",
+  async ({ path, extension }) => {
+    const f = await createInspectionFixture();
+    for (const name of ["web", "extension"]) {
+      const manifest = { name, dependencies: { cross: "1.0.0" } };
+      await f.writeJson(`${name}/package.json`, manifest);
+      await f.writeJson(`${name}/package-lock.json`, {
+        name,
+        lockfileVersion: 3,
+        packages: { "": manifest, "node_modules/cross": { version: "1.0.0" } },
+      });
+      await f.writeJson(`${name}/tsconfig.json`, {
+        compilerOptions: {
+          module: "ESNext",
+          moduleResolution: "Bundler",
+          types: [],
+          paths: { "cross/*": ["../web/src/*"] },
+        },
+        include: ["src"],
+      });
+      await f.write(
+        `${name}/src/value.ts`,
+        name === "extension" ? extension : "export const value = 1;",
+      );
+    }
+    const inspection = await inspectRepository(f.root);
+    const context: InspectionContext = {
+      repositoryRoot: f.root,
+      baselineInspection: inspection,
+      targetInspection: inspection,
+      mergeComparison: true,
+      config: resolveConfig({ schemaVersion: 1 }),
+      changeSet: {
+        isEmpty: false,
+        files: new Map([[path, { path, status: "modified", addedRanges: [] }]]),
+        containsAddedLine: () => false,
+      },
+    };
+    const workspace = inspection.workspaces.find(
+      (w) => w.relativeRoot === "extension",
+    )!;
+    expect(
+      await proveCompilerWorkspaceIndependence(context, workspace),
+    ).toMatchObject({
+      independent: false,
+      reason: "unknown",
+    });
+  },
+);

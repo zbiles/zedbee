@@ -1,4 +1,12 @@
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -502,4 +510,191 @@ describe("installed pre-merge-commit hooks", () => {
     );
     expect(await readFile(metadata.stdout, "utf8")).toBe(`${incoming}\n`);
   });
+});
+
+it("activates the tracked nested Husky hooks before a linked worktree installs dependencies", async () => {
+  const repo = await createGitRepository("zedbee-husky-worktree-");
+  const web = join(repo.root, "web");
+  await repo.write(".gitignore", "node_modules/\n");
+  await repo.write(
+    "web/package.json",
+    JSON.stringify({
+      name: "husky-worktree-fixture",
+      version: "1.0.0",
+      private: true,
+      devDependencies: { zedbee: "*" },
+      scripts: { prepare: "cd .. && husky" },
+    }),
+  );
+  await repo.write(".husky/.gitattributes", "custom-example.sh -text\n");
+  for (const name of ["pre-commit", "pre-merge-commit"]) {
+    await repo.write(
+      `.husky/${name}`,
+      `#!/bin/sh\nprintf '${name} custom step\\n' >&2\n`,
+    );
+  }
+  await repo.commitAll("base project");
+  expect((await repo.git(["switch", "-c", "husky-incoming"])).exitCode).toBe(0);
+  await repo.write("incoming.md", "An incoming note.\n");
+  await repo.commitAll("incoming change");
+  expect((await repo.git(["switch", "main"])).exitCode).toBe(0);
+  await installPackedFixture(
+    tarballPath,
+    packageRoot,
+    web,
+    join(packDirectory, "husky-cache"),
+  );
+  const prepare = async (cwd: string) => {
+    const result = await execa("npm", ["run", "prepare"], {
+      cwd: join(cwd, "web"),
+      env: { HUSKY: "1" },
+      reject: false,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+  };
+  await prepare(repo.root);
+  const initialized = await execa(
+    process.execPath,
+    [
+      join(web, "node_modules/zedbee/dist/cli.js"),
+      "init",
+      "--profile",
+      "fast",
+      "--checks",
+      "secrets",
+      "--hook",
+      "husky",
+      "--workflow",
+      "none",
+      "--yes",
+      "--format",
+      "json",
+    ],
+    { cwd: web, reject: false },
+  );
+  expect(initialized.exitCode, initialized.stdout + initialized.stderr).toBe(0);
+  const { proposal } = JSON.parse(initialized.stdout);
+  expect(proposal.hookActivation, initialized.stdout).toMatchObject({
+    status: "active",
+    remediation: expect.stringContaining("git add --chmod=+x -f --"),
+  });
+  const remediation: string = proposal.hookActivation.remediation;
+  const dispatchers = /git add --chmod=\+x -f -- (.+?)\. Stage the helper/u
+    .exec(remediation)?.[1]
+    ?.split(" ");
+  expect(dispatchers).toContain(".husky/_/pre-commit");
+  expect(dispatchers).toContain(".husky/_/pre-merge-commit");
+  expect(remediation).toContain(
+    "git add -f -- .husky/_/h .husky/_/LICENSE.zedbee-husky",
+  );
+  expect((await repo.git(["diff", "--cached", "--name-only"])).stdout).toBe("");
+  expect((await repo.git(["config", "core.filemode", "false"])).exitCode).toBe(
+    0,
+  );
+  expect(
+    (await repo.git(["add", "--chmod=+x", "-f", "--", ...dispatchers!]))
+      .exitCode,
+  ).toBe(0);
+  expect(
+    (
+      await repo.git([
+        "add",
+        "-f",
+        "--",
+        ".husky/_/h",
+        ".husky/_/LICENSE.zedbee-husky",
+      ])
+    ).exitCode,
+  ).toBe(0);
+  expect(
+    (await repo.git(["ls-files", "--stage", ".husky/_/pre-commit"])).stdout,
+  ).toMatch(/^100755 /u);
+  expect((await repo.git(["config", "core.autocrlf", "true"])).exitCode).toBe(
+    0,
+  );
+  expect((await repo.git(["add", "--all"])).exitCode).toBe(0);
+  const stagedSetup = await repo.git([
+    "commit",
+    "--no-verify",
+    "-m",
+    "tracked Husky integration",
+  ]);
+  expect(stagedSetup.exitCode, stagedSetup.stdout + stagedSetup.stderr).toBe(0);
+  const worktree = await mkdtemp(join(tmpdir(), "zedbee-husky-linked-"));
+  expect(
+    (await repo.git(["worktree", "add", "-b", "husky-linked", worktree]))
+      .exitCode,
+  ).toBe(0);
+
+  const environment = {
+    HUSKY: "1",
+    XDG_CONFIG_HOME: worktree,
+    XDG_CACHE_HOME: await mkdtemp(join(packDirectory, "husky-service-")),
+  };
+  const git = (args: readonly string[]) =>
+    execa("git", args, { cwd: worktree, env: environment, reject: false });
+  onTestFinished(async () => {
+    await execa(
+      process.execPath,
+      [join(web, "node_modules/zedbee/dist/cli.js"), "service", "stop"],
+      {
+        cwd: packageRoot,
+        env: environment,
+        reject: false,
+      },
+    ).catch(() => {});
+    await rm(worktree, { recursive: true, force: true });
+  });
+  expect(
+    await readFile(join(worktree, ".husky/.gitattributes"), "utf8"),
+  ).toContain("custom-example.sh -text");
+  for (const path of [
+    ".husky/_/pre-commit",
+    ".husky/_/h",
+    ".husky/pre-commit",
+  ]) {
+    expect(await readFile(join(worktree, path), "utf8")).not.toContain("\r");
+  }
+  const assertStartupFailure = (result: Awaited<ReturnType<typeof git>>) => {
+    const output = result.stdout + result.stderr;
+    expect(result.exitCode, output).not.toBe(0);
+    expect(output).toContain("Zedbee could not start");
+    expect(output).toContain("./web/node_modules/zedbee/dist/cli.js");
+    expect(output).not.toContain("custom step");
+  };
+  await writeFile(join(worktree, "notes.md"), "A worktree note.\n");
+  expect((await git(["add", "--", "notes.md"])).exitCode).toBe(0);
+  assertStartupFailure(await git(["commit", "-m", "first linked commit"]));
+
+  const installed = join(worktree, "web/node_modules");
+  await symlink(
+    join(web, "node_modules"),
+    installed,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  await prepare(worktree);
+  expect((await git(["diff", "--", ".husky"])).stdout).toBe("");
+  const commit = await git(["commit", "-m", "first linked commit"]);
+  const commitOutput = commit.stdout + commit.stderr;
+  expect(commit.exitCode, commitOutput).toBe(0);
+  expect(commitOutput.match(/pre-commit custom step/gu)).toHaveLength(1);
+  expect(commitOutput.match(/COMMIT ALLOWED/gu)).toHaveLength(1);
+
+  await unlink(installed);
+  assertStartupFailure(
+    await git(["merge", "--no-ff", "--no-edit", "husky-incoming"]),
+  );
+  expect((await git(["rev-parse", "--verify", "MERGE_HEAD"])).exitCode).toBe(0);
+  assertStartupFailure(await git(["commit", "--no-edit"]));
+  await symlink(
+    join(web, "node_modules"),
+    installed,
+    process.platform === "win32" ? "junction" : "dir",
+  );
+  const merge = await git(["commit", "--no-edit"]);
+  const mergeOutput = merge.stdout + merge.stderr;
+  expect(merge.exitCode, mergeOutput).toBe(0);
+  expect(mergeOutput.match(/pre-commit custom step/gu)).toHaveLength(1);
+  expect(mergeOutput.match(/COMMIT ALLOWED/gu)).toHaveLength(1);
+  expect(mergeOutput).toContain("Staged merge");
 });

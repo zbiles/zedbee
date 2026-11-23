@@ -50,9 +50,11 @@ const EXACT_TARGETS = new Set([
   "lefthook.yaml",
   "package.json",
   ".husky/pre-commit",
+  ".husky/.gitattributes",
   ".husky/install.mjs",
   ".husky/_/.gitignore",
   ".husky/_/h",
+  ".husky/_/LICENSE.zedbee-husky",
   ...TRACKED_HOOK_NAMES.flatMap((name) => [
     `.husky/${name}`,
     `.husky/_/${name}`,
@@ -318,8 +320,11 @@ export async function applyInitProposal(
         ? item.change.mode
         : refreshed.mode;
       if (
-        item.change.relativePath === ".zedbeerc.jsonc" &&
-        refreshed.before === item.change.after
+        (item.change.relativePath === ".zedbeerc.jsonc" ||
+          item.change.relativePath === ".husky/.gitattributes" ||
+          item.change.relativePath.startsWith(".husky/_/")) &&
+        refreshed.before === item.change.after &&
+        refreshed.mode === mode
       )
         continue;
       await atomicReplace(item.path, item.change.after, mode);
