@@ -32,9 +32,11 @@ import {
 } from "./terminal-viewport.js";
 import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
+import {
+  alternateScreenRenderOptions,
+  SGR_MOUSE_REPORT,
+} from "./alternate-screen-render.js";
 
-const CURSOR_HOME = "\u001b[H";
-const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
 const FIX_EVENT_MAX_FPS = 30;
 
 export interface FixAppProps extends FixPromptOptions {
@@ -50,18 +52,7 @@ export function fixMaxFps(): number {
 }
 
 export function fixRenderOptions() {
-  let homeTemporaryScreen = true;
-  return Object.freeze({
-    exitOnCtrlC: false,
-    patchConsole: false,
-    maxFps: fixMaxFps(),
-    alternateScreen: true,
-    onRender() {
-      if (!homeTemporaryScreen) return;
-      homeTemporaryScreen = false;
-      process.stdout.write(CURSOR_HOME);
-    },
-  });
+  return alternateScreenRenderOptions(fixMaxFps());
 }
 
 export function isFixCancellationInput(

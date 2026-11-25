@@ -55,6 +55,10 @@ import {
 } from "./terminal-viewport.js";
 import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { InitOperation, type InitOperationState } from "./init-operation.js";
+import {
+  alternateScreenRenderOptions,
+  SGR_MOUSE_REPORT,
+} from "./alternate-screen-render.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
@@ -70,26 +74,13 @@ export interface InitAppProps extends InitPromptOptions {
 }
 
 const INIT_EVENT_MAX_FPS = 30;
-const CURSOR_HOME = "\u001b[H";
-const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
 
 export function initMaxFps(): number {
   return INIT_EVENT_MAX_FPS;
 }
 
 export function initRenderOptions() {
-  let homeTemporaryScreen = true;
-  return Object.freeze({
-    exitOnCtrlC: false,
-    patchConsole: false,
-    maxFps: initMaxFps(),
-    alternateScreen: true,
-    onRender() {
-      if (!homeTemporaryScreen) return;
-      homeTemporaryScreen = false;
-      process.stdout.write(CURSOR_HOME);
-    },
-  });
+  return alternateScreenRenderOptions(initMaxFps());
 }
 
 export function InitApp({
