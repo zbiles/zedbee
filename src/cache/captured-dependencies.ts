@@ -25,6 +25,7 @@ import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
   DEPENDENCY_LIMITS,
   dependencyPathParts,
+  dependencyTextBytes,
   isInstalledDependencyPath,
   sanitizeDependencyInputManifest,
   type DependencyInputManifest,
@@ -35,6 +36,17 @@ export interface DependencyCaptureContext {
   readonly repositoryRoot: string;
   readonly snapshots?: Readonly<{ baselineDir: string; targetDir: string }>;
 }
+export type DependencyCaptureFailure =
+  | Readonly<{
+      reason: "capacity";
+      resource: keyof typeof DEPENDENCY_LIMITS;
+      observed: number;
+      limit: number;
+    }>
+  | Readonly<{
+      reason: "unsupported-scope" | "unreadable-input" | "inputs-changed";
+    }>
+  | Readonly<{ reason: "invalid-manifest"; lookup?: string }>;
 type Entry = {
   readonly probe: Exclude<DependencyProbe, { kind: "directory" }>;
   readonly text?: string;
@@ -86,7 +98,33 @@ export class CapturedDependencies {
   private bytes = 0;
   private names = 0;
   private metadataBytes = 128;
+  /** Optional acceleration consumes spare metadata capacity, never probe budget. */
+  private readonly lexicalLookups = new Map<string, Entry>();
+  private lookupBytes = 0;
   private supported = true;
+  private captureFailure: DependencyCaptureFailure | undefined;
+
+  /** Source-free, bounded first cause; never include paths or input contents. */
+  failure(): DependencyCaptureFailure | undefined {
+    return this.captureFailure;
+  }
+
+  private fail(failure: DependencyCaptureFailure): void {
+    this.supported = false;
+    this.captureFailure ??= Object.freeze(failure);
+  }
+
+  private capacity(
+    resource: keyof typeof DEPENDENCY_LIMITS,
+    observed: number,
+  ): void {
+    this.fail({
+      reason: "capacity",
+      resource,
+      observed: Math.min(observed, Number.MAX_SAFE_INTEGER),
+      limit: DEPENDENCY_LIMITS[resource],
+    });
+  }
 
   constructor(
     readonly context: DependencyCaptureContext,
@@ -169,6 +207,63 @@ export class CapturedDependencies {
     return undefined;
   }
 
+  /** Missing leaves are trustworthy only after checking their nearest existing
+   * ancestor. A package link into live source, outside, or nowhere is denied. */
+  private supportedAbsence(absolute: string): boolean {
+    let parent = dirname(absolute);
+    for (let depth = 0; depth < 128; depth++) {
+      try {
+        const real = realpathSync(parent);
+        const metadata = statSync(real);
+        if (!metadata.isDirectory() && !metadata.isFile()) return false;
+        const mappings = [
+          ...Object.entries(this.aliases),
+          ...Object.entries(this.roots),
+        ];
+        const mapping = mappings
+          .sort((a, b) => b[1].length - a[1].length)
+          .find(([, alias]) => contained(alias, parent));
+        if (
+          mapping !== undefined &&
+          real ===
+            resolve(this.roots[mapping[0]]!, relative(mapping[1], parent))
+        )
+          return true;
+        if (
+          mappings.some(
+            ([name, alias]) =>
+              contained(parent, alias) &&
+              resolve(real, relative(parent, alias)) === this.roots[name],
+          )
+        )
+          return true;
+        return this.allowedRoot(real) !== undefined;
+      } catch (error) {
+        if (
+          !["ENOENT", "ENOTDIR"].includes(
+            (error as NodeJS.ErrnoException).code ?? "",
+          )
+        )
+          return false;
+        try {
+          lstatSync(parent);
+          return false;
+        } catch (missing) {
+          if (
+            !["ENOENT", "ENOTDIR"].includes(
+              (missing as NodeJS.ErrnoException).code ?? "",
+            )
+          )
+            return false;
+        }
+      }
+      const next = dirname(parent);
+      if (next === parent) return false;
+      parent = next;
+    }
+    return false;
+  }
+
   private identify(path: string): string {
     const absolute = resolve(path);
     const priority = (name: string) =>
@@ -218,12 +313,21 @@ export class CapturedDependencies {
   }
 
   private retain(bytes: number): boolean {
+    if (!this.supported) return false;
     this.metadataBytes += bytes;
     if (
-      this.metadataBytes > DEPENDENCY_LIMITS.metadataBytes ||
-      this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes
+      this.metadataBytes + this.lookupBytes >
+      DEPENDENCY_LIMITS.metadataBytes
     ) {
-      this.supported = false;
+      this.lexicalLookups.clear();
+      this.lookupBytes = 0;
+    }
+    if (this.metadataBytes > DEPENDENCY_LIMITS.metadataBytes) {
+      this.capacity("metadataBytes", this.metadataBytes);
+      return false;
+    }
+    if (this.entries.size + this.listings.size >= DEPENDENCY_LIMITS.probes) {
+      this.capacity("probes", this.entries.size + this.listings.size + 1);
       return false;
     }
     return true;
@@ -231,12 +335,45 @@ export class CapturedDependencies {
 
   private capture(path: string): Entry {
     const absolute = resolve(path);
+    const previous = this.lexicalLookups.get(absolute);
+    if (previous !== undefined) return previous;
+    const entry = this.captureUncached(absolute);
+    const bytes = dependencyTextBytes(absolute) + 128;
+    if (
+      this.supported &&
+      this.entries.get(entry.probe.path) === entry &&
+      this.lookupBytes + bytes <= 4 * 1024 * 1024 &&
+      this.metadataBytes + this.lookupBytes + bytes <=
+        DEPENDENCY_LIMITS.metadataBytes
+    ) {
+      this.lexicalLookups.set(absolute, entry);
+      this.lookupBytes += bytes;
+    }
+    return entry;
+  }
+
+  private captureUncached(absolute: string): Entry {
     let identifier: string;
     try {
       identifier = this.identify(absolute);
     } catch {
-      this.supported = false;
+      this.fail({ reason: "unsupported-scope" });
       identifier = `unsupported:${absolute}`;
+    }
+    if (this.supported) {
+      try {
+        dependencyPathParts(identifier);
+      } catch {
+        this.fail({ reason: "invalid-manifest", lookup: identifier });
+        return {
+          probe: {
+            kind: "entry",
+            path: identifier,
+            entryType: "denied",
+            identity: digest("unsupported"),
+          },
+        };
+      }
     }
     const previous = this.entries.get(identifier);
     if (previous !== undefined) return previous;
@@ -255,12 +392,22 @@ export class CapturedDependencies {
         )
           continue;
         const bytes = Buffer.from(input.text, "utf8");
+        if (digest(bytes) !== input.digest) {
+          this.fail({ reason: "inputs-changed" });
+          throw new RangeError("Unsupported captured snapshot bytes");
+        }
         if (
-          digest(bytes) !== input.digest ||
           bytes.length > DEPENDENCY_LIMITS.fileBytes ||
           this.bytes + bytes.length > DEPENDENCY_LIMITS.bytes
-        )
+        ) {
+          this.capacity(
+            bytes.length > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            bytes.length > DEPENDENCY_LIMITS.fileBytes
+              ? bytes.length
+              : this.bytes + bytes.length,
+          );
           throw new RangeError("Unsupported captured snapshot bytes");
+        }
         const real = input.entry.canonicalPath;
         if (!contained(root, real))
           throw new TypeError("Invalid captured snapshot path");
@@ -275,7 +422,15 @@ export class CapturedDependencies {
           bytes,
         };
         this.bytes += bytes.length;
-        if (!this.retain(Buffer.byteLength(identifier) + 512))
+        if (
+          !this.retain(
+            dependencyTextBytes(identifier) +
+              512 +
+              dependencyTextBytes(
+                `${name}:${relative(root, real).split(sep).join("/")}`,
+              ),
+          )
+        )
           throw new RangeError("Snapshot capture capacity");
         this.entries.set(identifier, entry);
         return entry;
@@ -302,7 +457,12 @@ export class CapturedDependencies {
           metadata.size > DEPENDENCY_LIMITS.fileBytes ||
           this.bytes + metadata.size > DEPENDENCY_LIMITS.bytes
         ) {
-          this.supported = false;
+          this.capacity(
+            metadata.size > DEPENDENCY_LIMITS.fileBytes ? "fileBytes" : "bytes",
+            metadata.size > DEPENDENCY_LIMITS.fileBytes
+              ? metadata.size
+              : this.bytes + metadata.size,
+          );
           if (this.snapshotOnly)
             throw new RangeError("Snapshot capture capacity");
           // Leave exceptional large reads to the analyzer, without retaining them.
@@ -321,8 +481,10 @@ export class CapturedDependencies {
             before.dev !== metadata.dev ||
             before.ino !== metadata.ino ||
             canonical(absolute) !== real
-          )
+          ) {
+            this.fail({ reason: "inputs-changed" });
             throw new Error("Changed dependency path");
+          }
           if (
             !before.isFile() ||
             before.size > DEPENDENCY_LIMITS.fileBytes ||
@@ -339,7 +501,10 @@ export class CapturedDependencies {
               buffer.length - offset,
               offset,
             );
-            if (count === 0) throw new Error("Changed dependency input");
+            if (count === 0) {
+              this.fail({ reason: "inputs-changed" });
+              throw new Error("Changed dependency input");
+            }
             offset += count;
           }
           const after = fstatSync(fd);
@@ -349,7 +514,7 @@ export class CapturedDependencies {
             before.ctimeMs !== after.ctimeMs ||
             canonical(absolute) !== real
           )
-            this.supported = false;
+            this.fail({ reason: "inputs-changed" });
         } finally {
           closeSync(fd);
         }
@@ -378,7 +543,9 @@ export class CapturedDependencies {
       }
     } catch (error) {
       if (fallback !== undefined) {
-        this.supported = false;
+        if (canonical(absolute) !== fallback.passthrough)
+          this.fail({ reason: "inputs-changed" });
+        this.fail({ reason: "unreadable-input" });
         if (this.snapshotOnly) throw error;
         return fallback;
       }
@@ -389,14 +556,15 @@ export class CapturedDependencies {
         try {
           lstatSync(absolute);
         } catch (missing) {
-          absent = ["ENOENT", "ENOTDIR"].includes(
-            (missing as NodeJS.ErrnoException).code ?? "",
-          );
+          absent =
+            ["ENOENT", "ENOTDIR"].includes(
+              (missing as NodeJS.ErrnoException).code ?? "",
+            ) && this.supportedAbsence(absolute);
         }
       }
       if (absent) entry = { probe: { kind: "missing", path: identifier } };
       else {
-        this.supported = false;
+        this.fail({ reason: "unreadable-input" });
         entry = {
           probe: {
             kind: "entry",
@@ -410,10 +578,10 @@ export class CapturedDependencies {
     }
     if (
       this.retain(
-        Buffer.byteLength(identifier) +
+        dependencyTextBytes(identifier) +
           512 +
           (entry.probe.kind === "file"
-            ? Buffer.byteLength(entry.probe.realPath)
+            ? dependencyTextBytes(entry.probe.realPath)
             : 0),
       )
     )
@@ -456,6 +624,15 @@ export class CapturedDependencies {
             probe.realPath.slice("repository:".length),
           )))
     );
+  }
+  /** Optional proofs may only consume bounded captured bytes, never analyzer
+   * passthrough data after a capacity or trust-boundary failure. */
+  readCapturedFile(path: string): string | undefined {
+    if (this.failure() !== undefined) return undefined;
+    const entry = this.capture(path);
+    return this.failure() === undefined && entry.passthrough === undefined
+      ? entry.text
+      : undefined;
   }
   readFile(path: string): string | undefined {
     const entry = this.capture(path);
@@ -524,18 +701,20 @@ export class CapturedDependencies {
         }))
         .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       this.names += names.length;
+      if (this.names > DEPENDENCY_LIMITS.names) {
+        this.capacity("names", this.names);
+        return names;
+      }
       if (
-        this.names > DEPENDENCY_LIMITS.names ||
         !this.retain(
-          Buffer.byteLength(identifier) +
+          dependencyTextBytes(identifier) +
             256 +
             names.reduce(
-              (bytes, item) => bytes + Buffer.byteLength(item.name) + 256,
+              (bytes, item) => bytes + dependencyTextBytes(item.name) + 256,
               0,
             ),
         )
       ) {
-        this.supported = false;
         return names;
       }
       const probe = {
@@ -547,7 +726,7 @@ export class CapturedDependencies {
       this.listings.set(identifier, probe);
       return probe.names;
     } catch (error) {
-      this.supported = false;
+      this.fail({ reason: "unreadable-input" });
       throw error;
     }
   }
@@ -579,7 +758,7 @@ export class CapturedDependencies {
         ),
       });
     } catch {
-      this.supported = false;
+      this.fail({ reason: "invalid-manifest" });
       return undefined;
     }
   }

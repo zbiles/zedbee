@@ -1,3 +1,9 @@
+import { CHECK_IDS, type CheckId } from "../core/check-ids.js";
+export { CHECK_IDS, type CheckId } from "../core/check-ids.js";
+import {
+  accessibilitySettingsSchema,
+  type AccessibilitySettings,
+} from "../checks/react/accessibility-settings.js";
 import { z } from "zod";
 import { DISPLAY_TEXT_LIMITS, displayProse } from "../core/display-text.js";
 import type { AgentGuidance } from "../reporting/agent-guidance.js";
@@ -22,31 +28,18 @@ import type {
   ResolvedConfigurationOrigins,
 } from "./settings-definition.js";
 
-export const CHECK_IDS = [
-  "formatting",
-  "lint",
-  "types",
-  "cyclomaticComplexity",
-  "readabilityComplexity",
-  "structuralSecurity",
-  "secrets",
-  "duplication",
-  "dependencyArchitecture",
-  "deadCode",
-  "reactCorrectness",
-  "reactAccessibility",
-  "vulnerabilities",
-] as const;
 export const PROFILE_IDS = ["fast", "recommended", "thorough"] as const;
 
-export type CheckId = (typeof CHECK_IDS)[number];
 export type ProfileId = (typeof PROFILE_IDS)[number];
 export type CheckSeverity = "off" | "warn" | "error";
 export type CheckTiming = "relevant" | "always";
+export type DiagnosticMessagePolicy = "contextual" | "source-free";
 export type SourceExcerptPolicy = "never" | "interactive" | "always";
 export type TerminalFindingLimit = number | "all";
 
 export interface ResolvedReportingPolicy {
+  readonly diagnosticMessages: DiagnosticMessagePolicy;
+  readonly projectEslintMessages: "redacted" | "full";
   readonly sourceExcerpts: SourceExcerptPolicy;
   readonly terminalFindingLimit: TerminalFindingLimit;
   readonly temporaryReportMaxAge: string;
@@ -78,7 +71,12 @@ export interface ResolvedRulePolicy extends ResolvedCheckPolicyBase {
   rules: Readonly<Record<string, EslintRuleConfiguration>>;
 }
 
+export interface ResolvedAccessibilityPolicy extends ResolvedRulePolicy {
+  settings: Readonly<AccessibilitySettings>;
+}
+
 export interface ResolvedLintPolicy extends ResolvedRulePolicy {
+  engine: "managed" | "project";
   typeInformation: "required" | "when-available";
 }
 
@@ -97,9 +95,11 @@ export interface ResolvedCheckPolicies {
   readonly secrets: ResolvedCheckPolicyBase;
   readonly duplication: ResolvedDuplicationPolicy;
   readonly dependencyArchitecture: ResolvedCheckPolicyBase;
-  readonly deadCode: ResolvedCheckPolicyBase;
+  readonly deadCode: ResolvedCheckPolicyBase & {
+    readonly entryPoints?: readonly string[];
+  };
   readonly reactCorrectness: ResolvedRulePolicy;
-  readonly reactAccessibility: ResolvedRulePolicy;
+  readonly reactAccessibility: ResolvedAccessibilityPolicy;
   readonly vulnerabilities: ResolvedCheckPolicyBase & {
     onUnavailable: "block" | "warn";
   };
@@ -109,13 +109,16 @@ export type ResolvedCheckPolicy = ResolvedCheckPolicies[CheckId];
 
 export type ResolvedCheckPolicyPatch = Readonly<
   Partial<ResolvedCheckPolicyBase> & {
+    readonly entryPoints?: readonly string[];
     readonly max?: number;
     readonly threshold?: number;
     readonly blockWorsening?: boolean;
     readonly onUnavailable?: "block" | "warn";
     readonly engine?: FormattingEngine;
     readonly settings?:
-      Partial<FormattingSettings> | Partial<DuplicationSettings>;
+      | Partial<FormattingSettings>
+      | Partial<DuplicationSettings>
+      | AccessibilitySettings;
     readonly rules?: Readonly<Record<string, EslintRuleConfiguration>>;
     readonly typeInformation?: "required" | "when-available";
   }
@@ -252,8 +255,16 @@ function rulePolicyObjectSchema(checkId: RuleCheckId) {
     .object({
       ...commonPolicyFields,
       rules: eslintRuleSettingsSchema.optional(),
+      ...(checkId === "reactAccessibility"
+        ? { settings: accessibilitySettingsSchema.optional() }
+        : {}),
       ...(checkId === "lint"
         ? {
+            engine: z.enum(["managed", "project"]).optional().meta({
+              default: "managed",
+              description:
+                "Managed ESLint by default; project ESLint is experimental and requires separate trust.",
+            }),
             typeInformation: z
               .enum(["required", "when-available"])
               .optional()
@@ -349,6 +360,28 @@ function policySchema<T extends z.ZodType>(objectSchema: T) {
 }
 
 const simplePolicySchema = policySchema(simplePolicyObjectSchema);
+const deadCodePolicySchema = policySchema(
+  simplePolicyObjectSchema.extend({
+    entryPoints: z
+      .array(
+        z
+          .string()
+          .min(1)
+          .max(1024)
+          .regex(
+            /^(?!\/)(?!.*(?:^|\/)\.\.?(?:\/|$))(?!.*[\\:*?#[\]{}\u0000-\u001f\u007f-\u009f])[^/]+(?:\/[^/]+)*$/u,
+            "Use an exact repository-relative source or HTML path without globs, URLs, or traversal.",
+          ),
+      )
+      .max(256)
+      .optional()
+      .meta({
+        description:
+          "Additional exact repository-relative source or HTML entry paths; repository scope only, no globs.",
+        default: [],
+      }),
+  }),
+);
 const lintPolicySchema = policySchema(rulePolicyObjectSchema("lint"));
 const reactCorrectnessPolicySchema = policySchema(
   rulePolicyObjectSchema("reactCorrectness"),
@@ -409,7 +442,7 @@ const checksSchema = z
       "Dependency-cruiser architecture and import-boundary validation.",
     ),
     deadCode: describedPolicy(
-      simplePolicySchema,
+      deadCodePolicySchema,
       "Unused files, exports, and dependencies reported by Knip.",
     ),
     reactCorrectness: describedPolicy(
@@ -418,7 +451,7 @@ const checksSchema = z
     ),
     reactAccessibility: describedPolicy(
       reactAccessibilityPolicySchema,
-      "JSX accessibility validation for changed components.",
+      "Static JSX accessibility checks for changed components.",
     ),
     vulnerabilities: describedPolicy(
       vulnerabilityPolicySchema,
@@ -429,6 +462,16 @@ const checksSchema = z
 
 const reportingSchema = z
   .object({
+    diagnosticMessages: z.enum(["contextual", "source-free"]).optional().meta({
+      default: "contextual",
+      description:
+        "Managed diagnostic messages include reviewed source names locally, or source-free explanations for sharing. Source excerpts and project ESLint permissions are separate.",
+    }),
+    projectEslintMessages: z.enum(["redacted", "full"]).optional().meta({
+      default: "redacted",
+      description:
+        "Project ESLint diagnostic messages are redacted unless full messages are selected and separately permitted locally.",
+    }),
     sourceExcerpts: z.enum(["never", "interactive", "always"]).optional().meta({
       description:
         "Include exact staged source excerpts never, only in Ink, or in every report format.",
@@ -483,6 +526,7 @@ const resourcesSchema = z
 // Availability behavior and duplication settings are repository/workspace-wide
 // because neither can vary safely for an individual file target.
 const overrideChecksSchema = checksSchema.extend({
+  deadCode: simplePolicySchema.optional(),
   duplication: simplePolicySchema.optional(),
   vulnerabilities: simplePolicySchema.optional(),
 });
@@ -615,13 +659,32 @@ const policyOverrideSchema = z
           "Marks this override as generated by Zedbee setup; repeat setup replaces marked entries instead of duplicating them.",
       }),
   })
-  .strict();
+  .strict()
+  .superRefine((override, context) => {
+    const lint = override.checks.lint;
+    if (typeof lint !== "object" || lint.engine === undefined) return;
+    if (
+      override.excludeFiles !== undefined ||
+      override.files.some(
+        (pattern) =>
+          pattern !== "**" && !/^[^*?\[\]{}!()]+\/\*\*$/u.test(pattern),
+      )
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["checks", "lint", "engine"],
+        message:
+          "ESLint engine selection requires a whole workspace scope: use ** or a literal workspace path followed by /**, without excludeFiles.",
+      });
+    }
+  });
 
 const pathExclusionsSchema = z
   .array(pathExclusionSchema)
   .max(100, "Limit path exclusions to 100 entries.");
 
 export type CheckPolicyInput =
+  | z.infer<typeof deadCodePolicySchema>
   | z.infer<typeof simplePolicySchema>
   | z.infer<typeof lintPolicySchema>
   | z.infer<typeof reactCorrectnessPolicySchema>

@@ -1,0 +1,1 @@
+export const SUPPORTED_PROJECT_ESLINT_VERSION = "9.39.5";

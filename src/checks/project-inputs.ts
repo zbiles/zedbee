@@ -1,3 +1,8 @@
+import { deadCodePolicyPath } from "./dead-code/entry-configuration.js";
+import {
+  entryOwner,
+  viteInputPathsForInspection,
+} from "./dead-code/vite-entrypoints.js";
 import type { CheckTarget, InspectionContext } from "./adapter.js";
 import type { ChangeSet } from "../git/change-set.js";
 import type {
@@ -55,6 +60,7 @@ export async function projectInputsMayHaveChanged(
   context: InspectionContext,
   target: CheckTarget,
   sourceChanges: "all" | "deletions" = "all",
+  entryInputs?: "deadCode",
 ): Promise<boolean> {
   const { changed, deleted } = changeIndex(context.changeSet);
   if (changed.size === 0) return false;
@@ -64,6 +70,24 @@ export async function projectInputsMayHaveChanged(
   ]) {
     const workspace = workspaceIndex(inspection).get(target.relativeRoot);
     if (workspace === undefined) continue;
+    if (entryInputs === "deadCode") {
+      if (
+        changed.has(deadCodePolicyPath(context.repositoryRoot, context.config))
+      )
+        return true;
+      const explicit = (
+        context.config.checks.deadCode.entryPoints ?? []
+      ).filter(
+        (path) =>
+          entryOwner(inspection, path)?.relativeRoot === target.relativeRoot,
+      );
+      if (
+        (
+          await viteInputPathsForInspection(inspection, workspace, explicit)
+        ).some((path) => changed.has(path))
+      )
+        return true;
+    }
     const sourcePaths = sourceChanges === "all" ? changed : deleted;
     const changedSource = workspace.sourceFiles.some((path) =>
       sourcePaths.has(path),
@@ -75,12 +99,14 @@ export async function projectInputsMayHaveChanged(
       )
     )
       return true;
+    const configuration = await compilerConfigurationInputsForInspection(
+      inspection,
+      workspace,
+      context.signal,
+    );
     if (
-      [
-        ...(
-          await compilerConfigurationInputsForInspection(inspection, workspace)
-        ).paths,
-      ].some((path) => changed.has(path))
+      configuration.limited === true ||
+      [...configuration.paths].some((path) => changed.has(path))
     )
       return true;
   }

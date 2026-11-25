@@ -1,3 +1,7 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
+import { snapshotEntryPoints } from "./entry-configuration.js";
+import { join } from "node:path";
+import { CheckIncompleteError } from "../incomplete-error.js";
 import {
   loadSnapshotAliases,
   sourceModuleSpecifiers,
@@ -38,15 +42,6 @@ import { createKnipImportValidator } from "./import-boundary.js";
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
 
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
-
 async function validateSnapshotInputs(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
@@ -84,6 +79,8 @@ async function collectSide(
   signal: AbortSignal,
   captureContext: DependencyCaptureContext,
   guards: CapturedDependencies,
+  entryPoints: readonly string[],
+  allowMissingExplicit = false,
 ): Promise<{
   observations: readonly Observation[];
   dependencyInputs?: DependencyInputManifest;
@@ -93,7 +90,7 @@ async function collectSide(
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
   }
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined)
     return {
       observations: Object.freeze([]),
@@ -111,6 +108,11 @@ async function collectSide(
         inspection,
         workspace,
         async (path) => guards.assertMissing(path),
+        entryPoints,
+        (path) => {
+          guards.fileExists(join(canonicalRoot, path));
+        },
+        allowMissingExplicit,
       ),
       ...(sourceCapture === undefined ? {} : { sourceCapture }),
     },
@@ -151,6 +153,18 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
+        await snapshotEntryPoints(
+          context.baselineInspection,
+          context.config,
+          context.repositoryRoot,
+          true,
+          (path) => {
+            guards.fileExists(
+              join(context.baselineInspection.snapshotRoot, path),
+            );
+          },
+        ),
+        true,
       );
       const target = await collectSide(
         context.snapshots.targetDir,
@@ -159,6 +173,17 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         context.signal,
         captureContext,
         guards,
+        await snapshotEntryPoints(
+          context.targetInspection,
+          context.config,
+          context.repositoryRoot,
+          false,
+          (path) => {
+            guards.fileExists(
+              join(context.targetInspection.snapshotRoot, path),
+            );
+          },
+        ),
       );
       const manifests = [
         guards.manifest(),
@@ -212,9 +237,12 @@ export const deadCodeAdapter: ObservationCheckAdapter = {
         projectDelta: await projectInputsMayHaveChanged(
           context,
           context.target,
+          "all",
+          "deadCode",
         ),
       };
     } catch (error) {
+      if (error instanceof CheckIncompleteError) throw error;
       throw new Error("Dead-code analysis failed.", { cause: error });
     }
   },

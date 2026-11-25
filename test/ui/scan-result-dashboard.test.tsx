@@ -114,6 +114,59 @@ function expectPanelsTouch(
   ).toBe(upperBottomIndex + 1);
 }
 
+function dashboardWithFindingsAndDisclosures(): string {
+  const blocking = createFinding({ id: "blocking", rule: "blocking" });
+  const warning = createFinding({
+    id: "warning",
+    severity: "warning",
+    rule: "warning",
+  });
+  return dashboard(
+    createReport({
+      outcome: "incomplete",
+      exitCode: 2,
+      summary: {
+        passed: 0,
+        warnings: 1,
+        failed: 1,
+        incomplete: 1,
+        findings: [blocking, warning],
+      },
+      networkDisclosures: [
+        {
+          checkId: "vulnerabilities",
+          target: ".",
+          services: ["api.osv.dev"],
+          metadata: ["package names"],
+        },
+      ],
+      checks: [
+        {
+          checkId: "vulnerabilities",
+          status: "incomplete",
+          durationMs: 3,
+          findings: [],
+          error: {
+            code: "OSV_UNAVAILABLE",
+            message: "OSV is unavailable.",
+            remediation: "Restore network access, then scan again.",
+          },
+        },
+      ],
+    }),
+    presentation({
+      findings: [blocking, warning],
+      totalFindingCount: 2,
+      warnings: [
+        {
+          code: "TEMP_REPORT_CLEANUP_FAILED",
+          message: "An expired report remains.",
+        },
+      ],
+    }),
+  );
+}
+
 describe("ScanResultDashboard", () => {
   it("renders committed source identity and empty-base copy", () => {
     const output = dashboard(
@@ -386,60 +439,13 @@ describe("ScanResultDashboard", () => {
       "Fix: Format the staged lines, then stage the result.",
     );
     expect(output).toContain("Prettier  prefer-const");
-    expect(output).not.toContain("hidden-rule");
+    expect(output.replace(/\s+/gu, " ")).toContain(
+      "1 more blocking finding: formatting / hidden-rule.",
+    );
   });
 
   it("orders disclosures, incomplete checks, and report warnings after findings", () => {
-    const blocking = createFinding({ id: "blocking", rule: "blocking" });
-    const warning = createFinding({
-      id: "warning",
-      severity: "warning",
-      rule: "warning",
-    });
-    const output = dashboard(
-      createReport({
-        outcome: "incomplete",
-        exitCode: 2,
-        summary: {
-          passed: 0,
-          warnings: 1,
-          failed: 1,
-          incomplete: 1,
-          findings: [blocking, warning],
-        },
-        networkDisclosures: [
-          {
-            checkId: "vulnerabilities",
-            target: ".",
-            services: ["api.osv.dev"],
-            metadata: ["package names"],
-          },
-        ],
-        checks: [
-          {
-            checkId: "vulnerabilities",
-            status: "incomplete",
-            durationMs: 3,
-            findings: [],
-            error: {
-              code: "OSV_UNAVAILABLE",
-              message: "OSV is unavailable.",
-              remediation: "Restore network access, then scan again.",
-            },
-          },
-        ],
-      }),
-      presentation({
-        findings: [blocking, warning],
-        totalFindingCount: 2,
-        warnings: [
-          {
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            message: "An expired report remains.",
-          },
-        ],
-      }),
-    );
+    const output = dashboardWithFindingsAndDisclosures();
 
     expectOrder(output, [
       "BLOCKING FINDINGS",
@@ -515,56 +521,7 @@ describe("ScanResultDashboard", () => {
   });
 
   it("balances every result panel with a blank row above its content", () => {
-    const blocking = createFinding({ id: "blocking", rule: "blocking" });
-    const warning = createFinding({
-      id: "warning",
-      severity: "warning",
-      rule: "warning",
-    });
-    const output = dashboard(
-      createReport({
-        outcome: "incomplete",
-        exitCode: 2,
-        summary: {
-          passed: 0,
-          warnings: 1,
-          failed: 1,
-          incomplete: 1,
-          findings: [blocking, warning],
-        },
-        networkDisclosures: [
-          {
-            checkId: "vulnerabilities",
-            target: ".",
-            services: ["api.osv.dev"],
-            metadata: ["package names"],
-          },
-        ],
-        checks: [
-          {
-            checkId: "vulnerabilities",
-            status: "incomplete",
-            durationMs: 3,
-            findings: [],
-            error: {
-              code: "OSV_UNAVAILABLE",
-              message: "OSV is unavailable.",
-              remediation: "Restore network access, then scan again.",
-            },
-          },
-        ],
-      }),
-      presentation({
-        findings: [blocking, warning],
-        totalFindingCount: 2,
-        warnings: [
-          {
-            code: "TEMP_REPORT_CLEANUP_FAILED",
-            message: "An expired report remains.",
-          },
-        ],
-      }),
-    );
+    const output = dashboardWithFindingsAndDisclosures();
 
     for (const heading of [
       "SCAN RESULT",
@@ -702,3 +659,110 @@ describe("ScanResultDashboard", () => {
     ).toBeLessThanOrEqual(40);
   });
 });
+
+it("keeps omitted independent security groups visible when a tiny preview is full", async () => {
+  const { prepareTerminalPresentation } =
+    await import("../../src/reporting/presentation.js");
+  const missing = createFinding({
+    id: "missing",
+    check: "types",
+    rule: "typescript/TS2307",
+  });
+  const secret = createFinding({
+    id: "secret",
+    check: "secrets",
+    rule: "token",
+  });
+  const all = [secret, missing];
+  const report = createReport({
+    outcome: "blocked",
+    exitCode: 1,
+    summary: {
+      passed: 0,
+      failed: 2,
+      incomplete: 0,
+      warnings: 0,
+      findings: all,
+    },
+  });
+  const shown = await prepareTerminalPresentation(
+    {
+      ...report,
+      presentationPolicy: {
+        ...report.presentationPolicy,
+        terminalFindingLimit: 1,
+      },
+    },
+    {
+      requestedFormat: "auto",
+      selectedFormat: "ink",
+      store: { maintain: async () => ({ reportPath, warnings: [] }) },
+    },
+  );
+  const output = dashboard(report, shown).replace(/\s+/gu, " ");
+  expect(shown.findings.map((f) => f.id)).toEqual(["missing"]);
+  expect(output).toContain("1 more blocking finding: secrets / token.");
+  expect(output).toContain("Complete details are in the full report.");
+  expect(output).toContain("Showing 1 of 2 findings.");
+});
+
+it.each([
+  ["clean", "", "No findings require action."],
+  ["warning", "", "Review warnings separately."],
+  ["incomplete", "", "Resolve any incomplete checks."],
+  ["skipped", "", "no configured checks ran."],
+  ["custom", "Keep my custom instruction.", "Keep my custom instruction."],
+  ["blank", "", ""],
+] as const)(
+  "preserves configured %s guidance in text and Ink",
+  async (kind, custom, expected) => {
+    const { RECOMMENDED_AGENT_GUIDANCE } =
+      await import("../../src/reporting/agent-guidance.js");
+    const { renderText } = await import("../../src/renderers/text.js");
+    const base = createReport();
+    const report = {
+      ...base,
+      checks:
+        kind === "skipped"
+          ? [
+              {
+                checkId: "types",
+                status: "skipped" as const,
+                durationMs: 0,
+                findings: [],
+              },
+            ]
+          : base.checks,
+      summary: {
+        ...base.summary,
+        warnings: kind === "warning" ? 1 : 0,
+        incomplete: kind === "incomplete" ? 1 : 0,
+      },
+      presentationPolicy: {
+        ...base.presentationPolicy,
+        agentGuidance: {
+          opening: "",
+          nextStep: ["custom", "blank"].includes(kind)
+            ? custom
+            : "Fix every blocking finding, review warnings separately, and resolve any incomplete checks. Stage any changes and run Zedbee again. Do not bypass the pre-commit hook.",
+        },
+      },
+    };
+    expect(RECOMMENDED_AGENT_GUIDANCE.nextStep).toBe(
+      "Fix every blocking finding, review warnings separately, and resolve any incomplete checks. Stage any changes and run Zedbee again. Do not bypass the pre-commit hook.",
+    );
+    for (const output of [
+      dashboard(report),
+      renderText(report, {
+        width: 120,
+        color: false,
+        presentation: presentation(),
+      }),
+    ]) {
+      const text = output.replace(/\s+/gu, " ");
+      if (expected) expect(text).toContain(expected);
+      else expect(text).not.toContain("AGENT NEXT STEP");
+      expect(text).not.toContain("Fix every blocking finding");
+    }
+  },
+);

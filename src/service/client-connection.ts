@@ -143,7 +143,7 @@ export class ServiceClient {
       // Cleanup/control exchanges must remain possible while payload admission
       // is full. Pending accepted source/request objects share one byte budget.
       releaseRetention = this.retained.reserve(
-        op === "run" || op === "open"
+        op === "run" || op === "run-measured" || op === "open"
           ? analyzerRequestRetentionBytes(fields)
           : 0,
       );

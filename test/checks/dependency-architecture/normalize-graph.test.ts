@@ -10,6 +10,7 @@ function result(violations: readonly IViolation[]): ICruiseResult {
   return {
     modules: [],
     summary: {
+      advisedExitCode: violations.length > 0 ? 1 : 0,
       error: violations.length,
       warn: 0,
       info: 0,
@@ -18,7 +19,7 @@ function result(violations: readonly IViolation[]): ICruiseResult {
       violations: [...violations],
       optionsUsed: {},
       environment: {
-        version: "18.2.0",
+        version: "18.7.2",
         nodeVersionSupported: ">=22",
         nodeVersionFound: process.version,
         osVersionFound: process.platform,

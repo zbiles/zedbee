@@ -1,3 +1,4 @@
+import { copyManagedHooks } from "./generate-managed-react-hooks.mjs";
 import {
   chmodSync,
   lstatSync,
@@ -11,6 +12,7 @@ import { copyVendoredDependencies } from "./vendored-dependencies.mjs";
 
 const root = realpathSync(process.cwd());
 copyVendoredDependencies(root);
+copyManagedHooks(root);
 const cli = join(root, "dist", "cli.js");
 const metadata = lstatSync(cli);
 

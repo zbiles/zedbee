@@ -1,3 +1,9 @@
+import {
+  isProjectPrettierVersionAccepted,
+  manifestPrettierDeclaration,
+  SUPPORTED_PROJECT_PRETTIER_RANGE,
+  type ManifestDeclaration,
+} from "./project-version.js";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { lstat, open, readFile, realpath } from "node:fs/promises";
@@ -10,31 +16,6 @@ import type { ProjectPrettierInstallation } from "./project-types.js";
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const IDENTITY_CHUNK_BYTES = 64 * 1024;
-
-interface ManifestDeclaration {
-  readonly range: string;
-  readonly section: string;
-}
-
-function manifestPrettierDeclaration(
-  value: unknown,
-): ManifestDeclaration | undefined {
-  if (typeof value !== "object" || value === null) return undefined;
-  for (const section of [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-  ]) {
-    const dependencies = (value as Record<string, unknown>)[section];
-    if (typeof dependencies !== "object" || dependencies === null) continue;
-    const specifier = (dependencies as Record<string, unknown>).prettier;
-    if (typeof specifier === "string") {
-      return { range: specifier, section };
-    }
-  }
-  return undefined;
-}
 
 async function readBounded(path: string, maxBytes: number): Promise<string> {
   const metadata = await lstat(path);
@@ -149,12 +130,11 @@ export async function resolveProjectPrettierInstallation(
       const normalizedVersion = semver.valid(manifest.version);
       if (
         normalizedVersion === null ||
-        !semver.satisfies(normalizedVersion, ">=3.0.0 <4.0.0") ||
-        !satisfiesDeclaredRange(normalizedVersion, declaration.range)
+        !isProjectPrettierVersionAccepted(normalizedVersion, declaration.range)
       ) {
         throw new ProjectPrettierFailureError({
           code: "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
-          message: `The installed Prettier ${manifest.version} does not satisfy the supported range >=3.0.0 <4.0.0 or the project's declared ${declaration.range}.`,
+          message: `The installed Prettier ${manifest.version} does not satisfy the supported range ${SUPPORTED_PROJECT_PRETTIER_RANGE} or the project's declared ${declaration.range}.`,
           projectRoot: projectRoot === "" ? "." : projectRoot,
         });
       }
@@ -224,17 +204,4 @@ export async function resolveProjectPrettierInstallation(
       "No installed Prettier satisfying the project declaration was found.",
     projectRoot: projectRoot === "" ? "." : projectRoot,
   });
-}
-
-function satisfiesDeclaredRange(
-  version: string,
-  declaredRange: string,
-): boolean {
-  const normalizedRange = semver.validRange(declaredRange);
-  if (normalizedRange === null) return true;
-  try {
-    return semver.satisfies(version, normalizedRange);
-  } catch {
-    return false;
-  }
 }

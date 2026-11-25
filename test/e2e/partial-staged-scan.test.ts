@@ -386,3 +386,67 @@ describe("partially staged reporting", () => {
     expect(automaticOutput).not.toContain("WORKTREE-ONLY");
   });
 });
+
+it("keeps a renamed import blocked until its repair is staged and preserves independent unsafe blockers", async () => {
+  const { CHECK_IDS } = await import("../../src/config/schema.js");
+  const repo = await createGitRepository("zedbee-staged-import-");
+  await repo.write("package.json", '{"name":"staged-import","type":"module"}');
+  await repo.write(
+    "tsconfig.json",
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        noEmit: true,
+        target: "ES2022",
+        module: "ESNext",
+        moduleResolution: "bundler",
+        types: [],
+      },
+      include: ["src/**/*.ts"],
+    }),
+  );
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      profile: "recommended",
+      checks: Object.fromEntries(
+        CHECK_IDS.map((id) => [
+          id,
+          ["lint", "types"].includes(id) ? "error" : "off",
+        ]),
+      ),
+    }),
+  );
+  await repo.write("src/account.ts", "export const value = 1;\n");
+  await repo.write(
+    "src/index.ts",
+    'import { value } from "./account";\nexport const result = value;\n',
+  );
+  await repo.commitAll("baseline");
+  await repo.git(["mv", "src/account.ts", "src/renamed.ts"]);
+  await repo.write(
+    "src/index.ts",
+    'import { value } from "./renamed";\nexport const result = value;\n',
+  );
+  const partial = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(partial.outcome).toBe("blocked");
+  expect(
+    partial.summary.findings.some((f) => f.rule === "typescript/TS2307"),
+  ).toBe(true);
+  await repo.git(["add", "src/index.ts"]);
+  const repaired = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(repaired.outcome, JSON.stringify(repaired)).toBe("pass");
+  await repo.write(
+    "src/unsafe.ts",
+    "declare const unsafe: any;\nexport const result = unsafe();\n",
+  );
+  await repo.git(["add", "src/unsafe.ts"]);
+  const unsafe = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(unsafe.outcome).toBe("blocked");
+  expect(
+    unsafe.summary.findings.some(
+      (f) => f.rule === "@typescript-eslint/no-unsafe-call",
+    ),
+  ).toBe(true);
+});

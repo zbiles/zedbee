@@ -1,3 +1,4 @@
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 export type Severity = "info" | "warning" | "error";
 export type CheckStatus = "completed" | "skipped" | "incomplete";
 export type IncompleteDisposition = "block" | "warn";
@@ -39,6 +40,10 @@ export interface ManagedAutomaticFix {
 }
 
 export interface Finding {
+  readonly messageRedaction?: {
+    readonly redacted: true;
+    readonly reasons: readonly import("../checks/diagnostic-details.js").DiagnosticRedactionReason[];
+  };
   id: string;
   check: string;
   rule: string;
@@ -116,7 +121,23 @@ export interface FindingIdentity {
   readonly metricName?: string;
 }
 
+export interface StructuralParseFailure {
+  readonly path: string;
+  readonly snapshot: "baseline" | "staged" | "target";
+  readonly line: number;
+  readonly column: number;
+  readonly typescriptCode?: number;
+  readonly expectedToken?: string;
+  readonly reason: string;
+}
+
+export interface StructuralParseFailures {
+  readonly files: readonly StructuralParseFailure[];
+  readonly omitted: number;
+}
+
 export interface CheckError {
+  readonly parseFailures?: StructuralParseFailures;
   readonly diagnostic?: import("../checks/diagnostics.js").AnalyzerDiagnostic;
   code: string;
   message: string;
@@ -142,7 +163,19 @@ export interface FormattingCoverage {
   readonly unsupportedFiles: number;
 }
 
+export interface EslintAnalysis {
+  readonly excludedFiles?: number;
+  readonly messageNotice?: "permission-required";
+  readonly version: typeof SUPPORTED_PROJECT_ESLINT_VERSION;
+  readonly checkedFiles: number;
+  readonly ignoredFiles: number;
+  readonly baseline: "compared" | "new-coverage";
+  readonly messages: "redacted" | "full";
+}
+
 export interface CheckResult {
+  comparisonContext?: import("../checks/comparison-context.js").ComparisonContext;
+  eslintAnalysis?: EslintAnalysis;
   checkId: string;
   target?: string;
   status: CheckStatus;

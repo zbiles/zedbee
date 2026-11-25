@@ -254,3 +254,25 @@ Compared with: 2026-09-30T20:21:15.475Z — MacBook / Apple M5 Max / 128 GiB.
 | monorepo / Structural security (collection) | -0.3437 ms (-3.69%) | -0.3184 ms (-3.43%) |
 | monorepo / Attribution | +0.0023 ms (+6.30%) | +0.001 ms (+6.13%) |
 | monorepo / Rendering | 0 ms (0.00%) | +0.0004 ms (+10.00%) |
+
+## Change-aware comparison
+
+After building both packages, run `node bench/change-aware-analysis.mjs --reference /absolute/installed/reference --candidate /absolute/installed/candidate --samples 10 --workers 2 --mode cold`. Modes: `cold` creates a fresh executor with observation caching disabled; `warm-engine` reuses an executor with observation caching disabled; `warm-cache` reuses executor and observation cache. Warm-up samples are excluded. Cold does not flush OS filesystem caches. Counts/outcomes are correctness evidence; medians and p90 are exploratory samples. This harness does not run in consumer commit hooks. Its in-process memory field is explicitly unavailable; use the external process-tree benchmark for attributable memory.
+
+`--scenario type-regression` selects one scenario; `--diagnostics` captures candidate timing summaries for each sample. Warm-cache uses an isolated fixture/package-specific observation store and records hit/miss counts, rather than relying on a user cache. Package hashes cover the compiled dist tree and package manifest.
+
+`--parallel 2` stages the same change in two separate linked worktrees and scans them through one executor. `elapsedMs` covers the whole group, `scanDurationsMs` contains individual scan durations, and `durationMs` retains the first report's duration for compatibility. Every sample asserts the expected outcome; source regressions must include an actual TypeScript assignment finding. Candidate non-source scenarios reject irrelevant compiler jobs.
+
+## Committed-change CLI experiments
+
+`commit-scan-performance.mts` invokes an explicit built CLI against a disposable repository whose HEAD is the requested baseline and whose index equals the requested target commit. It refuses mismatched Git state, output inside the measured repository/installation, or an existing output directory. It never fetches a CLI or runs an installer.
+
+```sh
+node --experimental-strip-types bench/commit-scan-performance.mts --cli /path/to/installation/dist/cli.js --repository /private/disposable-copy --baseline BASE_SHA --target TARGET_SHA --execution local --cache fresh --samples 3 --output /private/evidence/new-run
+```
+
+For a recorded merge commit, use its first parent as the baseline and stage the exact merge tree in the disposable copy. Run the harness with `--comparison commit` and `--comparison merge` in separate output directories. The merge mode passes the validated incoming parents through Git's hook environment and verifies the parents in each report. Measurements include per-parent and union path counts. Compare check coverage and exit status before comparing elapsed time.
+
+Execution is `local` or `service`; cache mode is `uncached`, `fresh` or `warm`. Uncached mode requires the selected CLI's `--no-cache` option; historical installations without it must be measured in supported modes. Fresh/uncached samples start a fresh private service and cache state. Warm measurements share state after an excluded priming run; this does not guarantee that every analyzer stays loaded. Process-local telemetry/update requests are disabled for synthetic measurements, without changing saved user preferences.
+
+Reports, safe CLI diagnostics, individual wall times, medians and bounded owned-process ancestry are saved only to the explicit private output directory. Process sampling records executable roles rather than arguments, can miss short-lived/reparented children, and is marked partial when unavailable (including Windows); use `--process-sampling off` to disable it. `--load-label idle|controlled` labels an experiment, not a guarantee about other sessions. Compare findings/outcomes separately from elapsed time, and keep full-suite/package-installation tests out of timing intervals.

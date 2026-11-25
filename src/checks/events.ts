@@ -48,7 +48,19 @@ export interface ScanPhaseEvent extends CheckEventBase {
   phase: ScanPhase;
 }
 
+export interface MergeParentEvent extends CheckEventBase {
+  type: "merge-parent";
+  parent: number;
+  total: number;
+}
+
+export interface ParentCheckSettledEvent extends CheckEventBase {
+  type: "parent-check-settled";
+}
+
 export type ScanEvent =
+  | MergeParentEvent
+  | ParentCheckSettledEvent
   | CheckQueuedEvent
   | CheckRunningEvent
   | CheckCompletedEvent

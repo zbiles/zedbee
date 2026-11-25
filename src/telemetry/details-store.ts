@@ -17,6 +17,8 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   scanDetailsSchema,
+  performanceTelemetrySchema,
+  type ScanPerformanceTelemetry,
   telemetryEventSchema,
   telemetryV1EventSchema,
   type ScanDetails,
@@ -29,6 +31,7 @@ const envelopeSchema = z.strictObject({
   run_id: z.string().uuid(),
   timestamp: z.string().datetime(),
   details: scanDetailsSchema,
+  performance: performanceTelemetrySchema.optional(),
 });
 const filename =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:json|tmp)$/u;
@@ -65,7 +68,11 @@ export class TelemetryDetailsStore {
       throw error;
     }
   }
-  write(input: TelemetryV1Event, details: ScanDetails): void {
+  write(
+    input: TelemetryV1Event,
+    details: ScanDetails,
+    performance?: ScanPerformanceTelemetry,
+  ): void {
     const event = telemetryV1EventSchema.parse(input);
     if (event.environment === "ci" || event.event !== "scan_finished")
       throw Error("Invalid detail parent");
@@ -74,7 +81,23 @@ export class TelemetryDetailsStore {
       run_id: event.run_id,
       timestamp: event.timestamp,
       details,
+      ...(performance === undefined ? {} : { performance }),
     });
+    while (
+      envelope.performance &&
+      Buffer.byteLength(JSON.stringify(envelope)) > 17_000
+    ) {
+      envelope.performance.performance_status = "partial";
+      if (envelope.performance.check_performance.length)
+        envelope.performance.check_performance.pop();
+      else if (envelope.performance.incomplete_reasons.length) {
+        envelope.performance.incomplete_reasons.pop();
+        envelope.performance.incomplete_reasons_omitted++;
+      } else {
+        delete envelope.performance;
+        break;
+      }
+    }
     if (!this.directoryReady(true))
       throw Error("Details directory unavailable");
     const temporary = join(this.path, `${randomUUID()}.tmp`);
@@ -91,7 +114,9 @@ export class TelemetryDetailsStore {
     }
     this.prune();
   }
-  read(event: TelemetryV1Event): ScanDetails | undefined {
+  read(
+    event: TelemetryV1Event,
+  ): (ScanDetails & { performance?: ScanPerformanceTelemetry }) | undefined {
     let fd: number | undefined;
     try {
       if (
@@ -118,7 +143,12 @@ export class TelemetryDetailsStore {
         value.timestamp !== event.timestamp
       )
         return undefined;
-      return value.details;
+      return {
+        ...value.details,
+        ...(value.performance === undefined
+          ? {}
+          : { performance: value.performance }),
+      };
     } catch {
       return undefined;
     } finally {
@@ -197,13 +227,15 @@ export class TelemetryDetailsStore {
 }
 export function enrichTelemetryEvent(
   event: TelemetryV1Event,
-  details?: ScanDetails,
+  details?: ScanDetails & { performance?: ScanPerformanceTelemetry },
 ): TelemetryEvent {
   if (event.event === "scan_finished" && details !== undefined) {
+    const { performance, ...scanDetails } = details;
     const enriched = telemetryEventSchema.safeParse({
       ...event,
-      ...details,
-      schema_version: 2,
+      ...scanDetails,
+      ...performance,
+      schema_version: performance ? 3 : 2,
     });
     if (enriched.success) return enriched.data;
   }

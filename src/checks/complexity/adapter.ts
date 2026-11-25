@@ -1,3 +1,5 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
+import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { relative, sep } from "node:path";
@@ -10,10 +12,7 @@ import {
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
-import type {
-  RepositoryInspection,
-  WorkspaceInspection,
-} from "../../inspection/types.js";
+import type { RepositoryInspection } from "../../inspection/types.js";
 import type {
   FilePolicyResolver,
   SnapshotSide,
@@ -39,15 +38,6 @@ import {
 } from "./pair-class-metrics.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -281,7 +271,7 @@ async function collectSide(
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Complexity analysis failed.");
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   const candidates = new Set(workspace?.sourceFiles ?? []);
   if (side === "baseline") {
     for (const owner of inspection.workspaces) {
@@ -357,6 +347,13 @@ function createComplexityAdapter(
       inspectManagedCheck(id, context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
+        context.signal.throwIfAborted();
+        const moves = await sourceMoves(context, id, { crossFileOnly: true });
+        const donorPaths = new Set(changedFilePaths(context, "baseline"));
+        for (const pair of moves.pairs) {
+          if (workspaceOwns(context, "target", pair.target.entity.file))
+            donorPaths.add(pair.baseline.entity.file);
+        }
         const baseline = await collectSide(
           context.snapshots.baselineDir,
           context.baselineInspection,
@@ -365,7 +362,7 @@ function createComplexityAdapter(
           metricName,
           context.policyForFile,
           "baseline",
-          changedFilePaths(context, "baseline"),
+          donorPaths,
         );
         const target = await collectSide(
           context.snapshots.targetDir,
@@ -377,10 +374,33 @@ function createComplexityAdapter(
           "target",
           changedFilePaths(context, "target"),
         );
+        const movedIdentities = new Set(
+          moves.pairs
+            .filter(
+              (pair) => pair.baseline.entity.file !== pair.target.entity.file,
+            )
+            .map((pair) => pair.baseline.entity.identity),
+        );
+        const paired = pairClassMetricObservations(
+          {
+            ...baseline,
+            observations: baseline.observations.filter(
+              (observation) => !movedIdentities.has(observation.identity),
+            ),
+          },
+          target,
+          context.changeSet,
+        );
         return {
           checkId: id,
           target: context.target,
-          ...pairClassMetricObservations(baseline, target, context.changeSet),
+          ...paired,
+          baselineObservations: [
+            ...paired.baselineObservations,
+            ...baseline.observations.filter((observation) =>
+              movedIdentities.has(observation.identity),
+            ),
+          ],
         };
       } catch (error) {
         if (error instanceof CheckIncompleteError) throw error;

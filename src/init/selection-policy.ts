@@ -14,6 +14,10 @@ import type {
 /** The same selection contract is used by CLI flags and the interactive prompt. */
 export interface InitSelection {
   readonly profile: ProfileId;
+  readonly eslintEngine?: "managed" | "project" | undefined;
+  readonly eslintTrust?: boolean | undefined;
+  readonly eslintMessages?: boolean | undefined;
+  readonly eslintMessageTrust?: boolean | undefined;
   readonly checks?: readonly CheckId[] | undefined;
   readonly osvUnavailable?: InitOsvUnavailable | undefined;
   readonly hook?: InitHookChoice | undefined;
@@ -62,12 +66,30 @@ export function buildInitSelectionOptions(
     formatting === "project" &&
     (context.invocationTrust ||
       (selection.projectTrust ?? context.defaults.projectTrust) === true);
+  const eslintEngine = selection.eslintEngine ?? context.defaults.eslintEngine;
   const checks = selection.checks;
   const osvUnavailable =
     selection.osvUnavailable ?? context.defaults.osvUnavailable;
   return {
     ...context.base,
     profile: selection.profile,
+    ...(eslintEngine === undefined ? {} : { eslintEngine }),
+    ...((selection.eslintMessages ?? context.defaults.eslintMessages) ===
+    undefined
+      ? {}
+      : {
+          projectEslintMessages:
+            (selection.eslintMessages ?? context.defaults.eslintMessages)
+              ? ("full" as const)
+              : ("redacted" as const),
+        }),
+    ...((selection.eslintTrust ?? context.defaults.eslintTrust) === true
+      ? { projectEslintTrustConfirmed: true }
+      : {}),
+    ...((selection.eslintMessageTrust ??
+      context.defaults.eslintMessageTrust) === true
+      ? { projectEslintMessagesConfirmed: true }
+      : {}),
     ...(checks === undefined ? {} : { checks }),
     ...(osvUnavailable === undefined ? {} : { osvUnavailable }),
     hook: integration.hook,

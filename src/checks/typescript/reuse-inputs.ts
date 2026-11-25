@@ -8,6 +8,25 @@ import { DEPENDENCY_LIMITS } from "../../cache/dependency-inputs.js";
 const captures = Symbol("compiler dependency captures");
 export const compilerPrograms = Symbol("snapshot compiler programs");
 
+function captureKey(context: DependencyCaptureContext): string | undefined {
+  return analysisKey({
+    repositoryRoot: context.repositoryRoot,
+    snapshots: context.snapshots,
+  });
+}
+
+/** Program hosts retain their capture too. A capture that bypassed admission
+ * must not enter the session indirectly through the compiler-program store. */
+export function isRetainedCompilerCapture(
+  capture: CapturedDependencies,
+): boolean {
+  const key = captureKey(capture.context);
+  return (
+    key !== undefined &&
+    analysisStore<CapturedDependencies>(captures)?.get(key) === capture
+  );
+}
+
 /** A reused program keeps this capture as its live host, including lazy reads.
  * Each new collection validates served dependency bytes against a fresh view.
  */
@@ -15,10 +34,7 @@ export function captureAnalysisDependencies(
   context: DependencyCaptureContext,
 ): CapturedDependencies {
   const store = analysisStore<CapturedDependencies>(captures);
-  const key = analysisKey({
-    repositoryRoot: context.repositoryRoot,
-    snapshots: context.snapshots,
-  });
+  const key = captureKey(context);
   if (store === undefined || key === undefined)
     return new CapturedDependencies(context);
   const previous = store.get(key);

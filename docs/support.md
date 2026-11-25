@@ -2,6 +2,8 @@
 
 This document distinguishes implemented coverage from unsupported or deferred behavior. `zedbee checks --format json` is the machine-readable view of the current repository's configured checks and applicability.
 
+`zedbee doctor` warns when declared workspace `@types/*` packages in staged `dependencies` or `devDependencies` have no available installed manifest, or when its bounded metadata inspection cannot verify their installation layout. It supports hoisting within the current checkout and reports independent nested projects separately. These local, data-only readiness checks do not execute project code, access the network, or establish compiler comparability. A healthy result does not prove the selected HEAD/index comparison completed; use `zedbee scan` for that verification.
+
 ## Runtime and project support
 
 | Area              | Supported                                                                                                     | Notes                                                                                                                                                                                                                              |
@@ -163,3 +165,61 @@ every changed and skipped file, stage intended results, and rescan.
 - an offline OSV database;
 - legacy binary `bun.lockb` vulnerability parsing;
 - automatic staging, committing, or mutation of the Git index.
+
+## Check the version actually used by a hook
+
+A dependency declaration, lockfile resolution, installed package, and executable selected by a hook can disagree. Inspect all four before diagnosing a version-specific problem. For a hook that invokes `node ./web/node_modules/zedbee/dist/cli.js`, run these from the repository root:
+
+```sh
+node ./web/node_modules/zedbee/dist/cli.js --version
+node -p "require('./web/node_modules/zedbee/package.json').version"
+```
+
+Compare those results with the dependency in `web/package.json` and the owning lockfile. Use the repository's package manager and workspace installation instructions to synchronize the installation. If the manifest and lockfile disagree, update the lockfile deliberately; a frozen or clean install alone will not reconcile conflicting declarations. Recheck the exact hook executable and repeat the scan afterward. Swarm does not install or upgrade dependencies during a scan.
+
+## Staging and deletion-only commits
+
+A commit scan inspects the Git index. “Commit allowed” describes that selected content; it does not confirm that every intended file was staged. A failed earlier `git add` is not recorded in the index. Stop the calling workflow when staging fails, for example:
+
+```sh
+git add <paths> && git commit
+```
+
+Review `git diff --cached --stat` and the scan's staged-change counts. Unstaged and untracked files are not part of the scan. Deleting documentation may require no configured checks; the result reports skipped work rather than successful execution. Deleting source can still require compiler or project checks, including checks for broken imports. Partial staging is supported.
+
+For synthetic credential fixtures, see [the narrow Secretlint annotation](checks.md#synthetic-credentials-in-fixtures).
+
+## Package-manager processes during a scan
+
+An ordinary managed scan does not install dependencies. Missing required packages
+produce an incomplete check with installation guidance when they affect the scan.
+Independent workspaces can be skipped even when their install is stale. Restore required packages
+using the repository's package-manager workflow, then rerun the scan.
+
+When investigating an apparent install during a scan, record process ancestry and
+the scan's local timing report. Swarm's release tests deliberately install packed
+fixtures with npm, pnpm, Yarn and Bun; those test processes can overlap another
+terminal's scan. A matching process name alone does not establish ownership.
+Trusted executable project configurations run with the permissions you grant them;
+the managed-scan installer guard is not an operating-system sandbox for that code.
+
+Elapsed check time can include waiting for a worker. Local JSON report diagnostics
+separate queue and worker wall time so a long queued check is not mistaken for a
+CPU-heavy analyzer. See [reporting](reporting.md) for scope and privacy details.
+
+## Rehearsing a Swarm release
+
+Prepare the release commit and dispatch the [Release check workflow](../.github/workflows/release-check.yml)
+on that commit. The workflow installs the preceding pinned npm releases in a consumer fixture and stages
+an upgrade with the candidate. It runs the generated Husky hook on the upgrade, an independent web edit
+with missing e2e dependencies, and two e2e edits that exercise passing and blocking behavior.
+
+Download the tested npm archive and its `upgrade-verification.json` from the successful run. From the
+same clean commit, run `npm run release:tag -- /path/to/the/downloaded/artifact`. This checks the Git
+commit, npm version and tarball SHA-256 before creating the annotated tag. The tag workflow verifies
+that annotation against the artifact from the exact pre-tag run. Publish the archive from that run.
+
+For a local rehearsal, run `npm run artifact:prepare -- --smoke-only`. For a clean release checkout,
+`npm run artifact:prepare` puts the verified archive and upgrade evidence in `release-artifacts/`.
+Update the prior-release versions and npm integrity values in the upgrade fixture when preparing a
+new release.

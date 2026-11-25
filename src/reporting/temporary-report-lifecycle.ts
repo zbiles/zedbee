@@ -13,6 +13,7 @@ import {
   errorCode,
   warning,
   type ReportMaintenanceWarning,
+  type ReportMaintenanceDiagnostics,
 } from "./temporary-report-common.js";
 import {
   readBoundedRegularFile,
@@ -150,6 +151,7 @@ export async function loadState(
   repositoryDirectory: string,
   warnings: ReportMaintenanceWarning[],
   nowMs: number,
+  diagnostics?: ReportMaintenanceDiagnostics,
 ): Promise<ReportLifecycleState> {
   try {
     const parsed = parseState(
@@ -158,7 +160,11 @@ export async function loadState(
         MAX_STATE_BYTES,
       ),
     );
-    if (parsed.schemaVersion === 2) return parsed;
+    if (parsed.schemaVersion === 2) {
+      if (diagnostics) diagnostics.state = "loaded";
+      return parsed;
+    }
+    if (diagnostics) diagnostics.state = "migrated";
     const reports: ReportLifecycleState["reports"][number][] = [];
     for (const report of parsed.reports) {
       const path = trackedReportPath(repositoryDirectory, report.fileName);
@@ -189,9 +195,11 @@ export async function loadState(
         entries.length === 1 &&
         entries[0] === LOCK_FILE_NAME
       ) {
+        if (diagnostics) diagnostics.state = "new";
         return { schemaVersion: 2, reports: [] };
       }
     }
+    if (diagnostics) diagnostics.state = "recovered";
     warnings.push(
       warning(
         "TEMP_REPORT_CLEANUP_FAILED",
@@ -356,6 +364,7 @@ export async function removeExpiredReports(
   nowMs: number,
   maxAgeMs: number,
   warnings: ReportMaintenanceWarning[],
+  diagnostics?: ReportMaintenanceDiagnostics,
 ): Promise<ReportLifecycleState["reports"]> {
   const retained: ReportLifecycleState["reports"][number][] = [];
   for (const report of reports) {
@@ -377,7 +386,10 @@ export async function removeExpiredReports(
     try {
       metadata = await lstat(path);
     } catch (error) {
-      if (errorCode(error) === "ENOENT") continue;
+      if (errorCode(error) === "ENOENT") {
+        if (diagnostics) diagnostics.alreadyMissing++;
+        continue;
+      }
       warnings.push(
         warning(
           "TEMP_REPORT_CLEANUP_FAILED",
@@ -399,6 +411,7 @@ export async function removeExpiredReports(
     }
     try {
       await unlink(path);
+      if (diagnostics) diagnostics.removedExpired++;
     } catch (error) {
       warnings.push(
         warning(

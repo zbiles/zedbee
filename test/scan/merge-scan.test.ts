@@ -1,3 +1,5 @@
+import { createLocalAnalyzerExecutor } from "../../src/checks/runner/executor.js";
+import { lstat } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { CHECK_IDS } from "../../src/config/schema.js";
 import { runScan } from "../../src/scan/run-scan.js";
@@ -55,6 +57,189 @@ const scan = (repositoryRoot: string) =>
   });
 
 describe("staged merge comparison", () => {
+  it("does not open an analyzer session when every check is disabled", async () => {
+    const repo = await fixture();
+    await repo.git(["switch", "incoming"]);
+    await repo.write("incoming.md", "Incoming change");
+    await repo.commitAll("incoming change");
+    await repo.git(["switch", "main"]);
+    await repo.write("main.md", "Main change");
+    await repo.commitAll("main change");
+    await repo.git(["merge", "--no-commit", "--no-ff", "incoming"]);
+    await repo.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: Object.fromEntries(CHECK_IDS.map((id) => [id, "off"])),
+      }),
+    );
+    await repo.git(["add", ".zedbeerc.jsonc"]);
+
+    let opens = 0;
+    const report = await runScan({
+      repositoryRoot: repo.root,
+      merge: "required",
+      cache: false,
+      executor: {
+        async openSession() {
+          opens++;
+          return {
+            async run() {
+              throw new Error("No jobs expected");
+            },
+            async close() {},
+          };
+        },
+        async close() {},
+      },
+    });
+
+    expect(report.exitCode).toBe(0);
+    expect(report.mergeParents).toHaveLength(2);
+    expect(opens).toBe(0);
+  });
+
+  it.each(["secrets", "deadCode"] as const)(
+    "captures the scheduled inputs for %s across merge parents",
+    async (checkId) => {
+      const repo = await fixture();
+      await repo.write(
+        "package.json",
+        JSON.stringify({
+          name: "app",
+          devDependencies: { vite: "7" },
+        }),
+      );
+      await repo.write("index.html", "<p>Before entry selection</p>");
+      await repo.write(
+        ".zedbeerc.jsonc",
+        JSON.stringify({
+          schemaVersion: 1,
+          checks: Object.fromEntries(
+            CHECK_IDS.map((id) => [id, id === checkId ? "error" : "off"]),
+          ),
+        }),
+      );
+      await repo.commitAll("configure check");
+      await repo.git(["branch", "-f", "incoming", "HEAD"]);
+      await repo.git(["switch", "incoming"]);
+      await repo.write(
+        "index.html",
+        '<script type="module" src="/summarize.ts"></script>',
+      );
+      await repo.commitAll("select entry");
+      await repo.git(["switch", "main"]);
+      await repo.write("README.md", "Application notes");
+      await repo.commitAll("notes");
+      await repo.git(["merge", "--no-commit", "--no-ff", "incoming"]);
+
+      const local = createLocalAnalyzerExecutor();
+      const selections: (readonly string[])[] = [];
+      try {
+        const report = await runScan({
+          repositoryRoot: repo.root,
+          merge: "required",
+          cache: false,
+          executor: {
+            openSession(options) {
+              for (const selection of options?.sourceSelections ?? [])
+                selections.push(selection.paths);
+              return local.openSession(options);
+            },
+            close: () => local.close(),
+          },
+        });
+        expect(report.checks, JSON.stringify(report)).toEqual([
+          expect.objectContaining({ checkId, status: "completed" }),
+        ]);
+        expect(selections).toHaveLength(4);
+        for (const paths of selections) {
+          expect(paths).toContain("index.html");
+          if (checkId === "secrets")
+            expect(paths).not.toContain("main-caller.ts");
+          else expect(paths).toContain("main-caller.ts");
+        }
+      } finally {
+        await local.close();
+      }
+    },
+  );
+
+  it("blocks a merge when both parent scans fail to load the staged config", async () => {
+    const repo = await fixture();
+    await repo.git(["switch", "incoming"]);
+    await repo.write("incoming.ts", "export const incoming = 1;\n");
+    await repo.commitAll("incoming change");
+    await repo.git(["switch", "main"]);
+    await repo.git(["merge", "--no-commit", "--no-ff", "incoming"]);
+    await repo.write(".zedbeerc.jsonc", "invalid");
+    await repo.git(["add", ".zedbeerc.jsonc"]);
+
+    const report = await scan(repo.root);
+    expect(report).toMatchObject({
+      outcome: "incomplete",
+      exitCode: 2,
+      checks: [{ status: "incomplete", error: { code: "CONFIG_INVALID" } }],
+    });
+  });
+
+  it("prepares the same target once for an octopus merge and cleans every snapshot", async () => {
+    const repo = await fixture();
+    await repo.git(["branch", "other"]);
+    for (const branch of ["main", "incoming", "other"]) {
+      await repo.git(["switch", branch]);
+      await repo.write(`${branch}.ts`, `export const ${branch} = 1;\n`);
+      await repo.commitAll(branch);
+    }
+    await repo.git(["switch", "main"]);
+    const merge = await repo.git([
+      "merge",
+      "--no-commit",
+      "--no-ff",
+      "incoming",
+      "other",
+    ]);
+    expect(merge.exitCode, merge.stderr).toBe(0);
+    const pairs: { baselineDir: string; targetDir: string }[] = [];
+    const dependencies = DEFAULT_ANALYSIS_SESSION_DEPENDENCIES;
+    const report = await runScan({
+      repositoryRoot: repo.root,
+      merge: "required",
+      cache: false,
+      dependencies: {
+        ...dependencies,
+        evaluate: evaluatePolicy,
+        now: () => new Date(),
+        async buildCommitSnapshots(...args) {
+          const pair = await dependencies.buildCommitSnapshots(...args);
+          pairs.push(pair);
+          return pair;
+        },
+        async buildMergeBaseline(...args) {
+          const pair = await dependencies.buildMergeBaseline!(...args);
+          pairs.push(pair);
+          return pair;
+        },
+      },
+    });
+    expect(report).toMatchObject({
+      outcome: "pass",
+      exitCode: 0,
+      summary: { passed: 1 },
+    });
+    expect(report.mergeParents).toHaveLength(3);
+    expect(pairs).toHaveLength(3);
+    expect(new Set(pairs.map((pair) => pair.targetDir)).size).toBe(1);
+    expect(new Set(pairs.map((pair) => pair.baselineDir)).size).toBe(3);
+    for (const pair of pairs) {
+      await expect(lstat(pair.baselineDir)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(lstat(pair.targetDir)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    }
+  });
   it("retains a sanitized merge failure and cleanup diagnosis when private-index removal fails", async () => {
     const repo = await createGitRepository();
     await repo.write("value.ts", "export const value = 1;\n");
@@ -136,6 +321,8 @@ describe("staged merge comparison", () => {
     ]);
     expect(Object.isFrozen(report)).toBe(true);
     expect(Object.isFrozen(report.checks)).toBe(true);
+    expect(report.changeSummary).toBeUndefined();
+    expect(JSON.parse(renderJson(report)).changeSummary).toBeUndefined();
     expect(JSON.parse(renderJson(report)).mergeParents).toEqual([
       main,
       incoming,

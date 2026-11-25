@@ -1,3 +1,4 @@
+import { isConfigurableRuleCheckId } from "../config/settings-registry.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -17,10 +18,30 @@ export interface PolicyDecision {
   summary: RunSummary;
 }
 
-function applySeverity(finding: Finding, policy: ResolvedCheckPolicy): Finding {
+function applySeverity(
+  finding: Finding,
+  policy: ResolvedCheckPolicy,
+): Finding | undefined {
+  const ruleOwned = isConfigurableRuleCheckId(finding.check);
+  const configured =
+    ruleOwned && "rules" in policy ? policy.rules?.[finding.rule] : undefined;
+  const level = Array.isArray(configured) ? configured[0] : configured;
+  if (level === "off" || level === 0) return undefined;
+  if (
+    finding.check === "lint" &&
+    "engine" in policy &&
+    policy.engine === "project"
+  )
+    return {
+      ...finding,
+      severity: policy.severity === "warn" ? "warning" : finding.severity,
+    };
   return {
     ...finding,
-    severity: policy.severity === "warn" ? "warning" : "error",
+    severity:
+      policy.severity === "warn" || level === "warn" || level === 1
+        ? "warning"
+        : "error",
   };
 }
 
@@ -61,9 +82,9 @@ export function displayResultForPolicy(
           finding.location?.file !== undefined
             ? policyForFile(checkId, finding.location.file, "target")
             : policy;
-        return filePolicy.severity === "off"
-          ? []
-          : [applySeverity(finding, filePolicy)];
+        if (filePolicy.severity === "off") return [];
+        const applied = applySeverity(finding, filePolicy);
+        return applied === undefined ? [] : [applied];
       }),
   });
 }
@@ -95,11 +116,18 @@ export function evaluatePolicy(
       result.incompleteDisposition === "block",
   );
 
-  if (hasBlockingIncomplete) {
-    return { exitCode: 2, outcome: "incomplete", results: evaluated, summary };
-  }
-  if (summary.failed > 0) {
-    return { exitCode: 1, outcome: "blocked", results: evaluated, summary };
-  }
-  return { exitCode: 0, outcome: "pass", results: evaluated, summary };
+  return {
+    ...scanOutcome(summary, hasBlockingIncomplete),
+    results: evaluated,
+    summary,
+  };
+}
+
+export function scanOutcome(
+  summary: Pick<RunSummary, "failed">,
+  blockingIncomplete: boolean,
+): Pick<PolicyDecision, "outcome" | "exitCode"> {
+  if (blockingIncomplete) return { exitCode: 2, outcome: "incomplete" };
+  if (summary.failed > 0) return { exitCode: 1, outcome: "blocked" };
+  return { exitCode: 0, outcome: "pass" };
 }

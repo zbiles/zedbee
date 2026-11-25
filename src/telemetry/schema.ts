@@ -289,9 +289,109 @@ const telemetryV2EventSchema = z
     )
       invalid();
   });
+const milliseconds = z.number().int().min(0).max(604_800_000);
+export const INCOMPLETE_CODES = [
+  "other",
+  "SECRET_FILE_TOO_LARGE",
+  "SECRET_FILE_INVALID_UTF8",
+  "SECRET_FILE_UNSAFE",
+  "SECRETLINT_ANALYSIS_FAILED",
+  "TYPED_LINT_PROJECT_MISMATCH",
+  "TYPESCRIPT_PROJECT_MISMATCH",
+  "ADAPTER_RESULT_INVALID",
+  "CHECK_DISPATCH_FAILED",
+  "SNAPSHOT_CLEANUP_FAILED",
+  "COMPLEXITY_FILE_ANALYSIS_FAILED",
+  "STRUCTURAL_SECURITY_PARSE_FAILED",
+  "ANALYZER_SERVICE_UNAVAILABLE",
+] as const;
+export const performanceTelemetrySchema = z.strictObject({
+  performance_version: z.literal(1),
+  performance_status: z.enum(["complete", "partial", "unavailable"]),
+  changed_file_count_bucket: z.enum([
+    "0",
+    "1",
+    "2-5",
+    "6-20",
+    "21-100",
+    "101+",
+    "unknown",
+  ]),
+  change_category: z.enum([
+    "non_source",
+    "source",
+    "configuration_or_dependency",
+    "mixed",
+    "unknown",
+  ]),
+  execution_mode: z.enum(["service", "local", "none", "unknown"]),
+  worker_count: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+  check_performance: z
+    .array(
+      z.strictObject({
+        check_id: z.enum(TELEMETRY_CHECK_IDS),
+        task_count: count,
+        elapsed_sum_ms: milliseconds,
+        elapsed_max_ms: milliseconds,
+        queue_sum_ms: milliseconds.optional(),
+        queue_max_ms: milliseconds.optional(),
+        worker_sum_ms: milliseconds.optional(),
+        worker_max_ms: milliseconds.optional(),
+        cache_hits: count,
+        cache_misses: count,
+        cache_bypasses: count,
+      }),
+    )
+    .max(13)
+    .refine(
+      (rows) => new Set(rows.map((r) => r.check_id)).size === rows.length,
+    ),
+  incomplete_reasons: z
+    .array(
+      z.strictObject({
+        check_id: z.enum([...TELEMETRY_CHECK_IDS, "zedbee"]),
+        code: z.enum(INCOMPLETE_CODES),
+        count,
+      }),
+    )
+    .max(26),
+  incomplete_reasons_omitted: count,
+});
+export type ScanPerformanceTelemetry = z.infer<
+  typeof performanceTelemetrySchema
+>;
+const telemetryV3EventSchema = z
+  .strictObject({
+    ...telemetryV2EventSchema.shape,
+    ...performanceTelemetrySchema.shape,
+    schema_version: z.literal(3),
+  })
+  .superRefine((event, ctx) => {
+    const {
+      performance_version,
+      performance_status,
+      changed_file_count_bucket,
+      change_category,
+      execution_mode,
+      worker_count,
+      check_performance,
+      incomplete_reasons,
+      incomplete_reasons_omitted,
+      ...legacy
+    } = event;
+    if (
+      !telemetryV2EventSchema.safeParse({ ...legacy, schema_version: 2 })
+        .success
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "Invalid enriched scan contract",
+      });
+  });
 export const telemetryEventSchema = z.union([
   telemetryV1EventSchema,
   telemetryV2EventSchema,
+  telemetryV3EventSchema,
 ]);
 export type TelemetryEvent = z.infer<typeof telemetryEventSchema>;
 export type TelemetryCommand = (typeof TELEMETRY_COMMANDS)[number];

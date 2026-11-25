@@ -292,3 +292,20 @@ describe("createInitProposal", () => {
     expect(proposal.files[0]?.after).toContain('"formatting": "off"');
   });
 });
+
+it("provides a source-free setup choice without source excerpts", () => {
+  const proposal = createInitProposal(inspection(["react", "typescript"]), {
+    repositoryRoot: "/repo",
+    profile: "recommended",
+    hook: "none",
+    diagnosticMessages: "source-free",
+  });
+  const config = JSON.parse(
+    proposal.files.find((f) => f.relativePath === ".zedbeerc.jsonc")!.after,
+  );
+  expect(config.reporting).toMatchObject({
+    diagnosticMessages: "source-free",
+    sourceExcerpts: "never",
+  });
+  expect(proposal.diagnosticMessages).toBe("source-free");
+});

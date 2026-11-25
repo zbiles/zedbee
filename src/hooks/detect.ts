@@ -1,13 +1,6 @@
+import { resolveRawGitHookPath } from "./raw-hook-path.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ScanHookName } from "./command.js";
 import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
@@ -136,34 +129,11 @@ async function existingAbsoluteFile(
   }
 }
 
-export async function rawGitHookPath(
+export function rawGitHookPath(
   root: string,
   hookName: ScanHookName = "pre-commit",
 ): Promise<string> {
-  if (hookName !== "pre-commit" && hookName !== "pre-merge-commit")
-    throw new Error("Zedbee refused an unsafe hook target.");
-  const git = new GitClient(root);
-  const [hookOutput, commonOutput] = await Promise.all([
-    git.run(["rev-parse", "--git-path", `hooks/${hookName}`]),
-    git.run(["rev-parse", "--git-common-dir"]),
-  ]);
-  const hook = isAbsolute(hookOutput.stdout)
-    ? resolve(hookOutput.stdout)
-    : resolve(root, hookOutput.stdout);
-  const common = isAbsolute(commonOutput.stdout)
-    ? resolve(commonOutput.stdout)
-    : resolve(root, commonOutput.stdout);
-  const canonicalCommon = await realpath(common);
-  const hooksDirectory = resolve(canonicalCommon, "hooks");
-  const hooksState = await lstat(hooksDirectory);
-  if (hooksState.isSymbolicLink() || !hooksState.isDirectory()) {
-    throw new Error("Zedbee refused an unsafe hook target.");
-  }
-  const canonicalHook = resolve(await realpath(dirname(hook)), basename(hook));
-  if (canonicalHook !== resolve(hooksDirectory, hookName)) {
-    throw new Error("Zedbee refused an unsafe hook target.");
-  }
-  return canonicalHook;
+  return resolveRawGitHookPath(root, hookName, false);
 }
 
 export async function customGitHookPath(
@@ -275,7 +245,11 @@ function dependencyNames(
   return names;
 }
 
-async function autoChoice(root: string): Promise<ResolvedHookChoice> {
+/** Data-only selection shared by setup and read-only hook maintenance advice. */
+export async function detectHookChoice(
+  root: string,
+  inspected?: { readonly manifest: Record<string, unknown> | undefined },
+): Promise<ResolvedHookChoice> {
   try {
     const custom = await customGitHookPath(root);
     if (
@@ -287,7 +261,8 @@ async function autoChoice(root: string): Promise<ResolvedHookChoice> {
   } catch {
     return "none";
   }
-  const manifest = await packageData(root);
+  const manifest =
+    inspected === undefined ? await packageData(root) : inspected.manifest;
   const dependencies = dependencyNames(manifest);
   if (
     (
@@ -344,7 +319,7 @@ export async function detectHookIntegration(
 ): Promise<DetectedHookIntegration> {
   repositoryRoot = await realpath(repositoryRoot);
   if (requested === "tracked") {
-    const existing = await autoChoice(repositoryRoot);
+    const existing = await detectHookChoice(repositoryRoot);
     if (existing !== "raw" && existing !== "none")
       return detectHookIntegration(
         repositoryRoot,
@@ -423,7 +398,7 @@ export async function detectHookIntegration(
     });
   }
   const hook =
-    requested === "auto" ? await autoChoice(repositoryRoot) : requested;
+    requested === "auto" ? await detectHookChoice(repositoryRoot) : requested;
   if (hook === "none") {
     return Object.freeze({
       hook,

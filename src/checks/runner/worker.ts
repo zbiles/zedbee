@@ -1,7 +1,11 @@
+import { captureDiagnosticDetails } from "../diagnostic-details.js";
 import { restoreCheckContext, markAnalyzerWorker } from "./context.js";
 import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
-import { CheckIncompleteError } from "../incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "../incomplete-error.js";
 import { AnalyzerJobError, type AnalyzerDiagnostic } from "../diagnostics.js";
 import { sendWorkerReply } from "./send-worker-reply.js";
 import { exactFields } from "./envelope.js";
@@ -125,6 +129,7 @@ async function executeAndReply(message: Record<string, unknown>) {
         execute(request, controller!),
       ),
     );
+  const executionStarted = performance.now();
   const response = capture
     ? await withAnalysisSourceCapture(capture, run)
     : await run();
@@ -132,6 +137,7 @@ async function executeAndReply(message: Record<string, unknown>) {
     ...identity,
     type: "result",
     response,
+    workerMs: Math.max(0, Math.round(performance.now() - executionStarted)),
   } as Serializable);
   return identity;
 }
@@ -181,7 +187,9 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
         request.operation === "collect" &&
         adapter.output === "observations"
       )
-        result = await adapter.collect(context);
+        result = await captureDiagnosticDetails(context, () =>
+          adapter.collect(context),
+        );
       else if (
         request.operation === "runLegacy" &&
         adapter.output === "legacy-check-result"
@@ -208,32 +216,12 @@ async function execute(request: AnalyzerRequest, controller: AbortController) {
     // Exception stacks, causes and dependency stderr are never copied.
     const incomplete =
       error instanceof CheckIncompleteError
-        ? {
-            code: error.code,
-            message: error.message,
-            remediation: error.remediation,
-            ...(error.diagnostic === undefined
-              ? {}
-              : {
-                  diagnostic: {
-                    ...error.diagnostic,
-                    ...(controller.signal.aborted
-                      ? { category: "cancellation" as const }
-                      : {}),
-                  },
-                }),
-            ...(error.path === undefined ? {} : { path: error.path }),
-            ...(error.paths === undefined ? {} : { paths: error.paths }),
-            ...(error.snapshot === undefined
-              ? {}
-              : { snapshot: error.snapshot }),
-            ...(error.projectPaths === undefined
-              ? {}
-              : { projectPaths: error.projectPaths }),
-            ...(error.disposition === undefined
-              ? {}
-              : { disposition: error.disposition }),
-          }
+        ? incompleteErrorDetails(
+            error,
+            error.diagnostic !== undefined && controller.signal.aborted
+              ? { ...error.diagnostic, category: "cancellation" }
+              : error.diagnostic,
+          )
         : undefined;
     return {
       version: 1,

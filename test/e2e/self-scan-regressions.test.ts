@@ -71,6 +71,14 @@ describe("self-scan regressions", () => {
     await repository.write("value.tsx", changed);
     await repository.git(["add", "value.tsx"]);
 
+    await repository.write(
+      "node_modules/react/package.json",
+      JSON.stringify({ name: "react", version: "19.2.0", types: "index.d.ts" }),
+    );
+    await repository.write(
+      "node_modules/react/index.d.ts",
+      "export function useRef<T>(value:T):{current:T};\nexport function useEffect(effect:()=>void,deps:unknown[]):void;\n",
+    );
     const report = await runScan({
       repositoryRoot: repository.root,
       cache: false,

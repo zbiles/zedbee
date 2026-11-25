@@ -1,3 +1,5 @@
+import { inspectWorkspaceInstallations } from "./workspace-installation.js";
+import { diagnoseProjectEslint } from "./project-eslint.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,6 +23,7 @@ import { hasZedbeeScanCommand } from "../hooks/husky.js";
 import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
+import { inspectHookMaintenance } from "../hooks/update-notice.js";
 import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
@@ -40,6 +43,7 @@ export const DOCTOR_DIAGNOSTIC_IDS = [
   "background-service",
   "workspace-inspection",
   "project-prettier",
+  "project-eslint",
   "secretlint-readiness",
   "lockfile-support",
   "osv-connectivity",
@@ -63,6 +67,7 @@ export interface DiagnosticContext {
   readonly configPath?: string;
   /** Explicit invocation-only consent for the project Prettier probe. */
   readonly projectPrettierTrust?: boolean;
+  readonly projectEslintTrust?: boolean;
   readonly signal?: AbortSignal;
 }
 
@@ -121,6 +126,23 @@ async function regularFileContents(path: string): Promise<string | undefined> {
 }
 
 async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
+  const { hookUpdate, sharedHuskyPreCommit } = await inspectHookMaintenance(root);
+  if (hookUpdate !== undefined) {
+    return {
+      id: "hook-state",
+      status: "warning",
+      message: hookUpdate.message,
+      remediation: hookUpdate.remediation,
+    };
+  }
+  if (sharedHuskyPreCommit !== undefined) {
+    return sharedHuskyPreCommit
+      ? { id: "hook-state", status: "pass", message: "The shared Husky pre-commit hook invokes Zedbee." }
+      : { id: "hook-state", status: "warning",
+          message: "The shared Husky pre-commit hook does not invoke Zedbee.",
+          remediation: "Run zedbee init in the main checkout to add Zedbee to the shared hook.",
+        };
+  }
   const hookOutput = await new GitClient(root).run([
     "rev-parse",
     "--git-path",
@@ -345,18 +367,33 @@ export function createDefaultDiagnosticProbe(
         }
       }
       case "workspace-inspection": {
-        const count = await withSnapshots(
+        const root = await repositoryRoot(context.cwd);
+        const { count, readiness } = await withSnapshots(
           context.cwd,
-          async (targetDir) =>
-            (await inspectRepository(targetDir)).workspaces.length,
+          async (targetDir) => {
+            const inspection = await inspectRepository(targetDir);
+            return {
+              count: inspection.workspaces.length,
+              readiness: await inspectWorkspaceInstallations(
+                root,
+                inspection.workspaces,
+              ),
+            };
+          },
         );
         return {
           id,
-          status: "pass",
-          message: `Workspace inspection found ${count} workspace${
-            count === 1 ? "" : "s"
-          }.`,
+          status: readiness.status,
+          message: `Workspace inspection found ${count} workspace${count === 1 ? "" : "s"}. ${readiness.summary} Readiness inspected staged declarations and local installation metadata as data only; no project code was executed. The selected HEAD/index compiler comparison was not run.`,
+          remediation: `${readiness.status === "warning" ? "Restore the reported workspace's declared typings using its package manager and review any unsupported installation layout. " : ""}Run zedbee scan to verify the selected HEAD/index comparison; readiness does not establish which typings a scan requires.`,
         };
+      }
+      case "project-eslint": {
+        return diagnoseProjectEslint(
+          await repositoryRoot(context.cwd),
+          context.configPath,
+          context.projectEslintTrust === true,
+        );
       }
       case "project-prettier": {
         const root = await repositoryRoot(context.cwd);

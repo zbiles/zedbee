@@ -1,4 +1,4 @@
-import type { AgentGuidance } from "./agent-guidance.js";
+import { resolveAgentNextStep, type AgentGuidance } from "./agent-guidance.js";
 import type { TerminalPresentation } from "./presentation.js";
 
 export type ReportCalloutLine =
@@ -48,6 +48,7 @@ function availableCallout(
 export function buildReportCallouts(
   presentation: TerminalPresentation,
   guidance: AgentGuidance,
+  report?: import("../scan/report.js").ScanReport,
 ): ReportCallouts {
   if (
     !presentation.automatic ||
@@ -70,7 +71,9 @@ export function buildReportCallouts(
     ),
     closing: availableCallout(
       "AGENT NEXT STEP",
-      guidance.nextStep,
+      report === undefined
+        ? guidance.nextStep
+        : resolveAgentNextStep(report, guidance),
       presentation.reportPath,
     ),
   });

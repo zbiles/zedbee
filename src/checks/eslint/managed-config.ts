@@ -1,3 +1,7 @@
+import {
+  validateAccessibilitySettings,
+  type AccessibilitySettings,
+} from "../react/accessibility-settings.js";
 import js from "@eslint/js";
 import type { ESLint, Linter } from "eslint";
 import type * as ts from "typescript";
@@ -42,6 +46,7 @@ export type ReactCorrectnessConfigFactory = (
 export interface ManagedConfigOptions {
   readonly mode: ManagedEslintMode;
   readonly managedIgnores: readonly string[];
+  readonly accessibilitySettings?: Readonly<AccessibilitySettings>;
   readonly ruleOverrides?: Readonly<Record<string, EslintRuleConfiguration>>;
   readonly reactVersion?: string;
   readonly reactCorrectnessConfigFactory?: ReactCorrectnessConfigFactory;
@@ -53,6 +58,7 @@ export interface ManagedConfigOptions {
 
 export interface FileRuleGroup {
   readonly fingerprint: string;
+  readonly accessibilitySettings?: Readonly<AccessibilitySettings>;
   readonly files: readonly string[];
   readonly rules: Readonly<Record<string, EslintRuleConfiguration>>;
 }
@@ -84,7 +90,11 @@ export function groupFilesByRules(
 ): readonly FileRuleGroup[] {
   const groups = new Map<
     string,
-    { files: string[]; rules: FileRuleGroup["rules"] }
+    {
+      files: string[];
+      rules: FileRuleGroup["rules"];
+      accessibilitySettings?: Readonly<AccessibilitySettings>;
+    }
   >();
   for (const file of [...files].sort(compareCodeUnits)) {
     const policy = resolve(checkId as CheckId, file, side);
@@ -100,10 +110,24 @@ export function groupFilesByRules(
         ),
       ),
     );
-    const fingerprint = stableRuleValue(rules);
+    const accessibilitySettings =
+      checkId === "reactAccessibility" && "settings" in policy
+        ? validateAccessibilitySettings(policy.settings)
+        : undefined;
+    const fingerprint = stableRuleValue(
+      accessibilitySettings === undefined
+        ? rules
+        : { rules, settings: accessibilitySettings },
+    );
     const group = groups.get(fingerprint);
     if (group === undefined) {
-      groups.set(fingerprint, { files: [file], rules });
+      groups.set(fingerprint, {
+        files: [file],
+        rules,
+        ...(accessibilitySettings === undefined
+          ? {}
+          : { accessibilitySettings }),
+      });
     } else {
       group.files.push(file);
     }
@@ -116,6 +140,9 @@ export function groupFilesByRules(
           fingerprint,
           files: Object.freeze(group.files),
           rules: group.rules,
+          ...(group.accessibilitySettings === undefined
+            ? {}
+            : { accessibilitySettings: group.accessibilitySettings }),
         }),
       ),
   );
@@ -151,7 +178,7 @@ function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
         options.reactCorrectnessConfigFactory ?? managedReactCorrectnessConfig
       )(options.reactVersion);
     case "react-accessibility":
-      return managedReactAccessibilityConfig();
+      return managedReactAccessibilityConfig(options.accessibilitySettings);
     case "complexity":
       return {
         files: SOURCE_FILES,

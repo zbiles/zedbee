@@ -179,7 +179,7 @@ describe("OutcomeStrip", () => {
       <OutcomeStrip report={report} width={120} color={false} />,
     ).lastFrame()!;
 
-    expect(frame).toContain("All checks passed. Commit allowed.");
+    expect(frame).toContain("No checks ran for the selected changes. Commit allowed.");
     expect(frame).not.toContain("No staged changes");
   });
 

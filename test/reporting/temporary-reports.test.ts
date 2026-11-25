@@ -1204,3 +1204,73 @@ describe("temporary report store", () => {
     });
   });
 });
+
+it("reports observed expiry separately from missing files under a later shorter policy", async () => {
+  const { repositoryRoot, temporaryRoot } = await fixture();
+  let now = Date.UTC(2026, 10, 15, 12);
+  const store = createTemporaryReportStore({ temporaryRoot, now: () => now });
+  const old = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 86_400_000,
+    json: '{"private-source":"secret-value"}',
+  });
+  const missing = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 86_400_000,
+    json: "{}",
+  });
+  await unlink(missing.reportPath!);
+  now += 21 * 60 * 60 * 1000;
+  const preserved = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 86_400_000,
+    json: "{}",
+  });
+  expect(await readFile(old.reportPath!, "utf8")).toContain("secret-value");
+  expect((preserved as any).diagnostics).toBeUndefined();
+  const cleaned = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 3_600_000,
+    reportKind: "fix-plan",
+    diagnostics: true,
+  } as any);
+  expect((cleaned as any).diagnostics).toEqual({
+    schemaVersion: 1,
+    protocolVersion: 2,
+    effectiveMaxAgeMs: 3_600_000,
+    removedExpired: 1,
+    alreadyMissing: 1,
+    state: "loaded",
+    write: "not-requested",
+  });
+  expect(JSON.stringify((cleaned as any).diagnostics)).not.toMatch(
+    /secret|private|zedbee-report|\/tmp/,
+  );
+  await expect(readFile(old.reportPath!, "utf8")).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  expect(await readFile(preserved.reportPath!, "utf8")).toBe("{}");
+});
+
+it("reports conservative state recovery and keeps unknown files", async () => {
+  const { repositoryRoot, temporaryRoot } = await fixture();
+  const store = createTemporaryReportStore({ temporaryRoot });
+  const first = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 1000,
+    json: "{}",
+  });
+  const state = await storedState(first.reportPath!);
+  await writeFile(state.path, "corrupt-state");
+  const maintained = await store.maintain({
+    repositoryRoot,
+    maxAgeMs: 0,
+    diagnostics: true,
+  } as any);
+  expect((maintained as any).diagnostics).toMatchObject({
+    state: "recovered",
+    removedExpired: 0,
+    alreadyMissing: 0,
+  });
+  expect(await readFile(first.reportPath!, "utf8")).toBe("{}");
+});

@@ -1,3 +1,5 @@
+import { copyStrictJson, isUnsafeJsonKey } from "../../config/strict-json.js";
+import { managedHooksPlugin } from "../react/managed-hooks-plugin.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { ESLint, Rule } from "eslint";
@@ -156,8 +158,7 @@ function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {
       break;
     case "reactCorrectness":
       plugins.react = require("eslint-plugin-react") as ManagedRulePlugin;
-      plugins["react-hooks"] =
-        require("eslint-plugin-react-hooks") as ManagedRulePlugin;
+      plugins["react-hooks"] = managedHooksPlugin() as ManagedRulePlugin;
       break;
     case "reactAccessibility":
       plugins["jsx-a11y"] =
@@ -194,8 +195,6 @@ function managedRuleResources(checkId: RuleCheckId): ManagedRuleResources {
   return resources;
 }
 
-const unsafeJsonKeys = new Set(["__proto__", "prototype", "constructor"]);
-
 function jsonCompatibilityError(
   ruleId?: string,
 ): ManagedRuleConfigurationError {
@@ -203,97 +202,6 @@ function jsonCompatibilityError(
     "Managed rule options must contain only JSON-compatible data.",
     ruleId,
   );
-}
-
-function cloneJsonCompatibleValue(
-  value: unknown,
-  ruleId: string,
-  ancestors: Set<object>,
-): unknown {
-  if (value === null) return null;
-  switch (typeof value) {
-    case "boolean":
-    case "string":
-      return value;
-    case "number":
-      if (Number.isFinite(value)) return value;
-      throw jsonCompatibilityError(ruleId);
-    case "undefined":
-    case "bigint":
-    case "symbol":
-    case "function":
-      throw jsonCompatibilityError(ruleId);
-    case "object":
-      break;
-  }
-
-  if (ancestors.has(value)) throw jsonCompatibilityError(ruleId);
-  ancestors.add(value);
-  try {
-    if (Array.isArray(value)) {
-      if (Object.getPrototypeOf(value) !== Array.prototype) {
-        throw jsonCompatibilityError(ruleId);
-      }
-      const keys = Reflect.ownKeys(value);
-      if (
-        keys.length !== value.length + 1 ||
-        keys.some(
-          (key) =>
-            typeof key !== "string" ||
-            (key !== "length" &&
-              (!/^(?:0|[1-9][0-9]*)$/u.test(key) ||
-                Number(key) >= value.length)),
-        )
-      ) {
-        throw jsonCompatibilityError(ruleId);
-      }
-      const clone: unknown[] = [];
-      for (let index = 0; index < value.length; index += 1) {
-        const descriptor = Object.getOwnPropertyDescriptor(
-          value,
-          String(index),
-        );
-        if (
-          descriptor === undefined ||
-          descriptor.enumerable !== true ||
-          !("value" in descriptor)
-        ) {
-          throw jsonCompatibilityError(ruleId);
-        }
-        clone.push(
-          cloneJsonCompatibleValue(descriptor.value, ruleId, ancestors),
-        );
-      }
-      return clone;
-    }
-
-    const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
-      throw jsonCompatibilityError(ruleId);
-    }
-    const clone: Record<string, unknown> = {};
-    for (const key of Reflect.ownKeys(value)) {
-      if (typeof key !== "string" || unsafeJsonKeys.has(key)) {
-        throw jsonCompatibilityError(ruleId);
-      }
-      const descriptor = Object.getOwnPropertyDescriptor(value, key);
-      if (
-        descriptor === undefined ||
-        descriptor.enumerable !== true ||
-        !("value" in descriptor)
-      ) {
-        throw jsonCompatibilityError(ruleId);
-      }
-      clone[key] = cloneJsonCompatibleValue(
-        descriptor.value,
-        ruleId,
-        ancestors,
-      );
-    }
-    return clone;
-  } finally {
-    ancestors.delete(value);
-  }
 }
 
 function cloneJsonCompatibleRules(
@@ -308,7 +216,7 @@ function cloneJsonCompatibleRules(
   }
   const clone: Record<string, EslintRuleConfiguration> = {};
   for (const key of Reflect.ownKeys(input)) {
-    if (typeof key !== "string" || unsafeJsonKeys.has(key)) {
+    if (typeof key !== "string" || isUnsafeJsonKey(key)) {
       throw jsonCompatibilityError(typeof key === "string" ? key : undefined);
     }
     const descriptor = Object.getOwnPropertyDescriptor(input, key);
@@ -319,10 +227,11 @@ function cloneJsonCompatibleRules(
     ) {
       throw jsonCompatibilityError(key);
     }
-    clone[key] = cloneJsonCompatibleValue(
+    clone[key] = copyStrictJson(
       descriptor.value,
-      key,
       new Set([input]),
+      () => jsonCompatibilityError(key),
+      false,
     ) as EslintRuleConfiguration;
   }
   return clone;

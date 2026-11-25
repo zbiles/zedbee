@@ -1,3 +1,4 @@
+import { assertRequiredInstallation } from "../comparison-context.js";
 import type { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import type { SnapshotSide } from "../../config/file-policy.js";
 import type { WorkspaceInspection } from "../../inspection/types.js";
@@ -53,11 +54,30 @@ export function createSnapshotProjectCoverage(
         workspace,
         dependencies,
         checkId,
-      ).catch((error: unknown) => {
-        throw (
-          configurationIncompleteError(error, checkId, side, operation) ?? error
-        );
-      });
+      )
+        .then(async (project) => {
+          if (dependencies !== undefined)
+            await assertRequiredInstallation({
+              programs: project.programs,
+              repositoryRoot: context.repositoryRoot,
+              inspection:
+                side === "baseline"
+                  ? context.baselineInspection
+                  : context.targetInspection,
+              workspace,
+              dependencies,
+              side,
+              diagnosticMessages:
+                context.config.reporting.diagnosticMessages,
+            });
+          return project;
+        })
+        .catch((error: unknown) => {
+          throw (
+            configurationIncompleteError(error, checkId, side, operation) ??
+            error
+          );
+        });
       projects.set(key, pending);
     }
     return pending;

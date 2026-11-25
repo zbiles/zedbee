@@ -1,3 +1,4 @@
+import { canonicalTrustRoot } from "../../../src/git/common-directory.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInitProposal } from "../../../src/init/recommend.js";
 import { applyInitProposal } from "../../../src/init/write-config.js";
@@ -6,7 +7,6 @@ import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import {
   canonicalCheckoutRoot,
-  canonicalTrustRoot,
   persistProjectPrettierTrust,
   projectPrettierPermitAllows,
   projectPrettierTrustKey,

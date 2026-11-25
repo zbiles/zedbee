@@ -1,3 +1,4 @@
+import { parseFailureFields } from "../renderers/incomplete.js";
 import { Box, Text } from "ink";
 import type { CheckResult } from "../core/types.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
@@ -73,7 +74,8 @@ export function IncompleteList({
                   color={color}
                   tone={ZEDBEE_THEME.primary}
                 />
-                {error.path === undefined ? null : (
+                {error.path === undefined ||
+                error.parseFailures !== undefined ? null : (
                   <Field
                     label="Path"
                     value={error.path}
@@ -108,7 +110,20 @@ export function IncompleteList({
                     tone={ZEDBEE_THEME.secondary}
                   />
                 )}
-                {error.paths === undefined ? null : (
+                {error.parseFailures !== undefined ? (
+                  parseFailureFields(error.parseFailures).map(
+                    ({ label, value }, index) => (
+                      <Field
+                        key={index}
+                        label={label}
+                        value={value}
+                        width={width}
+                        color={color}
+                        tone={ZEDBEE_THEME.secondary}
+                      />
+                    ),
+                  )
+                ) : error.paths === undefined ? null : (
                   <>
                     <Field
                       label="Affected files"

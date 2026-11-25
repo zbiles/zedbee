@@ -1,3 +1,9 @@
+import { parse } from "jsonc-parser";
+import { isDeepStrictEqual } from "node:util";
+import {
+  ProjectEslintSetupError,
+  PROJECT_ESLINT_DISCLOSURE,
+} from "./eslint-setup.js";
 import { ImportCaptureError } from "../checks/prettier/project-import-capture.js";
 import { ProjectWorkspaceLayoutError } from "../checks/prettier/project-workspace.js";
 import { ProjectPrettierFailureError } from "../checks/prettier/project-error.js";
@@ -11,6 +17,7 @@ import type { InitProposal } from "./types.js";
 export function publicProposal(proposal: InitProposal) {
   return {
     profile: proposal.profile,
+    diagnosticMessages: proposal.diagnosticMessages ?? "contextual",
     workflow: proposal.workflow ?? "none",
     workflowAvailable: proposal.workflowAvailable ?? false,
     ...(proposal.workflowMessage === undefined
@@ -23,6 +30,13 @@ export function publicProposal(proposal: InitProposal) {
       : { hooksPathChange: proposal.hooksPathChange }),
     detectedEnvironments: proposal.detectedEnvironments,
     recommendedChecks: proposal.recommendedChecks,
+    eslintEngine: proposal.eslintEngine ?? "managed",
+    eslintConflicts: proposal.eslintConflicts ?? [],
+    projectEslintMessages: proposal.projectEslintMessages ?? "redacted",
+    projectEslintTrustRoots: proposal.projectEslintTrustRoots ?? [],
+    projectEslintTrustConfirmed: proposal.projectEslintTrustConfirmed === true,
+    projectEslintMessagesConfirmed:
+      proposal.projectEslintMessagesConfirmed === true,
     formatting: proposal.formatting ?? "managed",
     formattingScope: proposal.formattingScope ?? "repository",
     formattingScopeRoots: proposal.formattingScopeRoots ?? [],
@@ -54,6 +68,42 @@ export function publicProposal(proposal: InitProposal) {
   };
 }
 
+function configChangeMessage(
+  proposal: InitProposal,
+  applied: boolean,
+): string | undefined {
+  const config = proposal.files.find(
+    ({ relativePath }) => relativePath === ".zedbeerc.jsonc",
+  );
+  if (config === undefined || config.before === config.after) return undefined;
+  function generated(source: string | null): unknown {
+    const parsed = source === null ? undefined : parse(source);
+    const isManagedFormatting = (entry: { generated?: string } | null) =>
+      ["prettier-copy", "prettier-engine", "prettier-scope"].includes(
+        entry?.generated ?? "",
+      );
+    return {
+      overrides: Array.isArray(parsed?.overrides)
+        ? parsed.overrides.filter(isManagedFormatting)
+        : [],
+      exclusions: Array.isArray(parsed?.pathExclusions)
+        ? parsed.pathExclusions.filter(isManagedFormatting)
+        : [],
+      settings: isManagedFormatting(parsed?.checks?.formatting)
+        ? parsed.checks.formatting
+        : undefined,
+    };
+  }
+  if (config.before === null)
+    return applied
+      ? "Created .zedbeerc.jsonc."
+      : "Will create .zedbeerc.jsonc.";
+  const verb = applied ? "Updated" : "Will update";
+  return isDeepStrictEqual(generated(config.before), generated(config.after))
+    ? `${verb} .zedbeerc.jsonc.`
+    : `${verb} generated formatting settings in .zedbeerc.jsonc.`;
+}
+
 export function renderText(proposal: InitProposal, applied: boolean): string {
   const lines = [
     applied
@@ -68,6 +118,17 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
     `Hook activation: ${proposal.hookActivation.status} — ${proposal.hookActivation.message}`,
     `Detected: ${proposal.detectedEnvironments.join(", ") || "none"}`,
     `Recommended checks: ${proposal.recommendedChecks.join(", ") || "none"}`,
+    `ESLint: ${proposal.eslintEngine === "project" ? "project (experimental)" : "built-in (default)"}`,
+    ...(proposal.eslintEngine === "project"
+      ? [
+          PROJECT_ESLINT_DISCLOSURE,
+          `Project diagnostic messages: ${proposal.projectEslintMessages ?? "redacted"}`,
+          ...(proposal.eslintConflicts ?? []).map(
+            (value) => `Configuration conflict: ${value}`,
+          ),
+        ]
+      : []),
+    `Managed diagnostic messages: ${proposal.diagnosticMessages ?? "contextual"}. Contextual local reports include source names with targeted redaction. For managed source-free messages, use --diagnostic-messages source-free (also omits source excerpts). Project ESLint message permissions are separate.`,
     `Formatting: ${proposal.formatting ?? "managed"}`,
     `Formatting scope: ${proposal.formattingScope === "projects" ? proposal.formattingScopeRoots?.join(", ") || "repository" : "whole repository"}`,
     ...(proposal.formattingDetection ?? []).map(
@@ -94,7 +155,10 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
       `Hook activation required: ${proposal.hookActivation.remediation}`,
     );
   }
-  for (const file of proposal.files) lines.push("", file.diff);
+  const configUpdate = configChangeMessage(proposal, applied);
+  if (configUpdate !== undefined) lines.push(configUpdate);
+  for (const file of proposal.files)
+    if (file.before !== file.after) lines.push("", file.diff);
   if (proposal.hooksPathChange !== undefined)
     lines.push(
       `Git configuration: core.hooksPath → ${proposal.hooksPathChange.after}`,
@@ -128,6 +192,8 @@ export function renderInitFailure(error: unknown): string {
       "Reason: The project configuration could not be evaluated from captured inputs; one-time import is unavailable.",
       "Remediation: Check relative shared configuration paths and installed dependencies, then retry.",
     );
+  } else if (error instanceof ProjectEslintSetupError) {
+    lines.push(`Reason: ${error.message}`);
   } else if (error instanceof GithubWorkflowSetupError) {
     lines.push(`Reason: ${error.message}`);
   } else if (error instanceof HookInstallationError) {
@@ -162,8 +228,10 @@ export function renderInteractiveResult(
   proposal: InitProposal,
 ): string {
   if (!confirmed) return "Zedbee initialization cancelled\n";
+  const configUpdate = configChangeMessage(proposal, true);
   const lines = [
     "Zedbee initialized successfully",
+    ...(configUpdate === undefined ? [] : [configUpdate]),
     "Stage .zedbeerc.jsonc and the other setup files before checking or committing; commit checks use staged configuration.",
   ];
   if (proposal.hookActivation.remediation !== undefined) {

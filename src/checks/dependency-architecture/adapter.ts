@@ -1,4 +1,10 @@
 import {
+  isContainedImportSpecifier,
+  WINDOWS_PATH,
+  URL_SCHEME,
+} from "../project/import-specifier.js";
+import { findWorkspace } from "../../inspection/workspaces.js";
+import {
   prepareSnapshotAliases,
   sourceModuleSpecifiers,
   normalizedAliasSpecifier,
@@ -34,17 +40,6 @@ import { loadSnapshotProgramInput } from "../typescript/config.js";
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
-const WINDOWS_PATH = /^[A-Za-z]:[/\\]/u;
-const URL = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
 
 function selectedTsconfig(workspace: WorkspaceInspection): string | undefined {
   const sorted = [...workspace.tsconfigPaths].sort(
@@ -57,23 +52,8 @@ function selectedTsconfig(workspace: WorkspaceInspection): string | undefined {
 }
 
 function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (
-    specifier.includes("\\") ||
-    posix.isAbsolute(specifier) ||
-    WINDOWS_PATH.test(specifier) ||
-    (URL.test(specifier) &&
-      !specifier.startsWith("node:") &&
-      !specifier.startsWith("bun:"))
-  ) {
+  if (!isContainedImportSpecifier(sourcePath, specifier))
     throw new TypeError("Dependency import escaped the snapshot");
-  }
-  if (!specifier.startsWith(".")) return;
-  const resolved = posix.normalize(
-    posix.join(posix.dirname(sourcePath), specifier),
-  );
-  if (resolved === ".." || resolved.startsWith("../")) {
-    throw new TypeError("Dependency import escaped the snapshot");
-  }
 }
 
 async function validateContainedImports(
@@ -188,7 +168,7 @@ function containedEntrypoint(
     target.includes("\\") ||
     posix.isAbsolute(target) ||
     WINDOWS_PATH.test(target) ||
-    URL.test(target)
+    URL_SCHEME.test(target)
   ) {
     throw new TypeError("Workspace entrypoint escaped the snapshot");
   }
@@ -334,7 +314,7 @@ async function collectSide(
   if (canonicalRoot !== inspection.snapshotRoot) {
     throw new Error("Dependency architecture analysis failed.");
   }
-  const workspace = workspaceFor(inspection, target);
+  const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
   const sourceFiles = workspace.sourceFiles
     .filter((path) => SOURCE.test(path))

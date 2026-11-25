@@ -1,3 +1,11 @@
+import { realpath } from "node:fs/promises";
+import { recordPerformance } from "../diagnostics/scan-performance.js";
+import {
+  captureDiagnosticDetails,
+  retainDiagnosticDetails,
+  hasDiagnosticDetailSession,
+  needsContextualDiagnosticDetails,
+} from "./diagnostic-details.js";
 import {
   CHECK_IDS,
   type CheckId,
@@ -108,6 +116,19 @@ export function createDispatchObservationCollector(
   runContext: CheckRunContext,
 ) => Promise<CheckObservationSet> {
   const sanitizeMessages = createDiagnosticMessageSanitizer();
+  const collect = async (
+    adapter: Extract<AdapterSnapshot, { output: "observations" }>,
+    runContext: CheckRunContext,
+  ) => {
+    const value = await sanitizeMessages(
+      await captureDiagnosticDetails(runContext, () =>
+        Reflect.apply(adapter.collect, undefined, [runContext]),
+      ),
+    );
+    retainDiagnosticDetails(value);
+    const { diagnosticDetails: _privateDetails, ...safe } = value;
+    return safe;
+  };
   const identities = new Map<string, string | undefined>();
   const engineIdentityFor =
     options.cacheEngineIdentity ??
@@ -122,6 +143,7 @@ export function createDispatchObservationCollector(
     ReturnType<typeof createEffectiveBehaviorFingerprint> | undefined;
   let changeSetDigest: string | undefined;
   let preparationFailed = false;
+  let checkoutScope: Promise<string> | undefined;
   function prepareCache() {
     if (preparationFailed) throw new Error("Cache preparation unavailable");
     try {
@@ -155,22 +177,36 @@ export function createDispatchObservationCollector(
   }
   return async (adapter, runContext) => {
     if (
+      adapter.id === "lint" &&
+      "engine" in runContext.policy &&
+      runContext.policy.engine === "project"
+    ) {
+      return Reflect.apply(adapter.collect, undefined, [runContext]);
+    }
+    if (
       !isCacheableObservationCheck(adapter.id) ||
       (options.cache === undefined && options.cacheEngineIdentity === undefined)
     ) {
-      return sanitizeMessages(
-        await Reflect.apply(adapter.collect, undefined, [runContext]),
-      );
+      recordPerformance({
+        checkId: adapter.id,
+        kind: "cache_bypass",
+        durationMs: 0,
+      });
+      return collect(adapter, runContext);
     }
     const engineIdentity = engineIdentityFor(adapter.id);
     if (engineIdentity === undefined) {
-      return sanitizeMessages(
-        await Reflect.apply(adapter.collect, undefined, [runContext]),
-      );
+      recordPerformance({
+        checkId: adapter.id,
+        kind: "cache_bypass",
+        durationMs: 0,
+      });
+      return collect(adapter, runContext);
     }
     let cacheKey: string | undefined;
     if (options.cache !== undefined) {
       try {
+        const preparationStarted = performance.now();
         const prepared = prepareCache();
         const checkId = adapter.id as CheckId;
         cacheKey = await prepared.cacheKeyFor({
@@ -194,6 +230,15 @@ export function createDispatchObservationCollector(
                 )
               : undefined,
             changeSetDigest: prepared.changeSetDigest,
+            // Dependency witnesses already bind to the physical checkout.
+            // Keep identical trees in different checkouts from evicting one another.
+            ...(requiresDependencyInputs(adapter.id)
+              ? {
+                  checkout: await (checkoutScope ??= realpath(
+                    context.repositoryRoot,
+                  )),
+                }
+              : {}),
             baseline: cacheInspection(
               runContext.baselineInspection,
               runContext.target,
@@ -204,10 +249,35 @@ export function createDispatchObservationCollector(
             ),
           },
         });
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "cache_prepare",
+          durationMs: performance.now() - preparationStarted,
+        });
+        const lookupStarted = performance.now();
         const cached = await options.cache.get(cacheKey).catch(() => undefined);
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "cache_lookup",
+          durationMs: performance.now() - lookupStarted,
+        });
         if (
+          !(
+            hasDiagnosticDetailSession() &&
+            runContext.config.reporting.diagnosticMessages === "contextual" &&
+            cached !== undefined &&
+            needsContextualDiagnosticDetails(cached) &&
+            [
+              "types",
+              "lint",
+              "reactCorrectness",
+              "reactAccessibility",
+            ].includes(adapter.id)
+          ) &&
           cached !== undefined &&
           cached.checkId === adapter.id &&
+          (!["types", "lint"].includes(adapter.id) ||
+            cached.comparisonContext?.status === "comparable") &&
           sameTarget(cached.target, runContext.target) &&
           (!requiresDependencyInputs(adapter.id) ||
             validateDependencyInputs(
@@ -216,16 +286,28 @@ export function createDispatchObservationCollector(
               adapter.id === "deadCode" ? "knip" : false,
             ))
         ) {
-          return sanitizeMessages(sanitizeCacheableObservationSet(cached));
+          recordPerformance({
+            checkId: adapter.id,
+            kind: "cache_hit",
+            durationMs: 0,
+          });
+          const safe = await sanitizeMessages(
+            sanitizeCacheableObservationSet(cached),
+          );
+          retainDiagnosticDetails(safe);
+          return safe;
         }
       } catch {
         cacheKey = undefined;
       }
     }
 
-    const collected = await sanitizeMessages(
-      await Reflect.apply(adapter.collect, undefined, [runContext]),
-    );
+    recordPerformance({
+      checkId: adapter.id,
+      kind: cacheKey === undefined ? "cache_bypass" : "cache_miss",
+      durationMs: 0,
+    });
+    const collected = await collect(adapter, runContext);
     if (
       cacheKey !== undefined &&
       options.cache !== undefined &&

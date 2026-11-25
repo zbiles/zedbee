@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
 import { chmod, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -546,7 +547,15 @@ describe("executeChecksCommand", () => {
           id: "secrets",
           engine: expect.objectContaining({
             name: "Secretlint",
-            version: "13.0.4",
+            version: JSON.parse(
+              readFileSync(
+                new URL(
+                  "../../node_modules/@secretlint/core/package.json",
+                  import.meta.url,
+                ),
+                "utf8",
+              ),
+            ).version,
             license: "MIT",
           }),
         }),
@@ -554,7 +563,7 @@ describe("executeChecksCommand", () => {
           id: "duplication",
           engine: expect.objectContaining({
             name: "jscpd",
-            version: "5.3.2",
+            version: "5.4.2",
             license: "MIT",
           }),
         }),
@@ -606,6 +615,7 @@ describe("executeChecksCommand", () => {
     expect(formatting?.automaticFix).toBe("zedbee fix formatting");
     const lint = result.checks.find(({ id }) => id === "lint");
     expect(Object.keys(lint?.configuration.values ?? {})).toEqual([
+      "engine",
       "rules.eqeqeq",
       "rules.no-console",
     ]);
@@ -1089,4 +1099,37 @@ it("shows override exceptions without implying excluded files are unchecked", ()
       "src/generated/**",
     ]),
   ).toBe("Override src/** except src/generated/**: settings.tabWidth: 4");
+});
+
+it("lists default check metadata when optional accessibility mappings are unset", async () => {
+  const io = terminal();
+  const result = await executeChecksCommand(
+    { cwd: "/repo", format: "json", color: false },
+    io,
+    configuredDependencies(resolveConfig(undefined)),
+  );
+  expect(result.exitCode, io.stderr.join("")).toBe(0);
+  expect(
+    result.checks.find((check) => check.id === "reactAccessibility")
+      ?.configuration.values,
+  ).toEqual({});
+});
+it("describes project lint ownership instead of claiming project config is never loaded", async () => {
+  const io = terminal();
+  const config = resolveConfig({
+    schemaVersion: 1,
+    checks: { lint: { engine: "project" } },
+  });
+  const result = await executeChecksCommand(
+    { cwd: "/repo", format: "json", color: false },
+    io,
+    configuredDependencies(config),
+  );
+  expect(result.exitCode).toBe(0);
+  expect(
+    result.checks.find((check) => check.id === "lint")?.limitation,
+  ).toContain("project ESLint");
+  expect(
+    result.checks.find((check) => check.id === "lint")?.limitation,
+  ).not.toContain("never loads");
 });

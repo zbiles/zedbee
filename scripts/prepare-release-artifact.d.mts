@@ -14,3 +14,8 @@ export function assertReleaseBaseScanReport(
 ): void;
 
 export function prepareReleaseArtifact(cwd?: string): string;
+
+export function prepareReleaseArtifact(
+  cwd: string,
+  options: Readonly<{ smokeOnly: true }>,
+): undefined;

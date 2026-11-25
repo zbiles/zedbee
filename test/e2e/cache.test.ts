@@ -33,7 +33,10 @@ import {
   type RunScanDependencies,
   type RunScanOptions,
 } from "../../src/scan/run-scan.js";
-import { createGitRepository } from "../helpers/git-repository.js";
+import {
+  copyGitRepository,
+  createGitRepository,
+} from "../helpers/git-repository.js";
 import { DEFAULT_ANALYSIS_SESSION_DEPENDENCIES } from "../../src/scan/analysis-session.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../../src/checks/descriptors.js";
 
@@ -42,6 +45,10 @@ function stableReport(report: Awaited<ReturnType<typeof runScan>>) {
     ...report,
     startedAt: "<time>",
     durationMs: 0,
+    diagnostics:
+      report.diagnostics === undefined
+        ? undefined
+        : { ...report.diagnostics, performance: undefined },
     checks: report.checks.map((check) => ({ ...check, durationMs: 0 })),
   };
 }
@@ -136,6 +143,72 @@ describe("observation cache integration", () => {
       expect(cached.summary.incomplete).toBe(0);
       expect(stableReport(cached)).toEqual(stableReport(await scan(false)));
       expect(cached.outcome).toBe(type === "number" ? "pass" : "blocked");
+    }
+  });
+
+  it("keeps warm compiler results for identical staged trees in different checkouts", async () => {
+    const first = await createGitRepository();
+    await first.write(
+      "package.json",
+      '{"name":"fixture","dependencies":{"installed":"1.0.0"}}',
+    );
+    await first.write(".gitignore", "node_modules/\n");
+    await first.write(
+      "tsconfig.json",
+      '{"compilerOptions":{"strict":true},"include":["*.ts"]}',
+    );
+    await first.write("value.ts", "export const value = 1;\n");
+    await first.commitAll("baseline");
+    await first.write(
+      "value.ts",
+      'import { supplied } from "installed";\nexport const value: number = supplied;\n',
+    );
+    await first.git(["add", "value.ts"]);
+    const second = await copyGitRepository(first.root);
+    for (const [repository, type] of [
+      [first, "number"],
+      [second, "string"],
+    ] as const) {
+      await repository.write(
+        "node_modules/installed/package.json",
+        '{"name":"installed","types":"index.d.ts"}',
+      );
+      await repository.write(
+        "node_modules/installed/index.d.ts",
+        `export const supplied: ${type};\n`,
+      );
+    }
+    const root = await mkdtemp(
+      join(tmpdir(), "zedbee-compiler-checkout-cache-"),
+    );
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    const cache = new ObservationCacheStore({ root });
+    const scan = (repositoryRoot: string, enabled = true) =>
+      runScan({
+        repositoryRoot,
+        cache: enabled ? cache : false,
+        diagnosticMessages: "source-free",
+        dependencies: {
+          ...DEFAULT_ANALYSIS_SESSION_DEPENDENCIES,
+          adapters: DEFAULT_CHECK_ADAPTERS.filter(({ id }) => id === "types"),
+          evaluate: evaluatePolicy,
+          now: () => new Date("2026-11-20T00:00:00Z"),
+        },
+      });
+    expect((await scan(first.root)).outcome).toBe("pass");
+    expect((await scan(second.root)).outcome).toBe("blocked");
+    for (const repo of [first, second, first, second]) {
+      const warm = await scan(repo.root);
+      expect(warm.diagnostics?.performance?.checks).toContainEqual(
+        expect.objectContaining({
+          check_id: "types",
+          cache_hits: 1,
+          cache_misses: 0,
+        }),
+      );
+      expect(stableReport(warm)).toEqual(
+        stableReport(await scan(repo.root, false)),
+      );
     }
   });
 

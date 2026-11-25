@@ -1180,3 +1180,131 @@ it("isolates sibling framework detection and honors empty root shadowing through
     ),
   ).toBe(true);
 });
+
+it("keeps captured Vite modules and their imports reachable while preserving orphan and unused-export findings", async () => {
+  const run = await context(
+    "export const used=1;",
+    "export const used=1;",
+    { devDependencies: { vite: "7", "unused-plugin": "1" } },
+    async (f) => {
+      await f.write(
+        "index.html",
+        '<script type="module" src="/src/bootstrap.tsx?version=1#start"></script>',
+      );
+      await f.write(
+        "src/bootstrap.tsx",
+        'import {value} from "./reachable.js"; console.log(value);',
+      );
+      await f.write(
+        "src/reachable.ts",
+        "export const value=1; export const unusedViteExport=2;",
+      );
+      await f.write("src/orphan.ts", "export const orphan=1;");
+      await f.write(
+        "vite.config.ts",
+        'import {value} from "./config-helper.js"; export default {value};',
+      );
+      await f.write("config-helper.ts", "export const value=1;");
+    },
+  );
+  const result = await deadCodeAdapter.collect(run);
+  const observations = result.targetObservations;
+  for (const file of [
+    "src/bootstrap.tsx",
+    "config-helper.ts",
+    "vite.config.ts",
+  ])
+    expect(observations.some((item) => item.location?.file === file)).toBe(
+      false,
+    );
+  expect(
+    observations.some(
+      (item) => item.entity?.name === knipName("unusedViteExport"),
+    ),
+  ).toBe(true);
+  expect(
+    observations.some((item) => item.location?.file === "src/orphan.ts"),
+  ).toBe(true);
+  expect(
+    observations.some((item) => item.entity?.name === knipName("vite")),
+  ).toBe(false);
+  expect(
+    observations.some(
+      (item) => item.entity?.name === knipName("unused-plugin"),
+    ),
+  ).toBe(true);
+  expect(result.dependencyInputs?.probes).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ path: "target:index.html", kind: "file" }),
+      expect.objectContaining({ path: "target:vite.config.ts", kind: "file" }),
+      expect.objectContaining({
+        path: "target:vite.config.js",
+        kind: "missing",
+      }),
+    ]),
+  );
+  expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
+    true,
+  );
+  await writeFile(
+    join(run.snapshots.targetDir, "index.html"),
+    '<script type=module src="/src/orphan.ts"></script>',
+  );
+  expect(validateDependencyInputs(result.dependencyInputs, run, "knip")).toBe(
+    false,
+  );
+});
+
+it("accepts a newly configured explicit entry absent from baseline while validating the staged side", async () => {
+  const run = await context(
+    "export const used=1;",
+    "export const used=1;",
+    {},
+    async (f) => {
+      await f.write("src/new-start.ts", "console.log(1);");
+    },
+  );
+  await rm(join(run.snapshots.baselineDir, "src/new-start.ts"));
+  const config = resolveConfig({
+    schemaVersion: 1,
+    profile: "thorough",
+    checks: { deadCode: { entryPoints: ["src/new-start.ts"] } },
+  });
+  const result = await deadCodeAdapter.collect({
+    ...run,
+    config,
+    policy: config.checks.deadCode,
+    baselineInspection: await inspectRepository(run.snapshots.baselineDir),
+  });
+  expect(
+    result.targetObservations.some(
+      (item) => item.location?.file === "src/new-start.ts",
+    ),
+  ).toBe(false);
+});
+
+it("roots contained HTML source symlinks without inventing a cross-workspace entry", async () => {
+  const run = await context(
+    "export const used=1;",
+    "export const used=1;",
+    { devDependencies: { vite: "7" } },
+    async (f) => {
+      await f.write(
+        "index.html",
+        '<script type=module src="/src/alias.ts"></script>',
+      );
+      await f.write("src/bootstrap.ts", "console.log(1);");
+      await f.symlink("bootstrap.ts", "src/alias.ts");
+    },
+  );
+  const result = await deadCodeAdapter.collect(run);
+  expect(
+    result.targetObservations.filter(
+      (item) =>
+        item.rule === "files" &&
+        ["src/alias.ts", "src/bootstrap.ts"].includes(
+          item.location?.file ?? "",
+        ),
+    ),
+  ).toEqual([]);
+});

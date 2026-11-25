@@ -1,3 +1,5 @@
+import { joinSnapshotReaders } from "../git/snapshot-work.js";
+import { resolveWorkspaceLintPolicy } from "../config/target-policy.js";
 import pLimit from "p-limit";
 import type { CheckId } from "../config/schema.js";
 import type {
@@ -61,6 +63,83 @@ export function hasDependencyStateDelta(context: InspectionContext): boolean {
   );
 }
 
+async function selectProjectGraphWorkspaces(
+  context: InspectionContext,
+  workspaces: readonly WorkspaceInspection[],
+  checkId: "dependencyArchitecture" | "deadCode",
+  always: boolean,
+): Promise<readonly WorkspaceInspection[]> {
+  const all = [...context.baselineInspection.workspaces, ...workspaces];
+  const candidates = new Map(
+    all.map((workspace) => [workspace.relativeRoot, workspace]),
+  );
+  const targetRoots =
+    context.mergeComparison === true
+      ? new Set(workspaces.map((workspace) => workspace.relativeRoot))
+      : undefined;
+  // A removed workspace cannot create findings in the merged target.
+  const eligible = [...candidates.values()].filter(
+    (workspace) =>
+      targetRoots === undefined || targetRoots.has(workspace.relativeRoot),
+  );
+  const acquire = pLimit(4);
+  const selected = await joinSnapshotReaders(
+    eligible.map((workspace) =>
+      acquire(async () => ({
+        workspace,
+        relevant: always
+          ? workspace.sourceFiles.some((path) => SOURCE.test(path))
+          : await projectInputsMayHaveChanged(
+              context,
+              targetFor(workspace),
+              "all",
+              checkId === "deadCode" ? "deadCode" : undefined,
+            ),
+      })),
+    ),
+  );
+  return selected
+    .filter(({ relevant }) => relevant)
+    .map(({ workspace }) => workspace)
+    .sort((a, b) => compareCodeUnits(a.relativeRoot, b.relativeRoot));
+}
+
+async function selectCompilerWorkspaces(
+  context: InspectionContext,
+  workspaces: readonly WorkspaceInspection[],
+  checkId: "lint" | "types",
+  changed: ReadonlySet<string>,
+  always: boolean,
+  projectEngine: (workspace: WorkspaceInspection) => boolean,
+) {
+  return joinSnapshotReaders(
+    workspaces.map(async (workspace) => {
+      const supportsTypes = hasTypeScriptInputs(workspace);
+      const forced =
+        always ||
+        (checkId === "lint" &&
+          projectEngine(workspace) &&
+          !context.changeSet.isEmpty);
+      const hasInputs =
+        checkId === "types" ? supportsTypes : workspace.sourceFiles.length > 0;
+      const changedSource =
+        checkId === "lint" &&
+        workspace.sourceFiles.some((path) => changed.has(path));
+      const relevance =
+        hasInputs && supportsTypes && !forced && !changedSource
+          ? await compilerInputRelevance(context, workspace)
+          : undefined;
+      return {
+        workspace,
+        relevant:
+          hasInputs &&
+          (forced || changedSource || relevance?.relevant === true),
+        independent: relevance?.reason === "independent",
+      };
+    }),
+  );
+}
+
 /** Applicability is metadata only; it never opens an analyzer or executes config. */
 export async function inspectManagedCheck(
   checkId: CheckId,
@@ -71,11 +150,13 @@ export async function inspectManagedCheck(
     files.filter((file) => file.status !== "deleted").map((file) => file.path),
   );
   const always = context.config.checks[checkId].when === "always";
+  let independentTargets: readonly CheckTarget[] | undefined;
   const applicable = (targets: readonly CheckTarget[]): CheckApplicability => ({
     applies: true,
     executionClass: executionClassFor(checkId),
     requiresBaseline: checkId !== "formatting",
     targets,
+    ...(independentTargets === undefined ? {} : { independentTargets }),
   });
   if (checkId === "formatting") {
     const policyForFile = createFilePolicyResolver(
@@ -138,37 +219,30 @@ export async function inspectManagedCheck(
     }
   }
   let workspaces = context.targetInspection.workspaces;
+  const projectEngine = (workspace: WorkspaceInspection) =>
+    resolveWorkspaceLintPolicy(
+      context.filePolicyConfig ?? context.config,
+      workspace,
+    ).engine === "project";
+  if (checkId === "reactCorrectness" || checkId === "reactAccessibility") {
+    const managed = workspaces.filter((workspace) => !projectEngine(workspace));
+    if (managed.length === 0 && workspaces.length > 0)
+      return {
+        applies: false,
+        reason:
+          "Covered by the project ESLint configuration; accessibility coverage depends on its enabled rules.",
+      };
+    workspaces = managed;
+  }
   if (checkId === "dependencyArchitecture" || checkId === "deadCode") {
-    const all = [...context.baselineInspection.workspaces, ...workspaces];
-    const candidates = new Map(
-      all.map((workspace) => [workspace.relativeRoot, workspace]),
+    workspaces = await selectProjectGraphWorkspaces(
+      context,
+      workspaces,
+      checkId,
+      always,
     );
-    const targetRoots =
-      context.mergeComparison === true
-        ? new Set(workspaces.map((workspace) => workspace.relativeRoot))
-        : undefined;
-    // A removed workspace cannot create findings in the merged target.
-    const eligible = [...candidates.values()].filter(
-      (workspace) =>
-        targetRoots === undefined || targetRoots.has(workspace.relativeRoot),
-    );
-    const acquire = pLimit(4);
-    const selected = await Promise.all(
-      eligible.map((workspace) =>
-        acquire(async () => ({
-          workspace,
-          relevant: always
-            ? workspace.sourceFiles.some((path) => SOURCE.test(path))
-            : await projectInputsMayHaveChanged(context, targetFor(workspace)),
-        })),
-      ),
-    );
-    workspaces = selected
-      .filter(({ relevant }) => relevant)
-      .map(({ workspace }) => workspace)
-      .sort((a, b) => compareCodeUnits(a.relativeRoot, b.relativeRoot));
   } else if (checkId === "duplication") {
-    const selected = await Promise.all(
+    const selected = await joinSnapshotReaders(
       workspaces.map(async (workspace) => ({
         workspace,
         relevant: always
@@ -184,22 +258,17 @@ export async function inspectManagedCheck(
       .filter(({ relevant }) => relevant)
       .map(({ workspace }) => workspace);
   } else if (checkId === "lint" || checkId === "types") {
-    const selected = await Promise.all(
-      workspaces.map(async (workspace) => ({
-        workspace,
-        relevant:
-          checkId === "types"
-            ? hasTypeScriptInputs(workspace) &&
-              (always ||
-                (await compilerInputRelevance(context, workspace)).relevant)
-            : workspace.sourceFiles.length > 0 &&
-              (always ||
-                (hasTypeScriptInputs(workspace) &&
-                  (await compilerInputRelevance(context, workspace))
-                    .relevant) ||
-                workspace.sourceFiles.some((path) => changed.has(path))),
-      })),
+    const selected = await selectCompilerWorkspaces(
+      context,
+      workspaces,
+      checkId,
+      changed,
+      always,
+      projectEngine,
     );
+    independentTargets = selected
+      .filter(({ independent }) => independent)
+      .map(({ workspace }) => targetFor(workspace));
     workspaces = selected
       .filter(({ relevant }) => relevant)
       .map(({ workspace }) => workspace);
@@ -233,6 +302,7 @@ export async function inspectManagedCheck(
     ? applicable(workspaces.map(targetFor))
     : {
         applies: false,
+        ...(independentTargets === undefined ? {} : { independentTargets }),
         reason:
           checkId === "types"
             ? "No supported changed TypeScript source files"

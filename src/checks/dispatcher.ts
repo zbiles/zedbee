@@ -1,3 +1,8 @@
+import {
+  validateCompilerScopeProofs,
+  releaseCompilerScopeProofs,
+} from "./typescript/compiler-scope-graph.js";
+import { recordPerformance } from "../diagnostics/scan-performance.js";
 import pLimit from "p-limit";
 import {
   CHECK_IDS,
@@ -12,7 +17,10 @@ import type {
 import type { ScanEvent } from "./events.js";
 import { sanitizeCheckResult } from "./sanitize-result.js";
 import { incompleteResult } from "./incomplete-result.js";
-import { CheckIncompleteError } from "./incomplete-error.js";
+import {
+  CheckIncompleteError,
+  incompleteErrorDetails,
+} from "./incomplete-error.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { checkLabel } from "../core/check-label.js";
 import type { ObservationCache } from "../cache/store.js";
@@ -136,7 +144,7 @@ export async function prepareCheckDispatch(
   );
 
   const scheduled: Promise<CheckExecutionResult>[] = [];
-  const jobs: (() => Promise<CheckExecutionResult>)[] = [];
+  const jobs: ((queuedAt: number) => Promise<CheckExecutionResult>)[] = [];
   const scheduledTargets: {
     checkId: string;
     target: import("./adapter.js").CheckTarget;
@@ -207,23 +215,7 @@ export async function prepareCheckDispatch(
               ? incompleteResult({
                   checkId: adapter.id,
                   durationMs: 0,
-                  code: error.code,
-                  message: error.message,
-                  remediation: error.remediation,
-                  ...(error.diagnostic === undefined
-                    ? {}
-                    : { diagnostic: error.diagnostic }),
-                  ...(error.path === undefined ? {} : { path: error.path }),
-                  ...(error.paths === undefined ? {} : { paths: error.paths }),
-                  ...(error.snapshot === undefined
-                    ? {}
-                    : { snapshot: error.snapshot }),
-                  ...(error.projectPaths === undefined
-                    ? {}
-                    : { projectPaths: error.projectPaths }),
-                  ...(error.disposition === undefined
-                    ? {}
-                    : { disposition: error.disposition }),
+                  ...incompleteErrorDetails(error),
                 })
               : incompleteResult({
                   checkId: adapter.id,
@@ -242,7 +234,27 @@ export async function prepareCheckDispatch(
       continue;
     }
 
+    for (const target of applicability.independentTargets ?? []) {
+      scheduled.push(
+        Promise.resolve(
+          executionResult(
+            {
+              checkId: adapter.id,
+              target: target.id,
+              status: "skipped",
+              durationMs: 0,
+              findings: [],
+              skipReason:
+                "Workspace compiler inputs are independent of the selected changes",
+            },
+            inspectExecutionPolicy,
+          ),
+        ),
+      );
+    }
+
     if (!applicability.applies) {
+      if (applicability.independentTargets?.length) continue;
       scheduled.push(
         Promise.resolve(
           executionResult(
@@ -330,7 +342,12 @@ export async function prepareCheckDispatch(
       const executionPolicy = immutablePolicy(adapter.id, policy);
 
       scheduledTargets.push({ checkId: adapter.id, target });
-      jobs.push(async () => {
+      jobs.push(async (queuedAt) => {
+        recordPerformance({
+          checkId: adapter.id,
+          kind: "dispatcher",
+          durationMs: performance.now() - queuedAt,
+        });
         if (applicability.networkDisclosure !== undefined) {
           emit({
             type: "network-disclosure",
@@ -369,10 +386,20 @@ export async function prepareCheckDispatch(
     hasJobs: jobs.length > 0,
     scheduledTargets: Object.freeze(scheduledTargets),
   });
-  preparedExecutions.set(plan, async () =>
-    (await Promise.all([...scheduled, ...jobs.map((job) => limit(job))])).sort(
-      compareResults,
-    ),
-  );
+  preparedExecutions.set(plan, async () => {
+    try {
+      const results = await Promise.all([
+        ...scheduled,
+        ...jobs.map((job) => {
+          const queuedAt = performance.now();
+          return limit(() => job(queuedAt));
+        }),
+      ]);
+      await validateCompilerScopeProofs(adapterContext);
+      return results.sort(compareResults);
+    } finally {
+      releaseCompilerScopeProofs(adapterContext);
+    }
+  });
   return plan;
 }

@@ -1,5 +1,11 @@
+import {
+  validateAccessibilitySettings,
+  type AccessibilitySettings,
+} from "./accessibility-settings.js";
 import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
+import { managedHooksPlugin } from "./managed-hooks-plugin.js";
+import { managedAccessibilityPlugin } from "./managed-accessibility-plugin.js";
 
 const require = createRequire(import.meta.url);
 
@@ -20,7 +26,7 @@ export function managedReactCorrectnessConfig(
   const reactPlugin =
     require("eslint-plugin-react") as typeof import("eslint-plugin-react");
   const reactHooksPlugin =
-    require("eslint-plugin-react-hooks") as typeof import("eslint-plugin-react-hooks");
+    managedHooksPlugin() as typeof import("eslint-plugin-react-hooks");
   const reactConfigs = reactPlugin.configs.flat as unknown as ReactFlatConfigs;
   const hooksConfigs = reactHooksPlugin.configs.flat as HooksFlatConfigs;
   return {
@@ -38,13 +44,18 @@ export function managedReactCorrectnessConfig(
   };
 }
 
-export function managedReactAccessibilityConfig(): Linter.Config {
-  const jsxA11yPlugin = require("eslint-plugin-jsx-a11y") as ESLint.Plugin & {
+export function managedReactAccessibilityConfig(
+  settings?: Readonly<AccessibilitySettings>,
+): Linter.Config {
+  const jsxA11yPlugin = managedAccessibilityPlugin() as ESLint.Plugin & {
     readonly flatConfigs: { readonly recommended: Linter.Config };
   };
   return {
     files: SOURCE_FILES,
     plugins: { "jsx-a11y": jsxA11yPlugin as ESLint.Plugin },
     rules: { ...jsxA11yPlugin.flatConfigs.recommended.rules },
+    ...(settings === undefined
+      ? {}
+      : { settings: { "jsx-a11y": validateAccessibilitySettings(settings) } }),
   };
 }

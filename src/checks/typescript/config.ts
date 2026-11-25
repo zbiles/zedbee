@@ -1,8 +1,8 @@
+import { filterCapturedCompilerFiles } from "./captured-directory.js";
 import { posix, relative, resolve, sep } from "node:path";
 import { lstat } from "node:fs/promises";
 import * as ts from "typescript";
 import { parse, type ParseError } from "jsonc-parser";
-import picomatch from "picomatch";
 import {
   canonicalizeSnapshotRoot,
   readContainedFile,
@@ -79,7 +79,7 @@ function stringList(configPath: string, value: unknown): void {
   }
 }
 
-function validateConfigPaths(configPath: string, value: unknown): void {
+export function validateConfigPaths(configPath: string, value: unknown): void {
   const config = record(value);
   for (const field of ["files", "include", "exclude"] as const) {
     stringList(configPath, config[field]);
@@ -149,39 +149,23 @@ function preferredConfig(workspace: WorkspaceInspection): string {
   );
 }
 
-function configHost(
+export function configHost(
   snapshotRoot: string,
   files: ReadonlyMap<string, string>,
 ): ts.ParseConfigHost {
-  const pathMatcher = (pattern: string): ((path: string) => boolean) => {
-    const normalized = pattern.replace(/\/+$/u, "");
-    const exact = picomatch(pattern, { dot: true });
-    const descendant = picomatch(`${normalized}/**/*`, { dot: true });
-    return (path) => exact(path) || descendant(path);
-  };
   return {
     useCaseSensitiveFileNames: true,
     fileExists: (path) => files.has(resolve(path)),
     readFile: (path) => files.get(resolve(path)),
     readDirectory(rootDir, extensions, excludes, includes, depth) {
-      const root = resolve(rootDir);
-      const include = (includes?.length ? includes : ["**/*"]).map(pathMatcher);
-      const exclude = (excludes ?? []).map(pathMatcher);
-      return [...files.keys()].filter((path) => {
-        const fromRoot = normalize(relative(root, path));
-        if (
-          fromRoot === ".." ||
-          fromRoot.startsWith("../") ||
-          (depth !== undefined && fromRoot.split("/").length - 1 > depth) ||
-          !extensions.some((extension) => path.endsWith(extension))
-        ) {
-          return false;
-        }
-        return (
-          include.some((match) => match(fromRoot)) &&
-          !exclude.some((match) => match(fromRoot))
-        );
-      });
+      return filterCapturedCompilerFiles(
+        files.keys(),
+        resolve(rootDir),
+        extensions,
+        excludes,
+        includes,
+        depth,
+      );
     },
     trace: () => undefined,
   };

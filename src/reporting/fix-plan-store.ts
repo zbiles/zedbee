@@ -5,17 +5,15 @@ import {
 } from "../fixes/types.js";
 import type {
   TemporaryReportStore,
-  ReportMaintenanceWarning,
+  TemporaryReportResult,
 } from "./temporary-reports.js";
 import { COMPACT_DETAIL_LIMIT } from "./fix-presentation.js";
 export async function maintainPlan(
   plan: PreparedFixPlan,
   store: TemporaryReportStore,
   persistCompletePlan: boolean,
-): Promise<{
-  readonly reportPath?: string;
-  readonly warnings: readonly ReportMaintenanceWarning[];
-}> {
+  diagnostics = false,
+): Promise<TemporaryReportResult> {
   const json =
     persistCompletePlan &&
     (plan.publicPlan.items.length > COMPACT_DETAIL_LIMIT ||
@@ -27,6 +25,7 @@ export async function maintainPlan(
       repositoryRoot: plan.repositoryRoot,
       maxAgeMs: plan.temporaryReportMaxAgeMs,
       reportKind: "fix-plan",
+      ...(diagnostics ? { diagnostics: true } : {}),
       ...(json === undefined ? {} : { json }),
     });
   } catch {

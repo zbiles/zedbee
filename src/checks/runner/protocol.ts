@@ -1,3 +1,7 @@
+import { FIXABLE_CHECK_IDS } from "../../fixes/types.js";
+import { sanitizeComparisonContext } from "../comparison-context.js";
+import { sanitizeDiagnosticDetails } from "../diagnostic-details.js";
+import { sanitizeEslintAnalysis } from "../sanitize-result.js";
 import type { CheckId } from "../../config/schema.js";
 import type { CheckResult, Finding, Observation } from "../../core/types.js";
 import type { CheckFixCandidate } from "../../fixes/types.js";
@@ -50,11 +54,7 @@ export type AnalyzerResult<R extends AnalyzerRequest> =
       : R["operation"] extends "runLegacy"
         ? CheckResult
         : CheckObservationSet;
-export const FIX_CHECKS = new Set<CheckId>([
-  "formatting",
-  "lint",
-  "reactCorrectness",
-]);
+export const FIX_CHECKS: ReadonlySet<CheckId> = new Set(FIXABLE_CHECK_IDS);
 
 export function validateAnalyzerRequest(request: AnalyzerRequest): void {
   if (
@@ -163,6 +163,23 @@ export function validateAnalyzerResult<R extends AnalyzerRequest>(
       return safe;
     };
     result = {
+      ...(input.comparisonContext === undefined
+        ? {}
+        : {
+            comparisonContext: sanitizeComparisonContext(
+              input.comparisonContext,
+            ),
+          }),
+      ...(input.eslintAnalysis === undefined
+        ? {}
+        : { eslintAnalysis: sanitizeEslintAnalysis(input.eslintAnalysis) }),
+      ...(input.diagnosticDetails === undefined
+        ? {}
+        : {
+            diagnosticDetails: sanitizeDiagnosticDetails(
+              input.diagnosticDetails,
+            ),
+          }),
       checkId: input.checkId,
       target,
       baselineObservations: input.baselineObservations.map(normalize),

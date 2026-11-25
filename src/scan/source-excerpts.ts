@@ -1,6 +1,7 @@
+import { sanitizeComparisonContext } from "../checks/comparison-context.js";
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { SOURCE_EXCERPT_MAX_CODE_POINTS } from "../checks/sanitize-result.js";
-import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, SourceExcerpt } from "../core/types.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { readContainedLines } from "../inspection/read-json.js";
@@ -10,9 +11,7 @@ import {
 } from "../inspection/snapshot-registry.js";
 import type { RepositoryInspection } from "../inspection/types.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
-import type { ScanReport } from "./report.js";
 import pLimit from "p-limit";
-import { freezeResult } from "../core/freeze-result.js";
 
 interface SecretRange {
   readonly startLine: number;
@@ -103,6 +102,14 @@ function copyFinding(
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
+    ...(finding.messageRedaction === undefined
+      ? {}
+      : {
+          messageRedaction: {
+            redacted: true as const,
+            reasons: [...finding.messageRedaction.reasons],
+          },
+        }),
     ...(finding.location === undefined
       ? {}
       : { location: Object.freeze({ ...finding.location }) }),
@@ -127,6 +134,14 @@ function copyCheck(
   findings: readonly Finding[],
 ): CheckResult {
   return Object.freeze({
+    ...(check.comparisonContext === undefined
+      ? {}
+      : {
+          comparisonContext: sanitizeComparisonContext(check.comparisonContext),
+        }),
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
@@ -170,56 +185,6 @@ export function omitSourceExcerpts(
       ),
     ),
   );
-}
-
-function redactedMarker(
-  sourceExcerpt: SourceExcerpt | undefined,
-): SourceExcerpt | undefined {
-  if (sourceExcerpt?.redacted !== true) return undefined;
-  return Object.freeze({
-    line: sourceExcerpt.line,
-    redacted: true,
-    truncated: sourceExcerpt.truncated,
-  });
-}
-
-export function omitReportSourceExcerpts(report: ScanReport): ScanReport {
-  const checks = Object.freeze(
-    report.checks.map((check) =>
-      copyCheck(
-        check,
-        check.findings.map((finding) =>
-          copyFinding(finding, redactedMarker(finding.sourceExcerpt)),
-        ),
-      ),
-    ),
-  );
-  return freezeResult({
-    schemaVersion: report.schemaVersion,
-    outcome: report.outcome,
-    exitCode: report.exitCode,
-    repositoryRoot: report.repositoryRoot,
-    mode: report.mode,
-    baseline: report.baseline,
-    target: report.target,
-    ...(report.requestedBase === undefined
-      ? {}
-      : { requestedBase: report.requestedBase }),
-    changedFileCount: report.changedFileCount,
-    startedAt: report.startedAt,
-    durationMs: report.durationMs,
-    configuredPathExclusions: report.configuredPathExclusions,
-    appliedPathExclusions: report.appliedPathExclusions,
-    networkDisclosures: report.networkDisclosures.map((disclosure) => ({
-      checkId: disclosure.checkId,
-      target: disclosure.target,
-      services: [...disclosure.services],
-      metadata: [...disclosure.metadata],
-    })),
-    presentationPolicy: { ...report.presentationPolicy },
-    summary: summarizeChecks(checks),
-    checks,
-  });
 }
 
 export async function enrichSourceExcerpts(

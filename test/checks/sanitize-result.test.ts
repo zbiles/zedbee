@@ -87,6 +87,8 @@ describe("public result sanitizer contract", () => {
     // Each production registry also `satisfies Record<keyof Contract, true>`,
     // so adding a contract field without updating the sanitizer fails typecheck.
     expect(Object.keys(PUBLIC_CHECK_RESULT_FIELDS)).toEqual([
+      "comparisonContext",
+      "eslintAnalysis",
       "checkId",
       "target",
       "status",
@@ -99,6 +101,7 @@ describe("public result sanitizer contract", () => {
       "formattingCoverage",
     ]);
     expect(Object.keys(PUBLIC_FINDING_FIELDS)).toEqual([
+      "messageRedaction",
       "id",
       "check",
       "rule",
@@ -136,6 +139,7 @@ describe("public result sanitizer contract", () => {
       "paths",
       "snapshot",
       "projectPaths",
+      "parseFailures",
       "temporaryPath",
       "remediation",
     ]);
@@ -440,4 +444,63 @@ describe("public result sanitizer contract", () => {
       ),
     ).toThrow(/target|repository-relative path/i);
   });
+});
+
+it("derives parse failure reasons from trusted parser codes", () => {
+  const result = sanitizeCheckResult({
+    checkId: "structuralSecurity",
+    status: "incomplete",
+    durationMs: 0,
+    findings: [],
+    error: {
+      code: "STRUCTURAL_SECURITY_PARSE_FAILED",
+      message: "Could not parse selected files.",
+      parseFailures: {
+        omitted: 0,
+        files: [
+          {
+            path: "a.ts",
+            snapshot: "staged",
+            line: 1,
+            column: 7,
+            typescriptCode: 1109,
+            reason: "/private/tmp/snapshot/token = fixture",
+          },
+          {
+            path: "closing.ts",
+            snapshot: "staged",
+            line: 2,
+            column: 1,
+            typescriptCode: 1005,
+            expectedToken: "}",
+            reason: "replace me",
+          },
+          {
+            path: "invalid-token.ts",
+            snapshot: "staged",
+            line: 2,
+            column: 1,
+            typescriptCode: 1005,
+            expectedToken: "/private/tmp/snapshot",
+            reason: "replace me",
+          },
+          {
+            path: "b.ts",
+            snapshot: "baseline",
+            line: 1,
+            column: 7,
+            reason: "at parse (/private/tmp/snapshot/b.ts:1:7)",
+          },
+        ],
+      },
+    },
+  });
+  expect(
+    result.error?.parseFailures?.files.map(({ reason }) => reason),
+  ).toEqual([
+    "Expression expected.",
+    "'}' expected.",
+    "TypeScript expected another token.",
+    "The structural parser could not recognize this syntax.",
+  ]);
 });

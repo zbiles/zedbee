@@ -1,3 +1,10 @@
+import { resolveRawGitHookPath } from "../hooks/raw-hook-path.js";
+import {
+  hasProjectEslintTrust,
+  persistProjectEslintTrust,
+  revokeProjectEslintCapability,
+} from "../checks/eslint/project/trust.js";
+import { ProjectEslintSetupError } from "./eslint-setup.js";
 import { randomUUID } from "node:crypto";
 import {
   chmod,
@@ -133,34 +140,8 @@ async function validatedRawGitPath(
   ) {
     throw unsafeTarget();
   }
-  const git = new GitClient(root);
-  const [hookOutput, commonOutput] = await Promise.all([
-    git.run(["rev-parse", "--git-path", `hooks/${hookName}`]),
-    git.run(["rev-parse", "--git-common-dir"]),
-  ]);
-  const hook = isAbsolute(hookOutput.stdout)
-    ? resolve(hookOutput.stdout)
-    : resolve(root, hookOutput.stdout);
-  const common = isAbsolute(commonOutput.stdout)
-    ? resolve(commonOutput.stdout)
-    : resolve(root, commonOutput.stdout);
-  const commonState = await lstat(common);
-  if (commonState.isSymbolicLink() || !commonState.isDirectory()) {
-    throw unsafeTarget();
-  }
-  const canonicalCommon = await realpath(common);
-  const hooksDirectory = resolve(canonicalCommon, "hooks");
-  const hooksState = await lstat(hooksDirectory);
-  if (hooksState.isSymbolicLink() || !hooksState.isDirectory()) {
-    throw unsafeTarget();
-  }
-  const canonicalHook = resolve(await realpath(dirname(hook)), basename(hook));
-  if (
-    canonicalHook !== resolve(hooksDirectory, hookName) ||
-    canonicalHook !== change.absolutePath
-  ) {
-    throw unsafeTarget();
-  }
+  const canonicalHook = await resolveRawGitHookPath(root, hookName, true);
+  if (canonicalHook !== change.absolutePath) throw unsafeTarget();
   return canonicalHook;
 }
 
@@ -269,6 +250,29 @@ export async function applyInitProposal(
   const root = await realpath(resolve(proposal.repositoryRoot)).catch(() => {
     throw unsafeTarget();
   });
+  if ((proposal.eslintConflicts?.length ?? 0) > 0)
+    throw new ProjectEslintSetupError(proposal.eslintConflicts!.join(" "));
+  const eslintRoots = proposal.projectEslintTrustRoots ?? [];
+  if (eslintRoots.length > 0 && proposal.projectEslintTrustConfirmed !== true) {
+    for (const projectRoot of eslintRoots) {
+      if (!(await hasProjectEslintTrust(root, projectRoot, "execute")))
+        throw new ProjectEslintSetupError(
+          "Project ESLint requires separate execution trust. Use --trust-project-eslint or confirm its disclosure interactively.",
+        );
+    }
+  }
+  if (
+    eslintRoots.length > 0 &&
+    proposal.projectEslintMessages === "full" &&
+    proposal.projectEslintMessagesConfirmed !== true
+  ) {
+    for (const projectRoot of eslintRoots) {
+      if (!(await hasProjectEslintTrust(root, projectRoot, "messages")))
+        throw new ProjectEslintSetupError(
+          "Full project ESLint messages require separate source-disclosure consent. Use --allow-project-eslint-messages or choose redacted messages.",
+        );
+    }
+  }
   const validated = [] as Array<{
     readonly change: InitFileChange;
     readonly path: string;
@@ -291,8 +295,13 @@ export async function applyInitProposal(
     validated.push({ change, ...state });
   }
 
+  const updatedFiles: string[] = [];
   const applied: Array<{ path: string; before: string | null; mode: number }> =
     [];
+  const eslintGrants: Array<{
+    projectRoot: string;
+    capability: "execute" | "messages";
+  }> = [];
   const trustSnapshots: ProjectPrettierTrustSnapshot[] = [];
   const revokeSnapshots: ProjectPrettierTrustSnapshot[] = [];
   if (proposal.executableEvaluatedConfigs !== undefined) {
@@ -308,7 +317,13 @@ export async function applyInitProposal(
       const mode = item.change.relativePath.startsWith(".husky/_/")
         ? item.change.mode
         : refreshed.mode;
+      if (
+        item.change.relativePath === ".zedbeerc.jsonc" &&
+        refreshed.before === item.change.after
+      )
+        continue;
       await atomicReplace(item.path, item.change.after, mode);
+      updatedFiles.push(item.change.relativePath);
       applied.push({ path: item.path, before: item.before, mode: item.mode });
     }
     if (proposal.hooksPathChange !== undefined) {
@@ -337,6 +352,21 @@ export async function applyInitProposal(
         );
       }
     }
+    for (const projectRoot of eslintRoots) {
+      for (const capability of ["execute", "messages"] as const) {
+        const confirmed =
+          capability === "execute"
+            ? proposal.projectEslintTrustConfirmed
+            : proposal.projectEslintMessagesConfirmed;
+        if (
+          confirmed === true &&
+          !(await hasProjectEslintTrust(root, projectRoot, capability))
+        ) {
+          eslintGrants.push({ projectRoot, capability });
+          await persistProjectEslintTrust(root, projectRoot, capability);
+        }
+      }
+    }
     if (
       proposal.projectPrettierRevokeRoots !== undefined &&
       proposal.projectPrettierRevokeRoots.length > 0
@@ -352,6 +382,12 @@ export async function applyInitProposal(
   } catch {
     try {
       await rollback(applied);
+      for (const grant of eslintGrants)
+        await revokeProjectEslintCapability(
+          root,
+          grant.projectRoot,
+          grant.capability,
+        );
       for (const snapshot of revokeSnapshots) {
         await restoreProjectPrettierTrust(root, snapshot);
       }
@@ -367,9 +403,7 @@ export async function applyInitProposal(
   }
   return Object.freeze({
     applied: true,
-    files: Object.freeze(
-      proposal.files.map(({ relativePath }) => relativePath),
-    ),
+    files: Object.freeze(updatedFiles),
     rolledBack: false,
   });
 }

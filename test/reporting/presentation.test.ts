@@ -169,6 +169,26 @@ describe("prepareTerminalPresentation", () => {
     });
   });
 
+  it("preserves public metadata in a saved report with excerpts disabled", async () => {
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/complete.json",
+      warnings: [],
+    });
+    const report = reportWithFindings(0, {
+      hookUpdate: {
+        code: "HOOK_UPDATE_NEEDED",
+        message: "Swarm’s hooks need updating.",
+        remediation: "Run zedbee init to refresh them.",
+      },
+      changeSummary: { added: 0, modified: 0, deleted: 1, renamed: 0 },
+    });
+    await prepareTerminalPresentation(report, options(store, "auto", "text"));
+    const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
+    expect(JSON.parse(request.json ?? "")).toEqual(
+      JSON.parse(renderJson(report)),
+    );
+  });
+
   it("stores complete canonical JSON before selecting the ordered preview", async () => {
     const { store, maintain } = recordingStore({
       reportPath: "/tmp/zedbee/complete.json",
@@ -260,11 +280,13 @@ describe("prepareTerminalPresentation", () => {
       reportPath: "/tmp/zedbee/complete.json",
       warnings: [],
     });
-    const report = reportWithFindings(26);
+    const mergeParents = ["a".repeat(40), "b".repeat(40)];
+    const report = reportWithFindings(26, { mergeParents });
 
     await prepareTerminalPresentation(report, options(store, "auto", "ink"));
 
     const request = maintain.mock.calls[0]?.[0] as TemporaryReportRequest;
+    expect(JSON.parse(request.json!)).toMatchObject({ mergeParents });
     expect(request.json).not.toContain("const value");
     expect(request.json).not.toContain('"text"');
   });
@@ -505,3 +527,69 @@ describe("prepareTerminalPresentation", () => {
     ]);
   });
 });
+
+it.each([29, 300])(
+  "puts missing modules and independent security blockers ahead of %i unsafe follow-ons",
+  async (count) => {
+    const unsafe = Array.from({ length: count }, (_, index) =>
+      createFinding({
+        id: `unsafe-${index}`,
+        check: "lint",
+        rule: "@typescript-eslint/no-unsafe-call",
+        location: { file: "src/a.ts", startLine: index + 1 },
+      }),
+    );
+    const missing = createFinding({
+      id: "missing",
+      check: "types",
+      rule: "typescript/TS2307",
+      message: "Cannot find module './removed'.",
+      location: { file: "src/z.ts", startLine: 1 },
+    });
+    const secret = createFinding({
+      id: "secret",
+      check: "secrets",
+      rule: "secret-token",
+      location: { file: "src/private.ts", startLine: 1 },
+    });
+    const all = [...unsafe, missing, secret];
+    const report = reportWithFindings(0, {
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        failed: all.length,
+        warnings: 0,
+        incomplete: 0,
+        findings: all,
+      },
+      checks: [
+        { checkId: "types", status: "completed", durationMs: 1, findings: all },
+      ],
+    });
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/full.json",
+      warnings: [],
+    });
+    const presentation = await prepareTerminalPresentation(
+      report,
+      options(store, "auto", "text"),
+    );
+    expect(presentation.findings).toHaveLength(25);
+    expect(presentation.findings.slice(0, 2).map((f) => f.id)).toEqual([
+      "missing",
+      "secret",
+    ]);
+    expect((maintain.mock.calls[0]?.[0] as TemporaryReportRequest).json).toBe(
+      renderJson(report),
+    );
+    const { renderText } = await import("../../src/renderers/text.js");
+    const text = renderText(report, { width: 120, color: false, presentation });
+    expect(text).toContain(
+      `${count - 23} more blocking findings: lint / @typescript-eslint/no-unsafe-call`,
+    );
+    expect(text).toContain("Complete details are in the full report.");
+    expect(text).toContain("Review the staged diff for unresolved imports");
+    expect(text).not.toContain("unstaged changes");
+  },
+);

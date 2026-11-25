@@ -1,3 +1,9 @@
+import {
+  deadCodePolicyPath,
+  snapshotEntryPoints,
+} from "../checks/dead-code/entry-configuration.js";
+import { viteInputPathsForInspection } from "../checks/dead-code/vite-entrypoints.js";
+import { summarizeChanges, type ChangeSummary } from "./change-summary.js";
 import { dirname } from "node:path";
 import {
   createLocalAnalyzerExecutor,
@@ -43,6 +49,7 @@ import {
 } from "../git/selected-comparison.js";
 import {
   buildCommitSnapshotPair,
+  buildMergeBaselineSnapshot,
   buildSnapshotPair,
   countSnapshotFileLines,
   SnapshotConstructionCleanupError,
@@ -63,7 +70,10 @@ import type { ActiveScanPhase } from "./analysis-failure.js";
 import type { ScanFailureInput } from "./incomplete-report.js";
 import { unsupportedEntryFailures } from "./unsupported-inputs.js";
 import { announceScanPhase } from "./progress.js";
-import { settleSnapshotWork } from "../git/snapshot-work.js";
+import {
+  joinSnapshotReaders,
+  settleSnapshotWork,
+} from "../git/snapshot-work.js";
 
 export interface AnalysisSessionDependencies {
   captureIndexComparison?: typeof captureSelectedIndexComparison;
@@ -82,12 +92,14 @@ export interface AnalysisSessionDependencies {
   addCommitLineRanges?: typeof addCommitLineRanges;
   buildIndexSnapshots: typeof buildSnapshotPair;
   buildCommitSnapshots: typeof buildCommitSnapshotPair;
+  buildMergeBaseline?: typeof buildMergeBaselineSnapshot;
   inspectRepository(snapshotRoot: string): Promise<RepositoryInspection>;
   baselineForEmptyChange(
     git: GitClient,
     signal?: AbortSignal,
   ): Promise<"HEAD" | null>;
-  dispatch: typeof dispatchChecks;
+  /** Optional single-step dispatcher used by injected consumers. */
+  dispatch?: typeof dispatchChecks | undefined;
   adapters: readonly CheckAdapter[];
   clock(): number;
 }
@@ -108,6 +120,7 @@ export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies 
     addCommitLineRanges,
     buildIndexSnapshots: buildSnapshotPair,
     buildCommitSnapshots: buildCommitSnapshotPair,
+    buildMergeBaseline: buildMergeBaselineSnapshot,
     inspectRepository,
     async baselineForEmptyChange(git, signal) {
       if (git.selectedComparison !== undefined)
@@ -121,7 +134,6 @@ export const DEFAULT_ANALYSIS_SESSION_DEPENDENCIES: AnalysisSessionDependencies 
         ? "HEAD"
         : null;
     },
-    dispatch: dispatchChecks,
     adapters: DEFAULT_CHECK_ADAPTERS,
     clock: () => performance.now(),
   };
@@ -160,6 +172,7 @@ export interface AnalysisSessionState {
   phase: ActiveScanPhase;
   source: ScanSourceIdentity;
   changedFileCount: number | null;
+  changeSummary?: ChangeSummary;
   configuredPathExclusions: readonly PathExclusion[];
   appliedPathExclusions: readonly PathExclusion[];
 }
@@ -182,6 +195,8 @@ export type AnalysisSession =
     });
 
 export interface AnalysisSessionOptions {
+  mergeComparison?: boolean;
+  diagnosticMessages?: "contextual" | "source-free";
   /** Internal transfer from merge preflight; this session owns its cleanup. */
   selectedComparison?: SelectedIndexComparison;
   executor?: AnalyzerExecutor;
@@ -319,6 +334,17 @@ export async function withAnalysisSession<T>(
         options.signal,
       );
     }
+    if (options.diagnosticMessages !== undefined) {
+      if (!["contextual", "source-free"].includes(options.diagnosticMessages))
+        throw new TypeError("Invalid diagnostic message policy");
+      config = Object.freeze({
+        ...config,
+        reporting: Object.freeze({
+          ...config.reporting,
+          diagnosticMessages: options.diagnosticMessages,
+        }),
+      });
+    }
     state.configuredPathExclusions = config.pathExclusions;
     const resourcePolicy = resolveScanResourcePolicy(config.resources, {
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
@@ -368,6 +394,7 @@ export async function withAnalysisSession<T>(
       policyForFile,
     );
     state.changedFileCount = changeSet.files.size;
+    state.changeSummary = summarizeChanges(changeSet);
     signal.throwIfAborted();
     let session: AnalysisSession;
     if (changeSet.isEmpty) {
@@ -501,6 +528,9 @@ export async function withAnalysisSession<T>(
         );
         signal.throwIfAborted();
         const dispatchContext = {
+          ...(options.mergeComparison === true
+            ? { mergeComparison: true }
+            : {}),
           repositoryRoot: options.repositoryRoot,
           changeSet,
           config,
@@ -515,8 +545,9 @@ export async function withAnalysisSession<T>(
         };
         const dispatchOptions = options.dispatchOptions?.();
         state.phase = "dispatch";
+        const dispatchOverride = dependencies.dispatch;
         const prepared =
-          dependencies.dispatch === dispatchChecks
+          dispatchOverride === undefined
             ? await prepareCheckDispatch(
                 dependencies.adapters,
                 dispatchContext,
@@ -533,6 +564,37 @@ export async function withAnalysisSession<T>(
             prepared.scheduledTargets.every(
               ({ checkId }) => checkId === "secrets",
             );
+          const entryCaptureInputs = prepared?.scheduledTargets.some(
+            ({ checkId }) => checkId === "deadCode",
+          )
+            ? await joinSnapshotReaders(
+                [baselineInspection, targetInspection].map(
+                  async (inspection, side) => {
+                    const entries = await snapshotEntryPoints(
+                      inspection,
+                      config,
+                      options.repositoryRoot,
+                      side === 0,
+                    ).catch(() => []); // The adapter reports unsupported policy per check.
+
+                    return [
+                      deadCodePolicyPath(options.repositoryRoot, config),
+                      ...(
+                        await joinSnapshotReaders(
+                          inspection.workspaces.map((workspace) =>
+                            viteInputPathsForInspection(
+                              inspection,
+                              workspace,
+                              entries,
+                            ),
+                          ),
+                        )
+                      ).flat(),
+                    ];
+                  },
+                ),
+              )
+            : [[], []];
           execution = await executor.openSession({
             sourceSelections: [baselineInspection, targetInspection].map(
               (inspection, side) => ({
@@ -554,11 +616,12 @@ export async function withAnalysisSession<T>(
                       ),
                     ]
                   : [
-                      ...new Set(
-                        inspection.workspaces.flatMap(
+                      ...new Set([
+                        ...inspection.workspaces.flatMap(
                           (workspace) => workspace.sourceFiles,
                         ),
-                      ),
+                        ...(entryCaptureInputs[side] ?? []),
+                      ]),
                     ],
               }),
             ),
@@ -567,7 +630,7 @@ export async function withAnalysisSession<T>(
         enterPhase("dispatch");
         const dispatch = () =>
           prepared === undefined
-            ? dependencies.dispatch(
+            ? dispatchOverride!(
                 dependencies.adapters,
                 dispatchContext,
                 dispatchOptions,
@@ -638,7 +701,13 @@ export async function withAnalysisSession<T>(
     await snapshots?.cleanup();
   } catch {
     cleanupFailure = safeCleanupFailure(
-      snapshots === undefined ? undefined : dirname(snapshots.targetDir),
+      snapshots === undefined
+        ? undefined
+        : dirname(
+            executionCleanupProved
+              ? snapshots.baselineDir
+              : snapshots.targetDir,
+          ),
     );
   }
   try {

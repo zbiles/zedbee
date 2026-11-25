@@ -161,6 +161,18 @@ export async function shouldScheduleTarget(
     return targetPolicy.severity !== "off";
   }
 
+  if (
+    checkId === "lint" &&
+    "engine" in targetPolicy &&
+    targetPolicy.engine === "project"
+  ) {
+    return (
+      !changeSet.isEmpty &&
+      actualRelevantPaths(checkId, target, inspection, changeSet).some(
+        (path) => policyForFile("lint", path, "target").severity !== "off",
+      )
+    );
+  }
   const changed = new Set(
     [...changeSet.files.values()]
       .filter(({ status }) => status !== "deleted")

@@ -443,3 +443,127 @@ describe("safe diagnostic delivery", () => {
     expect(JSON.parse(io.stdout.join("")).outcome).toBe("blocked");
   });
 });
+
+it.each([false, true])(
+  "delivers source-free maintenance observations only with diagnostics=%s",
+  async (diagnostics) => {
+    const io = terminal();
+    const maintenance = {
+      schemaVersion: 1 as const,
+      protocolVersion: 2 as const,
+      effectiveMaxAgeMs: 1000,
+      removedExpired: 2,
+      alreadyMissing: 1,
+      state: "loaded" as const,
+      write: "not-requested" as const,
+    };
+    await executeScanCommand(
+      {
+        cwd: "/repo",
+        format: "json",
+        color: false,
+        animations: false,
+        diagnostics,
+      },
+      io,
+      {
+        ...scanDependencies(),
+        preparePresentation: async (_report, options) => {
+          expect((options as any).diagnostics === true).toBe(diagnostics);
+          return {
+            automatic: false,
+            reportStatus: "not-requested",
+            findings: [],
+            totalFindingCount: 0,
+            abbreviated: false,
+            warnings: [],
+            maintenanceDiagnostics: {
+              ...maintenance,
+              source: "fixture-secret-marker",
+              path: "/private/fixture-secret-marker",
+            },
+          } as any;
+        },
+      },
+    );
+    expect(JSON.parse(io.stdout.join("")).outcome).toBe("incomplete");
+    if (diagnostics)
+      expect(
+        JSON.parse(io.stderr.join("").split("\n")[1]!).reportMaintenance,
+      ).toEqual(maintenance);
+    else expect(io.stderr).toEqual([]);
+    expect(io.stderr.join("")).not.toContain("fixture-secret-marker");
+  },
+);
+
+it("includes fix maintenance observations while dropping unreviewed fields", async () => {
+  const io = terminal();
+  const maintenance = {
+    schemaVersion: 1 as const,
+    protocolVersion: 2 as const,
+    effectiveMaxAgeMs: 1000,
+    removedExpired: 0,
+    alreadyMissing: 1,
+    state: "recovered" as const,
+    write: "capacity-refused" as const,
+  };
+  await executeFixCommand(
+    {
+      cwd: "/repo",
+      format: "json",
+      color: false,
+      animations: false,
+      yes: false,
+      diagnostics: true,
+    },
+    io,
+    {
+      ...fixDependencies(),
+      store: {
+        maintain: async (request) => {
+          expect(request.diagnostics).toBe(true);
+          return {
+            warnings: [],
+            diagnostics: {
+              ...maintenance,
+              content: "fixture-secret-marker",
+            } as any,
+          };
+        },
+      },
+    },
+  );
+  expect(
+    JSON.parse(io.stderr.join("").split("\n")[1]!).reportMaintenance,
+  ).toEqual(maintenance);
+  expect(io.stdout.join("") + io.stderr.join("")).not.toContain(
+    "fixture-secret-marker",
+  );
+});
+
+it("delivers safe scan timings to diagnostics stderr without changing the canonical outcome", async () => {
+  const io = terminal();
+  const { ScanPerformanceRecorder } = await import("../../src/diagnostics/scan-performance.js");
+  const { ZEDBEE_VERSION } = await import("../../src/core/package-version.js");
+  const recorder = new ScanPerformanceRecorder();
+  recorder.record({ checkId: "types", kind: "elapsed", durationMs: 150 });
+  recorder.record({ checkId: "types", kind: "queue", durationMs: 100 });
+  recorder.record({ checkId: "types", kind: "worker", durationMs: 20 });
+  const code = await executeScanCommand({ cwd: "/repo", format: "json", color: false, animations: false, diagnostics: true }, io, {
+    ...scanDependencies(),
+    scan: async options => { options.onPerformanceSummary?.(recorder.snapshot()); return report; },
+  });
+  expect(code).toBe(report.exitCode);
+  const metadata = JSON.parse(io.stderr.join("").split("\n")[1]!);
+  expect(metadata.scan).toMatchObject({ scope: "scan-run", swarmVersion: ZEDBEE_VERSION, performance: { checks: [expect.objectContaining({ elapsed_sum_ms: 150, queue_sum_ms: 100, worker_sum_ms: 20 })] } });
+  expect(JSON.stringify(metadata.scan)).not.toContain("fixture-secret-marker");
+});
+
+it("forwards an explicit no-cache scan request to the existing controller option", async () => {
+  let cache: unknown = "not-called";
+  const code = await executeScanCommand({ cwd: "/repo", format: "json", color: false, animations: false, cache: false }, terminal(), {
+    ...scanDependencies(), scan: async options => { cache = options.cache; return report; },
+  });
+  expect(code).toBe(report.exitCode);
+  expect(cache).toBe(false);
+});

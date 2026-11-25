@@ -1,3 +1,6 @@
+import { typescriptDiagnosticMessage } from "./diagnostic-message.js";
+export { typescriptDiagnosticMessage } from "./diagnostic-message.js";
+import { recordDiagnosticDetail } from "../diagnostic-details.js";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
@@ -27,30 +30,6 @@ function severity(category: ts.DiagnosticCategory): Severity {
   if (category === ts.DiagnosticCategory.Error) return "error";
   if (category === ts.DiagnosticCategory.Warning) return "warning";
   return "info";
-}
-
-let messageTemplates: ReadonlyMap<number, string> | undefined;
-
-/** Compiler-owned prose only: interpolated literals may need source context to detect. */
-export function typescriptDiagnosticMessage(code: number): string {
-  if (messageTemplates === undefined) {
-    const diagnostics =
-      (ts as unknown as { Diagnostics?: Record<string, ts.DiagnosticMessage> })
-        .Diagnostics ?? {};
-    messageTemplates = new Map(
-      Object.values(diagnostics)
-        .filter(
-          (entry) =>
-            Number.isSafeInteger(entry.code) &&
-            typeof entry.message === "string",
-        )
-        .map((entry) => [
-          entry.code,
-          entry.message.replace(/\{\d+\}/gu, "[source]"),
-        ]),
-    );
-  }
-  return messageTemplates.get(code) ?? "TypeScript reported a diagnostic.";
 }
 
 function privateMessageIdentity(
@@ -119,7 +98,7 @@ export function convertTypescriptDiagnostic(
     location === undefined
       ? `repository:${messageIdentity.slice(0, 16)}`
       : `${location.file}:${location.startLine ?? 0}:${location.startColumn ?? 0}`;
-  return {
+  const observation: Observation = {
     check: "types",
     rule,
     identity: `${rule}:${scope}`,
@@ -128,4 +107,11 @@ export function convertTypescriptDiagnostic(
     message: sanitized,
     ...(location === undefined ? {} : { location }),
   };
+  recordDiagnosticDetail(
+    observation,
+    ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+    snapshotRoot,
+    diagnostic.file?.text,
+  );
+  return observation;
 }

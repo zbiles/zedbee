@@ -87,6 +87,8 @@ OSV scanning or update checks.
 
 ## Commands
 
+Use `zedbee --version` (or `zedbee -V`) to print the version of the CLI you invoked.
+
 | Command                 | Purpose                                                                                                                                                      |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `zedbee init`           | Recommend checks and safely add `.zedbeerc.jsonc` plus optional tracked or local pre-commit and pre-merge-commit hooks                                       |
@@ -146,6 +148,8 @@ try {
 Zedbee treats the Git index as the proposed commit. If you stage a file and edit it again without staging the later edit, Zedbee scans the staged version. It materializes isolated baseline and target snapshots by reading the selected Git blobs directly, without checkout EOL conversion, smudge/process filters, or Git LFS materialization, and cleans them after proving execution has stopped. Unproved cleanup retains the snapshots and makes the scan incomplete. Source excerpts therefore come from the exact selected object bytes and line, never from a later working-tree edit.
 
 `zedbee doctor` inspects configuration and environment without running a scan and, by default, inspects any project Prettier setup as data only. Pass `--trust-project-prettier` to have its formatting probe run the project's installed Prettier through the same installation and snapshot resolution that scans use. `scan` and `fix` accept the same flag: it grants invocation-only consent so a fresh, trusted CI checkout can run project formatting without interactive init; a clean clone without the flag reports the formatting check incomplete instead of executing anything.
+
+Doctor's `workspace-inspection` also performs a bounded, data-only check for installed package manifests for `@types/*` entries in staged workspace `dependencies` and `devDependencies`. It checks each discovered project and ancestor installations up to this checkout's root, so hoisted typings do not need a separate `node_modules` in every workspace. Missing declared typings or unsupported installation metadata produce a scoped warning with the package and workspace. Optional dependencies and peers are excluded. This checks installation presence, not package versions, declaration contents, all source imports, or whether every declared typing is needed by a scan. It neither executes project code nor contacts a service. Doctor has not run the selected HEAD/index compiler comparison; run `zedbee scan` to verify it.
 
 A bare `zedbee scan`, along with `zedbee fix` and `zedbee checks`, reads repository configuration from the Git index. `zedbee scan --base <ref>` instead reads it from the committed target `HEAD`. In index mode, a newly staged `.zedbeerc.jsonc` takes effect immediately, while an unstaged or untracked copy cannot weaken the policy applied to staged code; when the selected source has no configuration, Zedbee uses the recommended defaults. `zedbee init` and `zedbee doctor` still inspect the working copy because they create or diagnose local configuration rather than judge a proposed commit.
 
@@ -397,6 +401,8 @@ Automatic scans use branded Ink in a wide ordinary TTY. Narrow terminals, redire
 
 Automatic output and explicit `--format ink` show at most `reporting.terminalFindingLimit` findings; blockers appear first. Explicit Ink writes a temporary report only when its finding preview overflows. If an automatic or overflowed Ink report cannot be retained safely, Zedbee shows every finding, omits report paths and configured guidance, preserves the canonical scan outcome, and prints the fixed `REPORT UNAVAILABLE` alert at both the top and bottom. The closing alert occupies `NEXT STEPS` in the branded automatic dashboard. A dashboard without closing callouts omits that panel. Any `REPORT DELIVERY WARNING` is a detail panel, not that fixed alert.
 
+Long text-mode scans print an update to stderr every 30 seconds. The update shows the scan phase or active checks, with the current parent number during a staged merge. The final report goes to stdout.
+
 Explicit `--format text`, `--format json`, and `--format sarif` output remains complete, has no finding cap, and writes no sidecar. Redirect an explicit format when you need a durable saved location. SARIF is the complete, deterministically ordered enterprise export and retains Zedbee's normal exit status. See the [reporting guide](reporting.md) for the full contract, including incomplete-scan notifications, retention, and source-excerpt behavior.
 
 For coding tools and CI, prefer `zedbee scan --format json` or `zedbee scan --format sarif` when the receiving system ingests SARIF. Both are versioned, deterministically ordered, ANSI-free, repository-relative, and include stable finding IDs, attribution evidence, incomplete states, and network disclosures. When automatic output provides a complete report path, coding tools must process that file rather than only the preview. They must respect exit code 2 as unknown/incomplete—not as a clean scan—and should never bypass the hook merely because a finding is not automatically fixable.
@@ -445,6 +451,10 @@ Ordinary `git rebase` and `git cherry-pick` operations do not run Zedbee's pre-c
 
 ## Cache and performance
 
+Use `zedbee scan --no-cache` for a diagnostic run without observation-cache reads or writes. It preserves analysis and input validation; service reuse remains separately controlled by `--no-service`. The default cache policy is unchanged.
+
+Saved JSON reports include bounded local scan timing metadata when available. See [local timing diagnostics](reporting.md#local-scan-timing-diagnostics) for the distinction between elapsed, queue and worker time.
+
 Zedbee may cache content-addressed, normalized observations for audited local analyzers. Cache keys include source mode, the exact baseline and target identity, snapshot inventories, policy, workspace/config inputs, installed engine package identities, and runtime platform. TypeScript and lint capture their dependency files and resolution state; Knip captures its permitted snapshot inputs and package-absence guards. These inputs are checked again before saved findings are reused. Incomplete metadata prevents saving or reusing a result, and unknown checks default to uncached. Missing engine package metadata, cache failures, and corruption are misses and never reduce coverage. Source, raw analyzer output, Secretlint observations, OSV results, secrets, and online response bodies are never stored in the observation cache. Cached and uncached reports are required to remain semantically identical.
 
 Scan time depends on project size, enabled checks, baseline comparison, and validated cache reuse. A running service does not mean every analyzer remains loaded: some engines retire after a session or snapshot side. These lifecycle choices do not guarantee faster scans. See [safe analyzer diagnostics](reporting.md#safe-analyzer-diagnostics) to investigate a slow or incomplete job.
@@ -478,7 +488,35 @@ See [the complete check matrix](checks.md), [support matrix](support.md), [priva
 - For files intentionally outside every TypeScript project, a file override can set `checks.lint.typeInformation` to `"when-available"`. Zedbee then runs basic TypeScript lint without rules that require type information. The default is `"required"`; Zedbee never reduces coverage silently.
 - Intent-to-add entries are excluded from index mode as unstaged. Git LFS pointers, submodule pointers, and binary inputs selected by enabled text/source checks remain incomplete in either source mode with every affected path reported; use `pathExclusions` to intentionally suppress paths for specific checks.
 - OSV connectivity failures follow `checks.vulnerabilities.onUnavailable`: `block` fails closed, while `warn` reports the incomplete check and permits the commit if nothing else blocks.
-- If a hook cannot find Zedbee, restore the project-local dev dependency; generated hooks deliberately use `npx --no-install`.
+- If a hook cannot find Zedbee, restore this checkout's dependencies using the repository's package-manager instructions. Fresh worktrees need their own available installation. Current generated hooks check their selected local CLI before starting Node and explain when no scan ran; they do not download a replacement or use another checkout's copy. Missing dependencies required by a running check are reported separately as incomplete analysis.
+- Upgrading the installed package alone does not rewrite existing hooks. The next scan detects recognized outdated generated commands and displays **HOOK UPDATE NEEDED** after the scan result, inside the branded frame when using Ink. Plain-text output carries the same notice, JSON has separate `hookUpdate` metadata, and `zedbee doctor` reports a hook-state warning. This setup advice does not add findings or change the scan outcome, and repeats until the commands are refreshed. Run `zedbee init` to preview and apply the generated hook refresh. Custom hook commands are preserved and need a manual update. Lefthook and simple-git-hooks still require their normal activation step when setup reports activation as pending. Inspection is local and read-only; it never runs project hooks or downloads an update. The reminder appears when Swarm next runs, rather than in the package manager's installation output.
+- When a linked worktree uses the main checkout's Husky dispatcher, `scan` and `doctor` inspect the shared hook. Run `zedbee init` in the main checkout to refresh it.
 - pnpm and modern Yarn lockfiles that use YAML alias references (including anchor-based reuse) make vulnerability analysis incomplete. Zedbee deliberately disables alias expansion to keep lockfile parsing bounded. Regenerate the lockfile with the package manager rather than hand-authoring reusable YAML nodes.
 - If a repository commits a package beneath `node_modules` and source code imports it, managed Knip analysis is incomplete. Zedbee refuses to let snapshot-controlled packages participate in analyzer module resolution; remove the committed package and restore dependencies through the package manager and lockfile.
 - Very large jscpd source lists can exceed the operating system argument limit, and framework-heavy Knip projects may need future managed profiles. Both cases are reported rather than silently skipped.
+
+### Selected changes and check coverage
+
+Scan output distinguishes completed, skipped and incomplete check executions. Multiple workspace targets can contribute separate executions. Disabled checks are not counted as skipped. When every reported check is skipped, an allowed result says no applicable checks ran; when the execution list is empty, it says no checks ran for the selected changes. Neither claims that code was validated.
+
+Optional JSON `changeSummary` contains `added`, `modified`, `deleted` and `renamed` path counts from the selected index or commit comparison. Renames count once. The field is absent when change discovery failed and for combined merge comparisons. Existing `summary.passed` still counts completed executions without findings.
+
+A scan does not know whether an earlier staging command failed. Chain staging and committing with `&&` and review the selected changes; see [staging troubleshooting](support.md#staging-and-deletion-only-commits).
+
+Experimental ESLint setup options for `zedbee init`:
+
+- `--eslint-engine managed|project`: select bundled rules or the project's installed ESLint.
+- `--trust-project-eslint`: explicitly grant execution trust when applying project setup.
+- `--allow-project-eslint-messages`: separately allow source-bearing diagnostic text in local reports.
+
+Review the experimental support boundary in [Checks](checks.md#experimental-project-eslint)
+before choosing project mode. `zedbee doctor` inspects installation, flat config,
+and stored trust as data, without executing the configuration.
+
+### Managed diagnostic messages
+
+`zedbee scan --diagnostic-messages contextual` preserves reviewed module, member and function descriptions in local output. This is the default. `--diagnostic-messages source-free` requests trusted source-free explanations. Combine it with `--no-source` for a report without diagnostic names or source excerpts. The repository setting is `reporting.diagnosticMessages`; the CLI choice overrides it.
+
+Contextual output is local reporting, including temporary JSON reports, and can contain source-derived names. Sensitive or unsupported details are withheld with redaction metadata. Telemetry, ordinary progress events and persistent observation-cache prose remain source-free. Native project ESLint full messages still require their separate local permission.
+
+The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.

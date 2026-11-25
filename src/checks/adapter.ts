@@ -20,6 +20,9 @@ export interface CheckTarget {
  * this contract; legacy finding adapters continue returning CheckResult meanwhile.
  */
 export interface CheckObservationSet<TObservation = Observation> {
+  readonly comparisonContext?: import("./comparison-context.js").ComparisonContext;
+  readonly diagnosticDetails?: readonly import("./diagnostic-details.js").DiagnosticDetail[];
+  readonly eslintAnalysis?: import("../core/types.js").EslintAnalysis;
   readonly checkId: string;
   readonly target: CheckTarget;
   readonly baselineObservations: readonly TObservation[];
@@ -31,6 +34,7 @@ export interface CheckObservationSet<TObservation = Observation> {
 }
 
 export interface InspectionContext {
+  readonly signal?: AbortSignal;
   /** A staged merge must retain target-only findings throughout each affected project. */
   readonly mergeComparison?: boolean;
   repositoryRoot: string;
@@ -59,18 +63,22 @@ export interface CheckExecutionResult {
   readonly fixCandidates?: readonly CheckFixCandidate[];
 }
 
-export type CheckApplicability =
-  | { applies: false; reason: string }
-  | {
-      applies: true;
-      executionClass: ExecutionClass;
-      requiresBaseline: boolean;
-      targets: readonly CheckTarget[];
-      networkDisclosure?: {
-        readonly services: readonly string[];
-        readonly metadata: readonly string[];
-      };
-    };
+export type CheckApplicability = Readonly<{
+  independentTargets?: readonly CheckTarget[];
+}> &
+  (
+    | { applies: false; reason: string }
+    | {
+        applies: true;
+        executionClass: ExecutionClass;
+        requiresBaseline: boolean;
+        targets: readonly CheckTarget[];
+        networkDisclosure?: {
+          readonly services: readonly string[];
+          readonly metadata: readonly string[];
+        };
+      }
+  );
 
 export interface CheckRunContext extends InspectionContext {
   /** Read-only paths only; adapters never receive snapshot cleanup authority. */

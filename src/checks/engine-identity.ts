@@ -1,3 +1,7 @@
+import {
+  managedHooksRevision,
+  managedHooksProvenanceSha256,
+} from "./react/managed-hooks-identity.js";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,30 +27,31 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "@tybys/wasm-util",
       "@emnapi/core",
       "@emnapi/runtime",
+      "prettier",
     ]),
-    revision: "knip-snapshot-wasi-11.24.2-07f08138-v9-next-entries",
+    revision: "knip-snapshot-wasi-11.24.2-07f08138-v11-vite-policy-snapshots",
   }),
   lint: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
     revision:
-      "captured-inputs-v4-consumer-isolated-programs+diagnostic-privacy-v1",
+      "captured-inputs-v4-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
   }),
   types: Object.freeze({
     packages: Object.freeze(["typescript"]),
     revision:
-      "captured-inputs-v5-consumer-isolated-programs+diagnostic-privacy-v1",
+      "captured-inputs-v5-consumer-isolated-programs+project-relative-probes-v1+comparison-capacity-v1+diagnostic-privacy-v1+comparison-context-v1",
   }),
   cyclomaticComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "complexity-v6-source-identities",
+    revision: "complexity-v7-source-moves",
   }),
   readabilityComplexity: Object.freeze({
     packages: Object.freeze(["eslint", "typescript-eslint", "typescript"]),
-    revision: "zedbee-readability-v6-source-identities",
+    revision: "zedbee-readability-v7-source-moves",
   }),
   structuralSecurity: Object.freeze({
     packages: Object.freeze(["@ast-grep/napi", "typescript"]),
-    revision: "zedbee-structural-rules-v3",
+    revision: "zedbee-structural-rules-v4",
   }),
   duplication: Object.freeze({
     packages: Object.freeze(["jscpd", "typescript"]),
@@ -65,7 +70,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "eslint-plugin-react-hooks",
       "semver",
     ]),
-    revision: "zedbee-react-calibration-v2+diagnostic-privacy-v1",
+    revision: `zedbee-react-calibration-v3-source-moves+changed-local-files-v1+diagnostic-privacy-v1+${managedHooksRevision}:${managedHooksProvenanceSha256}`,
   }),
   reactAccessibility: Object.freeze({
     packages: Object.freeze([
@@ -74,7 +79,7 @@ const ENGINE_IDENTITY_METADATA = Object.freeze({
       "typescript",
       "eslint-plugin-jsx-a11y",
     ]),
-    revision: "diagnostic-privacy-v1",
+    revision: "diagnostic-privacy-v1+focusable-separator-v2+changed-local-files-v1",
   }),
 }) satisfies Readonly<
   Record<CacheableObservationCheckId, EngineIdentityMetadata>

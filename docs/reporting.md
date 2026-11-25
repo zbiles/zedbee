@@ -41,7 +41,7 @@ age. Redirect explicit JSON when durable fix-plan metadata is required.
 
 An automatic scan (`zedbee scan` or `zedbee scan --format auto`) always writes a complete versioned JSON report to operating-system temporary storage. A pass with zero findings still receives a report. Its complete report path appears before the final output and after the final result; the path is printed only after a complete report exists. A wide ordinary TTY uses branded Ink. A narrow terminal, redirected output, CI, `TERM=dumb`, or screen-reader output uses a linear ANSI-free result.
 
-Automatic output shows up to 25 findings by default, with blockers first; that limit applies only to findings. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths remain complete. Explicit `--format ink` is a bounded preview using the same limit, but writes a temporary report only when its finding preview overflows. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
+Automatic output shows up to 25 findings by default, with blockers first. Blocking parse, unresolved-input, and supported compiler-configuration failures precede unsafe/implicit-any findings; independent secrets and structural-security blockers also take priority. Omitted findings are counted by check and rule, with complete details in the full report. This ordering does not establish that one finding caused another, and the JSON/SARIF ordering and every finding remain unchanged. In staged mode, unresolved imports receive general staged-diff guidance; it does not assert that an importer has unstaged edits or that a previous staging command failed. That preview limit applies only to findings. Counts, disclosures, incomplete checks, report warnings, guidance, and report paths remain complete. Explicit `--format ink` is a bounded preview using the same limit, but writes a temporary report only when its finding preview overflows. Fixing only the visible preview is insufficient; read the complete report and address every applicable finding.
 
 Configure the limit and maximum report age without making any lockfile changes:
 
@@ -62,6 +62,25 @@ Configure the limit and maximum report age without making any lockfile changes:
 
 `terminalFindingLimit` defaults to 25; set it to any positive integer or `"all"` to show every finding. `temporaryReportMaxAge` defaults to `"24h"` and accepts positive whole-number durations such as `"30m"`, `"24h"`, and `"7d"`. Temporary reports become eligible for cleanup at the configured age and are removed during a subsequent Zedbee maintenance run. The operating system may remove them sooner. These handoffs are not archives. This configuration example is illustrative; `zedbee init` writes editable recommended guidance. `opening` and `nextStep` can be blanked independently with `""` to hide that heading/message. Complete-report lines remain when a configured message is blank.
 
+The **current maintenance request's age policy** applies to all tracked scan and
+fix reports at the same canonical checkout directory. For example, a 21-hour-old
+report survives a passing scan with `24h`, but a later scan or fix request with
+`1h` may remove it. The expiry policy is not stored separately per report. Linked
+worktrees with different physical checkout roots have separate directories;
+branches and scan/fix invocations at one root share a directory. Capacity refusal
+does not evict younger reports, and unknown files are preserved when lifecycle
+state cannot be recovered. This behavior does not establish the cause of any
+previously missing report.
+
+With `--diagnostics`, the local stderr diagnostics include a bounded
+`reportMaintenance` record: effective maximum age in milliseconds, protocol
+version, the number of reports actually removed after expiry, the number of
+expired tracked entries already missing, lifecycle-state recovery status, and
+write/capacity outcome. An already-missing entry is not counted as a removal and
+has no inferred cause. These observations contain no report content, filenames,
+repository paths, or report paths, and are not telemetry. They describe this
+maintenance request only and are absent without the opt-in flag.
+
 The temporary JSON report follows the disk source-excerpt policy, not the interactive preview policy. The default `"interactive"` policy can show source excerpts live in Ink but omits ordinary excerpts from disk. Set `sourceExcerpts` to `"always"` or pass `--include-source` to persist them; `"never"` or `--no-source` omits them. Secret content is always redacted.
 
 Cleanup and write warnings are non-blocking report-maintenance diagnostics and do not replace the scan's normal outcome. A cleanup warning identifies a safely validated path when possible. A report failure prints no path or configured guidance, restores every finding, preserves the canonical scan outcome, and shows the fixed `REPORT UNAVAILABLE` alert twice—above and below the result. `REPORT DELIVERY WARNING` is a detail panel for report-maintenance information, not the fixed failure alert.
@@ -75,6 +94,19 @@ npx zedbee scan --format text > zedbee-report.txt
 npx zedbee scan --format json > zedbee-report.json
 npx zedbee scan --format sarif > zedbee.sarif
 ```
+
+To retain an investigation artifact outside OS temporary storage while preserving
+the scan's exit status (including with shell `errexit` enabled):
+
+```sh
+status=0
+npx zedbee scan --format json > ./investigation-report.json || status=$?
+exit "$status"
+```
+
+Use `--format sarif` with the same pattern for SARIF. Choose a durable destination
+and manage its access and retention yourself; a temporary handoff path is not an
+archive.
 
 These explicit formats create no sidecar or automatic temporary report. Text is stable human-readable output, JSON is Zedbee's versioned machine contract, and SARIF is the enterprise interchange format. Redirect explicit JSON or SARIF when durable output is required. Coding tools that receive a complete-report path must process it and respect exit code 2 as incomplete required analysis; they must not treat a preview or an incomplete scan as clean.
 
@@ -112,3 +144,30 @@ Explicit output is complete even when automatic terminal presentation is constra
 SARIF follows the configured source-excerpt policy. Redirected SARIF omits ordinary source excerpts by default; use `--include-source` to opt in, `--no-source` to suppress them, or configure `reporting.sourceExcerpts`. Secret findings remain redacted in every format. Index-mode SARIF uses the exact staged Git-index snapshot; base-mode SARIF uses committed `HEAD`. Neither observes later working-tree edits.
 
 SARIF columns use UTF-16 code units, declared by `run.columnKind: "utf16CodeUnits"`. Diagnostic locations retain their original ranges. Permitted source excerpts appear in `result.properties["zedbee/sourceExcerpt"]` with `line`, `text`, `redacted: false`, and `truncated`; the existing `sourceExcerptTruncated` property also records truncation. Excerpt text is a sanitized display line: tabs expand to spaces, unsafe characters are replaced, and long lines may be truncated. It is therefore not emitted as a SARIF `region.snippet` or `contextRegion`. Redacted and omitted excerpts expose no source text.
+
+Experimental project ESLint adds optional `eslintAnalysis` metadata to its lint
+check result: `version`, `checkedFiles`, `ignoredFiles`, `excludedFiles`, `baseline` (`compared` or
+`new-coverage`), and `messages` (`redacted` or `full`). Both snapshot sides use the
+reported target-installed toolchain. Zero checked files means skipped coverage,
+not a successful lint run. A requested full-message policy without its separate
+local permission remains `redacted` in the actual result.
+
+### Diagnostic message detail
+
+Managed diagnostics default to contextual messages so module, member and function descriptions can explain the finding. Use `zedbee scan --diagnostic-messages source-free` to request source-free explanations. Set `reporting.diagnosticMessages` in repository configuration for the default. The command-line choice overrides that default.
+
+Contextual mode supports the pinned TS2591 missing-name template (including `process` and the standard Node type-install hint) and reviewed built-in React entity escape alternatives. Custom React `forbid` characters and alternatives are not a raw-message bypass. Source-free mode deliberately retains placeholder redaction for contextual substitutions. Validated complexity findings include their numeric score, effective limit, and baseline score when worsening, without adding entity names to the prose.
+
+JSON and terminal output use the same reviewed message. A finding's optional `messageRedaction` metadata explains withheld detail. This affects presentation; severity, attribution, stable finding IDs and fix selection use the underlying observation. Source excerpts have their own control. Project ESLint's full-message permission is separate.
+
+A `project-delta` finding means a diagnostic is new in a validated comparison; it is not an exact causal trace. If required installation inputs are unavailable, Swarm reports an incomplete check with setup guidance rather than claiming the commit introduced a source error. A required incomplete check prevents a misleading pass. Other completed checks still report their results.
+
+The managed source-free option does not override separately authorized full project ESLint messages. When sharing a report from project ESLint mode, also set `reporting.projectEslintMessages` to `"redacted"`.
+
+## Local scan timing diagnostics
+
+JSON reports can include an optional `diagnostics` object with its own `schemaVersion: 1`, `scope: "scan-run"`, the actual installed Swarm version, and bounded performance statistics. Older reports without this object remain valid. `zedbee scan --diagnostics` also writes these statistics to stderr.
+
+Elapsed check time can include worker waiting. Queue time measures waiting for a worker; worker time measures execution wall time, including operating-system scheduling. These values overlap and are not analyzer CPU measurements. The scope ends with scan-run cleanup; later CLI rendering and shutdown are separate command-stage timings. Missing measurements stay absent, and `partial` identifies incomplete measurement.
+
+This metadata contains only allowlisted check identities, numeric phase/cache/queue/worker statistics and execution-mode information. It contains no source, workspace names, process arguments or environment values, and does not add fields to telemetry. Optional diagnostic failures do not alter findings or the scan outcome.

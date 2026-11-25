@@ -1,3 +1,8 @@
+import {
+  localScanDiagnostics,
+  type LocalScanDiagnostics,
+} from "../diagnostics/local-scan-diagnostics.js";
+import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { TELEMETRY_CHECK_IDS } from "../telemetry/schema.js";
 import type {
   TelemetrySummary,
@@ -20,11 +25,12 @@ import {
 } from "../reporting/temporary-reports.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { runScan, type RunScanOptions } from "../scan/run-scan.js";
-import { resolveInstalledCliCommand } from "../hooks/command.js";
+import { inspectHookMaintenance } from "../hooks/update-notice.js";
 import { withUnreportableCleanupFailure } from "../scan/incomplete-report.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import type { ScanReport } from "../scan/report.js";
+import { createTextScanProgress } from "../reporting/text-scan-progress.js";
 import type { ScanEvent } from "../checks/events.js";
 import { hasAnalysisCleanupFailure } from "../scan/analysis-failure.js";
 import {
@@ -48,7 +54,7 @@ export interface ScanCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly telemetryObserver?: Pick<
     CommandTelemetry,
-    "observeRepository" | "scanReport"
+    "observeRepository" | "scanReport" | "performanceSummary"
   >;
   service?: boolean;
   executor?: AnalyzerExecutor;
@@ -59,9 +65,11 @@ export interface ScanCommandOptions {
   baseRef?: string;
   configPath?: string;
   sourceExcerpts?: SourceExcerptOverride;
+  diagnosticMessages?: "contextual" | "source-free";
   timeout?: string;
   noTimeout?: boolean;
   diagnostics?: boolean;
+  cache?: false;
   signal?: AbortSignal;
   /** Invocation-only consent for project Prettier execution. */
   projectPrettierTrust?: boolean;
@@ -210,6 +218,8 @@ export async function executeScanCommand(
   const started = performance.now();
   const stages: DiagnosticTimings = {};
   let diagnosticEntries: readonly DiagnosticEntry[] = [];
+  let scanDiagnostics: LocalScanDiagnostics | undefined;
+  let reportMaintenance: unknown;
   let cleanupFailed = false;
   let session: InkSession | undefined;
   let renderingFailed = false;
@@ -254,6 +264,10 @@ export async function executeScanCommand(
       io.width,
       io.env,
     );
+    const textProgress =
+      format === "text"
+        ? createTextScanProgress((line) => io.writeStderr(line))
+        : undefined;
     const scanOptions: RunScanOptions = {
       executor,
       repositoryRoot,
@@ -267,17 +281,30 @@ export async function executeScanCommand(
           }
         : {}),
       reportingSurface: format,
+      ...(options.cache === false ? { cache: false as const } : {}),
       ...(options.baseRef === undefined ? {} : { baseRef: options.baseRef }),
       ...(options.sourceExcerpts === undefined
         ? {}
         : { sourceExcerpts: options.sourceExcerpts }),
       ...(configPath === undefined ? {} : { configPath }),
+      ...(options.diagnosticMessages === undefined
+        ? {}
+        : { diagnosticMessages: options.diagnosticMessages }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
       ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
       ...(options.noTimeout ? { noTimeout: true } : {}),
       ...(options.projectPrettierTrust === true
         ? { projectPrettierTrust: true }
         : {}),
+      onPerformanceSummary(summary) {
+        scanDiagnostics = localScanDiagnostics({
+          schemaVersion: 1,
+          scope: "scan-run",
+          swarmVersion: ZEDBEE_VERSION,
+          performance: summary,
+        });
+        options.telemetryObserver?.performanceSummary?.(summary);
+      },
       onConfigurationSummary(summary) {
         try {
           options.telemetrySummary?.({
@@ -293,6 +320,7 @@ export async function executeScanCommand(
       onEvent(event) {
         // Event observers must never change the analyzer outcome.
         try {
+          textProgress?.update(event);
           if (format === "ink" && !renderingFailed) session?.update(event);
           else if (event.type === "git-soft-timeout")
             writeGitSoftTimeoutWarning(io);
@@ -322,9 +350,14 @@ export async function executeScanCommand(
       }
     }
 
-    let report = await timeCommandStage(stages, "analysis", () =>
-      dependencies.scan(scanOptions),
-    );
+    let report = await timeCommandStage(stages, "analysis", async () => {
+      const stop = textProgress?.start();
+      try {
+        return await dependencies.scan(scanOptions);
+      } finally {
+        stop?.();
+      }
+    });
     try {
       await closeExecutor();
     } catch {
@@ -350,20 +383,19 @@ export async function executeScanCommand(
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    // Resolving metadata never executes the installed package. Missing or
-    // unreadable installations retain the canonical no-install guidance.
-    const installedCliCommand = await resolveInstalledCliCommand(
-      report.repositoryRoot,
-    ).catch(() => undefined);
-    if (installedCliCommand !== undefined) {
+    const { installedCliCommand, hookUpdate } =
+      await inspectHookMaintenance(repositoryRoot);
+    if (installedCliCommand !== undefined)
       report = { ...report, installedCliCommand };
-    }
+    if (hookUpdate !== undefined) report = { ...report, hookUpdate };
     const presentation = await timeCommandStage(stages, "report", () =>
       dependencies.preparePresentation(report, {
         requestedFormat: options.format,
         selectedFormat: format,
+        ...(options.diagnostics === true ? { diagnostics: true } : {}),
       }),
     );
+    reportMaintenance = presentation.maintenanceDiagnostics;
     options.signal?.throwIfAborted();
 
     if (format === "json") {
@@ -456,6 +488,8 @@ export async function executeScanCommand(
         cancelled: options.signal?.aborted === true,
         cleanupFailed,
         renderingFailed,
+        reportMaintenance,
+        scanDiagnostics,
       });
     if (cleanupFailed) return 2;
   }

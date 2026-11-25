@@ -1,3 +1,11 @@
+import { sourceMoves, workspaceOwns } from "./source-moves.js";
+import {
+  pairSourceMoveMetrics,
+  pairSourceMoveLocations,
+} from "../attribution/pair-source-moves.js";
+import { sanitizeComparisonContext } from "./comparison-context.js";
+import { CheckIncompleteError } from "./incomplete-error.js";
+import { sanitizeEslintAnalysis } from "./sanitize-result.js";
 import { pairLocationObservations } from "../attribution/pair-locations.js";
 import {
   compareCodeUnits,
@@ -344,6 +352,9 @@ export async function observationCheckResult(
   context: CheckRunContext,
   requiresBaseline: boolean,
 ): Promise<CheckResult> {
+  const comparison = rawSet.comparisonContext === undefined ? undefined : sanitizeComparisonContext(rawSet.comparisonContext);
+  if (rawSet.projectDelta === true && (checkId === "types" || checkId === "lint") && rawSet.eslintAnalysis === undefined && comparison === undefined) throw new CheckIncompleteError({ code: "COMPARISON_INPUTS_UNVERIFIED", message: "Analysis did not provide validated snapshot comparison evidence.", remediation: "Rerun with an updated managed analyzer and a stable workspace installation." });
+  if (comparison !== undefined && comparison.status !== "comparable") throw new CheckIncompleteError({ code: "COMPARISON_INPUTS_UNVERIFIED", message: "Analysis could not verify that the snapshot comparison used stable required inputs.", remediation: "Ensure dependencies are installed and unchanged while scanning, then rerun." });
   let set = snapshotSet(rawSet, checkId, context.target, requiresBaseline);
   const hasMetrics = [...set.baseline, ...set.target].some(
     (observation) => observation.metric !== undefined,
@@ -353,6 +364,22 @@ export async function observationCheckResult(
     : undefined;
   assertUniqueMetricFingerprints("baseline", set.baseline);
   assertUniqueMetricFingerprints("target", set.target);
+  const supportsMoves = [...set.baseline, ...set.target].some(observation =>
+    ((checkId === "cyclomaticComplexity" || checkId === "readabilityComplexity") && observation.metric !== undefined) ||
+    (checkId === "reactCorrectness" && observation.rule === "react/no-unescaped-entities")
+  );
+  const moves = supportsMoves
+    ? await sourceMoves(context, checkId as CheckId, {
+        crossFileOnly: checkId !== "reactCorrectness",
+      })
+    : undefined;
+  const validMoveBaselinePaths = new Set(
+    moves?.pairs
+      .filter((pair) =>
+        workspaceOwns(context, "target", pair.target.entity.file),
+      )
+      .map((pair) => pair.baseline.entity.file),
+  );
   const baselinePaths = observationPaths(set.baseline);
   const targetPaths = observationPaths(set.target);
   const [baselineRegistry, targetRegistry] = await Promise.all([
@@ -378,8 +405,9 @@ export async function observationCheckResult(
       context.target,
       context.baselineInspection,
       baselineRegistry,
-      new Set(
-        [...context.changeSet.files.values()].flatMap((file) =>
+      new Set([
+        ...validMoveBaselinePaths,
+        ...[...context.changeSet.files.values()].flatMap((file) =>
           file.status === "renamed" &&
           file.previousPath !== undefined &&
           mostSpecificWorkspace(context.targetInspection, file.path)
@@ -387,7 +415,7 @@ export async function observationCheckResult(
             ? [file.previousPath]
             : [],
         ),
-      ),
+      ]),
     );
   if (targetRegistry !== undefined)
     validateObservationPaths(
@@ -397,7 +425,7 @@ export async function observationCheckResult(
       context.targetInspection,
       targetRegistry,
     );
-  if (context.mergeComparison === true) {
+  if (context.mergeComparison === true || checkId === "reactAccessibility") {
     const locationOnly = (observation: Observation) =>
       observation.location !== undefined &&
       observation.entity === undefined &&
@@ -440,6 +468,46 @@ export async function observationCheckResult(
       ],
     };
   }
+  if (moves !== undefined) {
+    if (checkId === "reactCorrectness") {
+      const files = async (
+        paths: readonly string[],
+        registry: SnapshotRegistry | undefined,
+      ) => {
+        const result: Record<string, string> = {};
+        for (const path of paths) {
+          context.signal.throwIfAborted();
+          if (registry !== undefined)
+            result[path] = await readContainedFile(registry, path);
+        }
+        return result;
+      };
+      const paired = pairSourceMoveLocations(set.baseline, set.target, moves, {
+        baseline: await files(
+          [
+            ...new Set(moves.pairs.map((pair) => pair.baseline.entity.file)),
+          ].filter((file) => baselinePaths.includes(file)),
+          baselineRegistry,
+        ),
+        target: await files(
+          [
+            ...new Set(moves.pairs.map((pair) => pair.target.entity.file)),
+          ].filter((file) => targetPaths.includes(file)),
+          targetRegistry,
+        ),
+      });
+      set = {
+        ...set,
+        baseline: paired.baselineObservations,
+        target: paired.targetObservations,
+      };
+    } else {
+      set = {
+        ...set,
+        baseline: pairSourceMoveMetrics(set.baseline, set.target, moves),
+      };
+    }
+  }
   const entities = await changedEntities(context, set.target, targetRegistry);
   const compareAllObservations =
     checkId === "vulnerabilities" && metricPolicy === undefined;
@@ -471,11 +539,40 @@ export async function observationCheckResult(
     entities,
     context,
   );
+  const eslintAnalysis =
+    rawSet.eslintAnalysis === undefined
+      ? undefined
+      : sanitizeEslintAnalysis(rawSet.eslintAnalysis);
   return {
+    ...(comparison === undefined ? {} : { comparisonContext: comparison }),
+    ...(eslintAnalysis === undefined ? {} : { eslintAnalysis }),
+    ...(eslintAnalysis?.checkedFiles === 0
+      ? {
+          skipReason:
+            "Project ESLint did not check any files; all candidate files were ignored or excluded.",
+        }
+      : {}),
     checkId,
     target: context.target.id,
-    status: "completed",
+    status: eslintAnalysis?.checkedFiles === 0 ? "skipped" : "completed",
     durationMs: 0,
-    findings: [...nonMetricFindings, ...metrics].sort(compareFindings),
+    findings: [...nonMetricFindings, ...metrics]
+      .map((finding) =>
+        moves === undefined ||
+        moves.diagnostics.length === 0 ||
+        !finding.attribution.staged
+          ? finding
+          : {
+              ...finding,
+              attribution: {
+                ...finding.attribution,
+                evidence: [
+                  ...finding.attribution.evidence,
+                  ...moves.diagnostics.map((code) => `source-move:${code}`),
+                ],
+              },
+            },
+      )
+      .sort(compareFindings),
   };
 }

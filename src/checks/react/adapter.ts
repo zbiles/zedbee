@@ -1,3 +1,7 @@
+import { findWorkspace } from "../../inspection/workspaces.js";
+import { changedFilePaths } from "../changed-file-paths.js";
+import { classifyCompilerChanges } from "../compiler-change-inputs.js";
+import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type { ESLint } from "eslint";
@@ -77,15 +81,6 @@ function reactAnalysisFailure(
   });
 }
 
-function workspaceFor(
-  inspection: RepositoryInspection,
-  target: CheckTarget,
-): WorkspaceInspection | undefined {
-  return inspection.workspaces.find(
-    ({ relativeRoot }) => relativeRoot === target.relativeRoot,
-  );
-}
-
 async function prepareSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -96,6 +91,7 @@ async function prepareSide(
   side: SnapshotSide,
   policyForFile: FilePolicyResolver,
   signal: AbortSignal,
+  selectedPaths?: ReadonlySet<string>,
 ): Promise<PreparedSide | undefined> {
   const failure =
     id === "reactCorrectness"
@@ -105,10 +101,16 @@ async function prepareSide(
   try {
     const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
     if (canonicalRoot !== inspection.snapshotRoot) throw new Error(failure);
-    const workspace = workspaceFor(inspection, target);
+    const workspace = findWorkspace(inspection, target.relativeRoot);
     if (workspace === undefined) return undefined;
     const files = workspace.sourceFiles
-      .filter((path) => SOURCE.test(path))
+      .filter(
+        (path) =>
+          SOURCE.test(path) &&
+          (selectedPaths === undefined ||
+            selectedPaths.has(path) ||
+            policyForFile(id, path, side).when === "always"),
+      )
       .sort(compareCodeUnits);
     if (files.length === 0) return undefined;
     const groups = groupFilesByRules(files, side, policyForFile, id);
@@ -149,6 +151,9 @@ async function collectPreparedSide(
         mode,
         managedIgnores: [],
         ruleOverrides: group.rules,
+        ...(group.accessibilitySettings === undefined
+          ? {}
+          : { accessibilitySettings: group.accessibilitySettings }),
         ...(prepared.reactVersion === undefined
           ? {}
           : {
@@ -285,6 +290,15 @@ export function createReactAdapter(
         }
       : {}),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
+      const changes =
+        !context.mergeComparison && context.policy.when !== "always"
+          ? await classifyCompilerChanges(context)
+          : undefined;
+      const local =
+        !context.mergeComparison &&
+        context.policy.when !== "always" &&
+        changes?.complete === true &&
+        !changes.requiresBroadComparison;
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
         context.baselineInspection,
@@ -295,6 +309,7 @@ export function createReactAdapter(
         "baseline",
         context.policyForFile,
         context.signal,
+        local ? changedFilePaths(context, "baseline") : undefined,
       );
       const collectTarget = await prepareSide(
         context.snapshots.targetDir,
@@ -306,6 +321,7 @@ export function createReactAdapter(
         "target",
         context.policyForFile,
         context.signal,
+        local ? changedFilePaths(context, "target") : undefined,
       );
       const [baselineObservations, targetObservations] =
         await settleSnapshotSides(
@@ -330,10 +346,56 @@ export function createReactAdapter(
           context.signal,
           isAnalyzerWorker(),
         );
+      const extraBaseline: Observation[] = [];
+      if (id === "reactCorrectness") {
+        const moves = await sourceMoves(context, id, { crossFileOnly: true });
+        const paths = new Set(
+          moves.pairs
+            .filter(
+              (pair) =>
+                pair.syntaxEqual &&
+                workspaceOwns(context, "target", pair.target.entity.file) &&
+                !workspaceOwns(context, "baseline", pair.baseline.entity.file),
+            )
+            .map((pair) => pair.baseline.entity.file),
+        );
+        for (const workspace of context.baselineInspection.workspaces) {
+          const selected = new Set(
+            workspace.sourceFiles.filter((file) => paths.has(file)),
+          );
+          if (selected.size === 0) continue;
+          const prepared = await prepareSide(
+            context.snapshots.baselineDir,
+            context.baselineInspection,
+            {
+              id: workspace.relativeRoot,
+              kind: "workspace",
+              relativeRoot: workspace.relativeRoot,
+            },
+            id,
+            mode,
+            resolveBaselineReactVersion,
+            "baseline",
+            context.policyForFile,
+            context.signal,
+            selected,
+          );
+          extraBaseline.push(
+            ...(await collectPreparedSide(
+              prepared,
+              id,
+              mode,
+              reactCorrectnessConfigFactory,
+              engineFactory,
+              context.signal,
+            )),
+          );
+        }
+      }
       return {
         checkId: id,
         target: context.target,
-        baselineObservations,
+        baselineObservations: [...baselineObservations, ...extraBaseline],
         targetObservations,
       };
     },

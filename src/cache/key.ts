@@ -1,3 +1,4 @@
+import { baselineRenameMap } from "../git/baseline-renames.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readlink, realpath } from "node:fs/promises";
@@ -75,28 +76,6 @@ function validatedCacheSource(
   return Object.freeze({ ...source });
 }
 
-function targetPolicyRenames(
-  changeSet: ChangeSet,
-): ReadonlyMap<string, string> {
-  const renames = new Map<string, string>();
-  for (const file of changeSet.files.values()) {
-    if (file.status !== "renamed") continue;
-    if (file.previousPath === undefined) {
-      throw new TypeError("Expected a renamed file to have a baseline path");
-    }
-    const baselinePath = normalizeRepositoryRelativePath(file.previousPath);
-    const targetPath = normalizeRepositoryRelativePath(file.path);
-    const existing = renames.get(baselinePath);
-    if (existing !== undefined && existing !== targetPath) {
-      throw new TypeError(
-        "Expected each baseline path to have one target path",
-      );
-    }
-    renames.set(baselinePath, targetPath);
-  }
-  return renames;
-}
-
 function targetPolicyPaths(
   paths: readonly string[],
   renames: ReadonlyMap<string, string>,
@@ -127,7 +106,7 @@ export function createEffectiveBehaviorFingerprint(
   paths: readonly string[],
 ) => EffectiveBehaviorFingerprint {
   const policyForFile = createFilePolicyResolver(config, changeSet);
-  const renames = targetPolicyRenames(changeSet);
+  const renames = baselineRenameMap(changeSet);
   return (checkId, paths) => {
     const files = Object.freeze(
       targetPolicyPaths(paths, renames).map((path) =>

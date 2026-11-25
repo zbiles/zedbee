@@ -37,6 +37,8 @@ import {
 } from "./commands/scan.js";
 
 interface CommanderScanOptions {
+  cache: boolean;
+  diagnosticMessages?: "contextual" | "source-free";
   merge?: boolean;
   hookInvocation?: boolean;
   service: boolean;
@@ -68,6 +70,10 @@ interface CommanderDoctorOptions {
 }
 
 interface CommanderInitOptions {
+  diagnosticMessages?: "contextual" | "source-free";
+  eslintEngine?: "managed" | "project";
+  trustProjectEslint?: boolean;
+  allowProjectEslintMessages?: boolean;
   profile: ProfileId;
   hook: InitHookChoice;
   checks?: readonly CheckId[];
@@ -103,6 +109,17 @@ export function scanTimeoutOverrides(
   return typeof timeout === "string" ? { timeout } : {};
 }
 
+function commandTerminalIO() {
+  return {
+    stdinIsTTY: process.stdin.isTTY === true,
+    stdoutIsTTY: process.stdout.isTTY === true,
+    width: normalizeTerminalWidth(process.stdout.columns),
+    env: process.env,
+    writeStdout: (value: string) => process.stdout.write(value),
+    writeStderr: (value: string) => process.stderr.write(value),
+  };
+}
+
 export interface CliDependencies {
   readonly startTelemetry?: typeof startTelemetry;
   readonly executeInitCommand?: typeof executeInitCommand;
@@ -117,6 +134,7 @@ export async function runCli(
 ): Promise<number> {
   const program = new Command()
     .name("zedbee")
+    .version(ZEDBEE_VERSION)
     .description("Diff-aware pre-commit scanning for JavaScript and TypeScript")
     .showHelpAfterError()
     .exitOverride();
@@ -265,6 +283,26 @@ export async function runCli(
 
   program
     .command("init")
+    .addOption(
+      new Option(
+        "--diagnostic-messages <policy>",
+        "managed local message detail; source-free also omits source excerpts",
+      ).choices(["contextual", "source-free"]),
+    )
+    .addOption(
+      new Option(
+        "--eslint-engine <engine>",
+        "use built-in lint rules or experimental project ESLint",
+      ).choices(["managed", "project"]),
+    )
+    .option(
+      "--trust-project-eslint",
+      "explicitly trust the project ESLint configuration and plugins",
+    )
+    .option(
+      "--allow-project-eslint-messages",
+      "separately permit source-bearing project ESLint messages in local reports",
+    )
     .description(
       "preview and safely initialize Zedbee policy, hooks, and GitHub workflow",
     )
@@ -353,6 +391,9 @@ export async function runCli(
             telemetry.summary(value);
           },
           profile: options.profile,
+          ...(options.diagnosticMessages === undefined
+            ? {}
+            : { diagnosticMessages: options.diagnosticMessages }),
           ...(options.workflow === undefined
             ? {}
             : { workflow: options.workflow }),
@@ -365,6 +406,17 @@ export async function runCli(
           ...(options.formattingScope === undefined
             ? {}
             : { formattingScope: options.formattingScope }),
+          ...(options.eslintEngine === undefined
+            ? {}
+            : { eslintEngine: options.eslintEngine }),
+          ...(options.trustProjectEslint === undefined
+            ? {}
+            : { trustProjectEslint: options.trustProjectEslint }),
+          ...(options.allowProjectEslintMessages === undefined
+            ? {}
+            : {
+                allowProjectEslintMessages: options.allowProjectEslintMessages,
+              }),
           trustProjectPrettier: options.trustProjectPrettier,
           yes: options.yes,
           format: options.format,
@@ -435,8 +487,18 @@ export async function runCli(
         "omit exact selected-target source excerpts",
       ).conflicts("includeSource"),
     )
+    .addOption(
+      new Option(
+        "--diagnostic-messages <policy>",
+        "managed diagnostic detail: local contextual names or source-free explanations",
+      ).choices(["contextual", "source-free"]),
+    )
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--timeout <duration>", "set the Git hard timeout for this scan")
+    .option(
+      "--no-cache",
+      "run analysis without observation-cache reads or writes",
+    )
     .option("--no-service", "use a command-owned local analyzer executor")
     .option(
       "--diagnostics",
@@ -461,7 +523,11 @@ export async function runCli(
             ? {}
             : { telemetryObserver: telemetry }),
           format: options.format,
+          ...(options.diagnosticMessages === undefined
+            ? {}
+            : { diagnosticMessages: options.diagnosticMessages }),
           service: options.service,
+          ...(options.cache === false ? { cache: false as const } : {}),
           color: options.color,
           animations: options.animations,
           ...(options.merge === true ? { merge: true } : {}),
@@ -481,14 +547,7 @@ export async function runCli(
             : {}),
           signal: controller.signal,
         },
-        {
-          stdinIsTTY: process.stdin.isTTY === true,
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: normalizeTerminalWidth(process.stdout.columns),
-          env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        },
+        commandTerminalIO(),
       );
     });
 
@@ -543,14 +602,7 @@ export async function runCli(
               : { configPath: options.config }),
             signal: controller.signal,
           },
-          {
-            stdinIsTTY: process.stdin.isTTY === true,
-            stdoutIsTTY: process.stdout.isTTY === true,
-            width: normalizeTerminalWidth(process.stdout.columns),
-            env: process.env,
-            writeStdout: (value) => process.stdout.write(value),
-            writeStderr: (value) => process.stderr.write(value),
-          },
+          commandTerminalIO(),
         );
       },
     );

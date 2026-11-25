@@ -1,3 +1,6 @@
+import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
+import { sanitizeComparisonContext } from "../checks/comparison-context.js";
+import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
 import { sanitizeFormattingCoverage } from "../checks/sanitize-result.js";
 import { compareFindings } from "../core/summarize.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -6,17 +9,20 @@ import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
+import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 
 function serializeFinding(
   finding: Finding,
-  installedCliCommand?: readonly string[],
+  installedCliCommand: readonly string[] | undefined,
+  includeSourceExcerpts: boolean,
 ): Record<string, unknown> {
   const sourceExcerpt =
-    finding.sourceExcerpt === undefined
+    finding.sourceExcerpt === undefined ||
+    (!includeSourceExcerpts && !finding.sourceExcerpt.redacted)
       ? undefined
       : {
           line: finding.sourceExcerpt.line,
-          ...(finding.sourceExcerpt.text === undefined
+          ...(!includeSourceExcerpts || finding.sourceExcerpt.text === undefined
             ? {}
             : { text: finding.sourceExcerpt.text }),
           redacted: finding.sourceExcerpt.redacted,
@@ -28,6 +34,14 @@ function serializeFinding(
     rule: finding.rule,
     severity: finding.severity,
     message: finding.message,
+    ...(finding.messageRedaction === undefined
+      ? {}
+      : {
+          messageRedaction: {
+            redacted: finding.messageRedaction.redacted,
+            reasons: [...finding.messageRedaction.reasons],
+          },
+        }),
     ...(finding.location === undefined ? {} : { location: finding.location }),
     ...(finding.remediation === undefined
       ? {}
@@ -56,7 +70,8 @@ function serializeFinding(
 
 function serializeCheck(
   check: CheckResult,
-  installedCliCommand?: readonly string[],
+  installedCliCommand: readonly string[] | undefined,
+  includeSourceExcerpts: boolean,
 ): Record<string, unknown> {
   const error =
     check.error === undefined
@@ -68,6 +83,9 @@ function serializeCheck(
             : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
           ...(check.error.path === undefined ? {} : { path: check.error.path }),
+          ...(check.error.parseFailures === undefined
+            ? {}
+            : { parseFailures: check.error.parseFailures }),
           ...(check.error.paths === undefined
             ? {}
             : { paths: [...check.error.paths] }),
@@ -85,13 +103,23 @@ function serializeCheck(
             : { remediation: check.error.remediation }),
         };
   return {
+    ...(check.eslintAnalysis === undefined
+      ? {}
+      : { eslintAnalysis: sanitizeEslintAnalysis(check.eslintAnalysis) }),
+    ...(check.comparisonContext === undefined
+      ? {}
+      : {
+          comparisonContext: sanitizeComparisonContext(check.comparisonContext),
+        }),
     checkId: check.checkId,
     ...(check.target === undefined ? {} : { target: check.target }),
     status: check.status,
     durationMs: check.durationMs,
     findings: [...check.findings]
       .sort(compareFindings)
-      .map((finding) => serializeFinding(finding, installedCliCommand)),
+      .map((finding) =>
+        serializeFinding(finding, installedCliCommand, includeSourceExcerpts),
+      ),
     ...(error === undefined ? {} : { error }),
     ...(check.skipReason === undefined ? {} : { skipReason: check.skipReason }),
     ...(check.incompleteDisposition === undefined
@@ -120,13 +148,22 @@ function serializeCheck(
   };
 }
 
-export function renderJson(report: ScanReport): string {
+export function renderJson(
+  report: ScanReport,
+  { includeSourceExcerpts = true }: { includeSourceExcerpts?: boolean } = {},
+): string {
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
   const payload = {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
+    ...(localScanDiagnostics(report.diagnostics) === undefined
+      ? {}
+      : { diagnostics: localScanDiagnostics(report.diagnostics) }),
+    ...(hookUpdateNotice(report) === undefined
+      ? {}
+      : { hookUpdate: hookUpdateNotice(report) }),
     repositoryRoot: ".",
     mode: source.mode,
     baseline: source.baseline,
@@ -138,6 +175,9 @@ export function renderJson(report: ScanReport): string {
       ? {}
       : { requestedBase: source.requestedBase }),
     changedFileCount: report.changedFileCount,
+    ...(report.changeSummary === undefined
+      ? {}
+      : { changeSummary: report.changeSummary }),
     startedAt: report.startedAt,
     durationMs: report.durationMs,
     ...(report.configuredPathExclusions.length === 0
@@ -164,7 +204,13 @@ export function renderJson(report: ScanReport): string {
           compareCodeUnits(left.checkId, right.checkId) ||
           compareCodeUnits(left.target ?? "", right.target ?? ""),
       )
-      .map((check) => serializeCheck(check, report.installedCliCommand)),
+      .map((check) =>
+        serializeCheck(
+          check,
+          report.installedCliCommand,
+          includeSourceExcerpts,
+        ),
+      ),
   };
   return `${JSON.stringify(payload, null, 2)}\n`;
 }

@@ -1,3 +1,8 @@
+import { reconcileGeneratedOverrides } from "./generated-formatting-overrides.js";
+import {
+  configureInitEslint,
+  PROJECT_ESLINT_DISCLOSURE,
+} from "./eslint-setup.js";
 import { createHash } from "node:crypto";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
@@ -493,9 +498,6 @@ function applyFormattingChoice(
 
   // Repeat setup replaces exactly the entries Zedbee generated and preserves
   // every unmarked, hand-authored override.
-  const existingOverrides = Array.isArray(root.overrides)
-    ? (root.overrides as readonly unknown[])
-    : [];
   const existingExclusions = Array.isArray(root.pathExclusions)
     ? root.pathExclusions
     : [];
@@ -514,18 +516,12 @@ function applyFormattingChoice(
       modify(next, ["pathExclusions"], finalExclusions, options),
     );
   }
-  for (let index = existingOverrides.length - 1; index >= 0; index--) {
-    if (isGeneratedOverrideEntry(existingOverrides[index])) {
-      next = applyEdits(
-        next,
-        modify(next, ["overrides", index], undefined, options),
-      );
-    }
-  }
-  for (const entry of generatedEntries) {
-    next = applyEdits(next, modify(next, ["overrides", -1], entry, options));
-  }
-  return next;
+  return reconcileGeneratedOverrides(
+    next,
+    isGeneratedOverrideEntry,
+    generatedEntries,
+    options,
+  );
 }
 
 function existingVulnerabilitySeverity(
@@ -659,43 +655,27 @@ export function createInitProposal(
     0o644,
   );
   if (options.formattingScope !== undefined) {
-    const source = parse(config.after) as Record<string, unknown>;
-    const existing = Array.isArray(source.overrides) ? source.overrides : [];
-    const editOptions = {
-      formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-    };
-    let after = config.after;
-    // Scope owns only its marked entries. Removing individual array elements
-    // preserves comments and bytes inside every handwritten override.
-    for (let index = existing.length - 1; index >= 0; index--) {
-      if (existing[index]?.generated === "prettier-scope") {
-        after = applyEdits(
-          after,
-          modify(after, ["overrides", index], undefined, editOptions),
-        );
-      }
-    }
     const roots = options.formattingScopeRoots ?? [];
-    if (
+    const after = reconcileGeneratedOverrides(
+      config.after,
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        (entry as Record<string, unknown>).generated === "prettier-scope",
       options.formattingScope === "projects" &&
-      roots.length > 0 &&
-      !roots.includes(".")
-    ) {
-      after = applyEdits(
-        after,
-        modify(
-          after,
-          ["overrides", -1],
-          {
-            files: ["**"],
-            excludeFiles: roots.map((root) => `${root}/**`),
-            checks: { formatting: "off" },
-            generated: "prettier-scope",
-          },
-          editOptions,
-        ),
-      );
-    }
+        roots.length > 0 &&
+        !roots.includes(".")
+        ? [
+            {
+              files: ["**"],
+              excludeFiles: roots.map((root) => `${root}/**`),
+              checks: { formatting: "off" },
+              generated: "prettier-scope",
+            },
+          ]
+        : [],
+      { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+    );
     if (after !== config.after) {
       config = initFileChange(
         config.relativePath,
@@ -705,6 +685,50 @@ export function createInitProposal(
       );
     }
   }
+  const eslintSetup = configureInitEslint(
+    config.after,
+    before,
+    inspection,
+    options,
+  );
+  if (eslintSetup.after !== config.after) {
+    config = initFileChange(
+      config.relativePath,
+      config.before,
+      eslintSetup.after,
+      config.mode,
+    );
+  }
+  if (options.diagnosticMessages !== undefined) {
+    let after = applyEdits(
+      config.after,
+      modify(
+        config.after,
+        ["reporting", "diagnosticMessages"],
+        options.diagnosticMessages,
+        { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+      ),
+    );
+    if (options.diagnosticMessages === "source-free")
+      after = applyEdits(
+        after,
+        modify(after, ["reporting", "sourceExcerpts"], "never", {
+          formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+        }),
+      );
+    config = initFileChange(
+      config.relativePath,
+      config.before,
+      after,
+      config.mode,
+    );
+  }
+  const diagnosticMessages =
+    (
+      parse(config.after) as {
+        reporting?: { diagnosticMessages?: "contextual" | "source-free" };
+      }
+    ).reporting?.diagnosticMessages ?? "contextual";
   const hook: ResolvedHookChoice =
     options.hook === "auto"
       ? "none"
@@ -759,7 +783,21 @@ export function createInitProposal(
         ? [hookActivation.remediation]
         : []),
       ...(options.formattingImport?.limitations ?? []),
+      ...(eslintSetup.engine === "project"
+        ? [PROJECT_ESLINT_DISCLOSURE, ...eslintSetup.conflicts]
+        : []),
     ]),
+    diagnosticMessages,
+    eslintEngine: eslintSetup.engine,
+    eslintConflicts: eslintSetup.conflicts,
+    projectEslintMessages: eslintSetup.messages,
+    projectEslintTrustRoots: eslintSetup.roots,
+    ...(options.projectEslintTrustConfirmed === true
+      ? { projectEslintTrustConfirmed: true }
+      : {}),
+    ...(options.projectEslintMessagesConfirmed === true
+      ? { projectEslintMessagesConfirmed: true }
+      : {}),
     formatting: formattingChoice,
     ...(options.formattingScope === undefined
       ? {}

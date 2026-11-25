@@ -1,3 +1,4 @@
+import { entryOwner, resolveViteEntrypoints } from "./vite-entrypoints.js";
 import { resolveFrameworkEntrypoints } from "./framework-entrypoints.js";
 import {
   prepareSnapshotAliases,
@@ -159,11 +160,26 @@ export async function createManagedKnipConfig(
   inspection: RepositoryInspection,
   selectedWorkspace?: WorkspaceInspection,
   missing?: (path: string) => Promise<void>,
+  entryPoints: readonly string[] = [],
+  captureEntryInput?: (path: string) => void,
+  allowMissingExplicit = false,
 ): Promise<ManagedKnipConfig> {
   if (inspection.snapshotRoot !== snapshotRoot) {
     throw new TypeError("Inspection does not match Knip snapshot");
   }
   const registry = await captureSnapshotRegistry(snapshotRoot);
+  for (const path of entryPoints) {
+    if (
+      !path ||
+      /[\\:*?#[\]{}\p{Cc}]/u.test(path) ||
+      path.startsWith("/") ||
+      path.split("/").some((part) => !part || part === "." || part === "..") ||
+      entryOwner(inspection, path) === undefined
+    )
+      throw new TypeError(
+        "Invalid dead-code entry point: use an exact owned repository-relative path",
+      );
+  }
   const workspaces: Record<
     string,
     {
@@ -224,12 +240,32 @@ export async function createManagedKnipConfig(
       .map((path) => relativeToWorkspace(workspace, path))
       .sort(compareCodeUnits);
     const framework = resolveFrameworkEntrypoints(workspace, registry);
+    const vite =
+      selectedWorkspace === undefined ||
+      selectedWorkspace.relativeRoot === workspace.relativeRoot
+        ? await resolveViteEntrypoints(
+            inspection,
+            workspace,
+            registry,
+            entryPoints,
+            captureEntryInput,
+            allowMissingExplicit,
+          )
+        : { entry: [], ignoreDependencies: [] };
     const entry = [
-      ...new Set([...declaredEntries, ...sourceEntries, ...framework.entry]),
+      ...new Set([
+        ...declaredEntries,
+        ...sourceEntries,
+        ...framework.entry,
+        ...vite.entry,
+      ]),
     ].sort(compareCodeUnits);
     workspaces[workspace.relativeRoot] = {
       entry,
-      ignoreDependencies: framework.ignoreDependencies,
+      ignoreDependencies: [
+        ...framework.ignoreDependencies,
+        ...vite.ignoreDependencies,
+      ],
       project,
       ignore: [...IGNORE],
       paths: Object.fromEntries(

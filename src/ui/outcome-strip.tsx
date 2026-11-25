@@ -1,3 +1,10 @@
+import { selectedChangesLine } from "../reporting/source-identity.js";
+import {
+  allowedScanDetail,
+  scanOutcomeDetail,
+  scanResultCountLine,
+  coverageLine,
+} from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
 import type { ScanReport } from "../scan/report.js";
 import {
@@ -12,22 +19,20 @@ function copyFor(
   report: ScanReport,
   narrow: boolean,
 ): readonly [string, string, string] {
-  const { passed, warnings, failed } = report.summary;
+  const { passed, warnings } = report.summary;
   const warningLabel = warnings === 1 ? "warning" : "warnings";
   if (report.outcome === "blocked") {
     return [
       "THAT STINGS",
-      narrow ? "Commit blocked." : "A check failed. Commit blocked.",
-      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
+      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      scanResultCountLine(report, true),
     ];
   }
   if (report.outcome === "incomplete") {
     return [
       "SCAN INCOMPLETE",
-      narrow
-        ? "Commit blocked."
-        : "A required check could not finish. Commit blocked.",
-      `${passed} passed · ${warnings} ${warningLabel} · ${failed} failed`,
+      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      scanResultCountLine(report, true),
     ];
   }
   if (report.changedFileCount === 0) {
@@ -35,8 +40,10 @@ function copyFor(
   }
   return [
     "BEE-UTIFUL",
-    narrow ? "Commit allowed." : "All checks passed. Commit allowed.",
-    `${passed} passed · ${warnings} ${warningLabel}`,
+    narrow && allowedScanDetail(report) === "All checks passed. Commit allowed."
+      ? "Commit allowed."
+      : allowedScanDetail(report),
+    `${passed} passed · ${warnings} ${warningLabel} · ${coverageLine(report)}`,
   ];
 }
 
@@ -108,6 +115,9 @@ export function OutcomeStrip({
           {headline}
         </Text>
         <Text {...colorProp(color, ZEDBEE_THEME.primary)}>{subline}</Text>
+        {selectedChangesLine(report) === undefined ? null : (
+          <Text wrap="wrap">{selectedChangesLine(report)}</Text>
+        )}
         {sourceIdentity === undefined ? null : (
           <Text {...colorProp(color, ZEDBEE_THEME.secondary)}>
             {sourceIdentity}

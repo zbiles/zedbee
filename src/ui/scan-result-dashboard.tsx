@@ -1,3 +1,14 @@
+import { parseFailureFields } from "../renderers/incomplete.js";
+import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
+import {
+  hookUpdateNotice,
+  HOOK_UPDATE_TITLE,
+} from "../reporting/hook-update-notice.js";
+import { selectedChangesLine } from "../reporting/source-identity.js";
+import {
+  allowedScanDetail,
+  coverageLine,
+} from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import {
@@ -103,10 +114,7 @@ function outcomeCopy(report: ScanReport): {
   }
   return {
     heading: "COMMIT ALLOWED",
-    detail:
-      report.changedFileCount === 0
-        ? emptyChangesCopy(report)
-        : "All checks passed. Commit allowed.",
+    detail: allowedScanDetail(report),
     tone: ZEDBEE_THEME.pass,
     symbol: "✓",
   };
@@ -146,6 +154,9 @@ function ResultContent({
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
         {outcome.detail}
       </Text>
+      {selectedChangesLine(report) === undefined ? null : (
+        <Text wrap="wrap">{selectedChangesLine(report)}</Text>
+      )}
       {sourceIdentity === undefined ? null : (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
           {sourceIdentity}
@@ -153,6 +164,8 @@ function ResultContent({
       )}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         {countLine(report)}
+        {" · "}
+        {coverageLine(report)}
       </Text>
       {presentation.abbreviated ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
@@ -314,7 +327,8 @@ function IncompleteChecksPanel({
                       width={contentWidth}
                       color={color}
                     />
-                    {error.path === undefined ? null : (
+                    {error.path === undefined ||
+                    error.parseFailures !== undefined ? null : (
                       <LabeledValue
                         label="Path"
                         value={error.path}
@@ -349,7 +363,20 @@ function IncompleteChecksPanel({
                         tone={ZEDBEE_THEME.secondary}
                       />
                     )}
-                    {error.paths === undefined ? null : (
+                    {error.parseFailures !== undefined ? (
+                      parseFailureFields(error.parseFailures).map(
+                        ({ label, value }, index) => (
+                          <LabeledValue
+                            key={index}
+                            label={label}
+                            value={value}
+                            width={contentWidth}
+                            color={color}
+                            tone={ZEDBEE_THEME.secondary}
+                          />
+                        ),
+                      )
+                    ) : error.paths === undefined ? null : (
                       <>
                         <LabeledValue
                           label="Affected files"
@@ -476,15 +503,22 @@ export function ScanResultDashboard({
   readonly color: boolean;
 }) {
   const panelWidth = brandedCommandContentWidth(width);
+  const hookUpdate = hookUpdateNotice(report);
   const sections = buildScanResultSections(report, presentation);
   const callouts = buildReportCallouts(
     presentation,
     report.presentationPolicy.agentGuidance,
+    report,
   );
   return (
     <Box flexDirection="column" width={width}>
       <Callouts lines={callouts.opening} width={width} color={color} />
       <BrandedCommandFrame width={width} color={color}>
+        {projectEslintNotices(report).map((notice) => (
+          <Box key={notice} marginY={1}>
+            <Text>{notice}</Text>
+          </Box>
+        ))}
         <FindingPanel
           title="BLOCKING FINDINGS"
           findings={sections.blockingFindings}
@@ -497,6 +531,13 @@ export function ScanResultDashboard({
           width={panelWidth}
           color={color}
         />
+        {sections.previewNotes.map((note) => (
+          <Box key={note} paddingX={2} marginY={1}>
+            <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+              {note}
+            </Text>
+          </Box>
+        ))}
         <DisclosuresPanel
           disclosures={sections.disclosures}
           width={panelWidth}
@@ -524,6 +565,26 @@ export function ScanResultDashboard({
             color={color}
           />
         </BrandedCommandPanel>
+        {hookUpdate === undefined ? null : (
+          <BrandedCommandPanel
+            title={HOOK_UPDATE_TITLE}
+            width={panelWidth}
+            color={color}
+          >
+            <Box flexDirection="column" paddingX={2} marginY={1}>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                {hookUpdate.message}
+              </Text>
+              <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+                Run{" "}
+                <Text bold {...colorProp(color, ZEDBEE_THEME.warning)}>
+                  zedbee init
+                </Text>
+                {hookUpdate.remediation.slice("Run zedbee init".length)}
+              </Text>
+            </Box>
+          </BrandedCommandPanel>
+        )}
         {callouts.closing.length === 0 ? null : (
           <BrandedCommandPanel
             title="NEXT STEPS"
