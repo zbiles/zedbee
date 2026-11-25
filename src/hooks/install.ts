@@ -34,6 +34,18 @@ export function isStockHuskyDispatcher(source: string | undefined): boolean {
     normalized === HUSKY_DISPATCHER || normalized === `${HUSKY_DISPATCHER}\n`
   );
 }
+/** Only bundled stock runtime bytes establish verified dispatch. */
+async function bundledHuskyRuntime(): Promise<string> {
+  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
+  return readFile(join(huskyRoot, "husky"), "utf8");
+}
+
+export async function isStockHuskyHelper(
+  source: string | undefined,
+): Promise<boolean> {
+  return source !== undefined && source === (await bundledHuskyRuntime());
+}
+
 const HUSKY_LICENSE = ".husky/_/LICENSE.zedbee-husky";
 const HUSKY_DISPATCHER_PATHS = TRACKED_HOOK_NAMES.map(
   (name) => `.husky/_/${name}`,
@@ -89,7 +101,7 @@ export async function trackedRuntimeChanges(
 ): Promise<readonly InitFileChange[] | undefined> {
   const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
   const [runtime, license] = await Promise.all([
-    readFile(join(huskyRoot, "husky"), "utf8"),
+    bundledHuskyRuntime(),
     readFile(join(huskyRoot, "LICENSE"), "utf8"),
   ]);
   const entries: Array<[string, string, number]> = [

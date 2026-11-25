@@ -17,6 +17,10 @@ const changes = new WeakMap<
   ChangeSet,
   { changed: ReadonlySet<string>; deleted: ReadonlySet<string> }
 >();
+const removedWorkspaceInputs = new WeakMap<
+  ChangeSet,
+  WeakMap<RepositoryInspection, boolean>
+>();
 const workspaceIndexes = new WeakMap<
   RepositoryInspection,
   ReadonlyMap<string, WorkspaceInspection>
@@ -32,6 +36,8 @@ function changeIndex(changeSet: ChangeSet) {
       changed.add(path);
       if (file.previousPath !== undefined) changed.add(file.previousPath);
       if (file.status === "deleted") deleted.add(path);
+      if (file.status === "renamed" && file.previousPath !== undefined)
+        deleted.add(file.previousPath);
     }
     index = { changed, deleted };
     changes.set(changeSet, index);
@@ -53,6 +59,28 @@ function workspaceIndex(inspection: RepositoryInspection) {
   return index;
 }
 
+function hasRemovedWorkspaceInputs(
+  context: InspectionContext,
+  deleted: ReadonlySet<string>,
+): boolean {
+  if (deleted.size === 0) return false;
+  let byInspection = removedWorkspaceInputs.get(context.changeSet);
+  if (!byInspection) {
+    byInspection = new WeakMap();
+    removedWorkspaceInputs.set(context.changeSet, byInspection);
+  }
+  let removed = byInspection.get(context.baselineInspection);
+  if (removed === undefined) {
+    removed = context.baselineInspection.workspaces.some(
+      (workspace) =>
+        deleted.has(workspace.manifestPath) ||
+        workspace.sourceFiles.some((path) => deleted.has(path)),
+    );
+    byInspection.set(context.baselineInspection, removed);
+  }
+  return removed;
+}
+
 /** Scope graph analysis to changed workspace inputs, including contained
  * inherited configurations outside the workspace's own directory.
  */
@@ -64,6 +92,16 @@ export async function projectInputsMayHaveChanged(
 ): Promise<boolean> {
   const { changed, deleted } = changeIndex(context.changeSet);
   if (changed.size === 0) return false;
+  // A disappearing source/package can invalidate imports or entrypoint usage
+  // in another surviving project, even if that consumer itself did not change.
+  const targetWorkspace = workspaceIndex(context.targetInspection).get(
+    target.relativeRoot,
+  );
+  if (
+    targetWorkspace?.sourceFiles.length &&
+    hasRemovedWorkspaceInputs(context, deleted)
+  )
+    return true;
   for (const inspection of [
     context.baselineInspection,
     context.targetInspection,

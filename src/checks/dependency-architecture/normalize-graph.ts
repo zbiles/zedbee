@@ -21,7 +21,6 @@ export interface DependencyDeclarations {
   readonly workspacePackages?: ReadonlySet<string>;
 }
 
-
 function repositoryPath(path: string, snapshotRoot: string): string {
   const candidate = canonicalText(path, "dependency path");
   return normalizeRepositoryRelativePath(
@@ -39,14 +38,14 @@ function rotations(nodes: readonly string[]): string[][] {
 }
 
 export function canonicalCycle(nodes: readonly string[]): readonly string[] {
-  if (!Array.isArray(nodes) || nodes.length < 2) {
+  if (!Array.isArray(nodes) || nodes.length === 0) {
     throw new TypeError("Expected a dependency cycle");
   }
   const normalized = nodes.map((node) =>
     normalizeRepositoryRelativePath(node.replaceAll("\\", "/")),
   );
   const withoutClosingNode =
-    normalized.length > 2 && normalized[0] === normalized.at(-1)
+    normalized.length > 1 && normalized[0] === normalized.at(-1)
       ? normalized.slice(0, -1)
       : normalized;
   if (new Set(withoutClosingNode).size !== withoutClosingNode.length) {

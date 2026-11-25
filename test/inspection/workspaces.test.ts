@@ -583,6 +583,44 @@ describe("workspace discovery", () => {
   );
 
   it.runIf(process.platform !== "win32")(
+    "assigns a linked parent's nested project to the deepest declared owner",
+    async () => {
+      const fixture = await createInspectionFixture();
+      await fixture.writeJson("package.json", {
+        workspaces: ["packages/linked", "internal/app/child"],
+      });
+      await fixture.writeJson("internal/app/package.json", { name: "parent" });
+      await fixture.writeJson("internal/app/child/package.json", {
+        name: "child",
+        dependencies: { react: "19.0.0" },
+      });
+      await fixture.write(
+        "internal/app/child/index.tsx",
+        "export const element = <div />;\n",
+      );
+      await fixture.writeJson("internal/app/child/tsconfig.json", {});
+      await fixture.write(
+        "internal/app/index.ts",
+        "export const parent = true;\n",
+      );
+      await mkdir(join(fixture.root, "packages"), { recursive: true });
+      await symlink("../internal/app", join(fixture.root, "packages/linked"));
+      const inspection = await inspectRepository(fixture.root);
+      const parent = inspection.workspaces.find(
+        (w) => w.relativeRoot === "packages/linked",
+      );
+      const child = inspection.workspaces.find(
+        (w) => w.relativeRoot === "internal/app/child",
+      );
+      expect(parent?.sourceFiles).toEqual(["packages/linked/index.ts"]);
+      expect(child?.sourceFiles).toEqual(["internal/app/child/index.tsx"]);
+      expect(child?.tsconfigPaths).toEqual([
+        "internal/app/child/tsconfig.json",
+      ]);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
     "keeps a contained manifest-only symlink attributed to its lexical workspace directory",
     async () => {
       const fixture = await createInspectionFixture();

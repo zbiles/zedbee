@@ -123,6 +123,15 @@ async function pathExists(path: string): Promise<boolean> {
 const TEST_BLOB = "0123456789012345678901234567890123456789";
 const MAX_SYMLINK_TARGET_BYTES = 1024 * 1024;
 
+// Model the explicit positive evidence Git returns for an unborn branch.
+async function unbornTryRun(args: readonly string[]) {
+  if (args[0] === "symbolic-ref")
+    return { stdout: "refs/heads/main", stderr: "", exitCode: 0 };
+  if (args[0] === "show-ref" && args[1] === "--exists")
+    return { stdout: "", stderr: "", exitCode: 2 };
+  return { stdout: "", stderr: "", exitCode: 128 };
+}
+
 function stagedRecord(path = "value.ts"): string {
   return `100644 ${TEST_BLOB} 0\t${path}\0`;
 }
@@ -183,9 +192,7 @@ describe.each([
             },
           });
         },
-        async tryRun() {
-          return { stdout: "", stderr: "", exitCode: 1 };
-        },
+        tryRun: unbornTryRun,
       } as unknown as GitClient;
 
       await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({
@@ -686,9 +693,7 @@ describe.each([
           }
         });
       },
-      async tryRun() {
-        return { stdout: "", stderr: "", exitCode: 1 };
-      },
+      tryRun: unbornTryRun,
     } as unknown as GitClient;
     const controller = new AbortController();
     const build = buildSnapshotPair("/repo", git, controller.signal);
@@ -739,7 +744,7 @@ describe.each([
         });
       },
       async tryRun() {
-        return { stdout: "", stderr: "", exitCode: 0 };
+        return { stdout: TEST_BLOB, stderr: "", exitCode: 0 };
       },
     } as unknown as GitClient;
     const controller = new AbortController();
@@ -771,9 +776,7 @@ describe.each([
           await chmod(snapshotRootFailure.temporaryParent, 0o500);
           throw new Error(rawFailure);
         },
-        async tryRun() {
-          return { stdout: "", stderr: "", exitCode: 1 };
-        },
+        tryRun: unbornTryRun,
       } as unknown as GitClient;
       onTestFinished(async () => {
         await chmod(snapshotRootFailure.temporaryParent, 0o700).catch(
@@ -833,9 +836,7 @@ describe.each([
           );
           throw new Error(rawFailure);
         },
-        async tryRun() {
-          return { stdout: "", stderr: "", exitCode: 1 };
-        },
+        tryRun: unbornTryRun,
       } as unknown as GitClient;
       onTestFinished(async () => {
         await rm(snapshotRootFailure.temporaryParent, { force: true });
@@ -905,9 +906,7 @@ describe.each([
           }
           return { stdout: "", stderr: "", exitCode: 0 };
         },
-        async tryRun() {
-          return { stdout: "", stderr: "", exitCode: 1 };
-        },
+        tryRun: unbornTryRun,
       } as unknown as GitClient;
 
       await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({
@@ -934,9 +933,7 @@ describe.each([
         }
         return { stdout: "", stderr: "", exitCode: 0 };
       },
-      async tryRun() {
-        return { stdout: "", stderr: "", exitCode: 1 };
-      },
+      tryRun: unbornTryRun,
     } as unknown as GitClient;
 
     await expect(buildSnapshotPair("/repo", git)).rejects.toMatchObject({

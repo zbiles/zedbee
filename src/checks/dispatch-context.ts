@@ -131,6 +131,11 @@ function snapshotInspection(
       : {
           fileSymlinkTargets: Object.freeze([...inspection.fileSymlinkTargets]),
         }),
+    ...(inspection.unownedSourceFiles === undefined
+      ? {}
+      : {
+          unownedSourceFiles: Object.freeze([...inspection.unownedSourceFiles]),
+        }),
     packageManager: inspection.packageManager,
     lockfiles: Object.freeze([...inspection.lockfiles]),
     workspaces: Object.freeze(
@@ -138,6 +143,9 @@ function snapshotInspection(
         Object.freeze({
           ...(workspace.name === undefined ? {} : { name: workspace.name }),
           relativeRoot: workspace.relativeRoot,
+          ...(workspace.canonicalRelativeRoot === undefined
+            ? {}
+            : { canonicalRelativeRoot: workspace.canonicalRelativeRoot }),
           manifestPath: workspace.manifestPath,
           sourceFiles: Object.freeze([...workspace.sourceFiles]),
           tsconfigPaths: Object.freeze([...workspace.tsconfigPaths]),

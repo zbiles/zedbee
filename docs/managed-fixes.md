@@ -107,7 +107,10 @@ conservatively annotated as having unstaged changes.
 Working-file previews read at most eight files concurrently. Source capture is
 limited to 4 MiB per file and 64 MiB across candidate files; exceeding either
 limit stops preparation before approval or writes. A file that grows during
-capture also requires a fresh preview. Exact-edit mapping uses one character
+capture also requires a fresh preview. Working files must decode as valid UTF-8.
+Swarm compares the raw byte digest before applying edits and immediately before
+replacement, so malformed or changed bytes cannot be silently rewritten.
+Exact-edit mapping uses one character
 diff per file with a one-second computation limit. If that limit is reached,
 the affected exact fixes are reported as skipped; other applicable actions
 remain in the plan.

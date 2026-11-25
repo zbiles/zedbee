@@ -1,3 +1,4 @@
+import { reportForComparisonRepairs } from "../reporting/comparison-repair.js";
 import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import {
@@ -169,7 +170,7 @@ export async function runScan(options: RunScanOptions): Promise<ScanReport> {
       options.onPerformanceSummary?.(summary);
     } catch {}
   }
-  return report;
+  return reportForComparisonRepairs(report);
 }
 
 async function runScanWithDetails(

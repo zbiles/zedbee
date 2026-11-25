@@ -136,7 +136,7 @@ export interface CreateInitProposalOptions {
   readonly workflowChange?: InitFileChange;
   readonly schemaReference?: string;
   readonly repositoryRoot: string;
-  readonly profile: ProfileId;
+  readonly profile?: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
   readonly changedChecks?: readonly CheckId[];

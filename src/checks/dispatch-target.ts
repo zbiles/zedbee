@@ -1,3 +1,4 @@
+import { physicalWorkspacePath } from "./workspace-comparison.js";
 import { resultForProgress } from "./progress-result.js";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
@@ -174,15 +175,28 @@ export async function executeDispatchTarget(
     runContext !== undefined
   ) {
     try {
-      fixCandidates = sanitizeFixCandidates(
-        await Reflect.apply(adapter.planFixes, undefined, [
-          runContext,
-          policyDisplayResult.findings,
-        ]),
-        {
-          checkId: adapter.id,
-          findingIds: policyDisplayResult.findings.map((finding) => finding.id),
-        },
+      fixCandidates = Object.freeze(
+        sanitizeFixCandidates(
+          await Reflect.apply(adapter.planFixes, undefined, [
+            runContext,
+            policyDisplayResult.findings,
+          ]),
+          {
+            checkId: adapter.id,
+            findingIds: policyDisplayResult.findings.map(
+              (finding) => finding.id,
+            ),
+          },
+        ).map((candidate) => {
+          if (target.kind !== "workspace") return candidate;
+          const file = physicalWorkspacePath(
+            runContext!.targetInspection,
+            candidate.file,
+          );
+          return file === candidate.file
+            ? candidate
+            : Object.freeze({ ...candidate, file });
+        }),
       );
     } catch (error) {
       result = incompleteResult({

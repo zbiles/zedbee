@@ -2813,3 +2813,36 @@ it("reports an applied setup separately when the usage preference is busy", asyn
   expect(io.stderr.join("")).toContain("TELEMETRY_PREFERENCE_SAVE_FAILED");
   expect(collected).toBe(false);
 });
+
+it.each(["fast", "thorough"] as const)(
+  "preserves %s on a noninteractive rerun without an explicit profile",
+  async (profile) => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}');
+    const config = `{\n  // retain this comment\n  "schemaVersion": 1,\n  "profile": "${profile}"\n}\n`;
+    await repository.write(".zedbeerc.jsonc", config);
+    const options = {
+      cwd: repository.root,
+      hook: "none",
+      yes: true,
+      format: "json",
+      color: false,
+      animations: false,
+    } as const;
+    const output = terminal();
+    expect(await executeInitCommand(options, output)).toBe(0);
+    const after = await repository.read(".zedbeerc.jsonc");
+    expect(after).toContain(`"profile": "${profile}"`);
+    expect(after).toContain("// retain this comment");
+    expect(JSON.parse(output.stdout.join("")).proposal.profile).toBe(profile);
+    expect(
+      await executeInitCommand(
+        { ...options, profile: "recommended" },
+        terminal(),
+      ),
+    ).toBe(0);
+    expect(await repository.read(".zedbeerc.jsonc")).toContain(
+      '"profile": "recommended"',
+    );
+  },
+);

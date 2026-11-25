@@ -304,3 +304,24 @@ describe("captured index comparison", () => {
     ).toBe(true);
   });
 });
+
+it("distinguishes a first commit from a damaged existing branch reference", async () => {
+  const repo = await createGitRepository();
+  const git = new GitClient(repo.root);
+  const initial = await captureSelectedIndexComparison(git);
+  expect(initial.baselineCommit).toBeNull();
+  await initial.cleanup();
+  await repo.write("value.js", "export const value = 1;");
+  await repo.commitAll("base");
+  const reference = (await repo.git(["symbolic-ref", "HEAD"])).stdout;
+  const file = (await repo.git(["rev-parse", "--git-path", reference])).stdout;
+  const tree = (await repo.git(["rev-parse", "HEAD^{tree}"])).stdout;
+  await writeFile(resolve(repo.root, file), tree + "\n");
+  await expect(captureSelectedIndexComparison(git)).rejects.toMatchObject({
+    code: "GIT_COMMAND_FAILED",
+  });
+  await writeFile(resolve(repo.root, file), "invalid-ref\n");
+  await expect(captureSelectedIndexComparison(git)).rejects.toMatchObject({
+    code: "GIT_COMMAND_FAILED",
+  });
+});

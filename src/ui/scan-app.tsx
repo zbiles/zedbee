@@ -10,6 +10,7 @@ import { buildScanResultSections } from "../reporting/result-sections.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
+import { repairFindingForMode } from "../reporting/comparison-repair.js";
 import { FindingsList } from "./findings-list.js";
 import { IncompleteList } from "./incomplete-list.js";
 import { LiveDashboard, type ScanProgress } from "./live-dashboard.js";
@@ -133,6 +134,7 @@ function NextSteps({
   }
   const [heading, ...lines] = nextStepsLines({
     outcome: report.outcome,
+    mode: report.mode,
     shown: presentation.findings.length,
     total: presentation.totalFindingCount,
     reportPath: presentation.reportPath,
@@ -230,7 +232,9 @@ export function ScanApp(props: ScanAppProps) {
       ))}
       <OutcomeStrip
         report={props.report}
-        findings={props.presentation?.findings ?? props.report.summary.findings}
+        findings={(
+          props.presentation?.findings ?? props.report.summary.findings
+        ).map((finding) => repairFindingForMode(finding, props.report!.mode))}
         width={props.width}
         color={props.color}
       />
@@ -241,7 +245,9 @@ export function ScanApp(props: ScanAppProps) {
         color={props.color}
       />
       <FindingsList
-        findings={props.presentation?.findings ?? props.report.summary.findings}
+        findings={(
+          props.presentation?.findings ?? props.report.summary.findings
+        ).map((finding) => repairFindingForMode(finding, props.report!.mode))}
         width={props.width}
         color={props.color}
       />

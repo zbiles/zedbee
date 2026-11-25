@@ -112,14 +112,13 @@ export function configureInitEslint(
     if (
       options.eslintEngine === "project" ||
       parse(after)?.checks?.lint?.engine === "project"
-    ) {
-      roots = inspection.workspaces.map(({ relativeRoot }) => relativeRoot);
-      conflicts.push(
-        error instanceof Error
-          ? error.message
-          : "Project ESLint settings conflict with managed configuration.",
-      );
-    }
+    )
+      engine = "project";
+    // An override can fail validation even when the global engine is managed.
+    // Keep effective roots discovered above and prevent all proposal writes.
+    conflicts.push(
+      error instanceof Error ? error.message : "Invalid ESLint configuration.",
+    );
   }
   return {
     after,

@@ -9,7 +9,11 @@ import { maintainPlan } from "../reporting/fix-plan-store.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
 import { validConfigPath } from "../config/selection-path.js";
 import { buildFixPlan } from "../fixes/build-plan.js";
-import { applyFixPlan, FixApplyCleanupError } from "../fixes/apply-plan.js";
+import {
+  applyFixPlan,
+  FixApplyCleanupError,
+  FixApplyInterruptedError,
+} from "../fixes/apply-plan.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
@@ -307,6 +311,7 @@ export async function executeFixCommand(
     });
     diagnosticEntries.push(...result.issues);
     await closeExecutor();
+    if (options.signal?.aborted) throw new FixApplyInterruptedError(result);
     const writeResult = () =>
       io.writeStdout(
         renderResultText(
@@ -339,10 +344,14 @@ export async function executeFixCommand(
     const details =
       cleanup === undefined ? undefined : cleanupFailureDetails(cleanup);
     const retainedResult =
-      cleanup instanceof FixApplyCleanupError ? cleanup.result : appliedResult;
+      cleanup instanceof FixApplyCleanupError
+        ? cleanup.result
+        : error instanceof FixApplyInterruptedError
+          ? error.result
+          : appliedResult;
     if (
       applying !== undefined &&
-      cleanup !== undefined &&
+      (cleanup !== undefined || error instanceof FixApplyInterruptedError) &&
       retainedResult !== undefined
     ) {
       summarize({
@@ -352,7 +361,7 @@ export async function executeFixCommand(
         diagnosticEntries.push(...retainedResult.issues);
       if (formatFor(options) === "json") {
         io.writeStdout(
-          `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details), null, 2)}\n`,
+          `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details, options.signal?.aborted === true), null, 2)}\n`,
         );
       } else {
         io.writeStdout(

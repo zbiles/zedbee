@@ -48,7 +48,7 @@ import {
   prepareGithubWorkflow,
 } from "../init/github-workflow.js";
 import { formatInitProposal } from "../init/format-proposal.js";
-import { createInitProposal } from "../init/recommend.js";
+import { createInitProposal, effectiveInitProfile } from "../init/recommend.js";
 import type {
   InitFormattingChoice,
   InitFormattingScope,
@@ -63,7 +63,7 @@ import type { CheckId, ProfileId } from "../config/schema.js";
 export interface InitCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
   readonly cwd: string;
-  readonly profile: ProfileId;
+  readonly profile?: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
   readonly workflow?: InitWorkflowChoice;
@@ -358,7 +358,8 @@ export async function executeInitCommand(
         )
       ).every(Boolean);
     const initialSelection: InitSelection = {
-      profile: options.profile,
+      profile: effectiveInitProfile(configBefore, options.profile),
+      profileExplicit: options.profile !== undefined,
       eslintEngine: options.eslintEngine,
       eslintTrust: options.trustProjectEslint === true || eslintTrustStored,
       eslintMessages:

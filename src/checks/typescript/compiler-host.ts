@@ -1,5 +1,9 @@
 import { filterCapturedCompilerFiles } from "./captured-directory.js";
-import { dependencyResolutionContainingFile } from "./dependency-resolution-path.js";
+import {
+  dependencyResolutionContainingFile,
+  physicalWorkspaceRelativePath,
+  type WorkspaceDirectoryAlias,
+} from "./dependency-resolution-path.js";
 import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
 import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
@@ -17,6 +21,7 @@ export interface SnapshotProgramInput {
   readonly reusePurpose?: CompilerProgramPurpose;
   readonly repositoryRoot: string;
   readonly snapshotRoot?: string;
+  readonly workspaceAlias?: WorkspaceDirectoryAlias;
   readonly files: Readonly<Record<string, string>>;
   readonly rootNames: readonly string[];
   readonly options: ts.CompilerOptions;
@@ -205,7 +210,10 @@ function createFreshSnapshotProgram(
         // Custom declarations remain in the snapshot; only installed type roots
         // use the project's dependency directory.
         return path?.split("/").includes("node_modules")
-          ? resolve(repositoryRoot, path)
+          ? resolve(
+              repositoryRoot,
+              physicalWorkspaceRelativePath(path, input.workspaceAlias),
+            )
           : typeRoot;
       });
     } else {
@@ -215,7 +223,10 @@ function createFreshSnapshotProgram(
           : resolve(snapshotRoot, projectRootNames[0] ?? "index.ts"),
       );
       const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
-      let directory = resolve(repositoryRoot, projectPath);
+      let directory = resolve(
+        repositoryRoot,
+        physicalWorkspaceRelativePath(projectPath, input.workspaceAlias),
+      );
       prepared.typeRoots = [];
       while (contained(repositoryRoot, directory)) {
         prepared.typeRoots.push(resolve(directory, "node_modules/@types"));
@@ -383,6 +394,7 @@ function createFreshSnapshotProgram(
             repositoryRoot,
             snapshotRoot,
             containingFile,
+            input.workspaceAlias,
           );
           const resolved = ts.resolveModuleName(
             specifier,

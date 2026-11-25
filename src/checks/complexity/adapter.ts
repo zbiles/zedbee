@@ -2,7 +2,7 @@ import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { changedFilePaths } from "../changed-file-paths.js";
+import { selectedChangedPaths } from "../changed-file-paths.js";
 import { validatedBatchResults } from "../eslint/batch-results.js";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
@@ -37,7 +37,6 @@ import {
   pairClassMetricObservations,
   type ComplexitySnapshot,
 } from "./pair-class-metrics.js";
-
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -282,11 +281,13 @@ async function collectSide(
   }
   const files = [...candidates]
     .filter((path) => MANAGED_SOURCE_PATH.test(path))
-    .filter(
-      (path) =>
-        selectedPaths.has(path) ||
-        policyForFile(checkId, path, side).when === "always",
-    )
+    .filter((path) => {
+      const policy = policyForFile(checkId, path, side);
+      return (
+        policy.severity !== "off" &&
+        (selectedPaths.has(path) || policy.when === "always")
+      );
+    })
     .sort(compareCodeUnits);
   if (files.length === 0) return { observations: [], files: {} };
   const engine = createManagedEslint({
@@ -350,7 +351,9 @@ function createComplexityAdapter(
       try {
         context.signal.throwIfAborted();
         const moves = await sourceMoves(context, id, { crossFileOnly: true });
-        const donorPaths = new Set(changedFilePaths(context, "baseline"));
+        const donorPaths = new Set(
+          selectedChangedPaths(context, id, "baseline"),
+        );
         for (const pair of moves.pairs) {
           if (workspaceOwns(context, "target", pair.target.entity.file))
             donorPaths.add(pair.baseline.entity.file);
@@ -373,7 +376,7 @@ function createComplexityAdapter(
           metricName,
           context.policyForFile,
           "target",
-          changedFilePaths(context, "target"),
+          selectedChangedPaths(context, id, "target"),
         );
         const movedIdentities = new Set(
           moves.pairs

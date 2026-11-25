@@ -124,7 +124,10 @@ function installationReady(
         name.split("/").some((part) => part === "." || part === "..")
       )
         return false;
-      let directory = resolve(repositoryRoot, workspace.relativeRoot),
+      let directory = resolve(
+          repositoryRoot,
+          workspace.canonicalRelativeRoot ?? workspace.relativeRoot,
+        ),
         found = false;
       for (let depth = 0; depth < 64; depth++) {
         const part = relative(resolve(repositoryRoot), directory);
@@ -280,7 +283,10 @@ export async function assertRequiredInstallation(options: {
           !sourcePath.startsWith(`..${sep}`);
         let path = containedSource
           ? dirname(resolve(repositoryRoot, sourcePath!))
-          : resolve(repositoryRoot, workspace.relativeRoot);
+          : resolve(
+              repositoryRoot,
+              workspace.canonicalRelativeRoot ?? workspace.relativeRoot,
+            );
         let installed = false;
         const searched: string[] = [];
         for (;;) {

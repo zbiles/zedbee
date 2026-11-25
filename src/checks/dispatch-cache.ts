@@ -1,3 +1,4 @@
+import { hasWorkspaceAliases } from "./workspace-comparison.js";
 import { realpath } from "node:fs/promises";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import {
@@ -185,6 +186,9 @@ export function createDispatchObservationCollector(
       return Reflect.apply(adapter.collect, undefined, [runContext]);
     }
     if (
+      (runContext.target.kind === "workspace" &&
+        (hasWorkspaceAliases(runContext.baselineInspection) ||
+          hasWorkspaceAliases(runContext.targetInspection))) ||
       !isCacheableObservationCheck(adapter.id) ||
       (options.cache === undefined && options.cacheEngineIdentity === undefined)
     ) {

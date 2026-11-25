@@ -13,6 +13,7 @@ import type {
   WorkspaceInspection,
 } from "../inspection/types.js";
 import type { CheckTarget, InspectionContext } from "./adapter.js";
+import { selectedChangedPaths } from "./changed-file-paths.js";
 import { isFormattingCandidate } from "./prettier/supported-path.js";
 import {
   compilerInputRelevance,
@@ -173,10 +174,10 @@ export async function shouldScheduleTarget(
       )
     );
   }
-  const changed = new Set(
-    [...changeSet.files.values()]
-      .filter(({ status }) => status !== "deleted")
-      .map(({ path }) => normalizeRepositoryRelativePath(path)),
+  const changed = selectedChangedPaths(
+    { ...context, target, policyForFile },
+    checkId,
+    "target",
   );
   const compilerInputChange =
     checkId === "lint" &&

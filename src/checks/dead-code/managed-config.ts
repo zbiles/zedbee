@@ -1,3 +1,4 @@
+import { packageExportTargets } from "../package-export-targets.js";
 import { entryOwner, resolveViteEntrypoints } from "./vite-entrypoints.js";
 import { resolveFrameworkEntrypoints } from "./framework-entrypoints.js";
 import {
@@ -75,7 +76,11 @@ function entrypointStrings(
     ...strings(manifest.main),
     ...strings(manifest.module),
     ...strings(manifest.types),
-    ...strings(manifest.exports),
+    ...(manifest.exports === undefined
+      ? []
+      : packageExportTargets(manifest.exports).filter(
+          (target): target is string => target !== null,
+        )),
     ...binEntries.flatMap((candidate) => strings(candidate)),
   ];
 }

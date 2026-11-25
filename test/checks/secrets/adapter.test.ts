@@ -8,6 +8,10 @@ import { SECRET_LINT_CONFIG } from "../../../src/checks/secrets/config.js";
 import { MAX_SECRET_FILE_BYTES } from "../../../src/checks/secrets/content.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
+import {
+  captureAnalysisSources,
+  withAnalysisSourceCapture,
+} from "../../../src/inspection/source-capture.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
@@ -238,6 +242,87 @@ describe("secretsAdapter", () => {
       baselineObservations: [],
       targetObservations: [],
     });
+  });
+
+  it.each([false, true])(
+    "accepts valid replacement characters and BOMs (captured=%s)",
+    async (captured) => {
+      const run = await context([
+        {
+          path: "text.txt",
+          status: "added",
+          addedRanges: [{ start: 1, end: 2 }],
+        },
+      ]);
+      const source = "\ufeff" + "x".repeat(65531) + "😀\ufffd";
+      await writeFile(`${run.snapshots.targetDir}/text.txt`, source);
+      const adapter = createSecretsAdapter({
+        lintSource: async ({ source }) =>
+          result(source.filePath, source.content),
+        comparisonKey: () => new Uint8Array(32),
+      });
+      const check = () =>
+        expect(adapter.collect(run)).resolves.toMatchObject({
+          targetObservations: expect.any(Array),
+        });
+      if (!captured) {
+        await check();
+        return;
+      }
+      const owner = (await captureAnalysisSources([
+        { snapshotRoot: run.snapshots.targetDir, paths: ["text.txt"] },
+      ]))!;
+      try {
+        await withAnalysisSourceCapture(owner, check);
+      } finally {
+        await owner.close();
+      }
+    },
+  );
+
+  it("scans included files in a mixed commit without reading excluded inputs", async () => {
+    const run = await context([
+      {
+        path: "generated.txt",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+      {
+        path: "included.txt",
+        status: "added",
+        addedRanges: [{ start: 1, end: 1 }],
+      },
+    ]);
+    const config = {
+      ...run.config,
+      pathExclusions: [
+        {
+          files: ["generated.txt"],
+          checks: ["secrets"] as const,
+          reason: "Generated fixture.",
+        },
+      ],
+    };
+    await writeFile(
+      `${run.snapshots.targetDir}/generated.txt`,
+      "x".repeat(MAX_SECRET_FILE_BYTES + 1),
+    );
+    await writeFile(`${run.snapshots.targetDir}/included.txt`, "included");
+    const scanned: string[] = [];
+    const adapter = createSecretsAdapter({
+      lintSource: async ({ source }) => {
+        scanned.push(source.filePath);
+        return result(source.filePath, source.content);
+      },
+      comparisonKey: () => new Uint8Array(32),
+    });
+    const collected = await adapter.collect({
+      ...run,
+      config,
+      policyForFile: testFilePolicyResolver(config, run.changeSet),
+    });
+    expect(scanned).toEqual(["included.txt"]);
+    expect(collected.targetObservations).toHaveLength(1);
   });
 
   it("skips binary files and fails safely for invalid UTF-8 and over-limit text", async () => {

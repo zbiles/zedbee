@@ -1,5 +1,8 @@
 import { MANAGED_SOURCE_PATH } from "./source-paths.js";
-import { owningWorkspace, workspaceContainsFile } from "./workspace-owner.js";
+import {
+  workspaceContainsFile,
+  physicalWorkspaceOrder,
+} from "./workspace-owner.js";
 import { posix, relative, sep } from "node:path";
 import {
   canonicalizeSnapshotRoot,
@@ -195,7 +198,8 @@ export async function inspectRepository(
       workspaces.some(({ relativeRoot, canonicalRelativeRoot }) =>
         [relativeRoot, canonicalRelativeRoot].some(
           (root) =>
-            workspaceContainsFile(root, path) ||
+            (failure.reason !== "excluded-symlink" &&
+              workspaceContainsFile(root, path)) ||
             root === path ||
             root.startsWith(`${path}/`),
         ),
@@ -225,47 +229,30 @@ export async function inspectRepository(
     sourcesByWorkspace.set(workspace, []);
     configsByWorkspace.set(workspace, []);
   }
-  const claimedSourceFiles = new Set<string>();
-  const claimedConfigPaths = new Set<string>();
-  for (const workspace of workspaces) {
-    if (workspace.canonicalRelativeRoot === workspace.relativeRoot) continue;
-    for (const path of sourceFiles) {
-      if (!workspaceContainsFile(workspace.canonicalRelativeRoot, path))
-        continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      sourcesByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedSourceFiles.add(path);
-    }
-    for (const path of tsconfigPaths) {
-      if (!workspaceContainsFile(workspace.canonicalRelativeRoot, path))
-        continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      configsByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedConfigPaths.add(path);
-    }
+  const unownedSourceFiles: string[] = [];
+  // Registry members use canonical spellings. Choose the deepest physical
+  // project first, then project the path into that declared owner's spelling.
+  // Equal physical roots prefer the real declaration, then a stable alias.
+  const owners = physicalWorkspaceOrder(workspaces);
+  function assign(
+    path: string,
+    byWorkspace: Map<DiscoveredWorkspace, string[]>,
+  ): boolean {
+    const owner = owners.find(({ canonicalRelativeRoot }) =>
+      workspaceContainsFile(canonicalRelativeRoot, path),
+    );
+    if (owner === undefined) return false;
+    const suffix =
+      owner.canonicalRelativeRoot === "."
+        ? path
+        : path.slice(owner.canonicalRelativeRoot.length + 1);
+    byWorkspace.get(owner)!.push(posix.join(owner.relativeRoot, suffix));
+    return true;
   }
   for (const path of sourceFiles) {
-    if (claimedSourceFiles.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      sourcesByWorkspace.get(owner)?.push(path);
-    }
+    if (!assign(path, sourcesByWorkspace)) unownedSourceFiles.push(path);
   }
-  for (const path of tsconfigPaths) {
-    if (claimedConfigPaths.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      configsByWorkspace.get(owner)?.push(path);
-    }
-  }
+  for (const path of tsconfigPaths) assign(path, configsByWorkspace);
 
   const inspectedWorkspaces = workspaces.map((workspace) => {
     const workspaceSources = sourcesByWorkspace.get(workspace) ?? [];
@@ -275,6 +262,9 @@ export async function inspectRepository(
         ? {}
         : { name: workspace.manifest.name }),
       relativeRoot: workspace.relativeRoot,
+      ...(workspace.canonicalRelativeRoot === workspace.relativeRoot
+        ? {}
+        : { canonicalRelativeRoot: workspace.canonicalRelativeRoot }),
       manifestPath: workspace.manifestPath,
       sourceFiles: workspaceSources,
       tsconfigPaths: workspaceConfigs,
@@ -306,6 +296,7 @@ export async function inspectRepository(
     fileSymlinkTargets: Object.freeze(
       [...symlinkTargets].sort(compareCodeUnits),
     ),
+    unownedSourceFiles: Object.freeze(unownedSourceFiles),
     packageManager: detectPackageManager(rootPackageManager, lockfiles),
     lockfiles,
     workspaces: inspectedWorkspaces,

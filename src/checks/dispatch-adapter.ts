@@ -8,6 +8,7 @@ import type {
   LegacyCheckResultAdapter,
   CheckFixProvider,
 } from "./adapter.js";
+import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { sanitizeCheckTarget } from "./sanitize-target.js";
 
 export type AdapterSnapshot =
@@ -105,6 +106,19 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
   }
   const candidate = value as Record<string, unknown>;
   const applies = candidate.applies;
+  const uncoveredPaths = candidate.uncoveredPaths;
+  if (uncoveredPaths !== undefined && !Array.isArray(uncoveredPaths))
+    throw new TypeError("Adapter returned invalid uncovered paths");
+  const coverage =
+    uncoveredPaths === undefined
+      ? {}
+      : {
+          uncoveredPaths: Object.freeze(
+            uncoveredPaths
+              .map(normalizeRepositoryRelativePath)
+              .sort(compareCodeUnits),
+          ),
+        };
   const independentTargets = candidate.independentTargets;
   if (independentTargets !== undefined && !Array.isArray(independentTargets))
     throw new TypeError("Adapter returned invalid independent targets");
@@ -130,6 +144,7 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
       applies,
       reason: displayProse(reason, "skip reason"),
       ...independent,
+      ...coverage,
     });
   }
   if (applies !== true) {
@@ -195,6 +210,7 @@ export function snapshotApplicability(value: unknown): CheckApplicability {
     requiresBaseline,
     targets,
     ...independent,
+    ...coverage,
     ...(networkDisclosure === undefined ? {} : { networkDisclosure }),
   });
 }

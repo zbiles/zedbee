@@ -8,3 +8,12 @@ export function assertUpgradeCommit(
     healthySibling?: string;
   }>,
 ): void;
+
+export function smokeConsumerUpgrades(options: {
+  root: string;
+  version: string;
+  scratch: string;
+  archive?: string;
+  cache?: string;
+  run: (...args: any[]) => string;
+}): readonly string[];

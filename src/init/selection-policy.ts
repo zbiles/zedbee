@@ -14,6 +14,7 @@ import type {
 /** The same selection contract is used by CLI flags and the interactive prompt. */
 export interface InitSelection {
   readonly profile: ProfileId;
+  readonly profileExplicit?: boolean;
   readonly eslintEngine?: "managed" | "project" | undefined;
   readonly eslintTrust?: boolean | undefined;
   readonly eslintMessages?: boolean | undefined;
@@ -73,7 +74,10 @@ export function buildInitSelectionOptions(
     selection.osvUnavailable ?? context.defaults.osvUnavailable;
   return {
     ...context.base,
-    profile: selection.profile,
+    ...((selection.profileExplicit ?? context.defaults.profileExplicit) ===
+    false
+      ? {}
+      : { profile: selection.profile }),
     ...(eslintEngine === undefined ? {} : { eslintEngine }),
     ...((selection.eslintMessages ?? context.defaults.eslintMessages) ===
     undefined

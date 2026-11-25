@@ -27,6 +27,13 @@ export const SHARED_HUSKY_ACTIVATION_NOTICE = Object.freeze({
   remediation: "Run the repository's hook setup in the main checkout.",
 });
 
+export const HUSKY_CUSTOM_RUNTIME_NOTICE = Object.freeze({
+  code: "HUSKY_RUNTIME_UNVERIFIED" as const,
+  message: "Swarm cannot verify the customized Husky dispatcher or helper.",
+  remediation:
+    "Inspect the Git-selected .husky/_ dispatcher and .husky/_/h in the hook's owning checkout; confirm that the helper invokes the .husky hook body. Preserve custom hooks.",
+});
+
 export const HUSKY_INSTALLATION_NOTICE = Object.freeze({
   code: "HUSKY_CLI_UNAVAILABLE" as const,
   message:
@@ -40,7 +47,8 @@ export type HookUpdateNotice =
   | typeof SHARED_HUSKY_UPDATE_NOTICE
   | typeof HUSKY_ACTIVATION_NOTICE
   | typeof SHARED_HUSKY_ACTIVATION_NOTICE
-  | typeof HUSKY_INSTALLATION_NOTICE;
+  | typeof HUSKY_INSTALLATION_NOTICE
+  | typeof HUSKY_CUSTOM_RUNTIME_NOTICE;
 
 /** Only fixed host-authored copy can enter presentation or persisted reports. */
 export function hookUpdateNotice(report: {
@@ -54,6 +62,8 @@ export function hookUpdateNotice(report: {
       return shared ? SHARED_HUSKY_UPDATE_NOTICE : HOOK_UPDATE_NOTICE;
     case "HUSKY_DISPATCHER_INACTIVE":
       return shared ? SHARED_HUSKY_ACTIVATION_NOTICE : HUSKY_ACTIVATION_NOTICE;
+    case "HUSKY_RUNTIME_UNVERIFIED":
+      return HUSKY_CUSTOM_RUNTIME_NOTICE;
     case "HUSKY_CLI_UNAVAILABLE":
       return HUSKY_INSTALLATION_NOTICE;
   }

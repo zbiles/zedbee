@@ -212,6 +212,7 @@ export async function captureSnapshotRegistry(
       await captureEntry(components.slice(0, index).join("/"));
   };
   for (const path of requestedPaths ?? []) await captureRequestedPath(path);
+  const unavailableEntries = new Set<string>();
   for (const entry of capturedEntries) {
     if (entry.kind !== "symlink") continue;
     if (requestedPaths !== undefined) {
@@ -243,6 +244,32 @@ export async function captureSnapshotRegistry(
       );
     const registeredTarget = absoluteEntries.get(entry.canonicalPath);
     if (
+      registeredTarget === undefined &&
+      requestedPaths === undefined &&
+      relative(snapshotRoot, entry.canonicalPath)
+        .split(sep)
+        .some((part) =>
+          IGNORED_DIRECTORY_NAMES.some((ignored) => ignored === part),
+        )
+    ) {
+      unavailableSymlinks.set(
+        entry.repositoryPath,
+        new RepositoryInspectionError(
+          "INVALID_SNAPSHOT_DATA",
+          "Zedbee could not inventory a symbolic link into an excluded directory.",
+          {
+            path: entry.repositoryPath,
+            reason: "excluded-symlink",
+            targetKind: entry.targetKind,
+          },
+        ),
+      );
+      unavailableEntries.add(entry.repositoryPath);
+      exactEntries.delete(entry.repositoryPath);
+      absoluteEntries.delete(entry.absolutePath);
+      continue;
+    }
+    if (
       registeredTarget === undefined ||
       registeredTarget.kind === "symlink" ||
       registeredTarget.targetIdentity.device !== entry.targetIdentity.device ||
@@ -251,7 +278,11 @@ export async function captureSnapshotRegistry(
       throw invalidSnapshot();
     }
   }
-  const frozenEntries = Object.freeze([...capturedEntries]);
+  const frozenEntries = Object.freeze(
+    capturedEntries.filter(
+      (entry) => !unavailableEntries.has(entry.repositoryPath),
+    ),
+  );
 
   const resolveEntry = (
     repositoryPath: string,

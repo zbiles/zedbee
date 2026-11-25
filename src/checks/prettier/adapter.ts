@@ -182,6 +182,9 @@ async function runProjectFiles(
   ignored: { file: string; reason: string }[],
   checked: Set<string>,
 ): Promise<CheckResult | undefined> {
+  const unsupportedByPath = new Map(
+    context.snapshots.unsupportedEntries.map((entry) => [entry.path, entry]),
+  );
   const grouped = new Map<string, string[]>();
   for (const file of files) {
     const projectRoot = owningProjectRoot(
@@ -266,6 +269,24 @@ async function runProjectFiles(
         if (support.kind === "ignored") {
           ignored.push({ file, reason: support.reason });
           continue;
+        }
+        const unsupported = unsupportedByPath.get(file);
+        if (unsupported !== undefined) {
+          return incompleteResult({
+            checkId: "formatting",
+            durationMs: 0,
+            code:
+              unsupported.kind === "binary"
+                ? "UNSUPPORTED_BINARY_INPUT"
+                : unsupported.kind === "git-lfs-pointer"
+                  ? "GIT_LFS_POINTER"
+                  : "GIT_SUBMODULE_UNAVAILABLE",
+            message:
+              "The selected project formatter supports this path, but its contents are not available as text.",
+            path: file,
+            remediation:
+              "Provide valid text in the selected revision, or explicitly exclude the path from formatting if it is not intended to be formatted.",
+          });
         }
         if (support.configFile !== undefined) {
           selectedConfigFiles.add(support.configFile);
@@ -445,7 +466,11 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       context.snapshots.unsupportedEntries.map((entry) => entry.path),
     );
     files = files.filter(
-      (file) => !unsupported.has(file) && !isGeneratedLockfile(file),
+      (file) =>
+        !isGeneratedLockfile(file) &&
+        (!unsupported.has(file) ||
+          context.policyForFile("formatting", file, "target").engine ===
+            "project"),
     );
     if (files.length === 0) {
       return skipped("No supported target files");

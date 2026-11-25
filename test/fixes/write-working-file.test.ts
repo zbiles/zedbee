@@ -94,6 +94,54 @@ describe("writeWorkingFile", () => {
     ).toEqual([]);
   });
 
+  it("keeps the original file if cancellation arrives during temporary sync", async () => {
+    const root = await fixture();
+    const controller = new AbortController();
+    await expect(
+      writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "new\n",
+        signal: controller.signal,
+        dependencies: {
+          syncTemporary: async (handle) => {
+            await handle.sync();
+            controller.abort();
+          },
+        },
+      }),
+    ).rejects.toThrow();
+    expect(await readFile(join(root, "src/value.ts"), "utf8")).toBe("old\n");
+    expect(await readdir(join(root, "src"))).toEqual(["value.ts"]);
+  });
+
+  it("refuses to replace bytes that changed despite their identical decoded representation", async () => {
+    const root = await fixture();
+    const path = join(root, "src/value.ts");
+    const original = Buffer.from("old\ufffd\n");
+    const intervening = Buffer.concat([
+      Buffer.from("old"),
+      Buffer.from([0xff, 0x0a]),
+    ]);
+    await writeFile(path, original);
+    await expect(
+      writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "new\n",
+        expectedSha256: createHash("sha256").update(original).digest("hex"),
+        dependencies: {
+          syncTemporary: async (handle) => {
+            await handle.sync();
+            await writeFile(path, intervening);
+          },
+        },
+      }),
+    ).rejects.toThrow("changed");
+    expect(await readFile(path)).toEqual(intervening);
+    expect(await readdir(join(root, "src"))).toEqual(["value.ts"]);
+  });
+
   it("rejects a changed file identity and keeps complete old-or-new contents on injected write failure", async () => {
     const root = await fixture();
     const initial = await lstat(join(root, "src", "value.ts"), {
@@ -219,39 +267,39 @@ describe("writeWorkingFile", () => {
   it.skipIf(process.platform === "win32")(
     "never cleans a temporary path through a swapped ancestor",
     async () => {
-    const root = await fixture();
-    const directory = join(root, "src");
-    const movedDirectory = join(root, "src-original");
-    const outside = await mkdtemp(join(tmpdir(), "zedbee-write-outside-"));
-    roots.push(outside);
+      const root = await fixture();
+      const directory = join(root, "src");
+      const movedDirectory = join(root, "src-original");
+      const outside = await mkdtemp(join(tmpdir(), "zedbee-write-outside-"));
+      roots.push(outside);
 
-    await expect(
-      writeWorkingFile({
-        repositoryRoot: root,
-        file: "src/value.ts",
-        source: "new\n",
-        dependencies: {
-          write: async (handle, source) => {
-            await handle.writeFile(source, "utf8");
-            const temporary = (await readdir(directory)).find((name) =>
-              name.startsWith(".zedbee-"),
-            );
-            if (temporary === undefined) throw new Error("missing temp");
-            await rename(directory, movedDirectory);
-            await symlink(outside, directory, "dir");
-            await writeFile(join(outside, temporary), "outside\n");
+      await expect(
+        writeWorkingFile({
+          repositoryRoot: root,
+          file: "src/value.ts",
+          source: "new\n",
+          dependencies: {
+            write: async (handle, source) => {
+              await handle.writeFile(source, "utf8");
+              const temporary = (await readdir(directory)).find((name) =>
+                name.startsWith(".zedbee-"),
+              );
+              if (temporary === undefined) throw new Error("missing temp");
+              await rename(directory, movedDirectory);
+              await symlink(outside, directory, "dir");
+              await writeFile(join(outside, temporary), "outside\n");
+            },
           },
-        },
-      }),
-    ).rejects.toThrow("unsafe");
-    expect(
-      await readFile(join(outside, (await readdir(outside))[0]!), "utf8"),
-    ).toBe("outside\n");
-    expect(
-      (await readdir(movedDirectory)).some((name) =>
-        name.startsWith(".zedbee-"),
-      ),
-    ).toBe(true);
+        }),
+      ).rejects.toThrow("unsafe");
+      expect(
+        await readFile(join(outside, (await readdir(outside))[0]!), "utf8"),
+      ).toBe("outside\n");
+      expect(
+        (await readdir(movedDirectory)).some((name) =>
+          name.startsWith(".zedbee-"),
+        ),
+      ).toBe(true);
     },
   );
 
@@ -292,19 +340,19 @@ describe("writeWorkingFile", () => {
   it.skipIf(process.platform === "win32")(
     "invokes directory sync after a committed rename",
     async () => {
-    const root = await fixture();
-    const synced: string[] = [];
-    await writeWorkingFile({
-      repositoryRoot: root,
-      file: "src/value.ts",
-      source: "new\n",
-      dependencies: {
-        syncDirectory: async (directory) => {
-          synced.push(directory);
+      const root = await fixture();
+      const synced: string[] = [];
+      await writeWorkingFile({
+        repositoryRoot: root,
+        file: "src/value.ts",
+        source: "new\n",
+        dependencies: {
+          syncDirectory: async (directory) => {
+            synced.push(directory);
+          },
         },
-      },
-    });
-    expect(synced).toEqual([join(root, "src")]);
+      });
+      expect(synced).toEqual([join(root, "src")]);
     },
   );
 

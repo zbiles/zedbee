@@ -1,5 +1,6 @@
-import { chmod, mkdir, realpath, symlink } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, readFile, realpath, symlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToString } from "ink";
 import { expect, it } from "vitest";
@@ -193,7 +194,10 @@ it("reports the same shared Husky update from scan and doctor in a linked worktr
   );
   await repo.write(
     ".husky/_/h",
-    '#!/usr/bin/env sh\ns=$(dirname "$(dirname "$0")")/$(basename "$0")\nsh -e "$s" "$@"\n',
+    await readFile(
+      join(dirname(fileURLToPath(import.meta.resolve("husky"))), "husky"),
+      "utf8",
+    ),
   );
   await chmod(join(repo.root, ".husky/_/pre-commit"), 0o755);
   const command = await resolveHookCommand(repo.root);

@@ -270,6 +270,10 @@ function validateWorkspaceSearchLinks(
 ): void {
   const { bases } = patterns;
   for (const [path, failure] of registry.unavailableSymlinks ?? []) {
+    // An excluded file cannot be a workspace directory. Required source and
+    // configuration paths are checked separately by repository inspection.
+    if (failure.reason === "excluded-symlink" && failure.targetKind === "file")
+      continue;
     const local = posix.relative(relativeRoot, path);
     if (local === ".." || local.startsWith("../")) continue;
     if (

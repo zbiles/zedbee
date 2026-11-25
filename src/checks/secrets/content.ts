@@ -1,6 +1,8 @@
+import { InvalidUtf8Error } from "../../core/utf8.js";
 import { RepositoryInspectionError } from "../../inspection/types.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
+import { selectedChangedPaths } from "../changed-file-paths.js";
 import type { CheckRunContext } from "../adapter.js";
 import type { UnsupportedIndexEntry } from "../../git/snapshot.js";
 import {
@@ -100,8 +102,19 @@ async function readTextSource(
   try {
     content = await readContainedFile(registry, repositoryPath, {
       maxBytes: MAX_SECRET_FILE_BYTES,
+      requireValidUtf8: true,
     });
   } catch (error) {
+    if (error instanceof InvalidUtf8Error) {
+      throw new SecretContentError({
+        code: "SECRET_FILE_INVALID_UTF8",
+        message:
+          "A changed file is not valid UTF-8 and cannot be scanned safely.",
+        path: repositoryPath,
+        remediation:
+          "Convert the selected target file to valid UTF-8 text and retry.",
+      });
+    }
     if (!(error instanceof ContainedFileSizeError)) throw error;
     throw new SecretContentError({
       code: "SECRET_FILE_TOO_LARGE",
@@ -111,34 +124,17 @@ async function readTextSource(
         "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
     });
   }
-  if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
-    throw new SecretContentError({
-      code: "SECRET_FILE_TOO_LARGE",
-      message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
-      path: repositoryPath,
-      remediation:
-        "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
-    });
-  }
   if (content.includes("\u0000")) return undefined;
-  if (content.includes("\ufffd")) {
-    throw new SecretContentError({
-      code: "SECRET_FILE_INVALID_UTF8",
-      message:
-        "A changed file is not valid UTF-8 and cannot be scanned safely.",
-      path: repositoryPath,
-      remediation:
-        "Convert the selected target file to valid UTF-8 text and retry.",
-    });
-  }
   return Object.freeze({ content, reportPath: repositoryPath, identityPath });
 }
 
 export async function collectSecretSourcePairs(
   context: CheckRunContext,
 ): Promise<readonly SecretSourcePair[]> {
+  const targetPaths = selectedChangedPaths(context, "secrets", "target");
+  const baselinePaths = selectedChangedPaths(context, "secrets", "baseline");
   const changed = [...context.changeSet.files.values()]
-    .filter(({ status }) => status !== "deleted")
+    .filter(({ path, status }) => status !== "deleted" && targetPaths.has(path))
     .sort((left, right) => compareCodeUnits(left.path, right.path));
   const pairs: SecretSourcePair[] = [];
   const binaryPaths = (entries: readonly UnsupportedIndexEntry[]) =>
@@ -165,7 +161,10 @@ export async function collectSecretSourcePairs(
       paths.add(path);
     };
     add(context.targetInspection.snapshotRoot, file.path);
-    if (file.status !== "added")
+    if (
+      file.status !== "added" &&
+      baselinePaths.has(file.previousPath ?? file.path)
+    )
       add(
         context.baselineInspection.snapshotRoot,
         file.previousPath ?? file.path,
@@ -202,7 +201,8 @@ export async function collectSecretSourcePairs(
   for (const file of changed) {
     const targetPath = normalizeRepositoryRelativePath(file.path);
     const baselinePath =
-      file.status === "added"
+      file.status === "added" ||
+      !baselinePaths.has(file.previousPath ?? file.path)
         ? undefined
         : normalizeRepositoryRelativePath(file.previousPath ?? file.path);
     const [baseline, target] = await Promise.all([

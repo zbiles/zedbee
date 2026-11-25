@@ -145,3 +145,50 @@ describe("ESLint setup proposal", () => {
     ).resolves.toBe(false);
   });
 });
+
+it.each([false, true])(
+  "validates an override-only project engine (conflict=%s)",
+  async (conflict) => {
+    const repo = await createGitRepository();
+    const nested = {
+      ...inspection,
+      workspaces: [
+        ...inspection.workspaces,
+        {
+          ...inspection.workspaces[0]!,
+          relativeRoot: "web",
+          manifestPath: "web/package.json",
+          sourceFiles: ["web/index.ts"],
+        },
+      ],
+    };
+    const before = JSON.stringify({
+      schemaVersion: 1,
+      ...(conflict
+        ? { checks: { lint: { typeInformation: "required" } } }
+        : {}),
+      overrides: [
+        { files: ["web/**"], checks: { lint: { engine: "project" } } },
+      ],
+    });
+    await repo.write(".zedbeerc.jsonc", before);
+    const proposal = createInitProposal(nested, {
+      ...options,
+      repositoryRoot: repo.root,
+      configBefore: before,
+      projectEslintTrustConfirmed: true,
+    });
+    expect(proposal.projectEslintTrustRoots).toEqual(["web"]);
+    expect(proposal.eslintEngine).toBe("project");
+    if (conflict) {
+      expect(proposal.eslintConflicts?.length).toBeGreaterThan(0);
+      await expect(applyInitProposal(proposal)).rejects.toThrow();
+      expect(await repo.read(".zedbeerc.jsonc")).toBe(before);
+      expect(await hasProjectEslintTrust(repo.root, "web", "execute")).toBe(
+        false,
+      );
+    } else {
+      expect(proposal.eslintConflicts).toEqual([]);
+    }
+  },
+);

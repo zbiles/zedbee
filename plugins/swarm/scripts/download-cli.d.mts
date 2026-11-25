@@ -1,3 +1,4 @@
+export function exactVersion(value: unknown): boolean;
 export const MAX_RELEASE_BYTES: number;
 export interface CliRelease {
   version: string;

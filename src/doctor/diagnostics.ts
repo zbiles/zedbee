@@ -1,3 +1,7 @@
+import { formattingRequirements } from "../checks/prettier/formatting-requirements.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
+import { readStagedChangeSet } from "../git/change-set.js";
+import { loadConfigFromIndex } from "../config/load-config.js";
 import { analyzableLockfiles } from "../checks/vulnerabilities/inventory/select-lockfiles.js";
 import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { inspectWorkspaceInstallations } from "./workspace-installation.js";
@@ -404,8 +408,61 @@ export function createDefaultDiagnosticProbe(
       }
       case "project-prettier": {
         const root = await repositoryRoot(context.cwd);
-        const discovery = await inspectProjectPrettierDiscovery(root);
-        if (discovery.status === "failed")
+        const configured = await withSnapshots(
+          context.cwd,
+          async (targetDir) => {
+            const git = new GitClient(root);
+            const config = await loadConfigFromIndex(
+              root,
+              git,
+              context.configPath,
+            );
+            const changeSet = await readStagedChangeSet(git);
+            const inspection = await inspectRepository(targetDir);
+            const requirements = formattingRequirements(
+              inspection,
+              createFilePolicyResolver(config, changeSet),
+              [...changeSet.files.values()]
+                .filter(({ status }) => status !== "deleted")
+                .map(({ path }) => path),
+            );
+            return await Promise.all(
+              requirements.projectRoots.map(async (projectRoot) => {
+                try {
+                  const installation = await resolveProjectPrettierInstallation(
+                    root,
+                    projectRoot,
+                    targetDir,
+                  );
+                  return {
+                    projectRoot,
+                    status: "available",
+                    version: installation.version,
+                  };
+                } catch {
+                  return { projectRoot, status: "missing", version: undefined };
+                }
+              }),
+            );
+          },
+        );
+        if (configured.some(({ status }) => status !== "available")) {
+          return {
+            id,
+            status: "fail",
+            message: `Required project Prettier could not be resolved for ${configured
+              .filter(({ status }) => status !== "available")
+              .map(({ projectRoot }) => projectRoot)
+              .join("; ")} in the selected index.`,
+            remediation:
+              "Restore the selected workspace's declared, supported Prettier installation or select the managed engine.",
+          };
+        }
+        const discovery =
+          configured.length > 0
+            ? undefined
+            : await inspectProjectPrettierDiscovery(root);
+        if (discovery?.status === "failed")
           return {
             id,
             status: "fail",
@@ -413,7 +470,10 @@ export function createDefaultDiagnosticProbe(
             remediation:
               "Check workspace manifests and file permissions, then retry.",
           };
-        const discovered = discovery.entries;
+        // Optional discovery remains useful for setup; explicitly configured
+        // project scopes, however, must all be resolvable in the selected index.
+        const discovered =
+          configured.length > 0 ? configured : (discovery?.entries ?? []);
         if (discovered.length === 0) {
           return {
             id,
@@ -434,8 +494,14 @@ export function createDefaultDiagnosticProbe(
         if (context.projectPrettierTrust !== true) {
           return {
             id,
-            status: "pass",
+            status: configured.length > 0 ? "warning" : "pass",
             message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
+            ...(configured.length === 0
+              ? {}
+              : {
+                  remediation:
+                    "Review the project's configuration and rerun doctor with --trust-project-prettier to verify the required formatter.",
+                }),
           };
         }
         try {

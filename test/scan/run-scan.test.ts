@@ -1075,6 +1075,26 @@ describe("runScan", () => {
     ]);
   });
 
+  it("limits unsupported-input preparation to the selected fix check", () => {
+    const changeSet = addedChangeSet("src/binary.mjs", "README.md");
+    const policyForFile = createFilePolicyResolver(config, changeSet);
+    const entries = [
+      { path: "src/binary.mjs", kind: "binary" },
+      { path: "README.md", kind: "binary" },
+    ] as const;
+    const selected = new Set(changeSet.files.keys());
+    expect(
+      unsupportedEntryFailures(entries, selected, policyForFile, "index", [
+        "formatting",
+      ]),
+    ).toMatchObject([{ path: "README.md" }]);
+    expect(
+      unsupportedEntryFailures(entries, selected, policyForFile, "index", [
+        "lint",
+      ]),
+    ).toMatchObject([{ path: "src/binary.mjs" }]);
+  });
+
   it("uses source-specific unsupported-input remediation", () => {
     const changeSet = addedChangeSet("src/binary.ts");
     const changedPaths = new Set(changeSet.files.keys());

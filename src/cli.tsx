@@ -65,7 +65,7 @@ interface CommanderInitOptions {
   eslintEngine?: "managed" | "project";
   trustProjectEslint?: boolean;
   allowProjectEslintMessages?: boolean;
-  profile: ProfileId;
+  profile?: ProfileId;
   hook: InitHookChoice;
   checks?: readonly CheckId[];
   osvUnavailable?: InitOsvUnavailable;
@@ -315,9 +315,11 @@ export async function runCli(
       ).choices(["github", "none"]),
     )
     .addOption(
-      new Option("--profile <profile>", "initial check profile")
-        .choices(["fast", "recommended", "thorough"])
-        .default("recommended"),
+      new Option("--profile <profile>", "initial check profile").choices([
+        "fast",
+        "recommended",
+        "thorough",
+      ]),
     )
     .addOption(
       new Option(
@@ -396,7 +398,9 @@ export async function runCli(
             });
             telemetry.summary(value);
           },
-          profile: options.profile,
+          ...(options.profile === undefined
+            ? {}
+            : { profile: options.profile }),
           ...(options.diagnosticMessages === undefined
             ? {}
             : { diagnosticMessages: options.diagnosticMessages }),
@@ -686,14 +690,13 @@ export async function runCli(
     if (interrupted === undefined && updateNotice !== undefined) {
       try {
         process.stdout.write(
-          (await import("./updates/notification.js")).renderUpdateNotice(
-            updateNotice,
-            {
-              cwd: process.cwd(),
-              color: updateColor,
-              indent: updateIndented,
-            },
-          ),
+          await (
+            await import("./updates/notification.js")
+          ).renderUpdateNotice(updateNotice, {
+            cwd: process.cwd(),
+            color: updateColor,
+            indent: updateIndented,
+          }),
         );
       } catch {
         /* A notice cannot change a command's result. */

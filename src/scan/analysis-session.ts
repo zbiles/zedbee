@@ -29,7 +29,14 @@ import {
   createFilePolicyResolver,
   type FilePolicyResolver,
 } from "../config/file-policy.js";
-import type { ResolvedConfig, PathExclusion } from "../config/schema.js";
+import { MANAGED_SOURCE_PATH } from "../inspection/source-paths.js";
+import type {
+  CheckId,
+  ResolvedConfig,
+  PathExclusion,
+} from "../config/schema.js";
+import { projectWorkspaceComparison } from "../checks/workspace-comparison.js";
+import { selectedChangedPaths } from "../checks/changed-file-paths.js";
 import {
   addCommitLineRanges,
   addStagedLineRanges,
@@ -211,6 +218,7 @@ export interface AnalysisSessionOptions {
   onConfiguration?: (config: ResolvedConfig) => void;
   /** Fix previews have no public baseline and preserve their empty-index fast path. */
   resolveEmptyBaseline?: boolean;
+  preflightCheckIds?: readonly CheckId[];
   /** Invocation-only consent for project Prettier; never tracked configuration. */
   projectPrettierTrust?: boolean;
   dependencies?: AnalysisSessionDependencies;
@@ -437,6 +445,7 @@ export async function withAnalysisSession<T>(
         new Set(changeSet.files.keys()),
         policyForFile,
         state.source.mode,
+        options.preflightCheckIds,
       );
       if (failures.length > 0) {
         session = {
@@ -555,11 +564,25 @@ export async function withAnalysisSession<T>(
           options.executor?.prepare?.();
           executor = options.executor ?? createLocalAnalyzerExecutor();
           executionCleanupProved = false;
-          const secretsOnly =
+          const fileLocalChecks = new Set<string>([
+            "secrets",
+            "structuralSecurity",
+            "cyclomaticComplexity",
+            "readabilityComplexity",
+          ]);
+          const localChecks =
             prepared !== undefined &&
-            prepared.scheduledTargets.every(
-              ({ checkId }) => checkId === "secrets",
-            );
+            prepared.scheduledTargets.every(({ checkId }) =>
+              fileLocalChecks.has(checkId),
+            )
+              ? [
+                  ...new Set(
+                    prepared.scheduledTargets.map(
+                      ({ checkId }) => checkId as CheckId,
+                    ),
+                  ),
+                ]
+              : undefined;
           const entryCaptureInputs = prepared?.scheduledTargets.some(
             ({ checkId }) => checkId === "deadCode",
           )
@@ -595,30 +618,65 @@ export async function withAnalysisSession<T>(
             sourceSelections: [baselineInspection, targetInspection].map(
               (inspection, side) => ({
                 snapshotRoot: inspection.snapshotRoot,
-                paths: secretsOnly
-                  ? [
-                      ...new Set(
-                        [...changeSet.files.values()]
-                          .filter(
-                            (file) =>
-                              file.status !== "deleted" &&
-                              (side === 1 || file.status !== "added"),
-                          )
-                          .map((file) =>
-                            side === 0
-                              ? (file.previousPath ?? file.path)
-                              : file.path,
-                          ),
-                      ),
-                    ]
-                  : [
-                      ...new Set([
-                        ...inspection.workspaces.flatMap(
-                          (workspace) => workspace.sourceFiles,
+                paths:
+                  localChecks !== undefined
+                    ? [
+                        ...new Set(
+                          localChecks.flatMap((checkId) => {
+                            const snapshotSide =
+                              side === 0 ? "baseline" : "target";
+                            const comparison = projectWorkspaceComparison(
+                              dispatchContext,
+                              checkId,
+                            );
+                            const changed = [
+                              ...selectedChangedPaths(
+                                {
+                                  ...comparison,
+                                  target: {
+                                    id: ".",
+                                    kind: "repository",
+                                    relativeRoot: ".",
+                                  },
+                                },
+                                checkId,
+                                snapshotSide,
+                              ),
+                            ];
+                            if (checkId === "secrets") return changed;
+                            const sources = inspection.workspaces.flatMap(
+                              (workspace) => workspace.sourceFiles,
+                            );
+                            const sourceSet = new Set(sources);
+                            return [
+                              ...changed.filter(
+                                (path) =>
+                                  MANAGED_SOURCE_PATH.test(path) &&
+                                  sourceSet.has(path),
+                              ),
+                              ...sources.filter((path) => {
+                                const policy = comparison.policyForFile(
+                                  checkId,
+                                  path,
+                                  snapshotSide,
+                                );
+                                return (
+                                  policy.severity !== "off" &&
+                                  policy.when === "always"
+                                );
+                              }),
+                            ];
+                          }),
                         ),
-                        ...(entryCaptureInputs[side] ?? []),
-                      ]),
-                    ],
+                      ]
+                    : [
+                        ...new Set([
+                          ...inspection.workspaces.flatMap(
+                            (workspace) => workspace.sourceFiles,
+                          ),
+                          ...(entryCaptureInputs[side] ?? []),
+                        ]),
+                      ],
               }),
             ),
           });

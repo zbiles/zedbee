@@ -222,4 +222,5 @@ that annotation against the artifact from the exact pre-tag run. Publish the arc
 For a local rehearsal, run `npm run artifact:prepare -- --smoke-only`. For a clean release checkout,
 `npm run artifact:prepare` puts the verified archive and upgrade evidence in `release-artifacts/`.
 Update the prior-release versions and npm integrity values in the upgrade fixture when preparing a
-new release.
+new release. Release rehearsal and tagging require complete Git history and an integrity pin for the
+immediately preceding release tag, in addition to the named historical regression fixtures.

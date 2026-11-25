@@ -11,6 +11,9 @@ import type { InitProposal } from "./types.js";
 export async function formatInitProposal(
   proposal: InitProposal,
 ): Promise<InitProposal> {
+  // Show the conflicting proposal for review; formatting must not rethrow the
+  // same validation failure before the UI can present it.
+  if ((proposal.eslintConflicts?.length ?? 0) > 0) return proposal;
   const files = await Promise.all(
     proposal.files.map(async (file) => {
       if (file.relativePath !== ".zedbeerc.jsonc") return file;

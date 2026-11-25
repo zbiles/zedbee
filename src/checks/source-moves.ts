@@ -5,6 +5,7 @@ import {
   type SourceMoveFile,
   type SourceMoveMap,
 } from "../attribution/source-moves.js";
+import { selectedChangedPaths } from "./changed-file-paths.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { analysisKey, analysisStore } from "./analysis-reuse.js";
 import type { CheckRunContext } from "./adapter.js";
@@ -50,10 +51,20 @@ export async function sourceMoves(
     if (!renamedSource && sourceChanges < 2)
       return { pairs: [], ambiguous: [], unmatched: [], diagnostics: [] };
   }
+  const repositoryContext = {
+    ...context,
+    target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+  };
+  const selected = {
+    baseline: selectedChangedPaths(repositoryContext, check, "baseline"),
+    target: selectedChangedPaths(repositoryContext, check, "target"),
+  };
   const key = analysisKey([
     context.snapshots.baselineDir,
     context.snapshots.targetDir,
     [...context.changeSet.files.values()],
+    [...selected.baseline],
+    [...selected.target],
   ]);
   const store =
     analysisStore<Promise<{ baseline: Sources; target: Sources }>>(
@@ -73,19 +84,7 @@ export async function sourceMoves(
         const membership = new Set(
           inspection.workspaces.flatMap((workspace) => workspace.sourceFiles),
         );
-        const paths = [
-          ...new Set(
-            [...context.changeSet.files.values()].flatMap((file) =>
-              side === "baseline"
-                ? file.status === "added"
-                  ? []
-                  : [file.previousPath ?? file.path]
-                : file.status === "deleted"
-                  ? []
-                  : [file.path],
-            ),
-          ),
-        ].filter(
+        const paths = [...selected[side]].filter(
           (path) => membership.has(path) && /\.(?:[cm]?[jt]sx?)$/iu.test(path),
         );
         fileCount += paths.length;

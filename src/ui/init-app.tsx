@@ -151,6 +151,7 @@ export function InitApp({
       visibleHeight: rows,
     });
   const [baseProfile, setBaseProfile] = useState<ProfileId>(proposal.profile);
+  const [profileSelected, setProfileSelected] = useState(false);
   const [customized, setCustomized] = useState(false);
   const [hookSelection, setHookSelection] = useState<InitHookChoice>(
     proposal.hookSelection ?? proposal.hook,
@@ -206,6 +207,7 @@ export function InitApp({
     () => ({
       ...proposalForSelection({
         profile: baseProfile,
+        ...(profileSelected ? { profileExplicit: true } : {}),
         eslintEngine,
         eslintTrust,
         eslintMessages,
@@ -235,6 +237,7 @@ export function InitApp({
       proposal.telemetryDisabledByEnvironment,
       proposal.recommendedChecks,
       baseProfile,
+      profileSelected,
       osvUnavailable,
       hookSelection,
       formatting,
@@ -251,11 +254,11 @@ export function InitApp({
       ? (preparedReview ?? selectedProposal)
       : selectedProposal;
   const eslintReviewBlocked =
-    effectiveEslintEngine === "project" &&
-    (!eslintTrust ||
-      (selectedProposal.projectEslintMessages === "full" &&
-        !eslintMessageTrust) ||
-      (selectedProposal.eslintConflicts?.length ?? 0) > 0);
+    (selectedProposal.eslintConflicts?.length ?? 0) > 0 ||
+    (effectiveEslintEngine === "project" &&
+      (!eslintTrust ||
+        (selectedProposal.projectEslintMessages === "full" &&
+          !eslintMessageTrust)));
   const beginReview = () => {
     if (eslintReviewBlocked) return;
     evaluation.cancel();
@@ -450,6 +453,7 @@ export function InitApp({
         ]!;
       const nextProposal = proposalForSelection({
         profile: nextProfile,
+        profileExplicit: true,
         eslintEngine,
         eslintTrust,
         eslintMessages,
@@ -463,6 +467,7 @@ export function InitApp({
         workflow,
       });
       setBaseProfile(nextProfile);
+      setProfileSelected(true);
       setCustomized(false);
       setSelected(new Set(nextProposal.recommendedChecks));
     } else if (

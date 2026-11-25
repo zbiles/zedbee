@@ -1,4 +1,8 @@
 import {
+  reportForComparisonRepairs,
+  repairFindingForMode,
+} from "../reporting/comparison-repair.js";
+import {
   blockedFindingLines,
   coverageLine,
   scanOutcomeDetail,
@@ -474,7 +478,11 @@ function automaticTextLines(
 ): string[] {
   const selectedFindings = validateReportDisplayStrings({
     checks: [],
-    summary: { findings: presentation.findings },
+    summary: {
+      findings: presentation.findings.map((finding) =>
+        repairFindingForMode(finding, report.mode),
+      ),
+    },
   }).summaryFindings;
   const sections = buildScanResultSections(
     { ...report, checks: sanitized.checks },
@@ -536,6 +544,7 @@ function guidanceLines(
     "",
     ...nextStepsLines({
       outcome: report.outcome,
+      mode: report.mode,
       shown: presentation.findings.length,
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
@@ -580,6 +589,7 @@ export function renderText(
   report: ScanReport,
   options: TextRendererOptions,
 ): string {
+  report = reportForComparisonRepairs(report);
   const sanitized = validateReportDisplayStrings(report);
   const width = Math.max(20, options.width);
   if (options.presentation?.automatic === true) {
@@ -599,7 +609,11 @@ export function renderText(
       ? sanitized.summaryFindings
       : validateReportDisplayStrings({
           checks: [],
-          summary: { findings: options.presentation.findings },
+          summary: {
+            findings: options.presentation.findings.map((finding) =>
+              repairFindingForMode(finding, report.mode),
+            ),
+          },
         }).summaryFindings;
   const lines = [
     ...headline(report, displayedFindings, width),

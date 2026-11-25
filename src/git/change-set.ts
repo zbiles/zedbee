@@ -192,26 +192,43 @@ function changeSetFromPatch(patch: string): ChangeSet {
   if (headers.length === 0 || headers.length !== files.length) {
     return invalidPatch();
   }
-  const changedFiles = files
-    .map((file, index) => {
-      const header = headers[index]!;
-      const changedFile = toChangedFile(
-        file,
-        patchNames(header[1]!, header[2], header[3]),
-      );
-      if (!validPatchFile(file)) {
-        return invalidPatch();
-      }
-      return changedFile;
-    })
-    .sort((left, right) => compareCodeUnits(left.path, right.path));
-  if (
-    new Set(changedFiles.map((file) => file.path)).size !== changedFiles.length
-  ) {
-    return invalidPatch();
+  const changedFiles = new Map<string, { file: ChangedFile; mode?: string }>();
+  for (const [index, file] of files.entries()) {
+    const header = headers[index]!;
+    const changedFile = toChangedFile(
+      file,
+      patchNames(header[1]!, header[2], header[3]),
+    );
+    if (!validPatchFile(file)) return invalidPatch();
+    const sectionStart = header.index! + header[0].length;
+    const mode =
+      /^\n(?:deleted file mode|new file mode) (100644|100755|120000|160000)(?:\n|$)/u.exec(
+        patch.slice(sectionStart),
+      )?.[1];
+    const previous = changedFiles.get(changedFile.path);
+    if (previous === undefined) {
+      changedFiles.set(changedFile.path, {
+        file: changedFile,
+        ...(mode === undefined ? {} : { mode }),
+      });
+      continue;
+    }
+    // Git represents a change between file types as two complementary
+    // sections at the same path. The modes distinguish it from duplicates.
+    if (
+      previous.file.status !== "deleted" ||
+      changedFile.status !== "added" ||
+      previous.mode === undefined ||
+      mode === undefined ||
+      previous.mode.slice(0, 2) === mode.slice(0, 2)
+    )
+      return invalidPatch();
+    changedFiles.set(changedFile.path, {
+      file: { ...changedFile, status: "modified" },
+    });
   }
 
-  return changeSetFromFiles(changedFiles);
+  return changeSetFromFiles([...changedFiles.values()].map(({ file }) => file));
 }
 
 function changeSetFromFiles(changedFiles: readonly ChangedFile[]): ChangeSet {
@@ -403,25 +420,54 @@ export async function discoverCommitChangeSet(
   return changeSetFromNameStatus(metadata.stdout);
 }
 
-function textTargets(
+// Keep each rename's source and destination together. The conservative byte
+// budget also leaves room for the fixed arguments and platform encoding.
+const PATHSPEC_BYTE_BUDGET = (process.platform === "win32" ? 24 : 128) * 1024;
+
+function* textTargetBatches(
   metadata: ChangeSet,
   excludedPaths: ReadonlySet<string>,
-): string[] {
-  return [
-    ...new Set(
-      [...metadata.files.values()].flatMap((file) =>
-        file.status === "deleted" || excludedPaths.has(file.path)
-          ? []
-          : file.previousPath === undefined
-            ? [file.path]
-            : [file.previousPath, file.path],
-      ),
-    ),
-  ];
+  byteBudget: number,
+): Iterable<string[]> {
+  let batch: string[] = [];
+  let bytes = 0;
+  for (const file of metadata.files.values()) {
+    if (file.status === "deleted" || excludedPaths.has(file.path)) continue;
+    const paths = [file.previousPath, file.path]
+      .filter((path): path is string => path !== undefined)
+      .map((path) => `:(literal)${path}`);
+    const cost = paths.reduce(
+      (size, path) => size + Buffer.byteLength(path) + 3,
+      0,
+    );
+    if (batch.length && bytes + cost > byteBudget) {
+      yield batch;
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(...paths);
+    bytes += cost;
+  }
+  if (batch.length) yield batch;
 }
 
-function literalPathspecs(paths: readonly string[]): string[] {
-  return paths.map((path) => `:(literal)${path}`);
+async function collectLineRanges(
+  git: GitClient,
+  metadata: ChangeSet,
+  excludedPaths: ReadonlySet<string>,
+  args: readonly string[],
+  options: Parameters<GitClient["run"]>[1],
+  byteBudget: number,
+): Promise<ChangeSet> {
+  const patches = new Map<string, ChangedFile>();
+  for (const paths of textTargetBatches(metadata, excludedPaths, byteBudget)) {
+    const patch = await git.run([...args, "--", ...paths], options);
+    for (const [path, file] of changeSetFromPatch(patch.stdout).files) {
+      if (patches.has(path)) return invalidPatch();
+      patches.set(path, file);
+    }
+  }
+  return applyAddedRanges(metadata, changeSetFromMap(patches));
 }
 
 export async function addStagedLineRanges(
@@ -429,10 +475,12 @@ export async function addStagedLineRanges(
   metadata: ChangeSet,
   excludedPaths: ReadonlySet<string>,
   signal?: AbortSignal,
+  byteBudget = PATHSPEC_BYTE_BUDGET,
 ): Promise<ChangeSet> {
-  const paths = textTargets(metadata, excludedPaths);
-  if (paths.length === 0) return metadata;
-  const patch = await git.run(
+  return collectLineRanges(
+    git,
+    metadata,
+    excludedPaths,
     [
       "diff",
       "--cached",
@@ -441,12 +489,10 @@ export async function addStagedLineRanges(
         : [git.selectedComparison.diffBase]),
       ...STAGED_DIFF_OPTIONS,
       "--text",
-      "--",
-      ...literalPathspecs(paths),
     ],
     signal === undefined ? {} : { signal },
+    byteBudget,
   );
-  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
 }
 
 export async function addCommitLineRanges(
@@ -456,24 +502,19 @@ export async function addCommitLineRanges(
   baselineCommit: string,
   targetCommit: string,
   signal?: AbortSignal,
+  byteBudget = PATHSPEC_BYTE_BUDGET,
 ): Promise<ChangeSet> {
-  const paths = textTargets(metadata, excludedPaths);
-  if (paths.length === 0) return metadata;
-  const patch = await git.run(
-    [
-      "diff",
-      ...COMMIT_DIFF_OPTIONS,
-      baselineCommit,
-      targetCommit,
-      "--",
-      ...literalPathspecs(paths),
-    ],
+  return collectLineRanges(
+    git,
+    metadata,
+    excludedPaths,
+    ["diff", ...COMMIT_DIFF_OPTIONS, baselineCommit, targetCommit],
     {
       env: { GIT_ATTR_SOURCE: targetCommit },
       ...(signal === undefined ? {} : { signal }),
     },
+    byteBudget,
   );
-  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
 }
 
 export async function readStagedChangeSet(

@@ -1,5 +1,13 @@
-import { chmod, mkdir, realpath, symlink, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import {
+  chmod,
+  mkdir,
+  realpath,
+  readFile,
+  symlink,
+  unlink,
+} from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { resolveHookCommand } from "../../src/hooks/command.js";
@@ -240,7 +248,27 @@ it("diagnoses an unreachable Husky body and its installation independently", asy
     code: "HUSKY_DISPATCHER_INACTIVE",
   });
   await unlink(join(repo.root, ".husky/_/h"));
+  await repo.write(".husky/_/h", "");
+  await repo.write(
+    "web/node_modules/zedbee/dist/cli.js",
+    'require("node:fs").writeFileSync("hook-invoked", "yes");',
+  );
+  expect((await repo.git(["hook", "run", "pre-commit"])).exitCode).toBe(0);
+  await expect(repo.read("hook-invoked")).rejects.toThrow();
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HUSKY_DISPATCHER_INACTIVE",
+  });
   await repo.write(".husky/_/h", "#!/bin/sh\n");
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HUSKY_RUNTIME_UNVERIFIED",
+  });
+  const stock = await readFile(
+    join(dirname(fileURLToPath(import.meta.resolve("husky"))), "husky"),
+    "utf8",
+  );
+  await repo.write(".husky/_/h", stock);
+  expect((await repo.git(["hook", "run", "pre-commit"])).exitCode).toBe(0);
+  expect(await repo.read("hook-invoked")).toBe("yes");
   const beta21 = `#!/bin/sh\nnpm test\n${command} || exit $?\n`;
   await repo.write(".husky/pre-commit", beta21);
   expect(await getHookUpdateNotice(repo.root)).toMatchObject({

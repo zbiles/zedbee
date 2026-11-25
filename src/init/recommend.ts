@@ -5,7 +5,12 @@ import {
 } from "./eslint-setup.js";
 import { createHash } from "node:crypto";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
-import { CHECK_IDS, type CheckId } from "../config/schema.js";
+import {
+  CHECK_IDS,
+  PROFILE_IDS,
+  type ProfileId,
+  type CheckId,
+} from "../config/schema.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { OSV_NETWORK_DISCLOSURE } from "./types.js";
@@ -164,9 +169,7 @@ const COMMON_CHECKS = new Set<CheckId>([
   "duplication",
   "deadCode",
 ]);
-const PROFILE_CHECKS: Readonly<
-  Record<CreateInitProposalOptions["profile"], ReadonlySet<CheckId>>
-> = {
+const PROFILE_CHECKS: Readonly<Record<ProfileId, ReadonlySet<CheckId>>> = {
   fast: new Set([
     "formatting",
     "lint",
@@ -252,7 +255,7 @@ interface FormattingConfigInput {
 }
 
 function configContents(
-  profile: CreateInitProposalOptions["profile"],
+  profile: ProfileId,
   before: string | null,
   checks: readonly CheckId[] | undefined,
   vulnerabilitiesEnabled: boolean,
@@ -260,6 +263,7 @@ function configContents(
   formatting: FormattingConfigInput | undefined,
   schemaReference = "./node_modules/zedbee/schema/zedbee.schema.json",
   changedChecks?: readonly CheckId[],
+  profileExplicit = true,
 ): string {
   const configuredChecks =
     checks === undefined
@@ -336,7 +340,11 @@ function configContents(
     modify(updated, ["$schema"], schemaReference, options),
   );
   updated = applyEdits(updated, modify(updated, ["schemaVersion"], 1, options));
-  updated = applyEdits(updated, modify(updated, ["profile"], profile, options));
+  if (profileExplicit)
+    updated = applyEdits(
+      updated,
+      modify(updated, ["profile"], profile, options),
+    );
   if (checks !== undefined) {
     const existing =
       (parsed as { checks?: Record<string, unknown> }).checks ?? {};
@@ -551,7 +559,7 @@ function environments(
 function recommendedChecks(
   inspection: RepositoryInspection,
   detected: readonly Environment[],
-  profile: CreateInitProposalOptions["profile"],
+  profile: ProfileId,
 ): readonly CheckId[] {
   const checks = new Set(COMMON_CHECKS);
   if (detected.includes("typescript")) checks.add("types");
@@ -577,6 +585,17 @@ function recommendedChecks(
   );
 }
 
+export function effectiveInitProfile(
+  before: string | null,
+  selected?: ProfileId,
+): ProfileId {
+  const prior = before === null ? undefined : parse(before)?.profile;
+  return (
+    selected ??
+    (PROFILE_IDS.includes(prior) ? (prior as ProfileId) : "recommended")
+  );
+}
+
 export function createInitProposal(
   inspection: RepositoryInspection,
   options: CreateInitProposalOptions,
@@ -584,7 +603,8 @@ export function createInitProposal(
   const detected = environments(inspection);
   const before = options.configBefore ?? null;
   const existingChecks = before === null ? {} : (parse(before)?.checks ?? {});
-  const recommended = recommendedChecks(inspection, detected, options.profile);
+  const profile = effectiveInitProfile(before, options.profile);
+  const recommended = recommendedChecks(inspection, detected, profile);
   const selectedChecks = Object.freeze(
     CHECK_IDS.filter((id) => {
       if (options.checks !== undefined) return options.checks.includes(id);
@@ -627,7 +647,7 @@ export function createInitProposal(
     ".zedbeerc.jsonc",
     before,
     configContents(
-      options.profile,
+      profile,
       before,
       options.checks,
       vulnerabilitiesEnabled,
@@ -635,6 +655,7 @@ export function createInitProposal(
       formattingConfig,
       options.schemaReference,
       options.changedChecks,
+      options.profile !== undefined,
     ),
     0o644,
   );
@@ -737,7 +758,7 @@ export function createInitProposal(
     ...(options.workflowMessage === undefined
       ? {}
       : { workflowMessage: options.workflowMessage }),
-    profile: options.profile,
+    profile,
     hook,
     hookActivation,
     ...(options.hooksPathChange === undefined

@@ -28,7 +28,12 @@ function CheckEntry({
   readonly color: boolean;
 }) {
   const applicable = check.applicability === "applicable";
-  const applicabilityTone = applicable ? ZEDBEE_THEME.pass : ZEDBEE_THEME.muted;
+  const incomplete = check.applicability === "incomplete";
+  const applicabilityTone = incomplete
+    ? ZEDBEE_THEME.warning
+    : applicable
+      ? ZEDBEE_THEME.pass
+      : ZEDBEE_THEME.muted;
   const targets =
     check.targets.length === 0 ? "none" : check.targets.join(", ");
   const customizedValues = Object.entries(check.configuration.values).filter(
@@ -49,7 +54,11 @@ function CheckEntry({
         </Text>
         <Box flexGrow={1} minWidth={1} />
         <Text bold {...colorProp(color, applicabilityTone)}>
-          {applicable ? "● APPLICABLE" : "○ NOT APPLICABLE"}
+          {incomplete
+            ? "● INCOMPLETE"
+            : applicable
+              ? "● APPLICABLE"
+              : "○ NOT APPLICABLE"}
         </Text>
         <Text> </Text>
         <Text bold {...colorProp(color, severityTone(check.severity))}>
@@ -79,6 +88,11 @@ function CheckEntry({
         Targets: {targets} · Timing: {check.timing} · Cost:{" "}
         {check.executionClass}
       </Text>
+      {check.uncoveredPaths?.length ? (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+          Uncovered paths: {check.uncoveredPaths.join(", ")}
+        </Text>
+      ) : null}
       <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
         Network: {check.network}
       </Text>

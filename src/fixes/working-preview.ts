@@ -6,12 +6,14 @@ import type { GitClient } from "../git/client.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import {
   canonicalizeSnapshotRoot,
-  readContainedFile,
+  readContainedBytes,
 } from "../inspection/read-json.js";
+import { MAX_WORKING_FILE_BYTES } from "./write-working-file.js";
+import { decodeLosslessUtf8 } from "../core/utf8.js";
 import type { CheckFixCandidate, WorkingFilePreview } from "./types.js";
 
 export const WORKING_PREVIEW_CONCURRENCY = 8;
-export const WORKING_PREVIEW_FILE_BYTES = 4 * 1024 * 1024;
+export const WORKING_PREVIEW_FILE_BYTES = MAX_WORKING_FILE_BYTES;
 export const WORKING_PREVIEW_TOTAL_BYTES = 64 * 1024 * 1024;
 const STATUS_PATH_BYTES = 24 * 1024;
 
@@ -178,13 +180,14 @@ export async function workingFilePreviews(
     }
     // Reserve before reading, and reject growth beyond the reserved size.
     reservedBytes += metadata.size;
-    const content = await readContainedFile(registry, file, {
+    const bytes = await readContainedBytes(registry, file, {
       maxBytes: metadata.size,
     });
+    const content = decodeLosslessUtf8(bytes);
     signal.throwIfAborted();
     const preview: WorkingFilePreview = Object.freeze({
       path: file,
-      sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
       content,
       mode: metadata.mode & 0o777,
       hasUnstagedChanges:

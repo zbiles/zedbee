@@ -1,3 +1,4 @@
+import { packageExportTargetsForConditions } from "../package-export-targets.js";
 import {
   isContainedImportSpecifier,
   WINDOWS_PATH,
@@ -104,23 +105,21 @@ function entrypointRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function exportTargets(value: unknown, depth = 0): readonly string[] {
-  if (depth > 8) throw new TypeError("Workspace exports are too deeply nested");
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) {
-    return value.flatMap((candidate) => exportTargets(candidate, depth + 1));
-  }
-  const object = entrypointRecord(value);
-  return Object.keys(object)
-    .sort(compareCodeUnits)
-    .flatMap((key) => exportTargets(object[key], depth + 1));
-}
-
+// Match dependency-cruiser's shared resolver conditions rather than
+// treating every package condition as an unconditional alias.
+const GRAPH_CONDITIONS = [
+  "import",
+  "require",
+  "node",
+  "default",
+  "types",
+] as const;
+const graphConditions = new Set<string>(GRAPH_CONDITIONS);
 function manifestEntrypoints(
   value: unknown,
-): ReadonlyMap<string, readonly string[]> {
+): ReadonlyMap<string, readonly (string | null)[]> {
   const manifest = entrypointRecord(value);
-  const result = new Map<string, readonly string[]>();
+  const result = new Map<string, readonly (string | null)[]>();
   const exportsValue = manifest.exports;
   if (exportsValue !== undefined) {
     if (
@@ -132,17 +131,26 @@ function manifestEntrypoints(
       const exportsRecord = exportsValue as Record<string, unknown>;
       for (const key of Object.keys(exportsRecord).sort(compareCodeUnits)) {
         if (key === "." || (/^\.\/[^*]+$/u.test(key) && !key.includes(".."))) {
-          result.set(key, exportTargets(exportsRecord[key]));
+          result.set(
+            key,
+            packageExportTargetsForConditions(
+              exportsRecord[key],
+              graphConditions,
+            ),
+          );
         }
       }
     } else {
-      result.set(".", exportTargets(exportsValue));
+      result.set(
+        ".",
+        packageExportTargetsForConditions(exportsValue, graphConditions),
+      );
     }
   }
   const legacy = [manifest.module, manifest.main, manifest.types].filter(
     (candidate): candidate is string => typeof candidate === "string",
   );
-  if (legacy.length > 0) {
+  if (exportsValue === undefined && legacy.length > 0) {
     result.set(".", [...(result.get(".") ?? []), ...legacy]);
   }
   return result;
@@ -205,9 +213,10 @@ async function workspaceAliases(
   const aliases: Record<string, string> = {};
   for (const workspace of inspection.workspaces) {
     if (workspace.name === undefined) continue;
-    const entrypoints = manifestEntrypoints(
+    const manifest = entrypointRecord(
       await readJsonData(registry, workspace.manifestPath),
     );
+    const entrypoints = manifestEntrypoints(manifest);
     const root =
       workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
     const rootFallbacks = [
@@ -223,9 +232,10 @@ async function workspaceAliases(
     )) {
       const entry =
         (entrypoints.get(exportKey) ?? [])
+          .filter((target): target is string => target !== null)
           .map((target) => containedEntrypoint(workspace, target))
           .find((candidate) => candidate !== undefined) ??
-        (exportKey === "."
+        (exportKey === "." && manifest.exports === undefined
           ? rootFallbacks.find((candidate) =>
               workspace.sourceFiles.includes(candidate),
             )
@@ -308,6 +318,7 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   signal: AbortSignal,
+  baselineWorkspacePackages: readonly string[] = [],
 ): Promise<readonly Observation[]> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -347,6 +358,7 @@ async function collectSide(
     },
     {
       modules: [join(canonicalRoot, ".zedbee-unavailable-node-modules")],
+      conditionNames: [...GRAPH_CONDITIONS],
       bustTheCache: true,
       alias: await workspaceAliases(inspection, canonicalRoot),
       plugins: [capturedAliasPlugin(canonicalRoot, aliases)],
@@ -396,11 +408,12 @@ async function collectSide(
           )
           .map(([specifier]) => specifier),
       ),
-      workspacePackages: new Set(
-        inspection.workspaces
+      workspacePackages: new Set([
+        ...baselineWorkspacePackages,
+        ...inspection.workspaces
           .map(({ name }) => name)
           .filter((name): name is string => name !== undefined),
-      ),
+      ]),
     },
   );
 }
@@ -423,6 +436,9 @@ export const dependencyArchitectureAdapter: ObservationCheckAdapter = {
         context.targetInspection,
         context.target,
         context.signal,
+        context.baselineInspection.workspaces.flatMap(({ name }) =>
+          name === undefined ? [] : [name],
+        ),
       );
       return {
         checkId: "dependencyArchitecture",

@@ -407,6 +407,28 @@ describe("executeChecksCommand", () => {
     },
   );
 
+  it.each([false, true])(
+    "reports uncovered sources with covered targets: %s",
+    async (mixed) => {
+      const repository = await createGitRepository("zedbee-checks-uncovered-");
+      await repository.write("pkg/package.json", '{"name":"pkg"}');
+      await repository.write("tools/orphan.js", "export const orphan = 1;\n");
+      if (mixed)
+        await repository.write("pkg/covered.js", "export const covered = 1;\n");
+      await repository.git(["add", "--all"]);
+      const io = terminal();
+      const result = await executeChecksCommand(
+        { cwd: repository.root, format: "json", color: false },
+        io,
+      );
+      expect(result.checks.find((check) => check.id === "lint")).toMatchObject({
+        applicability: "incomplete",
+        targets: mixed ? ["pkg"] : [],
+        uncoveredPaths: ["tools/orphan.js"],
+      });
+    },
+  );
+
   it("renders the Checks dashboard in a wide interactive terminal", async () => {
     const io = {
       ...terminal(),
@@ -1221,3 +1243,62 @@ it.each(["empty", "failed"] as const)(
     );
   },
 );
+
+it("reports selected formatting owners rather than untracked or managed-only sibling manifests", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    '{"name":"fixture","workspaces":["packages/*"]}',
+  );
+  await repo.write(
+    "packages/app/package.json",
+    '{"name":"app","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  await repo.write(
+    "packages/managed/package.json",
+    '{"name":"managed","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["packages/app/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    }),
+  );
+  await repo.git(["add", "--all"]);
+  await repo.write("packages/app/package.json", '{"name":"app"}');
+  // Installation metadata can be read locally, but the declaration's range
+  // must still come from the staged manifest that selected this owner.
+  await repo.write(
+    "packages/app/node_modules/prettier/package.json",
+    '{"version":"3.9.6"}',
+  );
+  await repo.write(
+    "packages/app/node_modules/prettier/index.mjs",
+    "export {};",
+  );
+  await repo.write(
+    "packages/untracked/package.json",
+    '{"name":"untracked","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  const result = await executeChecksCommand(
+    { cwd: repo.root, format: "json", color: false },
+    terminal(),
+  );
+  expect(result.exitCode).toBe(0);
+  expect(
+    result.checks.find(({ id }) => id === "formatting")?.effectiveEngines,
+  ).toEqual([
+    expect.objectContaining({ kind: "managed", projectRoot: "." }),
+    expect.objectContaining({
+      kind: "project",
+      projectRoot: "packages/app",
+      version: "3.9.6",
+    }),
+  ]);
+});

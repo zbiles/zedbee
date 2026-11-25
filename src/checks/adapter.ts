@@ -67,6 +67,7 @@ export interface CheckExecutionResult {
 
 export type CheckApplicability = Readonly<{
   independentTargets?: readonly CheckTarget[];
+  uncoveredPaths?: readonly string[];
 }> &
   (
     | { applies: false; reason: string }

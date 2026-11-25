@@ -5,6 +5,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
+import { decodeLosslessUtf8, InvalidUtf8Error } from "../core/utf8.js";
 import { capturedSourceInput } from "./source-capture.js";
 
 export function normalizeRepositoryPath(path: string): string {
@@ -88,6 +89,7 @@ export interface ContainedFileReadHooks {
 
 export interface ContainedFileReadOptions extends ContainedFileReadHooks {
   readonly maxBytes?: number;
+  readonly requireValidUtf8?: boolean;
 }
 
 export interface ContainedLineReadOptions extends ContainedFileReadHooks {
@@ -128,7 +130,7 @@ function unreadablePath(repositoryPath: string): RepositoryInspectionError {
   );
 }
 
-async function openWithoutFollowing(
+export async function openWithoutFollowing(
   canonicalPath: string,
 ): Promise<FileHandle> {
   const noFollow = constants.O_NOFOLLOW;
@@ -217,7 +219,8 @@ async function withValidatedContainedFile<T>(
   } catch (error) {
     if (
       error instanceof RepositoryInspectionError ||
-      error instanceof ContainedFileSizeError
+      error instanceof ContainedFileSizeError ||
+      error instanceof InvalidUtf8Error
     ) {
       throw error;
     }
@@ -227,7 +230,7 @@ async function withValidatedContainedFile<T>(
   }
 }
 
-async function readBoundedBytes(
+export async function readBoundedBytes(
   handle: FileHandle,
   repositoryPath: string,
   maxBytes: number,
@@ -265,6 +268,8 @@ export async function readContainedFile(
     if (captured.text === undefined) throw unreadablePath(repositoryPath);
     if (maxBytes !== undefined && captured.byteLength > maxBytes)
       throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    if (options.requireValidUtf8 === true && captured.validUtf8 !== true)
+      throw new InvalidUtf8Error();
     return captured.text;
   }
   return withValidatedContainedFile(
@@ -276,11 +281,14 @@ export async function readContainedFile(
         throw new ContainedFileSizeError(repositoryPath, maxBytes);
       }
       if (maxBytes === undefined) {
-        return handle.readFile({ encoding: "utf8" });
+        return options.requireValidUtf8 === true
+          ? decodeLosslessUtf8(await handle.readFile())
+          : handle.readFile({ encoding: "utf8" });
       }
-      return (
-        await readBoundedBytes(handle, repositoryPath, maxBytes)
-      ).toString("utf8");
+      const bytes = await readBoundedBytes(handle, repositoryPath, maxBytes);
+      return options.requireValidUtf8 === true
+        ? decodeLosslessUtf8(bytes)
+        : bytes.toString("utf8");
     },
   );
 }

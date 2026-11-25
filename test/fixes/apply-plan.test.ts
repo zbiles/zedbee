@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { diffChars } from "diff";
 import { describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import { applyFixPlan } from "../../src/fixes/apply-plan.js";
 import { DEFAULT_FORMATTING_SETTINGS } from "../../src/checks/prettier/settings.js";
 import type { PreparedFixPlan } from "../../src/fixes/types.js";
 import { writeWorkingFile } from "../../src/fixes/write-working-file.js";
+import { createGitRepository } from "../helpers/git-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import {
   createLocalAnalyzerExecutor,
@@ -190,6 +191,143 @@ describe("applyFixPlan", () => {
     expect(wrote).toBe(false);
     expect(await readFile(join(fixture.root, "a.js"), "utf8")).toBe(source);
   });
+  it.skipIf(process.platform === "win32")(
+    "retains committed progress when cancellation arrives during directory sync",
+    async () => {
+      const fixture = await createInspectionFixture();
+      const source = "const x=1";
+      await fixture.write("a.js", source);
+      const controller = new AbortController();
+      const plan = prepared(fixture.root, "a.js", source, source, [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file: "a.js",
+          findingIds: ["format"],
+          severities: ["error"],
+          settings: DEFAULT_FORMATTING_SETTINGS,
+        },
+      ]);
+      const rejected = await applyFixPlan(plan, {
+        signal: controller.signal,
+        formatWorkingSource: async () => "const x = 1;\n",
+        writeWorkingFile: (request) =>
+          writeWorkingFile({
+            ...request,
+            dependencies: { syncDirectory: async () => controller.abort() },
+          }),
+      }).catch((error: unknown) => error);
+      expect(rejected).toMatchObject({
+        result: { changedFiles: ["a.js"], appliedFixes: 1 },
+      });
+      expect(await readFile(join(fixture.root, "a.js"), "utf8")).toBe(
+        "const x = 1;\n",
+      );
+      expect(
+        (await readdir(fixture.root)).filter((file) =>
+          file.startsWith(".zedbee-"),
+        ),
+      ).toEqual([]);
+    },
+  );
+
+  it("stops after the first of two files without losing committed progress", async () => {
+    const fixture = await createGitRepository();
+    const source = "const x=1";
+    const files = ["a.js", "b.js"];
+    for (const file of files) await fixture.write(file, source);
+    await fixture.git(["add", "--all"]);
+    const index = await readFile(join(fixture.root, ".git/index"));
+    const parts = files.map((file) =>
+      prepared(fixture.root, file, source, source, [
+        {
+          kind: "format-file",
+          checkId: "formatting",
+          file,
+          findingIds: ["format"],
+          severities: ["error"],
+          settings: DEFAULT_FORMATTING_SETTINGS,
+        },
+      ]),
+    );
+    const plan: PreparedFixPlan = {
+      ...parts[0]!,
+      candidates: parts.flatMap((part) => part.candidates),
+      workingFiles: new Map(parts.flatMap((part) => [...part.workingFiles])),
+    };
+    const controller = new AbortController();
+    const failure = await applyFixPlan(plan, {
+      signal: controller.signal,
+      formatWorkingSource: async () => "const x = 1;\n",
+      writeWorkingFile: async (request) => {
+        await writeWorkingFile(request);
+        controller.abort();
+      },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({
+      result: { changedFiles: ["a.js"], appliedFixes: 1, exitCode: 1 },
+    });
+    expect(await readFile(join(fixture.root, "a.js"), "utf8")).toBe(
+      "const x = 1;\n",
+    );
+    expect(await readFile(join(fixture.root, "b.js"), "utf8")).toBe(source);
+    expect(await readFile(join(fixture.root, ".git/index"))).toEqual(index);
+    expect(
+      (await readdir(fixture.root)).filter((file) =>
+        file.startsWith(".zedbee-"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("refuses a stale raw-byte observation at apply without changing the file", async () => {
+    const fixture = await createInspectionFixture();
+    const original = "// \ufffd\nconst x=1";
+    const intervening = Buffer.concat([
+      Buffer.from("// "),
+      Buffer.from([0xff]),
+      Buffer.from("\nconst x=1"),
+    ]);
+    await fixture.write("a.js", original);
+    const plan = prepared(fixture.root, "a.js", original, original, [
+      {
+        kind: "format-file",
+        checkId: "formatting",
+        file: "a.js",
+        findingIds: ["format"],
+        severities: ["error"],
+        settings: DEFAULT_FORMATTING_SETTINGS,
+      },
+    ]);
+    await writeFile(join(fixture.root, "a.js"), intervening);
+    const outcome = await applyFixPlan(plan);
+    expect(outcome).toMatchObject({
+      changedFiles: [],
+      issues: [{ kind: "stale" }],
+    });
+    expect(await readFile(join(fixture.root, "a.js"))).toEqual(intervening);
+  });
+
+  it("round-trips valid UTF-8 and a BOM when applying working-file formatting", async () => {
+    const fixture = await createInspectionFixture();
+    const source = "\ufeff// 漢字😀\ufffd\nconst x=1";
+    await fixture.write("a.js", source);
+    const plan = prepared(fixture.root, "a.js", source, source, [
+      {
+        kind: "format-file",
+        checkId: "formatting",
+        file: "a.js",
+        findingIds: ["format"],
+        severities: ["error"],
+        settings: DEFAULT_FORMATTING_SETTINGS,
+      },
+    ]);
+    const outcome = await applyFixPlan(plan);
+    expect(outcome).toMatchObject({ changedFiles: ["a.js"], issues: [] });
+    expect(await readFile(join(fixture.root, "a.js"))).toEqual(
+      Buffer.from("\ufeff// 漢字😀\ufffd\nconst x = 1;\n"),
+    );
+  });
+
   it("maps exact edits across unrelated working changes without searching repeated text", async () => {
     const fixture = await createInspectionFixture();
     const base = "const target = target;\n";

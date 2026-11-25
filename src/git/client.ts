@@ -346,7 +346,12 @@ export class GitClient {
     try {
       if (this.clientOptions.runCommand !== undefined) {
         const output = await this.clientOptions.runCommand(args, { signal });
-        deadline.check();
+        deadline.check(
+          maxOutputBytes !== undefined &&
+            [output.stdout, output.stderr].some(
+              (value) => Buffer.byteLength(value) > maxOutputBytes,
+            ),
+        );
         if ((options.reject ?? true) && output.exitCode !== 0) {
           throw new GitCommandError(
             "GIT_COMMAND_FAILED",
@@ -373,29 +378,22 @@ export class GitClient {
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
         cancelSignal: signal,
       } as const;
-      const result = binary
-        ? await execa(command.executable, args, {
-            ...commandOptions,
-            encoding: "buffer",
-            stripFinalNewline: false,
-          })
-        : await execa(command.executable, args, commandOptions);
-
+      const result = await execa(command.executable, args, {
+        ...commandOptions,
+        encoding: "buffer",
+        stripFinalNewline: false,
+      });
       deadline.check(isOutputLimitExceeded(result), result.isCanceled);
 
-      const stderr =
-        typeof result.stderr === "string"
-          ? result.stderr
-          : Buffer.from(result.stderr).toString("utf8");
+      const stdout = Buffer.from(result.stdout as Uint8Array);
+      const stderr = Buffer.from(result.stderr as Uint8Array).toString("utf8");
+      const text = (value: string) =>
+        value.endsWith("\n") ? value.replace(/\r?\n$/u, "") : value;
       const output: GitOutput | GitBinaryOutput = binary
-        ? {
-            stdout: Buffer.from(result.stdout as Uint8Array),
-            stderr,
-            exitCode: result.exitCode ?? -1,
-          }
+        ? { stdout, stderr, exitCode: result.exitCode ?? -1 }
         : {
-            stdout: result.stdout as string,
-            stderr,
+            stdout: text(stdout.toString("utf8")),
+            stderr: text(stderr),
             exitCode: result.exitCode ?? -1,
           };
 

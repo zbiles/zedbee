@@ -1,3 +1,4 @@
+import { createGitRepository } from "../helpers/git-repository.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -168,9 +169,13 @@ describe("cached CLI notification", () => {
       }),
     ).toBeUndefined();
   });
-  it("keeps no-color output free of escape codes and shows the local update command", () => {
-    const root = fixture();
-    const text = renderUpdateNotice(
+  it("keeps no-color output free of escape codes and shows the local update command", async () => {
+    const { root } = await createGitRepository();
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ devDependencies: { zedbee: "^0.1.0" } }),
+    );
+    const text = await renderUpdateNotice(
       { current: "0.1.0", latest: "0.2.0" },
       { cwd: root, color: false },
     );
@@ -183,25 +188,31 @@ describe("cached CLI notification", () => {
     ["pnpm", "pnpm add --save-dev zedbee@latest"],
     ["yarn", "yarn add --dev zedbee@latest"],
     ["bun", "bun add --dev zedbee@latest"],
-  ])("uses the project's %s declaration", (manager, expected) => {
-    const root = fixture();
+  ])("uses the project's %s declaration", async (manager, expected) => {
+    const { root } = await createGitRepository();
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ packageManager: `${manager}@1.0.0` }),
+      JSON.stringify({
+        packageManager: `${manager}@1.0.0`,
+        devDependencies: { zedbee: "^0.1.0" },
+      }),
     );
-    expect(updateCommand(root)).toBe(expected);
+    expect(await updateCommand(root)).toContain(expected);
   });
-  it("permits pnpm's intentional workspace-root dev dependency update", () => {
-    const root = fixture();
+  it("permits pnpm's intentional workspace-root dev dependency update", async () => {
+    const { root } = await createGitRepository();
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ packageManager: "pnpm@10.0.0" }),
+      JSON.stringify({
+        packageManager: "pnpm@10.0.0",
+        devDependencies: { zedbee: "^0.1.0" },
+      }),
     );
     writeFileSync(
       join(root, "pnpm-workspace.yaml"),
       "packages:\n  - packages/*\n",
     );
-    expect(updateCommand(root)).toBe(
+    expect(await updateCommand(root)).toContain(
       "pnpm add --save-dev --workspace-root zedbee@latest",
     );
   });
@@ -290,4 +301,21 @@ it("keeps a delayed refresh's lease beyond the former expiration interval", asyn
       new Response(JSON.stringify({ ...metadata, version: "0.3.0" })),
   });
   expect(readUpdateCache(path, later)?.metadata?.version).toBe("0.3.0");
+});
+
+it("identifies nested pnpm declaration from repository root and subdirectories", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"root"}');
+  await repo.write(
+    "nested/package.json",
+    '{"name":"nested","devDependencies":{"zedbee":"^0.1.0"}}',
+  );
+  await repo.write("nested/pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+  await repo.write("nested/src/index.ts", "export {};\n");
+  expect(await updateCommand(repo.root)).toContain(
+    'directory "nested": pnpm add --save-dev zedbee@latest',
+  );
+  expect(await updateCommand(join(repo.root, "nested/src"))).toContain(
+    'directory "nested": pnpm add --save-dev zedbee@latest',
+  );
 });

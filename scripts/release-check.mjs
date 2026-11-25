@@ -1,3 +1,4 @@
+import { exactVersion } from "../plugins/swarm/scripts/download-cli.mjs";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -10,9 +11,6 @@ const OWNER_ACTION =
   "Release blocked: add the canonical HTTPS repository.url, homepage, and bugs.url to package.json and configure the matching Git remote.";
 const PACKAGE_ACTION =
   "Release blocked: package name, version, access, and registry must identify the public zedbee release.";
-const RELEASE_VERSION =
-  /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u;
-
 const LOCAL_STEPS = Object.freeze([
   { id: "build", command: "npm", args: ["run", "build"] },
   { id: "plugin", command: "npm", args: ["run", "plugin:check"] },
@@ -155,7 +153,7 @@ export function releaseReadiness(packageJson, remoteUrls) {
     packageJson?.name !== "zedbee" ||
     typeof packageJson?.version !== "string" ||
     packageJson.version === "0.0.0" ||
-    !RELEASE_VERSION.test(packageJson.version) ||
+    !exactVersion(packageJson.version) ||
     publishConfig?.access !== "public" ||
     publishConfig?.registry !== "https://registry.npmjs.org/"
   ) {

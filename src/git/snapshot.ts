@@ -1,3 +1,4 @@
+import { resolveIndexBaseline } from "./selected-comparison.js";
 import { StringDecoder } from "node:string_decoder";
 import { constants } from "node:fs";
 import {
@@ -794,8 +795,7 @@ export async function buildSnapshotPairOptimized(
   try {
     const baselineCommit =
       git.selectedComparison === undefined
-        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
-            .stdout || null
+        ? await resolveIndexBaseline(git, signal)
         : git.selectedComparison.baselineCommit;
     const staged = parseStagedEntries(
       (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
@@ -862,8 +862,7 @@ export async function buildSnapshotPairSerial(
 
     const baselineCommit =
       git.selectedComparison === undefined
-        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
-            .stdout || null
+        ? await resolveIndexBaseline(git, signal)
         : git.selectedComparison.baselineCommit;
     const baselineRef = baselineCommit === null ? null : "HEAD";
     let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];

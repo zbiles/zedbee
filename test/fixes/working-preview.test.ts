@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { copyFile, lstat, symlink, truncate } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  readFile,
+  symlink,
+  truncate,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { GitClient } from "../../src/git/client.js";
@@ -28,6 +35,46 @@ const dependencies = {
 } as unknown as BuildFixPlanDependencies;
 
 describe("working-file preview capture", () => {
+  it("does not construct edits for a working file containing malformed UTF-8", async () => {
+    const repo = await createGitRepository();
+    await repo.write("a.ts", "const x=1;\n");
+    await repo.git(["add", "a.ts"]);
+    const index = await readFile(join(repo.root, ".git/index"));
+    const original = Buffer.concat([
+      Buffer.from("const x=1; // "),
+      Buffer.from([0xff]),
+    ]);
+    await writeFile(join(repo.root, "a.ts"), original);
+    await expect(
+      workingFilePreviews(
+        repo.root,
+        [candidate("a.ts")],
+        new GitClient(repo.root),
+        signal(),
+        dependencies,
+      ),
+    ).rejects.toThrow(/UTF-8/u);
+    expect(await readFile(join(repo.root, "a.ts"))).toEqual(original);
+    expect(await readFile(join(repo.root, ".git/index"))).toEqual(index);
+  });
+
+  it("retains BOMs and literal replacement characters in the raw-byte preview", async () => {
+    const repo = await createGitRepository();
+    const source = "\ufeff// 漢字😀\ufffd\n";
+    await repo.write("a.ts", source);
+    const result = await workingFilePreviews(
+      repo.root,
+      [candidate("a.ts")],
+      new GitClient(repo.root),
+      signal(),
+      dependencies,
+    );
+    expect(result.get("a.ts")).toMatchObject({
+      content: source,
+      sha256: createHash("sha256").update(Buffer.from(source)).digest("hex"),
+    });
+  });
+
   it("ignores unrelated symlinks into excluded output directories", async () => {
     const repo = await createGitRepository();
     await repo.write("src/a.ts", "x");

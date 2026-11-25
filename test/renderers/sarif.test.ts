@@ -892,3 +892,82 @@ describe("renderSarif", () => {
     );
   });
 });
+
+it("retains the comparison parent in JSON and SARIF incomplete notifications", () => {
+  const parents = ["a".repeat(40), "b".repeat(40)];
+  const report = createReport({
+    outcome: "incomplete",
+    exitCode: 2,
+    mergeParents: parents,
+    checks: parents.map((comparisonParent) => ({
+      checkId: "types",
+      status: "incomplete",
+      durationMs: 0,
+      findings: [],
+      error: {
+        code: "BASELINE_FAILED",
+        message: "Comparison failed.",
+        snapshot: "last-commit",
+        comparisonParent,
+      },
+    })),
+  });
+  expect(
+    JSON.parse(renderJson(report)).checks.map(
+      (check: { error: { comparisonParent: string } }) =>
+        check.error.comparisonParent,
+    ),
+  ).toEqual(parents);
+  const notes = JSON.parse(renderSarif(report)).runs[0].invocations[0]
+    .toolExecutionNotifications;
+  expect(
+    notes.map(
+      (note: { properties: { comparisonParent: string } }) =>
+        note.properties.comparisonParent,
+    ),
+  ).toEqual(parents);
+});
+
+it("does not advertise an index-only automatic fix for committed comparisons", () => {
+  const finding = createFinding({
+    automaticFix: {
+      available: true,
+      command: ["npx", "--no-install", "zedbee", "fix", "formatting"],
+      scope: "working-file",
+      writes: "working-tree",
+      stagesChanges: false,
+    },
+  });
+  const report = createReport({
+    mode: "base",
+    baseline: "a".repeat(40),
+    target: "b".repeat(40),
+    outcome: "blocked",
+    exitCode: 1,
+    checks: [
+      {
+        checkId: "formatting",
+        status: "completed",
+        durationMs: 0,
+        findings: [finding],
+      },
+    ],
+    summary: {
+      passed: 0,
+      warnings: 0,
+      failed: 1,
+      incomplete: 0,
+      findings: [finding],
+    },
+  });
+  expect(renderJson(report)).not.toContain('"automaticFix"');
+  expect(renderSarif(report)).not.toContain("automaticFixCommand");
+  for (const output of [
+    renderJson(report),
+    renderSarif(report),
+    renderText(report, { color: false, width: 120 }),
+  ]) {
+    expect(output).toContain("same base range");
+    expect(output).not.toContain("zedbee fix formatting");
+  }
+});

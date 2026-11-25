@@ -1,4 +1,8 @@
-import { previousUpgradeVersions } from "./smoke-consumer-upgrade.mjs";
+import { exactVersion } from "../plugins/swarm/scripts/download-cli.mjs";
+import {
+  assertPredecessorCoverage,
+  previousUpgradeVersions,
+} from "./smoke-consumer-upgrade.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync } from "node:fs";
@@ -16,7 +20,7 @@ export function verifyUpgradeEvidence(evidence, identity) {
       identity[key],
       `Release evidence has a different ${key}.`,
     );
-  assert.match(identity.version, /^\d+\.\d+\.\d+(?:-[\da-z.-]+)?$/iu);
+  assert.ok(exactVersion(identity.version), "Invalid release version.");
   if (evidence.runId !== undefined) {
     assert.equal(typeof evidence.runId, "string");
     assert.match(evidence.runId, /^[0-9]+$/u);
@@ -35,7 +39,8 @@ function main() {
   const { version } = JSON.parse(
     readFileSync(join(root, "package.json"), "utf8"),
   );
-  assert.match(version, /^\d+\.\d+\.\d+(?:-[\da-z.-]+)?$/iu);
+  assert.ok(exactVersion(version), "Invalid release version.");
+  assertPredecessorCoverage(root, version);
   const archive = resolve(directory, `zedbee-${version}.tgz`);
   const verification = resolve(directory, "upgrade-verification.json");
   for (const file of [archive, verification]) {

@@ -1,4 +1,12 @@
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  mkdtemp,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -578,4 +586,90 @@ it("preserves Git header prefixes, UTF-8 bytes and quotation in all diff readers
       )
     ).files,
   ]).toEqual(entries);
+});
+
+it.skipIf(process.platform === "win32")(
+  "normalizes Git type changes in staged and committed patches",
+  async () => {
+    const repo = await createGitRepository();
+    await symlink("other.js", join(repo.root, "value.js"));
+    await repo.commitAll("link");
+    const base = (await repo.git(["rev-parse", "HEAD"])).stdout;
+    await rm(join(repo.root, "value.js"));
+    await repo.write("value.js", "first\nsecond\n");
+    await repo.git(["add", "value.js"]);
+    const git = new GitClient(repo.root);
+    const expected = {
+      path: "value.js",
+      status: "modified",
+      addedRanges: [{ start: 1, end: 2 }],
+    };
+    expect((await readStagedChangeSet(git)).files.get("value.js")).toEqual(
+      expected,
+    );
+    expect(
+      (
+        await addStagedLineRanges(
+          git,
+          await discoverStagedChangeSet(git),
+          new Set(),
+        )
+      ).files.get("value.js"),
+    ).toEqual(expected);
+    await repo.commitAll("regular file");
+    const target = (await repo.git(["rev-parse", "HEAD"])).stdout;
+    expect(
+      (await readCommitChangeSet(git, base, target)).files.get("value.js"),
+    ).toEqual(expected);
+    await rm(join(repo.root, "value.js"));
+    await symlink("other.js", join(repo.root, "value.js"));
+    await repo.git(["add", "value.js"]);
+    expect((await readStagedChangeSet(git)).files.get("value.js")?.status).toBe(
+      "modified",
+    );
+  },
+);
+
+it("collects multiple bounded batches without losing rename ranges or excluded paths", async () => {
+  const repo = await createGitRepository();
+  await repo.write("old space.js", "one\ntwo\nthree\nfour\n");
+  await repo.commitAll("base");
+  const base = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  await repo.git(["mv", "old space.js", "新 name.js"]);
+  await repo.write("新 name.js", "one\ntwo\nadded\nthree\nfour\n");
+  await repo.write("another.js", "added\n");
+  await repo.write("excluded.js", "ignored\n");
+  await repo.git(["add", "--all"]);
+  const git = new GitClient(repo.root);
+  const excluded = new Set(["excluded.js"]);
+  const metadata = await discoverStagedChangeSet(git);
+  const batches = await addStagedLineRanges(
+    git,
+    metadata,
+    excluded,
+    undefined,
+    30,
+  );
+  expect([...batches.files]).toEqual([
+    ...(await addStagedLineRanges(git, metadata, excluded)).files,
+  ]);
+  expect(batches.files.get("新 name.js")?.addedRanges).toEqual([
+    { start: 3, end: 3 },
+  ]);
+  expect(batches.files.get("excluded.js")?.addedRanges).toEqual([]);
+  await repo.commitAll("target");
+  const target = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  expect([
+    ...(
+      await addCommitLineRanges(
+        git,
+        await discoverCommitChangeSet(git, base, target),
+        excluded,
+        base,
+        target,
+        undefined,
+        30,
+      )
+    ).files,
+  ]).toEqual([...batches.files]);
 });

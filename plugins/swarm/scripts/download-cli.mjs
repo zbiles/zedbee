@@ -5,12 +5,22 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const MAX_RELEASE_BYTES = 64 * 1024 * 1024;
+// Exported for release tooling and the standalone Action.
+export function exactVersion(value) {
+  return (
+    typeof value === "string" &&
+    value.length <= 128 &&
+    /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$/u.test(
+      value,
+    )
+  );
+}
 export function validatePinnedRelease(metadata) {
   if (
     !metadata ||
     typeof metadata.version !== "string" ||
     typeof metadata.sha256 !== "string" ||
-    !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(metadata.version) ||
+    !exactVersion(metadata.version) ||
     metadata.url !==
       `https://registry.npmjs.org/zedbee/-/zedbee-${metadata.version}.tgz` ||
     !/^[a-f0-9]{64}$/.test(metadata.sha256)

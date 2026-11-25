@@ -1,3 +1,4 @@
+import { reportForComparisonRepairs } from "../reporting/comparison-repair.js";
 import { localScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
 import { sanitizeComparisonContext } from "../checks/comparison-context.js";
 import { sanitizeEslintAnalysis } from "../checks/sanitize-result.js";
@@ -155,6 +156,7 @@ export function renderJson(
   report: ScanReport,
   { includeSourceExcerpts = true }: { includeSourceExcerpts?: boolean } = {},
 ): string {
+  report = reportForComparisonRepairs(report);
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
   const payload = {

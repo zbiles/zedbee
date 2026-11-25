@@ -1,3 +1,4 @@
+import { exactVersion } from "../../../plugins/swarm/scripts/download-cli.mjs";
 import { commandInvocation } from "../../../scripts/command-invocation.mjs";
 import { validScanVerdict } from "./verdict.mjs";
 import { spawn } from "node:child_process";
@@ -15,15 +16,6 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-
-function exactVersion(value) {
-  if (typeof value !== "string" || value.length > 128) return false;
-  const identifier = "(?:0|[1-9][0-9]*)";
-  const prerelease = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
-  return new RegExp(
-    `^${identifier}\\.${identifier}\\.${identifier}(?:-${prerelease}(?:\\.${prerelease})*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
-  ).test(value);
-}
 
 function safeRef(value) {
   return (

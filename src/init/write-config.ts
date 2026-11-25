@@ -33,6 +33,11 @@ import {
   restoreProjectPrettierTrust,
   revokeProjectPrettierTrust,
 } from "../checks/prettier/project-trust.js";
+import { decodeLosslessUtf8 } from "../core/utf8.js";
+import {
+  openWithoutFollowing,
+  readBoundedBytes,
+} from "../inspection/read-json.js";
 import { verifyExecutableImportProvenance } from "./import-provenance.js";
 import { initContentHash } from "./recommend.js";
 import type {
@@ -104,7 +109,7 @@ async function currentContents(path: string): Promise<string | null> {
   const state = await metadata(path);
   if (state === undefined) return null;
   if (state.isSymbolicLink() || !state.isFile()) throw unsafeTarget();
-  return readFile(path, "utf8");
+  return decodeLosslessUtf8(await readFile(path));
 }
 
 async function validateGitConfig(root: string): Promise<void> {
@@ -201,11 +206,72 @@ async function validateChange(
   };
 }
 
+export class InitRollbackError extends Error {
+  constructor(readonly incompletePaths: readonly string[]) {
+    super(
+      "Zedbee initialization failed and rollback was incomplete." +
+        (incompletePaths.length === 0
+          ? ""
+          : ` Inspect preserved or unrestored paths: ${incompletePaths.map((path) => JSON.stringify(path)).join(", ")}.`),
+    );
+    this.name = "InitRollbackError";
+  }
+}
+
+interface InitWriteOwnership {
+  readonly bytes: Buffer;
+  readonly device: bigint;
+  readonly inode: bigint;
+  readonly mode: bigint;
+}
+
+function matchesWrite(
+  state: {
+    dev: bigint;
+    ino: bigint;
+    mode: bigint;
+    size: bigint;
+    isFile(): boolean;
+  },
+  written: InitWriteOwnership,
+): boolean {
+  return (
+    state.isFile() &&
+    state.dev === written.device &&
+    state.ino === written.inode &&
+    (BigInt(state.mode) & 0o7777n) === written.mode &&
+    BigInt(state.size) === BigInt(written.bytes.length)
+  );
+}
+
+async function assertOwned(
+  path: string,
+  written: InitWriteOwnership,
+): Promise<void> {
+  if ((await realpath(dirname(path))) !== dirname(path)) throw unsafeTarget();
+  if (!matchesWrite(await lstat(path, { bigint: true }), written))
+    throw unsafeTarget();
+  const handle = await openWithoutFollowing(path);
+  try {
+    const state = await handle.stat({ bigint: true });
+    if (!matchesWrite(state, written)) throw unsafeTarget();
+    const bytes = await readBoundedBytes(handle, path, written.bytes.length);
+    if (
+      !bytes.equals(written.bytes) ||
+      !matchesWrite(await lstat(path, { bigint: true }), written)
+    )
+      throw unsafeTarget();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function atomicReplace(
   path: string,
   contents: string,
   mode: number,
-): Promise<void> {
+  expectedOwnership?: InitWriteOwnership,
+): Promise<InitWriteOwnership> {
   const parent = dirname(path);
   await mkdir(parent, { recursive: true });
   const canonicalParent = await realpath(parent);
@@ -215,14 +281,24 @@ async function atomicReplace(
     `.zedbee-init-${process.pid}-${randomUUID()}.tmp`,
   );
   const handle = await open(temporary, "wx", 0o600);
+  const bytes = Buffer.from(contents, "utf8");
   let renamed = false;
   try {
-    await handle.writeFile(contents, "utf8");
+    await handle.writeFile(bytes);
     await handle.sync();
     await handle.chmod(mode);
+    const written = await handle.stat({ bigint: true });
     await handle.close();
+    if (expectedOwnership !== undefined)
+      await assertOwned(path, expectedOwnership);
     await rename(temporary, path);
     renamed = true;
+    return {
+      bytes,
+      device: written.dev,
+      inode: written.ino,
+      mode: written.mode & 0o7777n,
+    };
   } finally {
     await handle.close().catch(() => undefined);
     if (!renamed) await unlink(temporary).catch(() => undefined);
@@ -285,6 +361,7 @@ export async function applyInitProposal(
 
   const updatedFiles: string[] = [];
   const undo: Array<() => Promise<unknown>> = [];
+  const incompletePaths = new Set<string>();
   if (proposal.executableEvaluatedConfigs !== undefined) {
     await verifyExecutableImportProvenance(
       root,
@@ -296,6 +373,7 @@ export async function applyInitProposal(
       await dependencies.beforeWrite?.(index, item.change);
       signal?.throwIfAborted();
       const refreshed = await validateChange(root, item.change);
+      if (refreshed.path !== item.path) throw unsafeTarget();
       const mode = item.change.relativePath.startsWith(".husky/_/")
         ? item.change.mode
         : refreshed.mode;
@@ -308,14 +386,25 @@ export async function applyInitProposal(
       )
         continue;
       signal?.throwIfAborted();
-      await atomicReplace(item.path, item.change.after, mode);
+      const written = await atomicReplace(item.path, item.change.after, mode);
       updatedFiles.push(item.change.relativePath);
       undo.push(async () => {
-        if (item.before === null) {
-          await unlink(item.path).catch((error: unknown) => {
-            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          });
-        } else await atomicReplace(item.path, item.before, item.mode);
+        try {
+          if (refreshed.before === null) {
+            await assertOwned(item.path, written);
+            await unlink(item.path);
+          } else {
+            await atomicReplace(
+              item.path,
+              refreshed.before,
+              refreshed.mode,
+              written,
+            );
+          }
+        } catch (error) {
+          incompletePaths.add(item.change.relativePath);
+          throw error;
+        }
       });
     }
     if (proposal.hooksPathChange !== undefined) {
@@ -404,10 +493,7 @@ export async function applyInitProposal(
         incomplete = true;
       }
     }
-    if (incomplete)
-      throw new Error(
-        "Zedbee initialization failed and rollback was incomplete.",
-      );
+    if (incomplete) throw new InitRollbackError([...incompletePaths]);
     signal?.throwIfAborted();
     throw new Error("Zedbee initialization failed and was rolled back.");
   }

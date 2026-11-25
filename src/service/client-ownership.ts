@@ -27,11 +27,28 @@ export class ClientOwnership {
   }
   async close(): Promise<void> {
     await Promise.allSettled([...this.events]);
-    await Promise.all([...this.trees.values()].map((tree) => tree.stop()));
-    this.trees.clear();
-    await Promise.all(
-      [...this.leases.keys()].map((id) => this.releaseLease(id)),
+    const sessions = new Set([
+      ...this.leases.keys(),
+      ...[...this.trees.values()].map(({ sessionId }) => sessionId),
+    ]);
+    const failures = await Promise.allSettled(
+      [...sessions].map(async (id) => {
+        const trees = [...this.trees].filter(
+          ([, tree]) => tree.sessionId === id,
+        );
+        const stopped = await Promise.allSettled(
+          trees.map(async ([key, tree]) => {
+            await tree.stop();
+            this.trees.delete(key);
+          }),
+        );
+        const failure = stopped.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+        if (this.leases.has(id)) await this.releaseLease(id);
+      }),
     );
+    const failure = failures.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
   accept(value: Record<string, unknown>): Promise<void> {
     const operation = this.acceptEvent(value);
@@ -63,6 +80,8 @@ export class ClientOwnership {
       value.type === "io-release" &&
       exactFields(value, ["type", "eventId", "sessionId"])
     ) {
+      if ([...this.trees.values()].some((tree) => tree.sessionId === id))
+        throw new ServiceUnavailableError();
       await this.releaseLease(id);
     } else if (
       value.type === "tree-acquire" &&

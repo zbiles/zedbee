@@ -1,3 +1,4 @@
+import { reportForComparisonRepairs } from "../reporting/comparison-repair.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
 import { compareCodeUnits } from "../core/compare.js";
@@ -208,6 +209,9 @@ function createNotification(
         : { parseFailures: error.parseFailures }),
       ...(error.paths === undefined ? {} : { paths: [...error.paths] }),
       ...(error.snapshot === undefined ? {} : { snapshot: error.snapshot }),
+      ...(error.comparisonParent === undefined
+        ? {}
+        : { comparisonParent: error.comparisonParent }),
       ...(error.projectPaths === undefined
         ? {}
         : { projectPaths: [...error.projectPaths] }),
@@ -278,6 +282,7 @@ function createInvocation(
 }
 
 export function renderSarif(report: ScanReport): string {
+  report = reportForComparisonRepairs(report);
   const sanitized = validateReportDisplayStrings(report);
   const findings = [...sanitized.summaryFindings].sort(compareFindings);
   const rules = createRules(findings);

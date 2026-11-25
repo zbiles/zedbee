@@ -31,6 +31,7 @@ import {
   HOOK_UPDATE_NOTICE,
   HUSKY_ACTIVATION_NOTICE,
   HUSKY_INSTALLATION_NOTICE,
+  HUSKY_CUSTOM_RUNTIME_NOTICE,
   SHARED_HUSKY_ACTIVATION_NOTICE,
   SHARED_HUSKY_UPDATE_NOTICE,
   type HookUpdateNotice,
@@ -126,9 +127,12 @@ function resolveHuskyMaintenance(
     if (!hook.reachable)
       return {
         huskyPreCommit,
-        hookUpdate: shared
-          ? SHARED_HUSKY_ACTIVATION_NOTICE
-          : HUSKY_ACTIVATION_NOTICE,
+        hookUpdate:
+          hook.verification === "custom"
+            ? HUSKY_CUSTOM_RUNTIME_NOTICE
+            : shared
+              ? SHARED_HUSKY_ACTIVATION_NOTICE
+              : HUSKY_ACTIVATION_NOTICE,
       };
     const managed = managedHuskyInvocation(hook.source);
     if (command === undefined) {

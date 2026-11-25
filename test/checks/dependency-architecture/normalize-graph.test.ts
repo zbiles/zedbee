@@ -56,6 +56,21 @@ describe("dependency graph normalization", () => {
     ]);
   });
 
+  it("normalizes a verified direct self-edge as a cycle", () => {
+    const observations = normalizeDependencyViolations(
+      result([
+        violation(DEPENDENCY_RULE_NAMES.circular, {
+          to: "src/a.ts",
+          cycle: [{ name: "src/a.ts", dependencyTypes: ["local"] }],
+        }),
+      ]),
+      "/snapshot",
+      new Set(["src/a.ts"]),
+    );
+    expect(observations).toMatchObject([{ identity: "cycle:src/a.ts" }]);
+    expect(() => canonicalCycle([])).toThrow();
+  });
+
   it("emits stable path-only observations for every managed rule", () => {
     const observations = normalizeDependencyViolations(
       result([

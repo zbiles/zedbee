@@ -1,4 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { createGitRepository } from "../helpers/git-repository.js";
+import { GitClient } from "../../src/git/client.js";
+import { readStagedChangeSet } from "../../src/git/change-set.js";
+import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import { onTestFinished } from "vitest";
+import { join } from "node:path";
 import { DEFAULT_CHECK_ADAPTERS } from "../../src/checks/descriptors.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import type { CheckRunContext } from "../../src/checks/adapter.js";
@@ -26,11 +33,14 @@ const sourceChecks: readonly CheckId[] = [
 async function contextFor(
   paths: readonly string[],
   config = resolveConfig({ schemaVersion: 1, profile: "thorough" }),
+  unrelatedWorkspace = false,
 ): Promise<CheckRunContext> {
   const baseline = await createInspectionFixture();
   const target = await createInspectionFixture();
   for (const path of paths)
     await target.write(path, "export const value = 1;\n");
+  if (unrelatedWorkspace)
+    await target.writeJson("pkg/package.json", { name: "pkg" });
   const files = new Map(
     paths.map((path) => [
       path,
@@ -92,6 +102,209 @@ describe("project discovery diagnostics through dispatch", () => {
       expect(evaluatePolicy(results, context.config).outcome).toBe(
         "incomplete",
       );
+    },
+  );
+
+  it("reports unowned changed source alongside an unrelated project", async () => {
+    const context = await contextFor(["tools/orphan.js"], undefined, true);
+    const results = await dispatchChecks(adaptersFor(["lint"]), context);
+    expect(results[0]?.result).toMatchObject({
+      status: "incomplete",
+      error: { code: "PROJECT_NOT_DISCOVERED", path: "tools/orphan.js" },
+    });
+  });
+
+  it("continues a covered check alongside an uncovered input", async () => {
+    const context = await contextFor(
+      ["tools/orphan.js", "pkg/covered.js"],
+      undefined,
+      true,
+    );
+    const results = await dispatchChecks(adaptersFor(["lint"]), context);
+    expect(results.map(({ result }) => result)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "incomplete",
+          error: expect.objectContaining({ path: "tools/orphan.js" }),
+        }),
+        expect.objectContaining({ target: "pkg", status: "completed" }),
+      ]),
+    );
+  });
+
+  it.each([
+    "structuralSecurity",
+    "cyclomaticComplexity",
+    "readabilityComplexity",
+  ] as const)(
+    "does not parse explicitly excluded changed sources during %s",
+    async (checkId) => {
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "thorough",
+        overrides: [
+          { files: ["pkg/excluded.js"], checks: { [checkId]: "off" } },
+        ],
+      });
+      const context = await contextFor(
+        ["pkg/covered.js", "pkg/excluded.js"],
+        config,
+        true,
+      );
+      await writeFile(
+        join(context.snapshots.targetDir, "pkg/excluded.js"),
+        "export const broken = {",
+      );
+      const results = await dispatchChecks(adaptersFor([checkId]), context);
+      expect(results.map(({ result }) => result.status)).toEqual(["completed"]);
+    },
+  );
+
+  it.runIf(process.platform !== "win32").each([false, true])(
+    "attributes a staged React accessibility finding to its linked workspace with a physical-path exclusion: %s",
+    async (excluded) => {
+      const repository = await createGitRepository("zedbee-linked-project-");
+      await repository.write(
+        "package.json",
+        JSON.stringify({ name: "root", workspaces: ["packages/linked"] }),
+      );
+      await repository.write(
+        "internal/app/package.json",
+        JSON.stringify({
+          name: "app",
+          dependencies: { react: "19.0.0", "react-dom": "19.0.0" },
+        }),
+      );
+      await repository.write(
+        "internal/app/index.jsx",
+        "export const Component = () => <img alt='ok' />;\n",
+      );
+      await mkdir(join(repository.root, "packages"), { recursive: true });
+      await symlink(
+        "../internal/app",
+        join(repository.root, "packages/linked"),
+      );
+      await repository.commitAll("baseline");
+      await repository.write(
+        "internal/app/index.jsx",
+        "export const Component = () => <img />;\n",
+      );
+      await repository.git(["add", "--", "internal/app/index.jsx"]);
+      const git = new GitClient(repository.root);
+      const changeSet = await readStagedChangeSet(git);
+      const snapshots = await buildSnapshotPair(repository.root, git);
+      onTestFinished(snapshots.cleanup);
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "thorough",
+        ...(excluded
+          ? {
+              pathExclusions: [
+                {
+                  files: ["internal/app/index.jsx"],
+                  checks: ["reactAccessibility"],
+                  reason: "Fixture exclusion",
+                },
+              ],
+            }
+          : {}),
+      });
+      const results = await dispatchChecks(
+        adaptersFor(["reactAccessibility"]),
+        {
+          repositoryRoot: repository.root,
+          changeSet,
+          snapshots,
+          config,
+          baselineInspection: await inspectRepository(snapshots.baselineDir),
+          targetInspection: await inspectRepository(snapshots.targetDir),
+          signal: new AbortController().signal,
+          policyForFile: createFilePolicyResolver(config, changeSet),
+        },
+      );
+      expect(results).toHaveLength(1);
+      if (excluded) {
+        expect(results[0]?.result).toMatchObject({
+          status: "skipped",
+          findings: [],
+        });
+        return;
+      }
+      expect(results[0]?.result).toMatchObject({
+        status: "completed",
+        target: "packages/linked",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            location: expect.objectContaining({
+              file: "packages/linked/index.jsx",
+            }),
+          }),
+        ]),
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "reports a staged TypeScript diagnostic for a linked workspace",
+    async () => {
+      const repository = await createGitRepository("zedbee-linked-types-");
+      await repository.write(
+        "package.json",
+        JSON.stringify({ name: "root", workspaces: ["packages/linked"] }),
+      );
+      await repository.write(
+        "internal/app/package.json",
+        JSON.stringify({ name: "app" }),
+      );
+      await repository.write(
+        "internal/app/tsconfig.json",
+        JSON.stringify({ compilerOptions: { strict: true }, include: ["src"] }),
+      );
+      await repository.write(
+        "internal/app/src/index.ts",
+        "export const value: string = 'ok';\n",
+      );
+      await mkdir(join(repository.root, "packages"), { recursive: true });
+      await symlink(
+        "../internal/app",
+        join(repository.root, "packages/linked"),
+      );
+      await repository.commitAll("baseline");
+      await repository.write(
+        "internal/app/src/index.ts",
+        "export const value: string = 1;\n",
+      );
+      await repository.git(["add", "--", "internal/app/src/index.ts"]);
+      const git = new GitClient(repository.root);
+      const changeSet = await readStagedChangeSet(git);
+      const snapshots = await buildSnapshotPair(repository.root, git);
+      onTestFinished(snapshots.cleanup);
+      const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+      const results = await dispatchChecks(adaptersFor(["types"]), {
+        repositoryRoot: repository.root,
+        changeSet,
+        snapshots,
+        config,
+        baselineInspection: await inspectRepository(snapshots.baselineDir),
+        targetInspection: await inspectRepository(snapshots.targetDir),
+        signal: new AbortController().signal,
+        policyForFile: createFilePolicyResolver(config, changeSet),
+      });
+      expect(
+        results[0]?.result,
+        JSON.stringify(results[0]?.result),
+      ).toMatchObject({
+        status: "completed",
+        target: "packages/linked",
+        findings: expect.arrayContaining([
+          expect.objectContaining({
+            rule: "typescript/TS2322",
+            location: expect.objectContaining({
+              file: "packages/linked/src/index.ts",
+            }),
+          }),
+        ]),
+      });
     },
   );
 

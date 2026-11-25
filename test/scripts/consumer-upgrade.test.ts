@@ -1,5 +1,12 @@
+import { createGitRepository } from "../helpers/git-repository.js";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertUpgradeCommit } from "../../scripts/smoke-consumer-upgrade.mjs";
+import {
+  assertUpgradeCommit,
+  smokeConsumerUpgrades,
+} from "../../scripts/smoke-consumer-upgrade.mjs";
 import { verifyUpgradeEvidence } from "../../scripts/tag-tested-release.mjs";
 
 describe("release upgrade evidence", () => {
@@ -63,4 +70,50 @@ describe("release test hook outcome", () => {
       assertUpgradeCommit(report, { ...expected, error: true }),
     ).toThrow();
   });
+});
+
+it("requires the immediate beta.21 predecessor for beta.22 evidence", () => {
+  const identity = {
+    commit: "a".repeat(40),
+    version: "0.1.0-beta.22",
+    sha256: "b".repeat(64),
+  };
+  const upgradedFrom = [
+    "0.1.0-beta.15",
+    "0.1.0-beta.18",
+    "0.1.0-beta.19",
+    "0.1.0-beta.20",
+  ];
+  expect(() =>
+    verifyUpgradeEvidence({ ...identity, upgradedFrom }, identity),
+  ).toThrow();
+  expect(() =>
+    verifyUpgradeEvidence(
+      { ...identity, upgradedFrom: [...upgradedFrom, "0.1.0-beta.21"] },
+      identity,
+    ),
+  ).not.toThrow();
+});
+
+it("removes the owned upgrade fixture even if its first command fails", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", "{}");
+  await repo.commitAll("predecessor");
+  await repo.git(["tag", "v0.1.0-beta.21"]);
+  const scratch = await mkdtemp(join(tmpdir(), "zedbee-upgrade-test-"));
+  try {
+    expect(() =>
+      smokeConsumerUpgrades({
+        root: repo.root,
+        version: "0.1.0-beta.22",
+        scratch,
+        run() {
+          throw new Error("simulated fixture failure");
+        },
+      }),
+    ).toThrow("simulated fixture failure");
+    expect(await readdir(scratch)).toEqual([]);
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 });

@@ -12,6 +12,7 @@ import { ProjectPrettierTrustRequiredError } from "./formatter-setup.js";
 import { HookInstallationError } from "../hooks/command.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { GithubWorkflowSetupError } from "./github-workflow.js";
+import { InitRollbackError } from "./write-config.js";
 import type { InitProposal } from "./types.js";
 
 export function publicProposal(proposal: InitProposal) {
@@ -182,6 +183,8 @@ export function renderInitFailure(error: unknown): string {
       "Reason: One-time Prettier import is unavailable for these configuration inputs or installed dependency layout.",
       "Remediation: Use managed formatting settings or project formatting, or reduce the captured inputs and retry.",
     );
+  } else if (error instanceof InitRollbackError) {
+    lines.push(`Reason: ${error.message}`);
   } else if (error instanceof ExecutableImportStaleError) {
     lines.push(`Reason: ${error.message}`);
   } else if (

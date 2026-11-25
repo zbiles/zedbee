@@ -35,12 +35,22 @@ function policyCandidates(
 function workspaceCandidates(
   workspace: WorkspaceInspection,
 ): readonly string[] {
-  return [
+  const paths = [
     workspace.relativeRoot,
     workspace.manifestPath,
     ...workspace.sourceFiles,
     ...workspace.tsconfigPaths,
   ];
+  return workspace.canonicalRelativeRoot === undefined
+    ? paths
+    : [
+        ...paths,
+        ...paths.map(
+          (path) =>
+            workspace.canonicalRelativeRoot +
+            path.slice(workspace.relativeRoot.length),
+        ),
+      ];
 }
 
 /**

@@ -246,7 +246,7 @@ export async function loadSnapshotProgramInput(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
 ): Promise<SnapshotProgramInput> {
-  const prepared = await prepareSnapshotProgramFiles(snapshotRoot);
+  const prepared = await prepareSnapshotProgramFiles(snapshotRoot, workspace);
   return programInputForConfig(
     prepared,
     repositoryRoot,
@@ -317,13 +317,22 @@ function equalMetadata(
 
 async function prepareSnapshotProgramFiles(
   snapshotRoot: string,
+  workspace: WorkspaceInspection,
 ): Promise<PreparedSnapshotProgramFiles> {
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   const store = analysisStore<
     CachedSnapshotProgramFiles | PendingSnapshotProgramFiles
   >(preparedInputs);
   const capture = capturedSourceRegistry(canonicalRoot, []);
-  const cached = store?.get(canonicalRoot);
+  const key =
+    workspace.canonicalRelativeRoot === undefined
+      ? canonicalRoot
+      : JSON.stringify([
+          canonicalRoot,
+          workspace.relativeRoot,
+          workspace.canonicalRelativeRoot,
+        ]);
+  const cached = store?.get(key);
   if (cached !== undefined && cached.capture === capture) {
     if ("pending" in cached) return cached.pending;
     try {
@@ -338,10 +347,11 @@ async function prepareSnapshotProgramFiles(
       // Reacquisition applies the normal containment/read error boundary.
     }
   }
-  store?.delete(canonicalRoot);
+  store?.delete(key);
   const acquisition = acquireSnapshotProgramFiles(
     canonicalRoot,
     store !== undefined,
+    workspace,
   );
   const entry: PendingSnapshotProgramFiles = {
     capture,
@@ -349,19 +359,19 @@ async function prepareSnapshotProgramFiles(
   };
   // Install the promise before the first filesystem await finishes. Concurrent
   // workspaces share acquisition; a rejected or closed owner retains nothing.
-  store?.set(canonicalRoot, entry, 512);
+  store?.set(key, entry, 512);
   try {
     const { prepared, metadata, bytes } = await acquisition;
-    if (store?.get(canonicalRoot) === entry) {
-      store.delete(canonicalRoot);
+    if (store?.get(key) === entry) {
+      store.delete(key);
       if (metadata !== undefined)
-        store.set(canonicalRoot, { prepared, capture, metadata }, bytes);
+        store.set(key, { prepared, capture, metadata }, bytes);
     }
     return prepared;
   } catch (error) {
     // The returned pending promise is observed by concurrent callers only.
     await entry.pending.catch(() => undefined);
-    if (store?.get(canonicalRoot) === entry) store.delete(canonicalRoot);
+    if (store?.get(key) === entry) store.delete(key);
     throw error;
   }
 }
@@ -369,6 +379,7 @@ async function prepareSnapshotProgramFiles(
 async function acquireSnapshotProgramFiles(
   canonicalRoot: string,
   reusable: boolean,
+  workspace: WorkspaceInspection,
 ): Promise<{
   readonly prepared: PreparedSnapshotProgramFiles;
   readonly metadata: ReadonlyMap<string, string> | undefined;
@@ -403,6 +414,36 @@ async function acquireSnapshotProgramFiles(
     const absolutePath = resolve(canonicalRoot, path);
     if (captured.text === undefined) files.delete(absolutePath);
     else files.set(absolutePath, captured.text);
+  }
+  // The registry indexes physical paths without traversing directory links.
+  // A declared linked workspace's compiler sees the same contained files under
+  // its lexical config directory; do not implicitly expose unrelated aliases.
+  if (workspace.canonicalRelativeRoot !== undefined) {
+    const prefix =
+      workspace.canonicalRelativeRoot === "."
+        ? ""
+        : `${workspace.canonicalRelativeRoot}/`;
+    for (const entry of registry.entries()) {
+      if (
+        entry.targetKind !== "file" ||
+        !LOADABLE.test(entry.repositoryPath) ||
+        !entry.repositoryPath.startsWith(prefix)
+      )
+        continue;
+      const alias = posix.join(
+        workspace.relativeRoot,
+        entry.repositoryPath.slice(prefix.length),
+      );
+      const absolute = resolve(canonicalRoot, alias);
+      const captured = capturedSourceInput(canonicalRoot, alias);
+      if (captured !== undefined) {
+        if (captured.text !== undefined) files.set(absolute, captured.text);
+        continue;
+      }
+      if (registry.resolve(alias)?.canonicalPath !== entry.canonicalPath)
+        continue;
+      files.set(absolute, await readContainedFile(registry, alias));
+    }
   }
   const sources: Record<string, string> = {};
   for (const [absolute, source] of files) {
@@ -510,6 +551,14 @@ async function programInputForConfig(
   return {
     repositoryRoot,
     snapshotRoot: canonicalRoot,
+    ...(workspace.canonicalRelativeRoot === undefined
+      ? {}
+      : {
+          workspaceAlias: {
+            relativeRoot: workspace.relativeRoot,
+            canonicalRelativeRoot: workspace.canonicalRelativeRoot,
+          },
+        }),
     files: prepared.sources,
     rootNames,
     options: parsed.options,
@@ -525,7 +574,7 @@ export async function loadSnapshotProgramProjects(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
 ): Promise<readonly SnapshotProgramProject[]> {
-  const prepared = await prepareSnapshotProgramFiles(snapshotRoot);
+  const prepared = await prepareSnapshotProgramFiles(snapshotRoot, workspace);
   const preferred = canonicalWorkspaceConfig(workspace);
   const configPaths = workspace.tsconfigPaths.includes(preferred)
     ? [

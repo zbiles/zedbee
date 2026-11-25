@@ -31,8 +31,15 @@ function validateOptions(options: ServiceOptions): void {
 }
 function decodeStatus(value: unknown): ServiceStatus {
   if (
-    !exactFields(value, ["state", "pid", "activeSessions", "concurrency"]) ||
+    !exactFields(value, [
+      "state",
+      "pid",
+      "activeSessions",
+      "concurrency",
+      "draining",
+    ]) ||
     value.state !== "running" ||
+    (value.draining !== undefined && value.draining !== true) ||
     !Number.isSafeInteger(value.pid) ||
     (value.pid as number) <= 0 ||
     !Number.isSafeInteger(value.activeSessions) ||
@@ -140,6 +147,7 @@ export async function acquireServiceExecutor(
     const status = decodeStatus(await client.request("status"));
     if (
       status.state !== "running" ||
+      status.draining === true ||
       (options.concurrency !== undefined &&
         status.concurrency !== options.concurrency)
     )

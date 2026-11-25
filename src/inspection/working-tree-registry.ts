@@ -10,12 +10,18 @@ import {
   type SnapshotRegistry,
 } from "./snapshot-registry.js";
 
+function missingPath(error: unknown): boolean {
+  return ["ENOENT", "ENOTDIR"].includes(
+    (error as NodeJS.ErrnoException).code ?? "",
+  );
+}
+
 async function hasGitMarker(directory: string): Promise<boolean> {
   try {
     await lstat(join(directory, ".git"));
     return true;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    if (missingPath(error)) return false;
     throw error;
   }
 }
@@ -66,8 +72,7 @@ export async function captureWorkingTreeRegistry(
           if (metadata.isSymbolicLink()) break;
           boundary = metadata.isDirectory() && (await hasGitMarker(directory));
         } catch (error) {
-          const code = (error as NodeJS.ErrnoException).code;
-          if (code !== "ENOTDIR" && code !== "ENOENT") throw error;
+          if (!missingPath(error)) throw error;
           boundary = false;
         }
         boundaryCache.set(prefix, boundary);
@@ -95,7 +100,7 @@ export async function captureWorkingTreeRegistry(
       target = await realpath(join(canonicalRoot, path));
     } catch (error) {
       // Deleted index entries should not become live project candidates.
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      if (missingPath(error)) continue;
       throw error;
     }
     if (!isContainedPath(canonicalRoot, target))

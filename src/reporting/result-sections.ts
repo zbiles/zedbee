@@ -1,8 +1,6 @@
+import { repairFindingForMode } from "./comparison-repair.js";
 import { omittedFindingLines, isUnresolvedModule } from "./finding-priority.js";
-import type {
-  Finding,
-  ManagedAutomaticFix,
-} from "../core/types.js";
+import type { Finding, ManagedAutomaticFix } from "../core/types.js";
 import {
   presentIncompleteChecks,
   type IncompleteCheckPresentation,
@@ -26,6 +24,7 @@ function automaticFixes(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): readonly ManagedAutomaticFix[] {
+  if (report.mode !== "index") return [];
   const unique = new Map<string, ManagedAutomaticFix>();
   for (const finding of [
     ...presentation.findings,
@@ -46,12 +45,15 @@ export function buildScanResultSections(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): ScanResultSections {
+  const findings = presentation.findings.map((finding) =>
+    repairFindingForMode(finding, report.mode),
+  );
   return Object.freeze({
     blockingFindings: Object.freeze(
-      presentation.findings.filter(({ severity }) => severity === "error"),
+      findings.filter(({ severity }) => severity === "error"),
     ),
     warningFindings: Object.freeze(
-      presentation.findings.filter(({ severity }) => severity !== "error"),
+      findings.filter(({ severity }) => severity !== "error"),
     ),
     disclosures: Object.freeze([...report.networkDisclosures]),
     incompleteChecks: Object.freeze(

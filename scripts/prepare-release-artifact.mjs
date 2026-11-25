@@ -417,6 +417,7 @@ export function prepareReleaseArtifact(
       root,
       version: manifest.version,
       scratch: installedSmoke,
+      cache: join(scratch, "consumer-npm-cache"),
       archive,
       run,
     });

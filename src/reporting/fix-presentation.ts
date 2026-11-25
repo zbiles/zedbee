@@ -164,12 +164,15 @@ export function publicPlan(
   applied: boolean,
   result?: FixResult,
   cleanupFailure?: CleanupFailureDetails,
+  interrupted = false,
 ) {
   const rendered = projectPublicFixPlan(plan);
   return {
     applied,
     ...rendered,
-    exitCode: cleanupFailure === undefined ? rendered.exitCode : 2,
+    exitCode:
+      cleanupFailure === undefined && !interrupted ? rendered.exitCode : 2,
+    ...(interrupted ? { interrupted: true } : {}),
     ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
     ...(result === undefined
       ? {}

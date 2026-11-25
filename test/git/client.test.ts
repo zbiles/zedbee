@@ -275,3 +275,24 @@ it("gives an expired Git deadline priority over cancellation and output overflow
     ),
   ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
 });
+
+it.each(["ascii", "界", "🐝"])(
+  "enforces Git text output limits in bytes just like binary output (%s)",
+  async (character) => {
+    const repo = await createGitRepository();
+    const contents = character.repeat(80);
+    const bytes = Buffer.byteLength(contents);
+    await repo.write("value", contents);
+    await repo.commitAll("content");
+    const git = new GitClient(repo.root);
+    for (const read of [git.run.bind(git), git.runBytes.bind(git)]) {
+      await expect(
+        read(["show", "HEAD:value"], { maxOutputBytes: bytes - 1 }),
+      ).rejects.toMatchObject({ code: "GIT_OUTPUT_LIMIT_EXCEEDED" });
+      expect(
+        (await read(["show", "HEAD:value"], { maxOutputBytes: bytes }))
+          .exitCode,
+      ).toBe(0);
+    }
+  },
+);
