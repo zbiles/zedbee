@@ -36,8 +36,7 @@ import {
   pairClassMetricObservations,
   type ComplexitySnapshot,
 } from "./pair-class-metrics.js";
-
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -281,7 +280,7 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((path) => SOURCE.test(path))
+    .filter((path) => COMPILER_SOURCE.test(path))
     .filter(
       (path) =>
         selectedPaths.has(path) ||

@@ -22,6 +22,7 @@ import type {
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 import { collectStructuralSecurityObservations } from "./rules.js";
 
 import { StructuralParseError } from "./parser.js";
@@ -35,7 +36,6 @@ interface FailureCollection {
   omitted: number;
 }
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -59,7 +59,7 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((file) => SOURCE.test(file))
+    .filter((file) => COMPILER_SOURCE.test(file))
     .filter(
       (file) =>
         selectedPaths.has(file) ||

@@ -36,8 +36,8 @@ import type {
 import { normalizeDependencyViolations } from "./normalize-graph.js";
 import { createManagedDependencyRules } from "./rules.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 
@@ -317,7 +317,7 @@ async function collectSide(
   const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
   const sourceFiles = workspace.sourceFiles
-    .filter((path) => SOURCE.test(path))
+    .filter((path) => COMPILER_SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
   const aliases = await prepareSnapshotAliases(
