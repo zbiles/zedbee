@@ -1,4 +1,7 @@
-import { posix } from "node:path";
+import { lstat } from "node:fs/promises";
+import { join, posix } from "node:path";
+import type { InspectionContext } from "./adapter.js";
+import { memoizeCompilerDecision } from "./compiler-decision-cache.js";
 import type { ChangeSet } from "../git/change-set.js";
 
 export const COMPILER_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
@@ -16,6 +19,45 @@ export function isOrdinaryCompilerPath(path: string): boolean {
     COMPILER_ORDINARY.test(name)
   );
 }
+
+/** The managed compilers do not consume conventional OpenAPI documentation.
+ * Callers must check captured source, configuration and dependency inputs first. */
+export const ordinaryOpenApiEdits = memoizeCompilerDecision(
+  async (context: InspectionContext): Promise<ReadonlySet<string>> => {
+    const paths = new Set<string>();
+    for (const path of ["docs/openapi.yaml", "docs/openapi.yml"]) {
+      const change = context.changeSet.files.get(path);
+      if (
+        change?.status !== "modified" ||
+        [...context.changeSet.files.values()].some(
+          ({ previousPath }) => previousPath === path,
+        )
+      )
+        continue;
+
+      // An unchanged alias can expose YAML contents as a .ts or .json input.
+      // Check both snapshots for aliases, file type and matching mode.
+      const modes = await Promise.all(
+        [context.baselineInspection, context.targetInspection].map(
+          async ({ snapshotRoot, fileSymlinkTargets }) => {
+            if (fileSymlinkTargets?.includes(path) !== false) return undefined;
+            try {
+              const directory = await lstat(join(snapshotRoot, "docs"));
+              if (!directory.isDirectory()) return undefined;
+              const file = await lstat(join(snapshotRoot, path));
+              return file.isFile() ? file.mode : undefined;
+            } catch {
+              return undefined;
+            }
+          },
+        ),
+      );
+      context.signal?.throwIfAborted();
+      if (modes[0] !== undefined && modes[0] === modes[1]) paths.add(path);
+    }
+    return paths;
+  },
+);
 
 const changes = new WeakMap<ChangeSet, ReadonlySet<string>>();
 

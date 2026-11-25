@@ -226,6 +226,7 @@ export function ScanApp(props: ScanAppProps) {
       ))}
       <OutcomeStrip
         report={props.report}
+        findings={props.presentation?.findings ?? props.report.summary.findings}
         width={props.width}
         color={props.color}
       />

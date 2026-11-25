@@ -4,6 +4,7 @@ import {
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
   isOrdinaryCompilerPath,
+  ordinaryOpenApiEdits,
   changedCompilerPaths,
 } from "./compiler-paths.js";
 import { compilerPolicyInputPaths } from "./compiler-change-inputs.js";
@@ -76,6 +77,7 @@ async function resolveRelevance(
       if (!complete) return { relevant: true, reason: "unknown" };
     }
   }
+  const ordinaryDocs = await ordinaryOpenApiEdits(context);
   for (const path of paths) {
     const name = posix.basename(path);
     if (COMPILER_SOURCE.test(path)) return { relevant: true, reason: "source" };
@@ -84,7 +86,7 @@ async function resolveRelevance(
     if (COMPILER_CONFIGURATION.test(name))
       return { relevant: true, reason: "configuration" };
     if (DATA.test(path)) return { relevant: true, reason: "data" };
-    if (!isOrdinaryCompilerPath(path))
+    if (!isOrdinaryCompilerPath(path) && !ordinaryDocs.has(path))
       return { relevant: true, reason: "unknown" };
   }
   return complete

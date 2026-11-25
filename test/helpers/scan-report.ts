@@ -26,6 +26,19 @@ export function createFinding(overrides: Partial<Finding> = {}): Finding {
   };
 }
 
+export const missingExportPath =
+  "web/src/features/admin/users/resume/resume-console.tsx";
+
+export function createMissingExportFinding(): Finding {
+  return createFinding({
+    id: "missing-export",
+    check: "types",
+    rule: "typescript/TS2305",
+    message: "Module has no exported member.",
+    location: { file: missingExportPath, startLine: 6, startColumn: 10 },
+  });
+}
+
 export function createObservation(
   overrides: Omit<Partial<Observation>, "location"> & {
     readonly location?: SourceLocation | undefined;

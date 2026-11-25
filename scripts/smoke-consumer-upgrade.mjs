@@ -265,6 +265,9 @@ export function smokeConsumerUpgrades({
       previousReleases[previous],
     );
     assert.equal(readJson(join(installed, "package.json")).version, previous);
+    mkdirSync(join(fixture, "docs"));
+    const openApi = "docs/openapi.yaml";
+    writeFileSync(join(fixture, openApi), "openapi: 3.1.0\n");
     const e2eTest = join(e2e, "example.spec.ts");
     const goodTest =
       'import { expect, test } from "@playwright/test";\nimport { value } from "@fixture/value";\ntest("example", () => {\n  expect(value).toBe(1);\n});\n';
@@ -389,16 +392,22 @@ export function smokeConsumerUpgrades({
       join(fixture, "api", "pyproject.toml"),
       '[project]\nname = "fixture"\n',
     );
-    git(["add", "api/pyproject.toml"]);
+    writeFileSync(join(fixture, openApi), "openapi: 3.1.1\n");
+    git(["add", "api/pyproject.toml", openApi]);
     const apiOutput = git(
-      ["commit", "--no-gpg-sign", "-m", "API manifest only"],
+      [
+        "commit",
+        "--no-gpg-sign",
+        "-m",
+        "API manifest and OpenAPI documentation",
+      ],
       { combinedOutput: true },
     );
     const apiReport = JSON.parse(
       apiOutput.slice(apiOutput.indexOf("{"), apiOutput.lastIndexOf("}") + 1),
     );
     assert.equal(apiReport.outcome, "pass");
-    assert.equal(apiReport.changedFileCount, 1);
+    assert.equal(apiReport.changedFileCount, 2);
     for (const id of ["lint", "types"]) {
       const checks = apiReport.checks.filter((check) => check.checkId === id);
       assert.ok(
@@ -421,6 +430,23 @@ export function smokeConsumerUpgrades({
     commit(["e2e/example.spec.ts"], { workspace: "e2e" });
     writeFileSync(e2eTest, goodTest + "export const broken: string = 1;\n");
     commit(["e2e/example.spec.ts"], { workspace: "e2e", error: true });
+    if (previous === versions[0]) {
+      const savedHook = readFileSync(hook, "utf8");
+      writeFileSync(hook, savedHook.replace(" --format json", ""));
+      try {
+        const output = git(
+          ["commit", "--no-gpg-sign", "-m", "Verify blocked verdict"],
+          { expectedStatuses: [1], combinedOutput: true },
+        );
+        const verdict = output.split("SCAN RESULT")[1];
+        assert.match(
+          verdict ?? "",
+          /COMMIT BLOCKED\s+TypeScript · typescript\/TS2322\s+e2e\/example\.spec\.ts:\d+:\d+/u,
+        );
+      } finally {
+        writeFileSync(hook, savedHook);
+      }
+    }
   }
   return versions;
 }

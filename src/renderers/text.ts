@@ -1,4 +1,5 @@
 import {
+  blockedFindingLines,
   coverageLine,
   scanOutcomeDetail,
   scanResultCountLine,
@@ -10,7 +11,11 @@ import {
   HOOK_UPDATE_TITLE,
 } from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
-import type { CheckResult, Finding, ManagedAutomaticFix } from "../core/types.js";
+import type {
+  CheckResult,
+  Finding,
+  ManagedAutomaticFix,
+} from "../core/types.js";
 import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
@@ -178,7 +183,11 @@ function resultIdentityLines(report: ScanReport): string[] {
   );
 }
 
-function headline(report: ScanReport): string[] {
+function headline(
+  report: ScanReport,
+  visible: readonly Finding[],
+  width: number,
+): string[] {
   const title =
     report.outcome === "pass"
       ? "BEE-UTIFUL"
@@ -187,10 +196,12 @@ function headline(report: ScanReport): string[] {
         : "SCAN INCOMPLETE";
   return [
     title,
-    scanOutcomeDetail(report),
-    ...resultIdentityLines(report),
-    scanResultCountLine(report, report.outcome !== "pass"),
-    coverageLine(report),
+    ...resultDetailLines(report, visible, width),
+    ...[
+      ...resultIdentityLines(report),
+      scanResultCountLine(report, report.outcome !== "pass"),
+      coverageLine(report),
+    ].flatMap((line) => wrapWords(line, width)),
   ];
 }
 
@@ -385,9 +396,22 @@ function completeManagedFixLines(
       ];
 }
 
+function resultDetailLines(
+  report: ScanReport,
+  visible: readonly Finding[],
+  width: number,
+): readonly string[] {
+  const blocker = blockedFindingLines(report, visible, width);
+  return blocker.length > 0
+    ? blocker
+    : wrapWords(scanOutcomeDetail(report), width);
+}
+
 function automaticHeadline(
   report: ScanReport,
   presentation: TerminalPresentation,
+  visible: readonly Finding[],
+  width: number,
 ): string[] {
   const previewLine = presentation.abbreviated
     ? [
@@ -402,13 +426,18 @@ function automaticHeadline(
         : "SCAN INCOMPLETE";
   return [
     title,
-    report.outcome === "incomplete"
-      ? "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked."
-      : scanOutcomeDetail(report),
-    ...resultIdentityLines(report),
-    automaticCountLine(report),
-    coverageLine(report),
-    ...previewLine,
+    ...(report.outcome === "incomplete"
+      ? wrapWords(
+          "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
+          width,
+        )
+      : resultDetailLines(report, visible, width)),
+    ...[
+      ...resultIdentityLines(report),
+      automaticCountLine(report),
+      coverageLine(report),
+      ...previewLine,
+    ].flatMap((line) => wrapWords(line, width)),
   ];
 }
 
@@ -482,9 +511,7 @@ function automaticTextLines(
     ...incompleteSectionLines(sections.incompleteChecks, width),
     "",
     "SCAN RESULT",
-    ...automaticHeadline(report, presentation).flatMap((line) =>
-      wrapWords(line, width),
-    ),
+    ...automaticHeadline(report, presentation, selectedFindings, width),
     ...hookUpdateLines(report, width),
     "",
     ...calloutLines(
@@ -578,11 +605,14 @@ export function renderText(
           summary: { findings: options.presentation.findings },
         }).summaryFindings;
   const lines = [
-    ...headline(report).flatMap((line) => wrapWords(line, width)),
+    ...headline(report, displayedFindings, width),
     ...hookUpdateLines(report, width),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(sanitized.checks, width),
-    ...incompleteSectionLines(presentIncompleteChecks(sanitized.checks, report), width),
+    ...incompleteSectionLines(
+      presentIncompleteChecks(sanitized.checks, report),
+      width,
+    ),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
     ...completeManagedFixLines(

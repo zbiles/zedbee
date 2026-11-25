@@ -5,7 +5,12 @@ import type { TerminalPresentation } from "../../src/reporting/presentation.js";
 import { terminalCellWidth } from "../../src/renderers/terminal-cells.js";
 import type { ScanReport } from "../../src/scan/report.js";
 import { ScanResultDashboard } from "../../src/ui/scan-result-dashboard.js";
-import { createFinding, createReport } from "../helpers/scan-report.js";
+import {
+  createFinding,
+  createMissingExportFinding,
+  createReport,
+  missingExportPath,
+} from "../helpers/scan-report.js";
 
 const reportPath = "/private/tmp/zedbee-reports/hash/complete.json";
 
@@ -168,6 +173,43 @@ function dashboardWithFindingsAndDisclosures(): string {
 }
 
 describe("ScanResultDashboard", () => {
+  it.each([40, 80])(
+    "identifies the blocker in the %s-column verdict",
+    (width) => {
+      const blocker = createMissingExportFinding();
+      const secondBlocker = createFinding({ id: "other", rule: "other-rule" });
+      const warning = createFinding({ id: "warning", severity: "warning" });
+      const report = createReport({
+        outcome: "blocked",
+        exitCode: 1,
+        summary: {
+          passed: 0,
+          warnings: 1,
+          failed: 2,
+          incomplete: 0,
+          findings: [warning, blocker, secondBlocker],
+        },
+      });
+      const output = dashboard(
+        report,
+        presentation({
+          findings: [blocker],
+          totalFindingCount: 3,
+          abbreviated: true,
+        }),
+        { width },
+      );
+      const verdict = output.split("SCAN RESULT")[1]!;
+      const compact = verdict.replace(/[│█\s]/gu, "");
+      expect(verdict).toContain("COMMIT BLOCKED");
+      expect(verdict).toContain("TypeScript");
+      expect(verdict).toContain("typescript/TS2305");
+      expect(compact).toContain(missingExportPath + ":6:10");
+      expect(compact).toContain("1moreblockingfinding");
+      expect(verdict).not.toContain("other-rule");
+    },
+  );
+
   it("renders committed source identity and empty-base copy", () => {
     const output = dashboard(
       createReport({

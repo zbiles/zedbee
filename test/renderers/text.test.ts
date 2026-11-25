@@ -7,7 +7,12 @@ import { validateReportableSnapshotPath } from "../../src/git/snapshot-path.js";
 import { nextStepsLines } from "../../src/reporting/next-steps.js";
 import type { TerminalPresentation } from "../../src/reporting/presentation.js";
 import { renderText } from "../../src/renderers/text.js";
-import { createFinding, createReport } from "../helpers/scan-report.js";
+import {
+  createFinding,
+  createMissingExportFinding,
+  createReport,
+  missingExportPath,
+} from "../helpers/scan-report.js";
 
 const fixtureGraphemes = new Intl.Segmenter("en", {
   granularity: "grapheme",
@@ -38,6 +43,52 @@ function fixtureTerminalWidth(value: string): number {
 }
 
 describe("renderText", () => {
+  it.each([40, 80])(
+    "identifies the blocker in the %s-column verdict",
+    (width) => {
+      const blocker = createMissingExportFinding();
+      const secondBlocker = createFinding({
+        id: "other",
+        check: "types",
+        rule: "other-rule",
+        location: { file: "web/src/z.ts", startLine: 1 },
+      });
+      const warning = createFinding({ id: "warning", severity: "warning" });
+      const report = createReport({
+        outcome: "blocked",
+        exitCode: 1,
+        summary: {
+          passed: 0,
+          warnings: 1,
+          failed: 2,
+          incomplete: 0,
+          findings: [warning, blocker, secondBlocker],
+        },
+      });
+      const output = renderText(report, {
+        width,
+        color: false,
+        presentation: {
+          automatic: true,
+          reportStatus: "unavailable",
+          completeOutputFallback: true,
+          findings: [warning, blocker, secondBlocker],
+          totalFindingCount: 3,
+          abbreviated: false,
+          warnings: [],
+        },
+      });
+      const verdict = output.split("SCAN RESULT")[1]!;
+      const compact = verdict.replace(/[│█\s]/gu, "");
+      expect(verdict).toContain("COMMIT BLOCKED");
+      expect(verdict).toContain("TypeScript");
+      expect(verdict).toContain("typescript/TS2305");
+      expect(compact).toContain(missingExportPath + ":6:10");
+      expect(compact).toContain("1moreblockingfinding");
+      expect(verdict).not.toContain("other-rule");
+    },
+  );
+
   it("renders automatic sections and callouts in stable linear order", () => {
     const blocking = createFinding({ id: "blocking", rule: "blocking" });
     const warning = createFinding({
@@ -1009,9 +1060,11 @@ describe("renderText", () => {
 
     const output = renderText(report, { width: 80, color: false });
 
-    expect(output).toContain("THAT STINGS\nA check failed. Commit blocked.");
+    expect(output).toContain(
+      "THAT STINGS\nFormatting · prettier\nsrc/value.ts:2",
+    );
     expect(output).toContain("2 passed · 1 warning · 1 failed");
-    expect(output.match(/src\/value\.ts/g)).toHaveLength(2);
+    expect(output.match(/src\/value\.ts/g)).toHaveLength(3);
     expect(output).toContain("Prettier  prettier");
     expect(output).toContain("Prettier  other-rule");
     expect(output).toContain(
@@ -1169,7 +1222,7 @@ describe("renderText", () => {
     const output = renderText(report, { width: 80, color: true });
 
     expect(output).toContain("\u001b[38;5;231mTHAT STINGS");
-    expect(output).toContain("\u001b[38;5;145mA check failed. Commit blocked.");
+    expect(output).toContain("\u001b[38;5;145mFormatting · prettier");
     expect(output).toContain("\u001b[38;5;231mPrettier  prettier");
     expect(output).toContain("\u001b[38;5;145m       Issue:");
     expect(output).toContain("\u001b[38;5;221m       Fix:");

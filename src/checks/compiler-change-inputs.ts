@@ -4,6 +4,7 @@ import {
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
   isOrdinaryCompilerPath,
+  ordinaryOpenApiEdits,
   changedCompilerPaths,
 } from "./compiler-paths.js";
 import { posix, relative, resolve, sep, isAbsolute } from "node:path";
@@ -115,6 +116,7 @@ async function acquireCompilerChanges(
     }
   }
   let requiresBroadComparison = !complete;
+  const ordinaryDocs = await ordinaryOpenApiEdits(context);
   for (const path of paths) {
     const name = posix.basename(path);
     if (COMPILER_SOURCE.test(path)) sourcePaths.add(path);
@@ -132,7 +134,11 @@ async function acquireCompilerChanges(
       /\.d\.[cm]?ts$/iu.test(path)
     )
       requiresBroadComparison = true;
-    else if (!sourcePaths.has(path) && !isOrdinaryCompilerPath(path))
+    else if (
+      !sourcePaths.has(path) &&
+      !isOrdinaryCompilerPath(path) &&
+      !ordinaryDocs.has(path)
+    )
       unclassifiedPaths.add(path);
   }
   return {

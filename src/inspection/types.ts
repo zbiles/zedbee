@@ -38,6 +38,8 @@ export interface WorkspaceInspection {
 
 export interface RepositoryInspection {
   readonly snapshotRoot: string;
+  /** Canonical repository paths exposed through file symlinks in this snapshot. */
+  readonly fileSymlinkTargets?: readonly string[];
   readonly packageManager: PackageManager;
   readonly lockfiles: readonly string[];
   readonly workspaces: readonly WorkspaceInspection[];

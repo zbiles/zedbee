@@ -1,11 +1,13 @@
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
+  blockedFindingLines,
   scanOutcomeDetail,
   scanResultCountLine,
   coverageLine,
 } from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
+import type { Finding } from "../core/types.js";
 import type { ScanReport } from "../scan/report.js";
 import {
   emptyChangesCopy,
@@ -89,8 +91,10 @@ export function OutcomeStrip({
   report,
   width,
   color,
+  findings = report.summary.findings,
 }: {
   report: ScanReport;
+  findings?: readonly Finding[];
   width: number;
   color: boolean;
 }) {
@@ -106,6 +110,7 @@ export function OutcomeStrip({
   const showMotion = showBee && prefersMotion;
   const beeWidth = showMotion ? 53 : showBee ? 20 : 0;
   const copyWidth = Math.max(1, width - 3 - beeWidth);
+  const blocker = blockedFindingLines(report, findings, copyWidth);
 
   return (
     <Box width={width} flexDirection="row" flexWrap="nowrap">
@@ -114,7 +119,11 @@ export function OutcomeStrip({
         <Text bold {...colorProp(color, outcomeColor(report))}>
           {headline}
         </Text>
-        <Text {...colorProp(color, ZEDBEE_THEME.primary)}>{subline}</Text>
+        {(blocker.length > 0 ? blocker : [subline]).map((line, index) => (
+          <Text key={index} {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {line}
+          </Text>
+        ))}
         {selectedChangesLine(report) === undefined ? null : (
           <Text wrap="wrap">{selectedChangesLine(report)}</Text>
         )}

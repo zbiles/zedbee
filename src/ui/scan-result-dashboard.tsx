@@ -7,6 +7,7 @@ import {
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
+  blockedFindingLines,
   coverageLine,
   skippedCheckSummaries,
 } from "../reporting/check-coverage.js";
@@ -139,6 +140,7 @@ function ResultContent({
   readonly color: boolean;
 }) {
   const outcome = outcomeCopy(report);
+  const blocker = blockedFindingLines(report, presentation.findings, width - 6);
   const sourceIdentity = scanSourceIdentityLine(report);
   const skipped = skippedCheckSummaries(report.checks);
   return (
@@ -152,9 +154,15 @@ function ResultContent({
       <Text bold {...colorProp(color, outcome.tone)}>
         {outcome.symbol} {outcome.heading}
       </Text>
-      <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
-        {outcome.detail}
-      </Text>
+      {(blocker.length > 0 ? blocker : [outcome.detail]).map((line, index) => (
+        <Text
+          key={index}
+          wrap="wrap"
+          {...colorProp(color, ZEDBEE_THEME.primary)}
+        >
+          {line}
+        </Text>
+      ))}
       {selectedChangesLine(report) === undefined ? null : (
         <Text wrap="wrap">{selectedChangesLine(report)}</Text>
       )}
@@ -174,7 +182,11 @@ function ResultContent({
             SKIPPED CHECKS
           </Text>
           {skipped.map((line) => (
-            <Text key={line} wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            <Text
+              key={line}
+              wrap="wrap"
+              {...colorProp(color, ZEDBEE_THEME.secondary)}
+            >
               {line}
             </Text>
           ))}
@@ -320,7 +332,11 @@ function IncompleteChecksPanel({
               width={contentWidth}
               marginTop={index === 0 ? 0 : 1}
             >
-              <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+              <Text
+                bold
+                wrap="wrap"
+                {...colorProp(color, ZEDBEE_THEME.warning)}
+              >
                 ! {title}
               </Text>
               {fields.map(({ label, value }, fieldIndex) => (

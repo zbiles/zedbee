@@ -274,8 +274,10 @@ describe("ScanApp", () => {
       />,
     ).lastFrame()!;
 
-    expect(frame.match(/src\/value\.ts/g)).toHaveLength(1);
-    expect(frame).toContain("ESLint  no-unused-vars");
+    const [verdict, detail] = frame.split("ESLint  no-unused-vars");
+    expect(verdict).toContain("Lint · no-unused-vars");
+    expect(verdict).toContain("src/value.ts:2");
+    expect(detail?.match(/src\/value\.ts/g)).toHaveLength(1);
     expect(frame).toContain("2 │ const unused = calculateValue()");
     expect(frame).toContain(
       "Issue: Staged code does not match the managed format.",

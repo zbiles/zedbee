@@ -126,6 +126,11 @@ function snapshotInspection(
 ): RepositoryInspection {
   return Object.freeze({
     snapshotRoot: inspection.snapshotRoot,
+    ...(inspection.fileSymlinkTargets === undefined
+      ? {}
+      : {
+          fileSymlinkTargets: Object.freeze([...inspection.fileSymlinkTargets]),
+        }),
     packageManager: inspection.packageManager,
     lockfiles: Object.freeze([...inspection.lockfiles]),
     workspaces: Object.freeze(

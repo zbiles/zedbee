@@ -1,4 +1,4 @@
-import { posix } from "node:path";
+import { posix, relative, sep } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   normalizeRepositoryPath,
@@ -305,8 +305,18 @@ export async function inspectRepository(
   const rootPackageManager = workspaces.find(
     ({ relativeRoot }) => relativeRoot === ".",
   )?.manifest.packageManager;
+  const symlinkTargets = new Set<string>();
+  for (const entry of registry.entries()) {
+    if (entry.kind === "symlink" && entry.targetKind === "file")
+      symlinkTargets.add(
+        relative(canonicalRoot, entry.canonicalPath).split(sep).join("/"),
+      );
+  }
   const inspection: RepositoryInspection = {
     snapshotRoot: canonicalRoot,
+    fileSymlinkTargets: Object.freeze(
+      [...symlinkTargets].sort(compareCodeUnits),
+    ),
     packageManager: detectPackageManager(rootPackageManager, lockfiles),
     lockfiles,
     workspaces: inspectedWorkspaces,

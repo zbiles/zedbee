@@ -1,4 +1,10 @@
-import type { CheckResult } from "../core/types.js";
+import type { CheckResult, Finding } from "../core/types.js";
+import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
+import {
+  chunkTerminalCells,
+  wrapTerminalWords,
+} from "../renderers/terminal-cells.js";
+import { comparePreviewFindings } from "./finding-priority.js";
 import { checkLabel } from "./check-label.js";
 import type { ScanReport } from "../scan/report.js";
 import { emptyChangesCopy } from "./source-identity.js";
@@ -73,6 +79,51 @@ export function scanOutcomeDetail(report: ScanReport): string {
   if (report.outcome === "incomplete")
     return "A required check could not finish. Commit blocked.";
   return allowedScanDetail(report);
+}
+
+/** Identify the first visible blocker without repeating its diagnostic prose. */
+export function blockedFindingLines(
+  report: ScanReport,
+  visibleFindings: readonly Finding[],
+  width: number,
+): readonly string[] {
+  if (report.outcome !== "blocked") return [];
+
+  const first = visibleFindings
+    .filter(({ severity }) => severity === "error")
+    .sort(comparePreviewFindings)[0];
+  if (first === undefined) return [];
+
+  const [finding] = validateReportDisplayStrings({
+    checks: [],
+    summary: { findings: [first] },
+  }).summaryFindings;
+  if (finding === undefined) return [];
+
+  const lines = wrapTerminalWords(
+    `${checkLabel(finding.check)} · ${finding.rule}`,
+    width,
+  );
+  if (finding.location !== undefined) {
+    const { file, startLine, startColumn } = finding.location;
+    const line = startLine === undefined ? "" : `:${startLine}`;
+    const column =
+      startLine === undefined || startColumn === undefined
+        ? ""
+        : `:${startColumn}`;
+    lines.push(...chunkTerminalCells(`${file}${line}${column}`, width));
+  }
+  const remaining = report.summary.failed - 1;
+  if (remaining > 0) {
+    const label = remaining === 1 ? "finding" : "findings";
+    lines.push(
+      ...wrapTerminalWords(
+        `${remaining} more blocking ${label}. See the detailed findings.`,
+        width,
+      ),
+    );
+  }
+  return lines;
 }
 
 export function scanResultCountLine(
