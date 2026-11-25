@@ -36,6 +36,27 @@ export function minimalRevealOffset(
   return current;
 }
 
+export function revealOffsetForTarget(
+  offset: number,
+  terminalRows: number,
+  target: Readonly<{ y: number; height: number }>,
+  content: Readonly<{ y: number; height: number }>,
+): number {
+  if (target.height <= 0 || content.height <= 0) return offset;
+  const terminalHeight = Math.max(1, Math.trunc(terminalRows));
+  const visibleHeight =
+    content.height > terminalHeight && terminalHeight >= 3
+      ? terminalHeight - 2
+      : terminalHeight;
+  return minimalRevealOffset(
+    offset,
+    visibleHeight,
+    target.y - content.y,
+    target.height,
+    content.height,
+  );
+}
+
 const SGR_MOUSE = /(?:\u001b)?\[<(\d+);\d+;\d+[Mm]/gu;
 
 export function parseSgrWheelDelta(input: string): number {

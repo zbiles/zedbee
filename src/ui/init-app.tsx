@@ -45,9 +45,9 @@ import {
 } from "./branded-command-frame.js";
 import {
   clampScrollOffset,
-  minimalRevealOffset,
   pageScrollStep,
   parseSgrWheelDelta,
+  revealOffsetForTarget,
 } from "./terminal-viewport-model.js";
 import {
   TerminalViewport,
@@ -298,21 +298,12 @@ export function InitApp({
     const target = activeTargetRef.current;
     const content = contentRef.current;
     if (target === null || content === null) return;
-    const targetBounds = measureElement(target);
-    const contentBounds = measureElement(content);
-    if (targetBounds.height <= 0 || contentBounds.height <= 0) return;
-    const terminalHeight = Math.max(1, Math.trunc(rows));
-    const visibleHeight =
-      contentBounds.height > terminalHeight && terminalHeight >= 3
-        ? terminalHeight - 2
-        : terminalHeight;
     const currentOffset = setupOffsetRef.current;
-    const nextOffset = minimalRevealOffset(
+    const nextOffset = revealOffsetForTarget(
       currentOffset,
-      visibleHeight,
-      targetBounds.y - contentBounds.y,
-      targetBounds.height,
-      contentBounds.height,
+      rows,
+      measureElement(target),
+      measureElement(content),
     );
     if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
   }, [columns, focus, phase, rows]);
