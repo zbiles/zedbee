@@ -49,21 +49,13 @@ import type {
   CheckRunContext,
   CheckTarget,
 } from "./adapter.js";
-import { sanitizeCheckTarget } from "./sanitize-target.js";
+import { sameCheckTarget, sanitizeCheckTarget } from "./sanitize-target.js";
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
     throw new TypeError(`Expected ${field} to be an object`);
   }
   return value as Record<string, unknown>;
-}
-
-function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
-  return (
-    left.id === right.id &&
-    left.kind === right.kind &&
-    left.relativeRoot === right.relativeRoot
-  );
 }
 
 function observations(value: unknown, checkId: string): readonly Observation[] {
@@ -103,7 +95,7 @@ function snapshotSet(
   ) {
     throw new TypeError("Expected projectDelta to be a boolean");
   }
-  if (returnedCheckId !== checkId || !sameTarget(returnedTarget, target)) {
+  if (returnedCheckId !== checkId || !sameCheckTarget(returnedTarget, target)) {
     throw new TypeError("Observation set does not match its check target");
   }
   if (!requiresBaseline && baseline.length > 0) {

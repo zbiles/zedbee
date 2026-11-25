@@ -35,3 +35,14 @@ export function sanitizeCheckTarget(
 
   return Object.freeze({ id: safeId, kind, relativeRoot });
 }
+
+export function sameCheckTarget(
+  left: CheckTarget,
+  right: CheckTarget,
+): boolean {
+  return (
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.relativeRoot === right.relativeRoot
+  );
+}

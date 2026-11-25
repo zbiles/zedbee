@@ -31,6 +31,7 @@ import type {
   CheckRunContext,
   CheckTarget,
 } from "./adapter.js";
+import { sameCheckTarget } from "./sanitize-target.js";
 import type { AdapterSnapshot } from "./dispatch-adapter.js";
 import type { DispatchContext } from "./dispatch-context.js";
 import type { DispatchOptions } from "./dispatcher.js";
@@ -97,14 +98,6 @@ function cacheBehaviorPaths(
       ),
   );
   return Object.freeze([...new Set(paths)].sort(compareCodeUnits));
-}
-
-function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
-  return (
-    left.id === right.id &&
-    left.kind === right.kind &&
-    left.relativeRoot === right.relativeRoot
-  );
 }
 
 /** Trusted dispatch-local cache state is never included in adapter contexts. */
@@ -278,7 +271,7 @@ export function createDispatchObservationCollector(
           cached.checkId === adapter.id &&
           (!["types", "lint"].includes(adapter.id) ||
             cached.comparisonContext?.status === "comparable") &&
-          sameTarget(cached.target, runContext.target) &&
+          sameCheckTarget(cached.target, runContext.target) &&
           (!requiresDependencyInputs(adapter.id) ||
             validateDependencyInputs(
               cached.dependencyInputs,
