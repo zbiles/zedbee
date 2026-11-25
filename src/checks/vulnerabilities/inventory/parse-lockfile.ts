@@ -1,5 +1,4 @@
 import { posix } from "node:path";
-import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprint.js";
 import {
   ContainedFileSizeError,
   readContainedFile,
@@ -12,21 +11,14 @@ import { parsePnpmLockfile } from "./parse-pnpm.js";
 import { parseYarnLockfile } from "./parse-yarn.js";
 import { parseBunLockfile } from "./parse-bun.js";
 import { MAX_LOCKFILE_BYTES } from "./limits.js";
+import { normalizeLockfilePath } from "./normalize.js";
 import type { DependencyInventory } from "./types.js";
 
 export async function parseLockfileInventory(
   inspection: RepositoryInspection,
   repositoryPath: string,
 ): Promise<DependencyInventory> {
-  let lockfilePath: string;
-  try {
-    lockfilePath = normalizeRepositoryRelativePath(repositoryPath);
-  } catch {
-    throw inventoryError(
-      "LOCKFILE_NOT_DISCOVERED",
-      "Zedbee refused a lockfile path outside the inspected snapshot.",
-    );
-  }
+  const lockfilePath = normalizeLockfilePath(repositoryPath);
   if (!inspection.lockfiles.includes(lockfilePath)) {
     throw inventoryError(
       "LOCKFILE_NOT_DISCOVERED",

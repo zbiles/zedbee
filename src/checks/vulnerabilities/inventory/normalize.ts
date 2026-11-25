@@ -10,19 +10,22 @@ import {
 } from "./limits.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 
-export function validateLockfileInput(
-  contents: string,
-  repositoryPath: string,
-): string {
-  let lockfilePath: string;
+export function normalizeLockfilePath(repositoryPath: string): string {
   try {
-    lockfilePath = normalizeRepositoryRelativePath(repositoryPath);
+    return normalizeRepositoryRelativePath(repositoryPath);
   } catch {
     throw inventoryError(
       "LOCKFILE_NOT_DISCOVERED",
       "Zedbee refused a lockfile path outside the inspected snapshot.",
     );
   }
+}
+
+export function validateLockfileInput(
+  contents: string,
+  repositoryPath: string,
+): string {
+  const lockfilePath = normalizeLockfilePath(repositoryPath);
   if (Buffer.byteLength(contents, "utf8") > MAX_LOCKFILE_BYTES) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
