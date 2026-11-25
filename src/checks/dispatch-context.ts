@@ -175,6 +175,7 @@ export function adapterBaseContext(context: DispatchContext): DispatchContext {
   return Object.freeze({
     repositoryRoot: context.repositoryRoot,
     ...(context.mergeComparison === true ? { mergeComparison: true } : {}),
+    ...(context.baseComparison === true ? { baseComparison: true } : {}),
     changeSet: snapshotChangeSet(context.changeSet),
     config: snapshotConfig(context.config),
     snapshots: Object.freeze({
@@ -221,6 +222,7 @@ export function inspectionContext(
     baselineInspection: context.baselineInspection,
     targetInspection: context.targetInspection,
     ...(context.mergeComparison === true ? { mergeComparison: true } : {}),
+    ...(context.baseComparison === true ? { baseComparison: true } : {}),
   });
 }
 

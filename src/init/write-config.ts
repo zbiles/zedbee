@@ -7,7 +7,6 @@ import {
 import { ProjectEslintSetupError } from "./eslint-setup.js";
 import { randomUUID } from "node:crypto";
 import {
-  chmod,
   lstat,
   mkdir,
   open,
@@ -29,10 +28,10 @@ import { GitClient } from "../git/client.js";
 import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
 import {
+  ProjectPrettierTrustRollbackError,
   persistProjectPrettierTrust,
   restoreProjectPrettierTrust,
   revokeProjectPrettierTrust,
-  type ProjectPrettierTrustSnapshot,
 } from "../checks/prettier/project-trust.js";
 import { verifyExecutableImportProvenance } from "./import-provenance.js";
 import { initContentHash } from "./recommend.js";
@@ -224,24 +223,9 @@ async function atomicReplace(
     await handle.close();
     await rename(temporary, path);
     renamed = true;
-    await chmod(path, mode);
   } finally {
     await handle.close().catch(() => undefined);
     if (!renamed) await unlink(temporary).catch(() => undefined);
-  }
-}
-
-async function rollback(
-  applied: readonly { path: string; before: string | null; mode: number }[],
-): Promise<void> {
-  for (const item of [...applied].reverse()) {
-    if (item.before === null) {
-      await unlink(item.path).catch((error: unknown) => {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      });
-    } else {
-      await atomicReplace(item.path, item.before, item.mode);
-    }
   }
 }
 
@@ -249,6 +233,8 @@ export async function applyInitProposal(
   proposal: InitProposal,
   dependencies: ApplyInitDependencies = {},
 ): Promise<ApplyResult> {
+  const signal = dependencies.signal;
+  signal?.throwIfAborted();
   const root = await realpath(resolve(proposal.repositoryRoot)).catch(() => {
     throw unsafeTarget();
   });
@@ -298,14 +284,7 @@ export async function applyInitProposal(
   }
 
   const updatedFiles: string[] = [];
-  const applied: Array<{ path: string; before: string | null; mode: number }> =
-    [];
-  const eslintGrants: Array<{
-    projectRoot: string;
-    capability: "execute" | "messages";
-  }> = [];
-  const trustSnapshots: ProjectPrettierTrustSnapshot[] = [];
-  const revokeSnapshots: ProjectPrettierTrustSnapshot[] = [];
+  const undo: Array<() => Promise<unknown>> = [];
   if (proposal.executableEvaluatedConfigs !== undefined) {
     await verifyExecutableImportProvenance(
       root,
@@ -315,6 +294,7 @@ export async function applyInitProposal(
   try {
     for (const [index, item] of validated.entries()) {
       await dependencies.beforeWrite?.(index, item.change);
+      signal?.throwIfAborted();
       const refreshed = await validateChange(root, item.change);
       const mode = item.change.relativePath.startsWith(".husky/_/")
         ? item.change.mode
@@ -327,9 +307,16 @@ export async function applyInitProposal(
         refreshed.mode === mode
       )
         continue;
+      signal?.throwIfAborted();
       await atomicReplace(item.path, item.change.after, mode);
       updatedFiles.push(item.change.relativePath);
-      applied.push({ path: item.path, before: item.before, mode: item.mode });
+      undo.push(async () => {
+        if (item.before === null) {
+          await unlink(item.path).catch((error: unknown) => {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          });
+        } else await atomicReplace(item.path, item.before, item.mode);
+      });
     }
     if (proposal.hooksPathChange !== undefined) {
       await validateGitConfig(root);
@@ -337,12 +324,29 @@ export async function applyInitProposal(
         throw new Error(
           "Git hook configuration changed during initialization.",
         );
-      await new GitClient(root).run([
+      const git = new GitClient(root);
+      const previous = await git.tryRun([
+        "config",
+        "--local",
+        "--get",
+        "core.hooksPath",
+      ]);
+      if (previous.exitCode !== 0 && previous.exitCode !== 1)
+        throw new Error("Could not inspect local Git hook configuration.");
+      signal?.throwIfAborted();
+      await git.run([
         "config",
         "--local",
         "core.hooksPath",
         proposal.hooksPathChange.after,
       ]);
+      undo.push(() =>
+        git.run(
+          previous.exitCode === 1
+            ? ["config", "--local", "--unset", "core.hooksPath"]
+            : ["config", "--local", "core.hooksPath", previous.stdout],
+        ),
+      );
     }
     if (
       proposal.projectPrettierTrustRoots !== undefined &&
@@ -352,9 +356,9 @@ export async function applyInitProposal(
         throw unsafeTarget();
       }
       for (const projectRoot of proposal.projectPrettierTrustRoots) {
-        trustSnapshots.push(
-          await persistProjectPrettierTrust(root, projectRoot),
-        );
+        signal?.throwIfAborted();
+        const previous = await persistProjectPrettierTrust(root, projectRoot);
+        undo.push(() => restoreProjectPrettierTrust(root, previous));
       }
     }
     for (const projectRoot of eslintRoots) {
@@ -367,8 +371,11 @@ export async function applyInitProposal(
           confirmed === true &&
           !(await hasProjectEslintTrust(root, projectRoot, capability))
         ) {
-          eslintGrants.push({ projectRoot, capability });
+          signal?.throwIfAborted();
           await persistProjectEslintTrust(root, projectRoot, capability);
+          undo.push(() =>
+            revokeProjectEslintCapability(root, projectRoot, capability),
+          );
         }
       }
     }
@@ -379,31 +386,29 @@ export async function applyInitProposal(
       // Switching projects to managed/off withdraws their executable-code
       // grants in the same transaction; a failure restores each previous value.
       for (const projectRoot of proposal.projectPrettierRevokeRoots) {
-        revokeSnapshots.push(
-          ...(await revokeProjectPrettierTrust(root, projectRoot)),
-        );
+        signal?.throwIfAborted();
+        const revoked = await revokeProjectPrettierTrust(root, projectRoot);
+        // This revocation removes a group of Git keys. Reinsert those keys in
+        // their prior order when the undo stack is unwound.
+        for (const previous of revoked.toReversed())
+          undo.push(() => restoreProjectPrettierTrust(root, previous));
       }
     }
-  } catch {
-    try {
-      await rollback(applied);
-      for (const grant of eslintGrants)
-        await revokeProjectEslintCapability(
-          root,
-          grant.projectRoot,
-          grant.capability,
-        );
-      for (const snapshot of revokeSnapshots) {
-        await restoreProjectPrettierTrust(root, snapshot);
+    signal?.throwIfAborted();
+  } catch (error) {
+    let incomplete = error instanceof ProjectPrettierTrustRollbackError;
+    for (const compensate of undo.reverse()) {
+      try {
+        await compensate();
+      } catch {
+        incomplete = true;
       }
-      for (const snapshot of trustSnapshots) {
-        await restoreProjectPrettierTrust(root, snapshot);
-      }
-    } catch {
+    }
+    if (incomplete)
       throw new Error(
         "Zedbee initialization failed and rollback was incomplete.",
       );
-    }
+    signal?.throwIfAborted();
     throw new Error("Zedbee initialization failed and was rolled back.");
   }
   return Object.freeze({

@@ -620,6 +620,7 @@ describe("executeChecksCommand", () => {
       "engine",
       "rules.eqeqeq",
       "rules.no-console",
+      "typeInformation",
     ]);
     expect(lint?.configuration.overrides).toEqual([
       {
@@ -1135,3 +1136,88 @@ it("describes project lint ownership instead of claiming project config is never
     result.checks.find((check) => check.id === "lint")?.limitation,
   ).not.toContain("never loads");
 });
+
+it("describes lint type information in profile, repository and file scopes", async () => {
+  for (const explicit of [false, true]) {
+    const config = resolveConfig(
+      explicit
+        ? {
+            schemaVersion: 1,
+            checks: { lint: { typeInformation: "when-available" } },
+            overrides: [
+              {
+                files: ["legacy/**"],
+                checks: { lint: { typeInformation: "required" } },
+              },
+            ],
+          }
+        : undefined,
+    );
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      configuredDependencies(config),
+    );
+    const description = result.checks.find(
+      ({ id }) => id === "lint",
+    )!.configuration;
+    expect(description.values.typeInformation).toEqual({
+      value: config.checks.lint.typeInformation,
+      source: explicit ? "repository" : "profile",
+      customized: explicit,
+    });
+    expect(config.configurationOrigins.lint.typeInformation?.kind).toBe(
+      explicit ? "repository" : "profile",
+    );
+    if (explicit)
+      expect(description.overrides[0]?.values).toEqual({
+        typeInformation: "required",
+      });
+  }
+});
+
+it("preserves complete check descriptions when a static render fails", async () => {
+  const io = { ...terminal(), stdoutIsTTY: true };
+  const result = await executeChecksCommand(
+    { cwd: "/repo", format: "auto", color: false },
+    io,
+    {
+      ...dependencies,
+      renderDashboard: async () => {
+        throw new Error("render");
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(io.stdout).toHaveLength(1);
+  for (const id of CHECK_IDS) expect(io.stdout[0]).toContain(id);
+});
+
+it.each(["empty", "failed"] as const)(
+  "distinguishes %s project Prettier discovery",
+  async (kind) => {
+    const deps = configuredDependencies(
+      resolveConfig({
+        schemaVersion: 1,
+        checks: { formatting: { engine: "project" } },
+      }),
+    );
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      {
+        ...deps,
+        discoverProjectPrettier: async () => {
+          if (kind === "failed") throw new Error("fixture failure");
+          return [];
+        },
+      },
+    );
+    const engine = result.checks.find(
+      (check) => check.id === "formatting",
+    )!.engine;
+    expect(engine.version).toMatch(
+      kind === "failed" ? /^unavailable$/u : /^missing$/u,
+    );
+  },
+);

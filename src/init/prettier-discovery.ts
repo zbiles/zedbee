@@ -292,12 +292,7 @@ async function discoveryForProject(
 export async function discoverProjectPrettier(
   repositoryRoot: string,
 ): Promise<readonly ProjectPrettierDiscovery[]> {
-  let canonicalRoot: string;
-  try {
-    canonicalRoot = await canonicalizeSnapshotRoot(repositoryRoot);
-  } catch {
-    return Object.freeze([]);
-  }
+  const canonicalRoot = await canonicalizeSnapshotRoot(repositoryRoot);
   const registry = await captureWorkingTreeRegistry(canonicalRoot);
   const workspaces = await discoverWorkspaces(registry);
   const projectRoots = workspaces.map((workspace) => workspace.relativeRoot);
@@ -335,4 +330,15 @@ export function repositoryRelativePath(
     return undefined;
   }
   return fromRoot;
+}
+
+export async function inspectProjectPrettierDiscovery(
+  root: string,
+  discover = discoverProjectPrettier,
+) {
+  try {
+    return { status: "completed" as const, entries: await discover(root) };
+  } catch {
+    return { status: "failed" as const, entries: [] as const };
+  }
 }

@@ -134,7 +134,7 @@ describe("OutcomeStrip", () => {
       <OutcomeStrip report={report} width={160} color={false} />,
     ).lastFrame()!;
 
-    expect(frame).toContain("No committed changes. Commit allowed.");
+    expect(frame).toContain("No committed changes. Scan passed.");
     expect(frame).toContain(
       "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
     );

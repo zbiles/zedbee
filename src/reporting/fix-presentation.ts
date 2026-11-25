@@ -1,4 +1,4 @@
-import { projectPublicFixPlan } from "../fixes/public-plan.js";
+import { fixesFor, projectPublicFixPlan } from "../fixes/public-plan.js";
 import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
 import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
@@ -31,8 +31,6 @@ export function renderPlanText(
     `${count} ${count === 1 ? "fix" : "fixes"}`;
   const fileLabel = (count: number): string =>
     `${count} ${count === 1 ? "file" : "files"}`;
-  const fixesFor = (item: FixPlan["items"][number]): number =>
-    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const lines = [
     terminalText("Zedbee managed fix plan.", "primary", color),
     terminalText(
@@ -97,7 +95,10 @@ export function renderPlanText(
     }
   }
   if ((plan.checks?.length ?? 0) > 0 && plan.items.length > 0) lines.push("");
-  const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
+  const items =
+    reportPath === undefined
+      ? plan.items
+      : plan.items.slice(0, COMPACT_DETAIL_LIMIT);
   for (const item of items) {
     if (item.status === "skipped") {
       lines.push(

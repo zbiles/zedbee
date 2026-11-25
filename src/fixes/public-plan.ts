@@ -13,7 +13,7 @@ import type {
   WorkingFilePreview,
 } from "./types.js";
 
-function fixesFor(item: FixPlanItem): number {
+export function fixesFor(item: FixPlanItem): number {
   return item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
 }
 

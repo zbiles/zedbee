@@ -193,12 +193,12 @@ describe("compiler metadata completeness", () => {
       inspection.snapshotRoot,
     )(workspace);
     expect(inputs.complete).toBe(false);
+    expect(inputs.paths.has("missing.md/tsconfig.json")).toBe(false);
     expect([...inputs.paths]).toEqual(
       expect.arrayContaining([
         "tsconfig.json",
         "missing.md",
         "missing.md.json",
-        "missing.md/tsconfig.json",
         "directory/tsconfig.json",
       ]),
     );
@@ -592,4 +592,32 @@ it.each([
   } else {
     expect(classification.unclassifiedPaths.has(path)).toBe(true);
   }
+});
+
+it("resolves competing relative extends and project references as TypeScript does", async () => {
+  const { createCompilerConfigurationInputResolver } =
+    await import("../../src/checks/typescript/configuration-paths.js");
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "competing" });
+  await fixture.writeJson("lib.json", {});
+  await fixture.writeJson("lib/tsconfig.json", {});
+  const pathsFor = async (request: object) => {
+    await fixture.writeJson("tsconfig.json", request);
+    const inspection = await inspectRepository(fixture.root);
+    const workspace = {
+      ...inspection.workspaces[0]!,
+      tsconfigPaths: ["tsconfig.json"],
+    };
+    return (
+      await createCompilerConfigurationInputResolver(inspection.snapshotRoot)(
+        workspace,
+      )
+    ).paths;
+  };
+  const extended = await pathsFor({ extends: "./lib" });
+  expect(extended.has("lib.json")).toBe(true);
+  expect(extended.has("lib/tsconfig.json")).toBe(false);
+  const referenced = await pathsFor({ references: [{ path: "./lib" }] });
+  expect(referenced.has("lib/tsconfig.json")).toBe(true);
+  expect(referenced.has("lib.json")).toBe(false);
 });

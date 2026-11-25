@@ -1,6 +1,7 @@
 import { ESLint } from "eslint";
 import { realpath, stat } from "node:fs/promises";
-import { extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { managedConfig, type ManagedConfigOptions } from "./managed-config.js";
 import { ManagedEslintFailure } from "./failure.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
@@ -19,16 +20,6 @@ export interface ManagedEslintOptions extends ManagedConfigOptions {
   readonly cwd: string;
 }
 
-const sourceExtensions = new Set([
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-]);
 const windowsDrivePath = /^[A-Za-z]:/u;
 
 async function assertInspectorPath(cwd: string, path: string): Promise<void> {
@@ -46,7 +37,7 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     fromRoot === ".." ||
     fromRoot.startsWith(`..${sep}`) ||
     isAbsolute(fromRoot) ||
-    !sourceExtensions.has(extname(path))
+    !MANAGED_SOURCE_PATH.test(path)
   ) {
     throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
   }

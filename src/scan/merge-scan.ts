@@ -1,8 +1,9 @@
+import { bootstrapGitPolicy } from "./resource-policy.js";
+import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { isGitObjectId } from "../git/base-ref.js";
 import { scanOutcome } from "../policy/evaluate.js";
 import { changeSetFromMap } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
-import { resolveScanResourcePolicy } from "./resource-policy.js";
 import type { RunScanDependencies, RunScanOptions } from "./run-scan.js";
 import type { ScanReport } from "./report.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -17,8 +18,8 @@ import {
   createIncompleteReport,
   withUnreportableCleanupFailure,
 } from "./incomplete-report.js";
-import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
-import { sanitizeCheckResult } from "../checks/sanitize-result.js";
+import { PRECONFIGURATION_PRESENTATION_POLICY } from "./report.js";
+import { resultForProgress } from "../checks/progress-result.js";
 import { announceScanPhase } from "./progress.js";
 import {
   SelectedIndexCleanupError,
@@ -183,12 +184,7 @@ export async function runMergeScan(
           configuredPathExclusions: [],
           appliedPathExclusions: [],
           networkDisclosures: [],
-          presentationPolicy: {
-            terminalFindingLimit: 25,
-            temporaryReportMaxAge: "24h",
-            persistSourceExcerpts: false,
-            agentGuidance: EMPTY_AGENT_GUIDANCE,
-          },
+          presentationPolicy: PRECONFIGURATION_PRESENTATION_POLICY,
         },
         {
           code:
@@ -209,13 +205,7 @@ export async function runMergeScan(
   try {
     if (options.baseRef !== undefined)
       throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    const resourcePolicy = resolveScanResourcePolicy(
-      { gitHardTimeout: "30s" },
-      {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.noTimeout ? { noTimeout: true } : {}),
-      },
-    );
+    const resourcePolicy = bootstrapGitPolicy(options);
     let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });
@@ -243,7 +233,7 @@ export async function runMergeScan(
     }
     parents = comparison.parents;
     announceScanPhase(options.onEvent, "change-discovery", dependencies.clock);
-    const changes = await Promise.all(
+    const changes = await joinSnapshotReaders(
       parents.map((parent) =>
         dependencies.readCommitChangeSet(
           git,
@@ -374,7 +364,7 @@ export async function runMergeScan(
           checkId: result.checkId,
           target: result.target ?? ".",
           timestamp: dependencies.clock(),
-          result: sanitizeCheckResult(result),
+          result: resultForProgress(result),
         });
       } catch {
         // Display observers must not change the merge outcome.

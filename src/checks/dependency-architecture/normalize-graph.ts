@@ -1,3 +1,4 @@
+import { canonicalText } from "../../core/canonical-text.js";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, sep } from "node:path";
 import type { ICruiseResult, IViolation } from "dependency-cruiser";
@@ -20,17 +21,6 @@ export interface DependencyDeclarations {
   readonly workspacePackages?: ReadonlySet<string>;
 }
 
-function canonicalText(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
-    throw new TypeError(`Expected canonical ${field}`);
-  }
-  return value;
-}
 
 function repositoryPath(path: string, snapshotRoot: string): string {
   const candidate = canonicalText(path, "dependency path");

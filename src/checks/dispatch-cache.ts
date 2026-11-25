@@ -168,6 +168,7 @@ export function createDispatchObservationCollector(
               baseline: context.snapshots.baselineRef,
               target: context.snapshots.targetRef,
             },
+        context.signal,
       );
       return { cacheKeyFor, behaviorFor, changeSetDigest };
     } catch (error) {

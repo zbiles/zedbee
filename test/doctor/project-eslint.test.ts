@@ -44,3 +44,28 @@ describe("doctor project ESLint", () => {
     await expect(access(join(repo.root, "MARKER"))).rejects.toThrow();
   });
 });
+
+it.each(["parent", "child", "unsupported"] as const)(
+  "selects the %s flat configuration consistently across probes and execution",
+  async (kind) => {
+    const { findProjectEslintConfig } =
+      await import("../../src/checks/eslint/project/config-file.js");
+    const repo = await createGitRepository();
+    await repo.write("app/.eslintrc.json", "{}");
+    if (kind !== "unsupported")
+      await repo.write("eslint.config.js", "export default []");
+    if (kind === "child")
+      await repo.write("app/eslint.config.mjs", "export default []");
+    for (const mode of ["doctor", "mirror"] as const) {
+      const actual = await findProjectEslintConfig(repo.root, "app", mode);
+      expect(actual.supported).toBe(kind !== "unsupported");
+      if (actual.supported)
+        expect(actual.path).toBe(
+          join(
+            repo.root,
+            kind === "child" ? "app/eslint.config.mjs" : "eslint.config.js",
+          ),
+        );
+    }
+  },
+);

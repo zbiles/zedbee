@@ -249,3 +249,13 @@ describe("resolveMergeComparison", () => {
     ).rejects.toMatchObject({ code: "GIT_ABORTED" });
   });
 });
+
+it("uses captured absence without resolving a live merge metadata path", async () => {
+  const git = {
+    selectedComparison: { baselineCommit: null },
+    run() {
+      throw new Error("unexpected live Git read");
+    },
+  } as unknown as GitClient;
+  expect(await resolveMergeComparison(git, {}, false)).toBeUndefined();
+});

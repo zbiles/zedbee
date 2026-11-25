@@ -1,3 +1,4 @@
+import { Readable } from "node:stream";
 import { deadCodeAdapter } from "../../src/checks/dead-code/adapter.js";
 import * as fs from "node:fs";
 import * as crypto from "node:crypto";
@@ -1376,4 +1377,62 @@ it("does not reuse a completed dead-code observation from before snapshot-specif
     cacheEngineIdentity: () => current,
   });
   expect(collections).toBe(2);
+});
+
+it("waits for a live sibling hash after a cache read failure", async () => {
+  const baseline = await createInspectionFixture();
+  const target = await createInspectionFixture();
+  await baseline.write("failed.ts", "before");
+  await target.write("held.ts", "after");
+  let announce!: () => void;
+  const held = new Promise<void>((resolve) => {
+    announce = resolve;
+  });
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const streams = vi.mocked(fs.createReadStream);
+  const previous = streams.getMockImplementation()!;
+  const error = new Error("hash read failed");
+  streams.mockImplementation((path) => {
+    const source = async function* () {
+      if (String(path).endsWith("failed.ts")) {
+        await held;
+        throw error;
+      }
+      announce();
+      await gate;
+      yield Buffer.from("after");
+    };
+    return Readable.from(source()) as fs.ReadStream;
+  });
+  try {
+    const controller = new AbortController();
+    const makeKey = createObservationCacheKeyBuilder(
+      baseline.root,
+      target.root,
+      { mode: "index", baseline: "HEAD", target: "index" },
+      controller.signal,
+    );
+    const outcome = makeKey({
+      checkId: "lint",
+      engineIdentity: "test",
+      policy: { severity: "error", when: "relevant" },
+      checkTarget: { id: ".", kind: "repository", relativeRoot: "." },
+    });
+    let settled = false;
+    const result = outcome.catch((reason) => {
+      settled = true;
+      return reason;
+    });
+    await held;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    release();
+    expect(await result).toBe(error);
+  } finally {
+    release();
+    streams.mockImplementation(previous);
+  }
 });

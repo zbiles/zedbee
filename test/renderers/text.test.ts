@@ -835,7 +835,7 @@ describe("renderText", () => {
 
     const output = renderText(report, { width: 80, color: false });
 
-    expect(output).toContain("No committed changes. Commit allowed.");
+    expect(output).toContain("No committed changes. Scan passed.");
     expect(output).toContain(
       "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
     );

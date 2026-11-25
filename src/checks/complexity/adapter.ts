@@ -1,8 +1,9 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { changedFilePaths } from "../changed-file-paths.js";
-import { relative, sep } from "node:path";
+import { validatedBatchResults } from "../eslint/batch-results.js";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
 import {
@@ -37,7 +38,6 @@ import {
   type ComplexitySnapshot,
 } from "./pair-class-metrics.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -281,7 +281,7 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((path) => SOURCE.test(path))
+    .filter((path) => MANAGED_SOURCE_PATH.test(path))
     .filter(
       (path) =>
         selectedPaths.has(path) ||
@@ -295,12 +295,13 @@ async function collectSide(
     managedIgnores: [],
   });
   const results = await engine.lintFiles(files);
-  const allowed = new Set(files);
   const observations: Observation[] = [];
   const sources: Record<string, string> = {};
-  for (const result of results) {
-    const file = relative(canonicalRoot, result.filePath).split(sep).join("/");
-    if (!allowed.has(file)) throw new Error("Complexity analysis failed.");
+  for (const { file, result } of validatedBatchResults(
+    canonicalRoot,
+    files,
+    results,
+  )) {
     if (result.messages.length === 0) continue;
     if (result.source === undefined)
       throw new Error("Complexity analysis failed.");

@@ -1,5 +1,8 @@
 import { inspectionContext } from "../checks/dispatch-context.js";
-import { useStaticDashboard } from "../reporting/static-dashboard.js";
+import {
+  deliverDashboard,
+  useStaticDashboard,
+} from "../reporting/static-dashboard.js";
 import {
   joinSnapshotReaders,
   settleSnapshotWork,
@@ -28,7 +31,10 @@ import { GitClient } from "../git/client.js";
 import { captureSelectedIndexComparison } from "../git/selected-comparison.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
-import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import {
+  inspectProjectPrettierDiscovery,
+  discoverProjectPrettier,
+} from "../init/prettier-discovery.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import {
   immutableConfigurationSnapshot,
@@ -559,11 +565,13 @@ export async function executeChecksCommand(
       config.overrides.some(
         (override) => override.checks.formatting?.engine === "project",
       );
-    const discoveredProjectPrettier = formattingUsesProject
-      ? await (dependencies.discoverProjectPrettier ?? discoverProjectPrettier)(
+    const discovery = formattingUsesProject
+      ? await inspectProjectPrettierDiscovery(
           repositoryRoot,
-        ).catch(() => [] as const)
-      : [];
+          dependencies.discoverProjectPrettier,
+        )
+      : undefined;
+    const discoveredProjectPrettier = discovery?.entries ?? [];
     const formattingUsesManaged =
       config.checks.formatting.engine === "managed" ||
       config.overrides.some(
@@ -595,7 +603,8 @@ export async function executeChecksCommand(
               kind: "project" as const,
               projectRoot: ".",
               name: "Project Prettier",
-              version: "missing",
+              version:
+                discovery?.status === "failed" ? "unavailable" : "missing",
               license: "project-installed",
             }),
           ]
@@ -642,9 +651,11 @@ export async function executeChecksCommand(
           limitation:
             id === "lint" && lintUsesProject
               ? "Uses project ESLint configuration in selected workspaces under explicit trust; other workspaces retain managed rules. Project-rule automatic fixes are unavailable."
-              : id === "formatting" && formattingUsesProject
-                ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
-                : CATALOG[id].limitation,
+              : id === "formatting" && discovery?.status === "failed"
+                ? "Project Prettier setup could not be inspected. Check workspace manifests and file permissions."
+                : id === "formatting" && formattingUsesProject
+                  ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
+                  : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined
             ? {}
             : { automaticFix: CATALOG[id].automaticFix }),
@@ -654,22 +665,25 @@ export async function executeChecksCommand(
       }),
     );
     const result = Object.freeze({ exitCode: 0 as const, checks });
-    const dashboard = useStaticDashboard(options.format, io);
-    if (options.format === "json") {
-      io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
-    } else if (dashboard) {
-      await (dependencies.renderDashboard ?? renderDashboard)(result.checks, {
-        width: io.width,
-        color: options.color && io.env.NO_COLOR === undefined,
-      });
-    } else {
+    const writeText = () =>
       io.writeStdout(
         renderText(
           result,
           terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
         ),
       );
-    }
+    if (options.format === "json") {
+      io.writeStdout(JSON.stringify(result, null, 2) + "\n");
+    } else if (useStaticDashboard(options.format, io)) {
+      await deliverDashboard(
+        () =>
+          (dependencies.renderDashboard ?? renderDashboard)(result.checks, {
+            width: io.width,
+            color: options.color && io.env.NO_COLOR === undefined,
+          }),
+        writeText,
+      );
+    } else writeText();
     return result;
   } catch {
     io.writeStderr("Zedbee could not describe the configured checks.\n");

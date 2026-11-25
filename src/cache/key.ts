@@ -1,3 +1,7 @@
+import {
+  joinSnapshotReaders,
+  settleSnapshotWork,
+} from "../git/snapshot-work.js";
 import { baselineRenameMap } from "../git/baseline-renames.js";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -178,7 +182,10 @@ interface SnapshotCacheIdentity {
   readonly entriesByPath: ReadonlyMap<string, SnapshotInputIdentity>;
 }
 
-async function snapshotIdentity(root: string): Promise<SnapshotCacheIdentity> {
+async function snapshotIdentity(
+  root: string,
+  signal: AbortSignal,
+): Promise<SnapshotCacheIdentity> {
   const canonicalRoot = await realpath(root);
   const registry = await captureSnapshotRegistry(canonicalRoot);
   // An incomplete inventory cannot establish the existing full-snapshot key.
@@ -188,27 +195,39 @@ async function snapshotIdentity(root: string): Promise<SnapshotCacheIdentity> {
     compareCodeUnits(left.repositoryPath, right.repositoryPath),
   );
   const limit = pLimit(8);
-  const identities = await Promise.all(
+  const readIdentity = async (entry: (typeof entries)[number]) => {
+    signal.throwIfAborted();
+    if (entry.kind === "directory") {
+      return { path: entry.repositoryPath, kind: "directory" } as const;
+    }
+    if (entry.kind === "symlink") {
+      return {
+        path: entry.repositoryPath,
+        kind: "symlink",
+        target: await readlink(entry.absolutePath),
+      } as const;
+    }
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(entry.canonicalPath, {
+      highWaterMark: 64 * 1024,
+      signal,
+    })) {
+      hash.update(chunk as Buffer);
+    }
+    const digest = hash.digest("hex");
+    return { path: entry.repositoryPath, kind: "file", digest } as const;
+  };
+  let failed: { reason: unknown } | undefined;
+  const identities = await joinSnapshotReaders(
     entries.map((entry) =>
       limit(async () => {
-        if (entry.kind === "directory") {
-          return { path: entry.repositoryPath, kind: "directory" } as const;
+        if (failed) throw failed.reason;
+        try {
+          return await readIdentity(entry);
+        } catch (reason) {
+          failed ??= { reason };
+          throw reason;
         }
-        if (entry.kind === "symlink") {
-          return {
-            path: entry.repositoryPath,
-            kind: "symlink",
-            target: await readlink(entry.absolutePath),
-          } as const;
-        }
-        const hash = createHash("sha256");
-        for await (const chunk of createReadStream(entry.canonicalPath, {
-          highWaterMark: 64 * 1024,
-        })) {
-          hash.update(chunk as Buffer);
-        }
-        const digest = hash.digest("hex");
-        return { path: entry.repositoryPath, kind: "file", digest } as const;
       }),
     ),
   );
@@ -243,6 +262,7 @@ export function createObservationCacheKeyBuilder(
   baselineRoot: string,
   targetRoot: string,
   source: CacheSourceIdentity,
+  signal?: AbortSignal,
 ): ((input: SnapshotBoundKeyInput) => Promise<string>) & {
   matchesSnapshotFiles(
     manifest: DependencyInputManifest | undefined,
@@ -255,10 +275,11 @@ export function createObservationCacheKeyBuilder(
   const keyFor = async (input: SnapshotBoundKeyInput) => {
     // Share in-flight work as well as results. A rejected inventory disables
     // caching for this dispatch; a new dispatch will capture fresh identities.
-    const [baseline, target] = await (identities ??= Promise.all([
-      snapshotIdentity(baselineRoot),
-      snapshotIdentity(targetRoot),
-    ]));
+    const [baseline, target] = await (identities ??= settleSnapshotWork(
+      (signal) => snapshotIdentity(baselineRoot, signal),
+      (signal) => snapshotIdentity(targetRoot, signal),
+      signal === undefined ? {} : { signal },
+    ));
     return observationCacheKey(
       input,
       validatedSource,

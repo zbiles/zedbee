@@ -212,3 +212,20 @@ describe("verified CLI download", () => {
     expect(await readdir(root)).toEqual([]);
   });
 });
+
+it("checks the independent pinned CLI metadata before packing", async () => {
+  const root = await fixture();
+  const pin = join(root, "plugins/swarm/references/cli-release.json");
+  await writeFile(pin, JSON.stringify(release));
+  await expect(checkPlugin(root)).resolves.toBeDefined();
+  for (const override of [
+    { version: "latest" },
+    { url: "bad" },
+    { sha256: "bad" },
+  ]) {
+    await writeFile(pin, JSON.stringify({ ...release, ...override }));
+    await expect(checkPlugin(root)).rejects.toThrow(
+      "Invalid pinned CLI release",
+    );
+  }
+});

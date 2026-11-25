@@ -1,3 +1,4 @@
+import { owningWorkspace } from "../inspection/workspace-owner.js";
 import { sourceMoves, workspaceOwns } from "./source-moves.js";
 import {
   pairSourceMoveMetrics,
@@ -166,21 +167,6 @@ function observationPaths(input: readonly Observation[]): readonly string[] {
   ].sort(compareCodeUnits);
 }
 
-function ownsPath(relativeRoot: string, path: string): boolean {
-  return relativeRoot === "." || path.startsWith(`${relativeRoot}/`);
-}
-
-function mostSpecificWorkspace(inspection: RepositoryInspection, path: string) {
-  const depth = (root: string) => (root === "." ? 0 : root.split("/").length);
-  return inspection.workspaces
-    .filter((workspace) => ownsPath(workspace.relativeRoot, path))
-    .sort(
-      (left, right) =>
-        depth(right.relativeRoot) - depth(left.relativeRoot) ||
-        compareCodeUnits(left.relativeRoot, right.relativeRoot),
-    )[0];
-}
-
 function validateObservationPaths(
   side: string,
   input: readonly Observation[],
@@ -198,7 +184,7 @@ function validateObservationPaths(
         throw new TypeError(`Unknown ${side} observation path`);
       }
       if (target.kind === "repository") continue;
-      const owner = mostSpecificWorkspace(inspection, path);
+      const owner = owningWorkspace(inspection.workspaces, path);
       if (
         owner?.relativeRoot !== target.relativeRoot &&
         !renamedBaselinePaths?.has(path)
@@ -410,7 +396,7 @@ export async function observationCheckResult(
         ...[...context.changeSet.files.values()].flatMap((file) =>
           file.status === "renamed" &&
           file.previousPath !== undefined &&
-          mostSpecificWorkspace(context.targetInspection, file.path)
+          owningWorkspace(context.targetInspection.workspaces, file.path)
             ?.relativeRoot === context.target.relativeRoot
             ? [file.previousPath]
             : [],

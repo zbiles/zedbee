@@ -139,6 +139,7 @@ export interface CreateInitProposalOptions {
   readonly profile: ProfileId;
   readonly hook: InitHookChoice;
   readonly checks?: readonly CheckId[];
+  readonly changedChecks?: readonly CheckId[];
   readonly osvUnavailable?: InitOsvUnavailable;
   readonly configBefore?: string | null;
   readonly hookChange?: InitFileChange;
@@ -174,5 +175,6 @@ export interface ApplyResult {
 }
 
 export interface ApplyInitDependencies {
+  readonly signal?: AbortSignal;
   beforeWrite?(index: number, change: InitFileChange): Promise<void> | void;
 }

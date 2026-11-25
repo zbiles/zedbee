@@ -1,10 +1,11 @@
+import { GitClient } from "../../../src/git/client.js";
 import { canonicalTrustRoot } from "../../../src/git/common-directory.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInitProposal } from "../../../src/init/recommend.js";
 import { applyInitProposal } from "../../../src/init/write-config.js";
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, onTestFinished } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   canonicalCheckoutRoot,
   persistProjectPrettierTrust,
@@ -253,6 +254,76 @@ it("restores shared and legacy grants when setup revocation rolls back", async (
     requireProjectPrettierTrust(repo.root, ".", false),
   ).resolves.toBeDefined();
 });
+
+it.each([false, true])(
+  "reports incomplete setup and restores remaining grants after a failed partial revocation (linked checkout=%s)",
+  async (linked) => {
+    const repo = await createGitRepository();
+    await repo.write("package.json", '{"name":"fixture"}');
+    await repo.commitAll("fixture");
+    const shared = (await persistProjectPrettierTrust(repo.root, ".")).key;
+    const legacy = projectPrettierTrustKey(
+      await canonicalCheckoutRoot(repo.root),
+      ".",
+    );
+    await repo.git(["config", "--local", legacy, "v1"]);
+    let failingRemoval = legacy;
+    if (linked) {
+      const sibling = join(repo.root, "sibling");
+      expect(
+        (await repo.git(["worktree", "add", "--detach", sibling, "HEAD"]))
+          .exitCode,
+      ).toBe(0);
+      failingRemoval = projectPrettierTrustKey(
+        await canonicalCheckoutRoot(sibling),
+        ".",
+      );
+      await repo.git(["config", "--local", failingRemoval, "v1"]);
+    }
+    const proposal = createInitProposal(await inspectRepository(repo.root), {
+      repositoryRoot: repo.root,
+      profile: "recommended",
+      hook: "none",
+      formatting: "managed",
+      projectPrettierRevokeRoots: ["."],
+    });
+    const run = GitClient.prototype.run;
+    const restorationAttempts: string[] = [];
+    const stub = vi
+      .spyOn(GitClient.prototype, "run")
+      .mockImplementation(async function (this: GitClient, args, options) {
+        if (args[0] === "config" && args[1] === "--local") {
+          if (args[2] === "--unset" && args[3] === failingRemoval)
+            throw new Error("failed removal");
+          if (args[3] === "v1") {
+            restorationAttempts.push(args[2]!);
+            if (args[2] === shared) throw new Error("failed restore");
+          }
+        }
+        return run.call(this, args, options);
+      });
+    try {
+      await expect(applyInitProposal(proposal)).rejects.toThrow(
+        "rollback was incomplete",
+      );
+    } finally {
+      stub.mockRestore();
+    }
+    expect(restorationAttempts).toEqual(linked ? [shared, legacy] : [shared]);
+    expect(
+      (await repo.git(["config", "--local", "--get", shared])).exitCode,
+    ).toBe(1);
+    expect(
+      (await repo.git(["config", "--local", "--get", legacy])).stdout,
+    ).toBe("v1");
+    expect(
+      (await repo.git(["config", "--local", "--get", failingRemoval])).stdout,
+    ).toBe("v1");
+    await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
 
 it("does not revive legacy consent when an unavailable worktree returns after revocation", async () => {
   const repo = await createGitRepository();

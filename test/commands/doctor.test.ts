@@ -264,6 +264,35 @@ describe("doctor diagnostics", () => {
     });
   });
 
+  it("requires an independent workspace's binary Bun inventory to be migrated", async () => {
+    const repo = await createGitRepository("zedbee-doctor-bun-workspaces-");
+    await repo.write(
+      "package.json",
+      JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    );
+    await repo.write(
+      "packages/legacy/package.json",
+      JSON.stringify({ name: "legacy" }),
+    );
+    await repo.write(
+      "bun.lock",
+      JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "root" } },
+        packages: {},
+      }),
+    );
+    await repo.write("bun.lockb", "old binary");
+    await repo.write("packages/legacy/bun.lockb", "independent binary");
+    await repo.commitAll("workspace lockfiles");
+    const result = await defaultDiagnosticProbe("lockfile-support", {
+      cwd: repo.root,
+      environment: {},
+    });
+    expect(result.status).toBe("fail");
+    expect(result.remediation).toContain("save-text-lockfile");
+  });
+
   it("ignores lockfile fixtures outside project roots", async () => {
     const repository = await createGitRepository(
       "zedbee-doctor-fixture-lockfile-",
@@ -665,3 +694,69 @@ describe("executeDoctorCommand", () => {
     expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
   });
 });
+
+it("stops scheduling probes when the current request is cancelled", async () => {
+  const controller = new AbortController();
+  const started: string[] = [];
+  await expect(
+    runDiagnostics(
+      async (id) => {
+        started.push(id);
+        controller.abort();
+        throw new Error("cancelled");
+      },
+      { cwd: "/repo", environment: {}, signal: controller.signal },
+    ),
+  ).rejects.toThrow();
+  expect(started).toEqual([DOCTOR_DIAGNOSTIC_IDS[0]]);
+});
+
+it("delivers the original failed diagnosis once when the dashboard fails", async () => {
+  const io = terminal({ stdoutIsTTY: true, width: 90 });
+  const diagnostics = [
+    { id: "node", status: "fail", message: "Retained failure detail" },
+  ] as const;
+  const result = await executeDoctorCommand(doctorOptions(), io, {
+    diagnose: async () => diagnostics,
+    renderDashboard: async () => {
+      throw new Error("render");
+    },
+  });
+  expect(result).toEqual({ exitCode: 2, diagnostics });
+  expect(io.stdout).toHaveLength(1);
+  expect(io.stdout[0]).toContain("Retained failure detail");
+});
+
+it.each([
+  ["disabled", 0o644, "zedbee scan", "warning"],
+  ["merge-only", 0o755, "zedbee scan --merge", "warning"],
+  ["active", 0o755, "zedbee scan", "pass"],
+  ["shadowed", 0o755, "lefthook run pre-commit", "warning"],
+] as const)(
+  "reports %s pre-commit activation accurately",
+  async (kind, mode, command, status) => {
+    if (kind === "disabled" && process.platform === "win32") return;
+    const repo = await createGitRepository();
+    const path = ".git/hooks/pre-commit";
+    await repo.write(path, "#!/bin/sh\n" + command + "\n");
+    await chmod(join(repo.root, path), mode);
+    if (kind === "shadowed") {
+      await repo.write(
+        "lefthook.yaml",
+        "pre-commit:\n  commands:\n    echo:\n      run: echo ok",
+      );
+      await repo.write(
+        "lefthook.yml",
+        "pre-commit:\n  commands:\n    check:\n      run: zedbee scan",
+      );
+    }
+    expect(
+      (
+        await defaultDiagnosticProbe("hook-state", {
+          cwd: repo.root,
+          environment: {},
+        })
+      ).status,
+    ).toBe(status);
+  },
+);

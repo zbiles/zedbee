@@ -1,3 +1,7 @@
+import {
+  MANAGED_SOURCE_PATH,
+  MANAGED_TYPESCRIPT_PATH,
+} from "../inspection/source-paths.js";
 import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { resolveWorkspaceLintPolicy } from "../config/target-policy.js";
 import pLimit from "p-limit";
@@ -24,8 +28,6 @@ import {
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(
   IGNORED_DIRECTORY_NAMES,
 );
@@ -88,7 +90,7 @@ async function selectProjectGraphWorkspaces(
       acquire(async () => ({
         workspace,
         relevant: always
-          ? workspace.sourceFiles.some((path) => SOURCE.test(path))
+          ? workspace.sourceFiles.some((path) => MANAGED_SOURCE_PATH.test(path))
           : await projectInputsMayHaveChanged(
               context,
               targetFor(workspace),
@@ -200,7 +202,10 @@ export async function inspectManagedCheck(
     );
     const undiscovered = [...changed].sort(compareCodeUnits).find(
       (path) =>
-        (checkId === "types" ? TYPESCRIPT : SOURCE).test(path) &&
+        (checkId === "types"
+          ? MANAGED_TYPESCRIPT_PATH
+          : MANAGED_SOURCE_PATH
+        ).test(path) &&
         !path
           .split("/")
           .slice(0, -1)
@@ -294,7 +299,8 @@ export async function inspectManagedCheck(
     }
     workspaces = workspaces.filter((workspace) =>
       workspace.sourceFiles.some(
-        (path) => SOURCE.test(path) && (always || changed.has(path)),
+        (path) =>
+          MANAGED_SOURCE_PATH.test(path) && (always || changed.has(path)),
       ),
     );
   }

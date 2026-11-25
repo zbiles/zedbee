@@ -1,3 +1,17 @@
+import { lstat } from "node:fs/promises";
+import { join } from "node:path";
+
+export async function lefthookFilename(
+  root: string,
+): Promise<"lefthook.yaml" | "lefthook.yml"> {
+  try {
+    await lstat(join(root, "lefthook.yaml"));
+    return "lefthook.yaml";
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return "lefthook.yml";
+  }
+}
 import type { ScanHookName } from "./command.js";
 import { parseDocument } from "yaml";
 import {

@@ -309,3 +309,33 @@ it("provides a source-free setup choice without source excerpts", () => {
   });
   expect(proposal.diagnosticMessages).toBe("source-free");
 });
+
+it("preserves handwritten check policies and comments for untouched review and an unrelated toggle", () => {
+  const configBefore =
+    '{"schemaVersion":1,"checks":{"lint":{"severity":"warn",/* team rule */ "rules":{"eqeqeq":"off"}},"formatting":{"settings":{"tabWidth":4}},"types":"error"}}';
+  const options = {
+    profile: "recommended",
+    repositoryRoot: "/repo",
+    hook: "none",
+    configBefore,
+  } as const;
+  const repo = inspection(["javascript", "typescript"]);
+  const initial = createInitProposal(repo, options);
+  for (const changedChecks of [[], ["types"]] as const) {
+    const p = createInitProposal(repo, {
+      ...options,
+      changedChecks,
+      checks: changedChecks.length
+        ? initial.recommendedChecks.filter((id) => id !== "types")
+        : initial.recommendedChecks,
+    });
+    const after = p.files[0]!.after;
+    expect(after).toContain("/* team rule */");
+    expect(after).toMatch(/"eqeqeq":\s*"off"/u);
+    expect(after).toMatch(/"severity":\s*"warn"/u);
+    expect(after).toMatch(/"tabWidth":\s*4/u);
+    expect(after).toMatch(
+      changedChecks.length ? /"types":\s*"off"/u : /"types":\s*"error"/u,
+    );
+  }
+});

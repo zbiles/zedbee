@@ -1,3 +1,5 @@
+import { MANAGED_SOURCE_PATH } from "./source-paths.js";
+import { owningWorkspace, workspaceContainsFile } from "./workspace-owner.js";
 import { posix, relative, sep } from "node:path";
 import {
   canonicalizeSnapshotRoot,
@@ -26,8 +28,13 @@ export const LOCKFILE_MANAGERS = {
   "bun.lockb": "bun",
 } as const satisfies Record<string, Exclude<PackageManager, "unknown">>;
 
+function lockfileManager(name: string): PackageManager | undefined {
+  return Object.hasOwn(LOCKFILE_MANAGERS, name)
+    ? LOCKFILE_MANAGERS[name as keyof typeof LOCKFILE_MANAGERS]
+    : undefined;
+}
+
 const LOCKFILE_PRECEDENCE = ["npm", "pnpm", "yarn", "bun"] as const;
-const SOURCE_EXTENSION = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/;
 const TSCONFIG_NAME = /^tsconfig.*\.json$/;
 const ENVIRONMENT_ORDER: readonly Environment[] = [
   "javascript",
@@ -64,12 +71,7 @@ function detectPackageManager(
     return declared;
   }
   const detected = new Set(
-    lockfiles.map(
-      (path) =>
-        LOCKFILE_MANAGERS[
-          path.split("/").at(-1) as keyof typeof LOCKFILE_MANAGERS
-        ],
-    ),
+    lockfiles.map((path) => lockfileManager(posix.basename(path))),
   );
   return (
     LOCKFILE_PRECEDENCE.find((manager) => detected.has(manager)) ?? "unknown"
@@ -104,21 +106,6 @@ function lockfilesAtProjectRoots(
     projectRoots.add(workspace.canonicalRelativeRoot);
   }
   return lockfiles.filter((path) => projectRoots.has(posix.dirname(path)));
-}
-
-function ownsPath(workspaceRoot: string, path: string): boolean {
-  return workspaceRoot === "." || path.startsWith(`${workspaceRoot}/`);
-}
-
-function owningWorkspace(
-  workspaces: readonly DiscoveredWorkspace[],
-  path: string,
-): DiscoveredWorkspace | undefined {
-  return workspaces
-    .filter((workspace) => ownsPath(workspace.relativeRoot, path))
-    .sort(
-      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
-    )[0];
 }
 
 function inferEnvironments(
@@ -200,15 +187,15 @@ export async function inspectRepository(
   for (const [path, failure] of registry.unavailableSymlinks ?? []) {
     const name = posix.basename(path);
     const required =
-      SOURCE_EXTENSION.test(path) ||
+      MANAGED_SOURCE_PATH.test(path) ||
       TSCONFIG_NAME.test(name) ||
       name === "package.json" ||
       name === "pnpm-workspace.yaml" ||
-      Object.hasOwn(LOCKFILE_MANAGERS, name) ||
+      lockfileManager(name) !== undefined ||
       workspaces.some(({ relativeRoot, canonicalRelativeRoot }) =>
         [relativeRoot, canonicalRelativeRoot].some(
           (root) =>
-            ownsPath(root, path) ||
+            workspaceContainsFile(root, path) ||
             root === path ||
             root.startsWith(`${path}/`),
         ),
@@ -217,7 +204,7 @@ export async function inspectRepository(
   }
 
   const sourceFiles = discoverRepositoryFiles(registry, (path) =>
-    SOURCE_EXTENSION.test(path),
+    MANAGED_SOURCE_PATH.test(path),
   );
   const tsconfigPaths = discoverRepositoryFiles(
     registry,
@@ -227,7 +214,7 @@ export async function inspectRepository(
   const discoveredLockfiles = lockfilesAtProjectRoots(
     discoverRepositoryFiles(
       registry,
-      (path) => posix.basename(path) in LOCKFILE_MANAGERS,
+      (path) => lockfileManager(posix.basename(path)) !== undefined,
     ),
     workspaces,
   );
@@ -243,7 +230,8 @@ export async function inspectRepository(
   for (const workspace of workspaces) {
     if (workspace.canonicalRelativeRoot === workspace.relativeRoot) continue;
     for (const path of sourceFiles) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
+      if (!workspaceContainsFile(workspace.canonicalRelativeRoot, path))
+        continue;
       const suffix = path
         .slice(workspace.canonicalRelativeRoot.length)
         .replace(/^\//, "");
@@ -253,7 +241,8 @@ export async function inspectRepository(
       claimedSourceFiles.add(path);
     }
     for (const path of tsconfigPaths) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
+      if (!workspaceContainsFile(workspace.canonicalRelativeRoot, path))
+        continue;
       const suffix = path
         .slice(workspace.canonicalRelativeRoot.length)
         .replace(/^\//, "");

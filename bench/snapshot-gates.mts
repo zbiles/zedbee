@@ -1,3 +1,4 @@
+import { matchesCacheMode } from "./sample-modes.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -117,7 +118,12 @@ interface MatrixSample {
   durationMs?: number;
   cacheMode?: string;
   executorMode?: string;
-  observed?: { gets: number; hits: number; serviceSessions: number };
+  observed?: {
+    gets: number;
+    hits: number;
+    sets: number;
+    serviceSessions: number;
+  };
   service?: { state: string };
   serviceTreeMemory?: {
     verified: boolean;
@@ -195,10 +201,7 @@ export function assessSnapshotMatrixCell(input: unknown) {
         m = r.serviceTreeMemory;
       if (
         !o ||
-        !positive(o.gets) ||
-        !Number.isInteger(o.hits) ||
-        o.hits < 0 ||
-        (r.cacheMode === "warm" ? o.hits === 0 : o.hits !== 0) ||
+        !matchesCacheMode(r.cacheMode!, o) ||
         (r.executorMode === "local"
           ? o.serviceSessions !== 0 || r.service?.state !== "stopped"
           : !positive(o.serviceSessions) || r.service?.state !== "running") ||

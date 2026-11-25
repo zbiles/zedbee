@@ -28,7 +28,7 @@ function cell() {
         cacheMode: "warm",
         executorMode: "warm-service",
         durationMs: root === "base" ? 1000 : 900,
-        observed: { gets: 1, hits: 1, serviceSessions: 1 },
+        observed: { gets: 1, hits: 1, sets: 0, serviceSessions: 1 },
         service: { state: "running" },
         serviceTreeMemory: {
           verified: true,

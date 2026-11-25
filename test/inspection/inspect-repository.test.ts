@@ -449,3 +449,38 @@ describe("inspectRepository", () => {
     expect(inspection.workspaces[0]?.sourceFiles).toEqual(["src/index.ts"]);
   });
 });
+
+it("gives files to their deepest project including one-character workspaces", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { workspaces: ["a", "a/b", "ab"] });
+  for (const root of ["a", "a/b", "ab"]) {
+    await fixture.writeJson(root + "/package.json", {
+      name: root.replace("/", "-"),
+    });
+    await fixture.writeJson(root + "/tsconfig.json", {});
+    await fixture.write(root + "/x.ts", "export {};");
+  }
+  for (const name of ["toString", "constructor", "__proto__"])
+    await fixture.write(name, "");
+  await fixture.write("a/yarn.lock", "");
+  const inspection = await inspectRepository(fixture.root);
+  expect(inspection.lockfiles).toEqual(["a/yarn.lock"]);
+  const { owningProjectRoot } =
+    await import("../../src/checks/prettier/project-engine.js");
+  for (const w of inspection.workspaces) {
+    expect(w.sourceFiles).toEqual(
+      w.relativeRoot === "." ? [] : [w.relativeRoot + "/x.ts"],
+    );
+    expect(w.tsconfigPaths).toEqual(
+      w.relativeRoot === "." ? [] : [w.relativeRoot + "/tsconfig.json"],
+    );
+    for (const order of [
+      inspection.workspaces,
+      [...inspection.workspaces].reverse(),
+    ]) {
+      expect(owningProjectRoot(order, w.relativeRoot + "/x.ts")).toBe(
+        w.relativeRoot,
+      );
+    }
+  }
+});

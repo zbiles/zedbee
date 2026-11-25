@@ -174,6 +174,11 @@ export function compilerProofSlot(
     identity(owner, context.changeSet),
     workspaceRoot,
     context.repositoryRoot,
+    context.mergeComparison
+      ? "merge"
+      : context.baseComparison
+        ? "base"
+        : "index",
   ]);
   const retained = owner;
   return {

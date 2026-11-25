@@ -1,4 +1,5 @@
-import { lstat, realpath } from "node:fs/promises";
+import { lefthookFilename } from "./lefthook.js";
+import { realpath } from "node:fs/promises";
 import {
   basename,
   dirname,
@@ -252,11 +253,8 @@ export async function inspectHookMaintenance(
       managerSources = managerCommands(managers[0], false);
     } else if (choice === "lefthook") {
       // Match init's filename precedence, including an unreadable preferred file.
-      const preferredYaml = await lstat(join(root, "lefthook.yaml")).then(
-        () => true,
-        () => false,
-      );
-      const source = managers[preferredYaml ? 2 : 1];
+      const source =
+        managers[(await lefthookFilename(root)) === "lefthook.yaml" ? 2 : 1];
       if (source !== undefined) managerSources = managerCommands(source, true);
     }
     const commands = [

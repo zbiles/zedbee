@@ -18,6 +18,7 @@ export interface InitSelection {
   readonly eslintTrust?: boolean | undefined;
   readonly eslintMessages?: boolean | undefined;
   readonly eslintMessageTrust?: boolean | undefined;
+  readonly changedChecks?: readonly CheckId[];
   readonly checks?: readonly CheckId[] | undefined;
   readonly osvUnavailable?: InitOsvUnavailable | undefined;
   readonly hook?: InitHookChoice | undefined;
@@ -67,7 +68,7 @@ export function buildInitSelectionOptions(
     (context.invocationTrust ||
       (selection.projectTrust ?? context.defaults.projectTrust) === true);
   const eslintEngine = selection.eslintEngine ?? context.defaults.eslintEngine;
-  const checks = selection.checks;
+  const checks = selection.checks ?? context.defaults.checks;
   const osvUnavailable =
     selection.osvUnavailable ?? context.defaults.osvUnavailable;
   return {
@@ -91,6 +92,10 @@ export function buildInitSelectionOptions(
       ? { projectEslintMessagesConfirmed: true }
       : {}),
     ...(checks === undefined ? {} : { checks }),
+    ...(context.defaults.checks !== undefined ||
+    selection.changedChecks === undefined
+      ? {}
+      : { changedChecks: selection.changedChecks }),
     ...(osvUnavailable === undefined ? {} : { osvUnavailable }),
     hook: integration.hook,
     hookActivation: integration.activation,

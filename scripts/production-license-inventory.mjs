@@ -239,8 +239,8 @@ export function findProductionDependencies(
     optional: dependency.optional,
     conditional: false,
   }));
-  const visited = new Set();
-  const reachable = [];
+  const reachable = new Map();
+  const visited = new Map();
 
   while (queue.length > 0) {
     const current = queue.shift();
@@ -258,9 +258,6 @@ export function findProductionDependencies(
       );
     }
     const resolvedPackage = followPackageLinks(packages, packagePath);
-    if (visited.has(resolvedPackage.packagePath)) continue;
-
-    visited.add(resolvedPackage.packagePath);
     const packageMetadata = resolvedPackage.packageMetadata;
     const label = packageLabel(
       packageMetadata.name ?? current.dependency.name,
@@ -270,13 +267,25 @@ export function findProductionDependencies(
     const optional = current.optional || packageMetadata.optional === true;
     const conditional =
       current.conditional || hasPlatformConstraint(packageMetadata);
-    reachable.push({
-      packagePath: resolvedPackage.packagePath,
-      name: packageMetadata.name ?? current.dependency.name,
-      dependencyPath,
-      optional,
-      conditional,
-    });
+    const key = resolvedPackage.packagePath;
+    const requirement = Number(conditional) * 2 + Number(optional);
+    // Four possible path requirements. Revisit descendants for each distinct
+    // requirement because conditional and optional apply independently.
+    const seen = visited.get(key) ?? new Set();
+    if (seen.has(requirement)) continue;
+    seen.add(requirement);
+    visited.set(key, seen);
+    const previous = reachable.get(key);
+    if (!previous || requirement < previous.requirement) {
+      reachable.set(key, {
+        packagePath: key,
+        name: packageMetadata.name ?? current.dependency.name,
+        dependencyPath,
+        requirement,
+        optional,
+        conditional,
+      });
+    }
 
     for (const dependency of dependencyEntries(packageMetadata)) {
       queue.push({
@@ -289,9 +298,9 @@ export function findProductionDependencies(
     }
   }
 
-  return reachable.sort((left, right) =>
-    compareText(left.packagePath, right.packagePath),
-  );
+  return [...reachable.values()]
+    .map(({ requirement, ...entry }) => entry)
+    .sort((left, right) => compareText(left.packagePath, right.packagePath));
 }
 
 function isLicenseFilename(filename) {

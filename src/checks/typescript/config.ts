@@ -1,3 +1,4 @@
+import { configCandidates, referencedConfigPath } from "./config-candidates.js";
 import { filterCapturedCompilerFiles } from "./captured-directory.js";
 import { posix, relative, resolve, sep } from "node:path";
 import { lstat } from "node:fs/promises";
@@ -215,37 +216,26 @@ async function readConfigGraph(
       : Array.isArray(config.extends)
         ? config.extends
         : [config.extends];
-  for (const extension of extensions as string[]) {
-    const base = containedRepositoryPath(configPath, extension);
-    const candidates = [
-      base,
-      `${base}.json`,
-      posix.join(base, "tsconfig.json"),
-    ];
-    const resolvedPath = candidates.find(
+  const references = (config.references ?? []) as { path: string }[];
+  const requests = [
+    ...(extensions as string[]).map((path) => ({
+      path,
+      kind: "extends" as const,
+    })),
+    ...references.map(({ path }) => ({ path, kind: "reference" as const })),
+  ];
+  for (const { path, kind } of requests) {
+    const base = containedRepositoryPath(configPath, path);
+    const resolvedPath = configCandidates(base, kind).find(
       (candidate) => registry.resolve(candidate)?.targetKind === "file",
     );
     if (resolvedPath === undefined)
       throw new SnapshotConfigurationError(configPath, [5083]);
-    prepared.extendedConfigs.add(resolvedPath);
-    await readConfigGraph(prepared, resolvedPath, seen);
-  }
-  for (const reference of (config.references ?? []) as Record<
-    string,
-    unknown
-  >[]) {
-    const base = containedRepositoryPath(configPath, reference.path as string);
-    const candidates = [
-      base,
-      `${base}.json`,
-      posix.join(base, "tsconfig.json"),
-    ];
-    const resolvedPath = candidates.find(
-      (candidate) => registry.resolve(candidate)?.targetKind === "file",
-    );
-    if (resolvedPath === undefined)
-      throw new SnapshotConfigurationError(configPath, [5083]);
-    prepared.referencedConfigs.add(resolvedPath);
+    const configs =
+      kind === "reference"
+        ? prepared.referencedConfigs
+        : prepared.extendedConfigs;
+    configs.add(resolvedPath);
     await readConfigGraph(prepared, resolvedPath, seen);
   }
   prepared.validatedConfigs.add(configPath);
@@ -576,9 +566,7 @@ export async function loadSnapshotProgramProjects(
     projects.push({ configPath, input });
     for (const reference of input.projectReferences ?? []) {
       const path = normalize(relative(prepared.canonicalRoot, reference.path));
-      referencedConfigs.add(
-        path.endsWith(".json") ? path : posix.join(path, "tsconfig.json"),
-      );
+      referencedConfigs.add(referencedConfigPath(path));
     }
   }
   if (projects.length === 0) throw new TypeError("No TypeScript projects");

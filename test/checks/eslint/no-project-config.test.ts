@@ -1,3 +1,4 @@
+import { validatedBatchResults } from "../../../src/checks/eslint/batch-results.js";
 import { access, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -163,4 +164,33 @@ describe("createManagedEslint", () => {
       "export const nope = ;\n",
     );
   });
+});
+
+test("validates coverage including real ESLint ignore results", async () => {
+  const repo = await createGitRepository("zedbee-eslint-ignored-coverage-");
+  await repo.write("node_modules/ignored.js", "const unused = 1;");
+  await repo.write("keep.js", "export default 1;");
+  const engine = createManagedEslint({
+    cwd: repo.root,
+    mode: "lint",
+    managedIgnores: ["node_modules/ignored.js"],
+  });
+  const files = ["node_modules/ignored.js", "keep.js"];
+  const results = await engine.lintFiles(files);
+  const checked = validatedBatchResults(repo.root, files, results);
+  expect(checked.map(({ file }) => file).sort()).toEqual([...files].sort());
+  expect(
+    checked
+      .find(({ file }) => file === "node_modules/ignored.js")!
+      .result.messages.some((message) => message.message.includes("ignored")),
+  ).toBe(true);
+  expect(() => validatedBatchResults(repo.root, files, [])).toThrow();
+  expect(() =>
+    validatedBatchResults(repo.root, files, [results[0]!, results[0]!]),
+  ).toThrow();
+  expect(() =>
+    validatedBatchResults(repo.root, files, [
+      { filePath: join(repo.root, "foreign.js") },
+    ]),
+  ).toThrow();
 });

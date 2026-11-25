@@ -14,6 +14,7 @@ export {
 import { dependencyResolutionContainingFile } from "./dependency-resolution-path.js";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import { isBuiltin } from "node:module";
+import { lstat } from "node:fs/promises";
 import { dirname, resolve, relative, sep, isAbsolute } from "node:path";
 import type * as Typescript from "typescript";
 import type { InspectionContext } from "../adapter.js";
@@ -243,7 +244,7 @@ async function captureWorkspaceSignature(
   const snapshotDirectory = (path: string): boolean | undefined => {
     const absolute = resolve(path);
     if (directories.has(absolute)) return true;
-    if (absentPaths.has(absolute)) return false;
+    if (inventory.has(absolute) || absentPaths.has(absolute)) return false;
     if (
       within(inspection.snapshotRoot, absolute) &&
       !relative(inspection.snapshotRoot, absolute)
@@ -263,6 +264,8 @@ async function captureWorkspaceSignature(
     snapshotFile(path);
     return texts.get(resolve(path));
   };
+  const localJsonInputs = new Set<string>();
+  const localStyleInputs = new Set<string>();
   const resolveSnapshotMetadata = async <T>(operation: () => T): Promise<T> => {
     for (;;) {
       context.signal?.throwIfAborted();
@@ -282,9 +285,28 @@ async function captureWorkspaceSignature(
         if (registry.entries().some((e) => e.kind === "symlink"))
           throw Error("Unsupported resolution alias");
         const entry = registry.resolve(path);
-        if (entry?.targetKind === "file")
-          throw Error("Unsupported resolution metadata");
-        if (entry?.targetKind === "directory") {
+        if (entry?.targetKind === "file") {
+          // A regular JSON module inside an unchanged separately locked project
+          // is a compiler input with no import graph of its own. Retain its full
+          // contents in the two-snapshot signature and the proof witnesses.
+          if (
+            !context.baseComparison ||
+            !separateInstall ||
+            changes.unclassifiedPaths.size === 0 ||
+            !/\.(?:json|css)$/iu.test(path) ||
+            !path.startsWith(`${side.relativeRoot}/`) ||
+            changes.unclassifiedPaths.has(path)
+          )
+            throw Error("Unsupported resolution metadata");
+          const text = await add(path, 1024 * 1024);
+          if (/\.json$/iu.test(path)) {
+            JSON.parse(text);
+            localJsonInputs.add(error.path);
+          } else {
+            localStyleInputs.add(error.path);
+          }
+          inventory.add(error.path);
+        } else if (entry?.targetKind === "directory") {
           directories.add(error.path);
           witnesses.push({
             root: inspection.snapshotRoot,
@@ -563,7 +585,11 @@ async function captureWorkspaceSignature(
         ? installed.resolvedFileName
         : undefined;
     };
-    const resolveModule = async (specifier: string, from: string) => {
+    const resolveModule = async (
+      specifier: string,
+      from: string,
+      styleSideEffect = false,
+    ) => {
       const imports = await resolveSnapshotMetadata(() =>
         resolveOne(specifier, from, ts.ModuleKind.ESNext),
       );
@@ -572,6 +598,16 @@ async function captureWorkspaceSignature(
       );
       if (imports !== undefined && requires !== undefined)
         return [...new Set([imports, requires])];
+      // Vite-style side-effect CSS imports can be unresolved by the TS
+      // resolver. The actual CSS bytes and all resolution probes must still
+      // be witnessed; declaration resolutions follow the normal graph.
+      if (
+        imports === undefined &&
+        requires === undefined &&
+        styleSideEffect &&
+        localStyleInputs.has(resolve(dirname(from), specifier))
+      )
+        return [];
       if (
         separateInstall &&
         imports === undefined &&
@@ -603,6 +639,7 @@ async function captureWorkspaceSignature(
           context.signal === undefined ? undefined : { signal: context.signal },
         );
       const local = inventory.has(path);
+      if (localJsonInputs.has(path)) continue;
       if (within(libraryRoot, path)) {
         if (librarySeen.has(path)) continue;
         librarySeen.add(path);
@@ -665,7 +702,24 @@ async function captureWorkspaceSignature(
       visit(tree);
       if (unsafe) return unknown;
       for (const item of pre.importedFiles) {
-        const resolved = await resolveModule(item.fileName, path);
+        const styleSideEffect =
+          local &&
+          /^\.\.?\/.*\.css$/iu.test(item.fileName) &&
+          pre.importedFiles.filter(
+            (candidate) => candidate.fileName === item.fileName,
+          ).length === 1 &&
+          tree.statements.some(
+            (statement) =>
+              ts.isImportDeclaration(statement) &&
+              statement.importClause === undefined &&
+              ts.isStringLiteral(statement.moduleSpecifier) &&
+              statement.moduleSpecifier.text === item.fileName,
+          );
+        const resolved = await resolveModule(
+          item.fileName,
+          path,
+          styleSideEffect,
+        );
         if (!resolved) return unknown;
         for (const path of resolved) push(path);
       }
@@ -730,7 +784,7 @@ async function captureWorkspaceSignature(
 
 /** An installed merge can reuse ordinary observation-cache results. Only pay
  * for the extra merge proof if independent inputs could avoid a missing install. */
-function mergeMayNeedInstallation(
+function mayNeedInstallation(
   repositoryRoot: string,
   workspace: WorkspaceInspection,
 ): boolean {
@@ -757,6 +811,50 @@ function mergeMayNeedInstallation(
   );
 }
 
+async function ordinaryCommittedDataEdits(
+  context: InspectionContext,
+  paths: ReadonlySet<string>,
+): Promise<boolean> {
+  if (paths.size > 128) return false;
+  for (const path of paths) {
+    if (
+      !/\.json$/iu.test(path) ||
+      context.changeSet.files.get(path)?.status !== "modified" ||
+      [...context.changeSet.files.values()].some(
+        (change) => change.previousPath === path,
+      )
+    )
+      return false;
+    const modes: number[] = [];
+    for (const inspection of [
+      context.baselineInspection,
+      context.targetInspection,
+    ]) {
+      context.signal?.throwIfAborted();
+      if (inspection.fileSymlinkTargets?.includes(path) !== false) return false;
+      try {
+        const registry = await captureSnapshotRegistry(
+          inspection.snapshotRoot,
+          [path],
+        );
+        if (
+          registry.entries().some((entry) => entry.kind === "symlink") ||
+          registry.exact(path)?.kind !== "file"
+        )
+          return false;
+        const stat = await lstat(resolve(inspection.snapshotRoot, path));
+        if (!stat.isFile()) return false;
+        modes.push(stat.mode);
+      } catch {
+        context.signal?.throwIfAborted();
+        return false;
+      }
+    }
+    if (modes[0] !== modes[1]) return false;
+  }
+  return true;
+}
+
 export async function proveCompilerWorkspaceIndependence(
   context: InspectionContext,
   workspace: WorkspaceInspection,
@@ -771,6 +869,10 @@ export async function proveCompilerWorkspaceIndependence(
   const changes = await classifyCompilerChanges(context);
   const separateInstall = changes.separateNpmRoots.has(workspace.relativeRoot);
   const changedPaths = [...changes.sourcePaths, ...changes.localNpmInputs];
+  const committedData =
+    context.baseComparison === true &&
+    !context.mergeComparison &&
+    changes.unclassifiedPaths.size > 0;
   // On each merge parent, only separately locked installations can omit
   // unchanged siblings. Unclassified paths still require a closed resolution
   // graph. A probe into a changed asset or its metadata leaves the check active.
@@ -778,7 +880,14 @@ export async function proveCompilerWorkspaceIndependence(
     !changes.complete ||
     changes.requiresBroadComparison ||
     (context.mergeComparison && !separateInstall) ||
-    (changes.unclassifiedPaths.size > 0 && !context.mergeComparison) ||
+    (changes.unclassifiedPaths.size > 0 &&
+      !context.mergeComparison &&
+      (!committedData ||
+        !separateInstall ||
+        !(await ordinaryCommittedDataEdits(
+          context,
+          changes.unclassifiedPaths,
+        )))) ||
     changedPaths.length + changes.unclassifiedPaths.size === 0 ||
     (changes.localNpmInputs.size !== 0 && !separateInstall)
   )
@@ -792,8 +901,8 @@ export async function proveCompilerWorkspaceIndependence(
   )
     return { independent: false, reason: "changed-input" };
   if (
-    context.mergeComparison &&
-    !mergeMayNeedInstallation(context.repositoryRoot, workspace)
+    (context.mergeComparison || committedData) &&
+    !mayNeedInstallation(context.repositoryRoot, workspace)
   )
     return unknown;
   return acquireCompilerProof(context.signal, async () => {

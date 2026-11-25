@@ -194,6 +194,8 @@ In index mode, an intent-to-add entry (`git add --intent-to-add`) supplies no st
 
 An analyzer may inspect a whole file or project when correctness requires it. Zedbee separately attributes the result and reports only issues introduced or worsened by the selected target changes.
 
+Committed branch scans can omit lint and TypeScript checks for an unchanged, separately locked npm workspace with missing dependencies when both snapshots prove its compiler inputs are independent of the selected changes, including ordinary JSON content edits. A workspace that consumes a changed data file still requires analysis. If independence cannot be established, Swarm retains the check and reports any missing installation with applicable remediation. The branch-scan verdict describes the selected committed changes.
+
 Independent projects can live in subdirectories without a root `package.json`.
 Zedbee discovers them from the selected snapshot; running from `web/` is not
 required. Complexity and structural-security checks normally read only changed

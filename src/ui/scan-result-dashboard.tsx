@@ -7,6 +7,8 @@ import {
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
+  scanOutcomeHeading,
+  scanOutcomeDetail,
   blockedFindingLines,
   coverageLine,
   skippedCheckSummaries,
@@ -98,23 +100,22 @@ function outcomeCopy(report: ScanReport): {
 } {
   if (report.outcome === "blocked") {
     return {
-      heading: "COMMIT BLOCKED",
-      detail: "A check failed. Commit blocked.",
+      heading: scanOutcomeHeading(report),
+      detail: scanOutcomeDetail(report),
       tone: ZEDBEE_THEME.failure,
       symbol: "×",
     };
   }
   if (report.outcome === "incomplete") {
     return {
-      heading: "SCAN INCOMPLETE",
-      detail:
-        "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
+      heading: scanOutcomeHeading(report),
+      detail: scanOutcomeDetail(report, true),
       tone: ZEDBEE_THEME.warning,
       symbol: "!",
     };
   }
   return {
-    heading: "COMMIT ALLOWED",
+    heading: scanOutcomeHeading(report),
     detail: allowedScanDetail(report),
     tone: ZEDBEE_THEME.pass,
     symbol: "✓",

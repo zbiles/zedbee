@@ -558,6 +558,23 @@ async function importIgnoreFiles(
   return exclusions;
 }
 
+export function orderedConfigEntries<
+  T extends { projectRoot: string; configPath: string },
+>(entries: readonly T[]): readonly T[] {
+  const unique = new Map<string, T>();
+  for (const entry of entries) {
+    const key = JSON.stringify([entry.projectRoot, entry.configPath]);
+    if (!unique.has(key)) unique.set(key, entry);
+  }
+  return Object.freeze(
+    [...unique.values()].sort(
+      (left, right) =>
+        left.projectRoot.localeCompare(right.projectRoot) ||
+        left.configPath.localeCompare(right.configPath),
+    ),
+  );
+}
+
 export async function previewPrettierSettingsImport(
   repositoryRoot: string,
   evaluatedConfigs: ReadonlyMap<string, ImportableNativeConfig> = new Map(),
@@ -722,38 +739,8 @@ export async function previewPrettierSettingsImport(
     settings,
     overrides: Object.freeze(overrides),
     limitations: Object.freeze([...new Set(limitations)]),
-    executableConfigs: Object.freeze(
-      executableConfigs
-        .filter(
-          (entry, index, all) =>
-            all.findIndex(
-              (candidate) =>
-                candidate.projectRoot === entry.projectRoot &&
-                candidate.configPath === entry.configPath,
-            ) === index,
-        )
-        .sort(
-          (left, right) =>
-            left.projectRoot.localeCompare(right.projectRoot) ||
-            left.configPath.localeCompare(right.configPath),
-        ),
-    ),
-    sharedConfigs: Object.freeze(
-      sharedConfigs
-        .filter(
-          (entry, index, all) =>
-            all.findIndex(
-              (candidate) =>
-                candidate.projectRoot === entry.projectRoot &&
-                candidate.configPath === entry.configPath,
-            ) === index,
-        )
-        .sort(
-          (left, right) =>
-            left.projectRoot.localeCompare(right.projectRoot) ||
-            left.configPath.localeCompare(right.configPath),
-        ),
-    ),
+    executableConfigs: orderedConfigEntries(executableConfigs),
+    sharedConfigs: orderedConfigEntries(sharedConfigs),
     ...(pathExclusions.length === 0
       ? {}
       : { pathExclusions: Object.freeze(pathExclusions) }),

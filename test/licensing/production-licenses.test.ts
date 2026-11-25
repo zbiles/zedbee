@@ -1068,3 +1068,74 @@ describe("package metadata", () => {
     );
   });
 });
+
+it.each([
+  ["a", "z"],
+  ["z", "a"],
+])(
+  "retains required coverage through a hoisted diamond (%s optional, %s required)",
+  (optional, required) => {
+    const parent = { version: "1.0.0", dependencies: { shared: "1.0.0" } };
+    const result = findProductionDependencies({
+      name: "fixture",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          dependencies: { [required]: "1.0.0" },
+          optionalDependencies: { [optional]: "1.0.0" },
+        },
+        ["node_modules/" + optional]: parent,
+        ["node_modules/" + required]: parent,
+        "node_modules/shared": {
+          version: "1.0.0",
+          dependencies: { child: "1.0.0" },
+        },
+        "node_modules/child": {
+          version: "1.0.0",
+          dependencies: { shared: "1.0.0" },
+        },
+      },
+    });
+    for (const name of ["shared", "child"]) {
+      const entry = result.find(
+        (item) => item.packagePath === "node_modules/" + name,
+      );
+      expect(entry).toMatchObject({ optional: false, conditional: false });
+      expect(entry?.dependencyPath).toContain(required + "@1.0.0");
+    }
+  },
+);
+
+it("refuses to use fallback metadata for a missing package that is also required", async () => {
+  const root = await createFixtureRoot();
+  const parent = {
+    name: "a",
+    version: "1.0.0",
+    dependencies: { shared: "1.0.0" },
+    license: "MIT",
+  };
+  await writeLockfile(root, {
+    name: "test",
+    version: "1.0.0",
+    lockfileVersion: 3,
+    packages: {
+      "": {
+        optionalDependencies: { a: "1.0.0" },
+        dependencies: { z: "1.0.0" },
+      },
+      "node_modules/a": parent,
+      "node_modules/z": { ...parent, name: "z" },
+      "node_modules/shared": {
+        name: "shared",
+        version: "1.0.0",
+        license: "MIT",
+      },
+    },
+  });
+  for (const name of ["a", "z"])
+    await writePackage(root, "node_modules/" + name, { ...parent, name });
+  await expect(buildProductionInventory(root)).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});

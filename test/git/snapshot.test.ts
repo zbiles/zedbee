@@ -1459,3 +1459,46 @@ describe("buildCommitSnapshotPair", () => {
     expect(await pathExists(snapshotRootFailure.temporaryParent)).toBe(false);
   });
 });
+
+it.each(["\r", "\r\n", "\n", "\u2028", "\u2029"])(
+  "attributes the final TypeScript diagnostic after a binary-to-text transition (%j)",
+  async (separator) => {
+    const repo = await createGitRepository();
+    const { transpileModule } = await import("typescript");
+    const { addWholeFileLineRanges, discoverStagedChangeSet } =
+      await import("../../src/git/change-set.js");
+    await writeFile(join(repo.root, "count.ts"), Buffer.alloc(128, 0));
+    await repo.commitAll("binary baseline");
+    // Split a CRLF or multibyte character across the reader's buffer boundary.
+    const text =
+      "//" +
+      "x".repeat(65533) +
+      separator +
+      "const ok = 1;" +
+      separator +
+      "const =";
+    await repo.write("count.ts", text);
+    await repo.git(["add", "--", "count.ts"]);
+    const git = new GitClient(repo.root);
+    const pair = await buildSnapshotPair(repo.root, git);
+    onTestFinished(pair.cleanup);
+    expect(pair.baselineUnsupportedEntries).toContainEqual({
+      path: "count.ts",
+      kind: "binary",
+    });
+    const diagnostics =
+      transpileModule(text, { reportDiagnostics: true }).diagnostics ?? [];
+    const located = diagnostics.find(
+      (item) => item.file && item.start !== undefined,
+    )!;
+    const line =
+      located.file!.getLineAndCharacterOfPosition(located.start!).line + 1;
+    expect(line).toBe(3);
+    const count = await countSnapshotFileLines(pair.targetDir, "count.ts");
+    const changes = addWholeFileLineRanges(
+      await discoverStagedChangeSet(git),
+      new Map([["count.ts", count!]]),
+    );
+    expect(changes.containsAddedLine("count.ts", line)).toBe(true);
+  },
+);

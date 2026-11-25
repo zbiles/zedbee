@@ -69,12 +69,15 @@ export async function revokeProjectEslintCapability(
   projectRoot: string,
   capability: Capability,
 ): Promise<void> {
-  await new GitClient(root).tryRun([
+  const result = await new GitClient(root).tryRun([
     "config",
     "--local",
     "--unset-all",
     await trustKey(root, projectRoot, capability),
   ]);
+  // Git returns 5 when the key is already absent.
+  if (result.exitCode !== 0 && result.exitCode !== 5)
+    throw new Error("Could not remove the local project ESLint trust grant.");
 }
 export async function persistProjectEslintTrust(
   root: string,

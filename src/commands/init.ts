@@ -58,7 +58,7 @@ import type {
   InitProposal,
 } from "../init/types.js";
 import { applyInitProposal } from "../init/write-config.js";
-import { CHECK_IDS, type CheckId, type ProfileId } from "../config/schema.js";
+import type { CheckId, ProfileId } from "../config/schema.js";
 
 export interface InitCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
@@ -92,6 +92,7 @@ export interface InitCommandIO {
 }
 
 export interface InitPromptOptions {
+  readonly signal?: AbortSignal;
   readonly projectPrettierTrustStored?: boolean;
   readonly width: number;
   readonly color: boolean;
@@ -184,6 +185,7 @@ export async function executeInitCommand(
   dependencies: InitCommandDependencies = DEFAULT_DEPENDENCIES,
 ): Promise<0 | 2> {
   try {
+    options.signal?.throwIfAborted();
     const repositoryRoot = await dependencies.resolveRepositoryRoot(
       options.cwd,
     );
@@ -458,6 +460,7 @@ export async function executeInitCommand(
         proposal,
         {
           width: io.width,
+          ...(options.signal === undefined ? {} : { signal: options.signal }),
           ...(allProjectsTrusted ? { projectPrettierTrustStored: true } : {}),
           color,
           animations: options.animations && io.env.NO_COLOR === undefined,
@@ -471,16 +474,31 @@ export async function executeInitCommand(
         confirmed = true;
       }
     }
+    options.signal?.throwIfAborted();
     const result = confirmed
-      ? await applyInitProposal(proposal)
+      ? await applyInitProposal(
+          proposal,
+          options.signal === undefined ? {} : { signal: options.signal },
+        )
       : { applied: false, files: [] as readonly string[], rolledBack: false };
+    let preferenceFailed = false;
     if (
       result.applied &&
       promptedInteractively &&
       proposal.telemetryEnabled !== undefined &&
       !telemetryDisabled(io.env)
     ) {
-      dependencies.saveTelemetryPreference?.(io.env, proposal.telemetryEnabled);
+      try {
+        dependencies.saveTelemetryPreference?.(
+          io.env,
+          proposal.telemetryEnabled,
+        );
+      } catch {
+        preferenceFailed = true;
+        io.writeStderr(
+          "TELEMETRY_PREFERENCE_SAVE_FAILED: Zedbee setup was applied, but the telemetry preference could not be saved. No setup telemetry was collected. Use zedbee telemetry enable or disable to retry.\n",
+        );
+      }
     }
     if (options.format === "json") {
       io.writeStdout(
@@ -500,6 +518,7 @@ export async function executeInitCommand(
     } else {
       io.writeStdout(renderText(proposal, result.applied));
     }
+    if (preferenceFailed) return 0;
     try {
       options.telemetrySummary?.({
         outcome: result.applied
@@ -521,19 +540,4 @@ export async function executeInitCommand(
   }
 }
 
-export function parseCheckSelection(value: string): readonly CheckId[] {
-  const requested = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  const unknown = requested.filter(
-    (item): item is string => !CHECK_IDS.includes(item as CheckId),
-  );
-  if (requested.length === 0 || unknown.length > 0) {
-    throw new Error(
-      `Checks must be a comma-separated subset of: ${CHECK_IDS.join(", ")}`,
-    );
-  }
-  const selected = new Set(requested as CheckId[]);
-  return Object.freeze(CHECK_IDS.filter((check) => selected.has(check)));
-}
+export { parseCheckSelection } from "../init/check-selection.js";

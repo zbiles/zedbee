@@ -1,3 +1,4 @@
+import { bootstrapGitPolicy } from "./resource-policy.js";
 import {
   deadCodePolicyPath,
   snapshotEntryPoints,
@@ -280,13 +281,7 @@ export async function withAnalysisSession<T>(
   try {
     signal.throwIfAborted();
     enterPhase("configuration");
-    const bootstrapResourcePolicy = resolveScanResourcePolicy(
-      { gitHardTimeout: "30s" },
-      {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.noTimeout ? { noTimeout: true } : {}),
-      },
-    );
+    const bootstrapResourcePolicy = bootstrapGitPolicy(options);
     let bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy: bootstrapResourcePolicy,
     });
@@ -528,6 +523,7 @@ export async function withAnalysisSession<T>(
         );
         signal.throwIfAborted();
         const dispatchContext = {
+          ...(state.source.mode === "base" ? { baseComparison: true } : {}),
           ...(options.mergeComparison === true
             ? { mergeComparison: true }
             : {}),

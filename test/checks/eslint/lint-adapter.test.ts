@@ -1,3 +1,4 @@
+import { cleanEslintResults } from "../../helpers/eslint-results.js";
 import { access } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -319,7 +320,7 @@ describe("lintAdapter", () => {
         },
       };
       const adapter = createLintAdapter((options) => ({
-        async lintFiles() {
+        async lintFiles(patterns) {
           if (
             options.cwd ===
             (side === "baseline"
@@ -327,7 +328,7 @@ describe("lintAdapter", () => {
               : run.targetInspection.snapshotRoot)
           )
             throw new Error("secret source snippet /private/path token=hidden");
-          return [];
+          return cleanEslintResults(options.cwd, patterns);
         },
       }));
       const error = await adapter
@@ -843,7 +844,7 @@ describe("lintAdapter", () => {
       factoryCalls += 1;
       if (factoryCalls === 2) releaseFactories();
       return {
-        async lintFiles() {
+        async lintFiles(patterns) {
           await bothFactoriesReady;
           return options.cwd === run.targetInspection.snapshotRoot
             ? [
@@ -859,7 +860,7 @@ describe("lintAdapter", () => {
                   usedDeprecatedRules: [],
                 },
               ]
-            : [];
+            : cleanEslintResults(options.cwd, patterns);
         },
       };
     });

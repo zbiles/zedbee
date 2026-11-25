@@ -227,3 +227,51 @@ describe("GitClient", () => {
     expect(String(error)).not.toContain(repository.root);
   });
 });
+
+it("gives an expired Git deadline priority over cancellation and output overflow", async () => {
+  const parent = new AbortController();
+  const repo = await createGitRepository();
+  const policy = {
+    gitSoftTimeoutMs: undefined,
+    gitHardTimeoutMs: 20,
+    gitOutputLimitBytes: 1024,
+  };
+  const buffered = new GitClient(repo.root, {
+    resourcePolicy: policy,
+    async runCommand(_args, { signal }) {
+      await new Promise<void>((resolve) =>
+        signal!.addEventListener(
+          "abort",
+          () => {
+            parent.abort();
+            resolve();
+          },
+          { once: true },
+        ),
+      );
+      throw Object.assign(new Error(), { isMaxBuffer: true });
+    },
+  });
+  await expect(
+    buffered.run(["status"], { signal: parent.signal }),
+  ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
+
+  await repo.write("value", "bytes");
+  await repo.commitAll("content");
+  const oid = (await repo.git(["rev-parse", "HEAD:value"])).stdout;
+  const streamingParent = new AbortController();
+  const streaming = new GitClient(repo.root, {
+    resourcePolicy: { ...policy, gitHardTimeoutMs: 100 },
+  });
+  await expect(
+    streaming.streamBlobs(
+      [oid],
+      async () => {
+        await new Promise((resolve) => setTimeout(resolve, 140));
+        streamingParent.abort();
+        throw new Error("visitor error");
+      },
+      { signal: streamingParent.signal },
+    ),
+  ).rejects.toMatchObject({ code: "GIT_HARD_TIMEOUT" });
+});

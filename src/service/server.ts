@@ -124,6 +124,10 @@ export async function startServiceServer(
     releaseSession() {
       idle.close();
     },
+    failCleanup() {
+      cleanupFailed = true;
+      void close().catch(() => {});
+    },
     ownSession(session, owner) {
       owners.set(session, owner);
     },

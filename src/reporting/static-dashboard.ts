@@ -18,3 +18,14 @@ export function useStaticDashboard(
     env.CI === undefined
   );
 }
+
+export async function deliverDashboard(
+  render: () => Promise<void>,
+  writeText: () => void,
+): Promise<void> {
+  try {
+    await render();
+  } catch {
+    writeText();
+  }
+}

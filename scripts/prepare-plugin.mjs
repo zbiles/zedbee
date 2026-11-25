@@ -1,3 +1,4 @@
+import { validatePinnedRelease } from "../plugins/swarm/scripts/download-cli.mjs";
 import { spawnSync } from "node:child_process";
 import { constants } from "node:fs";
 import {
@@ -103,6 +104,14 @@ export async function checkPlugin(root = ROOT, { write = false } = {}) {
     "./skills/scan/SKILL.md"
   )
     throw new Error("Invalid plugin onboarding skill.");
+  validatePinnedRelease(
+    JSON.parse(
+      await readFile(
+        await pluginFile(root, "references/cli-release.json"),
+        "utf8",
+      ),
+    ),
+  );
   const generated = {
     ".claude-plugin/plugin.json": json(claudeManifest(manifest)),
     LICENSE: await readFile(join(root, "LICENSE"), "utf8"),

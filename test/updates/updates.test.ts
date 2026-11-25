@@ -250,3 +250,44 @@ describe("background refresh", () => {
     expect(requests).toBe(1);
   });
 });
+
+it("keeps a delayed refresh's lease beyond the former expiration interval", async () => {
+  const path = join(fixture(), "zedbee", "update.json");
+  let started!: () => void, finish!: () => void;
+  const held = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  const response = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let competitors = 0;
+  const old = refreshUpdateCache(path, {
+    now,
+    fetcher: async () => {
+      started();
+      await response;
+      return new Response(JSON.stringify(metadata));
+    },
+  });
+  await held;
+  try {
+    await refreshUpdateCache(path, {
+      now: now + 31_000,
+      fetcher: async () => {
+        competitors++;
+        return new Response(JSON.stringify({ ...metadata, version: "0.3.0" }));
+      },
+    });
+    expect(competitors).toBe(0);
+  } finally {
+    finish();
+    await old;
+  }
+  const later = now + 2 * 86400000;
+  await refreshUpdateCache(path, {
+    now: later,
+    fetcher: async () =>
+      new Response(JSON.stringify({ ...metadata, version: "0.3.0" })),
+  });
+  expect(readUpdateCache(path, later)?.metadata?.version).toBe("0.3.0");
+});

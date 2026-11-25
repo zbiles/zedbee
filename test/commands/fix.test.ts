@@ -1261,3 +1261,27 @@ describe("fix CLI registration", () => {
     expect(result.stdout).not.toContain("[check] [check]");
   });
 });
+
+it("prints the final skipped item when full-plan storage fails", async () => {
+  const items = Array.from({ length: 26 }, (_, i) => ({
+    ...applicablePlan().publicPlan.items[0]!,
+    file: "file-" + i + ".ts",
+    status: "skipped" as const,
+    reason: "skipped item " + i,
+  }));
+  const prepared = plan({
+    items,
+    summary: { fixes: 26, files: 26, blocking: 0, warnings: 0, skipped: 26 },
+  });
+  const deps = {
+    ...dependencies(prepared),
+    store: {
+      maintain: async () => {
+        throw new Error("unavailable");
+      },
+    },
+  };
+  const terminal = io(false);
+  await executeFixCommand(base, terminal, deps);
+  expect(terminal.stdout.join("")).toContain("skipped item 25");
+});

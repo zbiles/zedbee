@@ -213,9 +213,13 @@ export function ScanApp(props: ScanAppProps) {
 
   const instruction =
     props.report.outcome === "pass"
-      ? "✓ Commit allowed."
+      ? props.report.mode === "base"
+        ? "✓ Scan passed."
+        : "✓ Commit allowed."
       : props.report.outcome === "blocked"
-        ? "✕ Resolve the findings above, then stage the result."
+        ? props.report.mode === "base"
+          ? "✕ Resolve the findings above, then scan the updated committed changes."
+          : "✕ Resolve the findings above, then stage the result."
         : "✕ Restore the incomplete check, then scan again.";
   return (
     <Box flexDirection="column" width={props.width}>

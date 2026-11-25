@@ -1,3 +1,4 @@
+import { owningWorkspace } from "../../inspection/workspace-owner.js";
 import { ProjectPrettierFailureError } from "./project-error.js";
 export { ProjectPrettierFailureError } from "./project-error.js";
 export { snapshotIdentity } from "./project-snapshot-identity.js";
@@ -80,16 +81,7 @@ export function owningProjectRoot(
   workspaces: readonly { readonly relativeRoot: string }[],
   file: string,
 ): string {
-  const candidates = workspaces
-    .filter(
-      (workspace) =>
-        workspace.relativeRoot === "." ||
-        file.startsWith(`${workspace.relativeRoot}/`),
-    )
-    .sort(
-      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
-    );
-  return candidates[0]?.relativeRoot ?? ".";
+  return owningWorkspace(workspaces, file)?.relativeRoot ?? ".";
 }
 
 interface PendingRequest {

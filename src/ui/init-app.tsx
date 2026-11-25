@@ -211,6 +211,9 @@ export function InitApp({
         eslintMessages,
         eslintMessageTrust,
         checks: Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
+        changedChecks: CHECK_IDS.filter(
+          (id) => selected.has(id) !== proposal.recommendedChecks.includes(id),
+        ),
         osvUnavailable,
         hook: hookSelection,
         formatting,
@@ -230,6 +233,7 @@ export function InitApp({
       eslintMessageTrust,
       telemetryEnabled,
       proposal.telemetryDisabledByEnvironment,
+      proposal.recommendedChecks,
       baseProfile,
       osvUnavailable,
       hookSelection,
@@ -339,6 +343,11 @@ export function InitApp({
 
   useInput((input, key) => {
     const normalized = input.toLowerCase();
+    if (input === "\u0003" || (key.ctrl && normalized === "c")) {
+      onDecision(false);
+      exit();
+      return;
+    }
     const wheelDelta = parseSgrWheelDelta(input);
     if (SGR_MOUSE_REPORT.test(input)) {
       if (wheelDelta !== 0) scrollBy(wheelDelta);
@@ -594,8 +603,12 @@ export async function runInitPrompt(
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
   let cleanupMouse = () => disableTerminalMouse(process.stdout);
+  let app: ReturnType<typeof render> | undefined;
+  const abort = () => app?.unmount();
+  options.signal?.throwIfAborted();
+  options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    const app = render(
+    app = render(
       <InitApp
         proposal={proposal}
         proposalForSelection={proposalForSelection}
@@ -613,9 +626,12 @@ export async function runInitPrompt(
       />,
       initRenderOptions(),
     );
+    if (options.signal?.aborted) abort();
     await app.waitUntilExit();
+    options.signal?.throwIfAborted();
     return decision;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     cleanupMouse();
   }
 }

@@ -1,3 +1,5 @@
+import { commandInvocation } from "../../../scripts/command-invocation.mjs";
+import { validScanVerdict } from "./verdict.mjs";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -192,28 +194,25 @@ async function installPackage({ version, root, env, fetcher }) {
     '{"name":"zedbee-action-tool","private":true}\n',
     { mode: 0o600 },
   );
-  const result = await run(
-    "npm",
-    [
-      "install",
-      "--prefix",
-      prefix,
-      "--ignore-scripts",
-      "--no-audit",
-      "--no-fund",
-      "--package-lock=false",
-      "--",
-      tarballPath,
-    ],
-    {
-      cwd: prefix,
-      env: {
-        ...childEnvironment(env),
-        npm_config_cache: join(root, "npm-cache"),
-      },
-      stdio: "ignore",
+  const invocation = commandInvocation("npm", [
+    "install",
+    "--prefix",
+    prefix,
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund",
+    "--package-lock=false",
+    "--",
+    tarballPath,
+  ]);
+  const result = await run(invocation.executable, invocation.args, {
+    cwd: prefix,
+    env: {
+      ...childEnvironment(env),
+      npm_config_cache: join(root, "npm-cache"),
     },
-  );
+    stdio: "ignore",
+  });
   if (result.code !== 0) throw new Error("Installation failed");
   const installed = join(prefix, "node_modules", "zedbee");
   const manifest = JSON.parse(
@@ -257,12 +256,7 @@ function reportSummary(report, format, code) {
       (check) => check.status === "incomplete",
     ).length;
   }
-  const expected = { pass: 0, blocked: 1, incomplete: 2 };
-  if (
-    !Object.hasOwn(expected, outcome) ||
-    expected[outcome] !== code ||
-    reportExitCode !== code
-  )
+  if (!validScanVerdict(outcome, reportExitCode, code))
     throw new Error("Invalid report outcome");
   return { outcome, exitCode: code, findings, incomplete };
 }

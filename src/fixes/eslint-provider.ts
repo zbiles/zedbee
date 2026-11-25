@@ -1,4 +1,4 @@
-import { relative, sep } from "node:path";
+import { validatedBatchResults } from "../checks/eslint/batch-results.js";
 import type { ESLint, Linter } from "eslint";
 import { fingerprintObservation } from "../attribution/fingerprint.js";
 import type { CheckRunContext } from "../checks/adapter.js";
@@ -87,10 +87,6 @@ function selectedFindings(
   return selected;
 }
 
-function sourcePath(root: string, absolutePath: string): string {
-  return relative(root, absolutePath).split(sep).join("/");
-}
-
 /**
  * Re-runs a managed ESLint group against only the target snapshot and preserves
  * only exact official ESLint fixes that correlate to current attributed findings.
@@ -109,7 +105,6 @@ export async function planManagedEslintFixes(
   }
   const files = [...new Set(input.files)].sort(compareCodeUnits);
   if (files.length === 0) return Object.freeze([]);
-  const allowed = new Set(files);
   const registry =
     capturedSourceRegistry(canonicalRoot, files) ??
     (await captureSnapshotRegistry(canonicalRoot));
@@ -139,12 +134,8 @@ export async function planManagedEslintFixes(
   const engine = input.createEngine(Object.freeze(files));
   const results = await engine.lintFiles(files);
   context.signal.throwIfAborted();
-  for (const result of results) {
+  for (const {file, result} of validatedBatchResults(canonicalRoot, files, results)) {
     context.signal.throwIfAborted();
-    const file = sourcePath(canonicalRoot, result.filePath);
-    if (!allowed.has(file)) {
-      throw new TypeError("ESLint returned an unrequested file");
-    }
     if (!Array.isArray(result.messages)) {
       throw new TypeError("ESLint returned invalid message metadata");
     }

@@ -2,6 +2,7 @@ import {
   blockedFindingLines,
   coverageLine,
   scanOutcomeDetail,
+  scanOutcomeHeading,
   scanResultCountLine,
   skippedCheckSummaries,
 } from "../reporting/check-coverage.js";
@@ -58,6 +59,8 @@ export interface TextRendererOptions {
 const PRIMARY_TEXT_HEADINGS = new Set([
   "THAT STINGS",
   "SCAN INCOMPLETE",
+  "SCAN PASSED",
+  "SCAN BLOCKED",
   "BEE-UTIFUL",
   "COMMIT BLOCKED",
   "COMMIT ALLOWED",
@@ -189,11 +192,13 @@ function headline(
   width: number,
 ): string[] {
   const title =
-    report.outcome === "pass"
-      ? "BEE-UTIFUL"
-      : report.outcome === "blocked"
-        ? "THAT STINGS"
-        : "SCAN INCOMPLETE";
+    report.mode === "base"
+      ? scanOutcomeHeading(report)
+      : report.outcome === "pass"
+        ? "BEE-UTIFUL"
+        : report.outcome === "blocked"
+          ? "THAT STINGS"
+          : "SCAN INCOMPLETE";
   return [
     title,
     ...resultDetailLines(report, visible, width),
@@ -418,19 +423,11 @@ function automaticHeadline(
         `Showing ${presentation.findings.length} of ${presentation.totalFindingCount} findings.`,
       ]
     : [];
-  const title =
-    report.outcome === "pass"
-      ? "COMMIT ALLOWED"
-      : report.outcome === "blocked"
-        ? "COMMIT BLOCKED"
-        : "SCAN INCOMPLETE";
+  const title = scanOutcomeHeading(report);
   return [
     title,
     ...(report.outcome === "incomplete"
-      ? wrapWords(
-          "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked.",
-          width,
-        )
+      ? wrapWords(scanOutcomeDetail(report, true), width)
       : resultDetailLines(report, visible, width)),
     ...[
       ...resultIdentityLines(report),

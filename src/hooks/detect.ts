@@ -17,7 +17,7 @@ import {
   updateHuskyHook,
   ZEDBEE_COMMAND,
 } from "./husky.js";
-import { updateLefthookConfig } from "./lefthook.js";
+import { lefthookFilename, updateLefthookConfig } from "./lefthook.js";
 import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
 import { hasLefthookRunCommand } from "./state.js";
@@ -503,9 +503,7 @@ export async function detectHookIntegration(
   }
   const commands = { "pre-commit": command, "pre-merge-commit": mergeCommand };
   if (hook === "lefthook") {
-    const relativePath = (await exists(repositoryRoot, "lefthook.yaml"))
-      ? "lefthook.yaml"
-      : "lefthook.yml";
+    const relativePath = await lefthookFilename(repositoryRoot);
     return Object.freeze({
       hook,
       activation: await managerActivation(repositoryRoot, hook, commands),

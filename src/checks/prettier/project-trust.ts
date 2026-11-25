@@ -195,12 +195,16 @@ export async function restoreProjectPrettierTrust(
   snapshot: ProjectPrettierTrustSnapshot,
 ): Promise<void> {
   if (snapshot.previous === undefined) {
-    await new GitClient(repositoryRoot).tryRun([
+    const result = await new GitClient(repositoryRoot).tryRun([
       "config",
       "--local",
-      "--unset",
+      "--unset-all",
       snapshot.key,
     ]);
+    if (result.exitCode !== 0 && result.exitCode !== 5)
+      throw new Error(
+        "Could not restore the local project Prettier trust grant.",
+      );
     return;
   }
   await new GitClient(repositoryRoot).run([
@@ -211,6 +215,9 @@ export async function restoreProjectPrettierTrust(
   ]);
 }
 
+/** At least one completed grant removal could not be compensated. */
+export class ProjectPrettierTrustRollbackError extends AggregateError {}
+
 export async function revokeProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
@@ -220,17 +227,29 @@ export async function revokeProjectPrettierTrust(
     for (const key of await trustKeys(repositoryRoot, projectRoot, true)) {
       const previous = await readLocalValue(repositoryRoot, key);
       if (previous === undefined) continue;
-      snapshots.push({ key, previous });
       await new GitClient(repositoryRoot).run([
         "config",
         "--local",
         "--unset",
         key,
       ]);
+      snapshots.push({ key, previous });
     }
   } catch (error) {
-    for (const snapshot of snapshots)
-      await restoreProjectPrettierTrust(repositoryRoot, snapshot);
+    const failures: unknown[] = [];
+    for (const snapshot of snapshots) {
+      try {
+        await restoreProjectPrettierTrust(repositoryRoot, snapshot);
+      } catch (restoreError) {
+        failures.push(restoreError);
+      }
+    }
+    if (failures.length > 0)
+      throw new ProjectPrettierTrustRollbackError(
+        failures,
+        "Could not restore every revoked project Prettier trust grant.",
+        { cause: error },
+      );
     throw error;
   }
   return snapshots;

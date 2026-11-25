@@ -1,4 +1,7 @@
-import { useStaticDashboard } from "../reporting/static-dashboard.js";
+import {
+  deliverDashboard,
+  useStaticDashboard,
+} from "../reporting/static-dashboard.js";
 import {
   defaultDiagnosticProbe,
   runDiagnostics,
@@ -121,25 +124,28 @@ export async function executeDoctorCommand(
       ? (2 as const)
       : (0 as const);
     const result = Object.freeze({ exitCode, diagnostics });
-    const dashboard = useStaticDashboard(options.format, io);
-    if (options.format === "json") {
-      io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
-    } else if (dashboard) {
-      await (dependencies.renderDashboard ?? renderDashboard)(
-        result.diagnostics,
-        {
-          width: io.width,
-          color: options.color && io.env.NO_COLOR === undefined,
-        },
-      );
-    } else {
+    const writeText = () =>
       io.writeStdout(
         renderText(
           result,
           terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
         ),
       );
-    }
+    if (options.format === "json") {
+      io.writeStdout(JSON.stringify(result, null, 2) + "\n");
+    } else if (useStaticDashboard(options.format, io)) {
+      await deliverDashboard(
+        () =>
+          (dependencies.renderDashboard ?? renderDashboard)(
+            result.diagnostics,
+            {
+              width: io.width,
+              color: options.color && io.env.NO_COLOR === undefined,
+            },
+          ),
+        writeText,
+      );
+    } else writeText();
     return result;
   } catch {
     const result = Object.freeze({

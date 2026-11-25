@@ -1,3 +1,8 @@
+import { analyzableLockfiles } from "./inventory/select-lockfiles.js";
+import {
+  joinSnapshotReaders,
+  settleSnapshotWork,
+} from "../../git/snapshot-work.js";
 import {
   inspectManagedCheck,
   hasDependencyStateDelta,
@@ -31,23 +36,12 @@ const defaults: VulnerabilitiesAdapterDependencies = {
   client: createOsvClient(),
 };
 
-function analyzableLockfiles(
-  inspection: RepositoryInspection,
-): readonly string[] {
-  const hasTextBunLock = inspection.lockfiles.some(
-    (path) => path.split("/").at(-1) === "bun.lock",
-  );
-  return inspection.lockfiles.filter(
-    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
-  );
-}
-
 async function inventoryFor(
   inspection: RepositoryInspection,
   parseInventory: typeof parseLockfileInventory,
 ): Promise<DependencyInventory> {
-  const inventories = await Promise.all(
-    analyzableLockfiles(inspection).map((path) =>
+  const inventories = await joinSnapshotReaders(
+    analyzableLockfiles(inspection.lockfiles).map((path) =>
       parseInventory(inspection, path),
     ),
   );
@@ -123,10 +117,16 @@ export function createVulnerabilitiesAdapter(
       inspectManagedCheck("vulnerabilities", context),
     async collect(context: CheckRunContext): Promise<CheckObservationSet> {
       try {
-        const [baselineInventory, targetInventory] = await Promise.all([
-          inventoryFor(context.baselineInspection, dependencies.parseInventory),
-          inventoryFor(context.targetInspection, dependencies.parseInventory),
-        ]);
+        const [baselineInventory, targetInventory] = await settleSnapshotWork(
+          () =>
+            inventoryFor(
+              context.baselineInspection,
+              dependencies.parseInventory,
+            ),
+          () =>
+            inventoryFor(context.targetInspection, dependencies.parseInventory),
+          { signal: context.signal },
+        );
         const advisories = await dependencies.client.query(
           queryUnion(baselineInventory, targetInventory),
           context.signal,

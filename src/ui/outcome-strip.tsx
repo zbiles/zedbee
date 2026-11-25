@@ -3,6 +3,7 @@ import {
   allowedScanDetail,
   blockedFindingLines,
   scanOutcomeDetail,
+  scanOutcomeHeading,
   scanResultCountLine,
   coverageLine,
 } from "../reporting/check-coverage.js";
@@ -25,23 +26,31 @@ function copyFor(
   const warningLabel = warnings === 1 ? "warning" : "warnings";
   if (report.outcome === "blocked") {
     return [
-      "THAT STINGS",
-      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      report.mode === "base" ? scanOutcomeHeading(report) : "THAT STINGS",
+      narrow && report.mode !== "base"
+        ? "Commit blocked."
+        : scanOutcomeDetail(report),
       scanResultCountLine(report, true),
     ];
   }
   if (report.outcome === "incomplete") {
     return [
       "SCAN INCOMPLETE",
-      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      narrow && report.mode !== "base"
+        ? "Commit blocked."
+        : scanOutcomeDetail(report),
       scanResultCountLine(report, true),
     ];
   }
   if (report.changedFileCount === 0) {
-    return ["BEE-UTIFUL", emptyChangesCopy(report), "0 passed · 0 warnings"];
+    return [
+      report.mode === "base" ? scanOutcomeHeading(report) : "BEE-UTIFUL",
+      emptyChangesCopy(report),
+      "0 passed · 0 warnings",
+    ];
   }
   return [
-    "BEE-UTIFUL",
+    report.mode === "base" ? scanOutcomeHeading(report) : "BEE-UTIFUL",
     narrow && allowedScanDetail(report) === "All checks passed. Commit allowed."
       ? "Commit allowed."
       : allowedScanDetail(report),

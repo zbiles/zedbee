@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { execFileSync } from "node:child_process";
-import { benchmarkSamples } from "./sample-modes.mjs";
+import { benchmarkSamples, median } from "./sample-modes.mjs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readFile, readdir } from "node:fs/promises";
@@ -240,7 +240,6 @@ for (const scenario of [
     samples.push(...measured);
   }
 }
-const med = (a) => a.sort((x, y) => x - y)[Math.floor(a.length / 2)];
 const summaries = [];
 for (const scenario of [...new Set(samples.map((s) => s.scenario))])
   for (const [version] of implementations) {
@@ -250,7 +249,7 @@ for (const scenario of [...new Set(samples.map((s) => s.scenario))])
     summaries.push({
       scenario,
       version,
-      medianMs: med(s.map((s) => s.elapsedMs)),
+      medianMs: median(s.map((s) => s.elapsedMs)),
       p90Ms: s.map((x) => x.elapsedMs).sort((a, b) => a - b)[
         Math.ceil(s.length * 0.9) - 1
       ],

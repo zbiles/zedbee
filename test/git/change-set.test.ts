@@ -5,6 +5,8 @@ import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
 import {
   addCommitLineRanges,
+  addStagedLineRanges,
+  discoverStagedChangeSet,
   addWholeFileLineRanges,
   type ChangeSet,
   discoverCommitChangeSet,
@@ -156,46 +158,47 @@ describe("readCommitChangeSet", () => {
   it.skipIf(process.platform === "win32")(
     "adds text ranges after bounded commit metadata without changing rename status",
     async () => {
-    const repository = await createGitRepository();
-    await repository.write("old.ts", "line1\nline3\n");
-    await repository.write(":(literal)magic.ts", "before\n");
-    await repository.commitAll("baseline");
-    const baselineCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
-    await repository.git(["mv", "old.ts", "new.ts"]);
-    await repository.write("new.ts", "line1\nline2\nline3\n");
-    await repository.write(":(literal)magic.ts", "after\n");
-    await repository.commitAll("target");
-    const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
-    const git = new GitClient(repository.root);
+      const repository = await createGitRepository();
+      await repository.write("old.ts", "line1\nline3\n");
+      await repository.write(":(literal)magic.ts", "before\n");
+      await repository.commitAll("baseline");
+      const baselineCommit = (await repository.git(["rev-parse", "HEAD"]))
+        .stdout;
+      await repository.git(["mv", "old.ts", "new.ts"]);
+      await repository.write("new.ts", "line1\nline2\nline3\n");
+      await repository.write(":(literal)magic.ts", "after\n");
+      await repository.commitAll("target");
+      const targetCommit = (await repository.git(["rev-parse", "HEAD"])).stdout;
+      const git = new GitClient(repository.root);
 
-    const metadata = await discoverCommitChangeSet(
-      git,
-      baselineCommit,
-      targetCommit,
-    );
-    expect(metadata.files.get("new.ts")).toEqual({
-      path: "new.ts",
-      previousPath: "old.ts",
-      status: "renamed",
-      addedRanges: [],
-    });
+      const metadata = await discoverCommitChangeSet(
+        git,
+        baselineCommit,
+        targetCommit,
+      );
+      expect(metadata.files.get("new.ts")).toEqual({
+        path: "new.ts",
+        previousPath: "old.ts",
+        status: "renamed",
+        addedRanges: [],
+      });
 
-    const changeSet = await addCommitLineRanges(
-      git,
-      metadata,
-      new Set(),
-      baselineCommit,
-      targetCommit,
-    );
-    expect(changeSet.files.get("new.ts")).toEqual({
-      path: "new.ts",
-      previousPath: "old.ts",
-      status: "renamed",
-      addedRanges: [{ start: 2, end: 2 }],
-    });
-    expect(changeSet.files.get(":(literal)magic.ts")?.addedRanges).toEqual([
-      { start: 1, end: 1 },
-    ]);
+      const changeSet = await addCommitLineRanges(
+        git,
+        metadata,
+        new Set(),
+        baselineCommit,
+        targetCommit,
+      );
+      expect(changeSet.files.get("new.ts")).toEqual({
+        path: "new.ts",
+        previousPath: "old.ts",
+        status: "renamed",
+        addedRanges: [{ start: 2, end: 2 }],
+      });
+      expect(changeSet.files.get(":(literal)magic.ts")?.addedRanges).toEqual([
+        { start: 1, end: 1 },
+      ]);
     },
   );
 
@@ -528,4 +531,51 @@ describe("mergeLineRanges", () => {
       { start: 8, end: 10 },
     ]);
   });
+});
+
+it("preserves Git header prefixes, UTF-8 bytes and quotation in all diff readers", async () => {
+  const repo = await createGitRepository();
+  const git = new GitClient(repo.root);
+  const quoted = process.platform === "win32" ? "café.ts" : 'café"q.ts';
+  await repo.write("a/deleted.ts", "old\n");
+  await repo.write("b/old.ts", "renamed\n");
+  await repo.write("a/stays.ts", "before\n");
+  await repo.commitAll("initial");
+  const base = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  await repo.git(["mv", "b/old.ts", "a/" + quoted]);
+  await repo.git(["rm", "a/deleted.ts"]);
+  await repo.write("a/stays.ts", "after\n");
+  await repo.write("b/" + quoted, "new\n");
+  await repo.git(["add", "--all"]);
+  const staged = await readStagedChangeSet(git);
+  const entries = [...staged.files];
+  expect([...staged.files.keys()].sort()).toEqual(
+    ["a/deleted.ts", "a/" + quoted, "a/stays.ts", "b/" + quoted].sort(),
+  );
+  expect(staged.files.get("a/" + quoted)?.previousPath).toBe("b/old.ts");
+  expect([
+    ...(
+      await addStagedLineRanges(
+        git,
+        await discoverStagedChangeSet(git),
+        new Set(),
+      )
+    ).files,
+  ]).toEqual(entries);
+  await repo.commitAll("selected");
+  const target = (await repo.git(["rev-parse", "HEAD"])).stdout;
+  expect([...(await readCommitChangeSet(git, base, target)).files]).toEqual(
+    entries,
+  );
+  expect([
+    ...(
+      await addCommitLineRanges(
+        git,
+        await discoverCommitChangeSet(git, base, target),
+        new Set(),
+        base,
+        target,
+      )
+    ).files,
+  ]).toEqual(entries);
 });

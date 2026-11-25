@@ -21,14 +21,13 @@ const get = ObservationCacheStore.prototype.get;
 const set = ObservationCacheStore.prototype.set;
 ObservationCacheStore.prototype.get = async function (...args) {
   counters.gets++;
-  if (process.env.ZEDBEE_BENCH_CACHE === "off") return undefined;
   const value = await get.apply(this, args);
   if (value !== undefined) counters.hits++;
   return value;
 };
 ObservationCacheStore.prototype.set = async function (...args) {
   counters.sets++;
-  if (process.env.ZEDBEE_BENCH_CACHE !== "off") return set.apply(this, args);
+  return set.apply(this, args);
 };
 const { ServiceClient } = await load("service/client.js");
 const request = ServiceClient.prototype.request;

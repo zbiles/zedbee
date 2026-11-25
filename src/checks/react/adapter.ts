@@ -1,9 +1,10 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { relative, sep } from "node:path";
+import { validatedBatchResults } from "../eslint/batch-results.js";
 import type { ESLint } from "eslint";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -42,7 +43,6 @@ import {
   type ReactVersionResolver,
 } from "./version.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
 type ReactEslintEngineFactory = (
   options: ManagedEslintOptions,
@@ -106,7 +106,7 @@ async function prepareSide(
     const files = workspace.sourceFiles
       .filter(
         (path) =>
-          SOURCE.test(path) &&
+          MANAGED_SOURCE_PATH.test(path) &&
           (selectedPaths === undefined ||
             selectedPaths.has(path) ||
             policyForFile(id, path, side).when === "always"),
@@ -163,12 +163,11 @@ async function collectPreparedSide(
       });
       const results = await engine.lintFiles([...group.files]);
       signal.throwIfAborted();
-      const allowed = new Set(group.files);
-      for (const result of results) {
-        const path = relative(prepared.canonicalRoot, result.filePath)
-          .split(sep)
-          .join("/");
-        if (!allowed.has(path)) throw new Error("Unexpected ESLint result.");
+      for (const { file: path, result } of validatedBatchResults(
+        prepared.canonicalRoot,
+        group.files,
+        results,
+      )) {
         observations.push(
           ...result.messages.map((message) =>
             convertEslintMessage(path, message, prepared.canonicalRoot, id),

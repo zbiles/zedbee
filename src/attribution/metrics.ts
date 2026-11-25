@@ -1,3 +1,4 @@
+import { canonicalText } from "../core/canonical-text.js";
 import type {
   Attribution,
   ChangedEntity,
@@ -30,17 +31,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function canonicalText(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
-    throw new TypeError(`Expected canonical ${field}`);
-  }
-  return value;
-}
 
 function normalizeChangedEntities(
   entities: readonly ChangedEntity[],

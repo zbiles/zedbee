@@ -38,14 +38,63 @@ export function mergeLineRanges(ranges: readonly LineRange[]): LineRange[] {
   return merged;
 }
 
-function normalizePath(path: string | undefined): string | undefined {
-  if (path === undefined || path === "/dev/null") {
-    return undefined;
+// Read Git's original headers. parse-diff unquotes names and strips prefixes
+// before exposing them, losing information needed to distinguish literal bytes.
+function decodePatchName(raw: string): string {
+  if (!raw.startsWith('"')) return raw;
+  if (!raw.endsWith('"')) return invalidPatch();
+  const chunks: Buffer[] = [];
+  const escaped: Record<string, number> = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    "\\": 92,
+  };
+  for (const token of raw
+    .slice(1, -1)
+    .match(/[^\\]+|\\[0-3][0-7]{2}|\\[\s\S]|\\$/gu) ?? []) {
+    if (!token.startsWith("\\")) chunks.push(Buffer.from(token));
+    else {
+      const code =
+        token.length === 4
+          ? Number.parseInt(token.slice(1), 8)
+          : escaped[token.slice(1)];
+      if (code === undefined) return invalidPatch();
+      chunks.push(Buffer.from([code]));
+    }
   }
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.startsWith("a/") || normalized.startsWith("b/")
-    ? normalized.slice(2)
-    : normalized;
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    Buffer.concat(chunks),
+  );
+}
+
+function patchNames(
+  header: string,
+  renamedFrom?: string,
+  renamedTo?: string,
+): readonly [string, string] {
+  if (renamedFrom !== undefined && renamedTo !== undefined)
+    return [decodePatchName(renamedFrom), decodePatchName(renamedTo)];
+  // Non-renames always repeat the same name. Their midpoint is unambiguous,
+  // even when a legitimate name itself contains " b/".
+  const middle = (header.length - 1) / 2;
+  let fields =
+    Number.isInteger(middle) && header[middle] === " "
+      ? [header.slice(0, middle), header.slice(middle + 1)]
+      : undefined;
+  if (!fields || !/^"?a\//u.test(fields[0]!) || !/^"?b\//u.test(fields[1]!)) {
+    fields = /^(.*) ("?b\/.*)$/u.exec(header)?.slice(1);
+  }
+  if (!fields) return invalidPatch();
+  const [left, right] = fields.map(decodePatchName);
+  if (!left?.startsWith("a/") || !right?.startsWith("b/"))
+    return invalidPatch();
+  return [left.slice(2), right.slice(2)];
 }
 
 function addedRanges(file: parseDiff.File): LineRange[] {
@@ -65,16 +114,14 @@ function addedRanges(file: parseDiff.File): LineRange[] {
   );
 }
 
-function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
-  const from = normalizePath(file.from);
-  const to = normalizePath(file.to);
-
-  if (file.deleted === true || to === undefined) {
-    return from === undefined
-      ? undefined
-      : { path: from, status: "deleted", addedRanges: [] };
+function toChangedFile(
+  file: parseDiff.File,
+  [from, to]: readonly [string, string],
+): ChangedFile {
+  if (file.deleted === true) {
+    return { path: from, status: "deleted", addedRanges: [] };
   }
-  if (file.new === true || from === undefined) {
+  if (file.new === true) {
     return { path: to, status: "added", addedRanges: addedRanges(file) };
   }
   if (from !== to) {
@@ -93,11 +140,6 @@ function invalidPatch(): never {
 }
 
 function validPatchFile(file: parseDiff.File): boolean {
-  const from = normalizePath(file.from);
-  const to = normalizePath(file.to);
-  if (from === undefined && to === undefined) {
-    return false;
-  }
   return file.chunks.every((chunk) => {
     if (
       !Number.isInteger(chunk.oldStart) ||
@@ -142,14 +184,22 @@ function changeSetFromPatch(patch: string): ChangeSet {
   } catch {
     return invalidPatch();
   }
-  const headers = patch.match(/^diff --git /gmu) ?? [];
+  const headers = [
+    ...patch.matchAll(
+      /^diff --git ([^\n]*)(?:\n(?:old mode|new mode|similarity index|dissimilarity index) [^\n]*)*(?:\nrename from ([^\n]*)\nrename to ([^\n]*))?/gm,
+    ),
+  ];
   if (headers.length === 0 || headers.length !== files.length) {
     return invalidPatch();
   }
   const changedFiles = files
-    .map((file) => {
-      const changedFile = toChangedFile(file);
-      if (changedFile === undefined || !validPatchFile(file)) {
+    .map((file, index) => {
+      const header = headers[index]!;
+      const changedFile = toChangedFile(
+        file,
+        patchNames(header[1]!, header[2], header[3]),
+      );
+      if (!validPatchFile(file)) {
         return invalidPatch();
       }
       return changedFile;
@@ -182,11 +232,10 @@ export function changeSetFromMap(
     isEmpty,
     containsAddedLine(file, line) {
       return (
-        files
-          .get(file.replaceAll("\\", "/"))
-          ?.addedRanges.some(
-            ({ start, end }) => start <= line && line <= end,
-          ) ?? false
+        (
+          files.get(file) ?? files.get(file.replaceAll("\\", "/"))
+        )?.addedRanges.some(({ start, end }) => start <= line && line <= end) ??
+        false
       );
     },
   };

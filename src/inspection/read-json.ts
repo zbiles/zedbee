@@ -227,6 +227,27 @@ async function withValidatedContainedFile<T>(
   }
 }
 
+async function readBoundedBytes(
+  handle: FileHandle,
+  repositoryPath: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const buffer = Buffer.allocUnsafe(
+      Math.min(64 * 1024, maxBytes - total + 1),
+    );
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+    if (total > maxBytes)
+      throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    chunks.push(buffer.subarray(0, bytesRead));
+  }
+  return Buffer.concat(chunks, total);
+}
+
 export async function readContainedFile(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -257,20 +278,9 @@ export async function readContainedFile(
       if (maxBytes === undefined) {
         return handle.readFile({ encoding: "utf8" });
       }
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const remaining = maxBytes - total;
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes) {
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        }
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total).toString("utf8");
+      return (
+        await readBoundedBytes(handle, repositoryPath, maxBytes)
+      ).toString("utf8");
     },
   );
 }
@@ -291,20 +301,7 @@ export async function readContainedBytes(
     async (handle, size) => {
       if (size > BigInt(maxBytes))
         throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const buffer = Buffer.allocUnsafe(
-          Math.min(64 * 1024, maxBytes - total + 1),
-        );
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes)
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total);
+      return readBoundedBytes(handle, repositoryPath, maxBytes);
     },
   );
 }

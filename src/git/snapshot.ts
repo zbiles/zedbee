@@ -1,3 +1,4 @@
+import { StringDecoder } from "node:string_decoder";
 import { constants } from "node:fs";
 import {
   lstat,
@@ -67,9 +68,25 @@ export async function countSnapshotFileLines(
     throw error;
   }
   const buffer = Buffer.allocUnsafe(64 * 1024);
-  let bytes = 0;
+  const decoder = new StringDecoder("utf8");
   let lines = 0;
-  let lastByte = -1;
+  let hasTrailingText = false;
+  let previousCR = false;
+  const count = (text: string) => {
+    if (!text.length) return;
+    if (previousCR && text.startsWith("\n")) text = text.slice(1);
+    if (!text.length) {
+      previousCR = false;
+      return;
+    }
+    previousCR = text.endsWith("\r");
+    let lineEnd = 0;
+    for (const match of text.matchAll(/\r\n|[\r\n\u2028\u2029]/gu)) {
+      lines++;
+      lineEnd = match.index + match[0].length;
+    }
+    hasTrailingText = lineEnd < text.length;
+  };
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile()) return undefined;
@@ -79,22 +96,13 @@ export async function countSnapshotFileLines(
       }
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
       if (bytesRead === 0) break;
-      bytes += bytesRead;
-      lastByte = buffer[bytesRead - 1]!;
-      const chunk = buffer.subarray(0, bytesRead);
-      let newline = chunk.indexOf(0x0a);
-      while (newline !== -1) {
-        lines += 1;
-        newline = chunk.indexOf(0x0a, newline + 1);
-      }
-      if (!Number.isSafeInteger(bytes) || !Number.isSafeInteger(lines)) {
-        throw new Error("Snapshot file is too large to count safely.");
-      }
+      count(decoder.write(buffer.subarray(0, bytesRead)));
     }
   } finally {
     await handle.close();
   }
-  return bytes === 0 ? 0 : lines + (lastByte === 0x0a ? 0 : 1);
+  count(decoder.end());
+  return lines + Number(hasTrailingText);
 }
 
 export class SnapshotConstructionCleanupError extends Error {

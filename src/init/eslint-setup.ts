@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { applyEdits, modify, parse } from "jsonc-parser";
 import { configFileSchema } from "../config/schema.js";
 import { resolveConfig } from "../config/profiles.js";
@@ -58,17 +59,16 @@ export function configureInitEslint(
         const lintDisabled =
           id === "lint" &&
           (generated === "off" || generated?.severity === "off");
-        set(
-          ["checks", id],
-          lintDisabled
-            ? {
-                ...(typeof existing[id] === "string"
-                  ? { severity: existing[id] }
-                  : existing[id]),
-                severity: "off",
-              }
-            : existing[id],
-        );
+        const restored = lintDisabled
+          ? {
+              ...(typeof existing[id] === "string"
+                ? { severity: existing[id] }
+                : existing[id]),
+              severity: "off",
+            }
+          : existing[id];
+        if (!isDeepStrictEqual(generated, restored))
+          set(["checks", id], restored);
       } else if (id !== "lint" && parse(after)?.checks?.[id] !== undefined)
         set(["checks", id], undefined);
     }

@@ -1,3 +1,5 @@
+import { createInspectionFixture } from "../inspection/fixture.js";
+import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { describe, expect, it } from "vitest";
 import { CHECK_IDS } from "../../src/config/schema.js";
 import {
@@ -46,7 +48,9 @@ describe("check input contracts", () => {
   it("accepts JavaScript and TypeScript source only for source analyzers", () => {
     for (const checkId of JAVASCRIPT_SOURCE_CHECKS) {
       expect(inputContractFor(checkId).supportsPath("src/app.ts")).toBe(true);
-      expect(inputContractFor(checkId).supportsPath("package.json")).toBe(false);
+      expect(inputContractFor(checkId).supportsPath("package.json")).toBe(
+        false,
+      );
     }
 
     expect(inputContractFor("types").supportsPath("src/app.ts")).toBe(true);
@@ -57,9 +61,9 @@ describe("check input contracts", () => {
     expect(inputContractFor("formatting").supportsPath("package.json")).toBe(
       true,
     );
-    expect(inputContractFor("formatting").supportsPath("assets/photo.png")).toBe(
-      false,
-    );
+    expect(
+      inputContractFor("formatting").supportsPath("assets/photo.png"),
+    ).toBe(false);
   });
 
   it("limits vulnerability analysis to known lockfiles", () => {
@@ -67,7 +71,9 @@ describe("check input contracts", () => {
       inputContractFor("vulnerabilities").supportsPath("package-lock.json"),
     ).toBe(true);
     expect(
-      inputContractFor("vulnerabilities").supportsPath("packages/web/yarn.lock"),
+      inputContractFor("vulnerabilities").supportsPath(
+        "packages/web/yarn.lock",
+      ),
     ).toBe(true);
     expect(
       inputContractFor("vulnerabilities").supportsPath("package.json"),
@@ -95,20 +101,32 @@ describe("check input contracts", () => {
 
   it("rejects unsupported artifacts only when the check consumes their path", () => {
     expect(cannotAnalyzeArtifact("lint", "src/app.ts", "binary")).toBe(true);
-    expect(
-      cannotAnalyzeArtifact("formatting", "package.json", "binary"),
-    ).toBe(true);
+    expect(cannotAnalyzeArtifact("formatting", "package.json", "binary")).toBe(
+      true,
+    );
     expect(
       cannotAnalyzeArtifact("vulnerabilities", "package-lock.json", "binary"),
     ).toBe(true);
     expect(
       cannotAnalyzeArtifact("formatting", "package.json", "git-lfs-pointer"),
     ).toBe(true);
-    expect(cannotAnalyzeArtifact("secrets", "vendor", "submodule")).toBe(
-      true,
-    );
+    expect(cannotAnalyzeArtifact("secrets", "vendor", "submodule")).toBe(true);
     expect(cannotAnalyzeArtifact("lint", "assets/photo.png", "binary")).toBe(
       false,
     );
   });
+});
+
+it("uses the workspace inventory's filename rules for source preflight", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "fixture" });
+  const paths = ["lower.tsx", "upper.TSX", "other.txt"];
+  for (const path of paths) await fixture.write(path, "export default 1");
+  const inspection = await inspectRepository(fixture.root);
+  expect(inspection.workspaces[0]?.sourceFiles).toEqual(["lower.tsx"]);
+  for (const check of [...JAVASCRIPT_SOURCE_CHECKS, "types"] as const)
+    for (const path of paths)
+      expect(cannotAnalyzeArtifact(check, path, "binary")).toBe(
+        inspection.workspaces[0]!.sourceFiles.includes(path),
+      );
 });

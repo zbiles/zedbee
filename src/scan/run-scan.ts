@@ -22,7 +22,7 @@ import {
   summarizeConfiguration,
   type ConfigurationSummary,
 } from "../config/summary.js";
-import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
+import { PRECONFIGURATION_PRESENTATION_POLICY } from "./report.js";
 import { summarizeChecks } from "../core/summarize.js";
 import { evaluatePolicy, type PolicyDecision } from "../policy/evaluate.js";
 import type {
@@ -206,12 +206,8 @@ async function runScanWithDetails(
   }
   const networkDisclosures: NetworkDisclosure[] = [];
   let includeSourceExcerpts = false;
-  let presentationPolicy: ScanPresentationPolicy = Object.freeze({
-    terminalFindingLimit: 25,
-    temporaryReportMaxAge: "24h",
-    persistSourceExcerpts: false,
-    agentGuidance: EMPTY_AGENT_GUIDANCE,
-  });
+  let presentationPolicy: ScanPresentationPolicy =
+    PRECONFIGURATION_PRESENTATION_POLICY;
   const reportContext = (state: AnalysisSessionState): ScanReportContext => ({
     repositoryRoot: options.repositoryRoot,
     source: state.source,

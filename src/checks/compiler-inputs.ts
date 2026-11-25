@@ -40,6 +40,7 @@ type ScopedDecisions = WeakMap<
 >;
 const scopedDecisions: ScopedDecisions = new WeakMap();
 const scopedMergeDecisions: ScopedDecisions = new WeakMap();
+const scopedBaseDecisions: ScopedDecisions = new WeakMap();
 
 /** Metadata only. Known source/configuration membership takes precedence over
  * ordinary extensions. A possible input selects every compiler consumer: sibling
@@ -109,7 +110,9 @@ export function compilerInputRelevance(
     .catch(() => {});
   const decisions = context.mergeComparison
     ? scopedMergeDecisions
-    : scopedDecisions;
+    : context.baseComparison
+      ? scopedBaseDecisions
+      : scopedDecisions;
   let scoped = decisions.get(decision);
   if (scoped === undefined) {
     scoped = new WeakMap();
@@ -119,6 +122,7 @@ export function compilerInputRelevance(
   if (
     previous !== undefined &&
     !context.mergeComparison &&
+    !context.baseComparison &&
     ![...changedCompilerPaths(context.changeSet)].some(
       (path) =>
         COMPILER_SOURCE.test(path) ||
@@ -143,7 +147,8 @@ export function compilerInputRelevance(
         !result.relevant ||
         result.reason === "configuration" ||
         (!context.mergeComparison &&
-          !["source", "dependency"].includes(result.reason))
+          !["source", "dependency"].includes(result.reason) &&
+          !context.baseComparison)
       )
         return result;
       if (

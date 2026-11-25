@@ -222,3 +222,29 @@ describe("vulnerabilitiesAdapter", () => {
     expect(JSON.stringify(error)).not.toContain(run.snapshots.targetDir);
   });
 });
+
+it("retains a binary-only Bun workspace beside a workspace with both formats", async () => {
+  const run = await context();
+  const locks = ["a/bun.lock", "a/bun.lockb", "b/bun.lockb"];
+  const reads: string[] = [];
+  const adapter = createVulnerabilitiesAdapter({
+    parseInventory: async (_, path) => {
+      reads.push(path);
+      if (path === "b/bun.lockb")
+        throw new LockfileInventoryError(
+          "LOCKFILE_UNSUPPORTED_BINARY",
+          "Unsupported Bun lock",
+        );
+      return [];
+    },
+    client: { query: async () => new Map(), probe: async () => undefined },
+  });
+  await expect(
+    adapter.collect({
+      ...run,
+      targetInspection: { ...run.targetInspection, lockfiles: locks },
+    }),
+  ).rejects.toMatchObject({ code: "LOCKFILE_UNSUPPORTED_BINARY" });
+  expect(reads).toContain("a/bun.lock");
+  expect(reads).not.toContain("a/bun.lockb");
+});

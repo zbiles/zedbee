@@ -1,6 +1,8 @@
+import { analyzableLockfiles } from "../checks/vulnerabilities/inventory/select-lockfiles.js";
+import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { inspectWorkspaceInstallations } from "./workspace-installation.js";
 import { diagnoseProjectEslint } from "./project-eslint.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
@@ -20,7 +22,11 @@ import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { hasZedbeeScanCommand } from "../hooks/husky.js";
-import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
+import { readHookData } from "../hooks/read-hook-data.js";
+import {
+  lefthookFilename,
+  hasZedbeeLefthookConfig,
+} from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
 import { inspectHookMaintenance } from "../hooks/update-notice.js";
@@ -28,7 +34,7 @@ import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
 } from "../runtime/node-support.js";
-import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import { inspectProjectPrettierDiscovery } from "../init/prettier-discovery.js";
 import {
   openProjectFormatter,
   resolveProjectPrettierInstallation,
@@ -91,8 +97,10 @@ export async function runDiagnostics(
 ): Promise<readonly Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const id of DOCTOR_DIAGNOSTIC_IDS) {
+    context.signal?.throwIfAborted();
     try {
       const diagnostic = await probe(id, context);
+      context.signal?.throwIfAborted();
       if (
         diagnostic.id !== id ||
         !["pass", "warning", "fail"].includes(diagnostic.status) ||
@@ -103,6 +111,7 @@ export async function runDiagnostics(
         diagnostics.push(Object.freeze({ ...diagnostic }));
       }
     } catch {
+      context.signal?.throwIfAborted();
       diagnostics.push(failure(id));
     }
   }
@@ -112,17 +121,6 @@ export async function runDiagnostics(
 async function repositoryRoot(cwd: string): Promise<string> {
   return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
     .stdout;
-}
-
-async function regularFileContents(path: string): Promise<string | undefined> {
-  try {
-    const state = await lstat(path);
-    if (state.isSymbolicLink() || !state.isFile()) return undefined;
-    return readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
 }
 
 async function hookStateDiagnostic(
@@ -172,24 +170,24 @@ async function hookStateDiagnostic(
   const hookPath = isAbsolute(hookOutput.stdout)
     ? resolve(hookOutput.stdout)
     : resolve(root, hookOutput.stdout);
-  const [installedHook, huskyHook, lefthookYaml, lefthookYml, manifest] =
-    await Promise.all([
-      regularFileContents(hookPath),
-      regularFileContents(join(root, ".husky/pre-commit")),
-      regularFileContents(join(root, "lefthook.yaml")),
-      regularFileContents(join(root, "lefthook.yml")),
-      regularFileContents(join(root, "package.json")),
-    ]);
-  if (installedHook !== undefined && hasZedbeeScanCommand(installedHook)) {
+  const [installedHook, huskyHook, lefthook, manifest] = await Promise.all([
+    readHookData(hookPath, true),
+    readHookData(join(root, ".husky/pre-commit")),
+    readHookData(join(root, await lefthookFilename(root))),
+    readHookData(join(root, "package.json")),
+  ]);
+  if (
+    installedHook !== undefined &&
+    hasZedbeeScanCommand(installedHook, "pre-commit")
+  ) {
     return {
       id: "hook-state",
       status: "pass",
       message: "The active pre-commit path invokes Zedbee.",
     };
   }
-  const lefthookConfigured = [lefthookYaml, lefthookYml].some(
-    (source) => source !== undefined && hasZedbeeLefthookConfig(source),
-  );
+  const lefthookConfigured =
+    lefthook !== undefined && hasZedbeeLefthookConfig(lefthook);
   if (
     lefthookConfigured &&
     installedHook !== undefined &&
@@ -274,15 +272,6 @@ const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
   parseLockfileInventory,
   osvClient: createOsvClient({ timeoutMs: 5_000, retries: 0 }),
 };
-
-function analyzableLockfiles(lockfiles: readonly string[]): readonly string[] {
-  const hasTextBunLock = lockfiles.some(
-    (path) => path.split("/").at(-1) === "bun.lock",
-  );
-  return lockfiles.filter(
-    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
-  );
-}
 
 export function createDefaultDiagnosticProbe(
   overrides: Partial<DefaultDiagnosticDependencies> = {},
@@ -415,9 +404,16 @@ export function createDefaultDiagnosticProbe(
       }
       case "project-prettier": {
         const root = await repositoryRoot(context.cwd);
-        const discovered = await discoverProjectPrettier(root).catch(
-          () => [] as const,
-        );
+        const discovery = await inspectProjectPrettierDiscovery(root);
+        if (discovery.status === "failed")
+          return {
+            id,
+            status: "fail",
+            message: "Project Prettier setup could not be inspected.",
+            remediation:
+              "Check workspace manifests and file permissions, then retry.",
+          };
+        const discovered = discovery.entries;
         if (discovered.length === 0) {
           return {
             id,
@@ -559,7 +555,7 @@ export function createDefaultDiagnosticProbe(
             };
           }
           try {
-            const inventories = await Promise.all(
+            const inventories = await joinSnapshotReaders(
               lockfiles.map((path) =>
                 dependencies.parseLockfileInventory(inspection, path),
               ),
@@ -602,7 +598,9 @@ export function createDefaultDiagnosticProbe(
           };
         }
         try {
-          await dependencies.osvClient.probe(new AbortController().signal);
+          await dependencies.osvClient.probe(
+            context.signal ?? new AbortController().signal,
+          );
           return {
             id,
             status: "pass",

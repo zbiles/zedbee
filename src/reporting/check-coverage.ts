@@ -50,6 +50,7 @@ export function skippedCheckSummaries(
 
 export function allowedScanDetail(report: ScanReport): string {
   if (report.changedFileCount === 0) return emptyChangesCopy(report);
+  const verdict = report.mode === "base" ? "Scan passed." : "Commit allowed.";
   const coverage = checkCoverage(report);
   if (
     report.summary.warnings > 0 ||
@@ -62,22 +63,40 @@ export function allowedScanDetail(report: ScanReport): string {
         ? ["incomplete checks"]
         : []),
     ];
-    return `Commit allowed. Review ${concerns.join(" and ")}.`;
+    return `${verdict} Review ${concerns.join(" and ")}.`;
   }
   if (coverage.completed === 0) {
     if (coverage.skipped === 0)
-      return "No checks ran for the selected changes. Commit allowed.";
+      return `No checks ran for the selected changes. ${verdict}`;
     const scope =
       report.mode === "base" ? "selected committed changes" : "staged changes";
-    return `No applicable checks for the ${scope}. Commit allowed.`;
+    return `No applicable checks for the ${scope}. ${verdict}`;
   }
-  return "All checks passed. Commit allowed.";
+  return `All checks passed. ${verdict}`;
 }
 
-export function scanOutcomeDetail(report: ScanReport): string {
-  if (report.outcome === "blocked") return "A check failed. Commit blocked.";
-  if (report.outcome === "incomplete")
-    return "A required check could not finish. Commit blocked.";
+export function scanOutcomeHeading(report: ScanReport): string {
+  if (report.outcome === "incomplete") return "SCAN INCOMPLETE";
+  if (report.outcome === "blocked")
+    return report.mode === "base" ? "SCAN BLOCKED" : "COMMIT BLOCKED";
+  return report.mode === "base" ? "SCAN PASSED" : "COMMIT ALLOWED";
+}
+
+export function scanOutcomeDetail(
+  report: ScanReport,
+  detailed = false,
+): string {
+  const blocked = report.mode === "base" ? "Scan blocked." : "Commit blocked.";
+  if (report.outcome === "blocked")
+    return report.mode === "base"
+      ? "Blocking findings in selected commits."
+      : `A check failed. ${blocked}`;
+  if (report.outcome === "incomplete") {
+    const guidance = detailed
+      ? " Review INCOMPLETE CHECKS above for details."
+      : "";
+    return `A required check could not finish.${guidance} ${report.mode === "base" ? "Scan incomplete." : blocked}`;
+  }
   return allowedScanDetail(report);
 }
 

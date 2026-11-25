@@ -259,6 +259,7 @@ function configContents(
   osvUnavailable: InitOsvUnavailable,
   formatting: FormattingConfigInput | undefined,
   schemaReference = "./node_modules/zedbee/schema/zedbee.schema.json",
+  changedChecks?: readonly CheckId[],
 ): string {
   const configuredChecks =
     checks === undefined
@@ -336,14 +337,26 @@ function configContents(
   );
   updated = applyEdits(updated, modify(updated, ["schemaVersion"], 1, options));
   updated = applyEdits(updated, modify(updated, ["profile"], profile, options));
-  if (configuredChecks !== undefined) {
-    updated = applyEdits(
-      updated,
-      modify(updated, ["checks"], configuredChecks, options),
-    );
-  } else if (vulnerabilitiesEnabled) {
-    const root = parsed as Record<string, unknown>;
-    const checksValue = root.checks;
+  if (checks !== undefined) {
+    const existing =
+      (parsed as { checks?: Record<string, unknown> }).checks ?? {};
+    for (const id of changedChecks ?? CHECK_IDS) {
+      const prior = existing[id];
+      const selected = checks.includes(id);
+      const isObject = typeof prior === "object" && prior !== null;
+      const severity = isObject
+        ? (prior as { severity?: unknown }).severity
+        : prior;
+      if (selected && (severity === "warn" || severity === "error")) continue;
+      const path = isObject ? ["checks", id, "severity"] : ["checks", id];
+      updated = applyEdits(
+        updated,
+        modify(updated, path, selected ? "error" : "off", options),
+      );
+    }
+  }
+  if (vulnerabilitiesEnabled) {
+    const checksValue = parse(updated)?.checks;
     const existingVulnerability =
       typeof checksValue === "object" &&
       checksValue !== null &&
@@ -524,41 +537,6 @@ function applyFormattingChoice(
   );
 }
 
-function existingVulnerabilitySeverity(
-  before: string | null,
-): "off" | "warn" | "error" | undefined {
-  if (before === null) return undefined;
-  const errors: ParseError[] = [];
-  const root: unknown = parse(before, errors, { allowTrailingComma: true });
-  if (
-    errors.length > 0 ||
-    typeof root !== "object" ||
-    root === null ||
-    Array.isArray(root)
-  ) {
-    return undefined;
-  }
-  const checks = (root as Record<string, unknown>).checks;
-  if (typeof checks !== "object" || checks === null || Array.isArray(checks)) {
-    return undefined;
-  }
-  const vulnerability = (checks as Record<string, unknown>).vulnerabilities;
-  if (["off", "warn", "error"].includes(vulnerability as string)) {
-    return vulnerability as "off" | "warn" | "error";
-  }
-  if (
-    typeof vulnerability === "object" &&
-    vulnerability !== null &&
-    !Array.isArray(vulnerability)
-  ) {
-    const severity = (vulnerability as Record<string, unknown>).severity;
-    if (["off", "warn", "error"].includes(severity as string)) {
-      return severity as "off" | "warn" | "error";
-    }
-  }
-  return undefined;
-}
-
 function environments(
   inspection: RepositoryInspection,
 ): readonly Environment[] {
@@ -605,22 +583,27 @@ export function createInitProposal(
 ): InitProposal {
   const detected = environments(inspection);
   const before = options.configBefore ?? null;
-  const selectedChecks =
-    options.checks === undefined
-      ? recommendedChecks(inspection, detected, options.profile)
-      : Object.freeze(
-          CHECK_IDS.filter((check) => options.checks?.includes(check)),
-        );
+  const existingChecks = before === null ? {} : (parse(before)?.checks ?? {});
+  const recommended = recommendedChecks(inspection, detected, options.profile);
+  const selectedChecks = Object.freeze(
+    CHECK_IDS.filter((id) => {
+      if (options.checks !== undefined) return options.checks.includes(id);
+      const prior = existingChecks[id];
+      const severity = typeof prior === "string" ? prior : prior?.severity;
+      if (severity === "off") return false;
+      return (
+        severity === "warn" || severity === "error" || recommended.includes(id)
+      );
+    }),
+  );
   const vulnerabilityScanningAvailable = inspection.lockfiles.length > 0;
-  const configuredVulnerabilitySeverity = existingVulnerabilitySeverity(before);
   const vulnerabilitiesEnabled =
     vulnerabilityScanningAvailable &&
-    (options.checks === undefined
-      ? configuredVulnerabilitySeverity === undefined
-        ? selectedChecks.includes("vulnerabilities")
-        : configuredVulnerabilitySeverity !== "off"
-      : selectedChecks.includes("vulnerabilities"));
-  const osvUnavailable = options.osvUnavailable ?? "block";
+    selectedChecks.includes("vulnerabilities");
+  const osvUnavailable =
+    options.osvUnavailable ??
+    existingChecks.vulnerabilities?.onUnavailable ??
+    "block";
   // Repeat init preserves an existing explicit engine choice unless the user
   // selects a different one, so the preview never misstates current policy.
   const formattingChoice: InitFormattingChoice =
@@ -651,6 +634,7 @@ export function createInitProposal(
       osvUnavailable,
       formattingConfig,
       options.schemaReference,
+      options.changedChecks,
     ),
     0o644,
   );

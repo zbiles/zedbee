@@ -151,3 +151,28 @@ describe("readContainedFile", () => {
     );
   });
 });
+
+it("preserves UTF-8 across bounded reads and rejects descriptor growth in both APIs", async () => {
+  const fixture = await createInspectionFixture();
+  const text = "x".repeat(65535) + "🙂";
+  await fixture.write("utf8", text);
+  const registry = await captureSnapshotRegistry(
+    await canonicalizeSnapshotRoot(fixture.root),
+  );
+  const maxBytes = Buffer.byteLength(text);
+  await expect(readContainedFile(registry, "utf8", { maxBytes })).resolves.toBe(
+    text,
+  );
+  await expect(
+    readContainedBytes(registry, "utf8", { maxBytes }),
+  ).resolves.toEqual(Buffer.from(text));
+  for (const read of [readContainedFile, readContainedBytes]) {
+    await fixture.write("utf8", text);
+    await expect(
+      read(registry, "utf8", {
+        maxBytes,
+        afterOpen: () => fixture.write("utf8", text + "a"),
+      }),
+    ).rejects.toMatchObject({ code: "FILE_SIZE_LIMIT_EXCEEDED" });
+  }
+});

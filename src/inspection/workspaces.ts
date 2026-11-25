@@ -169,34 +169,41 @@ function normalizeWorkspacePattern(pattern: string): string {
   return negated ? `!${normalized}` : normalized;
 }
 
-export function matchesWorkspacePattern(
-  path: string,
-  patterns: readonly string[],
-): boolean {
-  patterns = patterns.map(normalizeWorkspacePattern);
-  const positivePatterns = patterns.filter(
-    (pattern) => !pattern.startsWith("!"),
-  );
-  const negativePatterns = patterns
+function compileWorkspacePatterns(input: readonly string[]) {
+  const normalized = input.map(normalizeWorkspacePattern);
+  const positive = normalized.filter((pattern) => !pattern.startsWith("!"));
+  const negative = normalized
     .filter((pattern) => pattern.startsWith("!"))
     .map((pattern) => pattern.slice(1));
   try {
-    return (
-      positivePatterns.some((pattern) =>
-        picomatch.isMatch(path, pattern, { dot: true }),
-      ) &&
-      !negativePatterns.some((pattern) =>
-        picomatch.isMatch(path, pattern, { dot: true }),
-      )
+    const includes = positive.map((pattern) =>
+      picomatch(pattern, { dot: true }),
     );
+    const excludes = negative.map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    );
+    return {
+      length: normalized.length,
+      bases: positive.map((pattern) => picomatch.scan(pattern).base),
+      matches: (path: string) =>
+        includes.some((match) => match(path)) &&
+        !excludes.some((match) => match(path)),
+    };
   } catch {
     throw invalidData("workspace configuration");
   }
 }
 
+export function matchesWorkspacePattern(
+  path: string,
+  patterns: readonly string[],
+): boolean {
+  return compileWorkspacePatterns(patterns).matches(path);
+}
+
 function discoverSelectedWorkspaceManifests(
   registry: SnapshotRegistry,
-  patterns: readonly string[],
+  patterns: ReturnType<typeof compileWorkspacePatterns>,
 ): readonly string[] {
   if (patterns.length === 0) {
     return [];
@@ -208,10 +215,7 @@ function discoverSelectedWorkspaceManifests(
       posix.basename(entry.repositoryPath) === "package.json"
     ) {
       const workspaceRoot = posix.dirname(entry.repositoryPath);
-      if (
-        workspaceRoot !== "." &&
-        matchesWorkspacePattern(workspaceRoot, patterns)
-      ) {
+      if (workspaceRoot !== "." && patterns.matches(workspaceRoot)) {
         manifests.add(entry.repositoryPath);
       }
     }
@@ -219,7 +223,7 @@ function discoverSelectedWorkspaceManifests(
     if (
       entry.kind === "symlink" &&
       entry.targetKind === "directory" &&
-      matchesWorkspacePattern(entry.repositoryPath, patterns)
+      patterns.matches(entry.repositoryPath)
     ) {
       const manifestPath = posix.join(entry.repositoryPath, "package.json");
       if (pathExists(registry, manifestPath)) {
@@ -261,12 +265,10 @@ export async function readPnpmWorkspacePatterns(
 
 function validateWorkspaceSearchLinks(
   registry: SnapshotRegistry,
-  patterns: readonly string[],
+  patterns: ReturnType<typeof compileWorkspacePatterns>,
   relativeRoot = ".",
 ): void {
-  const bases = patterns
-    .filter((pattern) => !pattern.startsWith("!"))
-    .map((pattern) => picomatch.scan(pattern).base);
+  const { bases } = patterns;
   for (const [path, failure] of registry.unavailableSymlinks ?? []) {
     const local = posix.relative(relativeRoot, path);
     if (local === ".." || local.startsWith("../")) continue;
@@ -299,10 +301,10 @@ export async function discoverWorkspaces(
         rootManifestPath,
       )
     : undefined;
-  const workspacePatterns = [
+  const workspacePatterns = compileWorkspacePatterns([
     ...(rootManifest?.workspacePatterns ?? []),
     ...(await readPnpmWorkspacePatterns(registry, readHooks)),
-  ].map(normalizeWorkspacePattern);
+  ]);
   validateWorkspaceSearchLinks(registry, workspacePatterns);
   // Explicit workspace patterns remain authoritative. Otherwise, independent
   // projects may live below a non-JavaScript repository root.
@@ -328,7 +330,10 @@ export async function discoverWorkspaces(
         compareCodeUnits(left, right),
     );
   const workspaces: DiscoveredWorkspace[] = [];
-  const independentWorkspacePatterns = new Map<string, readonly string[]>();
+  const independentWorkspacePatterns = new Map<
+    string,
+    ReturnType<typeof compileWorkspacePatterns>
+  >();
   if (rootManifest !== undefined) {
     workspaces.push({
       relativeRoot: ".",
@@ -353,10 +358,9 @@ export async function discoverWorkspaces(
         )[0];
       if (
         declaredParent !== undefined &&
-        !matchesWorkspacePattern(
-          posix.relative(declaredParent.relativeRoot, relativeRoot),
-          independentWorkspacePatterns.get(declaredParent.relativeRoot)!,
-        )
+        !independentWorkspacePatterns
+          .get(declaredParent.relativeRoot)!
+          .matches(posix.relative(declaredParent.relativeRoot, relativeRoot))
       )
         continue;
       explicitlySelected = declaredParent !== undefined;
@@ -403,19 +407,12 @@ export async function discoverWorkspaces(
       continue;
     }
     if (discoverIndependentProjects) {
-      validateWorkspaceSearchLinks(
-        registry,
-        [...manifest.workspacePatterns, ...pnpmWorkspacePatterns].map(
-          normalizeWorkspacePattern,
-        ),
-        relativeRoot,
-      );
-      independentWorkspacePatterns.set(
-        relativeRoot,
-        [...manifest.workspacePatterns, ...pnpmWorkspacePatterns].map(
-          normalizeWorkspacePattern,
-        ),
-      );
+      const patterns = compileWorkspacePatterns([
+        ...manifest.workspacePatterns,
+        ...pnpmWorkspacePatterns,
+      ]);
+      validateWorkspaceSearchLinks(registry, patterns, relativeRoot);
+      independentWorkspacePatterns.set(relativeRoot, patterns);
     }
     workspaces.push({
       relativeRoot,

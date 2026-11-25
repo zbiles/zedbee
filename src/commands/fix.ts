@@ -36,7 +36,10 @@ import {
 } from "../reporting/temporary-reports.js";
 import { terminalColorEnabled } from "../renderers/terminal-style.js";
 
-const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
+import {
+  deliverDashboard,
+  useStaticDashboard,
+} from "../reporting/static-dashboard.js";
 
 export interface FixCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
@@ -304,34 +307,7 @@ export async function executeFixCommand(
     });
     diagnosticEntries.push(...result.issues);
     await closeExecutor();
-    if (format === "json") {
-      outputPlan(true, result);
-    } else if (
-      options.format === "auto" &&
-      io.stdoutIsTTY &&
-      io.width >= MINIMUM_RESULT_DASHBOARD_WIDTH &&
-      io.env.TERM !== "dumb" &&
-      io.env.CI === undefined
-    ) {
-      try {
-        await (dependencies.renderResultDashboard ?? renderResultDashboard)(
-          prepared.publicPlan,
-          result,
-          {
-            width: io.width,
-            color: options.color && io.env.NO_COLOR === undefined,
-          },
-        );
-      } catch {
-        io.writeStdout(
-          renderResultText(
-            prepared.publicPlan,
-            result,
-            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
-          ),
-        );
-      }
-    } else {
+    const writeResult = () =>
       io.writeStdout(
         renderResultText(
           prepared.publicPlan,
@@ -339,7 +315,22 @@ export async function executeFixCommand(
           terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
         ),
       );
-    }
+    if (format === "json") {
+      outputPlan(true, result);
+    } else if (useStaticDashboard(options.format, io)) {
+      await deliverDashboard(
+        () =>
+          (dependencies.renderResultDashboard ?? renderResultDashboard)(
+            prepared.publicPlan,
+            result,
+            {
+              width: io.width,
+              color: options.color && io.env.NO_COLOR === undefined,
+            },
+          ),
+        writeResult,
+      );
+    } else writeResult();
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
   } catch (error) {

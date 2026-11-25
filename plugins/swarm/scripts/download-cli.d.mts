@@ -4,6 +4,9 @@ export interface CliRelease {
   url: string;
   sha256: string;
 }
+export function validatePinnedRelease(
+  metadata: unknown,
+): asserts metadata is CliRelease;
 export function downloadCli(options?: {
   fetchRelease?: (
     url: string,

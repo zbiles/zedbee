@@ -224,11 +224,12 @@ export function smokeConsumerUpgrades({
       });
     const installed = join(web, "node_modules", "zedbee");
     const cli = join(installed, "dist", "cli.js");
-    const cliRun = (args) =>
+    const cliRun = (args, expectedStatuses = [0]) =>
       run(process.execPath, [cli, ...args], {
         cwd: fixture,
         env,
         label: args[0],
+        expectedStatuses,
       }).trim();
 
     git(["init", "--initial-branch=main"]);
@@ -249,6 +250,7 @@ export function smokeConsumerUpgrades({
         compilerOptions: {
           module: "esnext",
           moduleResolution: "bundler",
+          resolveJsonModule: true,
           baseUrl: ".",
           paths: { "@fixture/*": ["./*"] },
           strict: true,
@@ -267,6 +269,8 @@ export function smokeConsumerUpgrades({
     assert.equal(readJson(join(installed, "package.json")).version, previous);
     mkdirSync(join(fixture, "docs"));
     const openApi = "docs/openapi.yaml";
+    const dataPath = "docs/data.json";
+    writeJson(join(fixture, dataPath), { value: 1 });
     writeFileSync(join(fixture, openApi), "openapi: 3.1.0\n");
     const e2eTest = join(e2e, "example.spec.ts");
     const goodTest =
@@ -416,7 +420,79 @@ export function smokeConsumerUpgrades({
       );
     }
     renameSync(removedInstallation, installation);
+    // Rehearse a real committed range independently of the staged hook.
+    git(["branch", "base-scan-smoke"]);
+    writeJson(join(fixture, dataPath), { value: 2 });
+    writeFileSync(join(web, "value.ts"), "export const value = 3;\n");
+    commit([dataPath, "web/value.ts"], {
+      workspace: "web",
+      healthySibling: "e2e",
+    });
+    renameSync(installation, removedInstallation);
+    try {
+      const baseReport = JSON.parse(
+        cliRun([
+          "scan",
+          "--base",
+          "base-scan-smoke",
+          "--format",
+          "json",
+          "--no-service",
+        ]),
+      );
+      assert.equal(baseReport.mode, "base");
+      assert.equal(baseReport.outcome, "pass");
+      for (const id of ["lint", "types"]) {
+        assert.ok(
+          baseReport.checks.some(
+            (check) =>
+              check.checkId === id &&
+              check.target === "e2e" &&
+              check.status === "skipped",
+          ),
+        );
+      }
+    } finally {
+      renameSync(removedInstallation, installation);
+    }
     if (archive !== undefined && previous === versions[0]) {
+      // The same JSON becomes a genuine compiler input through an import.
+      const consumerPath = "e2e/data-consumer.ts";
+      writeFileSync(
+        join(fixture, consumerPath),
+        'import data from "../docs/data.json";\nexport const selected = data.value;\n',
+      );
+      commit([consumerPath], { workspace: "e2e" });
+      git(["branch", "base-scan-required"]);
+      writeJson(join(fixture, dataPath), { value: 3 });
+      commit([dataPath], { workspace: "e2e" });
+      renameSync(installation, removedInstallation);
+      try {
+        const report = JSON.parse(
+          cliRun(
+            [
+              "scan",
+              "--base",
+              "base-scan-required",
+              "--format",
+              "json",
+              "--no-service",
+            ],
+            [2],
+          ),
+        );
+        assert.equal(report.outcome, "incomplete");
+        assert.ok(
+          report.checks.some(
+            (check) =>
+              check.checkId === "types" &&
+              check.target === "e2e" &&
+              check.error?.code === "COMPARISON_INSTALLATION_UNAVAILABLE",
+          ),
+        );
+      } finally {
+        renameSync(removedInstallation, installation);
+      }
       // Restore the stock previous hook before testing managed-hook migration.
       writeFileSync(hook, hookContents);
       smokeFreshLinkedWorktree({

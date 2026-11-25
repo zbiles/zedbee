@@ -1,3 +1,4 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { changedFilePaths } from "../changed-file-paths.js";
@@ -35,7 +36,6 @@ interface FailureCollection {
   omitted: number;
 }
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -59,7 +59,7 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((file) => SOURCE.test(file))
+    .filter((file) => MANAGED_SOURCE_PATH.test(file))
     .filter(
       (file) =>
         selectedPaths.has(file) ||

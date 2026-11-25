@@ -222,59 +222,45 @@ export function managedConfig(
       files: JAVASCRIPT_FILES,
       rules: { ...js.configs.recommended.rules },
     });
-    if (options.typedProject !== undefined) {
-      for (const preset of tseslint.configs.recommendedTypeChecked) {
-        const presetConfig = preset as Linter.Config;
-        const parserOptions = presetConfig.languageOptions?.parserOptions;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
-            ...presetConfig.languageOptions,
-            parser: reuseTypescriptParser,
-            parserOptions: {
-              ...(typeof parserOptions === "object" && parserOptions !== null
-                ? parserOptions
-                : {}),
-              programs: [...options.typedProject.programs],
-            },
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
+    const presets =
+      options.typedProject !== undefined
+        ? tseslint.configs.recommendedTypeChecked
+        : options.typeInformation === "basic"
+          ? tseslint.configs.recommended
+          : [];
+    for (const preset of presets) {
+      const presetConfig = preset as Linter.Config;
+      const parserOptions = presetConfig.languageOptions?.parserOptions;
+      config.push({
+        ...presetConfig,
+        files: TYPESCRIPT_FILES,
+        languageOptions: {
+          ...presetConfig.languageOptions,
+          parser: reuseTypescriptParser,
+          ...(options.typedProject === undefined
             ? {}
             : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
+                parserOptions: {
+                  ...(typeof parserOptions === "object" &&
+                  parserOptions !== null
+                    ? parserOptions
+                    : {}),
+                  programs: [...options.typedProject.programs],
                 },
               }),
-        });
-      }
-    } else if (options.typeInformation === "basic") {
-      for (const preset of tseslint.configs.recommended) {
-        const presetConfig = preset as Linter.Config;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
-            ...presetConfig.languageOptions,
-            parser: reuseTypescriptParser,
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
-            ? {}
-            : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
-                },
-              }),
-        });
-      }
+        },
+        ...(presetConfig.rules === undefined
+          ? {}
+          : { rules: { ...presetConfig.rules } }),
+        ...(presetConfig.plugins === undefined
+          ? {}
+          : {
+              plugins: {
+                ...presetConfig.plugins,
+                "@typescript-eslint": managedTypescriptPlugin,
+              },
+            }),
+      });
     }
   }
   const plugins = modePlugins(options);
