@@ -1,5 +1,5 @@
 import * as yarnLockfile from "@yarnpkg/lockfile";
-import { isMap, isScalar, parseDocument } from "yaml";
+import { isMap, isScalar } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
   finalizeDependencyRecords,
@@ -12,6 +12,10 @@ import {
 import { createSourcePositionIndex } from "./source-position.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 import { validateParsedStructure } from "./validate-structure.js";
+import {
+  parseYamlLockfileDocument,
+  readYamlLockfileData,
+} from "./yaml-document.js";
 
 const parseYarnClassic =
   typeof yarnLockfile.parse === "function"
@@ -77,17 +81,8 @@ function parseClassic(contents: string, lockfilePath: string): DependencyInvento
 }
 
 function parseModern(contents: string, lockfilePath: string): DependencyInventory {
-  const document = parseDocument(contents, { prettyErrors: false, strict: true, uniqueKeys: true });
-  if (document.errors.length > 0 || document.contents === null) {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not parse the Yarn Modern lockfile.");
-  }
-  let rawData: unknown;
-  try {
-    rawData = document.toJS({ maxAliasCount: 0 });
-  } catch {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not safely read the Yarn Modern lockfile structure.");
-  }
-  validateParsedStructure(rawData, "Yarn Modern");
+  const document = parseYamlLockfileDocument(contents, "Yarn Modern");
+  const rawData = readYamlLockfileData(document, "Yarn Modern");
   const data = plainRecord(rawData);
   const metadata = plainRecord(data.__metadata, "The Yarn Modern lockfile is missing metadata.");
   if (typeof metadata.version !== "number" || metadata.version < 4 || metadata.version > 8) {

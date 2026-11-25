@@ -3,7 +3,6 @@ import {
   isNode,
   isPair,
   isScalar,
-  parseDocument,
   type Node,
 } from "yaml";
 import { inventoryError } from "./errors.js";
@@ -22,7 +21,10 @@ import {
 } from "./normalize.js";
 import { createSourcePositionIndex } from "./source-position.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
-import { validateParsedStructure } from "./validate-structure.js";
+import {
+  parseYamlLockfileDocument,
+  readYamlLockfileData,
+} from "./yaml-document.js";
 
 function validateYamlTree(root: Node | null): void {
   let count = 0;
@@ -101,22 +103,9 @@ function directContexts(data: Record<string, unknown>, format: "6.0" | "9.0") {
 
 export function parsePnpmLockfile(contents: string, repositoryPath: string): DependencyInventory {
   const lockfilePath = validateLockfileInput(contents, repositoryPath);
-  const document = parseDocument(contents, {
-    prettyErrors: false,
-    strict: true,
-    uniqueKeys: true,
-  });
-  if (document.errors.length > 0 || document.contents === null) {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not parse the pnpm lockfile.");
-  }
+  const document = parseYamlLockfileDocument(contents, "pnpm");
   validateYamlTree(document.contents);
-  let rawData: unknown;
-  try {
-    rawData = document.toJS({ maxAliasCount: 0 });
-  } catch {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not safely read the pnpm lockfile structure.");
-  }
-  validateParsedStructure(rawData, "pnpm");
+  const rawData = readYamlLockfileData(document, "pnpm");
   const data = plainRecord(rawData);
   const format = data.lockfileVersion;
   if (format !== "6.0" && format !== "9.0") {
