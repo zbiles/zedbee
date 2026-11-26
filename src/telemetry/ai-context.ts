@@ -1,7 +1,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { TelemetryEnvironment } from "./policy.js";
-import type { ScanDetails } from "./schema.js";
+import { callerAiToolFields, type ScanDetails } from "./schema.js";
 
 export type CallerContext = Pick<
   ScanDetails,
@@ -29,14 +29,8 @@ export function callerContext(env: TelemetryEnvironment): CallerContext {
   )
     candidates.push("codex");
   return {
-    caller_ai_tool:
-      candidates.length === 0
-        ? "unknown"
-        : candidates.length === 1
-          ? candidates[0]!
-          : "ambiguous",
+    ...callerAiToolFields(candidates),
     caller_ai_tool_candidates: candidates,
-    caller_ai_tool_source: candidates.length ? "environment_hint" : "none",
   };
 }
 export function emptyRepositoryContext(): RepositoryToolContext {

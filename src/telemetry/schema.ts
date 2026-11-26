@@ -158,6 +158,22 @@ export const telemetryV1EventSchema = z
   });
 export type TelemetryV1Event = z.infer<typeof telemetryV1EventSchema>;
 export const AI_TOOLS = ["claude_code", "codex", "cursor"] as const;
+export function callerAiToolFields(
+  candidates: readonly (typeof AI_TOOLS)[number][],
+): {
+  caller_ai_tool: (typeof AI_TOOLS)[number] | "unknown" | "ambiguous";
+  caller_ai_tool_source: "none" | "environment_hint";
+} {
+  return {
+    caller_ai_tool:
+      candidates.length === 0
+        ? "unknown"
+        : candidates.length === 1
+          ? candidates[0]!
+          : "ambiguous",
+    caller_ai_tool_source: candidates.length ? "environment_hint" : "none",
+  };
+}
 const unique = <T>(values: T[]) => new Set(values).size === values.length;
 const checkIds = z.array(z.enum(TELEMETRY_CHECK_IDS)).max(13).refine(unique);
 const toolIds = z.array(z.enum(AI_TOOLS)).max(3).refine(unique);
@@ -223,17 +239,10 @@ export const scanDetailsSchema = z
       )
         invalid();
     }
-    const candidates = details.caller_ai_tool_candidates;
-    const expected =
-      candidates.length === 0
-        ? "unknown"
-        : candidates.length === 1
-          ? candidates[0]
-          : "ambiguous";
+    const expected = callerAiToolFields(details.caller_ai_tool_candidates);
     if (
-      details.caller_ai_tool !== expected ||
-      details.caller_ai_tool_source !==
-        (candidates.length ? "environment_hint" : "none")
+      details.caller_ai_tool !== expected.caller_ai_tool ||
+      details.caller_ai_tool_source !== expected.caller_ai_tool_source
     )
       invalid();
     if (new TextEncoder().encode(JSON.stringify(details)).byteLength > 16_384)
