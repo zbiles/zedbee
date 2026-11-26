@@ -9,7 +9,6 @@ import type {
   CommandTelemetry,
 } from "../telemetry/client.js";
 import { validConfigPath } from "../config/selection-path.js";
-import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
 import { renderSarif } from "../renderers/sarif.js";
 import { renderText } from "../renderers/text.js";
@@ -40,6 +39,7 @@ import {
   timeCommandStage,
   type DiagnosticTimings,
 } from "./diagnostics.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 import type {
   ReportingSurface,
   RequestedOutputFormat,
@@ -193,10 +193,7 @@ export function signalExitCode(signal: "SIGINT" | "SIGTERM"): 130 | 143 {
 }
 
 const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   scan: runScan,
   async openInk(options, onError) {
     const { openInkSession } = await import("../ui/render-ink.js");

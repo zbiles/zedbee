@@ -28,13 +28,13 @@ import {
   type PreparedFixPlan,
 } from "../fixes/types.js";
 import { hasApplicableFixes } from "../fixes/availability.js";
-import { GitClient } from "../git/client.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import {
   createTemporaryReportStore,
   type TemporaryReportStore,
 } from "../reporting/temporary-reports.js";
 import { terminalColorEnabled } from "../renderers/terminal-style.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 
 const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
 
@@ -107,10 +107,7 @@ async function renderResultDashboard(
 }
 
 const DEFAULT_DEPENDENCIES: FixCommandDependencies = {
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   buildFixPlan,
   applyFixPlan,
   async confirm(plan, options) {
