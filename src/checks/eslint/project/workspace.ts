@@ -7,6 +7,7 @@ import {
 } from "../../prettier/project-workspace.js";
 import { isContainedPath } from "../../../inspection/read-json.js";
 import { ProjectEslintFailureError, type ProjectEslintInput } from "./types.js";
+import { SUPPORTED_ESLINT_CONFIG_FILE_NAMES } from "./config-files.js";
 
 // The reused formatter mirror omits larger files. ESLint rules may inspect any
 // captured data file, so omission must instead make this check incomplete.
@@ -101,11 +102,7 @@ export async function createProjectEslintWorkspace(
   }
   let directory = resolve(workspace.treeRoot, input.projectRoot);
   while (isContainedPath(workspace.treeRoot, directory)) {
-    for (const name of [
-      "eslint.config.js",
-      "eslint.config.mjs",
-      "eslint.config.cjs",
-    ]) {
+    for (const name of SUPPORTED_ESLINT_CONFIG_FILE_NAMES) {
       const file = join(directory, name);
       if (
         await lstat(file)
