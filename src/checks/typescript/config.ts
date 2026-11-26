@@ -1,12 +1,17 @@
 import { filterCapturedCompilerFiles } from "./captured-directory.js";
-import { posix, relative, resolve, sep } from "node:path";
+import { posix, relative, resolve } from "node:path";
 import { lstat } from "node:fs/promises";
 import * as ts from "typescript";
 import { parse, type ParseError } from "jsonc-parser";
 import {
   canonicalizeSnapshotRoot,
+  normalizeRepositoryPath,
   readContainedFile,
 } from "../../inspection/read-json.js";
+import {
+  configExtensions,
+  tsconfigCandidates,
+} from "./config-requests.js";
 import {
   captureSnapshotRegistry,
   IGNORED_DIRECTORY_NAMES,
@@ -40,10 +45,6 @@ const SOURCE = /\.(?:[cm]?[jt]sx?)$/iu;
 const LOADABLE = /(?:\.(?:[cm]?[jt]sx?|json))$/iu;
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
-
-function normalize(path: string): string {
-  return path.split(sep).join("/");
-}
 
 function containedRepositoryPath(from: string, requested: string): string {
   if (
@@ -192,6 +193,15 @@ async function readConfigGraph(
     throw new SnapshotConfigurationError(configPath);
   }
   const config = record(data);
+  const resolveConfigRequest = (request: string): string => {
+    const base = containedRepositoryPath(configPath, request);
+    const resolvedPath = tsconfigCandidates(base).find(
+      (candidate) => registry.resolve(candidate)?.targetKind === "file",
+    );
+    if (resolvedPath === undefined)
+      throw new SnapshotConfigurationError(configPath, [5083]);
+    return resolvedPath;
+  };
   if (
     config.files !== undefined ||
     config.include !== undefined ||
@@ -209,24 +219,9 @@ async function readConfigGraph(
       configPath,
       optionErrors.map(({ code }) => code),
     );
-  const extensions =
-    config.extends === undefined
-      ? []
-      : Array.isArray(config.extends)
-        ? config.extends
-        : [config.extends];
+  const extensions = configExtensions(config);
   for (const extension of extensions as string[]) {
-    const base = containedRepositoryPath(configPath, extension);
-    const candidates = [
-      base,
-      `${base}.json`,
-      posix.join(base, "tsconfig.json"),
-    ];
-    const resolvedPath = candidates.find(
-      (candidate) => registry.resolve(candidate)?.targetKind === "file",
-    );
-    if (resolvedPath === undefined)
-      throw new SnapshotConfigurationError(configPath, [5083]);
+    const resolvedPath = resolveConfigRequest(extension);
     prepared.extendedConfigs.add(resolvedPath);
     await readConfigGraph(prepared, resolvedPath, seen);
   }
@@ -234,17 +229,7 @@ async function readConfigGraph(
     string,
     unknown
   >[]) {
-    const base = containedRepositoryPath(configPath, reference.path as string);
-    const candidates = [
-      base,
-      `${base}.json`,
-      posix.join(base, "tsconfig.json"),
-    ];
-    const resolvedPath = candidates.find(
-      (candidate) => registry.resolve(candidate)?.targetKind === "file",
-    );
-    if (resolvedPath === undefined)
-      throw new SnapshotConfigurationError(configPath, [5083]);
+    const resolvedPath = resolveConfigRequest(reference.path as string);
     prepared.referencedConfigs.add(resolvedPath);
     await readConfigGraph(prepared, resolvedPath, seen);
   }
@@ -416,7 +401,7 @@ async function acquireSnapshotProgramFiles(
   }
   const sources: Record<string, string> = {};
   for (const [absolute, source] of files) {
-    const path = normalize(relative(canonicalRoot, absolute));
+    const path = normalizeRepositoryPath(relative(canonicalRoot, absolute));
     if (path !== ".." && !path.startsWith("../")) sources[path] = source;
   }
   const prepared = {
@@ -453,7 +438,7 @@ async function parsePreparedConfig(
   if (files.size !== size) {
     const sources = { ...prepared.sources };
     for (const [absolute, text] of files)
-      sources[normalize(relative(canonicalRoot, absolute))] = text;
+      sources[normalizeRepositoryPath(relative(canonicalRoot, absolute))] = text;
     prepared.sources = Object.freeze(sources);
   }
   const configAbsolute = resolve(canonicalRoot, ...configPath.split("/"));
@@ -514,7 +499,7 @@ async function programInputForConfig(
     workspace.sourceFiles.filter((path) => SOURCE.test(path)),
   );
   const parsedRoots = parsed.fileNames
-    .map((path) => normalize(relative(canonicalRoot, path)))
+    .map((path) => normalizeRepositoryPath(relative(canonicalRoot, path)))
     .filter((path) => allowedRoots.has(path));
   const rootNames = parsedRoots;
   return {
@@ -575,7 +560,9 @@ export async function loadSnapshotProgramProjects(
     const input = inputs.get(configPath)!;
     projects.push({ configPath, input });
     for (const reference of input.projectReferences ?? []) {
-      const path = normalize(relative(prepared.canonicalRoot, reference.path));
+      const path = normalizeRepositoryPath(
+        relative(prepared.canonicalRoot, reference.path),
+      );
       referencedConfigs.add(
         path.endsWith(".json") ? path : posix.join(path, "tsconfig.json"),
       );
