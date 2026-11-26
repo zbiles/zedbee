@@ -10,6 +10,7 @@ import {
   utimes,
   writeFile,
 } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import type { CheckObservationSet, CheckTarget } from "../checks/adapter.js";
@@ -28,6 +29,16 @@ import {
 } from "./dependency-inputs.js";
 
 const KEY = /^[a-f0-9]{64}$/u;
+
+const SCHEMA_VERSION = 3;
+
+function isRealDirectory(metadata: Stats): boolean {
+  return metadata.isDirectory() && !metadata.isSymbolicLink();
+}
+
+function isRegularFile(metadata: Stats): boolean {
+  return metadata.isFile() && !metadata.isSymbolicLink();
+}
 
 export interface ObservationCache {
   get(key: string): Promise<CheckObservationSet | undefined>;
@@ -153,7 +164,7 @@ export class ObservationCacheStore implements ObservationCache {
   private async ensureRoot(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const metadata = await lstat(this.root);
-    if (!metadata.isDirectory() || metadata.isSymbolicLink()) {
+    if (!isRealDirectory(metadata)) {
       throw new TypeError("Invalid observation cache root");
     }
   }
@@ -161,23 +172,19 @@ export class ObservationCacheStore implements ObservationCache {
   async get(key: string): Promise<CheckObservationSet | undefined> {
     try {
       const rootMetadata = await lstat(this.root);
-      if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) {
+      if (!isRealDirectory(rootMetadata)) {
         return undefined;
       }
       const path = this.path(key);
       const metadata = await lstat(path);
-      if (
-        !metadata.isFile() ||
-        metadata.isSymbolicLink() ||
-        metadata.size > this.maxBytes
-      ) {
+      if (!isRegularFile(metadata) || metadata.size > this.maxBytes) {
         return undefined;
       }
       const serialized = await readFile(path, "utf8");
       const envelope = JSON.parse(serialized) as Record<string, unknown>;
       const payloadText = JSON.stringify(envelope.payload);
       if (
-        envelope.schemaVersion !== 3 ||
+        envelope.schemaVersion !== SCHEMA_VERSION ||
         typeof envelope.integrity !== "string" ||
         envelope.integrity !== digest(payloadText)
       ) {
@@ -200,7 +207,7 @@ export class ObservationCacheStore implements ObservationCache {
       const payload = sanitizeCacheableObservationSet(value);
       const payloadText = JSON.stringify(payload);
       const serialized = `${JSON.stringify({
-        schemaVersion: 3,
+        schemaVersion: SCHEMA_VERSION,
         integrity: digest(payloadText),
         payload,
       })}\n`;
@@ -233,7 +240,7 @@ export class ObservationCacheStore implements ObservationCache {
         names.map(async (name) => {
           const path = join(this.root, name);
           const metadata = await lstat(path);
-          return metadata.isFile() && !metadata.isSymbolicLink()
+          return isRegularFile(metadata)
             ? { name, path, size: metadata.size, mtimeMs: metadata.mtimeMs }
             : undefined;
         }),
@@ -250,7 +257,7 @@ export class ObservationCacheStore implements ObservationCache {
       const oldest = entries.shift();
       if (oldest === undefined) break;
       const metadata = await lstat(oldest.path);
-      if (!metadata.isFile() || metadata.isSymbolicLink()) continue;
+      if (!isRegularFile(metadata)) continue;
       await unlink(oldest.path);
       bytes -= oldest.size;
     }
