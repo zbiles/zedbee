@@ -642,17 +642,19 @@ export async function loadConfigFromCommit(
     if (explicitConfigPath !== undefined) {
       throw missingExplicitGitConfig(configPath, "the target Git commit");
     }
-    for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
-      const unsupported = await targetTreeEntry(
-        git,
-        targetCommit,
-        filename,
-        configPath,
-        signal,
+    const unsupported = await Promise.all(
+      UNSUPPORTED_CONFIG_FILENAMES.map((filename) =>
+        targetTreeEntry(git, targetCommit, filename, configPath, signal),
+      ),
+    );
+    const unsupportedIndex = unsupported.findIndex(
+      (candidate) => candidate !== undefined,
+    );
+    if (unsupportedIndex !== -1) {
+      throw unsupportedGitConfig(
+        repositoryRoot,
+        UNSUPPORTED_CONFIG_FILENAMES[unsupportedIndex]!,
       );
-      if (unsupported !== undefined) {
-        throw unsupportedGitConfig(repositoryRoot, filename);
-      }
     }
     return resolveConfig(undefined);
   }
