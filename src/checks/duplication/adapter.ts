@@ -213,6 +213,11 @@ async function collectSide(
   }
 }
 
+function settledValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
+}
+
 export const duplicationAdapter: ObservationCheckAdapter = {
   id: "duplication",
   output: "observations",
@@ -222,22 +227,26 @@ export const duplicationAdapter: ObservationCheckAdapter = {
     try {
       const policy = context.policy as ResolvedDuplicationPolicy;
       const policyThreshold = threshold(policy.threshold);
-      const baseline = await collectSide(
-        context.snapshots.baselineDir,
-        context.baselineInspection,
-        context.target,
-        policyThreshold,
-        policy.settings,
-        context.signal,
-      );
-      const target = await collectSide(
-        context.snapshots.targetDir,
-        context.targetInspection,
-        context.target,
-        policyThreshold,
-        policy.settings,
-        context.signal,
-      );
+      const [baselineResult, targetResult] = await Promise.allSettled([
+        collectSide(
+          context.snapshots.baselineDir,
+          context.baselineInspection,
+          context.target,
+          policyThreshold,
+          policy.settings,
+          context.signal,
+        ),
+        collectSide(
+          context.snapshots.targetDir,
+          context.targetInspection,
+          context.target,
+          policyThreshold,
+          policy.settings,
+          context.signal,
+        ),
+      ]);
+      const baseline = settledValue(baselineResult);
+      const target = settledValue(targetResult);
       if (
         target.report.percentage <= policyThreshold ||
         target.report.clones.length === 0
