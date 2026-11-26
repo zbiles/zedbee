@@ -199,7 +199,9 @@ function invalidConfigMessage(
   return `Invalid Zedbee configuration at ${basename(configPath)} (${path}).${help}`;
 }
 
-async function readWorkingTreeConfig(configPath: string): Promise<string> {
+export async function readWorkingTreeConfig(
+  configPath: string,
+): Promise<string> {
   const tooLarge = () =>
     new ConfigError(
       "CONFIG_INVALID",

@@ -33,8 +33,9 @@ import {
   type TelemetryEnvironment,
 } from "../telemetry/policy.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join } from "node:path";
+import { readWorkingTreeConfig } from "../config/load-config.js";
 import { resolveGitRepositoryRoot } from "./repository-root.js";
 import {
   detectHookIntegration,
@@ -168,7 +169,7 @@ async function existingConfig(repositoryRoot: string): Promise<string | null> {
     if (state.isSymbolicLink() || !state.isFile()) {
       throw new Error("unsafe config");
     }
-    return readFile(path, "utf8");
+    return await readWorkingTreeConfig(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
