@@ -18,6 +18,8 @@ import {
 } from "./trust.js";
 import { ProjectEslintFailureError } from "./types.js";
 
+const LINTABLE_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+
 async function hasConfiguration(
   root: string,
   project: string,
@@ -65,6 +67,8 @@ export async function collectProjectEslint(
   try {
     const checkoutRoot = await realpath(context.repositoryRoot);
     const projectRoot = context.target.relativeRoot;
+    const workspaceIn = (inspection: CheckRunContext["targetInspection"]) =>
+      inspection.workspaces.find((w) => w.relativeRoot === projectRoot);
     const permit = await requireProjectEslintTrust(checkoutRoot, projectRoot);
     const full =
       context.config.reporting.projectEslintMessages === "full" &&
@@ -75,13 +79,11 @@ export async function collectProjectEslint(
           ? context.baselineInspection
           : context.targetInspection;
       return (
-        inspection.workspaces
-          .find((w) => w.relativeRoot === projectRoot)
-          ?.sourceFiles.filter(
-            (file) =>
-              /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu.test(file) &&
-              context.policyForFile("lint", file, side).severity !== "off",
-          ) ?? []
+        workspaceIn(inspection)?.sourceFiles.filter(
+          (file) =>
+            LINTABLE_SOURCE.test(file) &&
+            context.policyForFile("lint", file, side).severity !== "off",
+        ) ?? []
       );
     };
     const before = filesFor("baseline"),
@@ -117,9 +119,7 @@ export async function collectProjectEslint(
       () => loadConfig(context.snapshots.baselineDir, baselineConfigPath),
       () => resolveConfig(undefined),
     );
-    const baselineWorkspace = context.baselineInspection.workspaces.find(
-      (w) => w.relativeRoot === projectRoot,
-    );
+    const baselineWorkspace = workspaceIn(context.baselineInspection);
     const previousPolicy =
       baselineWorkspace === undefined
         ? undefined
@@ -171,11 +171,9 @@ export async function collectProjectEslint(
       eslintAnalysis: {
         version: target.version,
         excludedFiles:
-          (context.targetInspection.workspaces
-            .find((w) => w.relativeRoot === projectRoot)
-            ?.sourceFiles.filter((file) =>
-              /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu.test(file),
-            ).length ?? 0) - after.length,
+          (workspaceIn(context.targetInspection)?.sourceFiles.filter((file) =>
+            LINTABLE_SOURCE.test(file),
+          ).length ?? 0) - after.length,
         checkedFiles: target.checkedFiles.length,
         ignoredFiles: target.ignoredFiles.length,
         baseline: baseline === undefined ? "new-coverage" : "compared",
