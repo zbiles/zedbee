@@ -38,6 +38,10 @@ import {
 } from "./pair-class-metrics.js";
 import { COMPILER_SOURCE } from "../compiler-paths.js";
 
+function complexityCause(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
   for (let index = 0; index < source.length; index += 1) {
@@ -314,11 +318,10 @@ async function collectSide(
           (policy as ResolvedComplexityPolicy).max,
         ).filter(({ metric }) => metric?.name === metricName),
       );
-    } catch {
+    } catch (error) {
       throw new CheckIncompleteError({
         code: "COMPLEXITY_FILE_ANALYSIS_FAILED",
-        message:
-          "Complexity analysis could not attribute metrics for a source file.",
+        message: `Complexity analysis could not complete for a source file: ${complexityCause(error)}`,
         path: file,
         remediation:
           "Verify that the file contains valid JavaScript or TypeScript, then retry. If the project accepts the syntax, report a Zedbee analyzer compatibility issue.",
