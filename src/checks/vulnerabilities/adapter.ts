@@ -15,6 +15,7 @@ import {
   type LockfileInventoryErrorCode,
 } from "./inventory/errors.js";
 import type { DependencyInventory } from "./inventory/types.js";
+import { analyzableLockfiles } from "./lockfiles.js";
 import { normalizeOsvInventory } from "./normalize.js";
 import { createOsvClient, osvQueryKey } from "./osv/client.js";
 import { OsvAnalysisError, OsvUnavailableError } from "./osv/errors.js";
@@ -31,23 +32,12 @@ const defaults: VulnerabilitiesAdapterDependencies = {
   client: createOsvClient(),
 };
 
-function analyzableLockfiles(
-  inspection: RepositoryInspection,
-): readonly string[] {
-  const hasTextBunLock = inspection.lockfiles.some(
-    (path) => path.split("/").at(-1) === "bun.lock",
-  );
-  return inspection.lockfiles.filter(
-    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
-  );
-}
-
 async function inventoryFor(
   inspection: RepositoryInspection,
   parseInventory: typeof parseLockfileInventory,
 ): Promise<DependencyInventory> {
   const inventories = await Promise.all(
-    analyzableLockfiles(inspection).map((path) =>
+    analyzableLockfiles(inspection.lockfiles).map((path) =>
       parseInventory(inspection, path),
     ),
   );

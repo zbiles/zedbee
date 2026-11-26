@@ -13,6 +13,7 @@ import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
 import { acquireServiceExecutor } from "../service/client.js";
 import { LockfileInventoryError } from "../checks/vulnerabilities/inventory/errors.js";
 import { parseLockfileInventory } from "../checks/vulnerabilities/inventory/parse-lockfile.js";
+import { analyzableLockfiles } from "../checks/vulnerabilities/lockfiles.js";
 import { createOsvClient } from "../checks/vulnerabilities/osv/client.js";
 import {
   OsvAnalysisError,
@@ -148,15 +149,6 @@ const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
   parseLockfileInventory,
   osvClient: createOsvClient({ timeoutMs: 5_000, retries: 0 }),
 };
-
-function analyzableLockfiles(lockfiles: readonly string[]): readonly string[] {
-  const hasTextBunLock = lockfiles.some(
-    (path) => path.split("/").at(-1) === "bun.lock",
-  );
-  return lockfiles.filter(
-    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
-  );
-}
 
 export function createDefaultDiagnosticProbe(
   overrides: Partial<DefaultDiagnosticDependencies> = {},
