@@ -228,6 +228,30 @@ function moduleBindings(
   return { namespaces, named };
 }
 
+function isModuleCallee(
+  context: RuleContext,
+  callee: string,
+  bindings: ReturnType<typeof moduleBindings>,
+  methods: ReadonlySet<string>,
+): boolean {
+  const direct = bindings.named.get(callee);
+  if (
+    direct !== undefined &&
+    methods.has(direct) &&
+    !hasNonImportBinding(context, callee)
+  )
+    return true;
+  const member = callee.match(
+    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.([\p{ID_Start}_$][\p{ID_Continue}$]*)$/u,
+  );
+  return (
+    member?.[1] !== undefined &&
+    bindings.namespaces.has(member[1]) &&
+    !hasNonImportBinding(context, member[1]) &&
+    methods.has(member[2] ?? "")
+  );
+}
+
 function importedCalls(
   context: RuleContext,
   modules: readonly string[],
@@ -237,22 +261,7 @@ function importedCalls(
   return context.nodes.filter((node) => {
     const callee = context.text(callCallee(node));
     if (callee === undefined) return false;
-    const direct = bindings.named.get(callee);
-    if (
-      direct !== undefined &&
-      methods.has(direct) &&
-      !hasNonImportBinding(context, callee)
-    )
-      return true;
-    const member = callee.match(
-      /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.([\p{ID_Start}_$][\p{ID_Continue}$]*)$/u,
-    );
-    return (
-      member?.[1] !== undefined &&
-      bindings.namespaces.has(member[1]) &&
-      !hasNonImportBinding(context, member[1]) &&
-      methods.has(member[2] ?? "")
-    );
+    return isModuleCallee(context, callee, bindings, methods);
   });
 }
 
@@ -331,25 +340,17 @@ const tlsDisabled: ContextualStructuralRule = {
 const PASSWORD_VALUE = /\b(?:password|passwd|pwd)\b/iu;
 const WEAK_HASH = /^(?:['"])(?:md5|sha-?1)(?:['"])$/iu;
 
+const CREATE_HASH = new Set(["createHash"]);
+
 function isWeakHashCall(
   context: RuleContext,
   node: SgNode,
   bindings: ReturnType<typeof moduleBindings>,
 ): boolean {
   const callee = context.text(callCallee(node));
-  if (callee === undefined) return false;
-  const direct =
-    bindings.named.get(callee) === "createHash" &&
-    !hasNonImportBinding(context, callee);
-  const member = callee.match(
-    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.createHash$/u,
-  );
-  const namespaced =
-    member?.[1] !== undefined &&
-    bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(context, member[1]);
   return (
-    (direct || namespaced) &&
+    callee !== undefined &&
+    isModuleCallee(context, callee, bindings, CREATE_HASH) &&
     WEAK_HASH.test(context.text(callArguments(node)[0]) ?? "")
   );
 }
@@ -389,6 +390,8 @@ function staticString(
   return text.length >= 2 ? text.slice(1, -1) : undefined;
 }
 
+const REQUEST = new Set(["request"]);
+
 function isRequestOptions(
   context: RuleContext,
   node: SgNode,
@@ -399,18 +402,11 @@ function isRequestOptions(
   if (args?.kind() !== "arguments" || call?.kind() !== "call_expression")
     return false;
   const callee = context.text(callCallee(call)) ?? "";
-  const direct =
-    (bindings.namespaces.has(callee) ||
-      bindings.named.get(callee) === "request") &&
-    !hasNonImportBinding(context, callee);
-  const member = callee.match(
-    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.request$/u,
+  return (
+    (bindings.namespaces.has(callee) &&
+      !hasNonImportBinding(context, callee)) ||
+    isModuleCallee(context, callee, bindings, REQUEST)
   );
-  const namespaced =
-    member?.[1] !== undefined &&
-    bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(context, member[1]);
-  return direct || namespaced;
 }
 
 function hasCredentialValue(context: RuleContext, node: SgNode): boolean {
