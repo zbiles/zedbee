@@ -291,19 +291,27 @@ function sanitizeSettings(
   return result as Partial<FormattingSettings>;
 }
 
-/** Reads an own data property without invoking accessors. */
-function ownDataValue(target: object, key: string): unknown {
-  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+/** An own data property's value; undefined when absent or an accessor. */
+function ownDataValue(object: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
   return descriptor !== undefined && "value" in descriptor
     ? descriptor.value
     : undefined;
 }
 
-function isPatternValue(value: unknown): value is string | string[] {
+/** True when the own property exists but is an accessor. */
+function isOwnAccessor(object: object, key: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  return descriptor !== undefined && !("value" in descriptor);
+}
+
+/** Mirrors parsePatternList in project-protocol.ts: non-empty only. */
+function isPatternList(value: unknown): value is string | readonly string[] {
+  if (typeof value === "string") return value.length > 0;
   return (
-    typeof value === "string" ||
-    (Array.isArray(value) &&
-      value.every((item) => typeof item === "string" && item.length > 0))
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "string" && item.length > 0)
   );
 }
 
@@ -324,24 +332,16 @@ function sanitizeOverrideEntry(
     return undefined;
   }
   const files = ownDataValue(entry, "files");
-  const hasFiles = isPatternValue(files);
-  if (!hasFiles || files === undefined) {
+  if (!isPatternList(files)) {
     limitations.push(
       "An exported configuration override has no usable files pattern and was not copied.",
     );
     return undefined;
   }
-  const excludeDescriptor = Object.getOwnPropertyDescriptor(
-    entry,
-    "excludeFiles",
-  );
-  const excludeFiles =
-    excludeDescriptor !== undefined && "value" in excludeDescriptor
-      ? excludeDescriptor.value
-      : undefined;
+  const excludeFiles = ownDataValue(entry, "excludeFiles");
   if (
-    (excludeDescriptor !== undefined && !("value" in excludeDescriptor)) ||
-    (excludeFiles !== undefined && !isPatternValue(excludeFiles))
+    isOwnAccessor(entry, "excludeFiles") ||
+    (excludeFiles !== undefined && !isPatternList(excludeFiles))
   ) {
     limitations.push(
       "An override has invalid or non-data excludeFiles and was not copied.",
@@ -360,10 +360,8 @@ function sanitizeOverrideEntry(
     return undefined;
   }
   return {
-    files: files as string | readonly string[],
-    ...(excludeFiles === undefined
-      ? {}
-      : { excludeFiles: excludeFiles as string | readonly string[] }),
+    files,
+    ...(excludeFiles === undefined ? {} : { excludeFiles }),
     settings,
   };
 }
