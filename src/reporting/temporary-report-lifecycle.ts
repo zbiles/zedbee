@@ -223,6 +223,23 @@ export async function loadState(
   }
 }
 
+async function syncDirectoryOrWarn(
+  directory: string,
+  subject: string,
+  warnings: ReportMaintenanceWarning[],
+): Promise<void> {
+  try {
+    await syncTemporaryReportDirectory(directory);
+  } catch (error) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `${subject} could not be synchronized (${errorCode(error)}).`,
+      ),
+    );
+  }
+}
+
 export async function rollbackReport(
   reportPath: string,
   warnings: ReportMaintenanceWarning[],
@@ -259,16 +276,11 @@ export async function rollbackReport(
     );
     return;
   }
-  try {
-    await syncTemporaryReportDirectory(dirname(reportPath));
-  } catch (error) {
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `A rolled-back report's directory could not be synchronized (${errorCode(error)}).`,
-      ),
-    );
-  }
+  await syncDirectoryOrWarn(
+    dirname(reportPath),
+    "A rolled-back report's directory",
+    warnings,
+  );
 }
 
 export async function writeUniqueReport(
@@ -348,16 +360,11 @@ async function removeReportTemporary(
     }
     return;
   }
-  try {
-    await syncTemporaryReportDirectory(repositoryDirectory);
-  } catch (error) {
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `A report temporary-file removal could not be synchronized (${errorCode(error)}).`,
-      ),
-    );
-  }
+  await syncDirectoryOrWarn(
+    repositoryDirectory,
+    "A report temporary-file removal",
+    warnings,
+  );
 }
 
 function trackedReportPath(
@@ -436,16 +443,11 @@ export async function removeExpiredReports(
       retained.push(report);
       continue;
     }
-    try {
-      await syncTemporaryReportDirectory(repositoryDirectory);
-    } catch (error) {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `A removed report's directory could not be synchronized (${errorCode(error)}).`,
-        ),
-      );
-    }
+    await syncDirectoryOrWarn(
+      repositoryDirectory,
+      "A removed report's directory",
+      warnings,
+    );
   }
   return retained;
 }
