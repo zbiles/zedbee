@@ -8,6 +8,7 @@ import type {
 import {
   findingIdentity,
   fingerprintObservation,
+  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
@@ -54,12 +55,7 @@ const NONE: Attribution = Object.freeze({
 });
 
 function canonicalEntityIdentity(identity: string): string {
-  if (
-    typeof identity !== "string" ||
-    identity.length === 0 ||
-    identity.trim() !== identity ||
-    /[\u0000-\u001f\u007f]/u.test(identity)
-  ) {
+  if (!isCanonicalSyntaxText(identity)) {
     throw new TypeError("Expected a canonical changed entity identity");
   }
   return identity;

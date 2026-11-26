@@ -8,6 +8,7 @@ import type {
 import {
   findingIdentity,
   fingerprintObservation,
+  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
@@ -31,12 +32,7 @@ function record(value: unknown, field: string): Record<string, unknown> {
 }
 
 function canonicalText(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
+  if (!isCanonicalSyntaxText(value)) {
     throw new TypeError(`Expected canonical ${field}`);
   }
   return value;
