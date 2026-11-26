@@ -45,10 +45,7 @@ function resolveLexicalPath(
 ): string {
   const candidate = resolve(snapshotRoot, repositoryPath);
   if (isAbsolute(repositoryPath) || !isContainedPath(snapshotRoot, candidate)) {
-    throw new RepositoryInspectionError(
-      "UNSAFE_SNAPSHOT_PATH",
-      "Zedbee refused a path outside the snapshot.",
-    );
+    throw unsafePath();
   }
   return candidate;
 }
@@ -62,16 +59,10 @@ export async function resolveContainedRealPath(
   try {
     canonicalPath = await realpath(candidate);
   } catch {
-    throw new RepositoryInspectionError(
-      "INVALID_SNAPSHOT_DATA",
-      `Zedbee could not read ${normalizeRepositoryPath(repositoryPath)} from the snapshot.`,
-    );
+    throw unreadablePath(repositoryPath);
   }
   if (!isContainedPath(snapshotRoot, canonicalPath)) {
-    throw new RepositoryInspectionError(
-      "UNSAFE_SNAPSHOT_PATH",
-      "Zedbee refused a path outside the snapshot.",
-    );
+    throw unsafePath();
   }
   return canonicalPath;
 }
