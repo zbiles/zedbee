@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import {
   chmod,
   lstat,
@@ -51,6 +52,17 @@ function hasIdentity(
   expected: FileIdentity,
 ): boolean {
   return metadata.dev === expected.device && metadata.ino === expected.inode;
+}
+
+function isUnchangedDirectory(
+  metadata: BigIntStats,
+  expected: FileIdentity,
+): boolean {
+  return (
+    !metadata.isSymbolicLink() &&
+    metadata.isDirectory() &&
+    hasIdentity(metadata, expected)
+  );
 }
 
 function isContainedBy(parent: string, child: string): boolean {
@@ -175,9 +187,7 @@ export async function createManagedOutputDirectory(
   const validateDirectoryIdentity = async () => {
     const metadata = await lstat(canonicalDirectory, { bigint: true });
     if (
-      metadata.isSymbolicLink() ||
-      !metadata.isDirectory() ||
-      !hasIdentity(metadata, identity) ||
+      !isUnchangedDirectory(metadata, identity) ||
       (await validateManagedDirectory(canonicalDirectory)) !==
         canonicalDirectory
     ) {
@@ -280,9 +290,7 @@ export async function writeManagedJsonConfig(
     const entries = await readdir(canonicalDirectory);
     if (
       validatedDirectory !== canonicalDirectory ||
-      !hasIdentity(directoryMetadata, directoryIdentity) ||
-      directoryMetadata.isSymbolicLink() ||
-      !directoryMetadata.isDirectory() ||
+      !isUnchangedDirectory(directoryMetadata, directoryIdentity) ||
       !hasIdentity(configMetadata, configIdentity) ||
       configMetadata.isSymbolicLink() ||
       !configMetadata.isFile() ||
@@ -324,9 +332,7 @@ export async function writeManagedJsonConfig(
       const metadata = await lstat(canonicalDirectory, { bigint: true });
       const entries = await readdir(canonicalDirectory);
       if (
-        metadata.isSymbolicLink() ||
-        !metadata.isDirectory() ||
-        !hasIdentity(metadata, directoryIdentity) ||
+        !isUnchangedDirectory(metadata, directoryIdentity) ||
         entries.length !== 0
       ) {
         throw new ManagedConfigError(
