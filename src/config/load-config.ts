@@ -214,20 +214,7 @@ export async function readWorkingTreeConfig(
     if (!metadata.isFile() || metadata.size > CONFIG_CONTENT_LIMIT_BYTES) {
       throw tooLarge();
     }
-    const buffer = Buffer.alloc(CONFIG_CONTENT_LIMIT_BYTES + 1);
-    let offset = 0;
-    while (offset < buffer.length) {
-      const { bytesRead } = await handle.read(
-        buffer,
-        offset,
-        buffer.length - offset,
-        offset,
-      );
-      if (bytesRead === 0) break;
-      offset += bytesRead;
-    }
-    if (offset > CONFIG_CONTENT_LIMIT_BYTES) throw tooLarge();
-    return buffer.subarray(0, offset).toString("utf8");
+    return handle.readFile("utf8");
   } finally {
     await handle.close();
   }
