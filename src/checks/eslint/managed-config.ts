@@ -193,6 +193,28 @@ function modePlugins(options: ManagedConfigOptions): Linter.Config | undefined {
   }
 }
 
+function managedTypescriptPreset(
+  presetConfig: Linter.Config,
+  languageOptions: NonNullable<Linter.Config["languageOptions"]>,
+): Linter.Config {
+  return {
+    ...presetConfig,
+    files: TYPESCRIPT_FILES,
+    languageOptions,
+    ...(presetConfig.rules === undefined
+      ? {}
+      : { rules: { ...presetConfig.rules } }),
+    ...(presetConfig.plugins === undefined
+      ? {}
+      : {
+          plugins: {
+            ...presetConfig.plugins,
+            "@typescript-eslint": managedTypescriptPlugin,
+          },
+        }),
+  };
+}
+
 export function managedConfig(
   options: ManagedConfigOptions,
 ): readonly Linter.Config[] {
@@ -226,10 +248,8 @@ export function managedConfig(
       for (const preset of tseslint.configs.recommendedTypeChecked) {
         const presetConfig = preset as Linter.Config;
         const parserOptions = presetConfig.languageOptions?.parserOptions;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
+        config.push(
+          managedTypescriptPreset(presetConfig, {
             ...presetConfig.languageOptions,
             parser: reuseTypescriptParser,
             parserOptions: {
@@ -238,42 +258,18 @@ export function managedConfig(
                 : {}),
               programs: [...options.typedProject.programs],
             },
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
-            ? {}
-            : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
-                },
-              }),
-        });
+          }),
+        );
       }
     } else if (options.typeInformation === "basic") {
       for (const preset of tseslint.configs.recommended) {
         const presetConfig = preset as Linter.Config;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
+        config.push(
+          managedTypescriptPreset(presetConfig, {
             ...presetConfig.languageOptions,
             parser: reuseTypescriptParser,
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
-            ? {}
-            : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
-                },
-              }),
-        });
+          }),
+        );
       }
     }
   }
