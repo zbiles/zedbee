@@ -9,6 +9,7 @@ import type {
 import { managedAutomaticFixFor } from "../../attribution/fingerprint.js";
 import { DISPLAY_TEXT_LIMITS } from "../../core/display-text.js";
 import { managedRuleInventory } from "./rule-settings.js";
+import { isConfigurableRuleCheckId } from "../../config/settings-registry.js";
 
 /** Only managed package metadata may supply source-free diagnostic prose. */
 export function eslintDiagnosticMessage(
@@ -18,11 +19,7 @@ export function eslintDiagnosticMessage(
   messageId?: string,
 ): string {
   if (rule === "eslint/parsing-error") return "The source could not be parsed.";
-  if (
-    check !== "lint" &&
-    check !== "reactCorrectness" &&
-    check !== "reactAccessibility"
-  )
+  if (!isConfigurableRuleCheckId(check))
     return "The analyzer reported a diagnostic.";
   try {
     const metadata = managedRuleInventory(check).get(rule)?.meta;

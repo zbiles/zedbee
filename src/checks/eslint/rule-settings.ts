@@ -1,4 +1,8 @@
 import { copyStrictJson, isUnsafeJsonKey } from "../../config/strict-json.js";
+import {
+  CONFIGURABLE_RULE_CHECK_IDS,
+  type ConfigurableRuleCheckId,
+} from "../../config/settings-registry.js";
 import { managedHooksPlugin } from "../react/managed-hooks-plugin.js";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -10,7 +14,7 @@ export { freezeRuleSettings } from "./freeze-rule-settings.js";
 const require = createRequire(import.meta.url);
 const eslintRoot = dirname(require.resolve("eslint/package.json"));
 
-export type RuleCheckId = "lint" | "reactCorrectness" | "reactAccessibility";
+export type RuleCheckId = ConfigurableRuleCheckId;
 export type LintRuleSettings = Readonly<
   Record<string, EslintRuleConfiguration>
 >;
@@ -333,9 +337,7 @@ function validateRuleId(checkId: RuleCheckId, ruleId: string): void {
 
   if (managedRuleInventory(checkId).has(ruleId)) return;
 
-  const owner = (
-    ["lint", "reactCorrectness", "reactAccessibility"] as const
-  ).find(
+  const owner = CONFIGURABLE_RULE_CHECK_IDS.find(
     (candidate) =>
       candidate !== checkId && managedRuleInventory(candidate).has(ruleId),
   );
