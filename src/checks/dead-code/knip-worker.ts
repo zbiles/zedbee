@@ -17,21 +17,11 @@ import {
 import { loadCapturedResolver } from "./wasi.js";
 import type { KnipJob } from "./executor.js";
 import { createPackageMetadataReader } from "./package-metadata.js";
+import { ISSUE_TYPES as KNIP_ISSUE_TYPES } from "./parse-report.js";
 
 const require = createRequire(import.meta.url);
 const globals = globalThis as unknown as Record<string, unknown>;
-const ISSUE_TYPES = new Set([
-  "files",
-  "dependencies",
-  "devDependencies",
-  "unlisted",
-  "unresolved",
-  "exports",
-  "types",
-  "nsExports",
-  "nsTypes",
-  "duplicates",
-]);
+const ISSUE_TYPES = new Set<string>(KNIP_ISSUE_TYPES);
 
 function reportFor(result: {
   issues: Record<

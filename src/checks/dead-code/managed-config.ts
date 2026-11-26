@@ -9,6 +9,7 @@ import { readContainedFile } from "../../inspection/read-json.js";
 import { managedKnipEntry } from "./managed-knip.js";
 import { dirname, join, posix } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { ISSUE_TYPES } from "./parse-report.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { readJsonData } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
@@ -16,19 +17,6 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
-
-const ISSUE_TYPES = [
-  "files",
-  "dependencies",
-  "devDependencies",
-  "unlisted",
-  "unresolved",
-  "exports",
-  "types",
-  "nsExports",
-  "nsTypes",
-  "duplicates",
-] as const;
 
 const IGNORE = [
   "**/node_modules/**",

@@ -3,7 +3,7 @@ import type { Observation } from "../../core/types.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { sourceEntityName } from "../../attribution/source-identity.js";
 
-const ISSUE_TYPES = [
+export const ISSUE_TYPES = [
   "files",
   "dependencies",
   "devDependencies",
