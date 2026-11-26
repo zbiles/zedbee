@@ -4,6 +4,7 @@ import { readContainedFile } from "../../inspection/read-json.js";
 import {
   captureSnapshotRegistry,
   IGNORED_DIRECTORY_NAMES,
+  type SnapshotRegistry,
 } from "../../inspection/snapshot-registry.js";
 import type {
   RepositoryInspection,
@@ -193,6 +194,7 @@ function selectedMapping(
 export async function loadSnapshotAliases(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
+  registry?: SnapshotRegistry,
 ): Promise<SnapshotAliases> {
   if (workspace.tsconfigPaths.length === 0)
     return { patterns: [], resolve: () => undefined };
@@ -201,7 +203,8 @@ export async function loadSnapshotAliases(
     snapshotRoot,
     workspace,
   );
-  const registry = await captureSnapshotRegistry(snapshotRoot);
+  const snapshotRegistry =
+    registry ?? (await captureSnapshotRegistry(snapshotRoot));
   const paths = input.options.paths ?? {};
   const configFilePath = input.options.configFilePath;
   const pathsBasePath = input.options.pathsBasePath;
@@ -224,7 +227,7 @@ export async function loadSnapshotAliases(
   };
   const entryFor = (path: string) => {
     try {
-      return registry.resolve(repositoryPath(path));
+      return snapshotRegistry.resolve(repositoryPath(path));
     } catch {
       return undefined;
     }
@@ -298,7 +301,7 @@ export async function loadSnapshotAliases(
       return candidates.find(
         (path) =>
           /\.[^/]+$/u.test(path) &&
-          registry.resolve(path)?.targetKind === "file",
+          snapshotRegistry.resolve(path)?.targetKind === "file",
       );
     },
   };
@@ -342,7 +345,11 @@ export async function prepareSnapshotAliases(
     pending.push(scope);
   };
   for (const workspace of pending) {
-    const aliases = await loadSnapshotAliases(snapshotRoot, workspace);
+    const aliases = await loadSnapshotAliases(
+      snapshotRoot,
+      workspace,
+      registry,
+    );
     workspaces.set(workspace.relativeRoot, aliases);
     const mappings: Record<string, readonly string[]> = Object.create(null);
     for (const sourcePath of workspace.sourceFiles) {
