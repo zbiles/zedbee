@@ -32,24 +32,25 @@ export function normalizeProjectRoot(root: string): string {
   return posix.normalize(path || ".").replace(/\/$/u, "") || ".";
 }
 type Capability = "execute" | "messages";
-async function trustKey(
-  root: string,
+function capabilityKey(
+  common: string,
   projectRoot: string,
   capability: Capability,
-): Promise<string> {
-  const common = await canonicalTrustRoot(root);
+): string {
   const digest = createHash("sha256")
     .update(`${common}\0${normalizeProjectRoot(projectRoot)}`)
     .digest("hex");
   return `zedbee.projectEslint-${digest}.${capability}`;
 }
-async function stored(
+async function trustKey(
   root: string,
   projectRoot: string,
   capability: Capability,
-): Promise<boolean> {
+): Promise<string> {
+  return capabilityKey(await canonicalTrustRoot(root), projectRoot, capability);
+}
+async function storedKey(root: string, key: string): Promise<boolean> {
   try {
-    const key = await trustKey(root, projectRoot, capability);
     const value = await new GitClient(root).tryRun([
       "config",
       "--local",
@@ -61,6 +62,16 @@ async function stored(
   } catch {
     return false;
   }
+}
+async function stored(
+  root: string,
+  projectRoot: string,
+  capability: Capability,
+): Promise<boolean> {
+  const key = await trustKey(root, projectRoot, capability).catch(
+    () => undefined,
+  );
+  return key === undefined ? false : storedKey(root, key);
 }
 export async function hasProjectEslintTrust(
   root: string,
@@ -108,7 +119,12 @@ export async function requireProjectEslintTrust(
 ): Promise<ProjectEslintPermit> {
   const checkoutRoot = await realpath(root),
     normalized = normalizeProjectRoot(projectRoot);
-  if (!explicitConsent && !(await stored(root, normalized, "execute")))
+  const common = await canonicalTrustRoot(root).catch(() => undefined);
+  const isStored = async (capability: Capability): Promise<boolean> =>
+    common === undefined
+      ? false
+      : storedKey(root, capabilityKey(common, normalized, capability));
+  if (!explicitConsent && !(await isStored("execute")))
     throw new ProjectEslintFailureError("PROJECT_ESLINT_TRUST_REQUIRED");
   const permit = Object.freeze({
     projectRoot: normalized,
@@ -119,7 +135,7 @@ export async function requireProjectEslintTrust(
     projectRoot: normalized,
     sourceMessages:
       (explicitConsent && options.sourceMessages === true) ||
-      (await stored(root, normalized, "messages")),
+      (await isStored("messages")),
   });
   return permit;
 }
