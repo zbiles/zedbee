@@ -165,6 +165,15 @@ export async function executeFixCommand(
       options.telemetrySummary?.(value);
     } catch {}
   };
+  const writeResultText = (plan: FixPlan, result: FixResult): void => {
+    io.writeStdout(
+      renderResultText(
+        plan,
+        result,
+        terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
+      ),
+    );
+  };
   try {
     options.signal?.throwIfAborted();
     const repositoryRoot = await timeCommandStage(stages, "repository", () =>
@@ -323,22 +332,10 @@ export async function executeFixCommand(
           },
         );
       } catch {
-        io.writeStdout(
-          renderResultText(
-            prepared.publicPlan,
-            result,
-            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
-          ),
-        );
+        writeResultText(prepared.publicPlan, result);
       }
     } else {
-      io.writeStdout(
-        renderResultText(
-          prepared.publicPlan,
-          result,
-          terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
-        ),
-      );
+      writeResultText(prepared.publicPlan, result);
     }
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
@@ -364,13 +361,7 @@ export async function executeFixCommand(
           `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details), null, 2)}\n`,
         );
       } else {
-        io.writeStdout(
-          renderResultText(
-            applying.publicPlan,
-            retainedResult,
-            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
-          ),
-        );
+        writeResultText(applying.publicPlan, retainedResult);
       }
     }
     if (cleanupFailed) {
