@@ -108,6 +108,23 @@ export function wrapPrefixedTerminalWords(
   return wrapTerminalWords(value, available).map((line) => `${prefix}${line}`);
 }
 
+export function wrapLabeledTerminalWords(
+  prefix: string,
+  value: string,
+  width: number,
+): string[] {
+  const prefixWidth = terminalCellWidth(prefix);
+  const lines: string[] = [];
+  for (const line of wrapTerminalWords(value, Math.max(1, width - prefixWidth))) {
+    lines.push(`${prefix}${line}`);
+  }
+  if (lines.length === 0) return [];
+  const continuation = " ".repeat(prefixWidth);
+  return lines.map((line, index) =>
+    index === 0 ? line : `${continuation}${line}`,
+  );
+}
+
 export function padStartTerminalCells(value: string, width: number): string {
   return `${" ".repeat(Math.max(0, width - terminalCellWidth(value)))}${value}`;
 }

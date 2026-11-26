@@ -38,6 +38,7 @@ import {
   padStartTerminalCells,
   terminalCellWidth,
   truncateTerminalCells,
+  wrapLabeledTerminalWords,
   wrapPrefixedTerminalWords as wrapWords,
 } from "./terminal-cells.js";
 
@@ -132,12 +133,7 @@ function descriptionLines(
   width: number,
 ): string[] {
   const indent = label === "Attribution" ? "    " : "       ";
-  const prefix = `${indent}${label}: `;
-  const prefixWidth = terminalCellWidth(prefix);
-  const continuation = " ".repeat(prefixWidth);
-  return wrapWords(value, Math.max(1, width - prefixWidth)).map(
-    (line, index) => `${index === 0 ? prefix : continuation}${line}`,
-  );
+  return wrapLabeledTerminalWords(`${indent}${label}: `, value, width);
 }
 
 function opaquePathLines(

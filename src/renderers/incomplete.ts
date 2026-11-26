@@ -1,17 +1,12 @@
 import type { CheckResult, StructuralParseFailures } from "../core/types.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
 import {
-  terminalCellWidth,
+  wrapLabeledTerminalWords,
   wrapPrefixedTerminalWords as wrapWords,
 } from "./terminal-cells.js";
 
 function fieldLines(label: string, value: string, width: number): string[] {
-  const prefix = `  ${label}: `;
-  const prefixWidth = terminalCellWidth(prefix);
-  const continuation = " ".repeat(prefixWidth);
-  return wrapWords(value, Math.max(1, width - prefixWidth)).map(
-    (line, index) => `${index === 0 ? prefix : continuation}${line}`,
-  );
+  return wrapLabeledTerminalWords(`  ${label}: `, value, width);
 }
 
 function titleLines(check: CheckResult, width: number): string[] {
