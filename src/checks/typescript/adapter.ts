@@ -36,6 +36,21 @@ import {
 
 const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 
+function programObservations(
+  programs: readonly ts.Program[],
+  snapshotRoot: string,
+  repositoryRoot: string,
+): Observation[] {
+  return programs
+    .flatMap((program) => ts.getPreEmitDiagnostics(program))
+    .map((diagnostic) =>
+      convertTypescriptDiagnostic(diagnostic, snapshotRoot, repositoryRoot),
+    )
+    .filter(
+      (observation): observation is Observation => observation !== undefined,
+    );
+}
+
 async function collectSide(
   repositoryRoot: string,
   inspection: RepositoryInspection,
@@ -79,18 +94,11 @@ async function collectSide(
       projectPaths,
       snapshot: side === "baseline" ? "last-commit" : "staged",
     });
-  const observations = programs
-    .flatMap((program) => ts.getPreEmitDiagnostics(program))
-    .map((diagnostic) =>
-      convertTypescriptDiagnostic(
-        diagnostic,
-        resolve(canonicalRoot),
-        resolve(repositoryRoot),
-      ),
-    )
-    .filter(
-      (observation): observation is Observation => observation !== undefined,
-    )
+  const observations = programObservations(
+    programs,
+    resolve(canonicalRoot),
+    resolve(repositoryRoot),
+  )
     .filter(
       (observation) =>
         requestedPaths === undefined ||
@@ -200,14 +208,7 @@ export async function analyzeTypescriptSnapshots(
       rootNames,
       options: { strict: true },
     });
-    return programs
-      .flatMap((program) => ts.getPreEmitDiagnostics(program))
-      .map((diagnostic) =>
-        convertTypescriptDiagnostic(diagnostic, process.cwd(), process.cwd()),
-      )
-      .filter(
-        (observation): observation is Observation => observation !== undefined,
-      );
+    return programObservations(programs, process.cwd(), process.cwd());
   };
   const baseline = new Map(
     analyze(snapshots.baseline).map((item) => [item.identity, item]),
