@@ -1,16 +1,9 @@
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  join,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseDocument } from "yaml";
 import { GitClient } from "../git/client.js";
+import { isContainedPath } from "../inspection/read-json.js";
 import { SCAN_HOOK_NAMES, resolveInstalledCliCommand } from "./command.js";
 import { installedHookCommand } from "./installed-command.js";
 import { detectHookChoice } from "./detect.js";
@@ -29,11 +22,6 @@ import {
 export { HOOK_UPDATE_NOTICE } from "../reporting/hook-update-notice.js";
 
 const MAX_BYTES = 64 * 1024;
-
-function contained(root: string, path: string): boolean {
-  const value = relative(root, path);
-  return !isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`);
-}
 
 /** Optional, bounded, data-only reads. Never follow a hook symlink. */
 async function readHookData(
@@ -160,7 +148,10 @@ export async function inspectHookMaintenance(
     for (const [index, hook] of hookResults.entries()) {
       const name = hookNames[index]!;
       const path = resolve(root, hook.stdout);
-      if (contained(root, path) || contained(join(common, "hooks"), path))
+      if (
+        isContainedPath(root, path) ||
+        isContainedPath(join(common, "hooks"), path)
+      )
         scripts.add(path);
       // Husky 9's dispatcher delegates to its tracked sibling script, even
       // when core.hooksPath points from a linked worktree to the main checkout.
@@ -216,7 +207,9 @@ export async function inspectHookMaintenance(
       scripts.add(join(root, ".husky/pre-commit"));
       scripts.add(join(root, ".husky/pre-merge-commit"));
     }
-    const sources = await Promise.all([...scripts].map((path) => readHookData(path)));
+    const sources = await Promise.all(
+      [...scripts].map((path) => readHookData(path)),
+    );
     let managerSources: readonly string[] = [];
     if (choice === "simple-git-hooks" && managers[0] !== undefined) {
       managerSources = managerCommands(managers[0], false);
