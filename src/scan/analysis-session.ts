@@ -61,7 +61,11 @@ import {
 } from "../git/snapshot-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import type { RepositoryInspection } from "../inspection/types.js";
-import { resolveScanResourcePolicy } from "./resource-policy.js";
+import {
+  resolveBootstrapResourcePolicy,
+  resolveScanResourcePolicy,
+  scanResourceOverrides,
+} from "./resource-policy.js";
 import {
   sanitizeScanSourceIdentity,
   type ScanSourceIdentity,
@@ -280,13 +284,7 @@ export async function withAnalysisSession<T>(
   try {
     signal.throwIfAborted();
     enterPhase("configuration");
-    const bootstrapResourcePolicy = resolveScanResourcePolicy(
-      { gitHardTimeout: "30s" },
-      {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.noTimeout ? { noTimeout: true } : {}),
-      },
-    );
+    const bootstrapResourcePolicy = resolveBootstrapResourcePolicy(options);
     let bootstrapGit = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy: bootstrapResourcePolicy,
     });
@@ -346,10 +344,10 @@ export async function withAnalysisSession<T>(
       });
     }
     state.configuredPathExclusions = config.pathExclusions;
-    const resourcePolicy = resolveScanResourcePolicy(config.resources, {
-      ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-      ...(options.noTimeout ? { noTimeout: true } : {}),
-    });
+    const resourcePolicy = resolveScanResourcePolicy(
+      config.resources,
+      scanResourceOverrides(options),
+    );
     options.onConfiguration?.(config);
     signal.throwIfAborted();
     enterPhase("change-discovery");

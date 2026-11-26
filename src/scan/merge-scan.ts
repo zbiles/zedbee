@@ -1,7 +1,7 @@
 import { scanOutcome } from "../policy/evaluate.js";
 import { changeSetFromMap } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
-import { resolveScanResourcePolicy } from "./resource-policy.js";
+import { resolveBootstrapResourcePolicy } from "./resource-policy.js";
 import type { RunScanDependencies, RunScanOptions } from "./run-scan.js";
 import type { ScanReport } from "./report.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -202,13 +202,7 @@ export async function runMergeScan(
   try {
     if (options.baseRef !== undefined)
       throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    const resourcePolicy = resolveScanResourcePolicy(
-      { gitHardTimeout: "30s" },
-      {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.noTimeout ? { noTimeout: true } : {}),
-      },
-    );
+    const resourcePolicy = resolveBootstrapResourcePolicy(options);
     let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });

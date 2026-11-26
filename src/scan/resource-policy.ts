@@ -100,3 +100,22 @@ export function resolveScanResourcePolicy(
     gitOutputLimitBytes: outputLimit(values.gitOutputLimitBytes),
   });
 }
+
+export function scanResourceOverrides(
+  options: ScanResourceOverrides,
+): ScanResourceOverrides {
+  return {
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    ...(options.noTimeout ? { noTimeout: true } : {}),
+  };
+}
+
+/** Git limits used before the repository configuration has been loaded. */
+export function resolveBootstrapResourcePolicy(
+  options: ScanResourceOverrides,
+): ScanResourcePolicy {
+  return resolveScanResourcePolicy(
+    { gitHardTimeout: "30s" },
+    scanResourceOverrides(options),
+  );
+}
