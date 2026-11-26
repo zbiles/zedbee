@@ -535,6 +535,19 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
     .join("\n\n")}\n`;
 }
 
+function usesEngine(
+  config: ResolvedConfig,
+  checkId: "lint" | "formatting",
+  engine: "managed" | "project",
+): boolean {
+  return (
+    config.checks[checkId].engine === engine ||
+    config.overrides.some(
+      (override) => override.checks[checkId]?.engine === engine,
+    )
+  );
+}
+
 export async function executeChecksCommand(
   options: ChecksCommandOptions,
   io: ChecksCommandIO,
@@ -549,26 +562,14 @@ export async function executeChecksCommand(
       options.configPath,
       dependencies,
     );
-    const lintUsesProject =
-      config.checks.lint.engine === "project" ||
-      config.overrides.some(
-        (override) => override.checks.lint?.engine === "project",
-      );
-    const formattingUsesProject =
-      config.checks.formatting.engine === "project" ||
-      config.overrides.some(
-        (override) => override.checks.formatting?.engine === "project",
-      );
+    const lintUsesProject = usesEngine(config, "lint", "project");
+    const formattingUsesProject = usesEngine(config, "formatting", "project");
     const discoveredProjectPrettier = formattingUsesProject
       ? await (dependencies.discoverProjectPrettier ?? discoverProjectPrettier)(
           repositoryRoot,
         ).catch(() => [] as const)
       : [];
-    const formattingUsesManaged =
-      config.checks.formatting.engine === "managed" ||
-      config.overrides.some(
-        (override) => override.checks.formatting?.engine === "managed",
-      );
+    const formattingUsesManaged = usesEngine(config, "formatting", "managed");
     const engineVersions = new Map<string, string>();
     const effectiveFormattingEngines = Object.freeze([
       ...(formattingUsesManaged
