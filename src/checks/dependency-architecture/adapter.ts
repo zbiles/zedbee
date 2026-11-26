@@ -241,6 +241,13 @@ async function workspaceAliases(
   return aliases;
 }
 
+/** Most specific workspace root first; the repository root "." last. */
+function compareScopeRoots(left: string, right: string): number {
+  return (
+    Number(left === ".") - Number(right === ".") || right.length - left.length
+  );
+}
+
 /** Redirect only to pre-resolved captured files, scoped to the importing workspace. */
 function capturedAliasPlugin(
   snapshotRoot: string,
@@ -249,9 +256,7 @@ function capturedAliasPlugin(
   NonNullable<NonNullable<Parameters<typeof cruise>[2]>["plugins"]>[number],
   { apply: unknown }
 > {
-  const scopes = [...prepared.workspaces.keys()].sort(
-    (a, b) => Number(a === ".") - Number(b === ".") || b.length - a.length,
-  );
+  const scopes = [...prepared.workspaces.keys()].sort(compareScopeRoots);
   return {
     apply(resolver) {
       const target = resolver.ensureHook("resolve");
@@ -367,10 +372,8 @@ async function collectSide(
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
   )?.configPath;
-  const aliasScopes = [...inspection.workspaces].sort(
-    (left, right) =>
-      Number(left.relativeRoot === ".") - Number(right.relativeRoot === ".") ||
-      right.relativeRoot.length - left.relativeRoot.length,
+  const aliasScopes = [...inspection.workspaces].sort((left, right) =>
+    compareScopeRoots(left.relativeRoot, right.relativeRoot),
   );
   return normalizeDependencyViolations(
     result,
