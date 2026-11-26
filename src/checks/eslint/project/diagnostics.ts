@@ -2,19 +2,9 @@ import { createHash } from "node:crypto";
 import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprint.js";
 import type { Observation } from "../../../core/types.js";
 import { DISPLAY_TEXT_LIMITS } from "../../../core/display-text.js";
+import type { ProjectEslintDiagnostic } from "./types.js";
 
-export interface ProjectDiagnostic {
-  readonly file: string;
-  readonly ruleId: string | null;
-  readonly severity: 1 | 2;
-  readonly message: string;
-  readonly line?: number;
-  readonly column?: number;
-  readonly endLine?: number;
-  readonly endColumn?: number;
-  readonly fatal?: boolean;
-  readonly comparisonIdentity?: string;
-}
+export type ProjectDiagnostic = ProjectEslintDiagnostic;
 export function convertProjectEslintDiagnostic(
   input: ProjectDiagnostic,
   fullMessages: boolean,
