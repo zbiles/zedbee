@@ -41,6 +41,25 @@ class WorkerConfigError extends Error {
 let state: WorkerState | undefined;
 let busy = false;
 
+interface ProjectIgnoreFiles {
+  readonly prettierIgnore?: string;
+  readonly gitIgnore?: string;
+}
+let ignoreFiles: ProjectIgnoreFiles | undefined;
+
+/** The project-root ignore files, checked once per worker session. */
+function projectIgnoreFiles(): ProjectIgnoreFiles {
+  if (ignoreFiles !== undefined) return ignoreFiles;
+  const directory = projectDirectory();
+  const prettierIgnore = join(directory, ".prettierignore");
+  const gitIgnore = join(directory, ".gitignore");
+  ignoreFiles = {
+    ...(existsSync(prettierIgnore) ? { prettierIgnore } : {}),
+    ...(existsSync(gitIgnore) ? { gitIgnore } : {}),
+  };
+  return ignoreFiles;
+}
+
 // Must match parseImportableConfig in project-protocol.ts.
 const IMPORT_MAX_OVERRIDES = 256;
 const IMPORT_MAX_LIMITATIONS = 64;
@@ -99,12 +118,10 @@ function projectDirectory(): string {
 
 /** Explicit project-root ignore files only; other projects' files are not read. */
 function projectIgnorePaths(): readonly string[] {
-  const directory = projectDirectory();
-  const candidates = [
-    join(directory, ".prettierignore"),
-    join(directory, ".gitignore"),
-  ];
-  return candidates.filter((path) => existsSync(path));
+  const { prettierIgnore, gitIgnore } = projectIgnoreFiles();
+  return [prettierIgnore, gitIgnore].filter(
+    (path): path is string => path !== undefined,
+  );
 }
 
 async function fileInfoIgnoredBy(
@@ -124,18 +141,18 @@ async function fileInfoIgnoredBy(
 async function ignoreReason(
   file: string,
 ): Promise<"prettierignore" | "gitignore"> {
-  const directory = projectDirectory();
-  const prettierIgnore = join(directory, ".prettierignore");
-  const gitIgnore = join(directory, ".gitignore");
-  if (existsSync(prettierIgnore)) {
-    if (await fileInfoIgnoredBy(state!.prettier, file, [prettierIgnore])) {
-      return "prettierignore";
-    }
+  const { prettierIgnore, gitIgnore } = projectIgnoreFiles();
+  if (
+    prettierIgnore !== undefined &&
+    (await fileInfoIgnoredBy(state!.prettier, file, [prettierIgnore]))
+  ) {
+    return "prettierignore";
   }
-  if (existsSync(gitIgnore)) {
-    if (await fileInfoIgnoredBy(state!.prettier, file, [gitIgnore])) {
-      return "gitignore";
-    }
+  if (
+    gitIgnore !== undefined &&
+    (await fileInfoIgnoredBy(state!.prettier, file, [gitIgnore]))
+  ) {
+    return "gitignore";
   }
   return "prettierignore";
 }
