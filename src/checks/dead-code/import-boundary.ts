@@ -4,6 +4,7 @@ import {
   URL_SCHEME,
 } from "../project/import-specifier.js";
 import { pinnedKnipModuleUrl } from "./managed-knip.js";
+import type { CommentImports } from "../typescript/aliases.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix } from "node:path";
@@ -138,26 +139,13 @@ interface Selection {
   readonly imports?: Record<string, unknown>;
 }
 
-export interface KnipComment {
-  readonly type: "Block" | "Line";
-  readonly start: number;
-  readonly end: number;
-  readonly value: string;
-}
-
-type CommentCollector = (
-  comments: readonly KnipComment[],
-  firstStatementStart: number,
-  addImport: (specifier: string) => void,
-) => void;
-
 export async function createKnipImportValidator(
   registry: SnapshotRegistry,
   probeMissing: (path: string) => Promise<void> = assertMissing,
   resolveAlias?: (sourcePath: string, specifier: string) => string | undefined,
 ): Promise<{
   validateImport: (sourcePath: string, specifier: string) => Promise<void>;
-  collectCommentImports: CommentCollector;
+  collectCommentImports: CommentImports;
 }> {
   const probes = new Map<string, Promise<void>>();
   const missing = (path: string): Promise<void> => {
@@ -340,6 +328,6 @@ export async function createKnipImportValidator(
   return {
     validateImport,
     collectCommentImports:
-      commentsModule.extractImportsFromComments as CommentCollector,
+      commentsModule.extractImportsFromComments as CommentImports,
   };
 }
