@@ -92,13 +92,32 @@ function overrideMatchesAny(
   );
 }
 
+const validatedProjectEslintConfigurations = new WeakMap<
+  ResolvedConfig,
+  WeakSet<RepositoryInspection>
+>();
+
+function assertProjectEslintConfigurationOnce(
+  config: ResolvedConfig,
+  inspection: RepositoryInspection,
+): void {
+  const validated = validatedProjectEslintConfigurations.get(config);
+  if (validated?.has(inspection) === true) return;
+  assertProjectEslintConfiguration(config, inspection);
+  if (validated === undefined) {
+    validatedProjectEslintConfigurations.set(config, new WeakSet([inspection]));
+  } else {
+    validated.add(inspection);
+  }
+}
+
 export function resolveTargetPolicy(
   config: ResolvedConfig,
   checkId: CheckId,
   target: CheckTarget,
   inspection: RepositoryInspection,
 ): ResolvedCheckPolicy {
-  assertProjectEslintConfiguration(config, inspection);
+  assertProjectEslintConfigurationOnce(config, inspection);
   let policy: ResolvedCheckPolicy = { ...config.checks[checkId] };
   const candidates = policyCandidates(target, inspection);
 
