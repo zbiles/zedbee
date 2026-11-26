@@ -169,29 +169,44 @@ function normalizeWorkspacePattern(pattern: string): string {
   return negated ? `!${normalized}` : normalized;
 }
 
+function workspacePatternMatcher(
+  patterns: readonly string[],
+): (path: string) => boolean {
+  const normalized = patterns.map(normalizeWorkspacePattern);
+  const positivePatterns = normalized.filter(
+    (pattern) => !pattern.startsWith("!"),
+  );
+  const negativePatterns = normalized
+    .filter((pattern) => pattern.startsWith("!"))
+    .map((pattern) => pattern.slice(1));
+  let matchers:
+    | { positive: picomatch.Matcher; negative: picomatch.Matcher | undefined }
+    | undefined;
+  return (path) => {
+    try {
+      matchers ??= {
+        positive: picomatch(positivePatterns, { dot: true }),
+        negative:
+          negativePatterns.length === 0
+            ? undefined
+            : picomatch(negativePatterns, { dot: true }),
+      };
+      return (
+        positivePatterns.length > 0 &&
+        matchers.positive(path) &&
+        !(matchers.negative?.(path) ?? false)
+      );
+    } catch {
+      throw invalidData("workspace configuration");
+    }
+  };
+}
+
 export function matchesWorkspacePattern(
   path: string,
   patterns: readonly string[],
 ): boolean {
-  patterns = patterns.map(normalizeWorkspacePattern);
-  const positivePatterns = patterns.filter(
-    (pattern) => !pattern.startsWith("!"),
-  );
-  const negativePatterns = patterns
-    .filter((pattern) => pattern.startsWith("!"))
-    .map((pattern) => pattern.slice(1));
-  try {
-    return (
-      positivePatterns.some((pattern) =>
-        picomatch.isMatch(path, pattern, { dot: true }),
-      ) &&
-      !negativePatterns.some((pattern) =>
-        picomatch.isMatch(path, pattern, { dot: true }),
-      )
-    );
-  } catch {
-    throw invalidData("workspace configuration");
-  }
+  return workspacePatternMatcher(patterns)(path);
 }
 
 function discoverSelectedWorkspaceManifests(
@@ -201,6 +216,7 @@ function discoverSelectedWorkspaceManifests(
   if (patterns.length === 0) {
     return [];
   }
+  const matches = workspacePatternMatcher(patterns);
   const manifests = new Set<string>();
   for (const entry of registry.entries()) {
     if (
@@ -208,10 +224,7 @@ function discoverSelectedWorkspaceManifests(
       posix.basename(entry.repositoryPath) === "package.json"
     ) {
       const workspaceRoot = posix.dirname(entry.repositoryPath);
-      if (
-        workspaceRoot !== "." &&
-        matchesWorkspacePattern(workspaceRoot, patterns)
-      ) {
+      if (workspaceRoot !== "." && matches(workspaceRoot)) {
         manifests.add(entry.repositoryPath);
       }
     }
@@ -219,7 +232,7 @@ function discoverSelectedWorkspaceManifests(
     if (
       entry.kind === "symlink" &&
       entry.targetKind === "directory" &&
-      matchesWorkspacePattern(entry.repositoryPath, patterns)
+      matches(entry.repositoryPath)
     ) {
       const manifestPath = posix.join(entry.repositoryPath, "package.json");
       if (pathExists(registry, manifestPath)) {
