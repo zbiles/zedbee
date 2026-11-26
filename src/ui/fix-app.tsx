@@ -21,6 +21,7 @@ import {
 } from "./branded-command-frame.js";
 import {
   clampScrollOffset,
+  isSgrMouseReport,
   pageScrollStep,
   parseSgrWheelDelta,
 } from "./terminal-viewport-model.js";
@@ -31,10 +32,7 @@ import {
 } from "./terminal-viewport.js";
 import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
-import {
-  alternateScreenRenderOptions,
-  SGR_MOUSE_REPORT,
-} from "./alternate-screen-render.js";
+import { alternateScreenRenderOptions } from "./alternate-screen-render.js";
 
 const FIX_EVENT_MAX_FPS = 30;
 
@@ -525,7 +523,7 @@ export function FixApp(props: FixAppProps) {
 
   useInput((input, key) => {
     const wheelDelta = parseSgrWheelDelta(input);
-    if (SGR_MOUSE_REPORT.test(input)) {
+    if (isSgrMouseReport(input)) {
       if (wheelDelta !== 0) scrollBy(wheelDelta);
       return;
     }

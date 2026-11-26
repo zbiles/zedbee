@@ -59,6 +59,12 @@ export function revealOffsetForTarget(
 
 const SGR_MOUSE = /(?:\u001b)?\[<(\d+);\d+;\d+[Mm]/gu;
 
+const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
+
+export function isSgrMouseReport(input: string): boolean {
+  return SGR_MOUSE_REPORT.test(input);
+}
+
 export function parseSgrWheelDelta(input: string): number {
   let delta = 0;
   for (const match of input.matchAll(SGR_MOUSE)) {
