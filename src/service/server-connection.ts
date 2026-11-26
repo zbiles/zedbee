@@ -5,7 +5,7 @@ import type {
   AnalyzerExecutionSession,
 } from "../checks/runner/executor.js";
 import {
-  LeaseRemovalDeferredError,
+  removeLeaseUnlessDeferred,
   type ServiceState,
   type StateLease,
 } from "./state.js";
@@ -302,17 +302,8 @@ export function acceptServiceConnection(
         host.releaseSession();
         if (!socket.destroyed && !host.stopping)
           await exchange("io-release", { sessionId: id });
-        else await removeAbandonedLease(id);
+        else await removeLeaseUnlessDeferred(host.state, id);
       }
-    }
-  }
-  async function removeAbandonedLease(id: string): Promise<void> {
-    try {
-      await host.state.removeLease(id);
-    } catch (error) {
-      // A surviving Windows client pins the exact lease without delete
-      // sharing. It removes that lease after independently acquiring it.
-      if (!(error instanceof LeaseRemovalDeferredError)) throw error;
     }
   }
   async function operate(value: Record<string, unknown>): Promise<unknown> {
@@ -368,7 +359,7 @@ export function acceptServiceConnection(
           host.releaseSession();
           if (lease && !socket.destroyed && !host.stopping)
             await exchange("io-release", { sessionId });
-          else if (lease) await removeAbandonedLease(sessionId);
+          else if (lease) await removeLeaseUnlessDeferred(host.state, sessionId);
         }
       }
     }

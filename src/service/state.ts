@@ -31,6 +31,17 @@ export class LeaseRemovalDeferredError extends ServiceUnavailableError {
     this.name = "LeaseRemovalDeferredError";
   }
 }
+/** Remove an I/O lease; a surviving Windows client may own its removal instead. */
+export async function removeLeaseUnlessDeferred(
+  state: Pick<ServiceState, "removeLease">,
+  id: string,
+): Promise<void> {
+  try {
+    await state.removeLease(id);
+  } catch (error) {
+    if (!(error instanceof LeaseRemovalDeferredError)) throw error;
+  }
+}
 function validRecord(value: unknown): value is ServiceRecord {
   return (
     exactFields(value, ["version", "identity", "instance", "secret"]) &&
