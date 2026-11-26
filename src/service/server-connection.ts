@@ -289,6 +289,11 @@ export function acceptServiceConnection(
       exchanges.delete(eventId);
     }
   }
+  async function handBackLease(sessionId: string): Promise<void> {
+    if (!socket.destroyed && !host.stopping)
+      await exchange("io-release", { sessionId });
+    else await removeLeaseUnlessDeferred(host.state, sessionId);
+  }
   async function closeSession(id: string): Promise<void> {
     const session = sessions.get(id);
     if (!session) throw new ServiceUnavailableError();
@@ -300,9 +305,7 @@ export function acceptServiceConnection(
         await leases.get(id)?.close();
         leases.delete(id);
         host.releaseSession();
-        if (!socket.destroyed && !host.stopping)
-          await exchange("io-release", { sessionId: id });
-        else await removeLeaseUnlessDeferred(host.state, id);
+        await handBackLease(id);
       }
     }
   }
@@ -357,9 +360,7 @@ export function acceptServiceConnection(
         if (!retained) {
           await lease?.close();
           host.releaseSession();
-          if (lease && !socket.destroyed && !host.stopping)
-            await exchange("io-release", { sessionId });
-          else if (lease) await removeLeaseUnlessDeferred(host.state, sessionId);
+          if (lease) await handBackLease(sessionId);
         }
       }
     }
