@@ -31,6 +31,18 @@ const sourceExtensions = new Set([
 ]);
 const windowsDrivePath = /^[A-Za-z]:/u;
 
+function invalidInspectorPath(path: string): Error {
+  return new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+}
+
+function escapesRoot(relativePath: string): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  );
+}
+
 async function assertInspectorPath(cwd: string, path: string): Promise<void> {
   const segments = path.split("/");
   const target = resolve(cwd, ...segments);
@@ -43,18 +55,16 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     segments.some(
       (segment) => segment === "" || segment === "." || segment === "..",
     ) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${sep}`) ||
-    isAbsolute(fromRoot) ||
+    escapesRoot(fromRoot) ||
     !sourceExtensions.has(extname(path))
   ) {
-    throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    throw invalidInspectorPath(path);
   }
 
   const captured = capturedSourceInput(cwd, path);
   if (captured !== undefined) {
     if (captured.entry !== undefined && captured.entry.targetKind !== "file") {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+      throw invalidInspectorPath(path);
     }
     return;
   }
@@ -64,16 +74,12 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
       realpath(target),
     ]);
     const canonicalRelative = relative(canonicalRoot, canonicalTarget);
-    if (
-      canonicalRelative === ".." ||
-      canonicalRelative.startsWith(`..${sep}`) ||
-      isAbsolute(canonicalRelative)
-    ) {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    if (escapesRoot(canonicalRelative)) {
+      throw invalidInspectorPath(path);
     }
     const targetStats = await stat(canonicalTarget);
     if (!targetStats.isFile()) {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+      throw invalidInspectorPath(path);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
