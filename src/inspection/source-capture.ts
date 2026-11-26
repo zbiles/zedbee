@@ -1,9 +1,11 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   ContainedFileSizeError,
+  isContainedPath,
+  normalizeRepositoryPath,
   readContainedBytes,
 } from "./read-json.js";
 import {
@@ -281,10 +283,6 @@ function validateSourceTransport(
     item.device <= 0xffffffffffffffffn &&
     item.inode >= 0n &&
     item.inode <= 0xffffffffffffffffn;
-  const contained = (root: string, path: string) => {
-    const from = relative(root, path);
-    return !isAbsolute(from) && from !== ".." && !from.startsWith(`..${sep}`);
-  };
   const entry = (
     item: unknown,
     root: string,
@@ -316,8 +314,8 @@ function validateSourceTransport(
       identity(item.targetIdentity) &&
       isAbsolute(item.absolutePath) &&
       isAbsolute(item.canonicalPath) &&
-      contained(root, item.absolutePath) &&
-      contained(root, item.canonicalPath) &&
+      isContainedPath(root, item.absolutePath) &&
+      isContainedPath(root, item.canonicalPath) &&
       resolve(root, item.repositoryPath) === item.absolutePath
     );
   };
@@ -375,7 +373,7 @@ function validateSourceTransport(
           .some(
             (part: string) => part === "" || part === "." || part === "..",
           ) ||
-        !contained(root.snapshotRoot, resolve(root.snapshotRoot, path))
+        !isContainedPath(root.snapshotRoot, resolve(root.snapshotRoot, path))
       )
         return invalid();
       paths.add(path);
@@ -438,9 +436,9 @@ export function importAnalysisSourceCapture(
     const exact = new Map(entries.map((item) => [item.repositoryPath, item]));
     const registry: SnapshotRegistry = Object.freeze({
       snapshotRoot: root.snapshotRoot,
-      exact: (path: string) => exact.get(path.split(sep).join("/")),
+      exact: (path: string) => exact.get(normalizeRepositoryPath(path)),
       resolve: (path: string) => {
-        const normalized = path.split(sep).join("/").replace(/^\.\//u, "");
+        const normalized = normalizeRepositoryPath(path).replace(/^\.\//u, "");
         return files.get(normalized)?.entry ?? exact.get(normalized);
       },
       entries: () => entries,
