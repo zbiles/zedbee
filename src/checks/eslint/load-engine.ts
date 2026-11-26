@@ -43,7 +43,11 @@ function escapesRoot(relativePath: string): boolean {
   );
 }
 
-async function assertInspectorPath(cwd: string, path: string): Promise<void> {
+async function assertInspectorPath(
+  cwd: string,
+  path: string,
+  canonicalRoot: () => Promise<string>,
+): Promise<void> {
   const segments = path.split("/");
   const target = resolve(cwd, ...segments);
   const fromRoot = relative(cwd, target);
@@ -69,11 +73,11 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     return;
   }
   try {
-    const [canonicalRoot, canonicalTarget] = await Promise.all([
-      realpath(cwd),
+    const [root, canonicalTarget] = await Promise.all([
+      canonicalRoot(),
       realpath(target),
     ]);
-    const canonicalRelative = relative(canonicalRoot, canonicalTarget);
+    const canonicalRelative = relative(root, canonicalTarget);
     if (escapesRoot(canonicalRelative)) {
       throw invalidInspectorPath(path);
     }
@@ -108,7 +112,11 @@ class ManagedEslint extends ESLint {
     patterns: string | string[],
   ): Promise<ESLint.LintResult[]> {
     const paths = typeof patterns === "string" ? [patterns] : patterns;
-    for (const path of paths) await assertInspectorPath(this.#cwd, path);
+    let rootPromise: Promise<string> | undefined;
+    const canonicalRoot = (): Promise<string> =>
+      (rootPromise ??= realpath(this.#cwd));
+    for (const path of paths)
+      await assertInspectorPath(this.#cwd, path, canonicalRoot);
     const store = analysisStore<Promise<ESLint.LintResult[]>>(rawComplexity);
     if (store === undefined && !hasAnalysisSourceCapture())
       return super.lintFiles(patterns);
