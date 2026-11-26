@@ -109,6 +109,14 @@ export async function validCompilerProof(
   signal?.throwIfAborted();
   return true;
 }
+function comparisonInputsChanged(): CheckIncompleteError {
+  return new CheckIncompleteError({
+    code: "COMPARISON_INPUTS_CHANGED",
+    message: "Inputs used to select compiler checks changed during this scan.",
+    remediation:
+      "Wait for dependency installation or file updates to finish, then rerun the scan.",
+  });
+}
 /** Required after analyzer work, before allowing any result based on a skip. */
 export async function validateCompilerScopeProofs(
   context: InspectionContext,
@@ -116,14 +124,7 @@ export async function validateCompilerScopeProofs(
   const signal = context.signal;
   const owner = owners.get(context.targetInspection);
   if (!owner) return;
-  if (owner.invalidated)
-    throw new CheckIncompleteError({
-      code: "COMPARISON_INPUTS_CHANGED",
-      message:
-        "Inputs used to select compiler checks changed during this scan.",
-      remediation:
-        "Wait for dependency installation or file updates to finish, then rerun the scan.",
-    });
+  if (owner.invalidated) throw comparisonInputsChanged();
   for (const record of owner.records.values()) {
     let verified = false;
     try {
@@ -131,14 +132,7 @@ export async function validateCompilerScopeProofs(
     } catch {
       signal?.throwIfAborted();
     }
-    if (!verified)
-      throw new CheckIncompleteError({
-        code: "COMPARISON_INPUTS_CHANGED",
-        message:
-          "Inputs used to select compiler checks changed during this scan.",
-        remediation:
-          "Wait for dependency installation or file updates to finish, then rerun the scan.",
-      });
+    if (!verified) throw comparisonInputsChanged();
   }
 }
 export function releaseCompilerScopeProofs(context: InspectionContext): void {
