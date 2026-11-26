@@ -66,11 +66,7 @@ export function viteInputPathsForInspection(
           if (entry.targetKind === "file" || entry.kind === "symlink")
             paths.add(entry.repositoryPath);
           if (entry.targetKind === "file")
-            paths.add(
-              relative(registry.snapshotRoot, entry.canonicalPath)
-                .split(sep)
-                .join("/"),
-            );
+            paths.add(canonicalRepositoryPath(registry, entry.canonicalPath));
         }
       } catch {
         /* Selected analyzer owns unsafe or unavailable input diagnostics. */
@@ -80,6 +76,12 @@ export function viteInputPathsForInspection(
     cache.set(key, pending);
   }
   return pending;
+}
+function canonicalRepositoryPath(
+  registry: SnapshotRegistry,
+  canonicalPath: string,
+): string {
+  return relative(registry.snapshotRoot, canonicalPath).split(sep).join("/");
 }
 function unsupported(path: string, reason: string): never {
   throw new CheckIncompleteError({
@@ -223,9 +225,7 @@ export async function resolveViteEntrypoints(
       entryOwner(inspection, path)?.relativeRoot !== workspace.relativeRoot
     )
       return false;
-    const canonical = relative(registry.snapshotRoot, resolved.canonicalPath)
-      .split(sep)
-      .join("/");
+    const canonical = canonicalRepositoryPath(registry, resolved.canonicalPath);
     return (
       entryOwner(inspection, canonical)?.relativeRoot === workspace.relativeRoot
     );
@@ -247,12 +247,10 @@ export async function resolveViteEntrypoints(
       );
     // The lexical alias itself may not appear in sourceFiles; Knip can resolve a
     // contained alias, but never root an undiscovered canonical source.
-    const canonical = relative(
-      registry.snapshotRoot,
+    const canonical = canonicalRepositoryPath(
+      registry,
       registry.resolve(path)!.canonicalPath,
-    )
-      .split(sep)
-      .join("/");
+    );
     if (
       !workspace.sourceFiles.includes(canonical) &&
       !workspace.sourceFiles.includes(path)
