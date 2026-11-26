@@ -84,10 +84,7 @@ function sameIdentity(
   return left.device === right.device && left.inode === right.inode;
 }
 
-export function containedWorkingPath(
-  root: string,
-  candidate: string,
-): boolean {
+export function containedWorkingPath(root: string, candidate: string): boolean {
   const fromRoot = relative(root, candidate);
   return (
     fromRoot !== ".." &&

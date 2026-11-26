@@ -12,7 +12,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import semver from "semver";
 import { isContainedPath } from "../../inspection/read-json.js";
 import { ProjectPrettierFailureError } from "./project-error.js";
-import type { ProjectPrettierFailure, ProjectPrettierInstallation } from "./project-types.js";
+import type {
+  ProjectPrettierFailure,
+  ProjectPrettierInstallation,
+} from "./project-types.js";
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const IDENTITY_CHUNK_BYTES = 64 * 1024;

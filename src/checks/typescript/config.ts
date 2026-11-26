@@ -8,10 +8,7 @@ import {
   normalizeRepositoryPath,
   readContainedFile,
 } from "../../inspection/read-json.js";
-import {
-  configExtensions,
-  tsconfigCandidates,
-} from "./config-requests.js";
+import { configExtensions, tsconfigCandidates } from "./config-requests.js";
 import {
   captureSnapshotRegistry,
   IGNORED_DIRECTORY_NAMES,
@@ -438,7 +435,8 @@ async function parsePreparedConfig(
   if (files.size !== size) {
     const sources = { ...prepared.sources };
     for (const [absolute, text] of files)
-      sources[normalizeRepositoryPath(relative(canonicalRoot, absolute))] = text;
+      sources[normalizeRepositoryPath(relative(canonicalRoot, absolute))] =
+        text;
     prepared.sources = Object.freeze(sources);
   }
   const configAbsolute = resolve(canonicalRoot, ...configPath.split("/"));

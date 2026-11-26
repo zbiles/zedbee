@@ -65,9 +65,7 @@ export interface ProjectFormatterInput {
 }
 
 function sourceExecArgv(): readonly string[] {
-  return RUNNING_FROM_SOURCE
-    ? ["--import", import.meta.resolve("tsx")]
-    : [];
+  return RUNNING_FROM_SOURCE ? ["--import", import.meta.resolve("tsx")] : [];
 }
 
 function minimalEnvironment(workspaceRoot: string): NodeJS.ProcessEnv {

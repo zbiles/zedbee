@@ -57,7 +57,8 @@ export function telemetryDirectory(env: TelemetryEnvironment): string {
   return join(root, "zedbee", "telemetry");
 }
 function owned(stat: Stats): void {
-  if (!hasPrivateOwnership(stat)) throw new Error("Unsafe telemetry permissions");
+  if (!hasPrivateOwnership(stat))
+    throw new Error("Unsafe telemetry permissions");
 }
 function readPrivate(
   path: string,

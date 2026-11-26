@@ -183,9 +183,7 @@ function projectFailureResult(
     durationMs: 0,
     code: error.code,
     message: error.message,
-    ...(error.failure.file === undefined
-      ? {}
-      : { path: error.failure.file }),
+    ...(error.failure.file === undefined ? {} : { path: error.failure.file }),
     remediation,
   });
 }
