@@ -33,6 +33,8 @@ export const TELEMETRY_EVENTS = [
 ] as const;
 const count = z.number().int().min(0).max(1_000_000);
 const identity = z.string().uuid();
+const unique = <T>(values: T[]) => new Set(values).size === values.length;
+const checkIds = z.array(z.enum(TELEMETRY_CHECK_IDS)).max(13).refine(unique);
 export const telemetryV1EventSchema = z
   .strictObject({
     schema_version: z.literal(1),
@@ -70,16 +72,8 @@ export const telemetryV1EventSchema = z
       .optional(),
     duration_ms: z.number().int().min(0).max(604_800_000).optional(),
     empty_input: z.boolean().optional(),
-    check_ids: z
-      .array(z.enum(TELEMETRY_CHECK_IDS))
-      .max(13)
-      .refine((v) => new Set(v).size === v.length)
-      .optional(),
-    enabled_check_ids: z
-      .array(z.enum(TELEMETRY_CHECK_IDS))
-      .max(13)
-      .refine((v) => new Set(v).size === v.length)
-      .optional(),
+    check_ids: checkIds.optional(),
+    enabled_check_ids: checkIds.optional(),
     finding_count: count.optional(),
     applied_count: count.optional(),
     skipped_count: count.optional(),
@@ -174,8 +168,6 @@ export function callerAiToolFields(
     caller_ai_tool_source: candidates.length ? "environment_hint" : "none",
   };
 }
-const unique = <T>(values: T[]) => new Set(values).size === values.length;
-const checkIds = z.array(z.enum(TELEMETRY_CHECK_IDS)).max(13).refine(unique);
 const toolIds = z.array(z.enum(AI_TOOLS)).max(3).refine(unique);
 export const findingGroupSchema = z
   .strictObject({
