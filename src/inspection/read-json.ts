@@ -227,18 +227,43 @@ async function withValidatedContainedFile<T>(
   }
 }
 
+function assertFileSizeLimit(maxBytes: number): void {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+    throw new TypeError("Expected a non-negative safe file-size limit");
+  }
+}
+
+async function readBoundedBuffer(
+  handle: FileHandle,
+  size: bigint,
+  repositoryPath: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  if (size > BigInt(maxBytes))
+    throw new ContainedFileSizeError(repositoryPath, maxBytes);
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const buffer = Buffer.allocUnsafe(
+      Math.min(64 * 1024, maxBytes - total + 1),
+    );
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+    if (total > maxBytes)
+      throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    chunks.push(buffer.subarray(0, bytesRead));
+  }
+  return Buffer.concat(chunks, total);
+}
+
 export async function readContainedFile(
   registry: SnapshotRegistry,
   repositoryPath: string,
   options: ContainedFileReadOptions = {},
 ): Promise<string> {
   const maxBytes = options.maxBytes;
-  if (
-    maxBytes !== undefined &&
-    (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
-  ) {
-    throw new TypeError("Expected a non-negative safe file-size limit");
-  }
+  if (maxBytes !== undefined) assertFileSizeLimit(maxBytes);
   const captured = capturedSourceInput(registry.snapshotRoot, repositoryPath);
   if (captured !== undefined) {
     if (captured.text === undefined) throw unreadablePath(repositoryPath);
@@ -251,26 +276,12 @@ export async function readContainedFile(
     repositoryPath,
     options,
     async (handle, size) => {
-      if (maxBytes !== undefined && size > BigInt(maxBytes)) {
-        throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      }
       if (maxBytes === undefined) {
         return handle.readFile({ encoding: "utf8" });
       }
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const remaining = maxBytes - total;
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes) {
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        }
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total).toString("utf8");
+      return (
+        await readBoundedBuffer(handle, size, repositoryPath, maxBytes)
+      ).toString("utf8");
     },
   );
 }
@@ -282,30 +293,12 @@ export async function readContainedBytes(
   options: ContainedFileReadOptions & { readonly maxBytes: number },
 ): Promise<Buffer> {
   const { maxBytes } = options;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
-    throw new TypeError("Expected a non-negative safe file-size limit");
+  assertFileSizeLimit(maxBytes);
   return withValidatedContainedFile(
     registry,
     repositoryPath,
     options,
-    async (handle, size) => {
-      if (size > BigInt(maxBytes))
-        throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const buffer = Buffer.allocUnsafe(
-          Math.min(64 * 1024, maxBytes - total + 1),
-        );
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes)
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total);
-    },
+    (handle, size) => readBoundedBuffer(handle, size, repositoryPath, maxBytes),
   );
 }
 
