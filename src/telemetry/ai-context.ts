@@ -121,7 +121,6 @@ export async function detectRepositoryTools(
     }
     for (const [name, kind, tool] of markers) {
       if (
-        options.permitted?.() === false ||
         performance.now() - started >= budget ||
         probes >= maximumProbes
       ) {
