@@ -10,6 +10,7 @@ import {
   analyzerRequestRetentionBytes,
   exactFields,
   jobFailure,
+  reportJobTiming,
 } from "./envelope.js";
 export { AnalyzerCapacityError } from "./envelope.js";
 import {
@@ -327,15 +328,7 @@ class LocalExecutor implements AnalyzerExecutor {
             });
             continue;
           }
-          try {
-            job.options.onTiming?.(
-              "queue",
-              Math.min(
-                604800000,
-                Math.max(0, Math.round(performance.now() - job.queuedAt)),
-              ),
-            );
-          } catch {}
+          reportJobTiming(job.options, "queue", job.queuedAt);
           // Observers may synchronously abort or close their owning session.
           if (job.options.signal?.aborted || job.session.closed) {
             this.settle(job, {
