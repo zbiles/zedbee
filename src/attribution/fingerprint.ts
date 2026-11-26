@@ -357,7 +357,7 @@ function locationScope(location: SourceLocation): FindingIdentityScope {
   return { kind: "location", ...normalized };
 }
 
-function findingIdentityFromSnapshot(
+export function findingIdentityFromSnapshot(
   observation: Observation,
 ): FindingIdentity {
   // Validate the report location even when the entity is the preferred identity.
@@ -420,9 +420,12 @@ function canonicalIdentity(identity: FindingIdentity): string {
   ]);
 }
 
-export function fingerprintObservation(observation: Observation): string {
-  const snapshot = normalizeObservation(observation);
+export function fingerprintSnapshot(snapshot: Observation): string {
   return createHash("sha256")
     .update(canonicalIdentity(findingIdentityFromSnapshot(snapshot)), "utf8")
     .digest("hex");
+}
+
+export function fingerprintObservation(observation: Observation): string {
+  return fingerprintSnapshot(normalizeObservation(observation));
 }
