@@ -218,15 +218,11 @@ function declarationObservations(
 }
 
 function cycleNodes(
-  violation: IViolation,
   from: string,
   to: string,
-  snapshotRoot: string,
+  reportedCycle: readonly string[],
 ): readonly string[] {
-  const reported = (violation.cycle ?? []).map(({ name }) =>
-    repositoryPath(name, snapshotRoot),
-  );
-  const nodes = [...new Set([from, to, ...reported])];
+  const nodes = [...new Set([from, to, ...reportedCycle])];
   return canonicalCycle(nodes);
 }
 
@@ -285,7 +281,7 @@ export function normalizeDependencyViolations(
       }
       const cycle =
         rule === DEPENDENCY_RULE_NAMES.circular
-          ? cycleNodes(violation, from, to, snapshotRoot)
+          ? cycleNodes(from, to, reportedCycle)
           : undefined;
       if (cycle !== undefined) {
         const identity = `cycle:${cycle.join(">")}`;
