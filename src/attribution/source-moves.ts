@@ -40,6 +40,16 @@ export const SOURCE_MOVE_LIMITS = Object.freeze({
   maxMilliseconds: 2_000,
 });
 
+/** Maps each renamed file's previous path to its new path. */
+export function renamedPaths(files: ChangeSet["files"]): Map<string, string> {
+  const renames = new Map<string, string>();
+  for (const file of files.values()) {
+    if (file.status === "renamed" && file.previousPath !== undefined)
+      renames.set(file.previousPath, file.path);
+  }
+  return renames;
+}
+
 /** Pure, bounded matching over selected, immutable captured sources only. */
 export function buildSourceMoveMap(input: {
   readonly baseline: Readonly<Record<string, SourceMoveFile>>;
@@ -59,14 +69,12 @@ export function buildSourceMoveMap(input: {
   });
   const beforePaths = new Set<string>();
   const afterPaths = new Set<string>();
-  const renames = new Map<string, string>();
   for (const file of input.changes.values()) {
     if (file.status !== "added")
       beforePaths.add(file.previousPath ?? file.path);
     if (file.status !== "deleted") afterPaths.add(file.path);
-    if (file.status === "renamed" && file.previousPath !== undefined)
-      renames.set(file.previousPath, file.path);
   }
+  const renames = renamedPaths(input.changes);
   const selected = (
     files: Readonly<Record<string, SourceMoveFile>>,
     paths: ReadonlySet<string>,
