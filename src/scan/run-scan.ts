@@ -34,6 +34,7 @@ import {
   withCleanupFailure,
   withUnreportableCleanupFailure,
   DEFAULT_SCAN_PRESENTATION_POLICY,
+  scanReportContextTail,
   type ScanReportContext,
 } from "./incomplete-report.js";
 import type {
@@ -287,16 +288,7 @@ async function runScanWithDetails(
         exitCode: decision?.exitCode ?? 0,
         repositoryRoot: options.repositoryRoot,
         ...state.source,
-        changedFileCount: state.changedFileCount,
-        ...(state.changeSummary === undefined
-          ? {}
-          : { changeSummary: state.changeSummary }),
-        startedAt,
-        durationMs: context.durationMs,
-        configuredPathExclusions: context.configuredPathExclusions,
-        appliedPathExclusions: context.appliedPathExclusions,
-        networkDisclosures,
-        presentationPolicy,
+        ...scanReportContextTail(context),
         summary: summarizeChecks(checks),
         checks,
       };

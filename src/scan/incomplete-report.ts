@@ -62,12 +62,42 @@ function incompleteCheck(
   });
 }
 
+export type ScanReportContextTail = Pick<
+  ScanReport,
+  | "changedFileCount"
+  | "changeSummary"
+  | "startedAt"
+  | "durationMs"
+  | "configuredPathExclusions"
+  | "appliedPathExclusions"
+  | "networkDisclosures"
+  | "presentationPolicy"
+>;
+
+export function scanReportContextTail(
+  context: ScanReportContext,
+): ScanReportContextTail {
+  return {
+    changedFileCount: context.changedFileCount,
+    ...(context.changeSummary === undefined
+      ? {}
+      : { changeSummary: context.changeSummary }),
+    startedAt: context.startedAt,
+    durationMs: context.durationMs,
+    configuredPathExclusions: context.configuredPathExclusions,
+    appliedPathExclusions: context.appliedPathExclusions,
+    networkDisclosures: context.networkDisclosures,
+    presentationPolicy: context.presentationPolicy,
+  };
+}
+
 export function createIncompleteReport(
   context: ScanReportContext,
   failure: ScanFailureInput | readonly ScanFailureInput[],
 ): ScanReport {
   const source = sanitizeScanSourceIdentity(context.source);
-  const failures = Array.isArray(failure) ? failure : [failure];
+  const failures: readonly ScanFailureInput[] =
+    "code" in failure ? [failure] : failure;
   const results = failures.map((item) =>
     incompleteCheck(item, context.durationMs),
   );
@@ -82,16 +112,7 @@ export function createIncompleteReport(
     ...(source.requestedBase === undefined
       ? {}
       : { requestedBase: source.requestedBase }),
-    changedFileCount: context.changedFileCount,
-    ...(context.changeSummary === undefined
-      ? {}
-      : { changeSummary: context.changeSummary }),
-    startedAt: context.startedAt,
-    durationMs: context.durationMs,
-    configuredPathExclusions: context.configuredPathExclusions,
-    appliedPathExclusions: context.appliedPathExclusions,
-    networkDisclosures: context.networkDisclosures,
-    presentationPolicy: context.presentationPolicy,
+    ...scanReportContextTail(context),
     summary: summarizeChecks(results),
     checks: results,
   };
