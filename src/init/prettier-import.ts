@@ -565,6 +565,28 @@ async function importIgnoreFiles(
   return exclusions;
 }
 
+/** Drops repeated projectRoot/configPath pairs and orders them stably. */
+function uniqueSortedConfigRefs<
+  T extends { readonly projectRoot: string; readonly configPath: string },
+>(entries: readonly T[]): readonly T[] {
+  return Object.freeze(
+    entries
+      .filter(
+        (entry, index, all) =>
+          all.findIndex(
+            (candidate) =>
+              candidate.projectRoot === entry.projectRoot &&
+              candidate.configPath === entry.configPath,
+          ) === index,
+      )
+      .sort(
+        (left, right) =>
+          left.projectRoot.localeCompare(right.projectRoot) ||
+          left.configPath.localeCompare(right.configPath),
+      ),
+  );
+}
+
 export async function previewPrettierSettingsImport(
   repositoryRoot: string,
   evaluatedConfigs: ReadonlyMap<string, ImportableNativeConfig> = new Map(),
@@ -725,38 +747,8 @@ export async function previewPrettierSettingsImport(
     settings,
     overrides: Object.freeze(overrides),
     limitations: Object.freeze([...new Set(limitations)]),
-    executableConfigs: Object.freeze(
-      executableConfigs
-        .filter(
-          (entry, index, all) =>
-            all.findIndex(
-              (candidate) =>
-                candidate.projectRoot === entry.projectRoot &&
-                candidate.configPath === entry.configPath,
-            ) === index,
-        )
-        .sort(
-          (left, right) =>
-            left.projectRoot.localeCompare(right.projectRoot) ||
-            left.configPath.localeCompare(right.configPath),
-        ),
-    ),
-    sharedConfigs: Object.freeze(
-      sharedConfigs
-        .filter(
-          (entry, index, all) =>
-            all.findIndex(
-              (candidate) =>
-                candidate.projectRoot === entry.projectRoot &&
-                candidate.configPath === entry.configPath,
-            ) === index,
-        )
-        .sort(
-          (left, right) =>
-            left.projectRoot.localeCompare(right.projectRoot) ||
-            left.configPath.localeCompare(right.configPath),
-        ),
-    ),
+    executableConfigs: uniqueSortedConfigRefs(executableConfigs),
+    sharedConfigs: uniqueSortedConfigRefs(sharedConfigs),
     ...(pathExclusions.length === 0
       ? {}
       : { pathExclusions: Object.freeze(pathExclusions) }),
