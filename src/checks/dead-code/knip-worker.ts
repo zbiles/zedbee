@@ -11,6 +11,7 @@ import {
 } from "../../inspection/source-capture.js";
 import {
   createKnipFilesystem,
+  INERT_TSCONFIG,
   MANAGED_CONFIG,
   VIRTUAL_ROOT,
 } from "./captured-filesystem.js";
@@ -167,7 +168,7 @@ async function run(job: KnipJob) {
       args: {
         config: MANAGED_CONFIG,
         workspace: job.workspace,
-        tsConfig: ".zedbee-managed-no-tsconfig.json",
+        tsConfig: INERT_TSCONFIG,
         "no-progress": true,
         "no-config-hints": true,
         "no-tag-hints": true,
