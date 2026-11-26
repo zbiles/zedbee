@@ -19,8 +19,7 @@ function unsafeImport(): never {
 }
 
 function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (!isContainedImportSpecifier(sourcePath, specifier))
-    throw new TypeError("Dead-code import escaped the snapshot");
+  if (!isContainedImportSpecifier(sourcePath, specifier)) unsafeImport();
 }
 
 async function assertMissing(path: string): Promise<void> {
