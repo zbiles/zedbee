@@ -4,11 +4,17 @@ import {
   PROJECT_ESLINT_DISCLOSURE,
 } from "./eslint-setup.js";
 import { createHash } from "node:crypto";
-import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
+import {
+  applyEdits,
+  modify,
+  parse,
+  type ModificationOptions,
+  type ParseError,
+} from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
-import { OSV_NETWORK_DISCLOSURE } from "./types.js";
+import { INIT_JSONC_EDIT_OPTIONS, OSV_NETWORK_DISCLOSURE } from "./types.js";
 import type {
   CreateInitProposalOptions,
   InitFileChange,
@@ -326,20 +332,23 @@ function configContents(
       "Zedbee could not safely update the existing configuration.",
     );
   }
-  const options = {
-    formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-  };
   let updated = before;
   updated = applyEdits(
     updated,
-    modify(updated, ["$schema"], schemaReference, options),
+    modify(updated, ["$schema"], schemaReference, INIT_JSONC_EDIT_OPTIONS),
   );
-  updated = applyEdits(updated, modify(updated, ["schemaVersion"], 1, options));
-  updated = applyEdits(updated, modify(updated, ["profile"], profile, options));
+  updated = applyEdits(
+    updated,
+    modify(updated, ["schemaVersion"], 1, INIT_JSONC_EDIT_OPTIONS),
+  );
+  updated = applyEdits(
+    updated,
+    modify(updated, ["profile"], profile, INIT_JSONC_EDIT_OPTIONS),
+  );
   if (configuredChecks !== undefined) {
     updated = applyEdits(
       updated,
-      modify(updated, ["checks"], configuredChecks, options),
+      modify(updated, ["checks"], configuredChecks, INIT_JSONC_EDIT_OPTIONS),
     );
   } else if (vulnerabilitiesEnabled) {
     const root = parsed as Record<string, unknown>;
@@ -362,7 +371,10 @@ function configContents(
         typeof value === "string"
           ? ["checks", "vulnerabilities", "onUnavailable"]
           : ["checks", "vulnerabilities"];
-      updated = applyEdits(updated, modify(updated, path, value, options));
+      updated = applyEdits(
+        updated,
+        modify(updated, path, value, INIT_JSONC_EDIT_OPTIONS),
+      );
     }
   }
   if (formatting !== undefined) {
@@ -377,18 +389,10 @@ function configContents(
         projectRoots: formatting.projectRoots ?? [],
         rootProject: formatting.rootProject ?? true,
       },
-      options,
+      INIT_JSONC_EDIT_OPTIONS,
     );
   }
   return updated.endsWith("\n") ? updated : `${updated}\n`;
-}
-
-interface JsoncFormatOptions {
-  readonly formattingOptions: {
-    readonly insertSpaces: boolean;
-    readonly tabSize: number;
-    readonly eol: string;
-  };
 }
 
 function applyFormattingChoice(
@@ -398,7 +402,7 @@ function applyFormattingChoice(
     readonly projectRoots: readonly string[];
     readonly rootProject: boolean;
   },
-  options: JsoncFormatOptions,
+  options: ModificationOptions,
 ): string {
   const root = parsed as Record<string, unknown>;
   const checksValue = root.checks;
@@ -674,7 +678,7 @@ export function createInitProposal(
             },
           ]
         : [],
-      { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+      INIT_JSONC_EDIT_OPTIONS,
     );
     if (after !== config.after) {
       config = initFileChange(
@@ -706,15 +710,18 @@ export function createInitProposal(
         config.after,
         ["reporting", "diagnosticMessages"],
         options.diagnosticMessages,
-        { formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" } },
+        INIT_JSONC_EDIT_OPTIONS,
       ),
     );
     if (options.diagnosticMessages === "source-free")
       after = applyEdits(
         after,
-        modify(after, ["reporting", "sourceExcerpts"], "never", {
-          formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-        }),
+        modify(
+          after,
+          ["reporting", "sourceExcerpts"],
+          "never",
+          INIT_JSONC_EDIT_OPTIONS,
+        ),
       );
     config = initFileChange(
       config.relativePath,

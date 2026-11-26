@@ -3,6 +3,7 @@ import type { CheckId, ProfileId } from "../config/schema.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
 import type { ImportedFormattingOverride } from "../checks/prettier/project-types.js";
 import type { Environment } from "../inspection/types.js";
+import type { ModificationOptions } from "jsonc-parser";
 
 export type InitWorkflowChoice = "github" | "none";
 
@@ -57,6 +58,11 @@ export type InitOsvUnavailable = "block" | "warn";
 
 export const OSV_NETWORK_DISCLOSURE =
   "Online vulnerability checks send package names, exact versions, and ecosystem identifiers to api.osv.dev; source code and file hashes are not sent.";
+
+/** jsonc-parser edit options used for every `.zedbeerc.jsonc` edit made by init. */
+export const INIT_JSONC_EDIT_OPTIONS: ModificationOptions = {
+  formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
+};
 
 export interface InitHookActivation {
   readonly status: "active" | "pending" | "not-requested";

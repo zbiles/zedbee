@@ -6,6 +6,7 @@ import {
   resolveWorkspaceLintPolicy,
 } from "../config/target-policy.js";
 import type { RepositoryInspection } from "../inspection/types.js";
+import { INIT_JSONC_EDIT_OPTIONS } from "./types.js";
 import type { CreateInitProposalOptions } from "./types.js";
 
 export class ProjectEslintSetupError extends Error {
@@ -31,12 +32,12 @@ export function configureInitEslint(
     "eslintEngine" | "projectEslintMessages"
   >,
 ) {
-  const editOptions = {
-    formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-  };
   let after = source;
   const set = (path: (string | number)[], value: unknown) => {
-    after = applyEdits(after, modify(after, path, value, editOptions));
+    after = applyEdits(
+      after,
+      modify(after, path, value, INIT_JSONC_EDIT_OPTIONS),
+    );
   };
   const prior = before === null ? {} : parse(before);
   const inheritedProject =
