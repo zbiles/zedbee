@@ -289,16 +289,10 @@ async function discoveryForProject(
   });
 }
 
-export async function discoverProjectPrettier(
-  repositoryRoot: string,
+export async function discoverProjectPrettierInRegistry(
+  registry: SnapshotRegistry,
+  canonicalRoot: string,
 ): Promise<readonly ProjectPrettierDiscovery[]> {
-  let canonicalRoot: string;
-  try {
-    canonicalRoot = await canonicalizeSnapshotRoot(repositoryRoot);
-  } catch {
-    return Object.freeze([]);
-  }
-  const registry = await captureWorkingTreeRegistry(canonicalRoot);
   const workspaces = await discoverWorkspaces(registry);
   const projectRoots = workspaces.map((workspace) => workspace.relativeRoot);
   const results: ProjectPrettierDiscovery[] = [];
@@ -318,6 +312,19 @@ export async function discoverProjectPrettier(
       compareCodeUnits(left.projectRoot, right.projectRoot),
     ),
   );
+}
+
+export async function discoverProjectPrettier(
+  repositoryRoot: string,
+): Promise<readonly ProjectPrettierDiscovery[]> {
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = await canonicalizeSnapshotRoot(repositoryRoot);
+  } catch {
+    return Object.freeze([]);
+  }
+  const registry = await captureWorkingTreeRegistry(canonicalRoot);
+  return discoverProjectPrettierInRegistry(registry, canonicalRoot);
 }
 
 /** Internal helper for tests and Task 4; never exported through the CLI surface. */

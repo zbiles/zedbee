@@ -6,7 +6,7 @@ import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 import { resolveHookCommand } from "../hooks/command.js";
-import { discoverProjectPrettier } from "./prettier-discovery.js";
+import { discoverProjectPrettierInRegistry } from "./prettier-discovery.js";
 
 export interface ProjectInstallTarget {
   readonly projectRoot: string;
@@ -30,9 +30,10 @@ export async function projectInstallTargets(
   projectRoots: readonly string[],
 ): Promise<readonly ProjectInstallTarget[]> {
   const registry = await captureWorkingTreeRegistry(repositoryRoot);
+  const canonicalRoot = await realpath(repositoryRoot);
   const [projects, prettier] = await Promise.all([
     discoverWorkspaces(registry),
-    discoverProjectPrettier(repositoryRoot),
+    discoverProjectPrettierInRegistry(registry, canonicalRoot),
   ]);
   const paths = new Set(
     registry.entries().map((entry) => entry.repositoryPath),
