@@ -3,11 +3,10 @@ import {
   WINDOWS_PATH,
   URL_SCHEME,
 } from "../project/import-specifier.js";
-import { managedKnipEntry } from "./managed-knip.js";
+import { pinnedKnipModuleUrl } from "./managed-knip.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonData } from "../../inspection/read-json.js";
 import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
 
@@ -163,10 +162,7 @@ export async function createKnipImportValidator(
 }> {
   // Reuse the pinned engine's spelling rules (loader prefixes, queries, fragments),
   // so validation sees the same source specifier as Knip. Never load project code.
-  const knipModule = fileURLToPath(managedKnipEntry);
-  const module = (await import(
-    pathToFileURL(join(dirname(knipModule), "util", "modules.js")).href
-  )) as {
+  const module = (await import(pinnedKnipModuleUrl("util", "modules.js"))) as {
     sanitizeSpecifier?: unknown;
   };
   if (typeof module.sanitizeSpecifier !== "function")
@@ -175,7 +171,7 @@ export async function createKnipImportValidator(
     value: string,
   ) => string;
   const commentsModule = (await import(
-    pathToFileURL(join(dirname(knipModule), "typescript", "comments.js")).href
+    pinnedKnipModuleUrl("typescript", "comments.js")
   )) as { extractImportsFromComments?: unknown };
   if (typeof commentsModule.extractImportsFromComments !== "function")
     throw new TypeError("Invalid pinned Knip comment helpers");

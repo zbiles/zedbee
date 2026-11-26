@@ -6,9 +6,8 @@ import {
 } from "../typescript/aliases.js";
 import { createKnipImportValidator } from "./import-boundary.js";
 import { readContainedFile } from "../../inspection/read-json.js";
-import { managedKnipEntry } from "./managed-knip.js";
-import { dirname, join, posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pinnedKnipModuleUrl } from "./managed-knip.js";
+import { posix } from "node:path";
 import { ISSUE_TYPES } from "./parse-report.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { readJsonData } from "../../inspection/read-json.js";
@@ -118,9 +117,8 @@ export interface ManagedKnipConfig {
 async function disabledPinnedPlugins(): Promise<
   Readonly<Record<string, false>>
 > {
-  const knipModule = fileURLToPath(managedKnipEntry);
   const pluginModule = (await import(
-    pathToFileURL(join(dirname(knipModule), "types", "PluginNames.js")).href
+    pinnedKnipModuleUrl("types", "PluginNames.js")
   )) as { readonly pluginNames?: unknown };
   if (
     !Array.isArray(pluginModule.pluginNames) ||
