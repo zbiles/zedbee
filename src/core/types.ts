@@ -99,14 +99,7 @@ export interface Observation {
 }
 
 export type FindingIdentityScope =
-  | {
-      readonly kind: "location";
-      readonly file: string;
-      readonly startLine?: number;
-      readonly startColumn?: number;
-      readonly endLine?: number;
-      readonly endColumn?: number;
-    }
+  | ({ readonly kind: "location" } & Readonly<SourceLocation>)
   | {
       readonly kind: "entity";
       readonly entityKind: string;
