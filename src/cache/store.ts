@@ -40,6 +40,27 @@ function isRegularFile(metadata: Stats): boolean {
   return metadata.isFile() && !metadata.isSymbolicLink();
 }
 
+function isMissing(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "ENOENT";
+}
+
+async function lstatIfPresent(path: string): Promise<Stats | undefined> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isMissing(error)) return undefined;
+    throw error;
+  }
+}
+
+async function unlinkIfPresent(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if (!isMissing(error)) throw error;
+  }
+}
+
 export interface ObservationCache {
   get(key: string): Promise<CheckObservationSet | undefined>;
   set(key: string, value: CheckObservationSet): Promise<void>;
@@ -239,8 +260,8 @@ export class ObservationCacheStore implements ObservationCache {
       await Promise.all(
         names.map(async (name) => {
           const path = join(this.root, name);
-          const metadata = await lstat(path);
-          return isRegularFile(metadata)
+          const metadata = await lstatIfPresent(path);
+          return metadata !== undefined && isRegularFile(metadata)
             ? { name, path, size: metadata.size, mtimeMs: metadata.mtimeMs }
             : undefined;
         }),
@@ -256,9 +277,9 @@ export class ObservationCacheStore implements ObservationCache {
     while (entries.length > this.maxEntries || bytes > this.maxBytes) {
       const oldest = entries.shift();
       if (oldest === undefined) break;
-      const metadata = await lstat(oldest.path);
-      if (!isRegularFile(metadata)) continue;
-      await unlink(oldest.path);
+      const metadata = await lstatIfPresent(oldest.path);
+      if (metadata !== undefined && !isRegularFile(metadata)) continue;
+      if (metadata !== undefined) await unlinkIfPresent(oldest.path);
       bytes -= oldest.size;
     }
   }
