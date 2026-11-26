@@ -307,16 +307,6 @@ function metricFindings(
     baselineByFingerprint.set(fingerprint, observation);
   }
 
-  const targetMetricFingerprints = new Set<string>();
-  for (const observation of target.filter(
-    (candidate) => candidate.metric !== undefined,
-  )) {
-    const fingerprint = fingerprintObservation(observation);
-    targetMetricFingerprints.add(fingerprint);
-  }
-
-  if (targetMetricFingerprints.size === 0) return [];
-
   const attributeMetric = prepareMetricAttribution(entities);
   return target
     .filter((observation) => observation.metric !== undefined)
