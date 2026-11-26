@@ -209,6 +209,32 @@ function isOutputLimitExceeded(error: unknown): boolean {
   );
 }
 
+function abortedError(): GitCommandError {
+  return new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+}
+
+function hardTimeoutError(): GitCommandError {
+  return new GitCommandError(
+    "GIT_HARD_TIMEOUT",
+    "Git command exceeded its configured hard timeout.",
+  );
+}
+
+function outputLimitError(): GitCommandError {
+  return new GitCommandError(
+    "GIT_OUTPUT_LIMIT_EXCEEDED",
+    "Git command exceeded its configured output limit.",
+  );
+}
+
+function exitCodeError(exitCode: number): GitCommandError {
+  return new GitCommandError(
+    "GIT_COMMAND_FAILED",
+    `Git command failed with exit code ${exitCode}.`,
+    exitCode,
+  );
+}
+
 const DEFAULT_DIAGNOSTIC_LIMIT_BYTES = 100_000_000;
 
 async function* batchObjectInput(
@@ -298,7 +324,7 @@ export class GitClient {
   ): Promise<GitOutput | GitBinaryOutput> {
     args = this.inertArguments(args);
     if (isAborted(options.signal)) {
-      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      throw abortedError();
     }
 
     const resourcePolicy = this.clientOptions.resourcePolicy;
@@ -329,17 +355,10 @@ export class GitClient {
       if (this.clientOptions.runCommand !== undefined) {
         const output = await this.clientOptions.runCommand(args, { signal });
         if (hardTimedOut) {
-          throw new GitCommandError(
-            "GIT_HARD_TIMEOUT",
-            "Git command exceeded its configured hard timeout.",
-          );
+          throw hardTimeoutError();
         }
         if ((options.reject ?? true) && output.exitCode !== 0) {
-          throw new GitCommandError(
-            "GIT_COMMAND_FAILED",
-            `Git command failed with exit code ${output.exitCode}.`,
-            output.exitCode,
-          );
+          throw exitCodeError(output.exitCode);
         }
         return binary
           ? { ...output, stdout: Buffer.from(output.stdout, "utf8") }
@@ -369,19 +388,13 @@ export class GitClient {
         : await execa(command.executable, args, commandOptions);
 
       if (isOutputLimitExceeded(result)) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
+        throw outputLimitError();
       }
       if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
+        throw hardTimeoutError();
       }
       if (result.isCanceled || isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+        throw abortedError();
       }
 
       const stderr =
@@ -401,11 +414,7 @@ export class GitClient {
           };
 
       if ((options.reject ?? true) && output.exitCode !== 0) {
-        throw new GitCommandError(
-          "GIT_COMMAND_FAILED",
-          `Git command failed with exit code ${output.exitCode}.`,
-          output.exitCode,
-        );
+        throw exitCodeError(output.exitCode);
       }
 
       return output;
@@ -414,19 +423,13 @@ export class GitClient {
         throw error;
       }
       if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
+        throw hardTimeoutError();
       }
       if (isOutputLimitExceeded(error)) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
+        throw outputLimitError();
       }
       if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+        throw abortedError();
       }
       throw new GitCommandError(
         "GIT_COMMAND_FAILED",
@@ -458,13 +461,13 @@ export class GitClient {
     options: GitRunOptions = {},
   ): Promise<void> {
     if (isAborted(options.signal)) {
-      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      throw abortedError();
     }
     if (objectIds.length === 0) return;
 
     const command = await this.resolvedGitCommand();
     if (isAborted(options.signal)) {
-      throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+      throw abortedError();
     }
     const resourcePolicy = this.clientOptions.resourcePolicy;
     const diagnosticLimit =
@@ -560,44 +563,28 @@ export class GitClient {
         exit,
       ]);
       if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
+        throw hardTimeoutError();
       }
       if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+        throw abortedError();
       }
       if (diagnosticLimitExceeded) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
+        throw outputLimitError();
       }
       if (exitCode !== 0) {
-        throw new GitCommandError(
-          "GIT_COMMAND_FAILED",
-          `Git command failed with exit code ${exitCode}.`,
-          exitCode,
-        );
+        throw exitCodeError(exitCode);
       }
     } catch (error) {
       terminate();
       await Promise.allSettled([input, output, diagnostics, exit]);
       if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
+        throw hardTimeoutError();
       }
       if (diagnosticLimitExceeded) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
+        throw outputLimitError();
       }
       if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+        throw abortedError();
       }
       if (visitorFailed) throw visitorFailure;
       if (error instanceof GitCommandError) throw error;
