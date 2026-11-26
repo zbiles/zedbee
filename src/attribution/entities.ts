@@ -4,7 +4,7 @@ import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
 import { normalizeRepositoryRelativePath } from "./fingerprint.js";
-import { sourceEntityName } from "./source-identity.js";
+import { entityIdentityPrefix, sourceEntityName } from "./source-identity.js";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".js",
@@ -300,7 +300,7 @@ function entityIdentity(
   owners: readonly LexicalOwner[],
 ): string {
   if (owners.length === 0 && declaration.identityQualifiers === undefined) {
-    return `${declaration.kind}:${file}:${declaration.name}`;
+    return entityIdentityPrefix(declaration.kind, file) + declaration.name;
   }
   const qualified = [
     ...owners,
@@ -309,7 +309,7 @@ function entityIdentity(
   ]
     .map(({ kind, name }) => `${kind}=${encodeURIComponent(name)}`)
     .join("/");
-  return `${declaration.kind}:${file}:${qualified}`;
+  return entityIdentityPrefix(declaration.kind, file) + qualified;
 }
 
 function normalizedRanges(

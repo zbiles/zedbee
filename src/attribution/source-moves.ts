@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as ts from "typescript";
 import type { MetricEntitySpan } from "./entities.js";
 import type { ChangeSet } from "../git/change-set.js";
+import { entityIdentityPrefix } from "./source-identity.js";
 
 export interface SourceMoveFile {
   readonly source: string;
@@ -89,7 +90,9 @@ export function buildSourceMoveMap(input: {
   const keys = new Map<SourceMoveEntity, string>();
   const policies = new Map<SourceMoveEntity, string>();
   const payload = (entity: MetricEntitySpan["entity"]) =>
-    entity.identity.slice(`${entity.kind}:${entity.file}:`.length);
+    entity.identity.slice(
+      entityIdentityPrefix(entity.kind, entity.file).length,
+    );
   const collect = (files: typeof before): SourceMoveEntity[] =>
     files.flatMap(([file, value]) => {
       input.signal?.throwIfAborted();

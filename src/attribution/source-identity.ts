@@ -8,6 +8,11 @@ export function sourceEntityName(name: string): string {
     .digest("hex")}`;
 }
 
+/** Prefix shared by every canonical syntax entity identity. */
+export function entityIdentityPrefix(kind: string, file: string): string {
+  return `${kind}:${file}:`;
+}
+
 const OPAQUE_NAME = /^name-[a-f0-9]{64}$/u;
 const SYNTAX_NAME =
   /^(?:name-[a-f0-9]{64}(?:@\d+(?:\.\d+)*)?|anonymous@\d+(?:\.\d+)*|default|constructor)$/u;
@@ -37,7 +42,7 @@ export function assertSourceSafeEntityObservation(
     !SYNTAX_NAME.test(entity.name)
   )
     throw new TypeError("Expected opaque syntax entity metadata");
-  const prefix = `${entity.kind}:${entity.file}:`;
+  const prefix = entityIdentityPrefix(entity.kind, entity.file);
   if (!observation.identity.startsWith(prefix))
     throw new TypeError("Expected canonical syntax entity identity");
   const payload = observation.identity.slice(prefix.length);
