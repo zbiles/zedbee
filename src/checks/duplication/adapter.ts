@@ -8,6 +8,7 @@ import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import { duplicationInputPaths } from "./input-paths.js";
 import type { NormalizedDuplicationReport } from "./types.js";
 import { loadDuplicationSources } from "./source-tokens.js";
+import { forEachConcurrently } from "./concurrency.js";
 import { compareCloneOccurrences } from "./clone-comparison.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { digestContainedLineRange } from "../../inspection/read-json.js";
@@ -64,11 +65,10 @@ export async function createFallbackTokenHashes(
 
   const ranges = [...uniqueRanges.values()];
   const hashes = new Map<number, string>();
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < ranges.length) {
-      const range = ranges[cursor++];
-      if (range === undefined) return;
+  await forEachConcurrently(
+    ranges,
+    FALLBACK_DIGEST_CONCURRENCY,
+    async (range) => {
       const hash = await digest(
         registry,
         range.location.file,
@@ -76,13 +76,7 @@ export async function createFallbackTokenHashes(
         range.location.endLine,
       );
       for (const index of range.indexes) hashes.set(index, hash);
-    }
-  };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(FALLBACK_DIGEST_CONCURRENCY, ranges.length) },
-      worker,
-    ),
+    },
   );
   return hashes;
 }
