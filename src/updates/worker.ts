@@ -2,9 +2,9 @@ import { closeSync, lstatSync, openSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  isUpdateCacheFresh,
   prepareUpdateDirectory,
   readUpdateCache,
-  UPDATE_INTERVAL,
   updateCachePath,
   writeUpdateCache,
 } from "./cache.js";
@@ -28,8 +28,7 @@ export async function refreshUpdateCache(
     descriptor = openSync(lock, "wx", 0o600);
     // Another process may have completed a refresh before we acquired the lock.
     const cached = readUpdateCache(path, now);
-    if (cached !== undefined && now - cached.checkedAt < UPDATE_INTERVAL)
-      return;
+    if (isUpdateCacheFresh(cached, now)) return;
     const metadata = await fetchLatestMetadata(options.fetcher);
     writeUpdateCache(path, { checkedAt: now, metadata: metadata ?? null });
   } catch {
