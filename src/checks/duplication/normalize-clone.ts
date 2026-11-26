@@ -14,6 +14,8 @@ import type {
   NormalizedDuplicationReport,
 } from "./types.js";
 
+const SHA256_HEX = /^[a-f0-9]{64}$/u;
+
 function object(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new TypeError(`Expected ${field} to be an object`);
@@ -161,7 +163,7 @@ export function cloneIdentity(
   right: NormalizedCloneFragment,
   tokenHash: string,
 ): string {
-  if (!/^[a-f0-9]{64}$/u.test(tokenHash)) {
+  if (!SHA256_HEX.test(tokenHash)) {
     throw new TypeError("Expected a canonical clone token hash");
   }
   const fragments = [fragmentKey(left), fragmentKey(right)].sort(
@@ -182,7 +184,7 @@ export function normalizeClone(
   const value = object(raw, "jscpd clone");
   const tokens = positiveInteger(value.tokens, "jscpd clone tokens");
   const tokenHash =
-    value.fragment === "" && /^[a-f0-9]{64}$/u.test(fallbackTokenHash ?? "")
+    value.fragment === "" && SHA256_HEX.test(fallbackTokenHash ?? "")
       ? fallbackTokenHash!
       : normalizedTokenHash(value.fragment as string);
   const fragments = [
@@ -209,6 +211,14 @@ export function normalizeClone(
   });
 }
 
+function jscpdReport(raw: unknown): JscpdReport {
+  const report = object(raw, "jscpd report") as unknown as JscpdReport;
+  if (!Array.isArray(report.duplicates)) {
+    throw new TypeError("Expected jscpd duplicates");
+  }
+  return report;
+}
+
 export function parseJscpdReport(
   raw: unknown,
   snapshotRoot: string,
@@ -216,10 +226,7 @@ export function parseJscpdReport(
   sourceFiles: readonly string[] = [],
   fallbackTokenHashes: ReadonlyMap<number, string> = new Map(),
 ): NormalizedDuplicationReport {
-  const report = object(raw, "jscpd report") as unknown as JscpdReport;
-  if (!Array.isArray(report.duplicates)) {
-    throw new TypeError("Expected jscpd duplicates");
-  }
+  const report = jscpdReport(raw);
   const statistics = object(report.statistics, "jscpd statistics");
   const total = object(statistics.total, "jscpd total statistics");
   const clones = report.duplicates
@@ -251,10 +258,7 @@ export function missingCloneFragmentLocations(
   index: number;
   location: NormalizedCloneFragment;
 }>[] {
-  const report = object(raw, "jscpd report");
-  if (!Array.isArray(report.duplicates)) {
-    throw new TypeError("Expected jscpd duplicates");
-  }
+  const report = jscpdReport(raw);
   return Object.freeze(
     report.duplicates.flatMap((clone, index) => {
       const value = object(clone, "jscpd clone");
