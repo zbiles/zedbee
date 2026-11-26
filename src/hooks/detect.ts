@@ -318,6 +318,7 @@ export async function detectHookIntegration(
   mergeCommand = mergeHookCommand(command),
 ): Promise<DetectedHookIntegration> {
   repositoryRoot = await realpath(repositoryRoot);
+  const commands = { "pre-commit": command, "pre-merge-commit": mergeCommand };
   if (requested === "tracked") {
     const existing = await detectHookChoice(repositoryRoot);
     if (existing !== "raw" && existing !== "none")
@@ -414,12 +415,7 @@ export async function detectHookIntegration(
         changedFile(
           repositoryRoot,
           `.husky/${name}`,
-          (before) =>
-            updateHuskyHook(
-              before,
-              name === "pre-commit" ? command : mergeCommand,
-              name,
-            ),
+          (before) => updateHuskyHook(before, commands[name], name),
           0o755,
         ),
       ),
@@ -450,7 +446,7 @@ export async function detectHookIntegration(
           file?.contents ?? null,
           updateRawGitHook(
             file?.contents,
-            name === "pre-commit" ? command : mergeCommand,
+            commands[name],
             name,
             hook === "raw"
               ? ".git/hooks/pre-commit"
@@ -479,7 +475,6 @@ export async function detectHookIntegration(
             },
     });
   }
-  const commands = { "pre-commit": command, "pre-merge-commit": mergeCommand };
   if (hook === "lefthook") {
     const relativePath = (await exists(repositoryRoot, "lefthook.yaml"))
       ? "lefthook.yaml"
