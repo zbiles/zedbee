@@ -153,12 +153,21 @@ type CommentCollector = (
 
 export async function createKnipImportValidator(
   registry: SnapshotRegistry,
-  missing: (path: string) => Promise<void> = assertMissing,
+  probeMissing: (path: string) => Promise<void> = assertMissing,
   resolveAlias?: (sourcePath: string, specifier: string) => string | undefined,
 ): Promise<{
   validateImport: (sourcePath: string, specifier: string) => Promise<void>;
   collectCommentImports: CommentCollector;
 }> {
+  const probes = new Map<string, Promise<void>>();
+  const missing = (path: string): Promise<void> => {
+    let probe = probes.get(path);
+    if (probe === undefined) {
+      probe = probeMissing(path);
+      probes.set(path, probe);
+    }
+    return probe;
+  };
   // Reuse the pinned engine's spelling rules (loader prefixes, queries, fragments),
   // so validation sees the same source specifier as Knip. Never load project code.
   const module = (await import(pinnedKnipModuleUrl("util", "modules.js"))) as {
