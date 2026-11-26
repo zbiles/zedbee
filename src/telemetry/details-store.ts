@@ -26,6 +26,11 @@ import {
   type TelemetryEvent,
   type TelemetryV1Event,
 } from "./schema.js";
+import {
+  TELEMETRY_MAX_QUEUE_BYTES,
+  TELEMETRY_MAX_QUEUED_EVENTS,
+  TELEMETRY_RETENTION_MS,
+} from "./retention.js";
 
 const envelopeSchema = z.strictObject({
   event_id: z.string().uuid(),
@@ -199,10 +204,12 @@ export class TelemetryDetailsStore {
           !pending.has(entry.name.slice(0, -5)) &&
           age > 60_000;
         if (
-          age > 7 * 86_400_000 ||
+          age > TELEMETRY_RETENTION_MS ||
           (temporary && age > 60_000) ||
           (!temporary &&
-            (orphan || count >= 100 || bytes + entry.stat.size > 256 * 1024))
+            (orphan ||
+              count >= TELEMETRY_MAX_QUEUED_EVENTS ||
+              bytes + entry.stat.size > TELEMETRY_MAX_QUEUE_BYTES))
         ) {
           unlinkSync(join(this.path, entry.name));
         } else if (!temporary) {

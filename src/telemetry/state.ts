@@ -23,13 +23,17 @@ import {
   type TelemetryV1Event as TelemetryEvent,
 } from "./schema.js";
 import type { TelemetryEnvironment } from "./policy.js";
-const WEEK = 7 * 24 * 60 * 60 * 1000;
+import {
+  TELEMETRY_MAX_QUEUE_BYTES,
+  TELEMETRY_MAX_QUEUED_EVENTS,
+  TELEMETRY_RETENTION_MS,
+} from "./retention.js";
 const stateSchema = z.strictObject({
   version: z.literal(1),
   enabled: z.boolean(),
   installation_id: z.string().uuid().optional(),
   notice_version: z.number().int().min(0).max(1),
-  events: z.array(telemetryEventSchema).max(100),
+  events: z.array(telemetryEventSchema).max(TELEMETRY_MAX_QUEUED_EVENTS),
 });
 export type TelemetryState = z.infer<typeof stateSchema>;
 const persistedSchema = z.strictObject({
@@ -259,16 +263,23 @@ export class TelemetryStore {
     this.update((state) => {
       if (!state.enabled) return;
       state.events = [...state.events, event]
-        .filter((e) => Date.parse(e.timestamp) >= Date.now() - WEEK)
-        .slice(-100);
-      while (Buffer.byteLength(JSON.stringify(state.events)) > 256 * 1024)
+        .filter(
+          (e) => Date.parse(e.timestamp) >= Date.now() - TELEMETRY_RETENTION_MS,
+        )
+        .slice(-TELEMETRY_MAX_QUEUED_EVENTS);
+      while (
+        Buffer.byteLength(JSON.stringify(state.events)) >
+        TELEMETRY_MAX_QUEUE_BYTES
+      )
         state.events.shift();
     });
   }
   pending(): TelemetryEvent[] {
     const state = this.read();
     return state?.enabled
-      ? state.events.filter((e) => Date.parse(e.timestamp) >= Date.now() - WEEK)
+      ? state.events.filter(
+          (e) => Date.parse(e.timestamp) >= Date.now() - TELEMETRY_RETENTION_MS,
+        )
       : [];
   }
   acknowledge(ids: readonly string[]): void {
