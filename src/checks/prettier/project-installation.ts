@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import semver from "semver";
 import { isContainedPath } from "../../inspection/read-json.js";
 import { ProjectPrettierFailureError } from "./project-error.js";
-import type { ProjectPrettierInstallation } from "./project-types.js";
+import type { ProjectPrettierFailure, ProjectPrettierInstallation } from "./project-types.js";
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 1024 * 1024;
 const IDENTITY_CHUNK_BYTES = 64 * 1024;
@@ -23,6 +23,22 @@ async function readBounded(path: string, maxBytes: number): Promise<string> {
     throw new Error("unbounded read");
   }
   return readFile(path, "utf8");
+}
+
+function reportedProjectRoot(projectRoot: string): string {
+  return projectRoot === "" ? "." : projectRoot;
+}
+
+function installationFailure(
+  code: ProjectPrettierFailure["code"],
+  message: string,
+  projectRoot: string,
+): ProjectPrettierFailureError {
+  return new ProjectPrettierFailureError({
+    code,
+    message,
+    projectRoot: reportedProjectRoot(projectRoot),
+  });
 }
 
 /**
@@ -50,12 +66,11 @@ async function snapshotPrettierDeclaration(
     if (parent === directory) break;
     directory = parent;
   }
-  throw new ProjectPrettierFailureError({
-    code: "PROJECT_PRETTIER_INSTALL_MISSING",
-    message:
-      "The selected snapshot does not declare Prettier for this project.",
-    projectRoot: projectRoot === "" ? "." : projectRoot,
-  });
+  throw installationFailure(
+    "PROJECT_PRETTIER_INSTALL_MISSING",
+    "The selected snapshot does not declare Prettier for this project.",
+    projectRoot,
+  );
 }
 
 async function resolveEntryUrl(packageRoot: string): Promise<string> {
@@ -113,12 +128,11 @@ export async function resolveProjectPrettierInstallation(
         !manifestMetadata.isFile() ||
         manifestMetadata.size > BigInt(MAX_MANIFEST_BYTES)
       ) {
-        throw new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_INSTALL_MISSING",
-          message:
-            "The installed Prettier manifest is unreadable or too large.",
-          projectRoot: projectRoot === "" ? "." : projectRoot,
-        });
+        throw installationFailure(
+          "PROJECT_PRETTIER_INSTALL_MISSING",
+          "The installed Prettier manifest is unreadable or too large.",
+          projectRoot,
+        );
       }
       const bytes = await readFile(canonicalManifest);
       const manifest = JSON.parse(bytes.toString("utf8")) as {
@@ -132,11 +146,11 @@ export async function resolveProjectPrettierInstallation(
         normalizedVersion === null ||
         !isProjectPrettierVersionAccepted(normalizedVersion, declaration.range)
       ) {
-        throw new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
-          message: `The installed Prettier ${manifest.version} does not satisfy the supported range ${SUPPORTED_PROJECT_PRETTIER_RANGE} or the project's declared ${declaration.range}.`,
-          projectRoot: projectRoot === "" ? "." : projectRoot,
-        });
+        throw installationFailure(
+          "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
+          `The installed Prettier ${manifest.version} does not satisfy the supported range ${SUPPORTED_PROJECT_PRETTIER_RANGE} or the project's declared ${declaration.range}.`,
+          projectRoot,
+        );
       }
       // Identity covers the executable entry bytes, the manifest bytes, and
       // the validated realpath, so an in-place engine swap is detectable. The
@@ -148,12 +162,11 @@ export async function resolveProjectPrettierInstallation(
         !entryMetadata.isFile() ||
         entryMetadata.size > BigInt(MAX_ENTRY_BYTES)
       ) {
-        throw new ProjectPrettierFailureError({
-          code: "PROJECT_PRETTIER_INSTALL_MISSING",
-          message:
-            "The installed Prettier entry is unreadable or too large to validate.",
-          projectRoot: projectRoot === "" ? "." : projectRoot,
-        });
+        throw installationFailure(
+          "PROJECT_PRETTIER_INSTALL_MISSING",
+          "The installed Prettier entry is unreadable or too large to validate.",
+          projectRoot,
+        );
       }
       const entryHash = createHash("sha256");
       {
@@ -182,7 +195,7 @@ export async function resolveProjectPrettierInstallation(
         .update(packageRoot, "utf8")
         .digest("hex");
       return Object.freeze({
-        projectRoot: projectRoot === "" ? "." : projectRoot,
+        projectRoot: reportedProjectRoot(projectRoot),
         packageRoot,
         entryUrl,
         version: normalizedVersion,
@@ -198,10 +211,9 @@ export async function resolveProjectPrettierInstallation(
     if (parent === current) break;
     current = parent;
   }
-  throw new ProjectPrettierFailureError({
-    code: "PROJECT_PRETTIER_INSTALL_MISSING",
-    message:
-      "No installed Prettier satisfying the project declaration was found.",
-    projectRoot: projectRoot === "" ? "." : projectRoot,
-  });
+  throw installationFailure(
+    "PROJECT_PRETTIER_INSTALL_MISSING",
+    "No installed Prettier satisfying the project declaration was found.",
+    projectRoot,
+  );
 }
