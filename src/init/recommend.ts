@@ -26,6 +26,17 @@ import type {
   ResolvedHookChoice,
 } from "./types.js";
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Parses existing config text; undefined when it is not a clean JSONC object. */
+function parseConfigRoot(source: string): Record<string, unknown> | undefined {
+  const errors: ParseError[] = [];
+  const parsed: unknown = parse(source, errors, { allowTrailingComma: true });
+  return errors.length === 0 && isRecord(parsed) ? parsed : undefined;
+}
+
 function formattingPolicyValue(
   choice: InitFormattingChoice,
   imported: InitFormattingImport | undefined,
@@ -89,12 +100,9 @@ function isGeneratedOverrideEntry(entry: unknown): boolean {
 /** An existing explicit engine or off choice survives repeat init untouched. */
 function existingFormattingChoice(before: string | null): InitFormattingChoice {
   if (before === null) return "managed";
-  const errors: ParseError[] = [];
-  const parsed: unknown = parse(before, errors, { allowTrailingComma: true });
-  if (errors.length > 0 || typeof parsed !== "object" || parsed === null) {
-    return "managed";
-  }
-  const checks = (parsed as Record<string, unknown>).checks;
+  const parsed = parseConfigRoot(before);
+  if (parsed === undefined) return "managed";
+  const checks = parsed.checks;
   if (typeof checks !== "object" || checks === null) return "managed";
   const formatting = (checks as Record<string, unknown>).formatting;
   if (formatting === "off") return "off";
@@ -104,7 +112,7 @@ function existingFormattingChoice(before: string | null): InitFormattingChoice {
     if (record.generated === "prettier-copy") return "copy";
     if (record.engine === "project") return "project";
   }
-  const overrides = (parsed as Record<string, unknown>).overrides;
+  const overrides = parsed.overrides;
   if (
     Array.isArray(overrides) &&
     overrides.some((entry) => {
@@ -320,14 +328,8 @@ function configContents(
       2,
     )}\n`;
   }
-  const errors: ParseError[] = [];
-  const parsed: unknown = parse(before, errors, { allowTrailingComma: true });
-  if (
-    errors.length > 0 ||
-    typeof parsed !== "object" ||
-    parsed === null ||
-    Array.isArray(parsed)
-  ) {
+  const parsed = parseConfigRoot(before);
+  if (parsed === undefined) {
     throw new Error(
       "Zedbee could not safely update the existing configuration.",
     );
@@ -351,14 +353,11 @@ function configContents(
       modify(updated, ["checks"], configuredChecks, INIT_JSONC_EDIT_OPTIONS),
     );
   } else if (vulnerabilitiesEnabled) {
-    const root = parsed as Record<string, unknown>;
+    const root = parsed;
     const checksValue = root.checks;
-    const existingVulnerability =
-      typeof checksValue === "object" &&
-      checksValue !== null &&
-      !Array.isArray(checksValue)
-        ? (checksValue as Record<string, unknown>).vulnerabilities
-        : undefined;
+    const existingVulnerability = isRecord(checksValue)
+      ? checksValue.vulnerabilities
+      : undefined;
     if (existingVulnerability !== "off") {
       const value =
         existingVulnerability === "error" || existingVulnerability === "warn"
@@ -406,19 +405,9 @@ function applyFormattingChoice(
 ): string {
   const root = parsed as Record<string, unknown>;
   const checksValue = root.checks;
-  const checksObject =
-    typeof checksValue === "object" &&
-    checksValue !== null &&
-    !Array.isArray(checksValue)
-      ? (checksValue as Record<string, unknown>)
-      : {};
+  const checksObject = isRecord(checksValue) ? checksValue : {};
   const existing = checksObject.formatting;
-  const existingObject =
-    typeof existing === "object" &&
-    existing !== null &&
-    !Array.isArray(existing)
-      ? (existing as Record<string, unknown>)
-      : undefined;
+  const existingObject = isRecord(existing) ? existing : undefined;
   const existingSeverity =
     existing === "off" || existing === "warn" || existing === "error"
       ? existing
@@ -532,30 +521,16 @@ function existingVulnerabilitySeverity(
   before: string | null,
 ): "off" | "warn" | "error" | undefined {
   if (before === null) return undefined;
-  const errors: ParseError[] = [];
-  const root: unknown = parse(before, errors, { allowTrailingComma: true });
-  if (
-    errors.length > 0 ||
-    typeof root !== "object" ||
-    root === null ||
-    Array.isArray(root)
-  ) {
-    return undefined;
-  }
-  const checks = (root as Record<string, unknown>).checks;
-  if (typeof checks !== "object" || checks === null || Array.isArray(checks)) {
-    return undefined;
-  }
-  const vulnerability = (checks as Record<string, unknown>).vulnerabilities;
+  const root = parseConfigRoot(before);
+  if (root === undefined) return undefined;
+  const checks = root.checks;
+  if (!isRecord(checks)) return undefined;
+  const vulnerability = checks.vulnerabilities;
   if (["off", "warn", "error"].includes(vulnerability as string)) {
     return vulnerability as "off" | "warn" | "error";
   }
-  if (
-    typeof vulnerability === "object" &&
-    vulnerability !== null &&
-    !Array.isArray(vulnerability)
-  ) {
-    const severity = (vulnerability as Record<string, unknown>).severity;
+  if (isRecord(vulnerability)) {
+    const severity = vulnerability.severity;
     if (["off", "warn", "error"].includes(severity as string)) {
       return severity as "off" | "warn" | "error";
     }
