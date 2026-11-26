@@ -1,20 +1,13 @@
 import pLimit from "p-limit";
-import { validateExactVersion, validatePackageName } from "../inventory/normalize.js";
 import {
-  OsvAnalysisError,
-  OsvUnavailableError,
-} from "./errors.js";
+  validateExactVersion,
+  validatePackageName,
+} from "../inventory/normalize.js";
+import { OsvAnalysisError, OsvUnavailableError } from "./errors.js";
 import { normalizeAdvisory } from "./normalize-advisory.js";
 import { readJsonResponse } from "./read-response.js";
-import {
-  advisoryResponseSchema,
-  batchResponseSchema,
-} from "./schemas.js";
-import type {
-  OsvAdvisory,
-  OsvClient,
-  OsvPackageQuery,
-} from "./types.js";
+import { advisoryResponseSchema, batchResponseSchema } from "./schemas.js";
+import type { OsvAdvisory, OsvClient, OsvPackageQuery } from "./types.js";
 
 const OSV_ORIGIN = "https://api.osv.dev";
 const QUERY_BATCH_URL = `${OSV_ORIGIN}/v1/querybatch`;
@@ -71,7 +64,10 @@ function safeQuery(query: OsvPackageQuery): OsvPackageQuery {
   }
 }
 
-function chunks<T>(values: readonly T[], size: number): readonly (readonly T[])[] {
+function chunks<T>(
+  values: readonly T[],
+  size: number,
+): readonly (readonly T[])[] {
   const result: T[][] = [];
   for (let index = 0; index < values.length; index += size) {
     result.push(values.slice(index, index + size));
@@ -93,6 +89,35 @@ function unavailableForStatus(status: number): OsvUnavailableError | undefined {
     );
   }
   return undefined;
+}
+
+function safeRequestError(
+  error: unknown,
+  signal: AbortSignal,
+  timeoutSignal: AbortSignal,
+): OsvUnavailableError | OsvAnalysisError {
+  if (
+    error instanceof OsvUnavailableError ||
+    error instanceof OsvAnalysisError
+  ) {
+    return error;
+  }
+  if (signal.aborted) {
+    return new OsvUnavailableError(
+      "OSV_REQUEST_ABORTED",
+      "The OSV request was cancelled.",
+    );
+  }
+  if (timeoutSignal.aborted) {
+    return new OsvUnavailableError(
+      "OSV_REQUEST_TIMEOUT",
+      "OSV did not respond before the request deadline.",
+    );
+  }
+  return new OsvUnavailableError(
+    "OSV_NETWORK_UNAVAILABLE",
+    "Zedbee could not connect to OSV.",
+  );
 }
 
 export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
@@ -135,25 +160,7 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
         }
         return await readJsonResponse(response);
       } catch (error) {
-        let safeError: OsvUnavailableError | OsvAnalysisError;
-        if (error instanceof OsvUnavailableError || error instanceof OsvAnalysisError) {
-          safeError = error;
-        } else if (signal.aborted) {
-          safeError = new OsvUnavailableError(
-            "OSV_REQUEST_ABORTED",
-            "The OSV request was cancelled.",
-          );
-        } else if (timeout.signal.aborted) {
-          safeError = new OsvUnavailableError(
-            "OSV_REQUEST_TIMEOUT",
-            "OSV did not respond before the request deadline.",
-          );
-        } else {
-          safeError = new OsvUnavailableError(
-            "OSV_NETWORK_UNAVAILABLE",
-            "Zedbee could not connect to OSV.",
-          );
-        }
+        const safeError = safeRequestError(error, signal, timeout.signal);
         if (
           safeError instanceof OsvAnalysisError ||
           safeError.code === "OSV_REQUEST_ABORTED" ||
@@ -270,10 +277,14 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
       pending = next;
     }
 
-    const allIds = [...new Set([...idsByKey.values()].flatMap((ids) => [...ids]))].sort();
+    const allIds = [
+      ...new Set([...idsByKey.values()].flatMap((ids) => [...ids])),
+    ].sort();
     const limit = pLimit(detailConcurrency);
     const advisoryEntries = await Promise.all(
-      allIds.map((id) => limit(async () => [id, await fetchAdvisory(id, signal)] as const)),
+      allIds.map((id) =>
+        limit(async () => [id, await fetchAdvisory(id, signal)] as const),
+      ),
     );
     const advisories = new Map(advisoryEntries);
     const result = new Map<string, readonly OsvAdvisory[]>();
@@ -281,12 +292,10 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
       result.set(
         key,
         Object.freeze(
-          [...(idsByKey.get(key) ?? [])]
-            .sort()
-            .flatMap((id) => {
-              const advisory = advisories.get(id);
-              return advisory === undefined ? [] : [advisory];
-            }),
+          [...(idsByKey.get(key) ?? [])].sort().flatMap((id) => {
+            const advisory = advisories.get(id);
+            return advisory === undefined ? [] : [advisory];
+          }),
         ),
       );
     }
