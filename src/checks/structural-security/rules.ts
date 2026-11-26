@@ -77,28 +77,46 @@ function identifierNames(
   return names;
 }
 
-function importLocalNames(
-  context: RuleContext,
-  node: SgNode,
-): ReadonlySet<string> {
-  const locals = new Set<string>();
-  const text = context.text(node)!;
+interface ImportClause {
+  readonly namespace: string | undefined;
+  readonly defaultImport: string | undefined;
+  readonly specifiers: readonly {
+    readonly imported: string;
+    readonly local: string;
+  }[];
+}
+
+function parseImportClause(text: string): ImportClause {
   const namespace = text.match(
     /import\s+\*\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)/u,
   )?.[1];
   const defaultImport = text.match(
     /import\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*(?:,|from)/u,
   )?.[1];
-  if (namespace !== undefined) locals.add(namespace);
-  if (defaultImport !== undefined) locals.add(defaultImport);
+  const specifiers: { imported: string; local: string }[] = [];
   for (const specifier of text.match(/\{([^}]*)\}/u)?.[1]?.split(",") ?? []) {
     const match = specifier
       .trim()
       .match(
         /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
       );
-    if (match?.[1] !== undefined) locals.add(match[2] ?? match[1]);
+    if (match?.[1] !== undefined)
+      specifiers.push({ imported: match[1], local: match[2] ?? match[1] });
   }
+  return { namespace, defaultImport, specifiers };
+}
+
+function importLocalNames(
+  context: RuleContext,
+  node: SgNode,
+): ReadonlySet<string> {
+  const { namespace, defaultImport, specifiers } = parseImportClause(
+    context.text(node)!,
+  );
+  const locals = new Set<string>();
+  if (namespace !== undefined) locals.add(namespace);
+  if (defaultImport !== undefined) locals.add(defaultImport);
+  for (const { local } of specifiers) locals.add(local);
   return locals;
 }
 
@@ -173,23 +191,12 @@ function moduleBindings(
       const text = context.text(node)!;
       if (!new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u").test(text))
         continue;
-      const namespace = text.match(
-        /import\s+\*\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)/u,
-      )?.[1];
-      const defaultImport = text.match(
-        /import\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*(?:,|from)/u,
-      )?.[1];
-      if (namespace !== undefined) namespaces.add(namespace);
-      if (defaultImport !== undefined) namespaces.add(defaultImport);
-      const specifiers = text.match(/\{([^}]*)\}/u)?.[1];
-      for (const specifier of specifiers?.split(",") ?? []) {
-        const match = specifier
-          .trim()
-          .match(
-            /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
-          );
-        if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
-      }
+      const clause = parseImportClause(text);
+      if (clause.namespace !== undefined) namespaces.add(clause.namespace);
+      if (clause.defaultImport !== undefined)
+        namespaces.add(clause.defaultImport);
+      for (const { imported, local } of clause.specifiers)
+        named.set(local, imported);
     }
     if (
       node.kind() === "lexical_declaration" ||
