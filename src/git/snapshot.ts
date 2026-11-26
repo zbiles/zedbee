@@ -19,7 +19,7 @@ import {
   captureSelectedIndexComparison,
   SelectedIndexCleanupError,
 } from "./selected-comparison.js";
-import { settleSnapshotWork } from "./snapshot-work.js";
+import { joinSnapshotReaders, settleSnapshotWork } from "./snapshot-work.js";
 import {
   SNAPSHOT_PREFIX,
   SnapshotError,
@@ -707,18 +707,12 @@ export async function buildCommitSnapshotPairOptimized(
   targetCommit: string,
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
-  const baseline = await readCommitEntries(
-    repositoryRoot,
-    git,
-    baselineCommit,
-    signal,
-  );
-  const target = await readCommitEntries(
-    repositoryRoot,
-    git,
-    targetCommit,
-    signal,
-  );
+  const entries = await joinSnapshotReaders([
+    readCommitEntries(repositoryRoot, git, baselineCommit, signal),
+    readCommitEntries(repositoryRoot, git, targetCommit, signal),
+  ]);
+  const baseline = entries[0]!;
+  const target = entries[1]!;
   return materializePair(
     git,
     baseline,
@@ -793,13 +787,13 @@ async function readIndexTargetEntries(
   git: GitClient,
   options: IndexRunOptions,
 ): Promise<SnapshotEntry[]> {
-  const staged = parseStagedEntries(
-    (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
-  );
+  const [stagedOutput, debugOutput] = await joinSnapshotReaders([
+    git.run(["ls-files", "--stage", "-z"], options),
+    git.run(["ls-files", "--debug", "-z"], options),
+  ]);
+  const staged = parseStagedEntries(stagedOutput!.stdout);
   validateEntryPaths(repositoryRoot, staged);
-  const intent = parseIntentToAddPaths(
-    (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
-  );
+  const intent = parseIntentToAddPaths(debugOutput!.stdout);
   return staged.filter((entry) => !intent.has(entry.path));
 }
 
