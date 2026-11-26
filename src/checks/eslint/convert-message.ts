@@ -9,7 +9,33 @@ import type {
 import { managedAutomaticFixFor } from "../../attribution/fingerprint.js";
 import { DISPLAY_TEXT_LIMITS } from "../../core/display-text.js";
 import { managedRuleInventory } from "./rule-settings.js";
-import { isConfigurableRuleCheckId } from "../../config/settings-registry.js";
+import {
+  isConfigurableRuleCheckId,
+  type ConfigurableRuleCheckId,
+} from "../../config/settings-registry.js";
+
+// Package-owned rule metadata only; no repository input enters this cache.
+const templatesByRule = new Map<string, Readonly<Record<string, string>>>();
+
+function ruleTemplates(
+  check: ConfigurableRuleCheckId,
+  rule: string,
+): Readonly<Record<string, string>> {
+  const key = `${check}\u0000${rule}`;
+  const cached = templatesByRule.get(key);
+  if (cached !== undefined) return cached;
+  const metadata = managedRuleInventory(check).get(rule)?.meta;
+  const templates = Object.freeze(
+    Object.fromEntries(
+      Object.entries(metadata?.messages ?? {}).map(([id, template]) => [
+        id,
+        template.replace(/\{\{[^{}]+\}\}/gu, "[source]"),
+      ]),
+    ),
+  );
+  templatesByRule.set(key, templates);
+  return templates;
+}
 
 /** Only managed package metadata may supply source-free diagnostic prose. */
 export function eslintDiagnosticMessage(
@@ -23,12 +49,7 @@ export function eslintDiagnosticMessage(
     return "The analyzer reported a diagnostic.";
   try {
     const metadata = managedRuleInventory(check).get(rule)?.meta;
-    const templates = Object.fromEntries(
-      Object.entries(metadata?.messages ?? {}).map(([id, template]) => [
-        id,
-        template.replace(/\{\{[^{}]+\}\}/gu, "[source]"),
-      ]),
-    );
+    const templates = ruleTemplates(check, rule);
     if (messageId !== undefined && Object.hasOwn(templates, messageId))
       return templates[messageId]!;
     if (message !== undefined && Object.values(templates).includes(message))
