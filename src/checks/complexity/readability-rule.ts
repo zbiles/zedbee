@@ -1,5 +1,7 @@
 import { Linter, type Rule } from "eslint";
 
+import { parseReadabilityScore } from "./metric-message.js";
+
 const functionTypes = new Set([
   "ArrowFunctionExpression",
   "FunctionDeclaration",
@@ -106,8 +108,8 @@ export function scoreReadabilityComplexities(source: string): number[] {
     },
   ]);
   return messages.flatMap((message) => {
-    const matched = /^zedbee-readability:(\d+)$/u.exec(message.message);
-    return matched === null ? [] : [Number(matched[1])];
+    const score = parseReadabilityScore(message.message);
+    return score === undefined ? [] : [score];
   });
 }
 
