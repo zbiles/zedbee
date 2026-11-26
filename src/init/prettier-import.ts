@@ -154,6 +154,19 @@ async function readConfigValue(
   }
 }
 
+function isPackageManifestConfig(path: string): boolean {
+  return ["package.json", "package.yaml"].includes(posix.basename(path));
+}
+
+async function readPrettierConfigData(
+  registry: SnapshotRegistry,
+  path: string,
+): Promise<unknown> {
+  return isPackageManifestConfig(path)
+    ? readPackagePrettierValue(registry, path)
+    : readConfigValue(registry, path);
+}
+
 function patternList(value: unknown): readonly string[] | undefined {
   if (typeof value === "string") return Object.freeze([value]);
   if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
@@ -459,11 +472,7 @@ async function loadProjectConfig(
     };
   } else {
     try {
-      value = ["package.json", "package.yaml"].includes(
-        posix.basename(configPath),
-      )
-        ? await readPackagePrettierValue(registry, configPath)
-        : await readConfigValue(registry, configPath);
+      value = await readPrettierConfigData(registry, configPath);
     } catch {
       limitations.push(
         `The Prettier configuration ${configPath} could not be parsed as data.`,
@@ -477,9 +486,7 @@ async function loadProjectConfig(
       };
     }
     if (typeof value === "string") {
-      const context = ["package.json", "package.yaml"].includes(
-        posix.basename(configPath),
-      )
+      const context = isPackageManifestConfig(configPath)
         ? `${posix.basename(configPath)} Prettier field in ${configPath}`
         : `Prettier configuration ${configPath}`;
       limitations.push(
@@ -605,11 +612,7 @@ export async function previewPrettierSettingsImport(
         });
       } else {
         try {
-          const value = ["package.json", "package.yaml"].includes(
-            posix.basename(path),
-          )
-            ? await readPackagePrettierValue(registry, path)
-            : await readConfigValue(registry, path);
+          const value = await readPrettierConfigData(registry, path);
           if (typeof value === "string")
             sharedConfigs.push({
               projectRoot: discovery.projectRoot,
