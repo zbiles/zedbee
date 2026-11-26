@@ -450,16 +450,22 @@ async function applyWithinSession(
     dependencies.signal?.throwIfAborted();
     const preview = plan.workingFiles.get(group.file);
     const ids = checkIds(group.candidates);
-    if (preview === undefined) {
+    const skipFile = (
+      kind: FixIssue["kind"],
+      message: string,
+      remediation: string,
+      diagnostic?: AnalyzerDiagnostic,
+    ): void => {
       unchangedFiles.push(group.file);
       issues.push(
-        issue(
-          "write",
-          group.file,
-          ids,
-          "Zedbee could not find the working-file preview.",
-          "Build a fresh fix plan and try again.",
-        ),
+        issue(kind, group.file, ids, message, remediation, diagnostic),
+      );
+    };
+    if (preview === undefined) {
+      skipFile(
+        "write",
+        "Zedbee could not find the working-file preview.",
+        "Build a fresh fix plan and try again.",
       );
       continue;
     }
@@ -470,42 +476,27 @@ async function applyWithinSession(
       identity = await stat(plan.repositoryRoot, group.file);
     } catch {
       dependencies.signal?.throwIfAborted();
-      unchangedFiles.push(group.file);
-      issues.push(
-        issue(
-          "write",
-          group.file,
-          ids,
-          "Zedbee could not safely read the working file.",
-          "Inspect the file path and build a fresh fix plan.",
-        ),
+      skipFile(
+        "write",
+        "Zedbee could not safely read the working file.",
+        "Inspect the file path and build a fresh fix plan.",
       );
       continue;
     }
     if (digestWorkingSource(working) !== preview.sha256) {
-      unchangedFiles.push(group.file);
-      issues.push(
-        issue(
-          "stale",
-          group.file,
-          ids,
-          "The working file changed after Zedbee previewed it.",
-          "Build a fresh fix plan and try again.",
-        ),
+      skipFile(
+        "stale",
+        "The working file changed after Zedbee previewed it.",
+        "Build a fresh fix plan and try again.",
       );
       continue;
     }
     const exact = exactEdits(group.candidates);
     if (exact.invalid) {
-      unchangedFiles.push(group.file);
-      issues.push(
-        issue(
-          "conflict",
-          group.file,
-          ids,
-          "Zedbee found overlapping or incompatible exact fixes.",
-          "Resolve the findings and build a fresh fix plan.",
-        ),
+      skipFile(
+        "conflict",
+        "Zedbee found overlapping or incompatible exact fixes.",
+        "Resolve the findings and build a fresh fix plan.",
       );
       continue;
     }
@@ -517,15 +508,10 @@ async function applyWithinSession(
         exact.edits,
       );
       if (composed === undefined) {
-        unchangedFiles.push(group.file);
-        issues.push(
-          issue(
-            "conflict",
-            group.file,
-            ids,
-            "Working changes overlap a managed exact fix.",
-            "Resolve the overlapping edit and build a fresh fix plan.",
-          ),
+        skipFile(
+          "conflict",
+          "Working changes overlap a managed exact fix.",
+          "Resolve the overlapping edit and build a fresh fix plan.",
         );
         continue;
       }
@@ -572,29 +558,20 @@ async function applyWithinSession(
           error.diagnostic.category === "cancellation"
         )
           throw error;
-        unchangedFiles.push(group.file);
         if (error instanceof FixPlanStaleError) {
-          issues.push(
-            issue(
-              "stale",
-              group.file,
-              ids,
-              "The selected formatting engine or snapshot changed after the plan was built.",
-              "Build a fresh fix plan and re-approve the changes.",
-            ),
+          skipFile(
+            "stale",
+            "The selected formatting engine or snapshot changed after the plan was built.",
+            "Build a fresh fix plan and re-approve the changes.",
           );
         } else if (error instanceof FixPlanIgnoredError) {
-          continue;
+          unchangedFiles.push(group.file);
         } else {
-          issues.push(
-            issue(
-              "format",
-              group.file,
-              ids,
-              "Zedbee could not format the complete working file.",
-              "Fix the formatting error and build a fresh fix plan.",
-              error instanceof AnalyzerJobError ? error.diagnostic : undefined,
-            ),
+          skipFile(
+            "format",
+            "Zedbee could not format the complete working file.",
+            "Fix the formatting error and build a fresh fix plan.",
+            error instanceof AnalyzerJobError ? error.diagnostic : undefined,
           );
         }
         continue;
@@ -605,6 +582,8 @@ async function applyWithinSession(
       unchangedFiles.push(group.file);
       continue;
     }
+    const appliedCount =
+      exact.edits.length + (formatCandidate === undefined ? 0 : 1);
     try {
       await write({
         repositoryRoot: plan.repositoryRoot,
@@ -614,13 +593,11 @@ async function applyWithinSession(
         expectedSha256: digestWorkingSource(working),
       });
       changedFiles.push(group.file);
-      progress.appliedFixes +=
-        exact.edits.length + (formatCandidate === undefined ? 0 : 1);
+      progress.appliedFixes += appliedCount;
     } catch (error) {
       if (error instanceof CommittedWriteError) {
         changedFiles.push(group.file);
-        progress.appliedFixes +=
-          exact.edits.length + (formatCandidate === undefined ? 0 : 1);
+        progress.appliedFixes += appliedCount;
         issues.push(
           issue(
             "write",
@@ -632,15 +609,10 @@ async function applyWithinSession(
         );
         continue;
       }
-      unchangedFiles.push(group.file);
-      issues.push(
-        issue(
-          "write",
-          group.file,
-          ids,
-          "Zedbee could not safely write the working file.",
-          "Inspect the file and build a fresh fix plan.",
-        ),
+      skipFile(
+        "write",
+        "Zedbee could not safely write the working file.",
+        "Inspect the file and build a fresh fix plan.",
       );
     }
   }
