@@ -32,6 +32,15 @@ import { createProjectProcessOwner } from "./project-process.js";
 const READY_TIMEOUT_MS = 10_000;
 const CLOSE_GRACE_MS = 2_000;
 
+const RUNNING_FROM_SOURCE = import.meta.url.endsWith(".ts");
+
+/** Resolves a sibling module path with the extension this build runs from. */
+function siblingModulePath(stem: string): string {
+  return fileURLToPath(
+    new URL(`${stem}.${RUNNING_FROM_SOURCE ? "ts" : "js"}`, import.meta.url),
+  );
+}
+
 export interface ProjectFormatterSession {
   classify(file: string): Promise<ProjectFormatSupport>;
   format(file: string, source: string): Promise<ProjectFormatResult>;
@@ -56,7 +65,7 @@ export interface ProjectFormatterInput {
 }
 
 function sourceExecArgv(): readonly string[] {
-  return import.meta.url.endsWith(".ts")
+  return RUNNING_FROM_SOURCE
     ? ["--import", import.meta.resolve("tsx")]
     : [];
 }
@@ -158,12 +167,7 @@ async function openSession(
     if (input.importWorkspace === undefined) await workspace.dispose();
     else releaseWorkspace?.();
   };
-  const workerEntry = fileURLToPath(
-    new URL(
-      `./project-worker.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
-      import.meta.url,
-    ),
-  );
+  const workerEntry = siblingModulePath("./project-worker");
   const owner = await createProjectProcessOwner().catch(async () => {
     await disposeWorkspace();
     throw new ProjectPrettierFailureError(
@@ -173,12 +177,7 @@ async function openSession(
       ),
     );
   });
-  const bootstrap = fileURLToPath(
-    new URL(
-      `../runner/bootstrap.${import.meta.url.endsWith(".ts") ? "ts" : "js"}`,
-      import.meta.url,
-    ),
-  );
+  const bootstrap = siblingModulePath("../runner/bootstrap");
   let child: ChildProcess;
   try {
     child = fork(bootstrap, [], {
