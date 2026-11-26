@@ -136,12 +136,26 @@ export function rawGitHookPath(
   return resolveRawGitHookPath(root, hookName, false);
 }
 
-export async function customGitHookPath(
+async function assertNoSymlinkedAncestors(
+  canonicalRoot: string,
+  fromRoot: string,
+): Promise<void> {
+  let ancestor = canonicalRoot;
+  for (const part of fromRoot.split(sep)) {
+    ancestor = join(ancestor, part);
+    try {
+      const state = await lstat(ancestor);
+      if (state.isSymbolicLink() || !state.isDirectory())
+        throw new Error("Zedbee refused an unsafe hook target.");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+async function customGitHooksDirectory(
   root: string,
-  hookName: ScanHookName = "pre-commit",
 ): Promise<string | undefined> {
-  if (hookName !== "pre-commit" && hookName !== "pre-merge-commit")
-    throw new Error("Zedbee refused an unsafe hook target.");
   const git = new GitClient(root);
   const configured = await git.run(["config", "--get", "core.hooksPath"], {
     reject: false,
@@ -159,18 +173,18 @@ export async function customGitHookPath(
   ) {
     throw new Error("Zedbee refused an unsafe hook target.");
   }
-  let ancestor = canonicalRoot;
-  for (const part of fromRoot.split(sep)) {
-    ancestor = join(ancestor, part);
-    try {
-      const state = await lstat(ancestor);
-      if (state.isSymbolicLink() || !state.isDirectory())
-        throw new Error("Zedbee refused an unsafe hook target.");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  return join(directory, hookName);
+  await assertNoSymlinkedAncestors(canonicalRoot, fromRoot);
+  return directory;
+}
+
+export async function customGitHookPath(
+  root: string,
+  hookName: ScanHookName = "pre-commit",
+): Promise<string | undefined> {
+  if (hookName !== "pre-commit" && hookName !== "pre-merge-commit")
+    throw new Error("Zedbee refused an unsafe hook target.");
+  const directory = await customGitHooksDirectory(root);
+  return directory === undefined ? undefined : join(directory, hookName);
 }
 
 async function huskyActivation(root: string): Promise<InitHookActivation> {
