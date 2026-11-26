@@ -7,15 +7,16 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openSynchronousKernelFileLease } from "../core/kernel-lease.js";
 import { openWindowsStateLease } from "../service/windows-pipe.js";
+import {
+  hasPrivateOwnership,
+  writePrivateFileAtomically,
+} from "./private-file.js";
 import { z } from "zod";
 import {
   telemetryV1EventSchema as telemetryEventSchema,
@@ -56,11 +57,7 @@ export function telemetryDirectory(env: TelemetryEnvironment): string {
   return join(root, "zedbee", "telemetry");
 }
 function owned(stat: Stats): void {
-  if (
-    process.platform !== "win32" &&
-    (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
-  )
-    throw new Error("Unsafe telemetry permissions");
+  if (!hasPrivateOwnership(stat)) throw new Error("Unsafe telemetry permissions");
 }
 function readPrivate(
   path: string,
@@ -214,7 +211,6 @@ export class TelemetryStore {
     explicitlyEnable = false,
   ): TelemetryState {
     const release = this.lock();
-    let temporary: string | undefined;
     try {
       const snapshot = this.snapshot();
       const persisted: PersistedState = snapshot.persisted ?? {
@@ -231,19 +227,13 @@ export class TelemetryStore {
         persisted.acknowledged_legacy_optout = snapshot.legacyFingerprint;
       change(state);
       stateSchema.parse(state);
-      temporary = join(this.directory, `${randomUUID()}.tmp`);
-      writeFileSync(temporary, JSON.stringify(persisted), {
-        flag: "wx",
-        mode: 0o600,
-      });
-      renameSync(temporary, join(this.directory, "state-v2.json"));
+      writePrivateFileAtomically(
+        this.directory,
+        join(this.directory, "state-v2.json"),
+        JSON.stringify(persisted),
+      );
       return state;
     } finally {
-      if (temporary) {
-        try {
-          unlinkSync(temporary);
-        } catch {}
-      }
       release();
     }
   }
