@@ -1,4 +1,8 @@
 import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
+import {
+  ESLINT_CONFIG_FILE_NAMES,
+  SUPPORTED_ESLINT_CONFIG_FILE_NAMES,
+} from "../checks/eslint/project/config-files.js";
 import { lstat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { loadConfig } from "../config/load-config.js";
@@ -19,20 +23,7 @@ async function configPath(
 ): Promise<{ path?: string; supported: boolean }> {
   let directory = resolve(root, projectRoot);
   while (directory === root || directory.startsWith(`${root}${sep}`)) {
-    for (const name of [
-      "eslint.config.js",
-      "eslint.config.mjs",
-      "eslint.config.cjs",
-      "eslint.config.ts",
-      "eslint.config.mts",
-      "eslint.config.cts",
-      ".eslintrc",
-      ".eslintrc.json",
-      ".eslintrc.js",
-      ".eslintrc.cjs",
-      ".eslintrc.yml",
-      ".eslintrc.yaml",
-    ]) {
+    for (const name of ESLINT_CONFIG_FILE_NAMES) {
       const path = join(directory, name);
       const state = await lstat(path).catch(() => undefined);
       if (state === undefined) continue;
@@ -40,11 +31,9 @@ async function configPath(
         path: relative(root, path).split(sep).join("/"),
         supported:
           state.isFile() &&
-          [
-            "eslint.config.js",
-            "eslint.config.mjs",
-            "eslint.config.cjs",
-          ].includes(name),
+          (SUPPORTED_ESLINT_CONFIG_FILE_NAMES as readonly string[]).includes(
+            name,
+          ),
       };
     }
     if (directory === root) break;

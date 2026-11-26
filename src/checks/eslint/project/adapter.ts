@@ -17,6 +17,7 @@ import {
   projectEslintSourceMessagesAllowed,
 } from "./trust.js";
 import { ProjectEslintFailureError } from "./types.js";
+import { ESLINT_CONFIG_FILE_NAMES } from "./config-files.js";
 
 const LINTABLE_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
@@ -26,20 +27,7 @@ async function hasConfiguration(
 ): Promise<boolean> {
   let directory = resolve(root, project);
   for (;;) {
-    for (const name of [
-      "eslint.config.js",
-      "eslint.config.mjs",
-      "eslint.config.cjs",
-      "eslint.config.ts",
-      "eslint.config.mts",
-      "eslint.config.cts",
-      ".eslintrc",
-      ".eslintrc.json",
-      ".eslintrc.js",
-      ".eslintrc.cjs",
-      ".eslintrc.yml",
-      ".eslintrc.yaml",
-    ]) {
+    for (const name of ESLINT_CONFIG_FILE_NAMES) {
       if (
         await access(join(directory, name)).then(
           () => true,
