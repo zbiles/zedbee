@@ -68,9 +68,9 @@ const PRIMARY_TEXT_HEADINGS = new Set([
   "COMPLETE REPORT",
 ]);
 
-const FINDING_TEXT_LABELS = new Set(
-  [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
-);
+const FINDING_TEXT_LABELS: readonly string[] = [
+  ...new Set([...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId))),
+];
 
 const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
 const FIX_CONTINUATION_PREFIX = " ".repeat("       Fix: ".length);
@@ -82,7 +82,7 @@ function textLineTone(line: string): TerminalTextTone {
   if (/^(?:Fix|Reason|Remediation): /u.test(trimmed)) return "reason";
   if (
     !line.startsWith(" ") &&
-    [...FINDING_TEXT_LABELS].some(
+    FINDING_TEXT_LABELS.some(
       (label) => line === label || line.startsWith(`${label}  `),
     )
   ) {
