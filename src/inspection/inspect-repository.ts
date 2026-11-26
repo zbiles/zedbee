@@ -111,14 +111,12 @@ function ownsPath(workspaceRoot: string, path: string): boolean {
 }
 
 function owningWorkspace(
-  workspaces: readonly DiscoveredWorkspace[],
+  workspacesByDepth: readonly DiscoveredWorkspace[],
   path: string,
 ): DiscoveredWorkspace | undefined {
-  return workspaces
-    .filter((workspace) => ownsPath(workspace.relativeRoot, path))
-    .sort(
-      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
-    )[0];
+  return workspacesByDepth.find((workspace) =>
+    ownsPath(workspace.relativeRoot, path),
+  );
 }
 
 function inferEnvironments(
@@ -207,9 +205,12 @@ function assignPathsToWorkspaces(
       claimed.add(path);
     }
   }
+  const workspacesByDepth = [...workspaces].sort(
+    (left, right) => right.relativeRoot.length - left.relativeRoot.length,
+  );
   for (const path of paths) {
     if (claimed.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
+    const owner = owningWorkspace(workspacesByDepth, path);
     if (owner !== undefined) {
       byWorkspace.get(owner)?.push(path);
     }
