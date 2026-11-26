@@ -12,17 +12,12 @@ import {
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
+import { NO_ATTRIBUTION } from "./range.js";
 
 export interface MetricDeltaPolicy {
   readonly limit: number;
   readonly blockWorsening: boolean;
 }
-
-const NONE: Attribution = Object.freeze({
-  kind: "none",
-  staged: false,
-  evidence: Object.freeze([]),
-});
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
@@ -268,7 +263,12 @@ function attributePreparedMetricDelta(
 
   const changedEntity = changed.get(targetSnapshot.identity);
   if (!matchesChangedEntity(targetSnapshot, changedEntity))
-    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
+    return toFinding(
+      targetSnapshot,
+      NO_ATTRIBUTION,
+      policySnapshot,
+      baselineSnapshot,
+    );
 
   const targetValue = targetSnapshot.metric!.value;
   const baselineValue = baselineSnapshot?.metric?.value;
@@ -284,7 +284,12 @@ function attributePreparedMetricDelta(
     policySnapshot.blockWorsening;
   const targetOnlyAboveLimit = baselineValue === undefined && aboveLimit;
   if (!crossesLimit && !worsensAboveLimit && !targetOnlyAboveLimit) {
-    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
+    return toFinding(
+      targetSnapshot,
+      NO_ATTRIBUTION,
+      policySnapshot,
+      baselineSnapshot,
+    );
   }
 
   const evidence = [

@@ -12,6 +12,7 @@ import {
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
+import { NO_ATTRIBUTION } from "./range.js";
 import { compareCodeUnits } from "../core/compare.js";
 
 export interface ObservationComparisonEvidence {
@@ -47,12 +48,6 @@ function comparisonFingerprint(observation: Observation): string {
   const fingerprint = fingerprintObservation(observation);
   return fingerprint;
 }
-
-const NONE: Attribution = Object.freeze({
-  kind: "none",
-  staged: false,
-  evidence: Object.freeze([]),
-});
 
 function canonicalEntityIdentity(identity: string): string {
   if (!isCanonicalSyntaxText(identity)) {
@@ -149,7 +144,7 @@ function comparisonAttribution(
   if (evidence.length === 0 && projectDelta) {
     evidence.push("project-delta");
   }
-  if (evidence.length === 0) return NONE;
+  if (evidence.length === 0) return NO_ATTRIBUTION;
 
   evidence.sort(compareCodeUnits);
   evidence.push(`target-only:${target.fingerprint}`);
@@ -220,7 +215,7 @@ export function compareObservationSets(
       remainingBaseline.get(normalized.comparisonFingerprint) ?? 0;
     if (remaining > 0) {
       remainingBaseline.set(normalized.comparisonFingerprint, remaining - 1);
-      return finding(normalized, NONE);
+      return finding(normalized, NO_ATTRIBUTION);
     }
     return finding(
       normalized,
