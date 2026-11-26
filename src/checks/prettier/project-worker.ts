@@ -291,6 +291,22 @@ function sanitizeSettings(
   return result as Partial<FormattingSettings>;
 }
 
+/** Reads an own data property without invoking accessors. */
+function ownDataValue(target: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(target, key);
+  return descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : undefined;
+}
+
+function isPatternValue(value: unknown): value is string | string[] {
+  return (
+    typeof value === "string" ||
+    (Array.isArray(value) &&
+      value.every((item) => typeof item === "string" && item.length > 0))
+  );
+}
+
 function sanitizeOverrideEntry(
   entry: unknown,
   limitations: string[],
@@ -307,15 +323,8 @@ function sanitizeOverrideEntry(
     );
     return undefined;
   }
-  const filesDescriptor = Object.getOwnPropertyDescriptor(entry, "files");
-  const files =
-    filesDescriptor !== undefined && "value" in filesDescriptor
-      ? filesDescriptor.value
-      : undefined;
-  const hasFiles =
-    typeof files === "string" ||
-    (Array.isArray(files) &&
-      files.every((item) => typeof item === "string" && item.length > 0));
+  const files = ownDataValue(entry, "files");
+  const hasFiles = isPatternValue(files);
   if (!hasFiles || files === undefined) {
     limitations.push(
       "An exported configuration override has no usable files pattern and was not copied.",
@@ -332,25 +341,15 @@ function sanitizeOverrideEntry(
       : undefined;
   if (
     (excludeDescriptor !== undefined && !("value" in excludeDescriptor)) ||
-    (excludeFiles !== undefined &&
-      !(
-        typeof excludeFiles === "string" ||
-        (Array.isArray(excludeFiles) &&
-          excludeFiles.every(
-            (item) => typeof item === "string" && item.length > 0,
-          ))
-      ))
+    (excludeFiles !== undefined && !isPatternValue(excludeFiles))
   ) {
     limitations.push(
       "An override has invalid or non-data excludeFiles and was not copied.",
     );
     return undefined;
   }
-  const optionsDescriptor = Object.getOwnPropertyDescriptor(entry, "options");
   const settings = sanitizeSettings(
-    optionsDescriptor !== undefined && "value" in optionsDescriptor
-      ? optionsDescriptor.value
-      : undefined,
+    ownDataValue(entry, "options"),
     limitations,
     "override",
   );
@@ -446,14 +445,7 @@ async function importConfig(
     files: string | readonly string[];
     settings: Partial<FormattingSettings>;
   }[] = [];
-  const overridesDescriptor = Object.getOwnPropertyDescriptor(
-    exported,
-    "overrides",
-  );
-  const overridesValue =
-    overridesDescriptor !== undefined && "value" in overridesDescriptor
-      ? overridesDescriptor.value
-      : undefined;
+  const overridesValue = ownDataValue(exported, "overrides");
   if (overridesValue !== undefined && !Array.isArray(overridesValue)) {
     limitations.push(
       "The exported overrides value is not an array and was not copied.",
