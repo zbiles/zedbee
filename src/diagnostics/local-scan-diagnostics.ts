@@ -1,7 +1,10 @@
 import { CHECK_IDS } from "../core/check-ids.js";
 import {
+  SCAN_CHANGE_CATEGORIES,
+  SCAN_EXECUTION_MODES,
   SCAN_PERFORMANCE_OVERHEADS,
   SCAN_PERFORMANCE_PHASES,
+  SCAN_WORKER_COUNTS,
   type CheckPerformance,
   type ScanPerformanceSummary,
 } from "./scan-performance.js";
@@ -101,21 +104,19 @@ export function sanitizeLocalScanDiagnostics(
   );
   if (
     typeof p.partial !== "boolean" ||
-    !["local", "service", "none", "unknown"].includes(
+    !(SCAN_EXECUTION_MODES as readonly string[]).includes(
       p.executionMode as string,
     ) ||
     !Array.isArray(p.checks) ||
     p.checks.length > CHECK_IDS.length ||
     (p.workerCount !== undefined &&
-      ![1, 2, 4].includes(p.workerCount as number)) ||
+      !(SCAN_WORKER_COUNTS as readonly number[]).includes(
+        p.workerCount as number,
+      )) ||
     (p.changeCategory !== undefined &&
-      ![
-        "non_source",
-        "source",
-        "configuration_or_dependency",
-        "mixed",
-        "unknown",
-      ].includes(p.changeCategory as string))
+      !(SCAN_CHANGE_CATEGORIES as readonly string[]).includes(
+        p.changeCategory as string,
+      ))
   )
     throw new TypeError("Invalid scan diagnostic performance");
   const seen = new Set<string>();
@@ -175,7 +176,11 @@ export function sanitizeLocalScanDiagnostics(
           }),
       ...(p.workerCount === undefined
         ? {}
-        : { workerCount: p.workerCount as 1 | 2 | 4 }),
+        : {
+            workerCount: p.workerCount as NonNullable<
+              ScanPerformanceSummary["workerCount"]
+            >,
+          }),
       phases: timings(p.phases, SCAN_PERFORMANCE_PHASES),
       overhead: timings(p.overhead, SCAN_PERFORMANCE_OVERHEADS),
     }),

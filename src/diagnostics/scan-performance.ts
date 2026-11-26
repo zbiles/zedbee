@@ -33,14 +33,9 @@ export interface CheckPerformance {
 export interface ScanPerformanceSummary {
   checks: CheckPerformance[];
   partial: boolean;
-  executionMode: "local" | "service" | "none" | "unknown";
-  changeCategory?:
-    | "non_source"
-    | "source"
-    | "configuration_or_dependency"
-    | "mixed"
-    | "unknown";
-  workerCount?: 1 | 2 | 4;
+  executionMode: (typeof SCAN_EXECUTION_MODES)[number];
+  changeCategory?: (typeof SCAN_CHANGE_CATEGORIES)[number];
+  workerCount?: (typeof SCAN_WORKER_COUNTS)[number];
   phases: Record<string, number>;
   overhead: Record<string, number>;
 }
@@ -64,6 +59,20 @@ export const SCAN_PERFORMANCE_OVERHEADS = [
   "dispatcher",
   "result",
 ] as const;
+export const SCAN_EXECUTION_MODES = [
+  "local",
+  "service",
+  "none",
+  "unknown",
+] as const;
+export const SCAN_CHANGE_CATEGORIES = [
+  "non_source",
+  "source",
+  "configuration_or_dependency",
+  "mixed",
+  "unknown",
+] as const;
+export const SCAN_WORKER_COUNTS = [1, 2, 4] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
 const bounded = (v: number) => Math.min(604800000, Math.max(0, Math.round(v)));
 export class ScanPerformanceRecorder {
