@@ -16,6 +16,11 @@ const permits = new WeakMap<
   object,
   { checkoutRoot: string; projectRoot: string; sourceMessages: boolean }
 >();
+function recordedPermit(permit: ProjectEslintPermit) {
+  return typeof permit === "object" && permit !== null
+    ? permits.get(permit)
+    : undefined;
+}
 export function normalizeProjectRoot(root: string): string {
   const path = root.replaceAll("\\", "/");
   if (
@@ -124,10 +129,7 @@ export function projectEslintPermitAllows(
   projectRoot: string,
   messages = false,
 ): boolean {
-  const recorded =
-    typeof permit === "object" && permit !== null
-      ? permits.get(permit)
-      : undefined;
+  const recorded = recordedPermit(permit);
   return (
     recorded !== undefined &&
     recorded.checkoutRoot === checkoutRoot &&
@@ -138,9 +140,5 @@ export function projectEslintPermitAllows(
 export function projectEslintSourceMessagesAllowed(
   permit: ProjectEslintPermit,
 ): boolean {
-  return (
-    typeof permit === "object" &&
-    permit !== null &&
-    permits.get(permit)?.sourceMessages === true
-  );
+  return recordedPermit(permit)?.sourceMessages === true;
 }
