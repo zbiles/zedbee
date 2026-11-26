@@ -25,6 +25,7 @@ import {
 import { compareCodeUnits } from "../core/compare.js";
 import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 import { captureSelectedIndexComparison } from "../git/selected-comparison.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
@@ -307,10 +308,7 @@ async function inspectConfiguredChecks(
 }
 
 const DEFAULT_DEPENDENCIES: ChecksCommandDependencies = {
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   loadConfig: (repositoryRoot, configPath, git) =>
     loadConfigFromIndex(repositoryRoot, git, configPath),
   inspectChecks: inspectConfiguredChecks,

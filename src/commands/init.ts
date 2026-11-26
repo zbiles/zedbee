@@ -35,7 +35,7 @@ import {
 import type { TelemetrySummary } from "../telemetry/client.js";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { GitClient } from "../git/client.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 import {
   detectHookIntegration,
   type DetectedHookIntegration,
@@ -138,10 +138,7 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
   saveTelemetryPreference(env, enabled) {
     new TelemetryStore(telemetryDirectory(env)).setEnabled(enabled);
   },
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   inspect: async (root) =>
     inspectRepository(root, {
       registry: await captureWorkingTreeRegistry(root),
