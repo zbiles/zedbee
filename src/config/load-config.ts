@@ -216,11 +216,7 @@ export async function loadConfig(
     for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
       const unsupportedPath = join(repositoryRoot, filename);
       if (await exists(unsupportedPath)) {
-        throw new ConfigError(
-          "CONFIG_UNSUPPORTED",
-          `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
-          unsupportedPath,
-        );
+        throw unsupportedGitConfig(repositoryRoot, filename);
       }
     }
     return resolveConfig(undefined);
@@ -293,21 +289,13 @@ function parseIntentToAddPaths(
   while (remaining !== "") {
     const pathEnd = remaining.indexOf("\0");
     if (pathEnd === -1) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-        configPath,
-      );
+      throw unreadableGitConfig(configPath, "the Git index");
     }
     const path = remaining.slice(0, pathEnd);
     const metadata = remaining.slice(pathEnd + 1);
     const match = INDEX_DEBUG_METADATA.exec(metadata);
     if (match === null) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-        configPath,
-      );
+      throw unreadableGitConfig(configPath, "the Git index");
     }
     if ((Number.parseInt(match[1]!, 16) & INTENT_TO_ADD_FLAG) !== 0) {
       paths.add(path);
@@ -327,11 +315,7 @@ function parseIndexEntries(output: string, configPath: string): IndexEntry[] {
       const path = separator === -1 ? "" : record.slice(separator + 1);
       const match = /^(\d{6}) ([0-9a-f]+) ([0-3])$/u.exec(header);
       if (match === null || path === "") {
-        throw new ConfigError(
-          "CONFIG_INVALID",
-          `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-          configPath,
-        );
+        throw unreadableGitConfig(configPath, "the Git index");
       }
       return {
         mode: match[1]!,
@@ -397,11 +381,7 @@ function singleRegularEntry(
 function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
   if (output === "") return [];
   if (!output.endsWith("\0")) {
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the target Git commit");
   }
   return output
     .slice(0, -1)
@@ -414,11 +394,7 @@ function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
         header,
       );
       if (match === null || path === "") {
-        throw new ConfigError(
-          "CONFIG_INVALID",
-          `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-          configPath,
-        );
+        throw unreadableGitConfig(configPath, "the target Git commit");
       }
       return {
         mode: match[1]!,
@@ -442,11 +418,7 @@ function singleTreeEntry(
     entry === undefined ||
     entry.path !== repositoryPath
   ) {
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the target Git commit");
   }
   return entry;
 }
@@ -486,11 +458,7 @@ async function targetTreeEntry(
     );
   } catch (error) {
     if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the target Git commit");
   }
   return singleTreeEntry(result.stdout, repositoryPath, configPath);
 }
@@ -534,6 +502,17 @@ async function readGitConfigBlob(
     );
   }
   return parseConfigSource(source.stdout, configPath);
+}
+
+function unreadableGitConfig(
+  configPath: string,
+  location: "the Git index" | "the target Git commit",
+): ConfigError {
+  return new ConfigError(
+    "CONFIG_INVALID",
+    `Zedbee could not safely read ${basename(configPath)} from ${location}.`,
+    configPath,
+  );
 }
 
 function missingExplicitGitConfig(
@@ -583,11 +562,7 @@ export async function loadConfigFromIndex(
     ) {
       throw error;
     }
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the Git index");
   }
   const selectedEntries = entries.get(repositoryPath) ?? [];
   if (selectedEntries.length === 0) {
