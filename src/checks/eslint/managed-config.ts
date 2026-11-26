@@ -82,6 +82,25 @@ function stableRuleValue(value: unknown): string {
   return encoded;
 }
 
+function sortedValidatedRules(
+  checkId: RuleCheckId,
+  input: Readonly<Record<string, EslintRuleConfiguration>>,
+  cache: Map<object, FileRuleGroup["rules"]>,
+): FileRuleGroup["rules"] {
+  const cached = cache.get(input);
+  if (cached !== undefined) return cached;
+  const validatedRules = validateManagedRuleConfiguration(checkId, input);
+  const rules: FileRuleGroup["rules"] = Object.freeze(
+    Object.fromEntries(
+      Object.entries(validatedRules).sort(([left], [right]) =>
+        compareCodeUnits(left, right),
+      ),
+    ),
+  );
+  cache.set(input, rules);
+  return rules;
+}
+
 export function groupFilesByRules(
   files: readonly string[],
   side: SnapshotSide,
@@ -96,20 +115,11 @@ export function groupFilesByRules(
       accessibilitySettings?: Readonly<AccessibilitySettings>;
     }
   >();
+  const validatedByInput = new Map<object, FileRuleGroup["rules"]>();
   for (const file of [...files].sort(compareCodeUnits)) {
     const policy = resolve(checkId as CheckId, file, side);
     if (policy.severity === "off" || !("rules" in policy)) continue;
-    const validatedRules = validateManagedRuleConfiguration(
-      checkId,
-      policy.rules,
-    );
-    const rules = Object.freeze(
-      Object.fromEntries(
-        Object.entries(validatedRules).sort(([left], [right]) =>
-          compareCodeUnits(left, right),
-        ),
-      ),
-    );
+    const rules = sortedValidatedRules(checkId, policy.rules, validatedByInput);
     const accessibilitySettings =
       checkId === "reactAccessibility" && "settings" in policy
         ? validateAccessibilitySettings(policy.settings)
