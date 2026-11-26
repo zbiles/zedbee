@@ -165,6 +165,84 @@ function PlanSummary({
   );
 }
 
+function groupItemsByFile(
+  items: readonly FixPlan["items"][number][],
+): Map<string, FixPlan["items"][number][]> {
+  const itemsByFile = new Map<string, FixPlan["items"][number][]>();
+  for (const item of items) {
+    const group = itemsByFile.get(item.file);
+    if (group === undefined) itemsByFile.set(item.file, [item]);
+    else group.push(item);
+  }
+  return itemsByFile;
+}
+
+function FileSummaryRow({
+  file,
+  items,
+  width,
+  color,
+  showRule,
+}: {
+  readonly file: FixPlan["files"][number];
+  readonly items: readonly FixPlan["items"][number][];
+  readonly width: number;
+  readonly color: boolean;
+  readonly showRule: boolean;
+}) {
+  const applicableItems = items.filter((item) => item.status !== "skipped");
+  const skippedItems = items.filter((item) => item.status === "skipped");
+  const blocking = applicableItems.reduce(
+    (count, item) => count + item.blocking,
+    0,
+  );
+  const warnings = applicableItems.reduce(
+    (count, item) => count + item.warnings,
+    0,
+  );
+  const applicableFixes =
+    file.applicableFixes ??
+    (items.some((item) => item.status !== undefined)
+      ? applicableItems.length
+      : file.fixes);
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="column" paddingX={2}>
+        <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.primary)}>
+          {file.path}
+        </Text>
+        {applicableFixes > 0 && file.hasUnstagedChanges ? (
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            APPLY —
+            {applicableItems.some((item) => item.checkId === "formatting")
+              ? " format current working file (includes unstaged changes)"
+              : " exact fixes preserve unrelated unstaged changes"}
+          </Text>
+        ) : applicableFixes > 0 ? (
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+            APPLY — {countLabel(applicableFixes, "fix")}
+            {blocking > 0 ? ` · ${countLabel(blocking, "blocking")}` : ""}
+            {warnings > 0 ? ` · ${countLabel(warnings, "warning")}` : ""}
+          </Text>
+        ) : null}
+        {skippedItems.map((item) => (
+          <Text
+            key={`${item.checkId}:${item.findingIds.join(":")}`}
+            wrap="wrap"
+            {...colorProp(color, ZEDBEE_THEME.failure)}
+          >
+            SKIP — {item.reason ?? "Managed exact fix is unavailable."}
+          </Text>
+        ))}
+        <Text> </Text>
+      </Box>
+      {showRule ? (
+        <BrandedCommandPanelRule width={width} color={color} />
+      ) : null}
+    </Box>
+  );
+}
+
 function FileSummaries({
   plan,
   width,
@@ -180,68 +258,19 @@ function FileSummaries({
     reportPath === undefined
       ? plan.files
       : plan.files.slice(0, FIX_PLAN_FILE_SUMMARY_LIMIT);
+  const itemsByFile = groupItemsByFile(plan.items);
   return (
     <>
-      {files.map((file, index) => {
-        const items = plan.items.filter((item) => item.file === file.path);
-        const applicableItems = items.filter(
-          (item) => item.status !== "skipped",
-        );
-        const skippedItems = items.filter((item) => item.status === "skipped");
-        const blocking = applicableItems.reduce(
-          (count, item) => count + item.blocking,
-          0,
-        );
-        const warnings = applicableItems.reduce(
-          (count, item) => count + item.warnings,
-          0,
-        );
-        const applicableFixes =
-          file.applicableFixes ??
-          (items.some((item) => item.status !== undefined)
-            ? applicableItems.length
-            : file.fixes);
-        return (
-          <Box key={file.path} flexDirection="column">
-            <Box flexDirection="column" paddingX={2}>
-              <Text
-                bold
-                wrap="wrap"
-                {...colorProp(color, ZEDBEE_THEME.primary)}
-              >
-                {file.path}
-              </Text>
-              {applicableFixes > 0 && file.hasUnstagedChanges ? (
-                <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-                  APPLY —
-                  {applicableItems.some((item) => item.checkId === "formatting")
-                    ? " format current working file (includes unstaged changes)"
-                    : " exact fixes preserve unrelated unstaged changes"}
-                </Text>
-              ) : applicableFixes > 0 ? (
-                <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
-                  APPLY — {countLabel(applicableFixes, "fix")}
-                  {blocking > 0 ? ` · ${countLabel(blocking, "blocking")}` : ""}
-                  {warnings > 0 ? ` · ${countLabel(warnings, "warning")}` : ""}
-                </Text>
-              ) : null}
-              {skippedItems.map((item) => (
-                <Text
-                  key={`${item.checkId}:${item.findingIds.join(":")}`}
-                  wrap="wrap"
-                  {...colorProp(color, ZEDBEE_THEME.failure)}
-                >
-                  SKIP — {item.reason ?? "Managed exact fix is unavailable."}
-                </Text>
-              ))}
-              <Text> </Text>
-            </Box>
-            {index < files.length - 1 ? (
-              <BrandedCommandPanelRule width={width} color={color} />
-            ) : null}
-          </Box>
-        );
-      })}
+      {files.map((file, index) => (
+        <FileSummaryRow
+          key={file.path}
+          file={file}
+          items={itemsByFile.get(file.path) ?? []}
+          width={width}
+          color={color}
+          showRule={index < files.length - 1}
+        />
+      ))}
       {reportPath !== undefined && plan.files.length > files.length ? (
         <Box paddingX={2} paddingBottom={1}>
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.muted)}>
