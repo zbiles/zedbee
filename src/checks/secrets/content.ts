@@ -60,6 +60,16 @@ function unsafeSecretFile(path: string): SecretContentError {
   });
 }
 
+function secretFileTooLarge(path: string): SecretContentError {
+  return new SecretContentError({
+    code: "SECRET_FILE_TOO_LARGE",
+    message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
+    path,
+    remediation:
+      "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
+  });
+}
+
 async function readTextSource(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -103,22 +113,10 @@ async function readTextSource(
     });
   } catch (error) {
     if (!(error instanceof ContainedFileSizeError)) throw error;
-    throw new SecretContentError({
-      code: "SECRET_FILE_TOO_LARGE",
-      message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
-      path: repositoryPath,
-      remediation:
-        "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
-    });
+    throw secretFileTooLarge(repositoryPath);
   }
   if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
-    throw new SecretContentError({
-      code: "SECRET_FILE_TOO_LARGE",
-      message: "A changed text file exceeds the 1 MiB secrets-scanning limit.",
-      path: repositoryPath,
-      remediation:
-        "Reduce this text file to at most 1 MiB, or intentionally exclude its path from the secrets check with pathExclusions, then retry.",
-    });
+    throw secretFileTooLarge(repositoryPath);
   }
   if (content.includes("\u0000")) return undefined;
   if (content.includes("\ufffd")) {
