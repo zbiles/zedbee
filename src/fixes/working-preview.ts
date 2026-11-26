@@ -9,6 +9,7 @@ import {
   readContainedFile,
 } from "../inspection/read-json.js";
 import type { CheckFixCandidate, WorkingFilePreview } from "./types.js";
+import { digestWorkingSource } from "./write-working-file.js";
 
 export const WORKING_PREVIEW_CONCURRENCY = 8;
 export const WORKING_PREVIEW_FILE_BYTES = 4 * 1024 * 1024;
@@ -184,7 +185,7 @@ export async function workingFilePreviews(
     signal.throwIfAborted();
     const preview: WorkingFilePreview = Object.freeze({
       path: file,
-      sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+      sha256: digestWorkingSource(content),
       content,
       mode: metadata.mode & 0o777,
       hasUnstagedChanges:

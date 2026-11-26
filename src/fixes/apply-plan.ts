@@ -1,5 +1,4 @@
 import { freezeResult } from "../core/freeze-result.js";
-import { createHash } from "node:crypto";
 import {
   createLocalAnalyzerExecutor,
   type AnalyzerExecutor,
@@ -10,7 +9,7 @@ import {
   retainCleanupFailure,
 } from "../scan/analysis-failure.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 import { GitClient } from "../git/client.js";
 import {
   buildSnapshotPair,
@@ -37,6 +36,8 @@ import {
 } from "../checks/diagnostics.js";
 import {
   CommittedWriteError,
+  containedWorkingPath,
+  digestWorkingSource,
   writeWorkingFile,
   type WorkingFileIdentity,
   type WriteWorkingFileRequest,
@@ -233,10 +234,6 @@ interface FileCandidates {
   readonly candidates: readonly CheckFixCandidate[];
 }
 
-function digest(source: string): string {
-  return createHash("sha256").update(source, "utf8").digest("hex");
-}
-
 function issue(
   kind: FixIssue["kind"],
   file: string,
@@ -309,22 +306,13 @@ function exactEdits(candidates: readonly CheckFixCandidate[]): {
   return { baseSource, edits, invalid };
 }
 
-function contained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot !== ".." &&
-    !fromRoot.startsWith(`..${sep}`) &&
-    !isAbsolute(fromRoot)
-  );
-}
-
 async function currentIdentity(
   root: string,
   file: string,
 ): Promise<WorkingFileIdentity> {
   const normalized = normalizeRepositoryRelativePath(file);
   const absolute = resolve(root, normalized);
-  if (!contained(resolve(root), absolute))
+  if (!containedWorkingPath(resolve(root), absolute))
     throw new Error("unsafe working-file path");
   const state = await lstat(absolute, { bigint: true });
   if (state.isSymbolicLink() || !state.isFile())
@@ -494,7 +482,7 @@ async function applyWithinSession(
       );
       continue;
     }
-    if (digest(working) !== preview.sha256) {
+    if (digestWorkingSource(working) !== preview.sha256) {
       unchangedFiles.push(group.file);
       issues.push(
         issue(
@@ -623,7 +611,7 @@ async function applyWithinSession(
         file: group.file,
         source: next,
         expectedIdentity: identity,
-        expectedSha256: digest(working),
+        expectedSha256: digestWorkingSource(working),
       });
       changedFiles.push(group.file);
       progress.appliedFixes +=

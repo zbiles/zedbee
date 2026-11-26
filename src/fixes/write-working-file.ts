@@ -69,7 +69,7 @@ function duplicateTarget(): Error {
   return new Error("Zedbee refused a duplicate in-flight working-file target.");
 }
 
-function digest(source: string): string {
+export function digestWorkingSource(source: string): string {
   return createHash("sha256").update(source, "utf8").digest("hex");
 }
 
@@ -84,7 +84,10 @@ function sameIdentity(
   return left.device === right.device && left.inode === right.inode;
 }
 
-function contained(root: string, candidate: string): boolean {
+export function containedWorkingPath(
+  root: string,
+  candidate: string,
+): boolean {
   const fromRoot = relative(root, candidate);
   return (
     fromRoot !== ".." &&
@@ -122,7 +125,7 @@ async function validateTarget(
   }
   const root = resolve(repositoryRoot);
   const target = resolve(root, normalized);
-  if (!contained(root, target)) throw unsafePath();
+  if (!containedWorkingPath(root, target)) throw unsafePath();
 
   const paths = [root];
   let current = root;
@@ -275,7 +278,8 @@ export async function writeWorkingFile(
     );
     if (
       request.expectedSha256 !== undefined &&
-      digest(await readFile(target.path, "utf8")) !== request.expectedSha256
+      digestWorkingSource(await readFile(target.path, "utf8")) !==
+        request.expectedSha256
     ) {
       throw changedFile();
     }
