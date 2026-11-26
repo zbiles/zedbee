@@ -25,6 +25,7 @@ import {
   writeManagedJsonConfig,
 } from "../project/config-boundary.js";
 import {
+  isPercentage,
   missingCloneFragmentLocations,
   parseJscpdReport,
 } from "./normalize-clone.js";
@@ -89,12 +90,7 @@ export async function createFallbackTokenHashes(
 const JSCPD_REPORT = "jscpd-report.json";
 
 function threshold(policyThreshold: number | undefined): number {
-  if (
-    typeof policyThreshold !== "number" ||
-    !Number.isFinite(policyThreshold) ||
-    policyThreshold < 0 ||
-    policyThreshold > 100
-  ) {
+  if (!isPercentage(policyThreshold)) {
     throw new TypeError(
       "Duplication analysis requires a percentage threshold.",
     );

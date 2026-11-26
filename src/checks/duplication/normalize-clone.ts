@@ -30,13 +30,17 @@ function positiveInteger(value: unknown, field: string): number {
   return value as number;
 }
 
+export function isPercentage(value: unknown): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= 0 &&
+    value <= 100
+  );
+}
+
 function finitePercentage(value: unknown): number {
-  if (
-    typeof value !== "number" ||
-    !Number.isFinite(value) ||
-    value < 0 ||
-    value > 100
-  ) {
+  if (!isPercentage(value)) {
     throw new TypeError("Expected jscpd duplicate percentage");
   }
   return value;
@@ -282,7 +286,7 @@ export function cloneObservations(
   report: NormalizedDuplicationReport,
   threshold: number,
 ): readonly Observation[] {
-  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 100) {
+  if (!isPercentage(threshold)) {
     throw new TypeError("Expected a duplication percentage threshold");
   }
   if (report.percentage <= threshold) return Object.freeze([]);
