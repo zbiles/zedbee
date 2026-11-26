@@ -13,6 +13,7 @@ import { checkLabel } from "../reporting/check-label.js";
 import type { NetworkDisclosure, ScanReport } from "../scan/report.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
+import { checkErrorDetailFields } from "./check-error-fields.js";
 
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI = "https://github.com/zbiles/Zedbee";
@@ -202,21 +203,7 @@ function createNotification(
         : { disposition: check.incompleteDisposition }),
       ...(check.target === undefined ? {} : { target: check.target }),
       durationMs: check.durationMs,
-      ...(error.path === undefined ? {} : { path: error.path }),
-      ...(error.parseFailures === undefined
-        ? {}
-        : { parseFailures: error.parseFailures }),
-      ...(error.paths === undefined ? {} : { paths: [...error.paths] }),
-      ...(error.snapshot === undefined ? {} : { snapshot: error.snapshot }),
-      ...(error.projectPaths === undefined
-        ? {}
-        : { projectPaths: [...error.projectPaths] }),
-      ...(error.temporaryPath === undefined
-        ? {}
-        : { temporaryPath: error.temporaryPath }),
-      ...(error.remediation === undefined
-        ? {}
-        : { remediation: error.remediation }),
+      ...checkErrorDetailFields(error),
     },
   };
 }

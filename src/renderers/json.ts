@@ -10,6 +10,7 @@ import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
+import { checkErrorDetailFields } from "./check-error-fields.js";
 
 function serializeFinding(
   finding: Finding,
@@ -82,25 +83,7 @@ function serializeCheck(
             ? {}
             : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
-          ...(check.error.path === undefined ? {} : { path: check.error.path }),
-          ...(check.error.parseFailures === undefined
-            ? {}
-            : { parseFailures: check.error.parseFailures }),
-          ...(check.error.paths === undefined
-            ? {}
-            : { paths: [...check.error.paths] }),
-          ...(check.error.snapshot === undefined
-            ? {}
-            : { snapshot: check.error.snapshot }),
-          ...(check.error.projectPaths === undefined
-            ? {}
-            : { projectPaths: [...check.error.projectPaths] }),
-          ...(check.error.temporaryPath === undefined
-            ? {}
-            : { temporaryPath: check.error.temporaryPath }),
-          ...(check.error.remediation === undefined
-            ? {}
-            : { remediation: check.error.remediation }),
+          ...checkErrorDetailFields(check.error),
         };
   return {
     ...(check.eslintAnalysis === undefined
