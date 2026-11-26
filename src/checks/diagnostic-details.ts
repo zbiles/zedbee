@@ -100,6 +100,14 @@ function withheld(
     redaction: { redacted: true, reasons: [reason] },
   };
 }
+function withheldForContext(observation: Observation): DiagnosticDetail {
+  return withheld(
+    observation,
+    supportsContextualRule(observation.rule)
+      ? "context-unavailable"
+      : "unsupported-template",
+  );
+}
 // Only reviewed built-in vocabulary is interpolated into package-owned templates.
 // Exact equality rejects arbitrary custom forbid/alternative options and controls.
 function reviewedReactEntityMessage(message: string): string | undefined {
@@ -194,13 +202,7 @@ async function reviewed(
       findingId: fingerprintObservation(observation),
       message: reviewedReactEntityMessage(original)!,
     };
-  if (source === undefined)
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+  if (source === undefined) return withheldForContext(observation);
   // JSX import source can come from configuration or a declaration outside this
   // diagnostic's captured file. Do not treat an arbitrary runtime name as proven.
   if (
@@ -209,12 +211,7 @@ async function reviewed(
       original,
     )
   )
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+    return withheldForContext(observation);
   let redacted = false;
   let rendered = original.replace(/'([^']+)'/gu, (quoted, value: string) => {
     if (
@@ -261,12 +258,7 @@ async function reviewed(
       }
     }
   } catch {
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+    return withheldForContext(observation);
   }
   return {
     findingId: fingerprintObservation(observation),
@@ -416,12 +408,7 @@ export function retainDiagnosticDetails(set: CheckObservationSet): void {
     if (store.size < 4096)
       store.set(id, {
         ...(observation.message.includes("[source]")
-          ? withheld(
-              observation,
-              supportsContextualRule(observation.rule)
-                ? "context-unavailable"
-                : "unsupported-template",
-            )
+          ? withheldForContext(observation)
           : { findingId: id, message: observation.message }),
         sourceFreeMessage: observation.message,
       });
