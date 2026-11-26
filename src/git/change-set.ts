@@ -311,6 +311,19 @@ const NAME_STATUS_DIFF_OPTIONS = [
   "--no-textconv",
 ] as const;
 
+function stagedDiffBase(git: GitClient): string[] {
+  return git.selectedComparison === undefined
+    ? []
+    : [git.selectedComparison.diffBase];
+}
+
+function commitDiffRunOptions(targetCommit: string, signal?: AbortSignal) {
+  return {
+    env: { GIT_ATTR_SOURCE: targetCommit },
+    ...(signal === undefined ? {} : { signal }),
+  };
+}
+
 export async function discoverStagedChangeSet(
   git: GitClient,
   signal?: AbortSignal,
@@ -319,9 +332,7 @@ export async function discoverStagedChangeSet(
     [
       "diff",
       "--cached",
-      ...(git.selectedComparison === undefined
-        ? []
-        : [git.selectedComparison.diffBase]),
+      ...stagedDiffBase(git),
       ...NAME_STATUS_DIFF_OPTIONS,
       "--find-renames",
     ],
@@ -346,10 +357,7 @@ export async function discoverCommitChangeSet(
       baselineCommit,
       targetCommit,
     ],
-    {
-      env: { GIT_ATTR_SOURCE: targetCommit },
-      ...(signal === undefined ? {} : { signal }),
-    },
+    commitDiffRunOptions(targetCommit, signal),
   );
   return changeSetFromNameStatus(metadata.stdout);
 }
@@ -387,9 +395,7 @@ export async function addStagedLineRanges(
     [
       "diff",
       "--cached",
-      ...(git.selectedComparison === undefined
-        ? []
-        : [git.selectedComparison.diffBase]),
+      ...stagedDiffBase(git),
       ...STAGED_DIFF_OPTIONS,
       "--text",
       "--",
@@ -419,10 +425,7 @@ export async function addCommitLineRanges(
       "--",
       ...literalPathspecs(paths),
     ],
-    {
-      env: { GIT_ATTR_SOURCE: targetCommit },
-      ...(signal === undefined ? {} : { signal }),
-    },
+    commitDiffRunOptions(targetCommit, signal),
   );
   return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
 }
@@ -432,14 +435,7 @@ export async function readStagedChangeSet(
   signal?: AbortSignal,
 ): Promise<ChangeSet> {
   const patch = await git.run(
-    [
-      "diff",
-      "--cached",
-      ...(git.selectedComparison === undefined
-        ? []
-        : [git.selectedComparison.diffBase]),
-      ...STAGED_DIFF_OPTIONS,
-    ],
+    ["diff", "--cached", ...stagedDiffBase(git), ...STAGED_DIFF_OPTIONS],
     signal === undefined ? {} : { signal },
   );
   return changeSetFromPatch(patch.stdout);
@@ -459,10 +455,7 @@ export async function readCommitChangeSet(
       baselineCommit,
       targetCommit,
     ],
-    {
-      env: { GIT_ATTR_SOURCE: targetCommit },
-      ...(signal === undefined ? {} : { signal }),
-    },
+    commitDiffRunOptions(targetCommit, signal),
   );
   return changeSetFromPatch(patch.stdout);
 }
