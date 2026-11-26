@@ -97,6 +97,15 @@ export function wrapTerminalWords(value: string, width: number): string[] {
   return lines;
 }
 
+export function wrapPrefixedTerminalWords(
+  value: string,
+  width: number,
+  prefix = "",
+): string[] {
+  const available = Math.max(1, width - terminalCellWidth(prefix));
+  return wrapTerminalWords(value, available).map((line) => `${prefix}${line}`);
+}
+
 export function padStartTerminalCells(value: string, width: number): string {
   return `${" ".repeat(Math.max(0, width - terminalCellWidth(value)))}${value}`;
 }

@@ -38,7 +38,7 @@ import {
   padStartTerminalCells,
   terminalCellWidth,
   truncateTerminalCells,
-  wrapTerminalWords,
+  wrapPrefixedTerminalWords as wrapWords,
 } from "./terminal-cells.js";
 
 export interface TextRendererOptions {
@@ -124,11 +124,6 @@ function styleFixExplanation(value: string): string {
         : [terminalText(MANAGED_FIX_COMMAND, "reason", true)]),
     ])
     .join("");
-}
-
-function wrapWords(value: string, width: number, indent = ""): string[] {
-  const available = Math.max(1, width - terminalCellWidth(indent));
-  return wrapTerminalWords(value, available).map((line) => `${indent}${line}`);
 }
 
 function descriptionLines(

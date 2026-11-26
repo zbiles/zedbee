@@ -1,11 +1,9 @@
 import type { CheckResult, StructuralParseFailures } from "../core/types.js";
 import { findingCheckLabel } from "../reporting/check-label.js";
-import { terminalCellWidth, wrapTerminalWords } from "./terminal-cells.js";
-
-function wrapWords(value: string, width: number, prefix = ""): string[] {
-  const available = Math.max(1, width - terminalCellWidth(prefix));
-  return wrapTerminalWords(value, available).map((line) => `${prefix}${line}`);
-}
+import {
+  terminalCellWidth,
+  wrapPrefixedTerminalWords as wrapWords,
+} from "./terminal-cells.js";
 
 function fieldLines(label: string, value: string, width: number): string[] {
   const prefix = `  ${label}: `;
