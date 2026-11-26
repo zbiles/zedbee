@@ -5,10 +5,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
 import type { Observation, Severity } from "../../core/types.js";
-
-function normalize(path: string): string {
-  return path.split(sep).join("/");
-}
+import { normalizeRepositoryPath } from "../../inspection/read-json.js";
 
 function repositoryPath(
   snapshotRoot: string,
@@ -23,7 +20,7 @@ function repositoryPath(
   ) {
     return undefined;
   }
-  return normalize(fromRoot);
+  return normalizeRepositoryPath(fromRoot);
 }
 
 function severity(category: ts.DiagnosticCategory): Severity {

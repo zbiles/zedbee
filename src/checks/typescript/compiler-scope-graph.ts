@@ -17,6 +17,7 @@ import { isBuiltin } from "node:module";
 import { dirname, resolve, relative, sep, isAbsolute } from "node:path";
 import type * as Typescript from "typescript";
 import type { InspectionContext } from "../adapter.js";
+import { isContainedPath } from "../../inspection/read-json.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -44,13 +45,6 @@ function isPackageSpecifier(specifier: string): boolean {
   return (
     /^(?:@[\w.-]+\/)?[\w-][\w./-]*$/u.test(specifier) &&
     specifier.split("/").every((part) => part && part !== "." && part !== "..")
-  );
-}
-function within(root: string, path: string) {
-  const part = relative(root, path);
-  return (
-    part === "" ||
-    (!isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`))
   );
 }
 async function captureWorkspaceSignature(
@@ -184,7 +178,7 @@ async function captureWorkspaceSignature(
   const manifests = new Set<string>();
   for (const path of inventory) {
     let directory = dirname(path);
-    while (within(inspection.snapshotRoot, directory)) {
+    while (isContainedPath(inspection.snapshotRoot, directory)) {
       manifests.add(
         relative(inspection.snapshotRoot, resolve(directory, "package.json"))
           .split(sep)
@@ -221,7 +215,7 @@ async function captureWorkspaceSignature(
   const directories = new Set<string>();
   for (const path of inventory) {
     let directory = dirname(path);
-    while (within(inspection.snapshotRoot, directory)) {
+    while (isContainedPath(inspection.snapshotRoot, directory)) {
       directories.add(directory);
       if (directory === inspection.snapshotRoot) break;
       directory = dirname(directory);
@@ -231,7 +225,7 @@ async function captureWorkspaceSignature(
     const absolute = resolve(path);
     if (inventory.has(absolute)) return true;
     if (
-      !within(inspection.snapshotRoot, absolute) ||
+      !isContainedPath(inspection.snapshotRoot, absolute) ||
       relative(inspection.snapshotRoot, absolute)
         .split(sep)
         .includes("node_modules")
@@ -245,7 +239,7 @@ async function captureWorkspaceSignature(
     if (directories.has(absolute)) return true;
     if (absentPaths.has(absolute)) return false;
     if (
-      within(inspection.snapshotRoot, absolute) &&
+      isContainedPath(inspection.snapshotRoot, absolute) &&
       !relative(inspection.snapshotRoot, absolute)
         .split(sep)
         .includes("node_modules")
@@ -311,8 +305,8 @@ async function captureWorkspaceSignature(
   };
   const libraryRoot = dirname(ts.getDefaultLibFilePath({}));
   const dependencyPath = (path: string) =>
-    within(context.repositoryRoot, resolve(path)) ||
-    within(libraryRoot, resolve(path));
+    isContainedPath(context.repositoryRoot, resolve(path)) ||
+    isContainedPath(libraryRoot, resolve(path));
   const host: Typescript.ModuleResolutionHost = {
     fileExists: (path) =>
       snapshotFile(path) ??
@@ -324,8 +318,8 @@ async function captureWorkspaceSignature(
         : undefined),
     directoryExists: (path) =>
       snapshotDirectory(path) ??
-      (within(context.repositoryRoot, resolve(path)) ||
-        (within(libraryRoot, resolve(path)) &&
+      (isContainedPath(context.repositoryRoot, resolve(path)) ||
+        (isContainedPath(libraryRoot, resolve(path)) &&
           captured(() => dependencies.directoryExists(path)))),
     getDirectories: (path) =>
       dependencyPath(path)
@@ -350,7 +344,7 @@ async function captureWorkspaceSignature(
     for (const declaration of w.dependencyDeclarations) {
       let directory = resolve(context.repositoryRoot, side.relativeRoot),
         found = false;
-      while (within(context.repositoryRoot, directory)) {
+      while (isContainedPath(context.repositoryRoot, directory)) {
         charge();
         if (
           captured(() =>
@@ -433,7 +427,7 @@ async function captureWorkspaceSignature(
       context.repositoryRoot,
       dirname(project.configPath),
     );
-    while (within(context.repositoryRoot, directory)) {
+    while (isContainedPath(context.repositoryRoot, directory)) {
       typeRoots.push(resolve(directory, "node_modules/@types"));
       if (directory === resolve(context.repositoryRoot)) break;
       directory = dirname(directory);
@@ -463,7 +457,7 @@ async function captureWorkspaceSignature(
         context.repositoryRoot,
         dirname(project.configPath),
       );
-      while (within(context.repositoryRoot, directory)) {
+      while (isContainedPath(context.repositoryRoot, directory)) {
         if (
           captured(() =>
             dependencies.fileExists(
@@ -592,7 +586,7 @@ async function captureWorkspaceSignature(
           context.signal === undefined ? undefined : { signal: context.signal },
         );
       const local = inventory.has(path);
-      if (within(libraryRoot, path)) {
+      if (isContainedPath(libraryRoot, path)) {
         if (librarySeen.has(path)) continue;
         librarySeen.add(path);
       }
