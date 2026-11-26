@@ -116,6 +116,15 @@ function commandOutputIO() {
   };
 }
 
+function outputFormatOption(
+  choices: readonly string[],
+  defaultValue: string,
+): Option {
+  return new Option("--format <format>", "output format")
+    .choices(choices)
+    .default(defaultValue);
+}
+
 function commandTerminalIO() {
   return {
     stdinIsTTY: process.stdin.isTTY === true,
@@ -209,11 +218,7 @@ export async function runCli(
   for (const operation of ["status", "enable", "disable"] as const) {
     telemetryCommand
       .command(operation)
-      .addOption(
-        new Option("--format <format>", "output format")
-          .choices(["text", "json"])
-          .default("text"),
-      )
+      .addOption(outputFormatOption(["text", "json"], "text"))
       .action((options: { format: "text" | "json" }) => {
         exitCode = executeTelemetryCommand(
           operation,
@@ -257,11 +262,7 @@ export async function runCli(
           ? "show service state without starting it"
           : "stop the service after active sessions release",
       )
-      .addOption(
-        new Option("--format <format>", "output format")
-          .choices(["text", "json"])
-          .default("text"),
-      )
+      .addOption(outputFormatOption(["text", "json"], "text"))
       .action(async (options: { format: "text" | "json" }) => {
         exitCode = await executeServiceCommand(
           operation,
@@ -351,11 +352,7 @@ export async function runCli(
       "allow this invocation to run the project's installed Prettier (never persisted by itself)",
       false,
     )
-    .addOption(
-      new Option("--format <format>", "output format")
-        .choices(["text", "json"])
-        .default("text"),
-    )
+    .addOption(outputFormatOption(["text", "json"], "text"))
     .option(
       "--yes",
       "apply the exact proposal without an interactive prompt",
@@ -460,9 +457,7 @@ export async function runCli(
       "scan committed HEAD changes since the unique merge base with this ref",
     )
     .addOption(
-      new Option("--format <format>", "output format")
-        .choices(["auto", "ink", "text", "json", "sarif"])
-        .default("auto"),
+      outputFormatOption(["auto", "ink", "text", "json", "sarif"], "auto"),
     )
     .addOption(
       new Option(
@@ -548,11 +543,7 @@ export async function runCli(
         ...FIXABLE_CHECK_IDS,
       ]),
     )
-    .addOption(
-      new Option("--format <format>", "output format")
-        .choices(["auto", "text", "json"])
-        .default("auto"),
-    )
+    .addOption(outputFormatOption(["auto", "text", "json"], "auto"))
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--yes", "apply the exact plan without confirmation", false)
     .option("--no-service", "use a command-owned local analyzer executor")
@@ -599,11 +590,7 @@ export async function runCli(
   program
     .command("checks")
     .description("describe configured checks and their applicability")
-    .addOption(
-      new Option("--format <format>", "output format")
-        .choices(["auto", "text", "json"])
-        .default("auto"),
-    )
+    .addOption(outputFormatOption(["auto", "text", "json"], "auto"))
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--no-color", "disable color")
     .action(async (options: CommanderChecksOptions) => {
@@ -629,11 +616,7 @@ export async function runCli(
   program
     .command("doctor")
     .description("diagnose Zedbee setup without running a scan")
-    .addOption(
-      new Option("--format <format>", "output format")
-        .choices(["auto", "text", "json"])
-        .default("auto"),
-    )
+    .addOption(outputFormatOption(["auto", "text", "json"], "auto"))
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option(
       "--trust-project-prettier",
