@@ -7,7 +7,7 @@ import { Worker } from "node:worker_threads";
 import { identityWorkerEntry } from "./identity-parallel.js";
 import { HEX, ServiceUnavailableError } from "./protocol.js";
 
-const digest = (value: string) =>
+export const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
 export interface ServiceIdentity {
   readonly key: string;

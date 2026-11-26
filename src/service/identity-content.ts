@@ -14,9 +14,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 import { ServiceUnavailableError } from "./protocol.js";
 import { hashFilesInWorkers } from "./identity-parallel.js";
-
-const digest = (value: string) =>
-  createHash("sha256").update(value).digest("hex");
+import { digest } from "./identity.js";
 function hashFile(
   path: string,
   collect = false,
