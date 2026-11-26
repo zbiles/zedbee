@@ -11,14 +11,17 @@ export interface SourceLocation {
   endColumn?: number;
 }
 
+export const ATTRIBUTION_KINDS = [
+  "range-overlap",
+  "syntax-ownership",
+  "transformation-diff",
+  "baseline-comparison",
+  "metric-delta",
+  "none",
+] as const;
+
 export interface Attribution {
-  kind:
-    | "range-overlap"
-    | "syntax-ownership"
-    | "transformation-diff"
-    | "baseline-comparison"
-    | "metric-delta"
-    | "none";
+  kind: (typeof ATTRIBUTION_KINDS)[number];
   staged: boolean;
   evidence: readonly string[];
 }

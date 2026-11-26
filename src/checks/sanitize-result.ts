@@ -4,6 +4,7 @@ import {
   incompleteComparisonContext,
   sanitizeComparisonContext,
 } from "./comparison-context.js";
+import { ATTRIBUTION_KINDS as ATTRIBUTION_KIND_LIST } from "../core/types.js";
 import type {
   Attribution,
   CheckError,
@@ -26,14 +27,7 @@ import { sanitizeSourceLine } from "../reporting/source-line.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeAnalyzerDiagnostic } from "./diagnostics.js";
 
-const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
-  "range-overlap",
-  "syntax-ownership",
-  "transformation-diff",
-  "baseline-comparison",
-  "metric-delta",
-  "none",
-]);
+const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>(ATTRIBUTION_KIND_LIST);
 
 export const SOURCE_EXCERPT_MAX_CODE_POINTS = 500;
 
