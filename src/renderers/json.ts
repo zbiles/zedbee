@@ -138,16 +138,14 @@ export function renderJson(
 ): string {
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
+  const diagnostics = localScanDiagnostics(report.diagnostics);
+  const hookUpdate = hookUpdateNotice(report);
   const payload = {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
-    ...(localScanDiagnostics(report.diagnostics) === undefined
-      ? {}
-      : { diagnostics: localScanDiagnostics(report.diagnostics) }),
-    ...(hookUpdateNotice(report) === undefined
-      ? {}
-      : { hookUpdate: hookUpdateNotice(report) }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(hookUpdate === undefined ? {} : { hookUpdate }),
     repositoryRoot: ".",
     ...sourceIdentityFields(source),
     changedFileCount: report.changedFileCount,

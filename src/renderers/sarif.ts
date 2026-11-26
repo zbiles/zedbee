@@ -225,6 +225,7 @@ function createInvocation(
   checks: readonly CheckResult[],
 ): Record<string, unknown> {
   const source = sanitizeScanSourceIdentity(report);
+  const hookUpdate = hookUpdateNotice(report);
   const notifications = checks
     .filter(isIncompleteCheckWithError)
     .sort(compareIncompleteChecks)
@@ -243,9 +244,7 @@ function createInvocation(
     toolExecutionNotifications: notifications,
     properties: {
       schemaVersion: report.schemaVersion,
-      ...(hookUpdateNotice(report) === undefined
-        ? {}
-        : { hookUpdate: hookUpdateNotice(report) }),
+      ...(hookUpdate === undefined ? {} : { hookUpdate }),
       outcome: report.outcome,
       exitCode: report.exitCode,
       ...sourceIdentityFields(source),
