@@ -11,7 +11,7 @@ import {
 } from "node:path";
 import { parseDocument } from "yaml";
 import { GitClient } from "../git/client.js";
-import { resolveInstalledCliCommand } from "./command.js";
+import { SCAN_HOOK_NAMES, resolveInstalledCliCommand } from "./command.js";
 import { installedHookCommand } from "./installed-command.js";
 import { detectHookChoice } from "./detect.js";
 import { hasHookExecutePermission } from "./install.js";
@@ -95,7 +95,7 @@ function managerCommands(source: string, yaml: boolean): readonly string[] {
         : document.toJS({ maxAliasCount: 0 }),
     );
     const hooks = yaml ? data : record(data["simple-git-hooks"]);
-    return ["pre-commit", "pre-merge-commit"].flatMap((name) => {
+    return SCAN_HOOK_NAMES.flatMap((name) => {
       if (!yaml)
         return typeof hooks[name] === "string" ? [hooks[name] as string] : [];
       return Object.values(record(record(hooks[name]).commands))
@@ -138,7 +138,7 @@ export async function inspectHookMaintenance(
     const root = await realpath(repositoryRoot);
     const command = installedHookCommand(installedCliCommand[1]!);
     const git = new GitClient(root);
-    const hookNames = ["pre-commit", "pre-merge-commit"] as const;
+    const hookNames = SCAN_HOOK_NAMES;
     const [gitDirs, ...hookResults] = await Promise.all([
       git.run(["rev-parse", "--git-common-dir", "--absolute-git-dir"]),
       ...hookNames.map((name) =>

@@ -8,6 +8,11 @@ import { installedHookCommand } from "./installed-command.js";
 
 export type ScanHookName = "pre-commit" | "pre-merge-commit";
 
+export const SCAN_HOOK_NAMES = Object.freeze([
+  "pre-commit",
+  "pre-merge-commit",
+] as const);
+
 export class HookInstallationError extends Error {
   constructor(
     message: string,

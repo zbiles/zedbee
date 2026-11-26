@@ -1,7 +1,7 @@
 import { resolveRawGitHookPath } from "./raw-hook-path.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { ScanHookName } from "./command.js";
+import { SCAN_HOOK_NAMES, type ScanHookName } from "./command.js";
 import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
 import type {
@@ -73,7 +73,7 @@ async function managerActivation(
 ): Promise<InitHookActivation> {
   try {
     const active = await Promise.all(
-      (["pre-commit", "pre-merge-commit"] as const).map(async (name) => {
+      SCAN_HOOK_NAMES.map(async (name) => {
         const installed = await existingAbsoluteFile(
           await rawGitHookPath(root, name),
         );
@@ -176,7 +176,7 @@ export async function customGitHookPath(
 async function huskyActivation(root: string): Promise<InitHookActivation> {
   try {
     const active = await Promise.all(
-      (["pre-commit", "pre-merge-commit"] as const).map(async (name) => {
+      SCAN_HOOK_NAMES.map(async (name) => {
         const path = await customGitHookPath(root, name);
         const direct = resolve(root, `.husky/${name}`);
         const dispatcher = resolve(root, `.husky/_/${name}`);
@@ -410,7 +410,7 @@ export async function detectHookIntegration(
   }
   if (hook === "husky") {
     const changes = await Promise.all(
-      (["pre-commit", "pre-merge-commit"] as const).map((name) =>
+      SCAN_HOOK_NAMES.map((name) =>
         changedFile(
           repositoryRoot,
           `.husky/${name}`,
@@ -433,7 +433,7 @@ export async function detectHookIntegration(
   }
   if (hook === "custom" || hook === "raw") {
     const changes = await Promise.all(
-      (["pre-commit", "pre-merge-commit"] as const).map(async (name) => {
+      SCAN_HOOK_NAMES.map(async (name) => {
         const absolutePath =
           hook === "raw"
             ? await rawGitHookPath(repositoryRoot, name)
