@@ -178,6 +178,23 @@ async function existingConfig(repositoryRoot: string): Promise<string | null> {
   }
 }
 
+async function allWorkspacesTrusted(
+  repositoryRoot: string,
+  projectRoots: readonly string[],
+  mode: Parameters<typeof hasProjectEslintTrust>[2],
+): Promise<boolean> {
+  return (
+    projectRoots.length > 0 &&
+    (
+      await Promise.all(
+        projectRoots.map((projectRoot) =>
+          hasProjectEslintTrust(repositoryRoot, projectRoot, mode),
+        ),
+      )
+    ).every(Boolean)
+  );
+}
+
 export async function executeInitCommand(
   options: InitCommandOptions,
   io: InitCommandIO,
@@ -337,24 +354,17 @@ export async function executeInitCommand(
     const eslintRoots = inspection.workspaces.map(
       ({ relativeRoot }) => relativeRoot,
     );
-    const eslintTrustStored =
-      eslintRoots.length > 0 &&
-      (
-        await Promise.all(
-          eslintRoots.map((projectRoot) =>
-            hasProjectEslintTrust(repositoryRoot, projectRoot, "execute"),
-          ),
-        )
-      ).every(Boolean);
-    const eslintMessagesStored =
-      eslintRoots.length > 0 &&
-      (
-        await Promise.all(
-          eslintRoots.map((projectRoot) =>
-            hasProjectEslintTrust(repositoryRoot, projectRoot, "messages"),
-          ),
-        )
-      ).every(Boolean);
+    const eslintTrustStored = await allWorkspacesTrusted(
+      repositoryRoot,
+      eslintRoots,
+      "execute",
+    );
+    const eslintMessagesStored = await allWorkspacesTrusted(
+      repositoryRoot,
+      eslintRoots,
+      "messages",
+    );
+
     const initialSelection: InitSelection = {
       profile: options.profile,
       eslintEngine: options.eslintEngine,
