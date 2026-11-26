@@ -179,6 +179,13 @@ function invalidSelectedPath(): never {
   );
 }
 
+function unresolvedIndex(): never {
+  throw new SnapshotError(
+    "UNRESOLVED_INDEX",
+    "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
+  );
+}
+
 function parseStagedEntries(output: string): SnapshotEntry[] {
   if (output === "") return [];
   if (!output.endsWith("\0")) return invalidSelectedPath();
@@ -191,12 +198,7 @@ function parseStagedEntries(output: string): SnapshotEntry[] {
       if (match === null || !supportedMode(match[1]!)) {
         return invalidSelectedPath();
       }
-      if (match[3] !== "0") {
-        throw new SnapshotError(
-          "UNRESOLVED_INDEX",
-          "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
-        );
-      }
+      if (match[3] !== "0") return unresolvedIndex();
       return { mode: match[1], objectId: match[2]!, path: match[4]! };
     });
 }
@@ -766,33 +768,52 @@ export async function buildMergeBaselineSnapshot(
   }
 }
 
+type IndexRunOptions = { signal?: AbortSignal };
+
+async function assertIndexResolved(
+  git: GitClient,
+  options: IndexRunOptions,
+): Promise<void> {
+  const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
+  if (unresolved.stdout !== "") unresolvedIndex();
+}
+
+async function resolveIndexBaselineCommit(
+  git: GitClient,
+  options: IndexRunOptions,
+): Promise<string | null> {
+  return git.selectedComparison === undefined
+    ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options)).stdout ||
+        null
+    : git.selectedComparison.baselineCommit;
+}
+
+async function readIndexTargetEntries(
+  repositoryRoot: string,
+  git: GitClient,
+  options: IndexRunOptions,
+): Promise<SnapshotEntry[]> {
+  const staged = parseStagedEntries(
+    (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
+  );
+  validateEntryPaths(repositoryRoot, staged);
+  const intent = parseIntentToAddPaths(
+    (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
+  );
+  return staged.filter((entry) => !intent.has(entry.path));
+}
+
 export async function buildSnapshotPairOptimized(
   repositoryRoot: string,
   git: GitClient,
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
   const options = signal === undefined ? {} : { signal };
-  const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
-  if (unresolved.stdout !== "")
-    throw new SnapshotError(
-      "UNRESOLVED_INDEX",
-      "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
-    );
+  await assertIndexResolved(git, options);
   const root = await createOwnedSnapshotRoot();
   try {
-    const baselineCommit =
-      git.selectedComparison === undefined
-        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
-            .stdout || null
-        : git.selectedComparison.baselineCommit;
-    const staged = parseStagedEntries(
-      (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
-    );
-    validateEntryPaths(repositoryRoot, staged);
-    const intent = parseIntentToAddPaths(
-      (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
-    );
-    const target = staged.filter((entry) => !intent.has(entry.path));
+    const baselineCommit = await resolveIndexBaselineCommit(git, options);
+    const target = await readIndexTargetEntries(repositoryRoot, git, options);
     const baseline =
       baselineCommit === null
         ? []
@@ -817,25 +838,14 @@ export async function buildSnapshotPairSerial(
   signal?: AbortSignal,
 ): Promise<SnapshotPair> {
   const options = signal === undefined ? {} : { signal };
-  const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
-  if (unresolved.stdout !== "") {
-    throw new SnapshotError(
-      "UNRESOLVED_INDEX",
-      "Zedbee cannot build a staged snapshot while the index has unresolved entries.",
-    );
-  }
+  await assertIndexResolved(git, options);
 
   const root = await createOwnedSnapshotRoot();
   try {
-    const stagedEntries = parseStagedEntries(
-      (await git.run(["ls-files", "--stage", "-z"], options)).stdout,
-    );
-    validateEntryPaths(repositoryRoot, stagedEntries);
-    const intentToAddPaths = parseIntentToAddPaths(
-      (await git.run(["ls-files", "--debug", "-z"], options)).stdout,
-    );
-    const selectedEntries = stagedEntries.filter(
-      (entry) => !intentToAddPaths.has(entry.path),
+    const selectedEntries = await readIndexTargetEntries(
+      repositoryRoot,
+      git,
+      options,
     );
     const symlinkPaths = symlinkEntryPaths(selectedEntries);
     const unsupportedEntries = await materializeEntries(
@@ -846,11 +856,7 @@ export async function buildSnapshotPairSerial(
       signal,
     );
 
-    const baselineCommit =
-      git.selectedComparison === undefined
-        ? (await git.tryRun(["rev-parse", "--verify", "HEAD"], options))
-            .stdout || null
-        : git.selectedComparison.baselineCommit;
+    const baselineCommit = await resolveIndexBaselineCommit(git, options);
     const baselineRef = baselineCommit === null ? null : "HEAD";
     let baselineUnsupportedEntries: readonly UnsupportedIndexEntry[] = [];
     let baselineSymlinkPaths: readonly string[] = [];
