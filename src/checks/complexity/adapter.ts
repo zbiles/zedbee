@@ -50,6 +50,25 @@ function lineStarts(source: string): readonly number[] {
   return starts;
 }
 
+const METRIC_OBSERVATION: Readonly<
+  Record<
+    ComplexityMetricName,
+    {
+      readonly check: "cyclomaticComplexity" | "readabilityComplexity";
+      readonly message: string;
+    }
+  >
+> = {
+  "cyclomatic-complexity": {
+    check: "cyclomaticComplexity",
+    message: "Cyclomatic complexity metric.",
+  },
+  "readability-complexity": {
+    check: "readabilityComplexity",
+    message: "Readability complexity metric.",
+  },
+};
+
 const metricObservations = Symbol("canonical complexity metrics");
 const metricMessages = Symbol("in-memory complexity traversal");
 
@@ -174,20 +193,14 @@ function rawObservationsFromMessages(
     const span = spanAt(offset);
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
-    const check =
-      metric.name === "cyclomatic-complexity"
-        ? "cyclomaticComplexity"
-        : "readabilityComplexity";
+    const { check, message: text } = METRIC_OBSERVATION[metric.name];
     return [
       {
         check,
         rule: metric.name,
         identity: span.entity.identity,
         severity: "error",
-        message:
-          metric.name === "cyclomatic-complexity"
-            ? "Cyclomatic complexity metric."
-            : "Readability complexity metric.",
+        message: text,
         location: {
           file,
           startLine: span.entity.startLine,
