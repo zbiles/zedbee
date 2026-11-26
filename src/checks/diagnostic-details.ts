@@ -8,12 +8,9 @@ import { capturedSourceRegistry } from "../inspection/source-capture.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import { managedRuleInventory } from "./eslint/rule-settings.js";
 import { readContainedFile } from "../inspection/read-json.js";
-
-export type DiagnosticRedactionReason =
-  | "sensitive-value"
-  | "context-unavailable"
-  | "unsupported-template"
-  | "source-free-policy";
+export type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
+import { isDiagnosticRedaction } from "./diagnostic-redaction.js";
+import type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
 export interface DiagnosticDetail {
   readonly findingId: string;
   readonly message: string;
@@ -51,12 +48,6 @@ const managed = new Set([
   "lint",
   "reactCorrectness",
   "reactAccessibility",
-]);
-const reasons = new Set<DiagnosticRedactionReason>([
-  "sensitive-value",
-  "context-unavailable",
-  "unsupported-template",
-  "source-free-policy",
 ]);
 const safeText = (s: string) =>
   s
@@ -382,7 +373,7 @@ export function sanitizeDiagnosticDetails(
   if (!Array.isArray(value) || value.length > 256)
     throw new TypeError("Invalid diagnostic details");
   let bytes = 0;
-  return value.map((v) => {
+  return value.map((v: Record<string, unknown>) => {
     if (
       !v ||
       typeof v.findingId !== "string" ||
@@ -396,17 +387,14 @@ export function sanitizeDiagnosticDetails(
     if (bytes > 1024 * 1024)
       throw new TypeError("Diagnostic detail budget exceeded");
     let redaction: DiagnosticDetail["redaction"];
-    if (v.redaction !== undefined) {
-      if (
-        v.redaction.redacted !== true ||
-        !Array.isArray(v.redaction.reasons) ||
-        v.redaction.reasons.length > 4 ||
-        v.redaction.reasons.some(
-          (r: DiagnosticRedactionReason) => !reasons.has(r),
-        )
-      )
+    const redactionValue: unknown = v.redaction;
+    if (redactionValue !== undefined) {
+      if (!isDiagnosticRedaction(redactionValue))
         throw new TypeError("Invalid diagnostic redaction");
-      redaction = { redacted: true, reasons: [...v.redaction.reasons] };
+      redaction = {
+        redacted: true,
+        reasons: [...redactionValue.reasons],
+      };
     }
     return {
       findingId: v.findingId,

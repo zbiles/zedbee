@@ -26,6 +26,7 @@ import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeAnalyzerDiagnostic } from "./diagnostics.js";
+import { isDiagnosticRedaction } from "./diagnostic-redaction.js";
 
 const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>(ATTRIBUTION_KIND_LIST);
 
@@ -143,19 +144,7 @@ interface CheckResultOverrides {
 function sanitizeMessageRedaction(
   value: Finding["messageRedaction"],
 ): NonNullable<Finding["messageRedaction"]> {
-  const allowed = new Set([
-    "sensitive-value",
-    "context-unavailable",
-    "unsupported-template",
-    "source-free-policy",
-  ]);
-  if (
-    !value ||
-    value.redacted !== true ||
-    !Array.isArray(value.reasons) ||
-    value.reasons.length > 4 ||
-    value.reasons.some((reason) => !allowed.has(reason))
-  )
+  if (!isDiagnosticRedaction(value))
     throw new TypeError("Invalid message redaction");
   return { redacted: true, reasons: [...value.reasons] };
 }
