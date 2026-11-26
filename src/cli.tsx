@@ -125,6 +125,18 @@ function outputFormatOption(
     .default(defaultValue);
 }
 
+function configPathOverride(config: string | undefined): {
+  configPath?: string;
+} {
+  return config === undefined ? {} : { configPath: config };
+}
+
+function projectPrettierTrustOverride(trustProjectPrettier: boolean): {
+  projectPrettierTrust?: true;
+} {
+  return trustProjectPrettier === true ? { projectPrettierTrust: true } : {};
+}
+
 function commandTerminalIO() {
   return {
     stdinIsTTY: process.stdin.isTTY === true,
@@ -516,9 +528,7 @@ export async function runCli(
           animations: options.animations,
           ...(options.merge === true ? { merge: true } : {}),
           ...(options.base === undefined ? {} : { baseRef: options.base }),
-          ...(options.config === undefined
-            ? {}
-            : { configPath: options.config }),
+          ...configPathOverride(options.config),
           ...(options.includeSource === true
             ? { sourceExcerpts: "include" as const }
             : options.source === false
@@ -526,9 +536,7 @@ export async function runCli(
               : {}),
           ...scanTimeoutOverrides(argv, options.timeout),
           ...(options.diagnostics === true ? { diagnostics: true } : {}),
-          ...(options.trustProjectPrettier === true
-            ? { projectPrettierTrust: true }
-            : {}),
+          ...projectPrettierTrustOverride(options.trustProjectPrettier),
           signal: controller.signal,
         },
         commandTerminalIO(),
@@ -571,15 +579,11 @@ export async function runCli(
             ...(check === undefined ? {} : { check }),
             yes: options.yes,
             ...(options.diagnostics === true ? { diagnostics: true } : {}),
-            ...(options.trustProjectPrettier === true
-              ? { projectPrettierTrust: true }
-              : {}),
+            ...projectPrettierTrustOverride(options.trustProjectPrettier),
             format: options.format,
             color: options.color,
             animations: options.animations,
-            ...(options.config === undefined
-              ? {}
-              : { configPath: options.config }),
+            ...configPathOverride(options.config),
             signal: controller.signal,
           },
           commandTerminalIO(),
@@ -599,9 +603,7 @@ export async function runCli(
           cwd: process.cwd(),
           format: options.format,
           color: options.color,
-          ...(options.config === undefined
-            ? {}
-            : { configPath: options.config }),
+          ...configPathOverride(options.config),
         },
         {
           stdoutIsTTY: process.stdout.isTTY === true,
@@ -631,12 +633,8 @@ export async function runCli(
           format: options.format,
           color: options.color,
           environment: process.env,
-          ...(options.config === undefined
-            ? {}
-            : { configPath: options.config }),
-          ...(options.trustProjectPrettier === true
-            ? { projectPrettierTrust: true }
-            : {}),
+          ...configPathOverride(options.config),
+          ...projectPrettierTrustOverride(options.trustProjectPrettier),
           signal: controller.signal,
         },
         {
