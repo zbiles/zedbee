@@ -67,6 +67,23 @@ class StateLimitError extends Error {
   readonly code = "STATE_LIMIT";
 }
 
+function isTrackedReportName(fileName: unknown): fileName is string {
+  return (
+    typeof fileName === "string" &&
+    basename(fileName) === fileName &&
+    REPORT_NAME.test(fileName)
+  );
+}
+
+function hasTrackedReportName(report: unknown): boolean {
+  return (
+    typeof report === "object" &&
+    report !== null &&
+    "fileName" in report &&
+    isTrackedReportName(report.fileName)
+  );
+}
+
 function parseState(serialized: string): ParsedReportLifecycleState {
   const value = JSON.parse(serialized) as Record<string, unknown> | null;
   if (value === null || typeof value !== "object") {
@@ -85,9 +102,7 @@ function parseState(serialized: string): ParsedReportLifecycleState {
           typeof report !== "object" ||
           report === null ||
           !hasOnlyKeys(report, ["fileName", "createdGeneration"]) ||
-          typeof report.fileName !== "string" ||
-          basename(report.fileName) !== report.fileName ||
-          !REPORT_NAME.test(report.fileName) ||
+          !hasTrackedReportName(report) ||
           !Number.isSafeInteger(report.createdGeneration) ||
           report.createdGeneration < 1 ||
           report.createdGeneration > (value.generation as number),
@@ -105,9 +120,7 @@ function parseState(serialized: string): ParsedReportLifecycleState {
           typeof report !== "object" ||
           report === null ||
           !hasOnlyKeys(report, ["fileName", "createdAtMs"]) ||
-          typeof report.fileName !== "string" ||
-          basename(report.fileName) !== report.fileName ||
-          !REPORT_NAME.test(report.fileName) ||
+          !hasTrackedReportName(report) ||
           !Number.isSafeInteger(report.createdAtMs) ||
           report.createdAtMs < 0,
       )
@@ -351,7 +364,7 @@ function trackedReportPath(
   repositoryDirectory: string,
   fileName: string,
 ): string | undefined {
-  if (basename(fileName) !== fileName || !REPORT_NAME.test(fileName)) {
+  if (!isTrackedReportName(fileName)) {
     return undefined;
   }
   const path = resolve(repositoryDirectory, fileName);
