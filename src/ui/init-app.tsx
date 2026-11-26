@@ -13,7 +13,6 @@ import {
 export { PROJECT_PRETTIER_DISCLOSURE, InitActionButton } from "./init-view.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  measureElement,
   Text,
   render,
   useApp,
@@ -47,9 +46,9 @@ import {
   clampScrollOffset,
   pageScrollStep,
   parseSgrWheelDelta,
-  revealOffsetForTarget,
 } from "./terminal-viewport-model.js";
 import {
+  revealOffsetForTarget,
   TerminalViewport,
   type TerminalViewportMetrics,
 } from "./terminal-viewport.js";
@@ -295,17 +294,16 @@ export function InitApp({
     pendingSetupGeometryRef.current = false;
     lastSetupRevealRef.current = { columns, rows, focus };
     if (!shouldReveal) return;
-    const target = activeTargetRef.current;
-    const content = contentRef.current;
-    if (target === null || content === null) return;
     const currentOffset = setupOffsetRef.current;
     const nextOffset = revealOffsetForTarget(
-      currentOffset,
+      activeTargetRef.current,
+      contentRef.current,
       rows,
-      measureElement(target),
-      measureElement(content),
+      currentOffset,
     );
-    if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
+    if (nextOffset !== undefined && nextOffset !== currentOffset) {
+      setSetupOffset(nextOffset);
+    }
   }, [columns, focus, phase, rows]);
 
   const scrollBy = (delta: number) => {

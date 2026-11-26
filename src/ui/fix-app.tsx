@@ -2,7 +2,6 @@ import { ActionButtonFace } from "./action-button-face.js";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   Box,
-  measureElement,
   Text,
   render,
   useApp,
@@ -24,9 +23,9 @@ import {
   clampScrollOffset,
   pageScrollStep,
   parseSgrWheelDelta,
-  revealOffsetForTarget,
 } from "./terminal-viewport-model.js";
 import {
+  revealOffsetForTarget,
   TerminalViewport,
   type TerminalViewportMetrics,
 } from "./terminal-viewport.js";
@@ -499,16 +498,15 @@ export function FixApp(props: FixAppProps) {
       return;
     }
     lastRevealRef.current = { columns, rows, focus };
-    const target = activeTargetRef.current;
-    const content = contentRef.current;
-    if (target === null || content === null) return;
     const nextOffset = revealOffsetForTarget(
-      offsetRef.current,
+      activeTargetRef.current,
+      contentRef.current,
       rows,
-      measureElement(target),
-      measureElement(content),
+      offsetRef.current,
     );
-    if (nextOffset !== offsetRef.current) setOffset(nextOffset);
+    if (nextOffset !== undefined && nextOffset !== offsetRef.current) {
+      setOffset(nextOffset);
+    }
   }, [columns, focus, rows]);
 
   const decide = (decision: boolean): void => {
