@@ -41,8 +41,43 @@ class WorkerConfigError extends Error {
 let state: WorkerState | undefined;
 let busy = false;
 
+// Must match parseImportableConfig in project-protocol.ts.
+const IMPORT_MAX_OVERRIDES = 256;
+const IMPORT_MAX_LIMITATIONS = 64;
+const IMPORT_MAX_LIMITATION_LENGTH = 1024;
+
+/** Trims an import reply so the parent's protocol limits always accept it. */
+function boundedImport(config: ImportableNativeConfig): ImportableNativeConfig {
+  const limitations = [...config.limitations];
+  if (config.overrides.length > IMPORT_MAX_OVERRIDES) {
+    limitations.push(
+      `Only the first ${IMPORT_MAX_OVERRIDES} configuration overrides were copied.`,
+    );
+  }
+  const bounded = limitations.map((entry) =>
+    entry.length > IMPORT_MAX_LIMITATION_LENGTH
+      ? `${entry.slice(0, IMPORT_MAX_LIMITATION_LENGTH - 3)}...`
+      : entry,
+  );
+  return {
+    settings: config.settings,
+    overrides: config.overrides.slice(0, IMPORT_MAX_OVERRIDES),
+    limitations:
+      bounded.length > IMPORT_MAX_LIMITATIONS
+        ? [
+            ...bounded.slice(0, IMPORT_MAX_LIMITATIONS - 1),
+            `${bounded.length - (IMPORT_MAX_LIMITATIONS - 1)} further limitations were omitted.`,
+          ]
+        : bounded,
+  };
+}
+
 function send(reply: ProjectPrettierReply): void {
-  process.send?.({ type: "reply", reply });
+  const bounded =
+    reply.operation === "importConfig"
+      ? { ...reply, result: boundedImport(reply.result) }
+      : reply;
+  process.send?.({ type: "reply", reply: bounded });
 }
 
 function failure(
