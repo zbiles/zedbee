@@ -82,6 +82,24 @@ function lintBatches(
   ]);
 }
 
+function lintEngineOptions(
+  prepared: PreparedLintSide,
+  group: PreparedLintSide["groups"][number],
+  batch: Readonly<{ files: readonly string[]; basic: boolean }>,
+): ManagedEslintOptions {
+  return {
+    cwd: prepared.canonicalRoot,
+    mode: "lint",
+    managedIgnores: [],
+    ruleOverrides: group.rules,
+    ...(batch.basic
+      ? { typeInformation: "basic" as const }
+      : prepared.typedProject === undefined
+        ? {}
+        : { typedProject: prepared.typedProject }),
+  };
+}
+
 function snapshotLabel(side: SnapshotSide, ref?: string | null): string {
   const label = side === "baseline" ? "baseline snapshot" : "target snapshot";
   // Only trusted, resolved Git identities are useful here. Never echo arbitrary
@@ -153,6 +171,29 @@ function typedFailure(options: {
       ...(failure === undefined ? {} : { failure }),
     },
   });
+}
+
+function planFixesFailure(
+  error: unknown,
+  signal: AbortSignal,
+  targetRef: string | null | undefined,
+  prepared: PreparedLintSide,
+  files: readonly string[],
+): never {
+  signal.throwIfAborted();
+  if (error instanceof CheckIncompleteError) throw error;
+  if (files.some((path) => TYPESCRIPT_SOURCE.test(path))) {
+    throw typedFailure({
+      side: "target",
+      ref: targetRef,
+      files,
+      projectPaths: prepared.projectPaths,
+      reason: "execution",
+      error,
+      operation: "planFixes",
+    });
+  }
+  throw new Error("Managed lint fix planning failed.");
 }
 
 async function prepareSide(
@@ -303,17 +344,7 @@ async function collectSide(
         TYPESCRIPT_SOURCE.test(path),
       );
       try {
-        const engine = engineFactory({
-          cwd: prepared.canonicalRoot,
-          mode: "lint",
-          managedIgnores: [],
-          ruleOverrides: group.rules,
-          ...(batch.basic
-            ? { typeInformation: "basic" as const }
-            : prepared.typedProject === undefined
-              ? {}
-              : { typedProject: prepared.typedProject }),
-        });
+        const engine = engineFactory(lintEngineOptions(prepared, group, batch));
         const results = await engine.lintFiles([...batch.files]);
         signal.throwIfAborted();
         const allowed = new Set(batch.files);
@@ -425,9 +456,6 @@ export function createLintAdapter(
       for (const group of prepared.groups) {
         context.signal.throwIfAborted();
         for (const batch of lintBatches(prepared, group.files)) {
-          const groupHasTypescript = batch.files.some((path) =>
-            TYPESCRIPT_SOURCE.test(path),
-          );
           try {
             candidates.push(
               ...(await planManagedEslintFixes(
@@ -436,36 +464,19 @@ export function createLintAdapter(
                   checkId: "lint",
                   files: batch.files,
                   createEngine: () =>
-                    engineFactory({
-                      cwd: prepared.canonicalRoot,
-                      mode: "lint",
-                      managedIgnores: [],
-                      ruleOverrides: group.rules,
-                      ...(batch.basic
-                        ? { typeInformation: "basic" as const }
-                        : prepared.typedProject === undefined
-                          ? {}
-                          : { typedProject: prepared.typedProject }),
-                    }),
+                    engineFactory(lintEngineOptions(prepared, group, batch)),
                 },
                 findings,
               )),
             );
           } catch (error) {
-            context.signal.throwIfAborted();
-            if (error instanceof CheckIncompleteError) throw error;
-            if (groupHasTypescript) {
-              throw typedFailure({
-                side: "target",
-                ref: context.snapshots.targetRef,
-                files: batch.files,
-                projectPaths: prepared.projectPaths,
-                reason: "execution",
-                error,
-                operation: "planFixes",
-              });
-            }
-            throw new Error("Managed lint fix planning failed.");
+            planFixesFailure(
+              error,
+              context.signal,
+              context.snapshots.targetRef,
+              prepared,
+              batch.files,
+            );
           }
         }
       }
