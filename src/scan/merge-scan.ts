@@ -59,14 +59,26 @@ function isBlockingIncomplete(check: CheckResult): boolean {
   );
 }
 
+/** First check per key, matching what Array.prototype.find returned. */
+function checksByKey(report: ScanReport): ReadonlyMap<string, CheckResult> {
+  const index = new Map<string, CheckResult>();
+  for (const check of report.checks) {
+    const key = checkKey(check);
+    if (!index.has(key)) index.set(key, check);
+  }
+  return index;
+}
+
 function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
-  const keys = [
-    ...new Set(reports.flatMap((report) => report.checks.map(checkKey))),
-  ].sort(compareCodeUnits);
+  const indexes = reports.map(checksByKey);
+  const parentEvidence = reports.map(
+    (report) => `merge-parent:${report.baseline}`,
+  );
+  const keys = [...new Set(indexes.flatMap((index) => [...index.keys()]))].sort(
+    compareCodeUnits,
+  );
   return keys.map((key) => {
-    const checks = reports.map((report) =>
-      report.checks.find((check) => checkKey(check) === key),
-    );
+    const checks = indexes.map((index) => index.get(key));
     const present = checks.filter(
       (check): check is CheckResult => check !== undefined,
     );
@@ -102,11 +114,10 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
       };
     const counts = present.slice(1).map((check) => {
       const count = new Map<string, number>();
-      for (const finding of check.findings)
-        count.set(
-          findingKey(finding),
-          (count.get(findingKey(finding)) ?? 0) + 1,
-        );
+      for (const finding of check.findings) {
+        const key = findingKey(finding);
+        count.set(key, (count.get(key) ?? 0) + 1);
+      }
       return count;
     });
     const findings = first.findings
@@ -120,10 +131,9 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
         ...finding,
         attribution: {
           ...finding.attribution,
-          evidence: [
-            ...finding.attribution.evidence,
-            ...reports.map((report) => `merge-parent:${report.baseline}`),
-          ].sort(compareCodeUnits),
+          evidence: [...finding.attribution.evidence, ...parentEvidence].sort(
+            compareCodeUnits,
+          ),
         },
       }));
     return {
