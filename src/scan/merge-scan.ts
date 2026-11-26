@@ -53,6 +53,12 @@ function checkKey(check: CheckResult): string {
   return JSON.stringify([check.checkId, check.target ?? "."]);
 }
 
+function isBlockingIncomplete(check: CheckResult): boolean {
+  return (
+    check.status === "incomplete" && check.incompleteDisposition === "block"
+  );
+}
+
 function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
   const keys = [
     ...new Set(reports.flatMap((report) => report.checks.map(checkKey))),
@@ -64,17 +70,14 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
     const present = checks.filter(
       (check): check is CheckResult => check !== undefined,
     );
+    const durationMs = present.reduce(
+      (sum, check) => sum + check.durationMs,
+      0,
+    );
     const incomplete =
-      present.find(
-        (check) =>
-          check.status === "incomplete" &&
-          check.incompleteDisposition === "block",
-      ) ?? present.find((check) => check.status === "incomplete");
-    if (incomplete !== undefined)
-      return {
-        ...incomplete,
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
-      };
+      present.find(isBlockingIncomplete) ??
+      present.find((check) => check.status === "incomplete");
+    if (incomplete !== undefined) return { ...incomplete, durationMs };
     const first =
       present.find((check) => check.status === "completed") ?? present[0]!;
     if (checks.some((check) => check === undefined))
@@ -94,7 +97,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
     if (present.some((check) => check.status === "skipped"))
       return {
         ...first,
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+        durationMs,
         findings: [],
       };
     const counts = present.slice(1).map((check) => {
@@ -125,7 +128,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
       }));
     return {
       ...first,
-      durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+      durationMs,
       findings,
     };
   });
@@ -365,11 +368,7 @@ export async function runMergeScan(
     const summary = summarizeChecks(checks);
     const blockingIncomplete =
       reports.some((report) => report.exitCode === 2) ||
-      checks.some(
-        (check) =>
-          check.status === "incomplete" &&
-          check.incompleteDisposition === "block",
-      );
+      checks.some(isBlockingIncomplete);
     const { changeSummary: _pairwiseSummary, ...firstReport } = reports[0]!;
     return (completed = {
       ...firstReport,
