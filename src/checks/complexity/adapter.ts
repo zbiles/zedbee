@@ -172,7 +172,6 @@ function rawObservationsFromMessages(
   file: string,
   source: string,
   messages: readonly LinterTypes.LintMessage[],
-  limit?: number,
 ): readonly Observation[] {
   const spanAt = metricSpanLookup(
     collectMetricEntitySpans(source, file),
@@ -214,7 +213,6 @@ function rawObservationsFromMessages(
         metric: {
           name: metric.name,
           value: metric.value,
-          ...(limit === undefined ? {} : { limit }),
         },
       },
     ];
