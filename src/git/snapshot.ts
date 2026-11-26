@@ -145,6 +145,12 @@ interface SnapshotEntry {
   path: string;
 }
 
+function symlinkEntryPaths(entries: readonly SnapshotEntry[]): string[] {
+  return entries
+    .filter((entry) => entry.mode === "120000")
+    .map((entry) => entry.path);
+}
+
 const MAX_SYMLINK_TARGET_BYTES = 1024 * 1024;
 
 const OBJECT_ID = "(?:[\\da-f]{40}|[\\da-f]{64})";
@@ -613,12 +619,8 @@ export async function buildCommitSnapshotPairSerial(
       targetCommit,
       signal,
     );
-    const baselineSymlinkPaths = baselineEntries
-      .filter((entry) => entry.mode === "120000")
-      .map((entry) => entry.path);
-    const symlinkPaths = targetEntries
-      .filter((entry) => entry.mode === "120000")
-      .map((entry) => entry.path);
+    const baselineSymlinkPaths = symlinkEntryPaths(baselineEntries);
+    const symlinkPaths = symlinkEntryPaths(targetEntries);
     const baselineUnsupportedEntries = await materializeEntries(
       git,
       baselineEntries,
@@ -687,12 +689,8 @@ async function materializePair(
       targetRef,
       baselineUnsupportedEntries,
       unsupportedEntries,
-      baselineSymlinkPaths: baselineEntries
-        .filter((entry) => entry.mode === "120000")
-        .map((entry) => entry.path),
-      symlinkPaths: targetEntries
-        .filter((entry) => entry.mode === "120000")
-        .map((entry) => entry.path),
+      baselineSymlinkPaths: symlinkEntryPaths(baselineEntries),
+      symlinkPaths: symlinkEntryPaths(targetEntries),
       cleanup: root.cleanup,
     };
   } catch (error) {
@@ -760,9 +758,7 @@ export async function buildMergeBaselineSnapshot(
       baselineDir: root.baselineDir,
       baselineRef,
       baselineUnsupportedEntries,
-      baselineSymlinkPaths: entries
-        .filter(({ mode }) => mode === "120000")
-        .map(({ path }) => path),
+      baselineSymlinkPaths: symlinkEntryPaths(entries),
       cleanup: root.cleanup,
     };
   } catch (error) {
@@ -841,9 +837,7 @@ export async function buildSnapshotPairSerial(
     const selectedEntries = stagedEntries.filter(
       (entry) => !intentToAddPaths.has(entry.path),
     );
-    const symlinkPaths = selectedEntries
-      .filter((entry) => entry.mode === "120000")
-      .map((entry) => entry.path);
+    const symlinkPaths = symlinkEntryPaths(selectedEntries);
     const unsupportedEntries = await materializeEntries(
       git,
       selectedEntries,
@@ -874,9 +868,7 @@ export async function buildSnapshotPairSerial(
         true,
         signal,
       );
-      baselineSymlinkPaths = baselineEntries
-        .filter((entry) => entry.mode === "120000")
-        .map((entry) => entry.path);
+      baselineSymlinkPaths = symlinkEntryPaths(baselineEntries);
     }
     return {
       baselineDir: root.baselineDir,
