@@ -15,6 +15,7 @@ import {
   type JobIdentity,
 } from "./envelope.js";
 import { stopProcessGroup } from "./process-group.js";
+import type { AnalyzerFailureCategory } from "../diagnostics.js";
 import type { WindowsJob } from "./windows-job.js";
 import type { AnalyzerJobOptions } from "./run-job.js";
 import type { AnalyzerRequest } from "./protocol.js";
@@ -84,6 +85,14 @@ export class SupervisedWorkerSlot {
       this.finish = resolve;
     });
   }
+  private jobOrSlotFailure(
+    category: AnalyzerFailureCategory,
+    message: string,
+  ): Error {
+    return this.job
+      ? jobFailure(this.job.request, category)
+      : new Error(message);
+  }
   async dispatch(envelope: unknown): Promise<void> {
     if (!this.child) await this.start(envelope);
     else {
@@ -91,9 +100,7 @@ export class SupervisedWorkerSlot {
         await this.acquireOwnership();
       } catch {
         this.stop(
-          this.job
-            ? jobFailure(this.job.request, "cleanup")
-            : new Error("Analyzer ownership failed."),
+          this.jobOrSlotFailure("cleanup", "Analyzer ownership failed."),
         );
         return;
       }
@@ -102,9 +109,7 @@ export class SupervisedWorkerSlot {
       this.child.send(envelope as Serializable, (error) => {
         if (error)
           this.stop(
-            this.job
-              ? jobFailure(this.job.request, "startup")
-              : new Error("Analyzer process failed."),
+            this.jobOrSlotFailure("startup", "Analyzer process failed."),
           );
       });
     }
@@ -175,11 +180,7 @@ export class SupervisedWorkerSlot {
     });
     slot.child = child;
     child.on("error", () =>
-      this.stop(
-        slot.job
-          ? jobFailure(slot.job.request, "startup")
-          : new Error("Analyzer process failed."),
-      ),
+      this.stop(this.jobOrSlotFailure("startup", "Analyzer process failed.")),
     );
     child.on("message", (message) => this.message(message));
     child.on("close", (code, signal) => {
@@ -199,19 +200,13 @@ export class SupervisedWorkerSlot {
           (error) => {
             if (error)
               this.stop(
-                slot.job
-                  ? jobFailure(slot.job.request, "startup")
-                  : new Error("Analyzer process failed."),
+                this.jobOrSlotFailure("startup", "Analyzer process failed."),
               );
           },
         );
         envelope = undefined;
       } catch {
-        this.stop(
-          slot.job
-            ? jobFailure(slot.job.request, "startup")
-            : new Error("Analyzer process failed."),
-        );
+        this.stop(this.jobOrSlotFailure("startup", "Analyzer process failed."));
         child.kill("SIGKILL");
       }
     });
@@ -225,9 +220,7 @@ export class SupervisedWorkerSlot {
     }
     const invalid = () =>
       this.stop(
-        slot.job
-          ? jobFailure(slot.job.request, "invalid-response")
-          : new Error("Invalid analyzer response."),
+        this.jobOrSlotFailure("invalid-response", "Invalid analyzer response."),
       );
     if (
       exactFields(value, ["type", "pid"]) &&
@@ -374,9 +367,10 @@ export class SupervisedWorkerSlot {
       } catch {
         /* Preserve cleanup failure and best-effort kill-on-close. */
       }
-      slot.failure = slot.job
-        ? jobFailure(slot.job.request, "cleanup")
-        : new Error("Analyzer cleanup failed.");
+      slot.failure = this.jobOrSlotFailure(
+        "cleanup",
+        "Analyzer cleanup failed.",
+      );
       slot.cleanupFailure = slot.failure;
       if (slot.session) slot.session.releaseFailure = slot.failure;
     }
