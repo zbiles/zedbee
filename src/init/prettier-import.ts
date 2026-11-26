@@ -117,7 +117,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readPackagePrettierValue(
+const configValueCache = new WeakMap<
+  SnapshotRegistry,
+  Map<string, Promise<unknown>>
+>();
+
+/** One registry is one captured tree, so each file is read and parsed once. */
+function cachedConfigValue(
+  registry: SnapshotRegistry,
+  key: string,
+  load: () => Promise<unknown>,
+): Promise<unknown> {
+  let entries = configValueCache.get(registry);
+  if (entries === undefined) {
+    entries = new Map();
+    configValueCache.set(registry, entries);
+  }
+  let value = entries.get(key);
+  if (value === undefined) {
+    value = load();
+    entries.set(key, value);
+  }
+  return value;
+}
+
+async function loadPackagePrettierValue(
   registry: SnapshotRegistry,
   path: string,
 ): Promise<unknown> {
@@ -132,7 +156,16 @@ async function readPackagePrettierValue(
   return isRecord(manifest) ? manifest.prettier : undefined;
 }
 
-async function readConfigValue(
+async function readPackagePrettierValue(
+  registry: SnapshotRegistry,
+  path: string,
+): Promise<unknown> {
+  return cachedConfigValue(registry, `package:${path}`, () =>
+    loadPackagePrettierValue(registry, path),
+  );
+}
+
+async function loadConfigValue(
   registry: SnapshotRegistry,
   repositoryPath: string,
 ): Promise<unknown> {
@@ -152,6 +185,15 @@ async function readConfigValue(
   } catch {
     return parseYaml(contents) as unknown;
   }
+}
+
+async function readConfigValue(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+): Promise<unknown> {
+  return cachedConfigValue(registry, `config:${repositoryPath}`, () =>
+    loadConfigValue(registry, repositoryPath),
+  );
 }
 
 function isPackageManifestConfig(path: string): boolean {
