@@ -26,26 +26,40 @@ function createAcquirer(
   };
 }
 
-/** Takes ownership of a verified, noninherited fd. Never unlink the coordination inode. */
-export function openSynchronousKernelFileLease(
+function leaseState(
   fd: number,
   unavailable: () => Error,
-): SynchronousKernelFileLease {
+  loadKoffi: () => typeof import("koffi").default,
+): { acquire(): boolean; markClosed(): boolean } {
   let closed = false;
   let acquire: ReturnType<typeof createAcquirer> | undefined;
   return {
     acquire() {
       if (closed) throw unavailable();
-      return (acquire ??= createAcquirer(
-        unavailable,
-        require("koffi") as typeof import("koffi").default,
-      ))(fd);
+      return (acquire ??= createAcquirer(unavailable, loadKoffi()))(fd);
     },
+    markClosed() {
+      if (closed) return false;
+      closed = true;
+      return true;
+    },
+  };
+}
+
+/** Takes ownership of a verified, noninherited fd. Never unlink the coordination inode. */
+export function openSynchronousKernelFileLease(
+  fd: number,
+  unavailable: () => Error,
+): SynchronousKernelFileLease {
+  const state = leaseState(
+    fd,
+    unavailable,
+    () => require("koffi") as typeof import("koffi").default,
+  );
+  return {
+    acquire: () => state.acquire(),
     close() {
-      if (!closed) {
-        closed = true;
-        closeSync(fd);
-      }
+      if (state.markClosed()) closeSync(fd);
     },
   };
 }
@@ -59,18 +73,11 @@ export async function openKernelFileLease(
   unavailable: () => Error,
 ): Promise<KernelFileLease> {
   const koffi = (await import("koffi")).default;
-  let closed = false;
-  let acquire: ReturnType<typeof createAcquirer> | undefined;
+  const state = leaseState(file.fd, unavailable, () => koffi);
   return {
-    acquire() {
-      if (closed) throw unavailable();
-      return (acquire ??= createAcquirer(unavailable, koffi))(file.fd);
-    },
+    acquire: () => state.acquire(),
     async close() {
-      if (!closed) {
-        closed = true;
-        await file.close();
-      }
+      if (state.markClosed()) await file.close();
     },
   };
 }
