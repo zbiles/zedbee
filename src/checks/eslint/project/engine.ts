@@ -9,6 +9,7 @@ import {
   parseProjectEslintResult,
   PROJECT_ESLINT_MAX_BYTES,
   PROJECT_ESLINT_MAX_FILES,
+  projectEslintMessageText,
   validProjectEslintPath,
 } from "./protocol.js";
 import {
@@ -226,9 +227,7 @@ export async function runProjectEslint(
               messages: fullMessages ? "full" : "redacted",
               diagnostics: parsed.diagnostics.map((d) => ({
                 ...d,
-                message: fullMessages
-                  ? d.message.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")
-                  : "The project's ESLint reported a diagnostic.",
+                message: projectEslintMessageText(d.message, fullMessages),
               })),
             });
           } else if (
