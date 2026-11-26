@@ -15,7 +15,10 @@ import {
 } from "../checks/prettier/project-engine.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Finding } from "../core/types.js";
-import { sanitizeFixCandidates } from "./sanitize.js";
+import {
+  sanitizeFixCandidates,
+  sanitizeFixCandidatesOfKind,
+} from "./sanitize.js";
 import type {
   FormatFileFixCandidate,
   CheckFixCandidate,
@@ -103,17 +106,14 @@ export async function planPrettierFixes(
       selection,
     });
   }
-  const sanitized = sanitizeFixCandidates(candidates, {
-    checkId: "formatting",
-    findingIds: candidates.flatMap((candidate) => candidate.findingIds),
-  });
-  return Object.freeze(
-    sanitized.map((candidate) => {
-      if (candidate.kind !== "format-file") {
-        throw new TypeError("Expected a Prettier format-file fix candidate");
-      }
-      return candidate;
-    }),
+  return sanitizeFixCandidatesOfKind(
+    "format-file",
+    candidates,
+    {
+      checkId: "formatting",
+      findingIds: candidates.flatMap((candidate) => candidate.findingIds),
+    },
+    "Expected a Prettier format-file fix candidate",
   );
 }
 

@@ -11,7 +11,7 @@ import {
 } from "../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import { capturedSourceRegistry } from "../inspection/source-capture.js";
-import { sanitizeFixCandidates } from "./sanitize.js";
+import { sanitizeFixCandidatesOfKind } from "./sanitize.js";
 import type { ExactFileFixCandidate } from "./types.js";
 
 export interface ManagedEslintFixInput {
@@ -188,7 +188,8 @@ export async function planManagedEslintFixes(
       }
     }
   }
-  const candidates = sanitizeFixCandidates(
+  return sanitizeFixCandidatesOfKind(
+    "exact-file",
     [...edits.entries()]
       .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([file, candidate]) => ({
@@ -202,13 +203,6 @@ export async function planManagedEslintFixes(
       checkId,
       findingIds: [...reported.keys()],
     },
-  );
-  return Object.freeze(
-    candidates.map((candidate) => {
-      if (candidate.kind !== "exact-file") {
-        throw new TypeError("Expected an exact-file ESLint fix candidate");
-      }
-      return candidate;
-    }),
+    "Expected an exact-file ESLint fix candidate",
   );
 }

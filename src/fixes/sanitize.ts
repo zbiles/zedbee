@@ -335,3 +335,20 @@ export function sanitizeFixCandidates(
     }),
   );
 }
+
+/** Sanitizes candidates and rejects any whose kind is not the expected one. */
+export function sanitizeFixCandidatesOfKind<
+  K extends CheckFixCandidate["kind"],
+>(
+  kind: K,
+  candidates: readonly unknown[],
+  scope: FixCandidateScope,
+  message: string,
+): readonly Extract<CheckFixCandidate, { kind: K }>[] {
+  return Object.freeze(
+    sanitizeFixCandidates(candidates, scope).map((candidate) => {
+      if (candidate.kind !== kind) throw new TypeError(message);
+      return candidate as Extract<CheckFixCandidate, { kind: K }>;
+    }),
+  );
+}
