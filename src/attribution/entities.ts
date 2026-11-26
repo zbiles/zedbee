@@ -472,6 +472,30 @@ function collectValidatedEntities(
   }
   visit(parsedSourceFile, [], [], { nextOrdinal: 0 });
 
+  // Same-named siblings under one ancestor path otherwise share a byte-
+  // identical identity. In source (startOffset) order, append a stable
+  // occurrence suffix after the first: earlier spans keep their original
+  // identity, so line or column numbers never enter a fingerprint.
+  const groups = new Map<string, MetricEntitySpan[]>();
+  for (const span of spans) {
+    const group = groups.get(span.entity.identity);
+    if (group === undefined) groups.set(span.entity.identity, [span]);
+    else group.push(span);
+  }
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    group.sort((left, right) => left.startOffset - right.startOffset);
+    for (let ordinal = 1; ordinal < group.length; ordinal += 1) {
+      const span = group[ordinal]!;
+      const identity = `${span.entity.identity}#${ordinal + 1}`;
+      spans[spans.indexOf(span)] = Object.freeze({
+        entity: Object.freeze({ ...span.entity, identity }),
+        startOffset: span.startOffset,
+        endOffset: span.endOffset,
+      });
+    }
+  }
+
   entities.sort(
     (left, right) =>
       compareCodeUnits(left.file, right.file) ||
