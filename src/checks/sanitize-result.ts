@@ -272,6 +272,14 @@ function sanitizeFinding(finding: Finding): Finding {
   };
 }
 
+function normalizedPathList(paths: readonly string[]): readonly string[] {
+  return Object.freeze(
+    [...new Set(paths.map(normalizeRepositoryRelativePath))].sort(
+      compareCodeUnits,
+    ),
+  );
+}
+
 function sanitizeError(
   error: CheckError,
   temporaryPath: ValidatedSnapshotPath | undefined,
@@ -301,11 +309,7 @@ function sanitizeError(
     ...(error.paths === undefined
       ? {}
       : {
-          paths: Object.freeze(
-            [...new Set(error.paths.map(normalizeRepositoryRelativePath))].sort(
-              compareCodeUnits,
-            ),
-          ),
+          paths: normalizedPathList(error.paths),
         }),
     ...(error.snapshot === undefined
       ? {}
@@ -317,13 +321,7 @@ function sanitizeError(
     ...(error.projectPaths === undefined
       ? {}
       : {
-          projectPaths: Object.freeze(
-            [
-              ...new Set(
-                error.projectPaths.map(normalizeRepositoryRelativePath),
-              ),
-            ].sort(compareCodeUnits),
-          ),
+          projectPaths: normalizedPathList(error.projectPaths),
         }),
     ...(temporaryPath === undefined ? {} : { temporaryPath }),
     ...(error.remediation === undefined
