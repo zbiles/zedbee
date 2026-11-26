@@ -4,12 +4,15 @@ import type { ICruiseResult, IViolation } from "dependency-cruiser";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
-import { DEPENDENCY_RULE_NAMES, HOOK_INSTALLER_PATH } from "./rules.js";
+import {
+  DEPENDENCY_RULE_NAMES,
+  HOOK_INSTALLER_PATH,
+  TEST_PATH as TEST_PATH_PATTERN,
+} from "./rules.js";
 
 const HOOK_INSTALLER = new RegExp(HOOK_INSTALLER_PATH);
 const RULES = new Set<string>(Object.values(DEPENDENCY_RULE_NAMES));
-const TEST_PATH =
-  /(^|\/)(?:test|tests|__tests__|spec)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
+const TEST_PATH = new RegExp(TEST_PATH_PATTERN, "u");
 
 export interface DependencyDeclarations {
   readonly production: ReadonlySet<string>;

@@ -1,6 +1,6 @@
 import type { IFlattenedRuleSet } from "dependency-cruiser";
 
-const TEST_PATH =
+export const TEST_PATH =
   "(^|/)(?:test|tests|__tests__|spec)(?:/|$)|\\.(?:test|spec)\\.[^.]+$";
 export const HOOK_INSTALLER_PATH = "(^|/)\\.husky/install\\.mjs$";
 const PRODUCTION_SOURCE = "(^|/)src/";
