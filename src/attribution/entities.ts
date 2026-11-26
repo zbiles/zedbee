@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import * as ts from "typescript";
 import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
+import { compareCodeUnits } from "../core/compare.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
 import { normalizeRepositoryRelativePath } from "./fingerprint.js";
@@ -351,10 +352,6 @@ function intersects(
   return ranges.some(
     (range) => startLine <= range.end && endLine >= range.start,
   );
-}
-
-function compareCodeUnits(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 interface ValidatedEntities {
