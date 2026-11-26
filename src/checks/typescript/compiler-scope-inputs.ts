@@ -10,6 +10,7 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
+import { configExtensions, tsconfigCandidates } from "./config-requests.js";
 export interface ScopeProject {
   readonly configPath: string;
   readonly options: ts.CompilerOptions;
@@ -86,11 +87,7 @@ export async function loadCompilerScopeInputs(
         throw new Unsupported();
       const base = posix.normalize(posix.join(posix.dirname(from), request));
       if (base === ".." || base.startsWith("../")) throw new Unsupported();
-      for (const candidate of [
-        base,
-        `${base}.json`,
-        posix.join(base, "tsconfig.json"),
-      ]) {
+      for (const candidate of tsconfigCandidates(base)) {
         signal?.throwIfAborted();
         const registry = await captureSnapshotRegistry(
           inspection.snapshotRoot,
@@ -120,12 +117,7 @@ export async function loadCompilerScopeInputs(
       const config = data as Record<string, unknown>;
       configs.set(path, config);
       visiting.add(path);
-      const extensions =
-        config.extends === undefined
-          ? []
-          : Array.isArray(config.extends)
-            ? config.extends
-            : [config.extends];
+      const extensions = configExtensions(config);
       for (const extension of extensions) {
         const next = await locate(path, extension);
         extended.add(next);

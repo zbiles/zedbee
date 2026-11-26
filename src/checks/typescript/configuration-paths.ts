@@ -13,6 +13,7 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
+import { configExtensions, tsconfigCandidates } from "./config-requests.js";
 
 /** One immutable inspection owns the acquisition cache. Only requested config
  * paths and their ancestors are inventoried, including canonical symlink targets.
@@ -164,12 +165,7 @@ function createResolver(
         continue;
       }
       const config = data as Record<string, unknown>;
-      const extensions =
-        config.extends === undefined
-          ? []
-          : Array.isArray(config.extends)
-            ? config.extends
-            : [config.extends];
+      const extensions = configExtensions(config);
       if (
         extensions.some((extension) => typeof extension !== "string") ||
         (config.references !== undefined && !Array.isArray(config.references))
@@ -221,11 +217,7 @@ function createResolver(
           complete = false;
           continue;
         }
-        const candidates = [
-          base,
-          `${base}.json`,
-          posix.join(base, "tsconfig.json"),
-        ];
+        const candidates = tsconfigCandidates(base);
         let found = false;
         for (const candidate of candidates) {
           signal?.throwIfAborted();
