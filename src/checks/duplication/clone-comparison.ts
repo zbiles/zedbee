@@ -16,6 +16,18 @@ import type {
 function signature(tokens: readonly SourceToken[]): string {
   return JSON.stringify(tokens.map(({ kind, text }) => [kind, text]));
 }
+function sameTokens(
+  left: readonly SourceToken[],
+  right: readonly SourceToken[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    const a = left[index]!;
+    const b = right[index]!;
+    if (a.kind !== b.kind || a.text !== b.text) return false;
+  }
+  return true;
+}
 function sameSource(
   prior: TokenizedSource | undefined,
   source: TokenizedSource | undefined,
@@ -25,7 +37,7 @@ function sameSource(
     prior?.valid &&
     source?.valid &&
     (mode === "mild"
-      ? signature(prior.tokens) === signature(source.tokens)
+      ? sameTokens(prior.tokens, source.tokens)
       : prior.text === source.text),
   );
 }
