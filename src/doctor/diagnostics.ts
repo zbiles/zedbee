@@ -1,4 +1,7 @@
-import { inspectWorkspaceInstallations } from "./workspace-installation.js";
+import {
+  inspectWorkspaceInstallations,
+  workspaceLabel,
+} from "./workspace-installation.js";
 import { diagnoseProjectEslint } from "./project-eslint.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -410,8 +413,7 @@ export function createDefaultDiagnosticProbe(
         }
         const summary = discovered
           .map((entry) => {
-            const location =
-              entry.projectRoot === "." ? "root" : entry.projectRoot;
+            const location = workspaceLabel(entry.projectRoot);
             return `${location}: ${entry.status}${
               entry.version === undefined ? "" : ` ${entry.version}`
             }`;
@@ -467,9 +469,7 @@ export function createDefaultDiagnosticProbe(
                     throw new Error("Unexpected project probe result.");
                   }
                   probed.push(
-                    `${
-                      entry.projectRoot === "." ? "root" : entry.projectRoot
-                    } (${installation.version})`,
+                    `${workspaceLabel(entry.projectRoot)} (${installation.version})`,
                   );
                 } finally {
                   await session.close();

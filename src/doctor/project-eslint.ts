@@ -15,6 +15,7 @@ import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.
 import { hasProjectEslintTrust } from "../checks/eslint/project/trust.js";
 import { resolveProjectEslintInstallation } from "../checks/eslint/project/installation.js";
 import { ProjectEslintFailureError } from "../checks/eslint/project/types.js";
+import { workspaceLabel } from "./workspace-installation.js";
 import type { Diagnostic } from "./diagnostics.js";
 
 async function configPath(
@@ -92,7 +93,7 @@ export async function diagnoseProjectEslint(
     if (!selected.supported) failed = true;
     if (!trusted) untrusted = true;
     descriptions.push(
-      `${project === "." ? "root" : project}: project engine (experimental); config ${selected.path ?? "missing"}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
+      `${workspaceLabel(project)}: project engine (experimental); config ${selected.path ?? "missing"}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
     );
   }
   return {
