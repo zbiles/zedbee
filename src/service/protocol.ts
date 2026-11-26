@@ -197,3 +197,9 @@ export function verifyProof(
     )
   );
 }
+export function throwFirstRejection(
+  results: readonly PromiseSettledResult<unknown>[],
+): void {
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
+}

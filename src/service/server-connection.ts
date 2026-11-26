@@ -25,6 +25,7 @@ import {
   HEX,
   ServiceUnavailableError,
   proof,
+  throwFirstRejection,
   verifyProof,
 } from "./protocol.js";
 import { ServiceConnection } from "./transport.js";
@@ -266,8 +267,7 @@ export function acceptServiceConnection(
           .filter(([id]) => id !== stopRequestId)
           .map(([, operation]) => operation),
       );
-      const failure = results.find((result) => result.status === "rejected");
-      if (failure?.status === "rejected") throw failure.reason;
+      throwFirstRejection(results);
     })();
     host.cleaning(peer, cleanup);
   });
