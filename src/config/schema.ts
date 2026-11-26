@@ -205,21 +205,7 @@ function safeBoundedDisplayProseSchema(field: string, max: number) {
 }
 
 function safeDisplayProseSchema(field: string) {
-  return z
-    .string()
-    .max(DISPLAY_TEXT_LIMITS.prose)
-    .regex(safeDisplayProsePattern)
-    .refine(
-      (value) => {
-        try {
-          displayProse(value, field, { allowEmpty: true });
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      { message: `Expected safe ${field} display text` },
-    );
+  return safeBoundedDisplayProseSchema(field, DISPLAY_TEXT_LIMITS.prose);
 }
 
 const commonPolicyFields = {
