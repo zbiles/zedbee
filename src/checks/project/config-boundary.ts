@@ -11,7 +11,8 @@ import {
   rmdir,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, join, relative } from "node:path";
+import { isContainedPath } from "../../inspection/read-json.js";
 
 const MANAGED_CONFIG_PREFIX = "zedbee-managed-config-";
 const MANAGED_OUTPUT_PREFIX = "zedbee-managed-output-";
@@ -66,13 +67,7 @@ function isUnchangedDirectory(
 }
 
 function isContainedBy(parent: string, child: string): boolean {
-  const pathFromParent = relative(parent, child);
-  return (
-    pathFromParent !== "" &&
-    !isAbsolute(pathFromParent) &&
-    pathFromParent !== ".." &&
-    !pathFromParent.startsWith(`..${sep}`)
-  );
+  return relative(parent, child) !== "" && isContainedPath(parent, child);
 }
 
 async function validateManagedDirectory(path: string): Promise<string> {
