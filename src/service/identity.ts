@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Worker } from "node:worker_threads";
+import { identityWorkerEntry } from "./identity-parallel.js";
 import { HEX, ServiceUnavailableError } from "./protocol.js";
 
 const digest = (value: string) =>
@@ -20,11 +21,7 @@ export function installedContentIdentity(
   root: string,
   tree: string,
 ): Promise<string> {
-  const source = new URL(import.meta.url).pathname.endsWith(".ts");
-  const entry = new URL(
-    source ? "./identity-source-worker.mjs" : "./identity-worker.js",
-    import.meta.url,
-  );
+  const entry = identityWorkerEntry();
   return new Promise((resolve, reject) => {
     const worker = new Worker(entry, {
       execArgv: [],
