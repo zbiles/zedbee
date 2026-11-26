@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { executionClassFor } from "../applicability.js";
 import {
+  TYPESCRIPT_PARSER_CHECK_IDS,
   validateAnalyzerRequest,
   type AnalyzerRequest,
   type AnalyzerResult,
@@ -75,14 +76,8 @@ interface Job extends WorkerJob {
   provisional?: Outcome | undefined;
 }
 function affinity(request: AnalyzerRequest): string {
-  return [
-    "lint",
-    "reactCorrectness",
-    "reactAccessibility",
-    "cyclomaticComplexity",
-    "readabilityComplexity",
-    "types",
-  ].includes(request.checkId)
+  return TYPESCRIPT_PARSER_CHECK_IDS.includes(request.checkId) ||
+    request.checkId === "types"
     ? "syntax"
     : request.checkId;
 }

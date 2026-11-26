@@ -26,6 +26,14 @@ export interface WorkingSourceInput {
   readonly source: string;
   readonly settings: Readonly<FormattingSettings>;
 }
+/** Checks that load @typescript-eslint/parser inside an analyzer worker. */
+export const TYPESCRIPT_PARSER_CHECK_IDS: readonly string[] = [
+  "lint",
+  "reactCorrectness",
+  "reactAccessibility",
+  "cyclomaticComplexity",
+  "readabilityComplexity",
+];
 export type AnalyzerRequest =
   | {
       readonly version: 1;
