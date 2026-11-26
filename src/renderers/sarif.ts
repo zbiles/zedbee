@@ -14,6 +14,7 @@ import type { NetworkDisclosure, ScanReport } from "../scan/report.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 import { checkErrorDetailFields } from "./check-error-fields.js";
+import { sourceIdentityFields } from "./source-identity-fields.js";
 
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI = "https://github.com/zbiles/Zedbee";
@@ -247,15 +248,7 @@ function createInvocation(
         : { hookUpdate: hookUpdateNotice(report) }),
       outcome: report.outcome,
       exitCode: report.exitCode,
-      mode: source.mode,
-      baseline: source.baseline,
-      target: source.target,
-      ...(source.mergeParents === undefined
-        ? {}
-        : { mergeParents: source.mergeParents }),
-      ...(source.requestedBase === undefined
-        ? {}
-        : { requestedBase: source.requestedBase }),
+      ...sourceIdentityFields(source),
       changedFileCount: report.changedFileCount,
       startedAt: report.startedAt,
       durationMs: report.durationMs,

@@ -11,6 +11,7 @@ import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
 import { checkErrorDetailFields } from "./check-error-fields.js";
+import { sourceIdentityFields } from "./source-identity-fields.js";
 
 function serializeFinding(
   finding: Finding,
@@ -148,15 +149,7 @@ export function renderJson(
       ? {}
       : { hookUpdate: hookUpdateNotice(report) }),
     repositoryRoot: ".",
-    mode: source.mode,
-    baseline: source.baseline,
-    target: source.target,
-    ...(source.mergeParents === undefined
-      ? {}
-      : { mergeParents: source.mergeParents }),
-    ...(source.requestedBase === undefined
-      ? {}
-      : { requestedBase: source.requestedBase }),
+    ...sourceIdentityFields(source),
     changedFileCount: report.changedFileCount,
     ...(report.changeSummary === undefined
       ? {}
