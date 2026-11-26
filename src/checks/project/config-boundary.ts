@@ -94,6 +94,22 @@ function validateArtifactName(name: string): void {
   }
 }
 
+async function createPrivateTemporaryDirectory(
+  prefix: string,
+): Promise<{ readonly path: string; readonly identity: FileIdentity }> {
+  const canonicalTempRoot = await realpath(tmpdir());
+  const temporaryDirectory = await mkdtemp(join(canonicalTempRoot, prefix));
+  try {
+    await chmod(temporaryDirectory, 0o700);
+    const path = await validateManagedDirectory(temporaryDirectory);
+    const identity = fileIdentity(await lstat(path, { bigint: true }));
+    return { path, identity };
+  } catch (error) {
+    await rmdir(temporaryDirectory);
+    throw error;
+  }
+}
+
 export async function createManagedOutputDirectory(
   name: string,
   expectedArtifacts: readonly string[],
@@ -114,20 +130,8 @@ export async function createManagedOutputDirectory(
     );
   }
 
-  const canonicalTempRoot = await realpath(tmpdir());
-  const temporaryDirectory = await mkdtemp(
-    join(canonicalTempRoot, `${MANAGED_OUTPUT_PREFIX}${name}-`),
-  );
-  let canonicalDirectory: string;
-  let identity: FileIdentity;
-  try {
-    await chmod(temporaryDirectory, 0o700);
-    canonicalDirectory = await validateManagedDirectory(temporaryDirectory);
-    identity = fileIdentity(await lstat(canonicalDirectory, { bigint: true }));
-  } catch (error) {
-    await rmdir(temporaryDirectory);
-    throw error;
-  }
+  const { path: canonicalDirectory, identity } =
+    await createPrivateTemporaryDirectory(`${MANAGED_OUTPUT_PREFIX}${name}-`);
   let cleaned = false;
 
   const readArtifact = async (artifactName: string): Promise<string> => {
@@ -241,26 +245,21 @@ export async function writeManagedJsonConfig(
     );
   }
   const expectedContents = `${encoded}\n`;
-  const expectedByteLength = BigInt(Buffer.byteLength(expectedContents, "utf8"));
-
-  const canonicalTempRoot = await realpath(tmpdir());
-  const temporaryDirectory = await mkdtemp(
-    join(canonicalTempRoot, MANAGED_CONFIG_PREFIX),
+  const expectedByteLength = BigInt(
+    Buffer.byteLength(expectedContents, "utf8"),
   );
-  let canonicalDirectory: string | undefined;
+
+  const privateDirectory = await createPrivateTemporaryDirectory(
+    MANAGED_CONFIG_PREFIX,
+  );
+  const canonicalDirectory: string = privateDirectory.path;
   let configPath: string | undefined;
-  let directoryIdentity: FileIdentity | undefined;
+  const directoryIdentity: FileIdentity = privateDirectory.identity;
   let configIdentity: FileIdentity | undefined;
   let cleaned = false;
 
   const cleanup = async (): Promise<void> => {
-    if (
-      cleaned ||
-      canonicalDirectory === undefined ||
-      configPath === undefined ||
-      directoryIdentity === undefined ||
-      configIdentity === undefined
-    ) {
+    if (cleaned || configPath === undefined || configIdentity === undefined) {
       return;
     }
 
@@ -308,11 +307,6 @@ export async function writeManagedJsonConfig(
   };
 
   try {
-    await chmod(temporaryDirectory, 0o700);
-    canonicalDirectory = await validateManagedDirectory(temporaryDirectory);
-    directoryIdentity = fileIdentity(
-      await lstat(canonicalDirectory, { bigint: true }),
-    );
     configPath = join(canonicalDirectory, `${name}.json`);
     const handle = await open(configPath, "wx", 0o600);
     try {
@@ -324,17 +318,9 @@ export async function writeManagedJsonConfig(
 
     return { path: configPath, cleanup };
   } catch (error) {
-    if (
-      canonicalDirectory !== undefined &&
-      configPath !== undefined &&
-      directoryIdentity !== undefined &&
-      configIdentity !== undefined
-    ) {
+    if (configPath !== undefined && configIdentity !== undefined) {
       await cleanup();
-    } else if (
-      canonicalDirectory !== undefined &&
-      directoryIdentity !== undefined
-    ) {
+    } else {
       const metadata = await lstat(canonicalDirectory, { bigint: true });
       const entries = await readdir(canonicalDirectory);
       if (
@@ -348,8 +334,6 @@ export async function writeManagedJsonConfig(
         );
       }
       await rmdir(canonicalDirectory);
-    } else {
-      await rmdir(temporaryDirectory);
     }
     throw error;
   }
