@@ -1,25 +1,14 @@
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
 import { capturedSourceInput } from "./source-capture.js";
+import { isContainedPath, normalizeRepositoryPath, unsafePath } from "./paths.js";
 
-export function normalizeRepositoryPath(path: string): string {
-  return path.split(sep).join("/");
-}
-
-export function isContainedPath(root: string, candidate: string): boolean {
-  const pathFromRoot = relative(root, candidate);
-  return (
-    pathFromRoot === "" ||
-    (!isAbsolute(pathFromRoot) &&
-      pathFromRoot !== ".." &&
-      !pathFromRoot.startsWith(`..${sep}`))
-  );
-}
+export { isContainedPath, normalizeRepositoryPath } from "./paths.js";
 
 export async function canonicalizeSnapshotRoot(
   snapshotRoot: string,
@@ -104,13 +93,6 @@ const NO_FOLLOW_UNSUPPORTED_CODES = new Set([
   "ENOTSUP",
   "EOPNOTSUPP",
 ]);
-
-function unsafePath(): RepositoryInspectionError {
-  return new RepositoryInspectionError(
-    "UNSAFE_SNAPSHOT_PATH",
-    "Zedbee refused a path outside the snapshot.",
-  );
-}
 
 function unreadablePath(repositoryPath: string): RepositoryInspectionError {
   return new RepositoryInspectionError(
