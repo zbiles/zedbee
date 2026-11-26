@@ -1,5 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { CHECK_IDS } from "../core/check-ids.js";
+export const MAX_DIAGNOSTIC_DURATION_MS = 604_800_000;
+export const MAX_DIAGNOSTIC_COUNT = 1_000_000;
 export type PerformanceKind =
   | "dispatcher"
   | "result"
@@ -74,7 +76,8 @@ export const SCAN_CHANGE_CATEGORIES = [
 ] as const;
 export const SCAN_WORKER_COUNTS = [1, 2, 4] as const;
 const active = new AsyncLocalStorage<ScanPerformanceRecorder>();
-const bounded = (v: number) => Math.min(604800000, Math.max(0, Math.round(v)));
+const bounded = (v: number) =>
+  Math.min(MAX_DIAGNOSTIC_DURATION_MS, Math.max(0, Math.round(v)));
 export class ScanPerformanceRecorder {
   private readonly checks = new Map<string, CheckPerformance>();
   private partial = false;
@@ -132,7 +135,7 @@ export class ScanPerformanceRecorder {
       };
       this.checks.set(sample.checkId, row);
     }
-    if (sample.durationMs > 604800000) this.partial = true;
+    if (sample.durationMs > MAX_DIAGNOSTIC_DURATION_MS) this.partial = true;
     const ms = bounded(sample.durationMs);
     if (
       (SCAN_PERFORMANCE_OVERHEADS as readonly string[]).includes(sample.kind)
@@ -143,7 +146,7 @@ export class ScanPerformanceRecorder {
       return;
     }
     if (sample.kind === "elapsed") {
-      row.task_count = Math.min(1000000, row.task_count + 1);
+      row.task_count = Math.min(MAX_DIAGNOSTIC_COUNT, row.task_count + 1);
       row.elapsed_sum_ms = bounded(row.elapsed_sum_ms + ms);
       row.elapsed_max_ms = Math.max(row.elapsed_max_ms, ms);
     } else if (sample.kind === "queue" || sample.kind === "worker") {
@@ -160,7 +163,7 @@ export class ScanPerformanceRecorder {
           : sample.kind === "cache_miss"
             ? "cache_misses"
             : "cache_bypasses";
-      row[key] = Math.min(1000000, row[key] + 1);
+      row[key] = Math.min(MAX_DIAGNOSTIC_COUNT, row[key] + 1);
     }
   }
   snapshot(): ScanPerformanceSummary {

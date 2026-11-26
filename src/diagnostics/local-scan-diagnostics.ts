@@ -1,5 +1,7 @@
 import { CHECK_IDS } from "../core/check-ids.js";
 import {
+  MAX_DIAGNOSTIC_COUNT,
+  MAX_DIAGNOSTIC_DURATION_MS,
   SCAN_CHANGE_CATEGORIES,
   SCAN_EXECUTION_MODES,
   SCAN_PERFORMANCE_OVERHEADS,
@@ -50,7 +52,7 @@ function duration(value: unknown): number {
     typeof value !== "number" ||
     !Number.isFinite(value) ||
     value < 0 ||
-    value > 604_800_000
+    value > MAX_DIAGNOSTIC_DURATION_MS
   )
     throw new TypeError("Invalid diagnostic duration");
   return value;
@@ -60,7 +62,7 @@ function count(value: unknown): number {
     typeof value !== "number" ||
     !Number.isSafeInteger(value) ||
     value < 0 ||
-    value > 1_000_000
+    value > MAX_DIAGNOSTIC_COUNT
   )
     throw new TypeError("Invalid diagnostic count");
   return value;
