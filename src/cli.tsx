@@ -109,14 +109,20 @@ export function scanTimeoutOverrides(
   return typeof timeout === "string" ? { timeout } : {};
 }
 
+function commandOutputIO() {
+  return {
+    writeStdout: (value: string) => process.stdout.write(value),
+    writeStderr: (value: string) => process.stderr.write(value),
+  };
+}
+
 function commandTerminalIO() {
   return {
     stdinIsTTY: process.stdin.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
     width: normalizeTerminalWidth(process.stdout.columns),
     env: process.env,
-    writeStdout: (value: string) => process.stdout.write(value),
-    writeStderr: (value: string) => process.stderr.write(value),
+    ...commandOutputIO(),
   };
 }
 
@@ -212,14 +218,7 @@ export async function runCli(
         exitCode = executeTelemetryCommand(
           operation,
           process.env,
-          {
-            writeStdout: (value) => {
-              process.stdout.write(value);
-            },
-            writeStderr: (value) => {
-              process.stderr.write(value);
-            },
-          },
+          commandOutputIO(),
           options.format,
         );
       });
@@ -244,17 +243,7 @@ export async function runCli(
     .action(async (options: { install?: "codex" | "claude"; yes: boolean }) => {
       exitCode = await (
         dependencies.executeAgentCommand ?? executeAgentCommand
-      )(
-        { cwd: process.cwd(), ...options },
-        {
-          writeStdout: (value) => {
-            process.stdout.write(value);
-          },
-          writeStderr: (value) => {
-            process.stderr.write(value);
-          },
-        },
-      );
+      )({ cwd: process.cwd(), ...options }, commandOutputIO());
     });
 
   const service = program
@@ -274,10 +263,11 @@ export async function runCli(
           .default("text"),
       )
       .action(async (options: { format: "text" | "json" }) => {
-        exitCode = await executeServiceCommand(operation, options.format, {
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        });
+        exitCode = await executeServiceCommand(
+          operation,
+          options.format,
+          commandOutputIO(),
+        );
       });
   }
 
@@ -429,8 +419,7 @@ export async function runCli(
           stdoutIsTTY: process.stdout.isTTY === true,
           width: process.stdout.columns ?? 80,
           env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
+          ...commandOutputIO(),
         },
       );
     });
@@ -631,8 +620,7 @@ export async function runCli(
           stdoutIsTTY: process.stdout.isTTY === true,
           width: process.stdout.columns ?? 80,
           env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
+          ...commandOutputIO(),
         },
       );
       exitCode = result.exitCode;
@@ -672,8 +660,7 @@ export async function runCli(
           stdoutIsTTY: process.stdout.isTTY === true,
           width: process.stdout.columns ?? 80,
           env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
+          ...commandOutputIO(),
         },
       );
       exitCode = result.exitCode;
