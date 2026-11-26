@@ -7,7 +7,6 @@ import {
 } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
-  MAX_DEPENDENCY_RECORDS,
   MAX_LOCKFILE_NESTING,
   MAX_LOCKFILE_NODES,
   MAX_LOCKFILE_STRING_LENGTH,
@@ -15,6 +14,7 @@ import {
 import {
   finalizeDependencyRecords,
   plainRecord,
+  validateDependencyRecordCount,
   validateExactVersion,
   validateLockfileInput,
   validatePackageName,
@@ -131,9 +131,7 @@ export function parsePnpmLockfile(contents: string, repositoryPath: string): Dep
         ...scope,
       });
     }
-    if (records.length > MAX_DEPENDENCY_RECORDS) {
-      throw inventoryError("LOCKFILE_LIMIT_EXCEEDED", "The pnpm lockfile contains too many dependency records.");
-    }
+    validateDependencyRecordCount(records.length, "pnpm");
   }
   return finalizeDependencyRecords(records);
 }
