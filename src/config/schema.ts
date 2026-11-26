@@ -517,37 +517,34 @@ const overrideChecksSchema = checksSchema.extend({
   vulnerabilities: simplePolicySchema.optional(),
 });
 
-const repositoryRelativeGlobSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .regex(/^[^\\]*$/, "Glob patterns must use forward slashes")
-  .regex(/^(?!\/)/, "Glob patterns must be repository-relative")
-  .regex(/^(?![A-Za-z]:)/, "Glob patterns must not use drive paths")
-  .regex(
-    /^(?!.*(?:^|\/)\.\.(?:\/|$))/,
-    "Glob patterns must not traverse parent directories",
-  )
-  .regex(/^(?!(?:\.\/)+$)/, "Glob patterns must not be empty")
+function withRepositoryGlobRules(schema: z.ZodString): z.ZodString {
+  return schema
+    .regex(/^[^\\]*$/, "Glob patterns must use forward slashes")
+    .regex(/^(?!\/)/, "Glob patterns must be repository-relative")
+    .regex(/^(?![A-Za-z]:)/, "Glob patterns must not use drive paths")
+    .regex(
+      /^(?!.*(?:^|\/)\.\.(?:\/|$))/,
+      "Glob patterns must not traverse parent directories",
+    )
+    .regex(/^(?!(?:\.\/)+$)/, "Glob patterns must not be empty");
+}
+
+const repositoryRelativeGlobSchema = withRepositoryGlobRules(
+  z.string().trim().min(1),
+)
   .transform((pattern) => pattern.replace(/^(?:\.\/)+/, ""))
   .meta({
     description:
       "Repository-relative forward-slash glob selecting files for this override.",
   });
 
-const pathExclusionPatternSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(256, "Glob pattern must be at most 256 UTF-16 code units")
-  .regex(/^[^\\]*$/, "Glob patterns must use forward slashes")
-  .regex(/^(?!\/)/, "Glob patterns must be repository-relative")
-  .regex(/^(?![A-Za-z]:)/, "Glob patterns must not use drive paths")
-  .regex(
-    /^(?!.*(?:^|\/)\.\.(?:\/|$))/,
-    "Glob patterns must not traverse parent directories",
-  )
-  .regex(/^(?!(?:\.\/)+$)/, "Glob patterns must not be empty")
+const pathExclusionPatternSchema = withRepositoryGlobRules(
+  z
+    .string()
+    .trim()
+    .min(1)
+    .max(256, "Glob pattern must be at most 256 UTF-16 code units"),
+)
   .regex(/^(?!!)/, "Glob pattern exclusions cannot be negated")
   .regex(/^[^{}]*$/u, "Brace patterns are not supported")
   .regex(/^(?!.*[@+*?!]\()/u, "Extended-glob patterns are not supported")
