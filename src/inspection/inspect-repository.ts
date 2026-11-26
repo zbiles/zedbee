@@ -185,6 +185,38 @@ function freezeWorkspace(workspace: WorkspaceInspection): WorkspaceInspection {
   return Object.freeze(workspace);
 }
 
+function assignPathsToWorkspaces(
+  workspaces: readonly DiscoveredWorkspace[],
+  paths: readonly string[],
+): Map<DiscoveredWorkspace, string[]> {
+  const byWorkspace = new Map<DiscoveredWorkspace, string[]>();
+  for (const workspace of workspaces) {
+    byWorkspace.set(workspace, []);
+  }
+  const claimed = new Set<string>();
+  for (const workspace of workspaces) {
+    if (workspace.canonicalRelativeRoot === workspace.relativeRoot) continue;
+    for (const path of paths) {
+      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
+      const suffix = path
+        .slice(workspace.canonicalRelativeRoot.length)
+        .replace(/^\//, "");
+      byWorkspace
+        .get(workspace)
+        ?.push(posix.join(workspace.relativeRoot, suffix));
+      claimed.add(path);
+    }
+  }
+  for (const path of paths) {
+    if (claimed.has(path)) continue;
+    const owner = owningWorkspace(workspaces, path);
+    if (owner !== undefined) {
+      byWorkspace.get(owner)?.push(path);
+    }
+  }
+  return byWorkspace;
+}
+
 export async function inspectRepository(
   snapshotRoot: string,
   dependencies: {
@@ -232,51 +264,8 @@ export async function inspectRepository(
     workspaces,
   );
 
-  const sourcesByWorkspace = new Map<DiscoveredWorkspace, string[]>();
-  const configsByWorkspace = new Map<DiscoveredWorkspace, string[]>();
-  for (const workspace of workspaces) {
-    sourcesByWorkspace.set(workspace, []);
-    configsByWorkspace.set(workspace, []);
-  }
-  const claimedSourceFiles = new Set<string>();
-  const claimedConfigPaths = new Set<string>();
-  for (const workspace of workspaces) {
-    if (workspace.canonicalRelativeRoot === workspace.relativeRoot) continue;
-    for (const path of sourceFiles) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      sourcesByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedSourceFiles.add(path);
-    }
-    for (const path of tsconfigPaths) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      configsByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedConfigPaths.add(path);
-    }
-  }
-  for (const path of sourceFiles) {
-    if (claimedSourceFiles.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      sourcesByWorkspace.get(owner)?.push(path);
-    }
-  }
-  for (const path of tsconfigPaths) {
-    if (claimedConfigPaths.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      configsByWorkspace.get(owner)?.push(path);
-    }
-  }
+  const sourcesByWorkspace = assignPathsToWorkspaces(workspaces, sourceFiles);
+  const configsByWorkspace = assignPathsToWorkspaces(workspaces, tsconfigPaths);
 
   const inspectedWorkspaces = workspaces.map((workspace) => {
     const workspaceSources = sourcesByWorkspace.get(workspace) ?? [];
