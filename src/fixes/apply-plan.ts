@@ -112,11 +112,12 @@ class ProjectFixFormattingOwner {
   cleanupFailed = false;
   temporaryPath: string | undefined;
   primaryFailure?: unknown;
+  snapshotFailure?: unknown;
   cleanupCause?: unknown;
 
   async stagedSnapshot(repositoryRoot: string, signal?: AbortSignal) {
     if (this.cleanupFailed && this.snapshot === undefined)
-      throw this.primaryFailure;
+      throw this.snapshotFailure;
     if (this.snapshot === undefined) {
       try {
         this.snapshot = await buildSnapshotPair(
@@ -129,6 +130,7 @@ class ProjectFixFormattingOwner {
         if (error instanceof SnapshotConstructionCleanupError) {
           this.cleanupFailed = true;
           this.temporaryPath = error.temporaryPath;
+          this.snapshotFailure = error.constructionError;
           this.primaryFailure ??= error.constructionError;
           throw error.constructionError;
         }
