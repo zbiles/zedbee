@@ -15,8 +15,8 @@ import type { ChangeSet, ChangedFile } from "../git/change-set.js";
 import {
   createIncompleteReport,
   withUnreportableCleanupFailure,
+  DEFAULT_SCAN_PRESENTATION_POLICY,
 } from "./incomplete-report.js";
-import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { sanitizeCheckResult } from "../checks/sanitize-result.js";
 import { announceScanPhase } from "./progress.js";
 import {
@@ -176,12 +176,7 @@ export async function runMergeScan(
           configuredPathExclusions: [],
           appliedPathExclusions: [],
           networkDisclosures: [],
-          presentationPolicy: {
-            terminalFindingLimit: 25,
-            temporaryReportMaxAge: "24h",
-            persistSourceExcerpts: false,
-            agentGuidance: EMPTY_AGENT_GUIDANCE,
-          },
+          presentationPolicy: DEFAULT_SCAN_PRESENTATION_POLICY,
         },
         {
           code:
