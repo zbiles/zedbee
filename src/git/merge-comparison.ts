@@ -53,6 +53,30 @@ async function readIncomingMergeHeads(
   }
 }
 
+async function resolveParentCommits(
+  git: GitClient,
+  refs: readonly string[],
+  options: { signal?: AbortSignal },
+): Promise<string[]> {
+  const outputs = await Promise.allSettled(
+    refs.map((ref) =>
+      git.tryRun(
+        ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+        options,
+      ),
+    ),
+  );
+  const parents: string[] = [];
+  for (const output of outputs) {
+    if (output.status === "rejected") throw output.reason;
+    if (output.value.exitCode !== 0 || !isGitObjectId(output.value.stdout))
+      throw new MergeComparisonError("MERGE_PARENTS_INVALID");
+    if (!parents.includes(output.value.stdout))
+      parents.push(output.value.stdout);
+  }
+  return parents;
+}
+
 /** Git writes MERGE_HEAD after the automatic merge hook, but supplies GITHEAD_<oid> before it. */
 export async function resolveMergeComparison(
   git: GitClient,
@@ -68,19 +92,11 @@ export async function resolveMergeComparison(
   }
   if (incoming.length > 100 || incoming.some((id) => !isGitObjectId(id)))
     throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-  const parents: string[] = [];
-  for (const ref of [
-    git.selectedComparison?.baselineCommit ?? "HEAD",
-    ...incoming,
-  ]) {
-    const output = await git.tryRun(
-      ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
-      options,
-    );
-    if (output.exitCode !== 0 || !isGitObjectId(output.stdout))
-      throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    if (!parents.includes(output.stdout)) parents.push(output.stdout);
-  }
+  const parents = await resolveParentCommits(
+    git,
+    [git.selectedComparison?.baselineCommit ?? "HEAD", ...incoming],
+    options,
+  );
   if (parents.length < 2)
     throw new MergeComparisonError("MERGE_PARENTS_INVALID");
   const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);
