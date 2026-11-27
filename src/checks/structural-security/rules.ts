@@ -177,6 +177,32 @@ function hasAnyBinding(context: RuleContext, name: string): boolean {
   );
 }
 
+function addRequireBindings(
+  text: string,
+  requirePattern: RegExp,
+  namespaces: Set<string>,
+  named: Map<string, string>,
+): void {
+  if (!requirePattern.test(text)) return;
+
+  const namespace = text.match(
+    /(?:const|let|var)\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*=/u,
+  )?.[1];
+  if (namespace !== undefined) namespaces.add(namespace);
+
+  const specifiers = text.match(
+    /(?:const|let|var)\s+\{([^}]*)\}\s*=/u,
+  )?.[1];
+  for (const specifier of specifiers?.split(",") ?? []) {
+    const match = specifier
+      .trim()
+      .match(
+        /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s*:\s*([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
+      );
+    if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
+  }
+}
+
 function moduleBindings(
   context: RuleContext,
   moduleNames: readonly string[],
@@ -186,11 +212,15 @@ function moduleBindings(
   const modulePattern = moduleNames
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
     .join("|");
+  const importPattern = new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u");
+  const requirePattern = new RegExp(
+    `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
+    "u",
+  );
   for (const node of context.nodes) {
     if (node.kind() === "import_statement") {
       const text = context.text(node)!;
-      if (!new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u").test(text))
-        continue;
+      if (!importPattern.test(text)) continue;
       const clause = parseImportClause(text);
       if (clause.namespace !== undefined) namespaces.add(clause.namespace);
       if (clause.defaultImport !== undefined)
@@ -202,27 +232,12 @@ function moduleBindings(
       node.kind() === "lexical_declaration" ||
       node.kind() === "variable_declaration"
     ) {
-      const text = context.text(node)!;
-      const required = new RegExp(
-        `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
-        "u",
+      addRequireBindings(
+        context.text(node)!,
+        requirePattern,
+        namespaces,
+        named,
       );
-      if (!required.test(text)) continue;
-      const namespace = text.match(
-        /(?:const|let|var)\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*=/u,
-      )?.[1];
-      if (namespace !== undefined) namespaces.add(namespace);
-      const specifiers = text.match(
-        /(?:const|let|var)\s+\{([^}]*)\}\s*=/u,
-      )?.[1];
-      for (const specifier of specifiers?.split(",") ?? []) {
-        const match = specifier
-          .trim()
-          .match(
-            /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s*:\s*([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
-          );
-        if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
-      }
     }
   }
   return { namespaces, named };
