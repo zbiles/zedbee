@@ -33,6 +33,7 @@ import {
   incompleteCheckTitle,
   incompleteErrorFields,
 } from "./incomplete-fields.js";
+import { networkDisclosureLine } from "./network-disclosure-line.js";
 
 function calloutHeading(value: string): boolean {
   return (
@@ -268,8 +269,7 @@ function DisclosuresPanel({
               wrap="wrap"
               {...colorProp(color, ZEDBEE_THEME.secondary)}
             >
-              ↗ {disclosure.checkId} sent {disclosure.metadata.join(", ")} to{" "}
-              {disclosure.services.join(", ")}.
+              {networkDisclosureLine(disclosure)}
             </Text>
           ))}
         </Box>

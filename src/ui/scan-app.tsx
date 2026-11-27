@@ -16,6 +16,7 @@ import { LiveDashboard, type ScanProgress } from "./live-dashboard.js";
 import { OutcomeStrip } from "./outcome-strip.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { chunkTerminalCells } from "../renderers/terminal-cells.js";
+import { networkDisclosureLine } from "./network-disclosure-line.js";
 
 function opaquePathLines(
   label: "Path" | "Full report",
@@ -242,8 +243,7 @@ export function ScanApp(props: ScanAppProps) {
       {props.report.networkDisclosures.map((disclosure) => (
         <Box key={`${disclosure.checkId}:${disclosure.target}`} marginTop={1}>
           <Text {...colorProp(props.color, ZEDBEE_THEME.secondary)}>
-            ↗ {disclosure.checkId} sent {disclosure.metadata.join(", ")} to{" "}
-            {disclosure.services.join(", ")}.
+            {networkDisclosureLine(disclosure)}
           </Text>
         </Box>
       ))}
