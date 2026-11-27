@@ -3,13 +3,14 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   lstat,
   mkdir,
-  readFile,
+  open,
   readdir,
   rename,
   unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
+import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -201,6 +202,25 @@ export class ObservationCacheStore implements ObservationCache {
     }
   }
 
+  private async readEntry(path: string): Promise<string | undefined> {
+    const handle = await open(
+      path,
+      constants.O_RDONLY |
+        (constants.O_NONBLOCK ?? 0) |
+        (constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const metadata = await handle.stat();
+      if (!metadata.isFile() || metadata.size > this.maxBytes) return undefined;
+      const serialized = await handle.readFile("utf8");
+      return Buffer.byteLength(serialized) > this.maxBytes
+        ? undefined
+        : serialized;
+    } finally {
+      await handle.close();
+    }
+  }
+
   async get(key: string): Promise<CheckObservationSet | undefined> {
     try {
       const rootMetadata = await lstat(this.root);
@@ -208,11 +228,8 @@ export class ObservationCacheStore implements ObservationCache {
         return undefined;
       }
       const path = this.path(key);
-      const metadata = await lstat(path);
-      if (!isRegularFile(metadata) || metadata.size > this.maxBytes) {
-        return undefined;
-      }
-      const serialized = await readFile(path, "utf8");
+      const serialized = await this.readEntry(path);
+      if (serialized === undefined) return undefined;
       const envelope = JSON.parse(serialized) as Record<string, unknown>;
       const payloadText = JSON.stringify(envelope.payload);
       if (
