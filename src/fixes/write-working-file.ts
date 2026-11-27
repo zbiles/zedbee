@@ -84,6 +84,14 @@ function sameIdentity(
   return left.device === right.device && left.inode === right.inode;
 }
 
+async function lstatOrUnsafe(path: string) {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch {
+    throw unsafePath();
+  }
+}
+
 export function containedWorkingPath(root: string, candidate: string): boolean {
   const fromRoot = relative(root, candidate);
   return (
@@ -97,12 +105,7 @@ async function validateAncestors(
   ancestors: readonly DirectoryState[],
 ): Promise<void> {
   for (const ancestor of ancestors) {
-    let state;
-    try {
-      state = await lstat(ancestor.path, { bigint: true });
-    } catch {
-      throw unsafePath();
-    }
+    const state = await lstatOrUnsafe(ancestor.path);
     if (state.isSymbolicLink() || !state.isDirectory()) throw unsafePath();
     if (!sameIdentity(identity(state), ancestor.identity)) throw changedFile();
   }
@@ -183,12 +186,7 @@ async function validatedTemporary(
   ancestors: readonly DirectoryState[],
 ): Promise<void> {
   await validateAncestors(ancestors);
-  let state;
-  try {
-    state = await lstat(temporary, { bigint: true });
-  } catch {
-    throw unsafePath();
-  }
+  const state = await lstatOrUnsafe(temporary);
   if (
     state.isSymbolicLink() ||
     !state.isFile() ||
