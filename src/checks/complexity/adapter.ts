@@ -47,11 +47,13 @@ function lineStarts(source: string): readonly number[] {
   return starts;
 }
 
+type ComplexityCheckId = "cyclomaticComplexity" | "readabilityComplexity";
+
 const METRIC_OBSERVATION: Readonly<
   Record<
     ComplexityMetricName,
     {
-      readonly check: "cyclomaticComplexity" | "readabilityComplexity";
+      readonly check: ComplexityCheckId;
       readonly message: string;
     }
   >
@@ -289,7 +291,7 @@ function candidateSourcePaths(
 
 function complexityFileLimits(
   candidates: Iterable<string>,
-  checkId: "cyclomaticComplexity" | "readabilityComplexity",
+  checkId: ComplexityCheckId,
   side: SnapshotSide,
   selectedPaths: ReadonlySet<string>,
   policyForFile: FilePolicyResolver,
@@ -325,7 +327,7 @@ async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
   target: CheckTarget,
-  checkId: "cyclomaticComplexity" | "readabilityComplexity",
+  checkId: ComplexityCheckId,
   metricName: ComplexityMetricName,
   policyForFile: FilePolicyResolver,
   side: SnapshotSide,
@@ -397,7 +399,7 @@ async function collectSide(
 }
 
 function createComplexityAdapter(
-  id: "cyclomaticComplexity" | "readabilityComplexity",
+  id: ComplexityCheckId,
   metricName: ComplexityMetricName,
 ): ObservationCheckAdapter {
   return {
