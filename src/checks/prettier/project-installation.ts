@@ -91,7 +91,9 @@ async function resolveEntryUrl(packageRoot: string): Promise<string> {
   } catch {
     /* Fall through to declared entry points. */
   }
-  const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+  const manifest = JSON.parse(
+    await readBounded(manifestPath, MAX_MANIFEST_BYTES),
+  ) as {
     main?: string;
     module?: string;
   };
