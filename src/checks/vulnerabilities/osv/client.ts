@@ -5,7 +5,7 @@ import {
 } from "../inventory/normalize.js";
 import { OsvAnalysisError, OsvUnavailableError } from "./errors.js";
 import { normalizeAdvisory } from "./normalize-advisory.js";
-import { readJsonResponse } from "./read-response.js";
+import { discardResponseBody, readJsonResponse } from "./read-response.js";
 import { advisoryResponseSchema, batchResponseSchema } from "./schemas.js";
 import type { OsvAdvisory, OsvClient, OsvPackageQuery } from "./types.js";
 
@@ -145,14 +145,19 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
           signal: combinedSignal,
         });
         if (response.status >= 300 && response.status <= 399) {
+          await discardResponseBody(response);
           throw new OsvAnalysisError(
             "OSV_REDIRECT_REJECTED",
             "OSV returned an unexpected redirect.",
           );
         }
         const unavailable = unavailableForStatus(response.status);
-        if (unavailable !== undefined) throw unavailable;
+        if (unavailable !== undefined) {
+          await discardResponseBody(response);
+          throw unavailable;
+        }
         if (!response.ok) {
+          await discardResponseBody(response);
           throw new OsvAnalysisError(
             "OSV_HTTP_REJECTED",
             "OSV rejected the vulnerability request.",
