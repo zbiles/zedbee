@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { Box, Text, measureElement, useBoxMetrics, type DOMElement } from "ink";
 import {
   clampScrollOffset,
-  minimalRevealOffset,
+  revealOffsetForTarget as revealOffsetForBounds,
 } from "./terminal-viewport-model.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
@@ -32,17 +32,11 @@ export function revealOffsetForTarget(
   const targetBounds = measureElement(target);
   const contentBounds = measureElement(content);
   if (targetBounds.height <= 0 || contentBounds.height <= 0) return undefined;
-  const terminalHeight = Math.max(1, Math.trunc(rows));
-  const visibleHeight =
-    contentBounds.height > terminalHeight && terminalHeight >= 3
-      ? terminalHeight - 2
-      : terminalHeight;
-  return minimalRevealOffset(
+  return revealOffsetForBounds(
     currentOffset,
-    visibleHeight,
-    targetBounds.y - contentBounds.y,
-    targetBounds.height,
-    contentBounds.height,
+    rows,
+    targetBounds,
+    contentBounds,
   );
 }
 
