@@ -163,6 +163,7 @@ const ENTRY_EXTENSIONS = [
 
 function containedEntrypoint(
   workspace: WorkspaceInspection,
+  sourceFiles: ReadonlySet<string>,
   target: string,
 ): string | undefined {
   if (
@@ -194,9 +195,7 @@ function containedEntrypoint(
       candidates.add(`${candidate}/index${extension}`);
     }
   }
-  return [...candidates].find((candidate) =>
-    workspace.sourceFiles.includes(candidate),
-  );
+  return [...candidates].find((candidate) => sourceFiles.has(candidate));
 }
 
 async function workspaceAliases(
@@ -207,6 +206,7 @@ async function workspaceAliases(
   const aliases: Record<string, string> = {};
   for (const workspace of inspection.workspaces) {
     if (workspace.name === undefined) continue;
+    const sourceFiles = new Set(workspace.sourceFiles);
     const entrypoints = manifestEntrypoints(
       await readJsonData(registry, workspace.manifestPath),
     );
@@ -225,12 +225,10 @@ async function workspaceAliases(
     )) {
       const entry =
         (entrypoints.get(exportKey) ?? [])
-          .map((target) => containedEntrypoint(workspace, target))
+          .map((target) => containedEntrypoint(workspace, sourceFiles, target))
           .find((candidate) => candidate !== undefined) ??
         (exportKey === "."
-          ? rootFallbacks.find((candidate) =>
-              workspace.sourceFiles.includes(candidate),
-            )
+          ? rootFallbacks.find((candidate) => sourceFiles.has(candidate))
           : undefined);
       if (entry === undefined) continue;
       const specifier =
