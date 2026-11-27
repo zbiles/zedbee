@@ -8,6 +8,7 @@ import { capturedSourceRegistry } from "../inspection/source-capture.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import { managedRuleInventory } from "./eslint/rule-settings.js";
 import { readContainedFile } from "../inspection/read-json.js";
+import { SOURCE_BEARING_MESSAGES } from "./diagnostic-messages.js";
 export type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
 import { isDiagnosticRedaction } from "./diagnostic-redaction.js";
 import type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
@@ -43,12 +44,7 @@ const canonicalRoot = (root: string) => {
     return resolve(root);
   }
 };
-const managed = new Set([
-  "types",
-  "lint",
-  "reactCorrectness",
-  "reactAccessibility",
-]);
+const managed: ReadonlySet<string> = SOURCE_BEARING_MESSAGES;
 const safeText = (s: string) =>
   s
     .replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, " ")

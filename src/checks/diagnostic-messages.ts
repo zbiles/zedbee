@@ -1,7 +1,7 @@
 import type { CheckObservationSet } from "./adapter.js";
 import type { Observation } from "../core/types.js";
 
-const SOURCE_BEARING_MESSAGES = new Set([
+export const SOURCE_BEARING_MESSAGES: ReadonlySet<string> = new Set([
   "types",
   "lint",
   "reactCorrectness",
