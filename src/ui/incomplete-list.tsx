@@ -1,7 +1,6 @@
-import { parseFailureFields } from "../renderers/incomplete.js";
 import { Box, Text } from "ink";
 import type { CheckResult } from "../core/types.js";
-import { findingCheckLabel } from "../reporting/check-label.js";
+import { incompleteCheckTitle, incompleteErrorFields } from "./incomplete-fields.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 function Field({
@@ -52,9 +51,6 @@ export function IncompleteList({
       </Text>
       {incomplete.map((check, index) => {
         const error = check.error;
-        const title =
-          error?.code.replaceAll("_", " ") ??
-          `${findingCheckLabel(check.checkId).toUpperCase()} INCOMPLETE`;
         return (
           <Box
             key={`${check.checkId}:${error?.code ?? "incomplete"}:${index}`}
@@ -63,116 +59,24 @@ export function IncompleteList({
             marginTop={1}
           >
             <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-              {title}
+              {`! ${incompleteCheckTitle(check)}`}
             </Text>
-            {error === undefined ? null : (
-              <>
-                <Field
-                  label="Issue"
-                  value={error.message}
-                  width={width}
-                  color={color}
-                  tone={ZEDBEE_THEME.primary}
-                />
-                {error.path === undefined ||
-                error.parseFailures !== undefined ? null : (
+            {error === undefined
+              ? null
+              : incompleteErrorFields(error).map((field) => (
                   <Field
-                    label="Path"
-                    value={error.path}
+                    key={field.key}
+                    label={field.label}
+                    value={field.value}
                     width={width}
                     color={color}
-                    tone={ZEDBEE_THEME.secondary}
-                  />
-                )}
-                {error.snapshot === undefined ? null : (
-                  <Field
-                    label="Checked version"
-                    value={
-                      error.snapshot === "last-commit"
-                        ? "Previous commit"
-                        : "Staged files"
+                    tone={
+                      field.emphasis === "primary"
+                        ? ZEDBEE_THEME.primary
+                        : ZEDBEE_THEME.secondary
                     }
-                    width={width}
-                    color={color}
-                    tone={ZEDBEE_THEME.secondary}
                   />
-                )}
-                {error.projectPaths === undefined ? null : (
-                  <Field
-                    label={
-                      error.projectPaths.length === 1
-                        ? "Loaded project"
-                        : "Loaded projects"
-                    }
-                    value={error.projectPaths.join(", ")}
-                    width={width}
-                    color={color}
-                    tone={ZEDBEE_THEME.secondary}
-                  />
-                )}
-                {error.parseFailures !== undefined ? (
-                  parseFailureFields(error.parseFailures).map(
-                    ({ label, value }, index) => (
-                      <Field
-                        key={index}
-                        label={label}
-                        value={value}
-                        width={width}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    ),
-                  )
-                ) : error.paths === undefined ? null : (
-                  <>
-                    <Field
-                      label="Affected files"
-                      value={String(error.paths.length)}
-                      width={width}
-                      color={color}
-                      tone={ZEDBEE_THEME.secondary}
-                    />
-                    {error.paths.slice(0, 10).map((path) => (
-                      <Field
-                        key={path}
-                        label="File"
-                        value={path}
-                        width={width}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    ))}
-                    {error.paths.length <= 10 ? null : (
-                      <Field
-                        label="More files"
-                        value={String(error.paths.length - 10)}
-                        width={width}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                  </>
-                )}
-                {error.temporaryPath === undefined ? null : (
-                  <Field
-                    label="Cleanup"
-                    value={error.temporaryPath}
-                    width={width}
-                    color={color}
-                    tone={ZEDBEE_THEME.secondary}
-                  />
-                )}
-                {error.remediation === undefined ? null : (
-                  <Field
-                    label="Fix"
-                    value={error.remediation}
-                    width={width}
-                    color={color}
-                    tone={ZEDBEE_THEME.primary}
-                  />
-                )}
-              </>
-            )}
+                ))}
           </Box>
         );
       })}

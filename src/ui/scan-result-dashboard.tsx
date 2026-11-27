@@ -1,4 +1,3 @@
-import { parseFailureFields } from "../renderers/incomplete.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
   hookUpdateNotice,
@@ -10,7 +9,6 @@ import {
   coverageLine,
 } from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
-import { findingCheckLabel } from "../reporting/check-label.js";
 import {
   buildReportCallouts,
   type ReportCalloutLine,
@@ -31,6 +29,10 @@ import {
 } from "./branded-command-frame.js";
 import { FindingsList } from "./findings-list.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
+import {
+  incompleteCheckTitle,
+  incompleteErrorFields,
+} from "./incomplete-fields.js";
 
 function calloutHeading(value: string): boolean {
   return (
@@ -302,9 +304,6 @@ function IncompleteChecksPanel({
         >
           {checks.map((check, index) => {
             const error = check.error;
-            const title =
-              error?.code.replaceAll("_", " ") ??
-              `${findingCheckLabel(check.checkId).toUpperCase()} INCOMPLETE`;
             return (
               <Box
                 key={`${check.checkId}:${error?.code ?? "incomplete"}:${index}`}
@@ -312,119 +311,25 @@ function IncompleteChecksPanel({
                 width={contentWidth}
                 marginTop={index === 0 ? 0 : 1}
               >
-                <Text
-                  bold
-                  wrap="wrap"
-                  {...colorProp(color, ZEDBEE_THEME.warning)}
-                >
-                  ! {title}
+                <Text bold wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+                  {`! ${incompleteCheckTitle(check)}`}
                 </Text>
-                {error === undefined ? null : (
-                  <>
-                    <LabeledValue
-                      label="Issue"
-                      value={error.message}
-                      width={contentWidth}
-                      color={color}
-                    />
-                    {error.path === undefined ||
-                    error.parseFailures !== undefined ? null : (
+                {error === undefined
+                  ? null
+                  : incompleteErrorFields(error).map((field) => (
                       <LabeledValue
-                        label="Path"
-                        value={error.path}
+                        key={field.key}
+                        label={field.label}
+                        value={field.value}
                         width={contentWidth}
                         color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.snapshot === undefined ? null : (
-                      <LabeledValue
-                        label="Checked version"
-                        value={
-                          error.snapshot === "last-commit"
-                            ? "Previous commit"
-                            : "Staged files"
+                        tone={
+                          field.emphasis === "primary"
+                            ? ZEDBEE_THEME.primary
+                            : ZEDBEE_THEME.secondary
                         }
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
                       />
-                    )}
-                    {error.projectPaths === undefined ? null : (
-                      <LabeledValue
-                        label={
-                          error.projectPaths.length === 1
-                            ? "Loaded project"
-                            : "Loaded projects"
-                        }
-                        value={error.projectPaths.join(", ")}
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.parseFailures !== undefined ? (
-                      parseFailureFields(error.parseFailures).map(
-                        ({ label, value }, index) => (
-                          <LabeledValue
-                            key={index}
-                            label={label}
-                            value={value}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        ),
-                      )
-                    ) : error.paths === undefined ? null : (
-                      <>
-                        <LabeledValue
-                          label="Affected files"
-                          value={String(error.paths.length)}
-                          width={contentWidth}
-                          color={color}
-                          tone={ZEDBEE_THEME.secondary}
-                        />
-                        {error.paths.slice(0, 10).map((path) => (
-                          <LabeledValue
-                            key={path}
-                            label="File"
-                            value={path}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        ))}
-                        {error.paths.length <= 10 ? null : (
-                          <LabeledValue
-                            label="More files"
-                            value={String(error.paths.length - 10)}
-                            width={contentWidth}
-                            color={color}
-                            tone={ZEDBEE_THEME.secondary}
-                          />
-                        )}
-                      </>
-                    )}
-                    {error.temporaryPath === undefined ? null : (
-                      <LabeledValue
-                        label="Cleanup"
-                        value={error.temporaryPath}
-                        width={contentWidth}
-                        color={color}
-                        tone={ZEDBEE_THEME.secondary}
-                      />
-                    )}
-                    {error.remediation === undefined ? null : (
-                      <LabeledValue
-                        label="Fix"
-                        value={error.remediation}
-                        width={contentWidth}
-                        color={color}
-                      />
-                    )}
-                  </>
-                )}
+                    ))}
               </Box>
             );
           })}
