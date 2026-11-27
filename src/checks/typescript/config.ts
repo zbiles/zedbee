@@ -8,7 +8,11 @@ import {
   normalizeRepositoryPath,
   readContainedFile,
 } from "../../inspection/read-json.js";
-import { configExtensions, tsconfigCandidates } from "./config-requests.js";
+import {
+  configExtensions,
+  containedRelativeRequest,
+  tsconfigCandidates,
+} from "./config-requests.js";
 import {
   captureSnapshotRegistry,
   IGNORED_DIRECTORY_NAMES,
@@ -40,22 +44,11 @@ const preparedInputs = Symbol("validated snapshot compiler inputs");
 
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/iu;
 const LOADABLE = /(?:\.(?:[cm]?[jt]sx?|json))$/iu;
-const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
-const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 const METADATA_BATCH_SIZE = 64;
 
 function containedRepositoryPath(from: string, requested: string): string {
-  if (
-    requested.length === 0 ||
-    requested.includes("\\") ||
-    WINDOWS_DRIVE_PATH.test(requested) ||
-    URL_SCHEME.test(requested) ||
-    posix.isAbsolute(requested)
-  ) {
-    throw new TypeError("Unsafe TypeScript configuration path");
-  }
-  const result = posix.normalize(posix.join(posix.dirname(from), requested));
-  if (result === ".." || result.startsWith("../")) {
+  const result = containedRelativeRequest(from, requested);
+  if (result === undefined) {
     throw new TypeError("Unsafe TypeScript configuration path");
   }
   return result;

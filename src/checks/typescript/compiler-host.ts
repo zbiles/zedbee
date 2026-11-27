@@ -6,8 +6,9 @@ import {
   isContainedPath,
   normalizeRepositoryPath,
 } from "../../inspection/read-json.js";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
+import { containedRelativeRequest } from "./config-requests.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   captureAnalysisDependencies,
@@ -66,17 +67,11 @@ function isBareSpecifier(specifier: string): boolean {
 function validateProjectSpecifier(sourcePath: string, specifier: string): void {
   if (isBareSpecifier(specifier)) return;
   if (
-    specifier.includes("\\") ||
-    WINDOWS_DRIVE_PATH.test(specifier) ||
-    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier) ||
-    specifier.startsWith("/")
+    containedRelativeRequest(
+      normalizeRepositoryPath(sourcePath),
+      specifier,
+    ) === undefined
   ) {
-    throw new TypeError("Unsafe TypeScript module path");
-  }
-  const candidate = posix.normalize(
-    posix.join(posix.dirname(normalizeRepositoryPath(sourcePath)), specifier),
-  );
-  if (candidate === ".." || candidate.startsWith("../")) {
     throw new TypeError("Unsafe TypeScript module path");
   }
 }
