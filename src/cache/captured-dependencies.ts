@@ -666,10 +666,10 @@ export class CapturedDependencies {
     path: string,
   ): Extract<DependencyProbe, { kind: "directory" }>["names"] {
     const absolute = resolve(path);
-    const identifier = this.capture(absolute).probe.path;
+    const captured = this.capture(absolute);
+    const identifier = captured.probe.path;
     const previous = this.listings.get(identifier);
     if (previous !== undefined) return previous.names;
-    const captured = this.capture(absolute);
     const entry = captured.probe;
     if (entry.kind === "missing" || captured.unavailable === true) return [];
     if (entry.kind !== "entry" || entry.entryType !== "directory")
