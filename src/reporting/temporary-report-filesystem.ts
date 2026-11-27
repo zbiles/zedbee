@@ -16,6 +16,25 @@ import {
   type ReportMaintenanceWarning,
 } from "./temporary-report-common.js";
 
+async function containedDirectoryPath(
+  path: string,
+  canonicalParent: string,
+  identity: { readonly dev: number; readonly ino: number },
+): Promise<string> {
+  const canonicalPath = await realpath(path);
+  const current = await lstat(path);
+  if (
+    current.isSymbolicLink() ||
+    !current.isDirectory() ||
+    current.dev !== identity.dev ||
+    current.ino !== identity.ino ||
+    dirname(canonicalPath) !== canonicalParent
+  ) {
+    throw new TypeError("Managed temporary-report boundary escapes its parent");
+  }
+  return canonicalPath;
+}
+
 export async function ensureManagedDirectory(
   canonicalParent: string,
   name: string,
@@ -30,20 +49,7 @@ export async function ensureManagedDirectory(
     throw new TypeError("Managed temporary-report boundary is not a directory");
   }
   if (platform === "win32") {
-    const canonicalPath = await realpath(path);
-    const current = await lstat(path);
-    if (
-      current.isSymbolicLink() ||
-      !current.isDirectory() ||
-      current.dev !== expected.dev ||
-      current.ino !== expected.ino ||
-      dirname(canonicalPath) !== canonicalParent
-    ) {
-      throw new TypeError(
-        "Managed temporary-report boundary escapes its parent",
-      );
-    }
-    return canonicalPath;
+    return containedDirectoryPath(path, canonicalParent, expected);
   }
   const handle = await open(
     path,
@@ -59,20 +65,7 @@ export async function ensureManagedDirectory(
       throw new TypeError("Managed temporary-report boundary changed");
     }
     await handle.chmod(0o700);
-    const canonicalPath = await realpath(path);
-    const current = await lstat(path);
-    if (
-      current.isSymbolicLink() ||
-      !current.isDirectory() ||
-      current.dev !== opened.dev ||
-      current.ino !== opened.ino ||
-      dirname(canonicalPath) !== canonicalParent
-    ) {
-      throw new TypeError(
-        "Managed temporary-report boundary escapes its parent",
-      );
-    }
-    return canonicalPath;
+    return await containedDirectoryPath(path, canonicalParent, opened);
   } finally {
     await handle.close();
   }
