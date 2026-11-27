@@ -2,6 +2,7 @@ import { findWorkspace } from "../../inspection/workspaces.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
+import { COMPILER_SOURCE as SOURCE } from "../compiler-paths.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { relative, sep } from "node:path";
 import type { ESLint } from "eslint";
@@ -41,8 +42,6 @@ import {
   createReactVersionResolver,
   type ReactVersionResolver,
 } from "./version.js";
-
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
 type ReactEslintEngineFactory = (
   options: ManagedEslintOptions,
