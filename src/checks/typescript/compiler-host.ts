@@ -275,15 +275,19 @@ function createFreshSnapshotProgram(
           dependencies.directoryExists(absolute)
         );
       },
-      getDirectories: (path) =>
-        isContainedPath(repositoryRoot, absolutePath(path)) ||
-        isContainedPath(typescriptLibraryRoot, absolutePath(path))
-          ? dependencies.getDirectories(absolutePath(path))
-          : [],
-      realpath: (path) =>
-        files.has(absolutePath(path)) || isSnapshotPath(absolutePath(path))
-          ? absolutePath(path)
-          : dependencies.realpath(absolutePath(path)),
+      getDirectories: (path) => {
+        const absolute = absolutePath(path);
+        return isContainedPath(repositoryRoot, absolute) ||
+          isContainedPath(typescriptLibraryRoot, absolute)
+          ? dependencies.getDirectories(absolute)
+          : [];
+      },
+      realpath: (path) => {
+        const absolute = absolutePath(path);
+        return files.has(absolute) || isSnapshotPath(absolute)
+          ? absolute
+          : dependencies.realpath(absolute);
+      },
     };
 
     // Resolve project aliases and relative imports in the captured tree first.
