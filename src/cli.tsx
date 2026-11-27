@@ -147,6 +147,15 @@ function commandTerminalIO() {
   };
 }
 
+function commandDisplayIO() {
+  return {
+    stdoutIsTTY: process.stdout.isTTY === true,
+    width: normalizeTerminalWidth(process.stdout.columns),
+    env: process.env,
+    ...commandOutputIO(),
+  };
+}
+
 export interface CliDependencies {
   readonly startTelemetry?: typeof startTelemetry;
   readonly executeInitCommand?: typeof executeInitCommand;
@@ -423,13 +432,7 @@ export async function runCli(
           animations: options.animations,
           signal: controller.signal,
         },
-        {
-          stdinIsTTY: process.stdin.isTTY === true,
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          ...commandOutputIO(),
-        },
+        commandTerminalIO(),
       );
     });
 
@@ -605,12 +608,7 @@ export async function runCli(
           color: options.color,
           ...configPathOverride(options.config),
         },
-        {
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          ...commandOutputIO(),
-        },
+        commandDisplayIO(),
       );
       exitCode = result.exitCode;
     });
@@ -637,12 +635,7 @@ export async function runCli(
           ...projectPrettierTrustOverride(options.trustProjectPrettier),
           signal: controller.signal,
         },
-        {
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          ...commandOutputIO(),
-        },
+        commandDisplayIO(),
       );
       exitCode = result.exitCode;
     });
