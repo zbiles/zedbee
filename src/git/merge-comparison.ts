@@ -21,6 +21,38 @@ export class MergeComparisonError extends Error {
   }
 }
 
+function githeadParents(
+  environment: Readonly<Record<string, string | undefined>>,
+): string[] {
+  return Object.keys(environment)
+    .filter((key) => /^GITHEAD_/u.test(key))
+    .map((key) => key.slice("GITHEAD_".length));
+}
+
+async function readIncomingMergeHeads(
+  git: GitClient,
+  environment: Readonly<Record<string, string | undefined>>,
+  options: { signal?: AbortSignal },
+): Promise<string[]> {
+  const selected = git.selectedComparison;
+  if (selected !== undefined) {
+    return selected.mergeHeads === undefined
+      ? githeadParents(environment)
+      : [...selected.mergeHeads];
+  }
+  const path = (
+    await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
+  ).stdout;
+  try {
+    return (await readFile(resolve(git.repositoryRoot, path), "utf8"))
+      .trim()
+      .split(/\r?\n/u);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return githeadParents(environment);
+  }
+}
+
 /** Git writes MERGE_HEAD after the automatic merge hook, but supplies GITHEAD_<oid> before it. */
 export async function resolveMergeComparison(
   git: GitClient,
@@ -29,22 +61,7 @@ export async function resolveMergeComparison(
   signal?: AbortSignal,
 ): Promise<{ parents: readonly string[]; tree: string } | undefined> {
   const options = signal === undefined ? {} : { signal };
-  let incoming = git.selectedComparison?.mergeHeads;
-  if (git.selectedComparison === undefined) {
-    const path = (
-      await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
-    ).stdout;
-    try {
-      incoming = (await readFile(resolve(git.repositoryRoot, path), "utf8"))
-        .trim()
-        .split(/\r?\n/u);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  incoming ??= Object.keys(environment)
-    .filter((key) => key.startsWith("GITHEAD_"))
-    .map((key) => key.slice("GITHEAD_".length));
+  const incoming = await readIncomingMergeHeads(git, environment, options);
   if (incoming.length === 0) {
     if (required) throw new MergeComparisonError("MERGE_PARENTS_UNAVAILABLE");
     return undefined;
