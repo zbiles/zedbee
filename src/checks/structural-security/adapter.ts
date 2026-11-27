@@ -37,19 +37,13 @@ interface FailureCollection {
   omitted: number;
 }
 
-async function collectSide(
-  snapshotRoot: string,
+function structuralSecurityFiles(
   inspection: RepositoryInspection,
   target: CheckTarget,
-  signal: AbortSignal,
   side: StructuralParseFailure["snapshot"],
   selectedPaths: ReadonlySet<string>,
   policyForFile: FilePolicyResolver,
-  failures: FailureCollection,
-): Promise<readonly Observation[]> {
-  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
-  if (canonicalRoot !== inspection.snapshotRoot)
-    throw new Error("Structural security analysis failed.");
+): string[] {
   const workspace = findWorkspace(inspection, target.relativeRoot);
   const candidates = new Set(workspace?.sourceFiles ?? []);
   if (side === "baseline") {
@@ -59,7 +53,7 @@ async function collectSide(
       }
     }
   }
-  const files = [...candidates]
+  return [...candidates]
     .filter((file) => MANAGED_SOURCE_PATH.test(file))
     .filter((file) => {
       const policy = policyForFile(
@@ -73,6 +67,50 @@ async function collectSide(
       );
     })
     .sort(compareCodeUnits);
+}
+
+function recordParseFailure(
+  failures: FailureCollection,
+  file: string,
+  side: StructuralParseFailure["snapshot"],
+  error: unknown,
+): void {
+  if (!(error instanceof StructuralParseError)) throw error;
+  if (failures.files.length === MAX_STRUCTURAL_PARSE_FAILURES) {
+    failures.omitted++;
+    return;
+  }
+  failures.files.push({
+    path: file,
+    snapshot: side,
+    ...error.position,
+    reason: structuralParseReason(
+      error.position.typescriptCode,
+      error.position.expectedToken,
+    ),
+  });
+}
+
+async function collectSide(
+  snapshotRoot: string,
+  inspection: RepositoryInspection,
+  target: CheckTarget,
+  signal: AbortSignal,
+  side: StructuralParseFailure["snapshot"],
+  selectedPaths: ReadonlySet<string>,
+  policyForFile: FilePolicyResolver,
+  failures: FailureCollection,
+): Promise<readonly Observation[]> {
+  const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
+  if (canonicalRoot !== inspection.snapshotRoot)
+    throw new Error("Structural security analysis failed.");
+  const files = structuralSecurityFiles(
+    inspection,
+    target,
+    side,
+    selectedPaths,
+    policyForFile,
+  );
   const liveRegistry = await captureSnapshotRegistry(
     canonicalRoot,
     hasAnalysisSourceCapture()
@@ -91,20 +129,7 @@ async function collectSide(
     try {
       observations.push(...collectStructuralSecurityObservations(file, source));
     } catch (error) {
-      if (!(error instanceof StructuralParseError)) throw error;
-      if (failures.files.length === MAX_STRUCTURAL_PARSE_FAILURES) {
-        failures.omitted++;
-        continue;
-      }
-      failures.files.push({
-        path: file,
-        snapshot: side,
-        ...error.position,
-        reason: structuralParseReason(
-          error.position.typescriptCode,
-          error.position.expectedToken,
-        ),
-      });
+      recordParseFailure(failures, file, side, error);
     }
   }
   return Object.freeze(
