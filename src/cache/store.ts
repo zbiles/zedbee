@@ -255,11 +255,7 @@ export class ObservationCacheStore implements ObservationCache {
     try {
       const payload = sanitizeCacheableObservationSet(value);
       const payloadText = JSON.stringify(payload);
-      const serialized = `${JSON.stringify({
-        schemaVersion: SCHEMA_VERSION,
-        integrity: digest(payloadText),
-        payload,
-      })}\n`;
+      const serialized = `{"schemaVersion":${JSON.stringify(SCHEMA_VERSION)},"integrity":${JSON.stringify(digest(payloadText))},"payload":${payloadText}}\n`;
       if (Buffer.byteLength(serialized) > this.maxBytes) return;
       await this.ensureRoot();
       const destination = this.path(key);
