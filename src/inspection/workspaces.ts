@@ -194,11 +194,21 @@ function compileWorkspacePatterns(input: readonly string[]) {
   }
 }
 
+const compiledWorkspacePatterns = new WeakMap<
+  readonly string[],
+  ReturnType<typeof compileWorkspacePatterns>
+>();
+
 export function matchesWorkspacePattern(
   path: string,
   patterns: readonly string[],
 ): boolean {
-  return compileWorkspacePatterns(patterns).matches(path);
+  let compiled = compiledWorkspacePatterns.get(patterns);
+  if (compiled === undefined) {
+    compiled = compileWorkspacePatterns(patterns);
+    compiledWorkspacePatterns.set(patterns, compiled);
+  }
+  return compiled.matches(path);
 }
 
 function discoverSelectedWorkspaceManifests(
