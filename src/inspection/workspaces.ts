@@ -4,7 +4,7 @@ import picomatch from "picomatch";
 import { parse as parseYaml } from "yaml";
 import {
   normalizeRepositoryPath,
-  readContainedFile,
+  readBoundedRepositoryData,
   readJsonData,
   type ContainedFileReadHooks,
 } from "./read-json.js";
@@ -243,7 +243,7 @@ export async function readPnpmWorkspacePatterns(
   if (!pathExists(registry, repositoryPath)) {
     return [];
   }
-  const contents = await readContainedFile(
+  const contents = await readBoundedRepositoryData(
     registry,
     repositoryPath,
     readHooks(repositoryPath),

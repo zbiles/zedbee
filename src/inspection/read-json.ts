@@ -434,12 +434,29 @@ export async function digestContainedLineRange(
   );
 }
 
+export const MAX_REPOSITORY_DATA_BYTES = 16 * 1024 * 1024;
+
+export async function readBoundedRepositoryData(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+  hooks: ContainedFileReadHooks = {},
+): Promise<string> {
+  return readContainedFile(registry, repositoryPath, {
+    ...hooks,
+    maxBytes: MAX_REPOSITORY_DATA_BYTES,
+  });
+}
+
 export async function readJsonData(
   registry: SnapshotRegistry,
   repositoryPath: string,
   hooks: ContainedFileReadHooks = {},
 ): Promise<unknown> {
-  const contents = await readContainedFile(registry, repositoryPath, hooks);
+  const contents = await readBoundedRepositoryData(
+    registry,
+    repositoryPath,
+    hooks,
+  );
 
   try {
     return JSON.parse(contents) as unknown;
