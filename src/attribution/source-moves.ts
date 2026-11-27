@@ -101,6 +101,12 @@ export function buildSourceMoveMap(input: {
     entity.identity.slice(
       entityIdentityPrefix(entity.kind, entity.file).length,
     );
+  const family = (entity: MetricEntitySpan["entity"]) => {
+    const member = payload(entity).replace(/^occurrence=[0-9]+\//u, "");
+    return member === `${entity.kind}=${encodeURIComponent(entity.name)}`
+      ? entity.name
+      : member;
+  };
   const collect = (files: typeof before): SourceMoveEntity[] =>
     files.flatMap(([file, value]) => {
       input.signal?.throwIfAborted();
@@ -179,7 +185,7 @@ export function buildSourceMoveMap(input: {
           .update(
             JSON.stringify([
               span.entity.kind,
-              payload(span.entity),
+              family(span.entity),
               directives,
               entity.tokens.map((token) => token.text),
             ]),
@@ -215,8 +221,57 @@ export function buildSourceMoveMap(input: {
         syntaxEqual: keys.get(old) === keys.get(next),
       });
   };
+  // A new same-named sibling can shift the occurrence ordinal. Prefer unique
+  // unchanged syntax within the same file and family before positional pairing.
+  const familyCounts = (
+    entities: readonly SourceMoveEntity[],
+    old: boolean,
+  ) => {
+    const counts = new Map<string, number>();
+    for (const { entity } of entities) {
+      const file = old
+        ? (renames.get(entity.file) ?? entity.file)
+        : entity.file;
+      const key = `${file}\0${family(entity)}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const oldFamilies = familyCounts(baseline, true);
+  const newFamilies = familyCounts(target, false);
+  const matching = new Map<
+    string,
+    { baseline: SourceMoveEntity[]; target: SourceMoveEntity[] }
+  >();
+  for (const [side, entities] of [
+    ["baseline", baseline],
+    ["target", target],
+  ] as const) {
+    for (const item of entities) {
+      const { entity } = item;
+      const file =
+        side === "baseline"
+          ? (renames.get(entity.file) ?? entity.file)
+          : entity.file;
+      const group = `${file}\0${family(entity)}`;
+      if (
+        (oldFamilies.get(group) ?? 0) < 2 &&
+        (newFamilies.get(group) ?? 0) < 2
+      )
+        continue;
+      const key = `${group}\0${keys.get(item)}`;
+      const candidates = matching.get(key) ?? { baseline: [], target: [] };
+      candidates[side].push(item);
+      matching.set(key, candidates);
+    }
+  }
+  for (const group of matching.values()) {
+    if (group.baseline.length === 1 && group.target.length === 1)
+      add(group.baseline[0]!, group.target[0]!);
+  }
   const continuations = new Map<string, SourceMoveEntity[]>();
   for (const entity of target) {
+    if (usedAfter.has(entity)) continue;
     const key = `${entity.entity.file}\0${payload(entity.entity)}`;
     const group = continuations.get(key) ?? [];
     group.push(entity);
@@ -224,11 +279,13 @@ export function buildSourceMoveMap(input: {
   }
   const oldCounts = new Map<string, number>();
   for (const entity of baseline) {
+    if (usedBefore.has(entity)) continue;
     const key = `${renames.get(entity.entity.file) ?? entity.entity.file}\0${payload(entity.entity)}`;
     oldCounts.set(key, (oldCounts.get(key) ?? 0) + 1);
   }
   // Reserve retained entities, even when modified or policy-incompatible: they cannot donate copies.
   for (const entity of baseline) {
+    if (usedBefore.has(entity)) continue;
     const key = `${renames.get(entity.entity.file) ?? entity.entity.file}\0${payload(entity.entity)}`;
     const candidates = continuations.get(key);
     if (oldCounts.get(key) === 1 && candidates?.length === 1)

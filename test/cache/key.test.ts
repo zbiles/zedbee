@@ -941,7 +941,7 @@ describe("observation cache keys", () => {
     };
     const original = await createObservationCacheKey(input);
     expect(original).toBe(
-      "32e2c7ffac4a68cd8f137837db0e98ac3df88a614c00b1efa81fc1e22cb08735",
+      "390c4160517545325dc3a85501ff6eef068227e36bac1b417b6ca4165a7cfde2",
     );
     const cacheKeyFor = createObservationCacheKeyBuilder(
       baseline.root,
@@ -949,7 +949,7 @@ describe("observation cache keys", () => {
       { mode: "index", baseline: "HEAD", target: "index" },
     );
     expect(await cacheKeyFor(input)).toBe(
-      "32e2c7ffac4a68cd8f137837db0e98ac3df88a614c00b1efa81fc1e22cb08735",
+      "390c4160517545325dc3a85501ff6eef068227e36bac1b417b6ca4165a7cfde2",
     );
     await target.write("value.txt", "changed\n");
     expect(await createObservationCacheKey(input)).not.toBe(original);
