@@ -12,8 +12,9 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { compareCodeUnits } from "../core/compare.js";
+import { isContainedPath } from "../inspection/paths.js";
 import type { GitBlobStream } from "./batch-object-stream.js";
 import type { GitClient } from "./client.js";
 import { GitCommandError } from "./errors.js";
@@ -260,13 +261,7 @@ function containedPath(
     return undefined;
   }
   const candidate = resolve(root, repositoryPath);
-  const fromRoot = relative(root, candidate);
-  if (
-    fromRoot === "" ||
-    isAbsolute(fromRoot) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${sep}`)
-  ) {
+  if (relative(root, candidate) === "" || !isContainedPath(root, candidate)) {
     return undefined;
   }
   return candidate;

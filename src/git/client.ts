@@ -6,9 +6,7 @@ import {
   dirname,
   isAbsolute,
   join,
-  relative,
   resolve,
-  sep,
 } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -18,6 +16,7 @@ import {
   type GitBlobVisitor,
 } from "./batch-object-stream.js";
 import { GitCommandError } from "./errors.js";
+import { isContainedPath } from "../inspection/paths.js";
 import type { ScanResourcePolicy } from "../scan/resource-policy.js";
 
 export interface GitRunOptions {
@@ -78,16 +77,6 @@ function containsNodeModulesBin(path: string): boolean {
   return components.some(
     (component, index) =>
       component === "node_modules" && components[index + 1] === ".bin",
-  );
-}
-
-function isContainedPath(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot === "" ||
-    (!isAbsolute(fromRoot) &&
-      fromRoot !== ".." &&
-      !fromRoot.startsWith(`..${sep}`))
   );
 }
 
