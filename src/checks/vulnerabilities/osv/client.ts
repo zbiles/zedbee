@@ -228,6 +228,24 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
     return normalizeAdvisory(parsed.data);
   };
 
+  const fetchAdvisories = async (
+    ids: readonly string[],
+    signal: AbortSignal,
+  ): Promise<ReadonlyMap<string, OsvAdvisory>> => {
+    const limit = pLimit(detailConcurrency);
+    try {
+      const entries = await Promise.all(
+        ids.map((id) =>
+          limit(async () => [id, await fetchAdvisory(id, signal)] as const),
+        ),
+      );
+      return new Map(entries);
+    } catch (error) {
+      limit.clearQueue();
+      throw error;
+    }
+  };
+
   const query = async (
     packages: readonly OsvPackageQuery[],
     signal: AbortSignal,
@@ -285,13 +303,7 @@ export function createOsvClient(options: OsvClientOptions = {}): OsvClient {
     const allIds = [
       ...new Set([...idsByKey.values()].flatMap((ids) => [...ids])),
     ].sort();
-    const limit = pLimit(detailConcurrency);
-    const advisoryEntries = await Promise.all(
-      allIds.map((id) =>
-        limit(async () => [id, await fetchAdvisory(id, signal)] as const),
-      ),
-    );
-    const advisories = new Map(advisoryEntries);
+    const advisories = await fetchAdvisories(allIds, signal);
     const result = new Map<string, readonly OsvAdvisory[]>();
     for (const key of unique.keys()) {
       result.set(
