@@ -6,10 +6,9 @@ import { createRequire } from "node:module";
 import type { ESLint, Linter } from "eslint";
 import { managedHooksPlugin } from "./managed-hooks-plugin.js";
 import { managedAccessibilityPlugin } from "./managed-accessibility-plugin.js";
+import { COMPILER_SOURCE_FILES as SOURCE_FILES } from "../compiler-paths.js";
 
 const require = createRequire(import.meta.url);
-
-const SOURCE_FILES = ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"];
 
 type ReactFlatConfigs = {
   readonly recommended: Linter.Config;

@@ -25,10 +25,10 @@ import {
   validateManagedRuleConfiguration,
   type RuleCheckId,
 } from "./rule-settings.js";
+import { COMPILER_SOURCE_FILES as SOURCE_FILES } from "../compiler-paths.js";
 
 const JAVASCRIPT_FILES = ["**/*.{js,jsx,mjs,cjs}"];
 const TYPESCRIPT_FILES = ["**/*.{ts,tsx,mts,cts}"];
-const SOURCE_FILES = ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"];
 
 export const readabilityComplexityPlugin: ESLint.Plugin = Object.freeze({
   rules: Object.freeze({
