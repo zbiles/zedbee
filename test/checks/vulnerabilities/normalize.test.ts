@@ -79,6 +79,57 @@ describe("normalizeOsvInventory", () => {
     ).not.toBe(first?.identity);
   });
 
+  it("picks the lowest semver fixed version above the installed version", () => {
+    const lodash = {
+      ...dependency,
+      name: "lodash",
+      version: "2.0.0",
+    };
+    const advisories: OsvAdvisory[] = [
+      {
+        id: "GHSA-matrix",
+        aliases: [],
+        affected: [
+          {
+            package: { name: "lodash", ecosystem: "npm" },
+            ranges: [
+              {
+                type: "SEMVER",
+                events: [
+                  { introduced: "0.0.0" },
+                  { fixed: "1.2.3" },
+                  { introduced: "1.5.0" },
+                  { fixed: "2.10.0" },
+                  { introduced: "2.5.0" },
+                  { fixed: "2.9.0" },
+                ],
+              },
+            ],
+            versions: [],
+          },
+        ],
+        severity: [{ type: "CVSS_V3", score: "8.1" }],
+        references: [],
+      },
+    ];
+    expect(
+      normalizeOsvInventory(
+        [lodash],
+        new Map([[osvQueryKey(lodash), advisories]]),
+      )[0]?.remediation,
+    ).toBe("Upgrade lodash to 2.9.0 or later.");
+  });
+
+  it("omits remediation when every fixed version is already installed", () => {
+    const installed = { ...dependency, version: "4.17.21" };
+    const observations = normalizeOsvInventory(
+      [installed],
+      new Map([[osvQueryKey(installed), [advisory()]]]),
+    );
+    expect(observations[0]).not.toHaveProperty("remediation");
+    expect(observations[0]?.message).not.toContain("fixed in");
+  });
+
   it("uses the maximum valid numeric CVSS value and ignores invalid values", () => {
     const multiple = {
       ...advisory(),
