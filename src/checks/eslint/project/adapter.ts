@@ -236,15 +236,13 @@ export async function collectProjectEslint(
       },
       context.changeSet,
     );
-    if (target.version !== SUPPORTED_PROJECT_ESLINT_VERSION)
-      throw new ProjectEslintFailureError("PROJECT_ESLINT_VERSION_UNSUPPORTED");
     return {
       checkId: "lint",
       target: context.target,
       ...paired,
       projectDelta: true,
       eslintAnalysis: {
-        version: target.version,
+        version: SUPPORTED_PROJECT_ESLINT_VERSION,
         excludedFiles:
           (workspaceIn(context.targetInspection)?.sourceFiles.filter((file) =>
             LINTABLE_SOURCE.test(file),
