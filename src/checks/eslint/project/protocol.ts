@@ -4,6 +4,7 @@ import {
   ProjectEslintFailureError,
   type ProjectEslintResult,
 } from "./types.js";
+import { MANAGED_SOURCE_PATH } from "../../../inspection/source-paths.js";
 
 export const PROJECT_ESLINT_MAX_BYTES = 1024 * 1024;
 export const PROJECT_ESLINT_MAX_FILES = 20_000;
@@ -27,7 +28,7 @@ export function validProjectEslintPath(value: unknown): value is string {
     value !== ".." &&
     !value.split("/").includes("..") &&
     posix.normalize(value) === value &&
-    /\.(?:[jt]sx?|[cm][jt]s)$/u.test(value) &&
+    MANAGED_SOURCE_PATH.test(value) &&
     !value.split("/").includes("node_modules")
   );
 }

@@ -20,8 +20,9 @@ import { ProjectEslintFailureError } from "./types.js";
 import { ESLINT_CONFIG_FILE_NAMES } from "./config-files.js";
 import type { Observation } from "../../../core/types.js";
 import { renamedPaths } from "../../../attribution/source-moves.js";
+import { MANAGED_SOURCE_PATH } from "../../../inspection/source-paths.js";
 
-const LINTABLE_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+const LINTABLE_SOURCE = MANAGED_SOURCE_PATH;
 
 const readSources = async (root: string, files: readonly string[]) =>
   Object.fromEntries(
