@@ -1,6 +1,7 @@
 import { extname } from "node:path";
 import * as ts from "typescript";
 import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
+import { canonicalText } from "../core/canonical-text.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
@@ -40,25 +41,14 @@ export interface MetricEntitySpan {
   readonly endOffset: number;
 }
 
-function canonicalName(name: string): string {
-  if (
-    name.length === 0 ||
-    name.trim() !== name ||
-    /[\u0000-\u001f\u007f]/u.test(name)
-  ) {
-    throw new TypeError("Expected a canonical syntax entity name");
-  }
-  return name;
-}
-
 function declarationName(
   name: ts.PropertyName | ts.BindingName | undefined,
 ): string | undefined {
   if (name === undefined) return undefined;
   if (ts.isIdentifier(name) || ts.isPrivateIdentifier(name))
-    return sourceEntityName(canonicalName(name.text));
+    return sourceEntityName(canonicalText(name.text, "syntax entity name"));
   if (ts.isStringLiteral(name) || ts.isNumericLiteral(name))
-    return sourceEntityName(canonicalName(name.text));
+    return sourceEntityName(canonicalText(name.text, "syntax entity name"));
   return undefined;
 }
 
@@ -74,7 +64,9 @@ function memberName(name: ts.PropertyName): string | undefined {
   ) {
     return undefined;
   }
-  return sourceEntityName(canonicalName(`Symbol.${expression.name.text}`));
+  return sourceEntityName(
+    canonicalText(`Symbol.${expression.name.text}`, "syntax entity name"),
+  );
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
@@ -203,8 +195,9 @@ function structuralFunctionDeclaration(
   const declared = ts.isFunctionExpression(node)
     ? declarationName(node.name)
     : undefined;
-  const name = canonicalName(
+  const name = canonicalText(
     `${declared ?? "anonymous"}@${syntaxPath.join(".")}`,
+    "syntax entity name",
   );
   return { kind: "function", name, node };
 }
