@@ -11,6 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import { compareCodeUnits } from "../../core/compare.js";
 import { isContainedPath } from "../../inspection/read-json.js";
 
 export interface ImportCaptureProvenance {
@@ -203,7 +204,7 @@ export function createImportSourceCapture(
     provenance(): ImportCaptureProvenance {
       const hash = createHash("sha256");
       for (const [key, value] of [...sources].sort(([a], [b]) =>
-        a < b ? -1 : a > b ? 1 : 0,
+        compareCodeUnits(a, b),
       ))
         hash.update(key).update("\0").update(value.sha256).update("\0");
       return Object.freeze({
