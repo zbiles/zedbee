@@ -260,13 +260,33 @@ function describeManagedEngine(
   return Object.freeze({ name: engine.name, license: engine.license, version });
 }
 
+async function readChangeSetAndSnapshots(
+  repositoryRoot: string,
+  git: GitClient,
+) {
+  const [changeSet, snapshots] = await Promise.allSettled([
+    readStagedChangeSet(git),
+    buildSnapshotPair(repositoryRoot, git),
+  ]);
+  if (changeSet.status === "rejected") {
+    // The change-set error stays the reported cause, as before.
+    if (snapshots.status === "fulfilled")
+      await snapshots.value.cleanup().catch(() => undefined);
+    throw changeSet.reason;
+  }
+  if (snapshots.status === "rejected") throw snapshots.reason;
+  return { changeSet: changeSet.value, snapshots: snapshots.value };
+}
+
 async function inspectConfiguredChecks(
   repositoryRoot: string,
   config: ResolvedConfig,
   git: GitClient,
 ): Promise<SelectedCheckApplicability> {
-  const changeSet = await readStagedChangeSet(git);
-  const snapshots = await buildSnapshotPair(repositoryRoot, git);
+  const { changeSet, snapshots } = await readChangeSetAndSnapshots(
+    repositoryRoot,
+    git,
+  );
   try {
     const [baselineInspection, targetInspection] = await settleSnapshotWork(
       () => inspectRepository(snapshots.baselineDir),
