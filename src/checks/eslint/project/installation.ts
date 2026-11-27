@@ -1,8 +1,12 @@
 import { SUPPORTED_PROJECT_ESLINT_VERSION } from "./supported-version.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import semver from "semver";
-import { isContainedPath } from "../../../inspection/read-json.js";
+import {
+  isContainedPath,
+  openWithoutFollowing,
+  readBoundedBytes,
+} from "../../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../../inspection/snapshot-registry.js";
 import { discoverWorkspaces } from "../../../inspection/workspaces.js";
 import {
@@ -17,7 +21,14 @@ async function json(
   const metadata = await lstat(path);
   if (!metadata.isFile() || metadata.size > maxBytes)
     throw new Error("Invalid manifest");
-  const value: unknown = JSON.parse(await readFile(path, "utf8"));
+  const handle = await openWithoutFollowing(path);
+  let bytes: Buffer;
+  try {
+    bytes = await readBoundedBytes(handle, path, maxBytes);
+  } finally {
+    await handle.close();
+  }
+  const value: unknown = JSON.parse(bytes.toString("utf8"));
   if (typeof value !== "object" || value === null || Array.isArray(value))
     throw new Error("Invalid manifest");
   return value as Record<string, unknown>;
