@@ -12,8 +12,7 @@ import {
   type CheckId,
   type ResolvedConfig,
 } from "./schema.js";
-import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
-import { DEFAULT_DUPLICATION_SETTINGS } from "../checks/duplication/settings.js";
+import { managedPolicyKeys, managedSettingKeys } from "./settings-registry.js";
 
 const CONFIG_FILENAME = ".zedbeerc.jsonc";
 const UNSUPPORTED_CONFIG_FILENAMES = [
@@ -126,30 +125,11 @@ function issuePath(issue: ValidationIssue): string {
 }
 
 function policyFields(checkId: CheckId): readonly string[] {
-  switch (checkId) {
-    case "formatting":
-      return ["severity", "when", "engine", "settings", "generated"];
-    case "duplication":
-      return ["severity", "when", "threshold", "settings"];
-    case "cyclomaticComplexity":
-    case "readabilityComplexity":
-      return ["severity", "when", "max", "blockWorsening"];
-    case "vulnerabilities":
-      return ["severity", "when", "onUnavailable"];
-    default:
-      return ["severity", "when"];
-  }
+  return managedPolicyKeys(checkId);
 }
 
 function settingFields(checkId: CheckId): readonly string[] {
-  switch (checkId) {
-    case "formatting":
-      return Object.keys(DEFAULT_FORMATTING_SETTINGS);
-    case "duplication":
-      return Object.keys(DEFAULT_DUPLICATION_SETTINGS);
-    default:
-      return [];
-  }
+  return managedSettingKeys(checkId);
 }
 
 function checkPath(

@@ -116,6 +116,16 @@ const POLICY_KEYS = Object.freeze({
   vulnerabilities: ["onUnavailable", "severity", "when"],
 } as const satisfies Readonly<Record<CheckId, readonly string[]>>);
 
+/**
+ * The policy keys a given check reads — the names the `policies` map keys
+ * by. The single source of truth for help text and validation so a new
+ * policy key cannot drift between what a check actually reads and what the
+ * user is told they may set.
+ */
+export function managedPolicyKeys(checkId: CheckId): readonly string[] {
+  return POLICY_KEYS[checkId];
+}
+
 export function snapshotManagedPolicy<
   T extends ResolvedCheckPolicy | ResolvedCheckPolicyPatch,
 >(checkId: CheckId, policy: Readonly<T>): Readonly<T> {
