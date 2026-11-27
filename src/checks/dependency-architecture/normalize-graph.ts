@@ -138,7 +138,8 @@ function matchesAlias(specifier: string, aliases: readonly string[]): boolean {
     const star = alias.indexOf("*");
     return star === -1
       ? alias === specifier
-      : specifier.startsWith(alias.slice(0, star)) &&
+      : specifier.length >= alias.length - 1 &&
+          specifier.startsWith(alias.slice(0, star)) &&
           specifier.endsWith(alias.slice(star + 1));
   });
 }

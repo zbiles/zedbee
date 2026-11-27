@@ -136,6 +136,40 @@ describe("dependency graph normalization", () => {
       ),
     ).toEqual([]);
   });
+
+  it("does not match an alias whose prefix and suffix overlap the specifier", () => {
+    const declarations = {
+      production: new Set<string>(),
+      development: new Set<string>(),
+      aliases: ["ab*ba"],
+    };
+    expect(
+      normalizeDependencyViolations(
+        result([
+          violation(DEPENDENCY_RULE_NAMES.unresolved, {
+            to: "aba",
+            unresolvedTo: "aba",
+          }),
+        ]),
+        "/snapshot",
+        new Set(["src/a.ts"]),
+        declarations,
+      ),
+    ).toEqual([]);
+    expect(
+      normalizeDependencyViolations(
+        result([
+          violation(DEPENDENCY_RULE_NAMES.unresolved, {
+            to: "abxba",
+            unresolvedTo: "abxba",
+          }),
+        ]),
+        "/snapshot",
+        new Set(["src/a.ts"]),
+        declarations,
+      ),
+    ).toHaveLength(1);
+  });
 });
 
 it.each([
