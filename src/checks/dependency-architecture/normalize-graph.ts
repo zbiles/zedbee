@@ -215,6 +215,106 @@ function cycleNodes(
   return canonicalCycle(nodes);
 }
 
+function violationSource(
+  rule: string,
+  reportedFrom: string,
+  reportedCycle: readonly string[],
+  allowedSources: ReadonlySet<string>,
+): string | undefined {
+  if (allowedSources.has(reportedFrom)) return reportedFrom;
+  if (rule !== DEPENDENCY_RULE_NAMES.circular) return undefined;
+  return reportedCycle.find((path) => allowedSources.has(path));
+}
+
+function isIgnoredUnresolved(
+  rule: string,
+  violation: IViolation,
+  declarations: DependencyDeclarations,
+): boolean {
+  if (rule !== DEPENDENCY_RULE_NAMES.unresolved) return false;
+  const specifier = violation.unresolvedTo ?? violation.to;
+  const name = packageName(specifier);
+  return (
+    name !== undefined &&
+    declarations.workspacePackages?.has(name) !== true &&
+    !matchesAlias(specifier, declarations.aliases ?? [])
+  );
+}
+
+function unresolvedMessage(
+  to: string,
+  declarations: DependencyDeclarations,
+): string {
+  return `Import "${to}" cannot be resolved.${
+    declarations.aliasConfigPath !== undefined &&
+    matchesAlias(to, declarations.aliases ?? [])
+      ? ` TypeScript configuration: ${declarations.aliasConfigPath}.`
+      : ""
+  }`;
+}
+
+function cycleObservations(
+  rule: string,
+  cycle: readonly string[],
+  allowedSources: ReadonlySet<string>,
+): readonly Observation[] {
+  const identity = `cycle:${cycle.join(">")}`;
+  return cycle
+    .filter((path) => allowedSources.has(path))
+    .map((path) => ({
+      check: "dependencyArchitecture",
+      rule,
+      identity,
+      severity: "error" as const,
+      message: message(rule),
+      location: { file: path },
+    }));
+}
+
+function violationObservations(
+  violation: IViolation,
+  snapshotRoot: string,
+  allowedSources: ReadonlySet<string>,
+  declarations: DependencyDeclarations,
+): readonly Observation[] {
+  const rule = canonicalText(violation.rule?.name, "dependency rule");
+  if (!RULES.has(rule)) throw new TypeError("Unsupported dependency rule");
+  const reportedFrom = repositoryPath(violation.from, snapshotRoot);
+  const reportedCycle = (violation.cycle ?? []).map(({ name }) =>
+    repositoryPath(name, snapshotRoot),
+  );
+  const from = violationSource(
+    rule,
+    reportedFrom,
+    reportedCycle,
+    allowedSources,
+  );
+  if (from === undefined) return [];
+  const cycleIndex = reportedCycle.indexOf(from);
+  const to =
+    cycleIndex === -1
+      ? violationTarget(violation, snapshotRoot)
+      : reportedCycle[(cycleIndex + 1) % reportedCycle.length]!;
+  if (isIgnoredUnresolved(rule, violation, declarations)) return [];
+  if (rule === DEPENDENCY_RULE_NAMES.circular) {
+    return cycleObservations(
+      rule,
+      cycleNodes(from, to, reportedCycle),
+      allowedSources,
+    );
+  }
+  return [
+    observation(
+      rule,
+      from,
+      to,
+      rule === DEPENDENCY_RULE_NAMES.unresolved
+        ? unresolvedMessage(to, declarations)
+        : message(rule),
+    ),
+  ];
+}
+
 export function normalizeDependencyViolations(
   result: ICruiseResult,
   snapshotRoot: string,
@@ -234,73 +334,13 @@ export function normalizeDependencyViolations(
   ) {
     throw new TypeError("Expected dependency-cruiser result");
   }
-  const observations = result.summary.violations.flatMap(
-    (violation): readonly Observation[] => {
-      const rule = canonicalText(violation.rule?.name, "dependency rule");
-      if (!RULES.has(rule)) throw new TypeError("Unsupported dependency rule");
-      const reportedFrom = repositoryPath(violation.from, snapshotRoot);
-      const reportedCycle = (violation.cycle ?? []).map(({ name }) =>
-        repositoryPath(name, snapshotRoot),
-      );
-      const from = allowedSources.has(reportedFrom)
-        ? reportedFrom
-        : rule === DEPENDENCY_RULE_NAMES.circular
-          ? reportedCycle.find((path) => allowedSources.has(path))
-          : undefined;
-      if (from === undefined) {
-        return [];
-      }
-      const cycleIndex = reportedCycle.indexOf(from);
-      const to =
-        cycleIndex === -1
-          ? violationTarget(violation, snapshotRoot)
-          : reportedCycle[(cycleIndex + 1) % reportedCycle.length]!;
-      if (
-        rule === DEPENDENCY_RULE_NAMES.unresolved &&
-        packageName(violation.unresolvedTo ?? violation.to) !== undefined &&
-        !declarations.workspacePackages?.has(
-          packageName(violation.unresolvedTo ?? violation.to)!,
-        ) &&
-        !matchesAlias(
-          violation.unresolvedTo ?? violation.to,
-          declarations.aliases ?? [],
-        )
-      ) {
-        return [];
-      }
-      const cycle =
-        rule === DEPENDENCY_RULE_NAMES.circular
-          ? cycleNodes(from, to, reportedCycle)
-          : undefined;
-      if (cycle !== undefined) {
-        const identity = `cycle:${cycle.join(">")}`;
-        return cycle
-          .filter((path) => allowedSources.has(path))
-          .map((path) => ({
-            check: "dependencyArchitecture",
-            rule,
-            identity,
-            severity: "error" as const,
-            message: message(rule),
-            location: { file: path },
-          }));
-      }
-      return [
-        observation(
-          rule,
-          from,
-          to,
-          rule === DEPENDENCY_RULE_NAMES.unresolved
-            ? `Import "${to}" cannot be resolved.${
-                declarations.aliasConfigPath !== undefined &&
-                matchesAlias(to, declarations.aliases ?? [])
-                  ? ` TypeScript configuration: ${declarations.aliasConfigPath}.`
-                  : ""
-              }`
-            : message(rule),
-        ),
-      ];
-    },
+  const observations = result.summary.violations.flatMap((violation) =>
+    violationObservations(
+      violation,
+      snapshotRoot,
+      allowedSources,
+      declarations,
+    ),
   );
   const unique = new Map<string, Observation>();
   for (const observation of [
