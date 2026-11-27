@@ -34,10 +34,21 @@ export function isStockHuskyDispatcher(source: string | undefined): boolean {
     normalized === HUSKY_DISPATCHER || normalized === `${HUSKY_DISPATCHER}\n`
   );
 }
+function huskyPackageRoot(): string {
+  return dirname(fileURLToPath(import.meta.resolve("husky")));
+}
+
+let bundledRuntime: Promise<string> | undefined;
+
 /** Only bundled stock runtime bytes establish verified dispatch. */
-async function bundledHuskyRuntime(): Promise<string> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
-  return readFile(join(huskyRoot, "husky"), "utf8");
+function bundledHuskyRuntime(): Promise<string> {
+  bundledRuntime ??= readFile(join(huskyPackageRoot(), "husky"), "utf8").catch(
+    (error: unknown) => {
+      bundledRuntime = undefined;
+      throw error;
+    },
+  );
+  return bundledRuntime;
 }
 
 export async function isStockHuskyHelper(
@@ -116,7 +127,7 @@ export async function hooksPathValue(root: string): Promise<string | null> {
 export async function trackedRuntimeChanges(
   root: string,
 ): Promise<readonly InitFileChange[] | undefined> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
+  const huskyRoot = huskyPackageRoot();
   const [runtime, license] = await Promise.all([
     bundledHuskyRuntime(),
     readFile(join(huskyRoot, "LICENSE"), "utf8"),
