@@ -4,7 +4,7 @@ import { recordDiagnosticDetail } from "../diagnostic-details.js";
 import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
-import type { Observation, Severity } from "../../core/types.js";
+import type { Observation, Severity, SourceLocation } from "../../core/types.js";
 import { normalizeRepositoryPath } from "../../inspection/read-json.js";
 
 function repositoryPath(
@@ -44,23 +44,10 @@ function privateMessageIdentity(
   return createHash("sha256").update(normalized).digest("hex");
 }
 
-export function convertTypescriptDiagnostic(
+function diagnosticLocation(
   diagnostic: ts.Diagnostic,
-  snapshotRoot: string,
-  repositoryRoot: string,
-): Observation | undefined {
-  const rule = `typescript/TS${diagnostic.code}`;
-  const sanitized = typescriptDiagnosticMessage(diagnostic.code);
-  const messageIdentity = privateMessageIdentity(
-    ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
-    snapshotRoot,
-    repositoryRoot,
-  );
-  const path =
-    diagnostic.file === undefined
-      ? undefined
-      : repositoryPath(snapshotRoot, diagnostic.file.fileName);
-  if (diagnostic.file !== undefined && path === undefined) return undefined;
+  path: string | undefined,
+): SourceLocation | undefined {
   const position =
     diagnostic.file !== undefined && diagnostic.start !== undefined
       ? diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
@@ -91,6 +78,28 @@ export function convertTypescriptDiagnostic(
                 endColumn: endPosition.character + 1,
               }),
         };
+  return location;
+}
+
+export function convertTypescriptDiagnostic(
+  diagnostic: ts.Diagnostic,
+  snapshotRoot: string,
+  repositoryRoot: string,
+): Observation | undefined {
+  const rule = `typescript/TS${diagnostic.code}`;
+  const sanitized = typescriptDiagnosticMessage(diagnostic.code);
+  const flattened = ts.flattenDiagnosticMessageText(diagnostic.messageText, " ");
+  const messageIdentity = privateMessageIdentity(
+    flattened,
+    snapshotRoot,
+    repositoryRoot,
+  );
+  const path =
+    diagnostic.file === undefined
+      ? undefined
+      : repositoryPath(snapshotRoot, diagnostic.file.fileName);
+  if (diagnostic.file !== undefined && path === undefined) return undefined;
+  const location = diagnosticLocation(diagnostic, path);
   const scope =
     location === undefined
       ? `repository:${messageIdentity.slice(0, 16)}`
@@ -106,7 +115,7 @@ export function convertTypescriptDiagnostic(
   };
   recordDiagnosticDetail(
     observation,
-    ts.flattenDiagnosticMessageText(diagnostic.messageText, " "),
+    flattened,
     snapshotRoot,
     diagnostic.file?.text,
   );
