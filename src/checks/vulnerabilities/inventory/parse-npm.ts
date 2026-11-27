@@ -48,8 +48,19 @@ function properties(node: JsonNode, field: string): readonly JsonProperty[] {
   });
 }
 
+const propertyLookups = new WeakMap<JsonNode, ReadonlyMap<string, JsonNode>>();
+
 function property(node: JsonNode, name: string): JsonNode | undefined {
-  return properties(node, "data").find(({ key }) => key === name)?.valueNode;
+  let lookup = propertyLookups.get(node);
+  if (lookup === undefined) {
+    const entries = new Map<string, JsonNode>();
+    for (const { key, valueNode } of properties(node, "data")) {
+      if (!entries.has(key)) entries.set(key, valueNode);
+    }
+    lookup = entries;
+    propertyLookups.set(node, lookup);
+  }
+  return lookup.get(name);
 }
 
 function validateTree(root: JsonNode): void {
