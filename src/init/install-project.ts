@@ -38,6 +38,9 @@ export async function projectInstallTargets(
   const paths = new Set(
     registry.entries().map((entry) => entry.repositoryPath),
   );
+  const manifests = new Map(
+    projects.map((project) => [project.relativeRoot, project.manifest]),
+  );
   return projects
     .filter((project) => projectRoots.includes(project.relativeRoot))
     .map((project) => {
@@ -45,9 +48,7 @@ export async function projectInstallTargets(
       let classicYarn = false;
       let directory = project.relativeRoot;
       while (true) {
-        const manifest = projects.find(
-          (candidate) => candidate.relativeRoot === directory,
-        )?.manifest;
+        const manifest = manifests.get(directory);
         const declared = /^(npm|pnpm|yarn|bun)@/u.exec(
           manifest?.packageManager ?? "",
         )?.[1];
