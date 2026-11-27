@@ -22,7 +22,10 @@ import {
   readContainedFile,
   readJsonData,
 } from "../../inspection/read-json.js";
-import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  captureSnapshotRegistry,
+  type SnapshotRegistry,
+} from "../../inspection/snapshot-registry.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -57,10 +60,9 @@ function validateSpecifier(sourcePath: string, specifier: string): void {
 }
 
 async function validateContainedImports(
-  snapshotRoot: string,
+  registry: SnapshotRegistry,
   sourceFiles: readonly string[],
 ): Promise<void> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   // Dependency-cruiser uses native reads; its entire input tree must be safe.
   for (const [path] of registry.unavailableSymlinks ?? []) {
     throw new CheckIncompleteError({
@@ -200,8 +202,8 @@ function containedEntrypoint(
 async function workspaceAliases(
   inspection: RepositoryInspection,
   snapshotRoot: string,
+  registry: SnapshotRegistry,
 ): Promise<Readonly<Record<string, string>>> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   const aliases: Record<string, string> = {};
   for (const workspace of inspection.workspaces) {
     if (workspace.name === undefined) continue;
@@ -330,7 +332,8 @@ async function collectSide(
     inspection,
     workspace,
   );
-  await validateContainedImports(canonicalRoot, aliases.sourceFiles);
+  const registry = await captureSnapshotRegistry(canonicalRoot);
+  await validateContainedImports(registry, aliases.sourceFiles);
   const tsconfig = selectedTsconfig(workspace);
   const programInput =
     tsconfig === undefined
@@ -353,7 +356,7 @@ async function collectSide(
     {
       modules: [join(canonicalRoot, ".zedbee-unavailable-node-modules")],
       bustTheCache: true,
-      alias: await workspaceAliases(inspection, canonicalRoot),
+      alias: await workspaceAliases(inspection, canonicalRoot, registry),
       plugins: [capturedAliasPlugin(canonicalRoot, aliases)],
     },
     programInput === undefined
