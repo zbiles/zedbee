@@ -185,14 +185,20 @@ function addRequireBindings(
 ): void {
   if (!requirePattern.test(text)) return;
 
-  const namespace = text.match(
-    /(?:const|let|var)\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*=/u,
-  )?.[1];
+  // A binding only counts when the declaration itself names it before the
+  // require; an arrow wrapping a nested require must not bind its outer name.
+  const namespacePattern = new RegExp(
+    `^(?:const|let|var)\\s+([\\p{ID_Start}_$][\\p{ID_Continue}$]*)\\s*=\\s*${requirePattern.source}`,
+    "u",
+  );
+  const destructurePattern = new RegExp(
+    `^(?:const|let|var)\\s+\\{([^}]*)\\}\\s*=\\s*${requirePattern.source}`,
+    "u",
+  );
+  const namespace = text.match(namespacePattern)?.[1];
   if (namespace !== undefined) namespaces.add(namespace);
 
-  const specifiers = text.match(
-    /(?:const|let|var)\s+\{([^}]*)\}\s*=/u,
-  )?.[1];
+  const specifiers = text.match(destructurePattern)?.[1];
   for (const specifier of specifiers?.split(",") ?? []) {
     const match = specifier
       .trim()
