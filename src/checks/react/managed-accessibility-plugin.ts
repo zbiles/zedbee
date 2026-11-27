@@ -89,6 +89,15 @@ function corrected(rule: Rule.RuleModule): Rule.RuleModule {
     },
   };
 }
+function upstreamRule(
+  rules: Record<string, Rule.RuleModule>,
+  name: string,
+): Rule.RuleModule {
+  const rule = rules[name];
+  if (rule === undefined)
+    throw new Error("Invalid managed accessibility plugin");
+  return rule;
+}
 let cached: ReturnType<typeof upstreamPlugin> | undefined;
 export function managedAccessibilityPlugin() {
   if (cached !== undefined) return cached;
@@ -101,7 +110,7 @@ export function managedAccessibilityPlugin() {
         [
           "no-noninteractive-element-interactions",
           "no-noninteractive-tabindex",
-        ].map((name) => [name, corrected(upstream.rules[name]!)]),
+        ].map((name) => [name, corrected(upstreamRule(upstream.rules, name))]),
       ),
     },
   });
