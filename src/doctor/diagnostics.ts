@@ -621,6 +621,7 @@ export function createDefaultDiagnosticProbe(
           };
         }
       }
+
       case "lockfile-support":
         return withSnapshots(context.cwd, async (targetDir) => {
           const inspection = await inspectRepository(targetDir);
