@@ -72,17 +72,14 @@ export function isConfigurableRuleCheckId(
 }
 
 export { immutableConfigurationSnapshot } from "./immutable-configuration.js";
-import { immutableConfigurationSnapshot } from "./immutable-configuration.js";
+import {
+  immutableConfigurationSnapshot,
+  unsupportedConfiguration,
+} from "./immutable-configuration.js";
 
 /** Common fields have their own checks-command columns. Nested fields are expanded separately. */
 export function managedPolicyScalarKeys(checkId: CheckId): readonly string[] {
   return POLICY_KEYS[checkId].filter((key) => !["severity", "when", "settings", "rules"].includes(key));
-}
-
-function unsupportedConfiguration(): TypeError {
-  return new TypeError(
-    "Managed configuration must contain only JSON-compatible data.",
-  );
 }
 
 const POLICY_KEYS = Object.freeze({

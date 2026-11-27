@@ -1,6 +1,6 @@
 import { copyStrictJson } from "./strict-json.js";
 
-function unsupportedConfiguration(): TypeError {
+export function unsupportedConfiguration(): TypeError {
   return new TypeError(
     "Managed configuration must contain only JSON-compatible data.",
   );
