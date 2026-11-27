@@ -6,24 +6,16 @@ import type {
   ProjectPrettierReply,
   ProjectPrettierRequest,
 } from "./project-types.js";
+import { PROJECT_PRETTIER_ERROR_CODES } from "./project-types.js";
 import {
   formattingSettingsSchema,
   type FormattingSettings,
 } from "./settings.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 
-const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
-  "PROJECT_PRETTIER_TRUST_REQUIRED",
-  "PROJECT_PRETTIER_INSTALL_MISSING",
-  "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
-  "PROJECT_PRETTIER_LAYOUT_UNSUPPORTED",
-  "PROJECT_PRETTIER_CONFIG_INVALID",
-  "PROJECT_PRETTIER_PLUGIN_MISSING",
-  "PROJECT_PRETTIER_WORKER_FAILED",
-  "PROJECT_PRETTIER_PROTOCOL_INVALID",
-  "PROJECT_PRETTIER_OUTPUT_LIMIT",
-  "PROJECT_PRETTIER_PLAN_STALE",
-]);
+const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set(
+  PROJECT_PRETTIER_ERROR_CODES,
+);
 
 export const PROJECT_PROTOCOL_MAX_BYTES = 8 * 1024 * 1024;
 export const PROJECT_FORMAT_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
