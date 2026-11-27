@@ -33,19 +33,21 @@ const readSources = async (root: string, files: readonly string[]) =>
     ),
   );
 
+const PROJECT_ESLINT_REMEDIATION = `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`;
+
 function projectEslintIncomplete(error: unknown): CheckIncompleteError {
   return new CheckIncompleteError(
     error instanceof ProjectEslintFailureError
       ? {
           code: error.code,
           message: error.message,
-          remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
+          remediation: PROJECT_ESLINT_REMEDIATION,
         }
       : {
           code: "PROJECT_ESLINT_ANALYSIS_FAILED",
           message:
             "Project ESLint could not complete analysis of the captured configuration and source.",
-          remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
+          remediation: PROJECT_ESLINT_REMEDIATION,
         },
   );
 }
