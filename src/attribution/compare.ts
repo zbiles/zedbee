@@ -7,6 +7,7 @@ import type {
 } from "../core/types.js";
 import {
   findingIdentityFromSnapshot,
+  fingerprintIdentity,
   fingerprintSnapshot,
   isCanonicalSyntaxText,
   normalizeObservation,
@@ -61,8 +62,11 @@ export { compareCodeUnits } from "../core/compare.js";
 function normalizeTarget(observation: Observation): NormalizedTarget {
   const snapshot = normalizeObservation(observation);
   const identity = findingIdentityFromSnapshot(snapshot);
-  const fingerprint = fingerprintSnapshot(snapshot);
-  const pairedFingerprint = comparisonFingerprint(snapshot);
+  const fingerprint = fingerprintIdentity(identity);
+  const pairedFingerprint =
+    snapshot.comparisonIdentity === undefined
+      ? fingerprint
+      : comparisonFingerprint(snapshot);
   const location = snapshot.location;
   const sortKey = JSON.stringify([
     fingerprint,

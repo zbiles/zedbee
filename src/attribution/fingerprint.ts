@@ -420,10 +420,14 @@ function canonicalIdentity(identity: FindingIdentity): string {
   ]);
 }
 
-export function fingerprintSnapshot(snapshot: Observation): string {
+export function fingerprintIdentity(identity: FindingIdentity): string {
   return createHash("sha256")
-    .update(canonicalIdentity(findingIdentityFromSnapshot(snapshot)), "utf8")
+    .update(canonicalIdentity(identity), "utf8")
     .digest("hex");
+}
+
+export function fingerprintSnapshot(snapshot: Observation): string {
+  return fingerprintIdentity(findingIdentityFromSnapshot(snapshot));
 }
 
 export function fingerprintObservation(observation: Observation): string {
