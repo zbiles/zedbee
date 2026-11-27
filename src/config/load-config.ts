@@ -1,4 +1,5 @@
 import { repositoryConfigPath } from "./selection-path.js";
+import { constants } from "node:fs";
 import { access, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
@@ -208,13 +209,33 @@ export async function readWorkingTreeConfig(
       `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the working tree.`,
       configPath,
     );
-  const handle = await open(configPath, "r");
+  const handle = await open(
+    configPath,
+    constants.O_RDONLY | constants.O_NONBLOCK,
+  );
   try {
     const metadata = await handle.stat();
     if (!metadata.isFile() || metadata.size > CONFIG_CONTENT_LIMIT_BYTES) {
       throw tooLarge();
     }
-    return handle.readFile("utf8");
+    const buffer = Buffer.allocUnsafe(CONFIG_CONTENT_LIMIT_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (bytesRead === 0) {
+        break;
+      }
+      length += bytesRead;
+    }
+    if (length > CONFIG_CONTENT_LIMIT_BYTES) {
+      throw tooLarge();
+    }
+    return buffer.toString("utf8", 0, length);
   } finally {
     await handle.close();
   }
