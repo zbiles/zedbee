@@ -173,7 +173,7 @@ export async function createManagedOutputDirectory(
           "Zedbee rejected a managed artifact whose identity changed.",
         );
       }
-      return handle.readFile("utf8");
+      return await handle.readFile("utf8");
     } finally {
       await handle.close();
     }
