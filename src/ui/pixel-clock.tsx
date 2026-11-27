@@ -1,4 +1,5 @@
 import { Text } from "ink";
+import { halfBlockGlyph } from "./compact-pixels.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 const GLYPHS: Readonly<Record<string, readonly string[]>> = Object.freeze({
@@ -34,13 +35,6 @@ const PIXEL_LABELS: ReadonlySet<string> = new Set<PixelLabel>([
   "fail",
 ]);
 
-function halfBlock(top: string, bottom: string): string {
-  if (top === "1" && bottom === "1") return "█";
-  if (top === "1") return "▀";
-  if (bottom === "1") return "▄";
-  return " ";
-}
-
 function renderPixelRows(
   value: string,
   glyphs: Readonly<Record<string, readonly string[]>>,
@@ -54,7 +48,10 @@ function renderPixelRows(
       .map((glyph) =>
         [...(glyph[topRow] ?? "000")]
           .map((top, column) =>
-            halfBlock(top, glyph[topRow + 1]?.[column] ?? "0"),
+            halfBlockGlyph(
+              top === "1",
+              (glyph[topRow + 1]?.[column] ?? "0") === "1",
+            ),
           )
           .join(""),
       )
