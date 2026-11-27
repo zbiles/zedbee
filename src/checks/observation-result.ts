@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import { sourceMoves, workspaceOwns } from "./source-moves.js";
 import {
   pairSourceMoveMetrics,
@@ -137,13 +138,17 @@ async function changedEntities(
     throw new TypeError("Changed entity source was not validated");
   }
 
-  const entities: ChangedEntity[] = [];
-  for (const file of files) {
-    const ranges = context.changeSet.files.get(file)?.addedRanges ?? [];
-    const source = await readContainedFile(registry, file);
-    entities.push(...collectChangedEntities(source, file, ranges));
-  }
-  return Object.freeze(entities);
+  const limit = pLimit(4);
+  const perFile = await Promise.all(
+    files.map((file) =>
+      limit(async () => {
+        const ranges = context.changeSet.files.get(file)?.addedRanges ?? [];
+        const source = await readContainedFile(registry, file);
+        return collectChangedEntities(source, file, ranges);
+      }),
+    ),
+  );
+  return Object.freeze(perFile.flat());
 }
 
 function observationPaths(input: readonly Observation[]): readonly string[] {
