@@ -207,14 +207,16 @@ export async function createReactVersionResolver(
 
   return Object.freeze(async (workspace: WorkspaceInspection) => {
     const manifest = resolveManifestVersion(workspace);
-    if (manifest.range === undefined) {
+    const { range } = manifest;
+    if (range === undefined) {
       return manifest.resolution;
     }
+    const compatibleRange = new Range(range);
     directRecordsPromise ??= loadDirectRecords();
     const directRecords = await directRecordsPromise;
     if (directRecords === undefined) return manifest.resolution;
     const compatibleRecords = directRecords.filter(({ version }) =>
-      satisfies(version, manifest.range ?? ""),
+      satisfies(version, compatibleRange),
     );
     const workspaceRoot = normalizedRoot(workspace.relativeRoot);
     const importerRecords = compatibleRecords.filter(
