@@ -1,5 +1,6 @@
 import { lstat, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { isContainedPath as contained } from "../inspection/paths.js";
 import type { TelemetryEnvironment } from "./policy.js";
 import { callerAiToolFields, type ScanDetails } from "./schema.js";
 
@@ -51,13 +52,6 @@ const markers = [
   ["AGENTS.override.md", "file", "generic"],
   [".agents", "directory", "generic"],
 ] as const;
-function contained(root: string, path: string): boolean {
-  const from = relative(root, path);
-  return (
-    from === "" ||
-    (!isAbsolute(from) && from !== ".." && !from.startsWith(`..${sep}`))
-  );
-}
 export async function detectRepositoryTools(
   root: string,
   cwd: string,
