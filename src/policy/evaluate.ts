@@ -60,7 +60,7 @@ export function displayResultForPolicy(
   const checkId = CHECK_IDS.includes(sanitizedResult.checkId as CheckId)
     ? (sanitizedResult.checkId as CheckId)
     : undefined;
-  return sanitizeCheckResult({
+  return {
     ...sanitizedResult,
     findings: sanitizedResult.findings
       .filter((finding) => finding.attribution.staged)
@@ -87,7 +87,7 @@ export function displayResultForPolicy(
         const applied = applySeverity(finding, filePolicy);
         return applied === undefined ? [] : [applied];
       }),
-  });
+  };
 }
 
 export function evaluatePolicy(
