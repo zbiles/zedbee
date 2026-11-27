@@ -468,24 +468,6 @@ function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
     });
 }
 
-function singleTreeEntry(
-  output: string,
-  repositoryPath: string,
-  configPath: string,
-): TreeEntry | undefined {
-  const entries = parseTreeEntries(output, configPath);
-  const entry = entries[0];
-  if (entries.length === 0) return undefined;
-  if (
-    entries.length !== 1 ||
-    entry === undefined ||
-    entry.path !== repositoryPath
-  ) {
-    throw unreadableGitConfig(configPath, "the target Git commit");
-  }
-  return entry;
-}
-
 function singleRegularTreeEntry(
   entry: TreeEntry,
   configPath: string,
@@ -503,17 +485,23 @@ function singleRegularTreeEntry(
   return entry;
 }
 
-async function targetTreeEntry(
+async function targetTreeEntries(
   git: GitClient,
   targetCommit: string,
-  repositoryPath: string,
+  repositoryPaths: readonly string[],
   configPath: string,
   signal?: AbortSignal,
-): Promise<TreeEntry | undefined> {
+): Promise<ReadonlyMap<string, TreeEntry>> {
   let result: Awaited<ReturnType<GitClient["run"]>>;
   try {
     result = await git.run(
-      ["ls-tree", "-z", targetCommit, "--", literalPathspec(repositoryPath)],
+      [
+        "ls-tree",
+        "-z",
+        targetCommit,
+        "--",
+        ...repositoryPaths.map(literalPathspec),
+      ],
       {
         maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
         ...(signal === undefined ? {} : { signal }),
@@ -523,7 +511,14 @@ async function targetTreeEntry(
     if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
     throw unreadableGitConfig(configPath, "the target Git commit");
   }
-  return singleTreeEntry(result.stdout, repositoryPath, configPath);
+  const entries = new Map<string, TreeEntry>();
+  for (const entry of parseTreeEntries(result.stdout, configPath)) {
+    if (!repositoryPaths.includes(entry.path) || entries.has(entry.path)) {
+      throw unreadableGitConfig(configPath, "the target Git commit");
+    }
+    entries.set(entry.path, entry);
+  }
+  return entries;
 }
 
 function selectGitConfigPath(
@@ -662,30 +657,27 @@ export async function loadConfigFromCommit(
     explicitConfigPath,
   );
 
-  const entry = await targetTreeEntry(
+  const candidatePaths =
+    explicitConfigPath === undefined
+      ? [CONFIG_FILENAME, ...UNSUPPORTED_CONFIG_FILENAMES]
+      : [repositoryPath];
+  const entries = await targetTreeEntries(
     git,
     targetCommit,
-    repositoryPath,
+    candidatePaths,
     configPath,
     signal,
   );
+  const entry = entries.get(repositoryPath);
   if (entry === undefined) {
     if (explicitConfigPath !== undefined) {
       throw missingExplicitGitConfig(configPath, "the target Git commit");
     }
-    const unsupported = await Promise.all(
-      UNSUPPORTED_CONFIG_FILENAMES.map((filename) =>
-        targetTreeEntry(git, targetCommit, filename, configPath, signal),
-      ),
+    const unsupported = UNSUPPORTED_CONFIG_FILENAMES.find((filename) =>
+      entries.has(filename),
     );
-    const unsupportedIndex = unsupported.findIndex(
-      (candidate) => candidate !== undefined,
-    );
-    if (unsupportedIndex !== -1) {
-      throw unsupportedGitConfig(
-        repositoryRoot,
-        UNSUPPORTED_CONFIG_FILENAMES[unsupportedIndex]!,
-      );
+    if (unsupported !== undefined) {
+      throw unsupportedGitConfig(repositoryRoot, unsupported);
     }
     return resolveConfig(undefined);
   }
