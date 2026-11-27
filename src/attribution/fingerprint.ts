@@ -103,9 +103,6 @@ export function normalizeManagedAutomaticFix(
     "writes",
     "stagesChanges",
   ]);
-  if (Array.isArray(input)) {
-    throw new TypeError("Expected supported automatic fix metadata");
-  }
   const commandValue = input.command;
   if (!Array.isArray(commandValue)) {
     throw new TypeError("Expected supported automatic fix command");
