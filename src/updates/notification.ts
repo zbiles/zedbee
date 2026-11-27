@@ -7,8 +7,8 @@ import { discoverWorkspaces } from "../inspection/workspaces.js";
 import { projectInstallManager } from "../init/install-project.js";
 import { terminalText } from "../renderers/terminal-style.js";
 import {
+  isUpdateCacheFresh,
   readUpdateCache,
-  UPDATE_INTERVAL,
   UPDATE_MAX_AGE,
   updateCachePath,
 } from "./cache.js";
@@ -42,7 +42,7 @@ export function getUpdateNotice(options: {
   try {
     const now = options.now ?? Date.now();
     const cache = readUpdateCache(updateCachePath(env), now);
-    if (cache === undefined || now - cache.checkedAt >= UPDATE_INTERVAL) {
+    if (!isUpdateCacheFresh(cache, now)) {
       try {
         (options.refresh ?? (() => scheduleRefresh(env)))();
       } catch {

@@ -77,28 +77,46 @@ function identifierNames(
   return names;
 }
 
-function importLocalNames(
-  context: RuleContext,
-  node: SgNode,
-): ReadonlySet<string> {
-  const locals = new Set<string>();
-  const text = context.text(node)!;
+interface ImportClause {
+  readonly namespace: string | undefined;
+  readonly defaultImport: string | undefined;
+  readonly specifiers: readonly {
+    readonly imported: string;
+    readonly local: string;
+  }[];
+}
+
+function parseImportClause(text: string): ImportClause {
   const namespace = text.match(
     /import\s+\*\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)/u,
   )?.[1];
   const defaultImport = text.match(
     /import\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*(?:,|from)/u,
   )?.[1];
-  if (namespace !== undefined) locals.add(namespace);
-  if (defaultImport !== undefined) locals.add(defaultImport);
+  const specifiers: { imported: string; local: string }[] = [];
   for (const specifier of text.match(/\{([^}]*)\}/u)?.[1]?.split(",") ?? []) {
     const match = specifier
       .trim()
       .match(
         /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
       );
-    if (match?.[1] !== undefined) locals.add(match[2] ?? match[1]);
+    if (match?.[1] !== undefined)
+      specifiers.push({ imported: match[1], local: match[2] ?? match[1] });
   }
+  return { namespace, defaultImport, specifiers };
+}
+
+function importLocalNames(
+  context: RuleContext,
+  node: SgNode,
+): ReadonlySet<string> {
+  const { namespace, defaultImport, specifiers } = parseImportClause(
+    context.text(node)!,
+  );
+  const locals = new Set<string>();
+  if (namespace !== undefined) locals.add(namespace);
+  if (defaultImport !== undefined) locals.add(defaultImport);
+  for (const { local } of specifiers) locals.add(local);
   return locals;
 }
 
@@ -159,6 +177,32 @@ function hasAnyBinding(context: RuleContext, name: string): boolean {
   );
 }
 
+function addRequireBindings(
+  text: string,
+  requirePattern: RegExp,
+  namespaces: Set<string>,
+  named: Map<string, string>,
+): void {
+  if (!requirePattern.test(text)) return;
+
+  const namespace = text.match(
+    /(?:const|let|var)\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*=/u,
+  )?.[1];
+  if (namespace !== undefined) namespaces.add(namespace);
+
+  const specifiers = text.match(
+    /(?:const|let|var)\s+\{([^}]*)\}\s*=/u,
+  )?.[1];
+  for (const specifier of specifiers?.split(",") ?? []) {
+    const match = specifier
+      .trim()
+      .match(
+        /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s*:\s*([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
+      );
+    if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
+  }
+}
+
 function moduleBindings(
   context: RuleContext,
   moduleNames: readonly string[],
@@ -168,57 +212,59 @@ function moduleBindings(
   const modulePattern = moduleNames
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
     .join("|");
+  const importPattern = new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u");
+  const requirePattern = new RegExp(
+    `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
+    "u",
+  );
   for (const node of context.nodes) {
     if (node.kind() === "import_statement") {
       const text = context.text(node)!;
-      if (!new RegExp(`from\\s*['"](?:${modulePattern})['"]`, "u").test(text))
-        continue;
-      const namespace = text.match(
-        /import\s+\*\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)/u,
-      )?.[1];
-      const defaultImport = text.match(
-        /import\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*(?:,|from)/u,
-      )?.[1];
-      if (namespace !== undefined) namespaces.add(namespace);
-      if (defaultImport !== undefined) namespaces.add(defaultImport);
-      const specifiers = text.match(/\{([^}]*)\}/u)?.[1];
-      for (const specifier of specifiers?.split(",") ?? []) {
-        const match = specifier
-          .trim()
-          .match(
-            /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s+as\s+([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
-          );
-        if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
-      }
+      if (!importPattern.test(text)) continue;
+      const clause = parseImportClause(text);
+      if (clause.namespace !== undefined) namespaces.add(clause.namespace);
+      if (clause.defaultImport !== undefined)
+        namespaces.add(clause.defaultImport);
+      for (const { imported, local } of clause.specifiers)
+        named.set(local, imported);
     }
     if (
       node.kind() === "lexical_declaration" ||
       node.kind() === "variable_declaration"
     ) {
-      const text = context.text(node)!;
-      const required = new RegExp(
-        `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
-        "u",
+      addRequireBindings(
+        context.text(node)!,
+        requirePattern,
+        namespaces,
+        named,
       );
-      if (!required.test(text)) continue;
-      const namespace = text.match(
-        /(?:const|let|var)\s+([\p{ID_Start}_$][\p{ID_Continue}$]*)\s*=/u,
-      )?.[1];
-      if (namespace !== undefined) namespaces.add(namespace);
-      const specifiers = text.match(
-        /(?:const|let|var)\s+\{([^}]*)\}\s*=/u,
-      )?.[1];
-      for (const specifier of specifiers?.split(",") ?? []) {
-        const match = specifier
-          .trim()
-          .match(
-            /^([\p{ID_Start}_$][\p{ID_Continue}$]*)(?:\s*:\s*([\p{ID_Start}_$][\p{ID_Continue}$]*))?$/u,
-          );
-        if (match?.[1] !== undefined) named.set(match[2] ?? match[1], match[1]);
-      }
     }
   }
   return { namespaces, named };
+}
+
+function isModuleCallee(
+  context: RuleContext,
+  callee: string,
+  bindings: ReturnType<typeof moduleBindings>,
+  methods: ReadonlySet<string>,
+): boolean {
+  const direct = bindings.named.get(callee);
+  if (
+    direct !== undefined &&
+    methods.has(direct) &&
+    !hasNonImportBinding(context, callee)
+  )
+    return true;
+  const member = callee.match(
+    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.([\p{ID_Start}_$][\p{ID_Continue}$]*)$/u,
+  );
+  return (
+    member?.[1] !== undefined &&
+    bindings.namespaces.has(member[1]) &&
+    !hasNonImportBinding(context, member[1]) &&
+    methods.has(member[2] ?? "")
+  );
 }
 
 function importedCalls(
@@ -230,22 +276,7 @@ function importedCalls(
   return context.nodes.filter((node) => {
     const callee = context.text(callCallee(node));
     if (callee === undefined) return false;
-    const direct = bindings.named.get(callee);
-    if (
-      direct !== undefined &&
-      methods.has(direct) &&
-      !hasNonImportBinding(context, callee)
-    )
-      return true;
-    const member = callee.match(
-      /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.([\p{ID_Start}_$][\p{ID_Continue}$]*)$/u,
-    );
-    return (
-      member?.[1] !== undefined &&
-      bindings.namespaces.has(member[1]) &&
-      !hasNonImportBinding(context, member[1]) &&
-      methods.has(member[2] ?? "")
-    );
+    return isModuleCallee(context, callee, bindings, methods);
   });
 }
 
@@ -324,25 +355,17 @@ const tlsDisabled: ContextualStructuralRule = {
 const PASSWORD_VALUE = /\b(?:password|passwd|pwd)\b/iu;
 const WEAK_HASH = /^(?:['"])(?:md5|sha-?1)(?:['"])$/iu;
 
+const CREATE_HASH = new Set(["createHash"]);
+
 function isWeakHashCall(
   context: RuleContext,
   node: SgNode,
   bindings: ReturnType<typeof moduleBindings>,
 ): boolean {
   const callee = context.text(callCallee(node));
-  if (callee === undefined) return false;
-  const direct =
-    bindings.named.get(callee) === "createHash" &&
-    !hasNonImportBinding(context, callee);
-  const member = callee.match(
-    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.createHash$/u,
-  );
-  const namespaced =
-    member?.[1] !== undefined &&
-    bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(context, member[1]);
   return (
-    (direct || namespaced) &&
+    callee !== undefined &&
+    isModuleCallee(context, callee, bindings, CREATE_HASH) &&
     WEAK_HASH.test(context.text(callArguments(node)[0]) ?? "")
   );
 }
@@ -382,6 +405,8 @@ function staticString(
   return text.length >= 2 ? text.slice(1, -1) : undefined;
 }
 
+const REQUEST = new Set(["request"]);
+
 function isRequestOptions(
   context: RuleContext,
   node: SgNode,
@@ -392,29 +417,29 @@ function isRequestOptions(
   if (args?.kind() !== "arguments" || call?.kind() !== "call_expression")
     return false;
   const callee = context.text(callCallee(call)) ?? "";
-  const direct =
-    (bindings.namespaces.has(callee) ||
-      bindings.named.get(callee) === "request") &&
-    !hasNonImportBinding(context, callee);
-  const member = callee.match(
-    /^([\p{ID_Start}_$][\p{ID_Continue}$]*)\.request$/u,
+  return (
+    (bindings.namespaces.has(callee) &&
+      !hasNonImportBinding(context, callee)) ||
+    isModuleCallee(context, callee, bindings, REQUEST)
   );
-  const namespaced =
-    member?.[1] !== undefined &&
-    bindings.namespaces.has(member[1]) &&
-    !hasNonImportBinding(context, member[1]);
-  return direct || namespaced;
 }
+
+const EMPTY_CREDENTIAL_VALUES: ReadonlySet<string> = new Set([
+  "undefined",
+  "null",
+  "false",
+  '""',
+  "''",
+  "``",
+  "void 0",
+]);
 
 function hasCredentialValue(context: RuleContext, node: SgNode): boolean {
   if (!CREDENTIAL_PROPERTY.test(propertyName(context, node) ?? ""))
     return false;
   const value = context.text(propertyValue(node))?.trim();
   return (
-    value !== undefined &&
-    !new Set(["undefined", "null", "false", '""', "''", "``", "void 0"]).has(
-      value,
-    )
+    value !== undefined && !EMPTY_CREDENTIAL_VALUES.has(value)
   );
 }
 

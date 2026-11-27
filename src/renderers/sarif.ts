@@ -14,6 +14,8 @@ import { checkLabel } from "../reporting/check-label.js";
 import type { NetworkDisclosure, ScanReport } from "../scan/report.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
+import { checkErrorDetailFields } from "./check-error-fields.js";
+import { sourceIdentityFields } from "./source-identity-fields.js";
 
 const SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI = "https://github.com/zbiles/Zedbee";
@@ -203,24 +205,7 @@ function createNotification(
         : { disposition: check.incompleteDisposition }),
       ...(check.target === undefined ? {} : { target: check.target }),
       durationMs: check.durationMs,
-      ...(error.path === undefined ? {} : { path: error.path }),
-      ...(error.parseFailures === undefined
-        ? {}
-        : { parseFailures: error.parseFailures }),
-      ...(error.paths === undefined ? {} : { paths: [...error.paths] }),
-      ...(error.snapshot === undefined ? {} : { snapshot: error.snapshot }),
-      ...(error.comparisonParent === undefined
-        ? {}
-        : { comparisonParent: error.comparisonParent }),
-      ...(error.projectPaths === undefined
-        ? {}
-        : { projectPaths: [...error.projectPaths] }),
-      ...(error.temporaryPath === undefined
-        ? {}
-        : { temporaryPath: error.temporaryPath }),
-      ...(error.remediation === undefined
-        ? {}
-        : { remediation: error.remediation }),
+      ...checkErrorDetailFields(error),
     },
   };
 }
@@ -241,6 +226,7 @@ function createInvocation(
   checks: readonly CheckResult[],
 ): Record<string, unknown> {
   const source = sanitizeScanSourceIdentity(report);
+  const hookUpdate = hookUpdateNotice(report);
   const notifications = checks
     .filter(isIncompleteCheckWithError)
     .sort(compareIncompleteChecks)
@@ -259,20 +245,10 @@ function createInvocation(
     toolExecutionNotifications: notifications,
     properties: {
       schemaVersion: report.schemaVersion,
-      ...(hookUpdateNotice(report) === undefined
-        ? {}
-        : { hookUpdate: hookUpdateNotice(report) }),
+      ...(hookUpdate === undefined ? {} : { hookUpdate }),
       outcome: report.outcome,
       exitCode: report.exitCode,
-      mode: source.mode,
-      baseline: source.baseline,
-      target: source.target,
-      ...(source.mergeParents === undefined
-        ? {}
-        : { mergeParents: source.mergeParents }),
-      ...(source.requestedBase === undefined
-        ? {}
-        : { requestedBase: source.requestedBase }),
+      ...sourceIdentityFields(source),
       changedFileCount: report.changedFileCount,
       startedAt: report.startedAt,
       durationMs: report.durationMs,

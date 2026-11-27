@@ -4,6 +4,10 @@ import {
 } from "../inspection/source-paths.js";
 import type { CheckId } from "../config/schema.js";
 import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import {
+  COMPILER_SOURCE as JAVASCRIPT_SOURCE,
+  TYPESCRIPT_SOURCE,
+} from "./compiler-paths.js";
 
 export type ArtifactKind =
   | "text"

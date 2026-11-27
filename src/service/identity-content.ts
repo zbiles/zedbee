@@ -14,9 +14,7 @@ import { createRequire } from "node:module";
 import { basename, dirname, join, relative } from "node:path";
 import { ServiceUnavailableError } from "./protocol.js";
 import { hashFilesInWorkers } from "./identity-parallel.js";
-
-const digest = (value: string) =>
-  createHash("sha256").update(value).digest("hex");
+import { digest } from "./identity.js";
 function hashFile(
   path: string,
   collect = false,
@@ -145,20 +143,28 @@ function dependencyNames(manifest: Record<string, any>): Map<string, boolean> {
   }
   return result;
 }
-/** Actual Node package search paths, with global/NODE_PATH roots excluded. */
-function resolveDependency(root: string, name: string): string | undefined {
+const searchLocationCache = new Map<string, readonly string[]>();
+function dependencySearchLocations(root: string): readonly string[] {
+  const cached = searchLocationCache.get(root);
+  if (cached !== undefined) return cached;
   // Trailing slash asks for package lookup even for names such as punycode
   // that also name a builtin. Declared installed contents still join identity.
   const locations =
-    createRequire(join(root, "package.json")).resolve.paths(`${name}/`) ?? [];
+    createRequire(join(root, "package.json")).resolve.paths("x/") ?? [];
   const allowed = new Set<string>();
   for (let directory = root; ; directory = dirname(directory)) {
     if (basename(directory) !== "node_modules")
       allowed.add(join(directory, "node_modules"));
     if (directory === dirname(directory)) break;
   }
+  const filtered = locations.filter((location) => allowed.has(location));
+  searchLocationCache.set(root, filtered);
+  return filtered;
+}
+/** Actual Node package search paths, with global/NODE_PATH roots excluded. */
+function resolveDependency(root: string, name: string): string | undefined {
+  const locations = dependencySearchLocations(root);
   for (const location of locations) {
-    if (!allowed.has(location)) continue;
     const candidate = join(location, name);
     try {
       const resolved = realpathSync(candidate);

@@ -15,7 +15,11 @@ import type {
   AnalyzerExecutionSessionOptions,
 } from "../checks/runner/executor.js";
 import type { AnalyzerJobOptions } from "../checks/runner/run-job.js";
-import { HEX, ServiceUnavailableError } from "./protocol.js";
+import {
+  HEX,
+  ServiceUnavailableError,
+  throwFirstRejection,
+} from "./protocol.js";
 
 /** Closing must settle independent tree/lease witnesses before resolving. */
 export interface ServiceSessionConnection {
@@ -129,10 +133,7 @@ export function executorForConnection(
             const results = await Promise.allSettled(
               [...sessions].map((session) => session.close()),
             );
-            const failure = results.find(
-              (result) => result.status === "rejected",
-            );
-            if (failure?.status === "rejected") throw failure.reason;
+            throwFirstRejection(results);
           } finally {
             await client.close();
           }

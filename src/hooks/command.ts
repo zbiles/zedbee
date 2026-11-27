@@ -1,12 +1,18 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { compareCodeUnits } from "../core/compare.js";
+import { isContainedPath } from "../inspection/read-json.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 
 import { installedHookCommand } from "./installed-command.js";
 
 export type ScanHookName = "pre-commit" | "pre-merge-commit";
+
+export const SCAN_HOOK_NAMES = Object.freeze([
+  "pre-commit",
+  "pre-merge-commit",
+] as const);
 
 export class HookInstallationError extends Error {
   constructor(
@@ -15,14 +21,6 @@ export class HookInstallationError extends Error {
   ) {
     super(message);
   }
-}
-
-function contained(root: string, path: string): boolean {
-  const value = relative(root, path);
-  return (
-    value === "" ||
-    (!isAbsolute(value) && value !== ".." && !value.startsWith(`..${sep}`))
-  );
 }
 
 /** Read installed package metadata only; never execute packages during setup. */
@@ -34,7 +32,7 @@ async function installedCommand(
   { command: string; packageRoot: string; cliPath: string } | undefined
 > {
   let directory = resolve(repositoryRoot, projectRoot);
-  while (contained(repositoryRoot, directory)) {
+  while (isContainedPath(repositoryRoot, directory)) {
     const packageRoot = join(directory, "node_modules", "zedbee");
     try {
       const manifestPath = join(packageRoot, "package.json");
@@ -49,10 +47,11 @@ async function installedCommand(
       if (manifest.name !== "zedbee" || typeof bin !== "string")
         return undefined;
       const path = resolve(packageRoot, bin);
-      if (!contained(packageRoot, path) || !(await stat(path)).isFile())
+      if (!isContainedPath(packageRoot, path) || !(await stat(path)).isFile())
         return undefined;
       const canonicalPackage = await realpath(packageRoot);
-      if (!contained(canonicalPackage, await realpath(path))) return undefined;
+      if (!isContainedPath(canonicalPackage, await realpath(path)))
+        return undefined;
       const repositoryPath = `./${relative(repositoryRoot, path).split(sep).join("/")}`;
       if (/[\r\n\0]/u.test(repositoryPath)) return undefined;
       return {
@@ -148,7 +147,7 @@ export async function resolveLocalSchemaReference(
     try {
       if (
         !(await stat(schema)).isFile() ||
-        !contained(
+        !isContainedPath(
           await realpath(installation.packageRoot),
           await realpath(schema),
         )

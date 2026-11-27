@@ -33,9 +33,10 @@ import {
   type TelemetryEnvironment,
 } from "../telemetry/policy.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import { GitClient } from "../git/client.js";
+import { readWorkingTreeConfig } from "../config/load-config.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 import {
   detectHookIntegration,
   type DetectedHookIntegration,
@@ -139,10 +140,7 @@ const DEFAULT_DEPENDENCIES: InitCommandDependencies = {
   saveTelemetryPreference(env, enabled) {
     new TelemetryStore(telemetryDirectory(env)).setEnabled(enabled);
   },
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   inspect: async (root) =>
     inspectRepository(root, {
       registry: await captureWorkingTreeRegistry(root),
@@ -172,11 +170,28 @@ async function existingConfig(repositoryRoot: string): Promise<string | null> {
     if (state.isSymbolicLink() || !state.isFile()) {
       throw new Error("unsafe config");
     }
-    return readFile(path, "utf8");
+    return await readWorkingTreeConfig(path);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+async function allWorkspacesTrusted(
+  repositoryRoot: string,
+  projectRoots: readonly string[],
+  mode: Parameters<typeof hasProjectEslintTrust>[2],
+): Promise<boolean> {
+  return (
+    projectRoots.length > 0 &&
+    (
+      await Promise.all(
+        projectRoots.map((projectRoot) =>
+          hasProjectEslintTrust(repositoryRoot, projectRoot, mode),
+        ),
+      )
+    ).every(Boolean)
+  );
 }
 
 export async function executeInitCommand(
@@ -339,24 +354,17 @@ export async function executeInitCommand(
     const eslintRoots = inspection.workspaces.map(
       ({ relativeRoot }) => relativeRoot,
     );
-    const eslintTrustStored =
-      eslintRoots.length > 0 &&
-      (
-        await Promise.all(
-          eslintRoots.map((projectRoot) =>
-            hasProjectEslintTrust(repositoryRoot, projectRoot, "execute"),
-          ),
-        )
-      ).every(Boolean);
-    const eslintMessagesStored =
-      eslintRoots.length > 0 &&
-      (
-        await Promise.all(
-          eslintRoots.map((projectRoot) =>
-            hasProjectEslintTrust(repositoryRoot, projectRoot, "messages"),
-          ),
-        )
-      ).every(Boolean);
+    const eslintTrustStored = await allWorkspacesTrusted(
+      repositoryRoot,
+      eslintRoots,
+      "execute",
+    );
+    const eslintMessagesStored = await allWorkspacesTrusted(
+      repositoryRoot,
+      eslintRoots,
+      "messages",
+    );
+
     const initialSelection: InitSelection = {
       profile: effectiveInitProfile(configBefore, options.profile),
       profileExplicit: options.profile !== undefined,

@@ -12,6 +12,11 @@ import {
 } from "node:path";
 import { RepositoryInspectionError } from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
+import {
+  isContainedPath,
+  normalizeRepositoryPath,
+  unsafePath,
+} from "./paths.js";
 
 export const IGNORED_DIRECTORY_NAMES = [
   "node_modules",
@@ -50,27 +55,6 @@ export interface SnapshotRegistry {
   exact(repositoryPath: string): SnapshotRegistryEntry | undefined;
   resolve(repositoryPath: string): SnapshotRegistryEntry | undefined;
   entries(): readonly SnapshotRegistryEntry[];
-}
-
-function normalizePath(path: string): string {
-  return path.split(sep).join("/");
-}
-
-function isContained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot === "" ||
-    (!isAbsolute(fromRoot) &&
-      fromRoot !== ".." &&
-      !fromRoot.startsWith(`..${sep}`))
-  );
-}
-
-function unsafePath(): RepositoryInspectionError {
-  return new RepositoryInspectionError(
-    "UNSAFE_SNAPSHOT_PATH",
-    "Zedbee refused a path outside the snapshot.",
-  );
 }
 
 function invalidSnapshot(): RepositoryInspectionError {
@@ -120,7 +104,7 @@ export async function captureSnapshotRegistry(
     }
     try {
       canonicalPath = await realpath(absolutePath);
-      if (!isContained(snapshotRoot, canonicalPath)) {
+      if (!isContainedPath(snapshotRoot, canonicalPath)) {
         throw new RepositoryInspectionError(
           "UNSAFE_SNAPSHOT_PATH",
           "Zedbee refused a path outside the snapshot.",
@@ -222,25 +206,25 @@ export async function captureSnapshotRegistry(
       let destination: string;
       try {
         const parent = await realpath(dirname(entry.absolutePath));
-        if (!isContained(snapshotRoot, parent)) throw unsafePath();
+        if (!isContainedPath(snapshotRoot, parent)) throw unsafePath();
         const linkPath = join(parent, basename(entry.absolutePath));
         destination = resolve(parent, await readlink(linkPath));
         if (linkPath !== entry.absolutePath)
           await captureRequestedPath(
-            normalizePath(relative(snapshotRoot, linkPath)),
+            normalizeRepositoryPath(relative(snapshotRoot, linkPath)),
           );
       } catch {
         throw invalidSnapshot();
       }
-      if (!isContained(snapshotRoot, destination)) throw unsafePath();
+      if (!isContainedPath(snapshotRoot, destination)) throw unsafePath();
       if (destination !== snapshotRoot)
         await captureRequestedPath(
-          normalizePath(relative(snapshotRoot, destination)),
+          normalizeRepositoryPath(relative(snapshotRoot, destination)),
         );
     }
     if (requestedPaths !== undefined && entry.canonicalPath !== snapshotRoot)
       await captureRequestedPath(
-        normalizePath(relative(snapshotRoot, entry.canonicalPath)),
+        normalizeRepositoryPath(relative(snapshotRoot, entry.canonicalPath)),
       );
     const registeredTarget = absoluteEntries.get(entry.canonicalPath);
     if (
@@ -287,7 +271,7 @@ export async function captureSnapshotRegistry(
   const resolveEntry = (
     repositoryPath: string,
   ): SnapshotRegistryEntry | undefined => {
-    const normalized = normalizePath(repositoryPath).replace(/^\.\//, "");
+    const normalized = normalizeRepositoryPath(repositoryPath).replace(/^\.\//, "");
     const exact = exactEntries.get(normalized);
     if (exact !== undefined) return exact;
     const components = normalized.split("/");
@@ -317,7 +301,7 @@ export async function captureSnapshotRegistry(
     snapshotRoot,
     unavailableSymlinks,
     exact: (repositoryPath: string) =>
-      exactEntries.get(normalizePath(repositoryPath)),
+      exactEntries.get(normalizeRepositoryPath(repositoryPath)),
     resolve: resolveEntry,
     entries: () => frozenEntries,
   });

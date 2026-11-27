@@ -23,7 +23,10 @@ import {
   readContainedFile,
   readJsonData,
 } from "../../inspection/read-json.js";
-import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  captureSnapshotRegistry,
+  type SnapshotRegistry,
+} from "../../inspection/snapshot-registry.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -37,8 +40,8 @@ import type {
 import { normalizeDependencyViolations } from "./normalize-graph.js";
 import { createManagedDependencyRules } from "./rules.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 
@@ -58,10 +61,9 @@ function validateSpecifier(sourcePath: string, specifier: string): void {
 }
 
 async function validateContainedImports(
-  snapshotRoot: string,
+  registry: SnapshotRegistry,
   sourceFiles: readonly string[],
 ): Promise<void> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   // Dependency-cruiser uses native reads; its entire input tree must be safe.
   for (const [path] of registry.unavailableSymlinks ?? []) {
     throw new CheckIncompleteError({
@@ -169,6 +171,7 @@ const ENTRY_EXTENSIONS = [
 
 function containedEntrypoint(
   workspace: WorkspaceInspection,
+  sourceFiles: ReadonlySet<string>,
   target: string,
 ): string | undefined {
   if (
@@ -200,19 +203,18 @@ function containedEntrypoint(
       candidates.add(`${candidate}/index${extension}`);
     }
   }
-  return [...candidates].find((candidate) =>
-    workspace.sourceFiles.includes(candidate),
-  );
+  return [...candidates].find((candidate) => sourceFiles.has(candidate));
 }
 
 async function workspaceAliases(
   inspection: RepositoryInspection,
   snapshotRoot: string,
+  registry: SnapshotRegistry,
 ): Promise<Readonly<Record<string, string>>> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   const aliases: Record<string, string> = {};
   for (const workspace of inspection.workspaces) {
     if (workspace.name === undefined) continue;
+    const sourceFiles = new Set(workspace.sourceFiles);
     const manifest = entrypointRecord(
       await readJsonData(registry, workspace.manifestPath),
     );
@@ -233,11 +235,11 @@ async function workspaceAliases(
       const entry =
         (entrypoints.get(exportKey) ?? [])
           .filter((target): target is string => target !== null)
-          .map((target) => containedEntrypoint(workspace, target))
+          .map((target) => containedEntrypoint(workspace, sourceFiles, target))
           .find((candidate) => candidate !== undefined) ??
         (exportKey === "." && manifest.exports === undefined
           ? rootFallbacks.find((candidate) =>
-              workspace.sourceFiles.includes(candidate),
+              sourceFiles.has(candidate),
             )
           : undefined);
       if (entry === undefined) continue;
@@ -251,6 +253,13 @@ async function workspaceAliases(
   return aliases;
 }
 
+/** Most specific workspace root first; the repository root "." last. */
+function compareScopeRoots(left: string, right: string): number {
+  return (
+    Number(left === ".") - Number(right === ".") || right.length - left.length
+  );
+}
+
 /** Redirect only to pre-resolved captured files, scoped to the importing workspace. */
 function capturedAliasPlugin(
   snapshotRoot: string,
@@ -259,9 +268,7 @@ function capturedAliasPlugin(
   NonNullable<NonNullable<Parameters<typeof cruise>[2]>["plugins"]>[number],
   { apply: unknown }
 > {
-  const scopes = [...prepared.workspaces.keys()].sort(
-    (a, b) => Number(a === ".") - Number(b === ".") || b.length - a.length,
-  );
+  const scopes = [...prepared.workspaces.keys()].sort(compareScopeRoots);
   return {
     apply(resolver) {
       const target = resolver.ensureHook("resolve");
@@ -328,7 +335,7 @@ async function collectSide(
   const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
   const sourceFiles = workspace.sourceFiles
-    .filter((path) => SOURCE.test(path))
+    .filter((path) => COMPILER_SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
   const aliases = await prepareSnapshotAliases(
@@ -336,7 +343,8 @@ async function collectSide(
     inspection,
     workspace,
   );
-  await validateContainedImports(canonicalRoot, aliases.sourceFiles);
+  const registry = await captureSnapshotRegistry(canonicalRoot);
+  await validateContainedImports(registry, aliases.sourceFiles);
   const tsconfig = selectedTsconfig(workspace);
   const programInput =
     tsconfig === undefined
@@ -360,7 +368,7 @@ async function collectSide(
       modules: [join(canonicalRoot, ".zedbee-unavailable-node-modules")],
       conditionNames: [...GRAPH_CONDITIONS],
       bustTheCache: true,
-      alias: await workspaceAliases(inspection, canonicalRoot),
+      alias: await workspaceAliases(inspection, canonicalRoot, registry),
       plugins: [capturedAliasPlugin(canonicalRoot, aliases)],
     },
     programInput === undefined
@@ -379,10 +387,8 @@ async function collectSide(
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
   )?.configPath;
-  const aliasScopes = [...inspection.workspaces].sort(
-    (left, right) =>
-      Number(left.relativeRoot === ".") - Number(right.relativeRoot === ".") ||
-      right.relativeRoot.length - left.relativeRoot.length,
+  const aliasScopes = [...inspection.workspaces].sort((left, right) =>
+    compareScopeRoots(left.relativeRoot, right.relativeRoot),
   );
   return normalizeDependencyViolations(
     result,

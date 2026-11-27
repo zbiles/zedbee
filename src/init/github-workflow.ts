@@ -10,6 +10,7 @@ import {
   readPnpmWorkspacePatterns,
 } from "../inspection/workspaces.js";
 import { readContainedFile } from "../inspection/read-json.js";
+import { LOCKFILE_MANAGERS } from "../inspection/inspect-repository.js";
 import type {
   RepositoryInspection,
   PackageManager,
@@ -25,14 +26,7 @@ const NODE = "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020";
 const BUN = "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6";
 const LOCK_MANAGERS: Readonly<
   Record<string, Exclude<PackageManager, "unknown">>
-> = {
-  "package-lock.json": "npm",
-  "npm-shrinkwrap.json": "npm",
-  "pnpm-lock.yaml": "pnpm",
-  "yarn.lock": "yarn",
-  "bun.lock": "bun",
-  "bun.lockb": "bun",
-};
+> = LOCKFILE_MANAGERS;
 type Step = Record<string, unknown>;
 export class GithubWorkflowSetupError extends Error {
   constructor(message: string) {

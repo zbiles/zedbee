@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { executionClassFor } from "../applicability.js";
 import {
+  TYPESCRIPT_PARSER_CHECK_IDS,
   validateAnalyzerRequest,
   type AnalyzerRequest,
   type AnalyzerResult,
@@ -10,6 +11,7 @@ import {
   analyzerRequestRetentionBytes,
   exactFields,
   jobFailure,
+  reportJobTiming,
 } from "./envelope.js";
 export { AnalyzerCapacityError } from "./envelope.js";
 import {
@@ -74,14 +76,8 @@ interface Job extends WorkerJob {
   provisional?: Outcome | undefined;
 }
 function affinity(request: AnalyzerRequest): string {
-  return [
-    "lint",
-    "reactCorrectness",
-    "reactAccessibility",
-    "cyclomaticComplexity",
-    "readabilityComplexity",
-    "types",
-  ].includes(request.checkId)
+  return TYPESCRIPT_PARSER_CHECK_IDS.includes(request.checkId) ||
+    request.checkId === "types"
     ? "syntax"
     : request.checkId;
 }
@@ -327,15 +323,7 @@ class LocalExecutor implements AnalyzerExecutor {
             });
             continue;
           }
-          try {
-            job.options.onTiming?.(
-              "queue",
-              Math.min(
-                604800000,
-                Math.max(0, Math.round(performance.now() - job.queuedAt)),
-              ),
-            );
-          } catch {}
+          reportJobTiming(job.options, "queue", job.queuedAt);
           // Observers may synchronously abort or close their owning session.
           if (job.options.signal?.aborted || job.session.closed) {
             this.settle(job, {

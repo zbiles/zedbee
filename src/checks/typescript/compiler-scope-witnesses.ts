@@ -6,7 +6,10 @@ import {
   type DependencyCaptureContext,
 } from "../../cache/captured-dependencies.js";
 import type { DependencyInputManifest } from "../../cache/dependency-inputs.js";
-import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  captureSnapshotRegistry,
+  type SnapshotRegistry,
+} from "../../inspection/snapshot-registry.js";
 import { readContainedFile } from "../../inspection/read-json.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 
@@ -82,6 +85,40 @@ export async function readProofInput(
   signal?.throwIfAborted();
   return text;
 }
+async function witnessHolds(
+  registry: SnapshotRegistry,
+  witness: Witness,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (witness.digest === undefined) {
+    const entry = registry.resolve(witness.path);
+    return witness.directory
+      ? entry?.targetKind === "directory"
+      : entry === undefined;
+  }
+  const text = await readContainedFile(registry, witness.path, {
+    maxBytes: witness.limit,
+  });
+  signal?.throwIfAborted();
+  return proofDigest(text) === witness.digest;
+}
+async function rootWitnessesHold(
+  root: string,
+  witnesses: readonly Witness[],
+  signal?: AbortSignal,
+): Promise<boolean> {
+  signal?.throwIfAborted();
+  const registry = await captureSnapshotRegistry(
+    root,
+    witnesses.map((witness) => witness.path),
+  );
+  signal?.throwIfAborted();
+  if (registry.entries().some((e) => e.kind === "symlink")) return false;
+  for (const witness of witnesses) {
+    if (!(await witnessHolds(registry, witness, signal))) return false;
+  }
+  return true;
+}
 export async function validCompilerProof(
   record: ProofRecord,
   signal?: AbortSignal,
@@ -89,25 +126,25 @@ export async function validCompilerProof(
   signal?.throwIfAborted();
   if (!CapturedDependencies.validate(record.manifest, record.context))
     return false;
-  for (const w of record.witnesses) {
-    if (w.digest === undefined) {
-      const registry = await captureSnapshotRegistry(w.root, [w.path]);
-      signal?.throwIfAborted();
-      if (registry.entries().some((e) => e.kind === "symlink")) return false;
-      if (
-        w.directory
-          ? registry.resolve(w.path)?.targetKind !== "directory"
-          : registry.resolve(w.path) !== undefined
-      )
-        return false;
-    } else if (
-      proofDigest(await readProofInput(w.root, w.path, w.limit, signal)) !==
-      w.digest
-    )
-      return false;
+  const byRoot = new Map<string, Witness[]>();
+  for (const witness of record.witnesses) {
+    const group = byRoot.get(witness.root);
+    if (group === undefined) byRoot.set(witness.root, [witness]);
+    else group.push(witness);
+  }
+  for (const [root, witnesses] of byRoot) {
+    if (!(await rootWitnessesHold(root, witnesses, signal))) return false;
   }
   signal?.throwIfAborted();
   return true;
+}
+function comparisonInputsChanged(): CheckIncompleteError {
+  return new CheckIncompleteError({
+    code: "COMPARISON_INPUTS_CHANGED",
+    message: "Inputs used to select compiler checks changed during this scan.",
+    remediation:
+      "Wait for dependency installation or file updates to finish, then rerun the scan.",
+  });
 }
 /** Required after analyzer work, before allowing any result based on a skip. */
 export async function validateCompilerScopeProofs(
@@ -116,14 +153,7 @@ export async function validateCompilerScopeProofs(
   const signal = context.signal;
   const owner = owners.get(context.targetInspection);
   if (!owner) return;
-  if (owner.invalidated)
-    throw new CheckIncompleteError({
-      code: "COMPARISON_INPUTS_CHANGED",
-      message:
-        "Inputs used to select compiler checks changed during this scan.",
-      remediation:
-        "Wait for dependency installation or file updates to finish, then rerun the scan.",
-    });
+  if (owner.invalidated) throw comparisonInputsChanged();
   for (const record of owner.records.values()) {
     let verified = false;
     try {
@@ -131,14 +161,7 @@ export async function validateCompilerScopeProofs(
     } catch {
       signal?.throwIfAborted();
     }
-    if (!verified)
-      throw new CheckIncompleteError({
-        code: "COMPARISON_INPUTS_CHANGED",
-        message:
-          "Inputs used to select compiler checks changed during this scan.",
-        remediation:
-          "Wait for dependency installation or file updates to finish, then rerun the scan.",
-      });
+    if (!verified) throw comparisonInputsChanged();
   }
 }
 export function releaseCompilerScopeProofs(context: InspectionContext): void {

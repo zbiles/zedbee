@@ -1,5 +1,6 @@
 import { repositoryConfigPath } from "./selection-path.js";
-import { access, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, open } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser";
 import type { GitClient } from "../git/client.js";
@@ -11,8 +12,7 @@ import {
   type CheckId,
   type ResolvedConfig,
 } from "./schema.js";
-import { DEFAULT_FORMATTING_SETTINGS } from "../checks/prettier/settings.js";
-import { DEFAULT_DUPLICATION_SETTINGS } from "../checks/duplication/settings.js";
+import { managedPolicyKeys, managedSettingKeys } from "./settings-registry.js";
 
 const CONFIG_FILENAME = ".zedbeerc.jsonc";
 const UNSUPPORTED_CONFIG_FILENAMES = [
@@ -61,8 +61,12 @@ async function exists(path: string): Promise<boolean> {
   try {
     await access(path);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return false;
+    }
+    throw error;
   }
 }
 
@@ -121,30 +125,11 @@ function issuePath(issue: ValidationIssue): string {
 }
 
 function policyFields(checkId: CheckId): readonly string[] {
-  switch (checkId) {
-    case "formatting":
-      return ["severity", "when", "engine", "settings", "generated"];
-    case "duplication":
-      return ["severity", "when", "threshold", "settings"];
-    case "cyclomaticComplexity":
-    case "readabilityComplexity":
-      return ["severity", "when", "max", "blockWorsening"];
-    case "vulnerabilities":
-      return ["severity", "when", "onUnavailable"];
-    default:
-      return ["severity", "when"];
-  }
+  return managedPolicyKeys(checkId);
 }
 
 function settingFields(checkId: CheckId): readonly string[] {
-  switch (checkId) {
-    case "formatting":
-      return Object.keys(DEFAULT_FORMATTING_SETTINGS);
-    case "duplication":
-      return Object.keys(DEFAULT_DUPLICATION_SETTINGS);
-    default:
-      return [];
-  }
+  return managedSettingKeys(checkId);
 }
 
 function checkPath(
@@ -199,6 +184,47 @@ function invalidConfigMessage(
   return `Invalid Zedbee configuration at ${basename(configPath)} (${path}).${help}`;
 }
 
+export async function readWorkingTreeConfig(
+  configPath: string,
+): Promise<string> {
+  const tooLarge = () =>
+    new ConfigError(
+      "CONFIG_INVALID",
+      `Zedbee configuration ${basename(configPath)} is too large or could not be read safely from the working tree.`,
+      configPath,
+    );
+  const handle = await open(
+    configPath,
+    constants.O_RDONLY | constants.O_NONBLOCK,
+  );
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size > CONFIG_CONTENT_LIMIT_BYTES) {
+      throw tooLarge();
+    }
+    const buffer = Buffer.allocUnsafe(CONFIG_CONTENT_LIMIT_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        length,
+        buffer.length - length,
+        length,
+      );
+      if (bytesRead === 0) {
+        break;
+      }
+      length += bytesRead;
+    }
+    if (length > CONFIG_CONTENT_LIMIT_BYTES) {
+      throw tooLarge();
+    }
+    return buffer.toString("utf8", 0, length);
+  } finally {
+    await handle.close();
+  }
+}
+
 export async function loadConfig(
   repositoryRoot: string,
   explicitConfigPath?: string,
@@ -213,29 +239,48 @@ export async function loadConfig(
         configPath,
       );
     }
-    for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
-      const unsupportedPath = join(repositoryRoot, filename);
-      if (await exists(unsupportedPath)) {
-        throw new ConfigError(
-          "CONFIG_UNSUPPORTED",
-          `Unsupported Zedbee configuration file ${filename}; use ${CONFIG_FILENAME}.`,
-          unsupportedPath,
-        );
-      }
+    const present = await Promise.all(
+      UNSUPPORTED_CONFIG_FILENAMES.map((filename) =>
+        exists(join(repositoryRoot, filename)),
+      ),
+    );
+    const unsupportedIndex = present.indexOf(true);
+    if (unsupportedIndex !== -1) {
+      throw unsupportedGitConfig(
+        repositoryRoot,
+        UNSUPPORTED_CONFIG_FILENAMES[unsupportedIndex]!,
+      );
     }
     return resolveConfig(undefined);
   }
 
-  const source = await readFile(configPath, "utf8");
+  const source = await readWorkingTreeConfig(configPath);
   return parseConfigSource(source, configPath);
+}
+
+function parseJsonc(
+  source: string,
+  configPath: string,
+  parseErrors: ParseError[],
+): unknown {
+  try {
+    return parse(source, parseErrors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+    });
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Invalid Zedbee configuration at ${basename(configPath)}: values are nested too deeply.`,
+      configPath,
+    );
+  }
 }
 
 function parseConfigSource(source: string, configPath: string): ResolvedConfig {
   const parseErrors: ParseError[] = [];
-  const value: unknown = parse(source, parseErrors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
+  const value: unknown = parseJsonc(source, configPath, parseErrors);
 
   const firstParseError = parseErrors[0];
   if (firstParseError !== undefined) {
@@ -293,21 +338,13 @@ function parseIntentToAddPaths(
   while (remaining !== "") {
     const pathEnd = remaining.indexOf("\0");
     if (pathEnd === -1) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-        configPath,
-      );
+      throw unreadableGitConfig(configPath, "the Git index");
     }
     const path = remaining.slice(0, pathEnd);
     const metadata = remaining.slice(pathEnd + 1);
     const match = INDEX_DEBUG_METADATA.exec(metadata);
     if (match === null) {
-      throw new ConfigError(
-        "CONFIG_INVALID",
-        `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-        configPath,
-      );
+      throw unreadableGitConfig(configPath, "the Git index");
     }
     if ((Number.parseInt(match[1]!, 16) & INTENT_TO_ADD_FLAG) !== 0) {
       paths.add(path);
@@ -327,11 +364,7 @@ function parseIndexEntries(output: string, configPath: string): IndexEntry[] {
       const path = separator === -1 ? "" : record.slice(separator + 1);
       const match = /^(\d{6}) ([0-9a-f]+) ([0-3])$/u.exec(header);
       if (match === null || path === "") {
-        throw new ConfigError(
-          "CONFIG_INVALID",
-          `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-          configPath,
-        );
+        throw unreadableGitConfig(configPath, "the Git index");
       }
       return {
         mode: match[1]!,
@@ -397,11 +430,7 @@ function singleRegularEntry(
 function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
   if (output === "") return [];
   if (!output.endsWith("\0")) {
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the target Git commit");
   }
   return output
     .slice(0, -1)
@@ -414,11 +443,7 @@ function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
         header,
       );
       if (match === null || path === "") {
-        throw new ConfigError(
-          "CONFIG_INVALID",
-          `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-          configPath,
-        );
+        throw unreadableGitConfig(configPath, "the target Git commit");
       }
       return {
         mode: match[1]!,
@@ -427,28 +452,6 @@ function parseTreeEntries(output: string, configPath: string): TreeEntry[] {
         path,
       };
     });
-}
-
-function singleTreeEntry(
-  output: string,
-  repositoryPath: string,
-  configPath: string,
-): TreeEntry | undefined {
-  const entries = parseTreeEntries(output, configPath);
-  const entry = entries[0];
-  if (entries.length === 0) return undefined;
-  if (
-    entries.length !== 1 ||
-    entry === undefined ||
-    entry.path !== repositoryPath
-  ) {
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
-  }
-  return entry;
 }
 
 function singleRegularTreeEntry(
@@ -468,17 +471,23 @@ function singleRegularTreeEntry(
   return entry;
 }
 
-async function targetTreeEntry(
+async function targetTreeEntries(
   git: GitClient,
   targetCommit: string,
-  repositoryPath: string,
+  repositoryPaths: readonly string[],
   configPath: string,
   signal?: AbortSignal,
-): Promise<TreeEntry | undefined> {
+): Promise<ReadonlyMap<string, TreeEntry>> {
   let result: Awaited<ReturnType<GitClient["run"]>>;
   try {
     result = await git.run(
-      ["ls-tree", "-z", targetCommit, "--", literalPathspec(repositoryPath)],
+      [
+        "ls-tree",
+        "-z",
+        targetCommit,
+        "--",
+        ...repositoryPaths.map(literalPathspec),
+      ],
       {
         maxOutputBytes: INDEX_QUERY_OUTPUT_LIMIT_BYTES,
         ...(signal === undefined ? {} : { signal }),
@@ -486,13 +495,16 @@ async function targetTreeEntry(
     );
   } catch (error) {
     if (signal?.aborted === true || isGitResourceFailure(error)) throw error;
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the target Git commit.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the target Git commit");
   }
-  return singleTreeEntry(result.stdout, repositoryPath, configPath);
+  const entries = new Map<string, TreeEntry>();
+  for (const entry of parseTreeEntries(result.stdout, configPath)) {
+    if (!repositoryPaths.includes(entry.path) || entries.has(entry.path)) {
+      throw unreadableGitConfig(configPath, "the target Git commit");
+    }
+    entries.set(entry.path, entry);
+  }
+  return entries;
 }
 
 function selectGitConfigPath(
@@ -534,6 +546,17 @@ async function readGitConfigBlob(
     );
   }
   return parseConfigSource(source.stdout, configPath);
+}
+
+function unreadableGitConfig(
+  configPath: string,
+  location: "the Git index" | "the target Git commit",
+): ConfigError {
+  return new ConfigError(
+    "CONFIG_INVALID",
+    `Zedbee could not safely read ${basename(configPath)} from ${location}.`,
+    configPath,
+  );
 }
 
 function missingExplicitGitConfig(
@@ -583,11 +606,7 @@ export async function loadConfigFromIndex(
     ) {
       throw error;
     }
-    throw new ConfigError(
-      "CONFIG_INVALID",
-      `Zedbee could not safely read ${basename(configPath)} from the Git index.`,
-      configPath,
-    );
+    throw unreadableGitConfig(configPath, "the Git index");
   }
   const selectedEntries = entries.get(repositoryPath) ?? [];
   if (selectedEntries.length === 0) {
@@ -624,28 +643,27 @@ export async function loadConfigFromCommit(
     explicitConfigPath,
   );
 
-  const entry = await targetTreeEntry(
+  const candidatePaths =
+    explicitConfigPath === undefined
+      ? [CONFIG_FILENAME, ...UNSUPPORTED_CONFIG_FILENAMES]
+      : [repositoryPath];
+  const entries = await targetTreeEntries(
     git,
     targetCommit,
-    repositoryPath,
+    candidatePaths,
     configPath,
     signal,
   );
+  const entry = entries.get(repositoryPath);
   if (entry === undefined) {
     if (explicitConfigPath !== undefined) {
       throw missingExplicitGitConfig(configPath, "the target Git commit");
     }
-    for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
-      const unsupported = await targetTreeEntry(
-        git,
-        targetCommit,
-        filename,
-        configPath,
-        signal,
-      );
-      if (unsupported !== undefined) {
-        throw unsupportedGitConfig(repositoryRoot, filename);
-      }
+    const unsupported = UNSUPPORTED_CONFIG_FILENAMES.find((filename) =>
+      entries.has(filename),
+    );
+    if (unsupported !== undefined) {
+      throw unsupportedGitConfig(repositoryRoot, unsupported);
     }
     return resolveConfig(undefined);
   }

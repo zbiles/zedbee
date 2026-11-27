@@ -75,6 +75,17 @@ function overridePatternPreview(pattern: string): string {
   ).text;
 }
 
+function patternListPreview(patterns: readonly string[]): string {
+  const rendered = patterns
+    .slice(0, OVERRIDE_PATTERN_PREVIEW_COUNT)
+    .map(overridePatternPreview)
+    .join(", ");
+  const omitted = Math.max(0, patterns.length - OVERRIDE_PATTERN_PREVIEW_COUNT);
+  return omitted === 0
+    ? rendered
+    : `${rendered}, ... [truncated] (+${omitted} patterns)`;
+}
+
 export function configurationValueLine(
   key: string,
   value: EffectiveSettingDescription,
@@ -100,41 +111,25 @@ export function configurationOverrideLine(
   values: Readonly<Record<string, unknown>>,
   excludeFiles: readonly string[] = [],
 ): string {
-  const omitted = Math.max(0, files.length - OVERRIDE_PATTERN_PREVIEW_COUNT);
-  const renderedFiles = files
-    .slice(0, OVERRIDE_PATTERN_PREVIEW_COUNT)
-    .map(overridePatternPreview);
-  const filesPreview =
-    omitted === 0
-      ? renderedFiles.join(", ")
-      : `${renderedFiles.join(", ")}, ... [truncated] (+${omitted} patterns)`;
   const renderedValues = Object.entries(values)
     .map(([key, value]) => `${key}: ${terminalValuePreview(value)}`)
     .join(", ");
-  const excluded = excludeFiles
-    .slice(0, OVERRIDE_PATTERN_PREVIEW_COUNT)
-    .map(overridePatternPreview)
-    .join(", ");
-  const omittedExclusions = Math.max(
-    0,
-    excludeFiles.length - OVERRIDE_PATTERN_PREVIEW_COUNT,
-  );
   const exceptions =
     excludeFiles.length === 0
       ? ""
-      : ` except ${excluded}${omittedExclusions ? `, ... [truncated] (+${omittedExclusions} patterns)` : ""}`;
-  return `Override ${filesPreview}${exceptions}: ${renderedValues}`;
+      : ` except ${patternListPreview(excludeFiles)}`;
+  return `Override ${patternListPreview(files)}${exceptions}: ${renderedValues}`;
 }
 
 export function configurationTextLines(
   configuration: CheckConfigurationDescription,
   effectiveSettingsPrefix?: string,
 ): readonly string[] {
+  const overrides = configuration.overrides.map(
+    ({ files, values, excludeFiles }) =>
+      configurationOverrideLine(files, values, excludeFiles),
+  );
   if (effectiveSettingsPrefix !== undefined) {
-    const overrides = configuration.overrides.map(
-      ({ files, values, excludeFiles }) =>
-        configurationOverrideLine(files, values, excludeFiles),
-    );
     return [
       configurationSummary(configuration),
       "Effective settings:",
@@ -145,10 +140,6 @@ export function configurationTextLines(
   const customizedValues = Object.entries(configuration.values)
     .filter(([, value]) => value.customized)
     .map(([key, value]) => configurationValueLine(key, value));
-  const overrides = configuration.overrides.map(
-    ({ files, values, excludeFiles }) =>
-      configurationOverrideLine(files, values, excludeFiles),
-  );
   return [
     configurationSummary(configuration),
     ...customizedValues,

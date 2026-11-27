@@ -22,6 +22,7 @@ import {
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import {
   discoverProjectPrettier,
+  EXECUTABLE_CONFIG_EXTENSIONS as EXECUTABLE_EXTENSIONS,
   type ProjectPrettierDiscovery,
 } from "./prettier-discovery.js";
 import { editorConfigImport } from "./prettier-editorconfig.js";
@@ -82,15 +83,6 @@ function configPrecedence(version: string): readonly string[] {
   return LEGACY_CONFIG_PRECEDENCE;
 }
 
-const EXECUTABLE_EXTENSIONS = new Set([
-  ".js",
-  ".cjs",
-  ".mjs",
-  ".ts",
-  ".cts",
-  ".mts",
-]);
-
 export interface PrettierSettingsImportPreview {
   readonly pathExclusions?: readonly PathExclusion[];
   readonly settings: Partial<FormattingSettings>;
@@ -117,7 +109,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-async function readPackagePrettierValue(
+const configValueCache = new WeakMap<
+  SnapshotRegistry,
+  Map<string, Promise<unknown>>
+>();
+
+/** One registry is one captured tree, so each file is read and parsed once. */
+function cachedConfigValue(
+  registry: SnapshotRegistry,
+  key: string,
+  load: () => Promise<unknown>,
+): Promise<unknown> {
+  let entries = configValueCache.get(registry);
+  if (entries === undefined) {
+    entries = new Map();
+    configValueCache.set(registry, entries);
+  }
+  let value = entries.get(key);
+  if (value === undefined) {
+    value = load();
+    entries.set(key, value);
+  }
+  return value;
+}
+
+async function loadPackagePrettierValue(
   registry: SnapshotRegistry,
   path: string,
 ): Promise<unknown> {
@@ -132,7 +148,16 @@ async function readPackagePrettierValue(
   return isRecord(manifest) ? manifest.prettier : undefined;
 }
 
-async function readConfigValue(
+async function readPackagePrettierValue(
+  registry: SnapshotRegistry,
+  path: string,
+): Promise<unknown> {
+  return cachedConfigValue(registry, `package:${path}`, () =>
+    loadPackagePrettierValue(registry, path),
+  );
+}
+
+async function loadConfigValue(
   registry: SnapshotRegistry,
   repositoryPath: string,
 ): Promise<unknown> {
@@ -152,6 +177,28 @@ async function readConfigValue(
   } catch {
     return parseYaml(contents) as unknown;
   }
+}
+
+async function readConfigValue(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+): Promise<unknown> {
+  return cachedConfigValue(registry, `config:${repositoryPath}`, () =>
+    loadConfigValue(registry, repositoryPath),
+  );
+}
+
+function isPackageManifestConfig(path: string): boolean {
+  return ["package.json", "package.yaml"].includes(posix.basename(path));
+}
+
+async function readPrettierConfigData(
+  registry: SnapshotRegistry,
+  path: string,
+): Promise<unknown> {
+  return isPackageManifestConfig(path)
+    ? readPackagePrettierValue(registry, path)
+    : readConfigValue(registry, path);
 }
 
 function patternList(value: unknown): readonly string[] | undefined {
@@ -459,11 +506,7 @@ async function loadProjectConfig(
     };
   } else {
     try {
-      value = ["package.json", "package.yaml"].includes(
-        posix.basename(configPath),
-      )
-        ? await readPackagePrettierValue(registry, configPath)
-        : await readConfigValue(registry, configPath);
+      value = await readPrettierConfigData(registry, configPath);
     } catch {
       limitations.push(
         `The Prettier configuration ${configPath} could not be parsed as data.`,
@@ -477,9 +520,7 @@ async function loadProjectConfig(
       };
     }
     if (typeof value === "string") {
-      const context = ["package.json", "package.yaml"].includes(
-        posix.basename(configPath),
-      )
+      const context = isPackageManifestConfig(configPath)
         ? `${posix.basename(configPath)} Prettier field in ${configPath}`
         : `Prettier configuration ${configPath}`;
       limitations.push(
@@ -622,11 +663,7 @@ export async function previewPrettierSettingsImport(
         });
       } else {
         try {
-          const value = ["package.json", "package.yaml"].includes(
-            posix.basename(path),
-          )
-            ? await readPackagePrettierValue(registry, path)
-            : await readConfigValue(registry, path);
+          const value = await readPrettierConfigData(registry, path);
           if (typeof value === "string")
             sharedConfigs.push({
               projectRoot: discovery.projectRoot,

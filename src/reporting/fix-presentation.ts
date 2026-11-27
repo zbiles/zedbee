@@ -7,12 +7,16 @@ import {
   FIXABLE_CHECK_IDS,
   FIX_PLAN_FILE_SUMMARY_LIMIT,
   type FixPlan,
+  type FixPlanCheckIssue,
   type FixResult,
 } from "../fixes/types.js";
 import { displayProse } from "../core/display-text.js";
 import { opaqueTemporaryReportPath } from "./report-path.js";
 import type { ReportMaintenanceWarning } from "./temporary-reports.js";
-import { terminalText } from "../renderers/terminal-style.js";
+import {
+  terminalText,
+  type TerminalTextTone,
+} from "../renderers/terminal-style.js";
 export const COMPACT_DETAIL_LIMIT = 25;
 function safeText(value: unknown, field: string): string {
   try {
@@ -20,6 +24,33 @@ function safeText(value: unknown, field: string): string {
   } catch {
     return "unavailable";
   }
+}
+
+function checkIssueLines(
+  issue: FixPlanCheckIssue,
+): readonly { readonly text: string; readonly tone: TerminalTextTone }[] {
+  return [
+    {
+      text: `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+      tone: "secondary",
+    },
+    ...(issue.path === undefined
+      ? []
+      : [
+          {
+            text: `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+            tone: "secondary" as const,
+          },
+        ]),
+    ...(issue.remediation === undefined
+      ? []
+      : [
+          {
+            text: `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+            tone: "reason" as const,
+          },
+        ]),
+  ];
 }
 
 export function renderPlanText(
@@ -68,29 +99,9 @@ export function renderPlanText(
     );
     for (const issue of check.issues) {
       lines.push(
-        terminalText(
-          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
-          "secondary",
-          color,
+        ...checkIssueLines(issue).map((line) =>
+          terminalText(line.text, line.tone, color),
         ),
-        ...(issue.path === undefined
-          ? []
-          : [
-              terminalText(
-                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
-                "secondary",
-                color,
-              ),
-            ]),
-        ...(issue.remediation === undefined
-          ? []
-          : [
-              terminalText(
-                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
-                "reason",
-                color,
-              ),
-            ]),
       );
     }
   }
@@ -263,19 +274,7 @@ export function renderResultText(
     } else if (check.status === "incomplete") {
       lines.push(`${check.checkId}: INCOMPLETE`);
       for (const issue of check.issues) {
-        lines.push(
-          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
-          ...(issue.path === undefined
-            ? []
-            : [
-                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
-              ]),
-          ...(issue.remediation === undefined
-            ? []
-            : [
-                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
-              ]),
-        );
+        lines.push(...checkIssueLines(issue).map((line) => line.text));
       }
     } else if (check.status === "not-applicable") {
       lines.push(

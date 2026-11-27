@@ -60,33 +60,34 @@ export function displayResultForPolicy(
   const checkId = CHECK_IDS.includes(sanitizedResult.checkId as CheckId)
     ? (sanitizedResult.checkId as CheckId)
     : undefined;
-  return sanitizeCheckResult({
+  return {
     ...sanitizedResult,
     findings: sanitizedResult.findings
       .filter((finding) => finding.attribution.staged)
       .flatMap((finding) => {
-        const pathExcluded =
+        const fileTarget =
           policyForFile !== undefined &&
           checkId !== undefined &&
-          finding.location?.file !== undefined &&
-          (policyForFile.pathExclusionsForFile?.(
-            checkId,
-            finding.location.file,
+          finding.location?.file !== undefined
+            ? { resolve: policyForFile, checkId, file: finding.location.file }
+            : undefined;
+        const pathExcluded =
+          fileTarget !== undefined &&
+          (fileTarget.resolve.pathExclusionsForFile?.(
+            fileTarget.checkId,
+            fileTarget.file,
             "target",
           ).length ?? 0) > 0;
         if (pathExcluded) return [];
         const filePolicy =
-          policyForFile !== undefined &&
-          checkId !== undefined &&
-          checkId !== "duplication" &&
-          finding.location?.file !== undefined
-            ? policyForFile(checkId, finding.location.file, "target")
+          fileTarget !== undefined && fileTarget.checkId !== "duplication"
+            ? fileTarget.resolve(fileTarget.checkId, fileTarget.file, "target")
             : policy;
         if (filePolicy.severity === "off") return [];
         const applied = applySeverity(finding, filePolicy);
         return applied === undefined ? [] : [applied];
       }),
-  });
+  };
 }
 
 export function evaluatePolicy(

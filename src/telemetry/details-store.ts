@@ -7,14 +7,15 @@ import {
   mkdirSync,
   opendirSync,
   readFileSync,
-  writeFileSync,
-  renameSync,
   unlinkSync,
   type Stats,
 } from "node:fs";
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import {
+  hasPrivateOwnership,
+  writePrivateFileAtomically,
+} from "./private-file.js";
 import {
   scanDetailsSchema,
   performanceTelemetrySchema,
@@ -25,6 +26,11 @@ import {
   type TelemetryEvent,
   type TelemetryV1Event,
 } from "./schema.js";
+import {
+  TELEMETRY_MAX_QUEUE_BYTES,
+  TELEMETRY_MAX_QUEUED_EVENTS,
+  TELEMETRY_RETENTION_MS,
+} from "./retention.js";
 
 const envelopeSchema = z.strictObject({
   event_id: z.string().uuid(),
@@ -36,11 +42,7 @@ const envelopeSchema = z.strictObject({
 const filename =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(?:json|tmp)$/u;
 function owned(stat: Stats): void {
-  if (
-    stat.isSymbolicLink() ||
-    (process.platform !== "win32" &&
-      (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0))
-  )
+  if (stat.isSymbolicLink() || !hasPrivateOwnership(stat))
     throw Error("Unsafe telemetry details permissions");
 }
 export class TelemetryDetailsStore {
@@ -100,18 +102,11 @@ export class TelemetryDetailsStore {
     }
     if (!this.directoryReady(true))
       throw Error("Details directory unavailable");
-    const temporary = join(this.path, `${randomUUID()}.tmp`);
-    try {
-      writeFileSync(temporary, JSON.stringify(envelope), {
-        flag: "wx",
-        mode: 0o600,
-      });
-      renameSync(temporary, join(this.path, `${event.event_id}.json`));
-    } finally {
-      try {
-        unlinkSync(temporary);
-      } catch {}
-    }
+    writePrivateFileAtomically(
+      this.path,
+      join(this.path, `${event.event_id}.json`),
+      JSON.stringify(envelope),
+    );
     this.prune();
   }
   read(
@@ -176,6 +171,13 @@ export class TelemetryDetailsStore {
     }
     return entries;
   }
+  private unlinkEntry(name: string): void {
+    try {
+      unlinkSync(join(this.path, name));
+    } catch {
+      /* A vanished or busy entry cannot stop the rest of the cleanup. */
+    }
+  }
   remove(ids: readonly string[]): void {
     const names = new Set(
       ids
@@ -184,13 +186,12 @@ export class TelemetryDetailsStore {
     );
     try {
       for (const entry of this.entries())
-        if (names.has(entry.name)) unlinkSync(join(this.path, entry.name));
+        if (names.has(entry.name)) this.unlinkEntry(entry.name);
     } catch {}
   }
   clear(): void {
     try {
-      for (const entry of this.entries())
-        unlinkSync(join(this.path, entry.name));
+      for (const entry of this.entries()) this.unlinkEntry(entry.name);
     } catch {}
   }
   prune(pendingIds?: readonly string[]): void {
@@ -209,10 +210,12 @@ export class TelemetryDetailsStore {
           !pending.has(entry.name.slice(0, -5)) &&
           age > 60_000;
         if (
-          age > 7 * 86_400_000 ||
+          age > TELEMETRY_RETENTION_MS ||
           (temporary && age > 60_000) ||
           (!temporary &&
-            (orphan || count >= 100 || bytes + entry.stat.size > 256 * 1024))
+            (orphan ||
+              count >= TELEMETRY_MAX_QUEUED_EVENTS ||
+              bytes + entry.stat.size > TELEMETRY_MAX_QUEUE_BYTES))
         ) {
           unlinkSync(join(this.path, entry.name));
         } else if (!temporary) {

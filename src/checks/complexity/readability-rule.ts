@@ -1,10 +1,24 @@
 import { Linter, type Rule } from "eslint";
 
+import { parseReadabilityScore } from "./metric-message.js";
+
 const functionTypes = new Set([
   "ArrowFunctionExpression",
   "FunctionDeclaration",
   "FunctionExpression",
 ]);
+
+const decisionTypes = [
+  "IfStatement",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "SwitchStatement",
+  "CatchClause",
+  "ConditionalExpression",
+] as const;
 
 interface Frame {
   readonly node: Rule.Node;
@@ -55,7 +69,7 @@ export const readabilityComplexityRule: Rule.RuleModule = {
       }
     };
 
-    return {
+    const listeners: Rule.RuleListener = {
       onCodePathStart(_codePath, node) {
         if (isFunction(node)) frames.push({ node, score: 0, nesting: 0 });
       },
@@ -71,26 +85,14 @@ export const readabilityComplexityRule: Rule.RuleModule = {
           data: { score: frame.score },
         });
       },
-      IfStatement: enterDecision,
-      "IfStatement:exit": exitDecision,
-      ForStatement: enterDecision,
-      "ForStatement:exit": exitDecision,
-      ForInStatement: enterDecision,
-      "ForInStatement:exit": exitDecision,
-      ForOfStatement: enterDecision,
-      "ForOfStatement:exit": exitDecision,
-      WhileStatement: enterDecision,
-      "WhileStatement:exit": exitDecision,
-      DoWhileStatement: enterDecision,
-      "DoWhileStatement:exit": exitDecision,
-      SwitchStatement: enterDecision,
-      "SwitchStatement:exit": exitDecision,
-      CatchClause: enterDecision,
-      "CatchClause:exit": exitDecision,
-      ConditionalExpression: enterDecision,
-      "ConditionalExpression:exit": exitDecision,
       LogicalExpression: logical,
     };
+
+    for (const type of decisionTypes) {
+      listeners[type] = enterDecision;
+      listeners[`${type}:exit`] = exitDecision;
+    }
+    return listeners;
   },
 };
 
@@ -106,8 +108,8 @@ export function scoreReadabilityComplexities(source: string): number[] {
     },
   ]);
   return messages.flatMap((message) => {
-    const matched = /^zedbee-readability:(\d+)$/u.exec(message.message);
-    return matched === null ? [] : [Number(matched[1])];
+    const score = parseReadabilityScore(message.message);
+    return score === undefined ? [] : [score];
   });
 }
 

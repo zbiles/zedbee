@@ -5,6 +5,7 @@ import { resolveConfig } from "../config/profiles.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { prettierOptions } from "../checks/prettier/settings.js";
 import { initFileChange } from "./recommend.js";
+import { INIT_JSONC_EDIT_OPTIONS } from "./types.js";
 import type { InitProposal } from "./types.js";
 
 /** Format inert setup data before binding the review, hashes, and writes. */
@@ -44,9 +45,7 @@ export async function formatInitProposal(
               },
               generated: "prettier-engine",
             },
-            {
-              formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-            },
+            INIT_JSONC_EDIT_OPTIONS,
           ),
         );
       }

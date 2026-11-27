@@ -57,12 +57,32 @@ export function hasHookExecutePermission(mode: number): boolean {
   return process.platform === "win32" || (mode & 0o111) !== 0;
 }
 
+export interface HookFile {
+  readonly contents: string;
+  readonly mode: number;
+}
+
+export async function readRegularHookFile(
+  path: string,
+  unsafeMessage: string,
+): Promise<HookFile | undefined> {
+  try {
+    const state = await lstat(path);
+    if (!state.isFile() || state.isSymbolicLink())
+      throw new Error(unsafeMessage);
+    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 export async function hookFile(
   root: string,
   relativePath: string,
-): Promise<{ contents: string; mode: number } | undefined> {
+): Promise<HookFile | undefined> {
+  const path = join(root, relativePath);
   try {
-    const path = join(root, relativePath);
     let ancestor = resolve(root);
     for (const part of relative(resolve(root), dirname(path))
       .split(sep)
@@ -72,14 +92,11 @@ export async function hookFile(
       if (state.isSymbolicLink() || !state.isDirectory())
         throw new Error("Unsafe hook directory.");
     }
-    const state = await lstat(path);
-    if (!state.isFile() || state.isSymbolicLink())
-      throw new Error("Unsafe hook file.");
-    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+  return readRegularHookFile(path, "Unsafe hook file.");
 }
 
 export async function hooksPathValue(root: string): Promise<string | null> {

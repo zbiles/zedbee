@@ -31,19 +31,19 @@ import {
   TelemetryDetailsStore,
   enrichTelemetryEvent,
 } from "./details-store.js";
+const TELEMETRY_SUMMARY_KEYS = [
+  "empty_input",
+  "check_ids",
+  "enabled_check_ids",
+  "finding_count",
+  "applied_count",
+  "skipped_count",
+  "profile",
+  "hook",
+  "outcome",
+] as const;
 export type TelemetrySummary = Partial<
-  Pick<
-    TelemetryEvent,
-    | "empty_input"
-    | "check_ids"
-    | "enabled_check_ids"
-    | "finding_count"
-    | "applied_count"
-    | "skipped_count"
-    | "profile"
-    | "hook"
-    | "outcome"
-  >
+  Pick<TelemetryEvent, (typeof TELEMETRY_SUMMARY_KEYS)[number]>
 >;
 export interface CommandTelemetry {
   observeRepository?(root: string, cwd: string): void;
@@ -241,17 +241,7 @@ function createTelemetry(options: StartTelemetryOptions): CommandTelemetry {
     summary(value) {
       // Only explicit metadata fields cross this boundary, even for untyped callers.
       try {
-        for (const key of [
-          "empty_input",
-          "check_ids",
-          "enabled_check_ids",
-          "finding_count",
-          "applied_count",
-          "skipped_count",
-          "profile",
-          "hook",
-          "outcome",
-        ] as const) {
+        for (const key of TELEMETRY_SUMMARY_KEYS) {
           if (value[key] !== undefined)
             Object.assign(summary, { [key]: value[key] });
         }

@@ -71,6 +71,18 @@ describe("loadConfig", () => {
     });
   });
 
+  it.skipIf(process.platform === "win32")(
+    "surfaces ELOOP instead of treating a symlink loop as no config",
+    async () => {
+      const root = await createRepositoryRoot();
+      await symlink(".zedbeerc.jsonc", join(root, ".zedbeerc.jsonc"));
+
+      await expect(loadConfig(root)).rejects.toMatchObject({
+        code: "ELOOP",
+      });
+    },
+  );
+
   it("reports project ESLint policy contradictions as actionable configuration errors", async () => {
     const root = await createRepositoryRoot();
     await writeFile(

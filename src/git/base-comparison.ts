@@ -65,21 +65,25 @@ export async function resolveBaseComparison(
     fail("BASE_REF_INVALID");
   }
 
-  const baseOutput = await runRevisionCommand(
-    git,
-    ["rev-parse", "--verify", "--end-of-options", `${requestedBase}^{commit}`],
-    signal,
-  );
-  if (baseOutput.exitCode !== 0) fail("BASE_REF_UNAVAILABLE");
-  const baseTip = revision(baseOutput.stdout);
-
-  const targetOutput = await runRevisionCommand(
-    git,
-    ["rev-parse", "--verify", "HEAD^{commit}"],
-    signal,
-  );
-  if (targetOutput.exitCode !== 0) fail("TARGET_COMMIT_UNAVAILABLE");
-  const targetCommit = revision(targetOutput.stdout);
+  const [baseOutput, targetOutput] = await Promise.allSettled([
+    runRevisionCommand(
+      git,
+      [
+        "rev-parse",
+        "--verify",
+        "--end-of-options",
+        `${requestedBase}^{commit}`,
+      ],
+      signal,
+    ),
+    runRevisionCommand(git, ["rev-parse", "--verify", "HEAD^{commit}"], signal),
+  ]);
+  if (baseOutput.status === "rejected") throw baseOutput.reason;
+  if (baseOutput.value.exitCode !== 0) fail("BASE_REF_UNAVAILABLE");
+  const baseTip = revision(baseOutput.value.stdout);
+  if (targetOutput.status === "rejected") throw targetOutput.reason;
+  if (targetOutput.value.exitCode !== 0) fail("TARGET_COMMIT_UNAVAILABLE");
+  const targetCommit = revision(targetOutput.value.stdout);
 
   const mergeOutput = await runRevisionCommand(
     git,

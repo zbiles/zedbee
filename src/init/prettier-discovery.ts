@@ -57,7 +57,7 @@ export const DATA_CONFIG_FILE_NAMES = [
 
 const DATA_CONFIG_FILES: readonly string[] = [...DATA_CONFIG_FILE_NAMES];
 
-const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
+export const EXECUTABLE_CONFIG_EXTENSIONS = new Set([
   ".js",
   ".cjs",
   ".mjs",

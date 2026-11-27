@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as ts from "typescript";
 import type { MetricEntitySpan } from "./entities.js";
 import type { ChangeSet } from "../git/change-set.js";
+import { entityIdentityPrefix } from "./source-identity.js";
 
 export interface SourceMoveFile {
   readonly source: string;
@@ -39,6 +40,16 @@ export const SOURCE_MOVE_LIMITS = Object.freeze({
   maxMilliseconds: 2_000,
 });
 
+/** Maps each renamed file's previous path to its new path. */
+export function renamedPaths(files: ChangeSet["files"]): Map<string, string> {
+  const renames = new Map<string, string>();
+  for (const file of files.values()) {
+    if (file.status === "renamed" && file.previousPath !== undefined)
+      renames.set(file.previousPath, file.path);
+  }
+  return renames;
+}
+
 /** Pure, bounded matching over selected, immutable captured sources only. */
 export function buildSourceMoveMap(input: {
   readonly baseline: Readonly<Record<string, SourceMoveFile>>;
@@ -58,14 +69,12 @@ export function buildSourceMoveMap(input: {
   });
   const beforePaths = new Set<string>();
   const afterPaths = new Set<string>();
-  const renames = new Map<string, string>();
   for (const file of input.changes.values()) {
     if (file.status !== "added")
       beforePaths.add(file.previousPath ?? file.path);
     if (file.status !== "deleted") afterPaths.add(file.path);
-    if (file.status === "renamed" && file.previousPath !== undefined)
-      renames.set(file.previousPath, file.path);
   }
+  const renames = renamedPaths(input.changes);
   const selected = (
     files: Readonly<Record<string, SourceMoveFile>>,
     paths: ReadonlySet<string>,
@@ -89,7 +98,9 @@ export function buildSourceMoveMap(input: {
   const keys = new Map<SourceMoveEntity, string>();
   const policies = new Map<SourceMoveEntity, string>();
   const payload = (entity: MetricEntitySpan["entity"]) =>
-    entity.identity.slice(`${entity.kind}:${entity.file}:`.length);
+    entity.identity.slice(
+      entityIdentityPrefix(entity.kind, entity.file).length,
+    );
   const collect = (files: typeof before): SourceMoveEntity[] =>
     files.flatMap(([file, value]) => {
       input.signal?.throwIfAborted();

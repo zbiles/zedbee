@@ -174,6 +174,20 @@ async function attribute(
   );
 }
 
+function projectFailureResult(
+  error: ProjectPrettierFailureError,
+  remediation: string,
+): CheckResult {
+  return incompleteResult({
+    checkId: "formatting",
+    durationMs: 0,
+    code: error.code,
+    message: error.message,
+    ...(error.failure.file === undefined ? {} : { path: error.failure.file }),
+    remediation,
+  });
+}
+
 async function runProjectFiles(
   context: CheckRunContext,
   files: readonly string[],
@@ -226,14 +240,10 @@ async function runProjectFiles(
       );
     } catch (error) {
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          remediation:
-            "Install a supported Prettier version in the project, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Install a supported Prettier version in the project, then retry.",
+        );
       }
       throw error;
     }
@@ -249,14 +259,10 @@ async function runProjectFiles(
       });
     } catch (error) {
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          remediation:
-            "Review the project Prettier installation and configuration, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Review the project Prettier installation and configuration, then retry.",
+        );
       }
       throw error;
     }
@@ -312,17 +318,10 @@ async function runProjectFiles(
     } catch (error) {
       if (context.signal.aborted) throw error;
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          ...(error.failure.file === undefined
-            ? {}
-            : { path: error.failure.file }),
-          remediation:
-            "Fix the project Prettier configuration or plugin, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Fix the project Prettier configuration or plugin, then retry.",
+        );
       }
       if (error instanceof ProjectFormattingSourceLimitError) {
         return incompleteResult({

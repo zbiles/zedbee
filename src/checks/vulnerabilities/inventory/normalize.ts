@@ -10,19 +10,26 @@ import {
 } from "./limits.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 
-export function validateLockfileInput(
-  contents: string,
-  repositoryPath: string,
-): string {
-  let lockfilePath: string;
+export function normalizeLockfilePath(repositoryPath: string): string {
   try {
-    lockfilePath = normalizeRepositoryRelativePath(repositoryPath);
+    return normalizeRepositoryRelativePath(repositoryPath);
   } catch {
     throw inventoryError(
       "LOCKFILE_NOT_DISCOVERED",
       "Zedbee refused a lockfile path outside the inspected snapshot.",
     );
   }
+}
+
+function lockfileLabel(formatLabel: string | undefined): string {
+  return formatLabel === undefined ? "lockfile" : `${formatLabel} lockfile`;
+}
+
+export function validateLockfileInput(
+  contents: string,
+  repositoryPath: string,
+): string {
+  const lockfilePath = normalizeLockfilePath(repositoryPath);
   if (Buffer.byteLength(contents, "utf8") > MAX_LOCKFILE_BYTES) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
@@ -32,7 +39,10 @@ export function validateLockfileInput(
   return lockfilePath;
 }
 
-export function validatePackageName(value: unknown): string {
+export function validatePackageName(
+  value: unknown,
+  formatLabel?: string,
+): string {
   if (
     typeof value !== "string" ||
     value.length === 0 ||
@@ -47,39 +57,45 @@ export function validatePackageName(value: unknown): string {
       typeof value === "string" && value.length > MAX_PACKAGE_NAME_LENGTH
         ? "LOCKFILE_LIMIT_EXCEEDED"
         : "LOCKFILE_INVALID",
-      "The lockfile contains an invalid package name.",
+      `The ${lockfileLabel(formatLabel)} contains an invalid package name.`,
     );
   }
   return value;
 }
 
-export function validateExactVersion(value: unknown): string {
+export function validateExactVersion(
+  value: unknown,
+  formatLabel?: string,
+): string {
   if (typeof value !== "string" || value.length === 0) {
     throw inventoryError(
       "LOCKFILE_VERSION_MISSING",
-      "The lockfile contains a package without an exact version.",
+      `The ${lockfileLabel(formatLabel)} contains a package without an exact version.`,
     );
   }
   if (value.length > MAX_PACKAGE_VERSION_LENGTH) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
-      "The lockfile contains an oversized package version.",
+      `The ${lockfileLabel(formatLabel)} contains an oversized package version.`,
     );
   }
   if (/[\s|]/u.test(value) || /^[~^<>=*]/u.test(value)) {
     throw inventoryError(
       "LOCKFILE_VERSION_INVALID",
-      "The lockfile contains a package version that is not exact.",
+      `The ${lockfileLabel(formatLabel)} contains a package version that is not exact.`,
     );
   }
   return value;
 }
 
-export function validateDependencyRecordCount(count: number): void {
+export function validateDependencyRecordCount(
+  count: number,
+  formatLabel?: string,
+): void {
   if (count > MAX_DEPENDENCY_RECORDS) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
-      "The lockfile contains too many dependency records.",
+      `The ${lockfileLabel(formatLabel)} contains too many dependency records.`,
     );
   }
 }
@@ -102,7 +118,7 @@ export function finalizeDependencyRecords(
         "The lockfile contains an oversized dependency path.",
       );
     }
-    dependencyPath?.forEach(validatePackageName);
+    dependencyPath?.forEach((name) => validatePackageName(name));
     const record = Object.freeze({
       ...candidate,
       name,

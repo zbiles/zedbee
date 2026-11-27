@@ -1,6 +1,7 @@
 import { memoizeCompilerDecision } from "./compiler-decision-cache.js";
 import {
   COMPILER_SOURCE,
+  TYPESCRIPT_SOURCE,
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
   isOrdinaryCompilerPath,
@@ -15,7 +16,6 @@ import type { WorkspaceInspection } from "../inspection/types.js";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const DATA = /\.jsonc?$/iu;
 
 export function hasTypeScriptInputs(workspace: WorkspaceInspection): boolean {

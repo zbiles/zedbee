@@ -50,7 +50,8 @@ import {
   padStartTerminalCells,
   terminalCellWidth,
   truncateTerminalCells,
-  wrapTerminalWords,
+  wrapLabeledTerminalWords,
+  wrapPrefixedTerminalWords as wrapWords,
 } from "./terminal-cells.js";
 
 export interface TextRendererOptions {
@@ -83,9 +84,9 @@ const PRIMARY_TEXT_HEADINGS = new Set([
   "COMPLETE REPORT",
 ]);
 
-const FINDING_TEXT_LABELS = new Set(
-  [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
-);
+const FINDING_TEXT_LABELS: readonly string[] = [
+  ...new Set([...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId))),
+];
 
 const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
 const FIX_CONTINUATION_PREFIX = " ".repeat("       Fix: ".length);
@@ -97,7 +98,7 @@ function textLineTone(line: string): TerminalTextTone {
   if (/^(?:Fix|Reason|Remediation): /u.test(trimmed)) return "reason";
   if (
     !line.startsWith(" ") &&
-    [...FINDING_TEXT_LABELS].some(
+    FINDING_TEXT_LABELS.some(
       (label) => line === label || line.startsWith(`${label}  `),
     )
   ) {
@@ -141,23 +142,13 @@ function styleFixExplanation(value: string): string {
     .join("");
 }
 
-function wrapWords(value: string, width: number, indent = ""): string[] {
-  const available = Math.max(1, width - terminalCellWidth(indent));
-  return wrapTerminalWords(value, available).map((line) => `${indent}${line}`);
-}
-
 function descriptionLines(
   label: "Issue" | "Fix" | "Attribution" | "Path",
   value: string,
   width: number,
 ): string[] {
   const indent = label === "Attribution" ? "    " : "       ";
-  const prefix = `${indent}${label}: `;
-  const prefixWidth = terminalCellWidth(prefix);
-  const continuation = " ".repeat(prefixWidth);
-  return wrapWords(value, Math.max(1, width - prefixWidth)).map(
-    (line, index) => `${index === 0 ? prefix : continuation}${line}`,
-  );
+  return wrapLabeledTerminalWords(`${indent}${label}: `, value, width);
 }
 
 function opaquePathLines(
@@ -289,18 +280,25 @@ function findingSectionLines(
   return ["", heading, ...renderedFindings(findings, width, verbose)];
 }
 
+function disclosureSentenceLines(
+  disclosures: ScanReport["networkDisclosures"],
+  width: number,
+): string[] {
+  return disclosures.flatMap((disclosure) =>
+    wrapWords(
+      `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
+      width,
+      "  ",
+    ),
+  );
+}
+
 function disclosureLines(report: ScanReport, width: number): string[] {
   if (report.networkDisclosures.length === 0) return [];
   return [
     "",
     "NETWORK DISCLOSURE",
-    ...report.networkDisclosures.flatMap((disclosure) =>
-      wrapWords(
-        `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
-        width,
-        "  ",
-      ),
-    ),
+    ...disclosureSentenceLines(report.networkDisclosures, width),
   ];
 }
 
@@ -309,16 +307,19 @@ function disclosureSectionLines(
   width: number,
 ): string[] {
   if (disclosures.length === 0) return [];
+  return ["", "DISCLOSURES", ...disclosureSentenceLines(disclosures, width)];
+}
+
+function warningBodyLines(
+  warning: ReportMaintenanceWarning,
+  width: number,
+): string[] {
   return [
-    "",
-    "DISCLOSURES",
-    ...disclosures.flatMap((disclosure) =>
-      wrapWords(
-        `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
-        width,
-        "  ",
-      ),
-    ),
+    ...wrapWords(warning.code.replaceAll("_", " "), width),
+    ...descriptionLines("Issue", warning.message, width),
+    ...(warning.path === undefined
+      ? []
+      : opaquePathLines("Path", warning.path, width)),
   ];
 }
 
@@ -330,11 +331,7 @@ function maintenanceWarningLines(
   return warnings.flatMap((warning) => [
     "",
     "REPORT MAINTENANCE WARNING",
-    ...wrapWords(warning.code.replaceAll("_", " "), width),
-    ...descriptionLines("Issue", warning.message, width),
-    ...(warning.path === undefined
-      ? []
-      : opaquePathLines("Path", warning.path, width)),
+    ...warningBodyLines(warning, width),
   ]);
 }
 
@@ -348,11 +345,7 @@ function reportWarningsSectionLines(
     "REPORT WARNINGS",
     ...warnings.flatMap((warning, index) => [
       ...(index === 0 ? [] : [""]),
-      ...wrapWords(warning.code.replaceAll("_", " "), width),
-      ...descriptionLines("Issue", warning.message, width),
-      ...(warning.path === undefined
-        ? []
-        : opaquePathLines("Path", warning.path, width)),
+      ...warningBodyLines(warning, width),
     ]),
   ];
 }

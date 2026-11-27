@@ -37,6 +37,7 @@ import {
   pairClassMetricObservations,
   type ComplexitySnapshot,
 } from "./pair-class-metrics.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -45,6 +46,25 @@ function lineStarts(source: string): readonly number[] {
   }
   return starts;
 }
+
+const METRIC_OBSERVATION: Readonly<
+  Record<
+    ComplexityMetricName,
+    {
+      readonly check: "cyclomaticComplexity" | "readabilityComplexity";
+      readonly message: string;
+    }
+  >
+> = {
+  "cyclomatic-complexity": {
+    check: "cyclomaticComplexity",
+    message: "Cyclomatic complexity metric.",
+  },
+  "readability-complexity": {
+    check: "readabilityComplexity",
+    message: "Readability complexity metric.",
+  },
+};
 
 const metricObservations = Symbol("canonical complexity metrics");
 const metricMessages = Symbol("in-memory complexity traversal");
@@ -149,7 +169,6 @@ function rawObservationsFromMessages(
   file: string,
   source: string,
   messages: readonly LinterTypes.LintMessage[],
-  limit?: number,
 ): readonly Observation[] {
   const spanAt = metricSpanLookup(
     collectMetricEntitySpans(source, file),
@@ -170,20 +189,14 @@ function rawObservationsFromMessages(
     const span = spanAt(offset);
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
-    const check =
-      metric.name === "cyclomatic-complexity"
-        ? "cyclomaticComplexity"
-        : "readabilityComplexity";
+    const { check, message: text } = METRIC_OBSERVATION[metric.name];
     return [
       {
         check,
         rule: metric.name,
         identity: span.entity.identity,
         severity: "error",
-        message:
-          metric.name === "cyclomatic-complexity"
-            ? "Cyclomatic complexity metric."
-            : "Readability complexity metric.",
+        message: text,
         location: {
           file,
           startLine: span.entity.startLine,
@@ -197,7 +210,6 @@ function rawObservationsFromMessages(
         metric: {
           name: metric.name,
           value: metric.value,
-          ...(limit === undefined ? {} : { limit }),
         },
       },
     ];
@@ -317,11 +329,10 @@ async function collectSide(
           (policy as ResolvedComplexityPolicy).max,
         ).filter(({ metric }) => metric?.name === metricName),
       );
-    } catch {
+    } catch (error) {
       throw new CheckIncompleteError({
         code: "COMPLEXITY_FILE_ANALYSIS_FAILED",
-        message:
-          "Complexity analysis could not attribute metrics for a source file.",
+        message: `Complexity analysis could not complete for a source file: ${(error instanceof Error ? error.message : String(error))}`,
         path: file,
         remediation:
           "Verify that the file contains valid JavaScript or TypeScript, then retry. If the project accepts the syntax, report a Zedbee analyzer compatibility issue.",

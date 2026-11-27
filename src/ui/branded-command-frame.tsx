@@ -9,7 +9,7 @@ import {
 } from "./pixel-wordmark.js";
 import { ZEDBEE_THEME } from "./theme.js";
 
-const SOLID_BORDER = {
+export const SOLID_BORDER = {
   top: "█",
   bottom: "█",
   left: "█",
@@ -27,14 +27,16 @@ export function brandedCommandContentWidth(width: number): number {
 export function BrandedCommandPanelRule({
   width,
   color,
+  tone = ZEDBEE_THEME.border,
 }: {
   readonly width: number;
   readonly color: boolean;
+  readonly tone?: string;
 }) {
   return (
     <Box marginX={-1}>
       <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>├</Text>
-      <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>
+      <Text {...(color ? { color: tone } : {})}>
         {"─".repeat(Math.max(1, width - 2))}
       </Text>
       <Text {...(color ? { color: ZEDBEE_THEME.border } : {})}>┤</Text>
@@ -46,11 +48,13 @@ export function BrandedCommandPanel({
   title,
   width,
   color,
+  minHeight,
   children,
 }: {
   readonly title: string;
   readonly width: number;
   readonly color: boolean;
+  readonly minHeight?: number;
   readonly children: ReactNode;
 }) {
   return (
@@ -58,6 +62,7 @@ export function BrandedCommandPanel({
       flexDirection="column"
       width={width}
       borderStyle="single"
+      {...(minHeight === undefined ? {} : { minHeight })}
       {...(color
         ? {
             borderColor: ZEDBEE_THEME.border,

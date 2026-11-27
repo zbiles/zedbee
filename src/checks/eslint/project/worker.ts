@@ -3,7 +3,10 @@ import { writeSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
 import { relative, resolve, sep } from "node:path";
-import { PROJECT_ESLINT_MAX_BYTES } from "./protocol.js";
+import {
+  PROJECT_ESLINT_MAX_BYTES,
+  projectEslintMessageText,
+} from "./protocol.js";
 import type {
   ProjectEslintDiagnostic,
   ProjectEslintFailureCode,
@@ -77,9 +80,10 @@ process.once("message", (raw: ProjectEslintRequest) => {
               comparisonIdentity: createHash("sha256")
                 .update(`${message.severity}\0${message.message}`)
                 .digest("hex"),
-              message: raw.fullMessages
-                ? message.message.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")
-                : "The project's ESLint reported a diagnostic.",
+              message: projectEslintMessageText(
+                message.message,
+                raw.fullMessages,
+              ),
               ...(message.line ? { line: message.line } : {}),
               ...(message.column ? { column: message.column } : {}),
               ...(message.endLine ? { endLine: message.endLine } : {}),

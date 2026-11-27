@@ -6,11 +6,13 @@ import type {
   SourceLocation,
 } from "../core/types.js";
 import {
-  findingIdentity,
-  fingerprintObservation,
+  findingIdentityFromSnapshot,
+  fingerprintSnapshot,
+  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
+import { NO_ATTRIBUTION } from "./range.js";
 import { compareCodeUnits } from "../core/compare.js";
 
 export interface ObservationComparisonEvidence {
@@ -43,23 +45,12 @@ function comparisonFingerprint(observation: Observation): string {
       observation.comparisonIdentity,
     ]);
   }
-  const fingerprint = fingerprintObservation(observation);
+  const fingerprint = fingerprintSnapshot(observation);
   return fingerprint;
 }
 
-const NONE: Attribution = Object.freeze({
-  kind: "none",
-  staged: false,
-  evidence: Object.freeze([]),
-});
-
 function canonicalEntityIdentity(identity: string): string {
-  if (
-    typeof identity !== "string" ||
-    identity.length === 0 ||
-    identity.trim() !== identity ||
-    /[\u0000-\u001f\u007f]/u.test(identity)
-  ) {
+  if (!isCanonicalSyntaxText(identity)) {
     throw new TypeError("Expected a canonical changed entity identity");
   }
   return identity;
@@ -69,8 +60,8 @@ export { compareCodeUnits } from "../core/compare.js";
 
 function normalizeTarget(observation: Observation): NormalizedTarget {
   const snapshot = normalizeObservation(observation);
-  const identity = findingIdentity(snapshot);
-  const fingerprint = fingerprintObservation(snapshot);
+  const identity = findingIdentityFromSnapshot(snapshot);
+  const fingerprint = fingerprintSnapshot(snapshot);
   const pairedFingerprint = comparisonFingerprint(snapshot);
   const location = snapshot.location;
   const sortKey = JSON.stringify([
@@ -153,7 +144,7 @@ function comparisonAttribution(
   if (evidence.length === 0 && projectDelta) {
     evidence.push("project-delta");
   }
-  if (evidence.length === 0) return NONE;
+  if (evidence.length === 0) return NO_ATTRIBUTION;
 
   evidence.sort(compareCodeUnits);
   evidence.push(`target-only:${target.fingerprint}`);
@@ -224,7 +215,7 @@ export function compareObservationSets(
       remainingBaseline.get(normalized.comparisonFingerprint) ?? 0;
     if (remaining > 0) {
       remainingBaseline.set(normalized.comparisonFingerprint, remaining - 1);
-      return finding(normalized, NONE);
+      return finding(normalized, NO_ATTRIBUTION);
     }
     return finding(
       normalized,

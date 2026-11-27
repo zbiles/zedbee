@@ -1,3 +1,4 @@
+import { escapeLabelControls, workspaceLabel } from "./workspace-installation.js";
 import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 import { findProjectEslintConfig } from "../checks/eslint/project/config-file.js";
 import { relative, sep } from "node:path";
@@ -63,7 +64,7 @@ export async function diagnoseProjectEslint(
     if (!selected.supported) failed = true;
     if (!trusted) untrusted = true;
     descriptions.push(
-      `${project === "." ? "root" : project}: project engine (experimental); config ${selected.path === undefined ? "missing" : relative(root, selected.path).split(sep).join("/")}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
+      `${workspaceLabel(project)}: project engine (experimental); config ${selected.path === undefined ? "missing" : escapeLabelControls(relative(root, selected.path).split(sep).join("/"))}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
     );
   }
   return {

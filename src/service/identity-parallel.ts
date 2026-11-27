@@ -2,16 +2,21 @@ import { Worker } from "node:worker_threads";
 import { exactFields } from "../checks/runner/envelope.js";
 import { HEX, ServiceUnavailableError } from "./protocol.js";
 
+/** The metadata worker entry: the .mjs shim under tsx, the built .js otherwise. */
+export function identityWorkerEntry(): URL {
+  const source = new URL(import.meta.url).pathname.endsWith(".ts");
+  return new URL(
+    source ? "./identity-source-worker.mjs" : "./identity-worker.js",
+    import.meta.url,
+  );
+}
+
 /** Own every file worker through both phases and its final exit. */
 export async function hashFilesInWorkers(
   files: readonly string[],
   budget: SharedArrayBuffer,
 ): Promise<string[]> {
-  const source = new URL(import.meta.url).pathname.endsWith(".ts");
-  const entry = new URL(
-    source ? "./identity-source-worker.mjs" : "./identity-worker.js",
-    import.meta.url,
-  );
+  const entry = identityWorkerEntry();
   const batches = Array.from(
     { length: Math.min(4, files.length) },
     () => [] as string[],

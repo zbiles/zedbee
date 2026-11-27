@@ -24,6 +24,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { isContainedPath } from "../inspection/paths.js";
 import { GitClient } from "../git/client.js";
 import { customGitHookPath } from "../hooks/detect.js";
 import { hooksPathValue, TRACKED_HOOK_NAMES } from "../hooks/install.js";
@@ -74,13 +75,7 @@ function unsafeTarget(): Error {
 }
 
 function contained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot !== "" &&
-    !isAbsolute(fromRoot) &&
-    fromRoot !== ".." &&
-    !fromRoot.startsWith(`..${sep}`)
-  );
+  return relative(root, candidate) !== "" && isContainedPath(root, candidate);
 }
 
 async function metadata(path: string) {

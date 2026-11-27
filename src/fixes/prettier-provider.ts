@@ -7,7 +7,10 @@ import type {
 } from "../checks/adapter.js";
 import type { FormattingSettings } from "../checks/prettier/settings.js";
 import { prettierParserFor } from "../checks/prettier/supported-path.js";
-import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
+import type {
+  FormattingFixSelection,
+  ProjectPrettierInstallation,
+} from "../checks/prettier/project-types.js";
 import {
   owningProjectRoot,
   resolveProjectPrettierInstallation,
@@ -15,7 +18,10 @@ import {
 } from "../checks/prettier/project-engine.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { Finding } from "../core/types.js";
-import { sanitizeFixCandidates } from "./sanitize.js";
+import {
+  sanitizeFixCandidates,
+  sanitizeFixCandidatesOfKind,
+} from "./sanitize.js";
 import type {
   FormatFileFixCandidate,
   CheckFixCandidate,
@@ -31,6 +37,22 @@ function isFixableFormattingFinding(finding: Finding): finding is Finding & {
     finding.location !== undefined &&
     (finding.severity === "warning" || finding.severity === "error")
   );
+}
+
+async function cachedInstallation(
+  installations: Map<string, ProjectPrettierInstallation>,
+  context: CheckRunContext,
+  projectRoot: string,
+): Promise<ProjectPrettierInstallation> {
+  const cached = installations.get(projectRoot);
+  if (cached !== undefined) return cached;
+  const installation = await resolveProjectPrettierInstallation(
+    context.repositoryRoot,
+    projectRoot,
+    context.snapshots.targetDir,
+  );
+  installations.set(projectRoot, installation);
+  return installation;
 }
 
 /**
@@ -56,6 +78,7 @@ export async function planPrettierFixes(
   }
 
   let projectSnapshotIdentity: string | undefined;
+  const installations = new Map<string, ProjectPrettierInstallation>();
   const candidates: FormatFileFixCandidate[] = [];
   for (const [file, fileFindings] of [...findingsByFile.entries()].sort(
     ([left], [right]) => compareCodeUnits(left, right),
@@ -73,10 +96,10 @@ export async function planPrettierFixes(
         context.targetInspection.workspaces,
         file,
       );
-      const installation = await resolveProjectPrettierInstallation(
-        context.repositoryRoot,
+      const installation = await cachedInstallation(
+        installations,
+        context,
         projectRoot,
-        context.snapshots.targetDir,
       );
       projectSnapshotIdentity ??= await snapshotIdentity(
         context.snapshots.targetDir,
@@ -103,17 +126,14 @@ export async function planPrettierFixes(
       selection,
     });
   }
-  const sanitized = sanitizeFixCandidates(candidates, {
-    checkId: "formatting",
-    findingIds: candidates.flatMap((candidate) => candidate.findingIds),
-  });
-  return Object.freeze(
-    sanitized.map((candidate) => {
-      if (candidate.kind !== "format-file") {
-        throw new TypeError("Expected a Prettier format-file fix candidate");
-      }
-      return candidate;
-    }),
+  return sanitizeFixCandidatesOfKind(
+    "format-file",
+    candidates,
+    {
+      checkId: "formatting",
+      findingIds: candidates.flatMap((candidate) => candidate.findingIds),
+    },
+    "Expected a Prettier format-file fix candidate",
   );
 }
 

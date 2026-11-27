@@ -56,13 +56,18 @@ function checkKey(check: CheckResult): string {
 }
 
 function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
-  const keys = [
-    ...new Set(reports.flatMap((report) => report.checks.map(checkKey))),
-  ].sort(compareCodeUnits);
+  const indexes = reports.map((report) => {
+    const index = new Map<string, CheckResult>();
+    for (const check of report.checks) {
+      const key = checkKey(check);
+      if (!index.has(key)) index.set(key, check);
+    }
+    return index;
+  });
+  const keys = [...new Set(indexes.flatMap((index) => [...index.keys()]))].sort(compareCodeUnits);
+  const parentEvidence = reports.map((report) => `merge-parent:${report.baseline}`);
   return keys.map((key) => {
-    const checks = reports.map((report) =>
-      report.checks.find((check) => checkKey(check) === key),
-    );
+    const checks = indexes.map((index) => index.get(key));
     const present = checks.filter(
       (check): check is CheckResult => check !== undefined,
     );
@@ -127,7 +132,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
           ...finding.attribution,
           evidence: [
             ...finding.attribution.evidence,
-            ...reports.map((report) => `merge-parent:${report.baseline}`),
+            ...parentEvidence,
           ].sort(compareCodeUnits),
         },
       }));

@@ -1,3 +1,4 @@
+import type { BigIntStats } from "node:fs";
 import {
   chmod,
   lstat,
@@ -10,7 +11,8 @@ import {
   rmdir,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, join, relative } from "node:path";
+import { isContainedPath } from "../../inspection/read-json.js";
 
 const MANAGED_CONFIG_PREFIX = "zedbee-managed-config-";
 const MANAGED_OUTPUT_PREFIX = "zedbee-managed-output-";
@@ -53,14 +55,19 @@ function hasIdentity(
   return metadata.dev === expected.device && metadata.ino === expected.inode;
 }
 
-function isContainedBy(parent: string, child: string): boolean {
-  const pathFromParent = relative(parent, child);
+function isUnchangedDirectory(
+  metadata: BigIntStats,
+  expected: FileIdentity,
+): boolean {
   return (
-    pathFromParent !== "" &&
-    !isAbsolute(pathFromParent) &&
-    pathFromParent !== ".." &&
-    !pathFromParent.startsWith(`..${sep}`)
+    !metadata.isSymbolicLink() &&
+    metadata.isDirectory() &&
+    hasIdentity(metadata, expected)
   );
+}
+
+function isContainedBy(parent: string, child: string): boolean {
+  return relative(parent, child) !== "" && isContainedPath(parent, child);
 }
 
 async function validateManagedDirectory(path: string): Promise<string> {
@@ -94,6 +101,22 @@ function validateArtifactName(name: string): void {
   }
 }
 
+async function createPrivateTemporaryDirectory(
+  prefix: string,
+): Promise<{ readonly path: string; readonly identity: FileIdentity }> {
+  const canonicalTempRoot = await realpath(tmpdir());
+  const temporaryDirectory = await mkdtemp(join(canonicalTempRoot, prefix));
+  try {
+    await chmod(temporaryDirectory, 0o700);
+    const path = await validateManagedDirectory(temporaryDirectory);
+    const identity = fileIdentity(await lstat(path, { bigint: true }));
+    return { path, identity };
+  } catch (error) {
+    await rmdir(temporaryDirectory);
+    throw error;
+  }
+}
+
 export async function createManagedOutputDirectory(
   name: string,
   expectedArtifacts: readonly string[],
@@ -114,20 +137,8 @@ export async function createManagedOutputDirectory(
     );
   }
 
-  const canonicalTempRoot = await realpath(tmpdir());
-  const temporaryDirectory = await mkdtemp(
-    join(canonicalTempRoot, `${MANAGED_OUTPUT_PREFIX}${name}-`),
-  );
-  let canonicalDirectory: string;
-  let identity: FileIdentity;
-  try {
-    await chmod(temporaryDirectory, 0o700);
-    canonicalDirectory = await validateManagedDirectory(temporaryDirectory);
-    identity = fileIdentity(await lstat(canonicalDirectory, { bigint: true }));
-  } catch (error) {
-    await rmdir(temporaryDirectory);
-    throw error;
-  }
+  const { path: canonicalDirectory, identity } =
+    await createPrivateTemporaryDirectory(`${MANAGED_OUTPUT_PREFIX}${name}-`);
   let cleaned = false;
 
   const readArtifact = async (artifactName: string): Promise<string> => {
@@ -162,7 +173,7 @@ export async function createManagedOutputDirectory(
           "Zedbee rejected a managed artifact whose identity changed.",
         );
       }
-      return handle.readFile("utf8");
+      return await handle.readFile("utf8");
     } finally {
       await handle.close();
     }
@@ -171,9 +182,7 @@ export async function createManagedOutputDirectory(
   const validateDirectoryIdentity = async () => {
     const metadata = await lstat(canonicalDirectory, { bigint: true });
     if (
-      metadata.isSymbolicLink() ||
-      !metadata.isDirectory() ||
-      !hasIdentity(metadata, identity) ||
+      !isUnchangedDirectory(metadata, identity) ||
       (await validateManagedDirectory(canonicalDirectory)) !==
         canonicalDirectory
     ) {
@@ -241,26 +250,21 @@ export async function writeManagedJsonConfig(
     );
   }
   const expectedContents = `${encoded}\n`;
-  const expectedByteLength = BigInt(Buffer.byteLength(expectedContents, "utf8"));
-
-  const canonicalTempRoot = await realpath(tmpdir());
-  const temporaryDirectory = await mkdtemp(
-    join(canonicalTempRoot, MANAGED_CONFIG_PREFIX),
+  const expectedByteLength = BigInt(
+    Buffer.byteLength(expectedContents, "utf8"),
   );
-  let canonicalDirectory: string | undefined;
+
+  const privateDirectory = await createPrivateTemporaryDirectory(
+    MANAGED_CONFIG_PREFIX,
+  );
+  const canonicalDirectory: string = privateDirectory.path;
   let configPath: string | undefined;
-  let directoryIdentity: FileIdentity | undefined;
+  const directoryIdentity: FileIdentity = privateDirectory.identity;
   let configIdentity: FileIdentity | undefined;
   let cleaned = false;
 
   const cleanup = async (): Promise<void> => {
-    if (
-      cleaned ||
-      canonicalDirectory === undefined ||
-      configPath === undefined ||
-      directoryIdentity === undefined ||
-      configIdentity === undefined
-    ) {
+    if (cleaned || configPath === undefined || configIdentity === undefined) {
       return;
     }
 
@@ -281,9 +285,7 @@ export async function writeManagedJsonConfig(
     const entries = await readdir(canonicalDirectory);
     if (
       validatedDirectory !== canonicalDirectory ||
-      !hasIdentity(directoryMetadata, directoryIdentity) ||
-      directoryMetadata.isSymbolicLink() ||
-      !directoryMetadata.isDirectory() ||
+      !isUnchangedDirectory(directoryMetadata, directoryIdentity) ||
       !hasIdentity(configMetadata, configIdentity) ||
       configMetadata.isSymbolicLink() ||
       !configMetadata.isFile() ||
@@ -308,11 +310,6 @@ export async function writeManagedJsonConfig(
   };
 
   try {
-    await chmod(temporaryDirectory, 0o700);
-    canonicalDirectory = await validateManagedDirectory(temporaryDirectory);
-    directoryIdentity = fileIdentity(
-      await lstat(canonicalDirectory, { bigint: true }),
-    );
     configPath = join(canonicalDirectory, `${name}.json`);
     const handle = await open(configPath, "wx", 0o600);
     try {
@@ -324,23 +321,13 @@ export async function writeManagedJsonConfig(
 
     return { path: configPath, cleanup };
   } catch (error) {
-    if (
-      canonicalDirectory !== undefined &&
-      configPath !== undefined &&
-      directoryIdentity !== undefined &&
-      configIdentity !== undefined
-    ) {
+    if (configPath !== undefined && configIdentity !== undefined) {
       await cleanup();
-    } else if (
-      canonicalDirectory !== undefined &&
-      directoryIdentity !== undefined
-    ) {
+    } else {
       const metadata = await lstat(canonicalDirectory, { bigint: true });
       const entries = await readdir(canonicalDirectory);
       if (
-        metadata.isSymbolicLink() ||
-        !metadata.isDirectory() ||
-        !hasIdentity(metadata, directoryIdentity) ||
+        !isUnchangedDirectory(metadata, directoryIdentity) ||
         entries.length !== 0
       ) {
         throw new ManagedConfigError(
@@ -348,8 +335,6 @@ export async function writeManagedJsonConfig(
         );
       }
       await rmdir(canonicalDirectory);
-    } else {
-      await rmdir(temporaryDirectory);
     }
     throw error;
   }

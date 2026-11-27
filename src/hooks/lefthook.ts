@@ -20,6 +20,14 @@ import {
   ZEDBEE_COMMAND,
 } from "./husky.js";
 
+type LefthookData = {
+  readonly [name: string]: {
+    readonly commands?: Readonly<
+      Record<string, { readonly run?: unknown } | null>
+    >;
+  };
+};
+
 export function updateLefthookConfig(
   before: string | null | undefined,
   command = ZEDBEE_COMMAND,
@@ -32,18 +40,15 @@ export function updateLefthookConfig(
   if (document.errors.length > 0) {
     throw new TypeError("Expected valid Lefthook YAML.");
   }
-  const data = document.toJS() as {
-    readonly [name: string]: {
-      readonly commands?: Readonly<Record<string, { readonly run?: unknown }>>;
-    };
-  };
+  const data = (document.toJS() ?? {}) as LefthookData;
   let changed = false;
   let configured = false;
   const entries = data[hookName]?.commands ?? {};
   for (const [name, entry] of Object.entries(entries)) {
-    if (typeof entry.run !== "string") continue;
-    const updated = replaceManagedZedbeeCommand(entry.run, command);
-    if (updated !== entry.run) {
+    const run = entry?.run;
+    if (typeof run !== "string") continue;
+    const updated = replaceManagedZedbeeCommand(run, command);
+    if (updated !== run) {
       document.setIn([hookName, "commands", name, "run"], updated);
       changed = true;
     }
@@ -58,15 +63,13 @@ export function updateLefthookConfig(
 }
 
 function hasZedbeeLefthookData(
-  data: {
-    readonly [name: string]: {
-      readonly commands?: Readonly<Record<string, { readonly run?: unknown }>>;
-    };
-  },
+  data: LefthookData,
   hookName: ScanHookName = "pre-commit",
 ): boolean {
   return Object.values(data[hookName]?.commands ?? {}).some(
-    ({ run }) => typeof run === "string" && hasZedbeeScanCommand(run, hookName),
+    (entry) =>
+      typeof entry?.run === "string" &&
+      hasZedbeeScanCommand(entry.run, hookName),
   );
 }
 
@@ -77,13 +80,7 @@ export function hasZedbeeLefthookConfig(
   const document = parseDocument(source, { strict: true });
   if (document.errors.length > 0) return false;
   return hasZedbeeLefthookData(
-    document.toJS() as {
-      readonly [name: string]: {
-        readonly commands?: Readonly<
-          Record<string, { readonly run?: unknown }>
-        >;
-      };
-    },
+    (document.toJS() ?? {}) as LefthookData,
     hookName,
   );
 }

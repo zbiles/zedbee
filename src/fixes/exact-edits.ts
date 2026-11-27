@@ -153,13 +153,35 @@ export function composeExactFixes(
 ): string | undefined {
   const mapping = createExactEditMapping(base, working);
   if (mapping === undefined) return undefined;
-  let merged = working;
+  const mapped: { start: number; end: number; replacement: string }[] = [];
   for (const edit of [...edits].sort(
     (left, right) => right.start - left.start || right.end - left.end,
   )) {
     const offsets = mapping.mapEdit(edit);
     if (offsets === undefined) return undefined;
-    merged = `${merged.slice(0, offsets.start)}${edit.replacement}${merged.slice(offsets.end)}`;
+    mapped.push({
+      start: offsets.start,
+      end: offsets.end,
+      replacement: edit.replacement,
+    });
   }
-  return merged;
+  const disjoint = mapped.every(
+    (current, index) => index === 0 || current.end <= mapped[index - 1]!.start,
+  );
+  if (!disjoint) {
+    let merged = working;
+    for (const entry of mapped) {
+      merged = `${merged.slice(0, entry.start)}${entry.replacement}${merged.slice(entry.end)}`;
+    }
+    return merged;
+  }
+  const pieces: string[] = [];
+  let cursor = 0;
+  for (let index = mapped.length - 1; index >= 0; --index) {
+    const entry = mapped[index]!;
+    pieces.push(working.slice(cursor, entry.start), entry.replacement);
+    cursor = entry.end;
+  }
+  pieces.push(working.slice(cursor));
+  return pieces.join("");
 }

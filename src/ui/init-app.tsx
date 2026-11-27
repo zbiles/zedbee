@@ -13,7 +13,6 @@ import {
 export { PROJECT_PRETTIER_DISCLOSURE, InitActionButton } from "./init-view.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  measureElement,
   Text,
   render,
   useApp,
@@ -45,16 +44,18 @@ import {
 } from "./branded-command-frame.js";
 import {
   clampScrollOffset,
-  minimalRevealOffset,
+  isSgrMouseReport,
   pageScrollStep,
   parseSgrWheelDelta,
 } from "./terminal-viewport-model.js";
 import {
+  revealOffsetForTarget,
   TerminalViewport,
   type TerminalViewportMetrics,
 } from "./terminal-viewport.js";
 import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { InitOperation, type InitOperationState } from "./init-operation.js";
+import { alternateScreenRenderOptions } from "./alternate-screen-render.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
@@ -70,26 +71,13 @@ export interface InitAppProps extends InitPromptOptions {
 }
 
 const INIT_EVENT_MAX_FPS = 30;
-const CURSOR_HOME = "\u001b[H";
-const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
 
 export function initMaxFps(): number {
   return INIT_EVENT_MAX_FPS;
 }
 
 export function initRenderOptions() {
-  let homeTemporaryScreen = true;
-  return Object.freeze({
-    exitOnCtrlC: false,
-    patchConsole: false,
-    maxFps: initMaxFps(),
-    alternateScreen: true,
-    onRender() {
-      if (!homeTemporaryScreen) return;
-      homeTemporaryScreen = false;
-      process.stdout.write(CURSOR_HOME);
-    },
-  });
+  return alternateScreenRenderOptions(initMaxFps());
 }
 
 export function InitApp({
@@ -311,26 +299,16 @@ export function InitApp({
     pendingSetupGeometryRef.current = false;
     lastSetupRevealRef.current = { columns, rows, focus };
     if (!shouldReveal) return;
-    const target = activeTargetRef.current;
-    const content = contentRef.current;
-    if (target === null || content === null) return;
-    const targetBounds = measureElement(target);
-    const contentBounds = measureElement(content);
-    if (targetBounds.height <= 0 || contentBounds.height <= 0) return;
-    const terminalHeight = Math.max(1, Math.trunc(rows));
-    const visibleHeight =
-      contentBounds.height > terminalHeight && terminalHeight >= 3
-        ? terminalHeight - 2
-        : terminalHeight;
     const currentOffset = setupOffsetRef.current;
-    const nextOffset = minimalRevealOffset(
+    const nextOffset = revealOffsetForTarget(
+      activeTargetRef.current,
+      contentRef.current,
+      rows,
       currentOffset,
-      visibleHeight,
-      targetBounds.y - contentBounds.y,
-      targetBounds.height,
-      contentBounds.height,
     );
-    if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
+    if (nextOffset !== undefined && nextOffset !== currentOffset) {
+      setSetupOffset(nextOffset);
+    }
   }, [columns, focus, phase, rows]);
 
   const scrollBy = (delta: number) => {
@@ -352,7 +330,7 @@ export function InitApp({
       return;
     }
     const wheelDelta = parseSgrWheelDelta(input);
-    if (SGR_MOUSE_REPORT.test(input)) {
+    if (isSgrMouseReport(input)) {
       if (wheelDelta !== 0) scrollBy(wheelDelta);
       return;
     }

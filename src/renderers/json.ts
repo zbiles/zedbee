@@ -11,6 +11,8 @@ import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeScanSourceIdentity } from "../scan/source-mode.js";
 import { fixCommandArguments } from "../reporting/fix-command.js";
 import { hookUpdateNotice } from "../reporting/hook-update-notice.js";
+import { checkErrorDetailFields } from "./check-error-fields.js";
+import { sourceIdentityFields } from "./source-identity-fields.js";
 
 function serializeFinding(
   finding: Finding,
@@ -83,28 +85,7 @@ function serializeCheck(
             ? {}
             : { diagnostic: check.error.diagnostic }),
           message: check.error.message,
-          ...(check.error.path === undefined ? {} : { path: check.error.path }),
-          ...(check.error.parseFailures === undefined
-            ? {}
-            : { parseFailures: check.error.parseFailures }),
-          ...(check.error.paths === undefined
-            ? {}
-            : { paths: [...check.error.paths] }),
-          ...(check.error.snapshot === undefined
-            ? {}
-            : { snapshot: check.error.snapshot }),
-          ...(check.error.comparisonParent === undefined
-            ? {}
-            : { comparisonParent: check.error.comparisonParent }),
-          ...(check.error.projectPaths === undefined
-            ? {}
-            : { projectPaths: [...check.error.projectPaths] }),
-          ...(check.error.temporaryPath === undefined
-            ? {}
-            : { temporaryPath: check.error.temporaryPath }),
-          ...(check.error.remediation === undefined
-            ? {}
-            : { remediation: check.error.remediation }),
+          ...checkErrorDetailFields(check.error),
         };
   return {
     ...(check.eslintAnalysis === undefined
@@ -159,26 +140,16 @@ export function renderJson(
   report = reportForComparisonRepairs(report);
   const sanitized = validateReportDisplayStrings(report);
   const source = sanitizeScanSourceIdentity(report);
+  const diagnostics = localScanDiagnostics(report.diagnostics);
+  const hookUpdate = hookUpdateNotice(report);
   const payload = {
     schemaVersion: report.schemaVersion,
     outcome: report.outcome,
     exitCode: report.exitCode,
-    ...(localScanDiagnostics(report.diagnostics) === undefined
-      ? {}
-      : { diagnostics: localScanDiagnostics(report.diagnostics) }),
-    ...(hookUpdateNotice(report) === undefined
-      ? {}
-      : { hookUpdate: hookUpdateNotice(report) }),
+    ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(hookUpdate === undefined ? {} : { hookUpdate }),
     repositoryRoot: ".",
-    mode: source.mode,
-    baseline: source.baseline,
-    target: source.target,
-    ...(source.mergeParents === undefined
-      ? {}
-      : { mergeParents: source.mergeParents }),
-    ...(source.requestedBase === undefined
-      ? {}
-      : { requestedBase: source.requestedBase }),
+    ...sourceIdentityFields(source),
     changedFileCount: report.changedFileCount,
     ...(report.changeSummary === undefined
       ? {}

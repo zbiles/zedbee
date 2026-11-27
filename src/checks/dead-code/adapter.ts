@@ -38,9 +38,7 @@ import { runCapturedKnip } from "./executor.js";
 import { createManagedKnipConfig } from "./managed-config.js";
 import { parseKnipReport } from "./parse-report.js";
 import { createKnipImportValidator } from "./import-boundary.js";
-
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
+import { INERT_TSCONFIG } from "./captured-filesystem.js";
 
 async function validateSnapshotInputs(
   snapshotRoot: string,

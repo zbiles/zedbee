@@ -1,4 +1,5 @@
 import { compareCodeUnits } from "../../core/compare.js";
+import { findWorkspace } from "../../inspection/workspaces.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -47,9 +48,7 @@ export async function duplicationInputsMayHaveChanged(
     context.baselineInspection,
     context.targetInspection,
   ]) {
-    const workspace = inspection.workspaces.find(
-      (candidate) => candidate.relativeRoot === relativeRoot,
-    );
+    const workspace = findWorkspace(inspection, relativeRoot);
     const side =
       workspace === undefined
         ? []

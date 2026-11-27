@@ -6,28 +6,24 @@ import type {
   ProjectPrettierReply,
   ProjectPrettierRequest,
 } from "./project-types.js";
+import { PROJECT_PRETTIER_ERROR_CODES } from "./project-types.js";
 import {
   formattingSettingsSchema,
   type FormattingSettings,
 } from "./settings.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 
-const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set([
-  "PROJECT_PRETTIER_TRUST_REQUIRED",
-  "PROJECT_PRETTIER_INSTALL_MISSING",
-  "PROJECT_PRETTIER_VERSION_UNSUPPORTED",
-  "PROJECT_PRETTIER_LAYOUT_UNSUPPORTED",
-  "PROJECT_PRETTIER_CONFIG_INVALID",
-  "PROJECT_PRETTIER_PLUGIN_MISSING",
-  "PROJECT_PRETTIER_WORKER_FAILED",
-  "PROJECT_PRETTIER_PROTOCOL_INVALID",
-  "PROJECT_PRETTIER_OUTPUT_LIMIT",
-  "PROJECT_PRETTIER_PLAN_STALE",
-]);
+const KNOWN_FAILURE_CODES: ReadonlySet<string> = new Set(
+  PROJECT_PRETTIER_ERROR_CODES,
+);
 
 export const PROJECT_PROTOCOL_MAX_BYTES = 8 * 1024 * 1024;
 export const PROJECT_FORMAT_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
+
+export const IMPORT_MAX_OVERRIDES = 256;
+export const IMPORT_MAX_LIMITATIONS = 64;
+export const IMPORT_MAX_LIMITATION_LENGTH = 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -177,21 +173,28 @@ function parseSettings(
   return parsed.data as unknown as Partial<FormattingSettings>;
 }
 
+/** A non-empty pattern string or a non-empty list of non-empty patterns. */
+export function isPatternList(
+  value: unknown,
+): value is string | readonly string[] {
+  if (typeof value === "string") return value.length > 0;
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "string" && item.length > 0)
+  );
+}
+
 function parsePatternList(
   value: unknown,
   field: string,
 ): string | readonly string[] {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((item) => typeof item === "string" && item.length > 0)
-  ) {
-    return Object.freeze([...value]);
+  if (!isPatternList(value)) {
+    throw new TypeError(
+      `Invalid ${field} pattern in the project formatter reply`,
+    );
   }
-  throw new TypeError(
-    `Invalid ${field} pattern in the project formatter reply`,
-  );
+  return Array.isArray(value) ? Object.freeze([...value]) : value;
 }
 
 function parseFormatResult(value: unknown): ProjectFormatResult {
@@ -248,7 +251,10 @@ function parseImportableConfig(value: unknown): ImportableNativeConfig {
     throw new TypeError("Invalid imported configuration reply");
   }
   const settings = parseSettings(value.settings, "imported settings");
-  if (!Array.isArray(value.overrides) || value.overrides.length > 256) {
+  if (
+    !Array.isArray(value.overrides) ||
+    value.overrides.length > IMPORT_MAX_OVERRIDES
+  ) {
     throw new TypeError("Invalid imported configuration overrides");
   }
   const overrides = value.overrides.map((entry) => {
@@ -280,10 +286,12 @@ function parseImportableConfig(value: unknown): ImportableNativeConfig {
   });
   if (
     !Array.isArray(value.limitations) ||
-    value.limitations.length > 64 ||
+    value.limitations.length > IMPORT_MAX_LIMITATIONS ||
     value.limitations.some(
       (entry) =>
-        typeof entry !== "string" || entry.length === 0 || entry.length > 1024,
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.length > IMPORT_MAX_LIMITATION_LENGTH,
     )
   ) {
     throw new TypeError("Invalid imported configuration limitations");

@@ -1,5 +1,6 @@
 import type { CheckRunContext, CheckTarget } from "./adapter.js";
 import type { SnapshotLocationObservations } from "../attribution/pair-locations.js";
+import { workspaceSourceFiles } from "./changed-file-paths.js";
 
 /** A renamed file keeps its baseline even when its owning workspace changes. */
 export async function collectRenamedBaselines(
@@ -10,10 +11,9 @@ export async function collectRenamedBaselines(
   ) => Promise<SnapshotLocationObservations>,
 ): Promise<SnapshotLocationObservations> {
   const baseline = await collect(context.target);
-  const targetFiles = new Set(
-    context.targetInspection.workspaces.find(
-      (workspace) => workspace.relativeRoot === context.target.relativeRoot,
-    )?.sourceFiles,
+  const targetFiles = workspaceSourceFiles(
+    context.targetInspection,
+    context.target.relativeRoot,
   );
   const previousPaths = new Set(
     [...context.changeSet.files.values()]

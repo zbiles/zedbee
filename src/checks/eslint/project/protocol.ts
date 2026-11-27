@@ -7,6 +7,14 @@ import {
 
 export const PROJECT_ESLINT_MAX_BYTES = 1024 * 1024;
 export const PROJECT_ESLINT_MAX_FILES = 20_000;
+export function projectEslintMessageText(
+  message: string,
+  fullMessages: boolean,
+): string {
+  return fullMessages
+    ? message.replace(/[\x00-\x1f\x7f-\x9f]/gu, " ")
+    : "The project's ESLint reported a diagnostic.";
+}
 export function validProjectEslintPath(value: unknown): value is string {
   return (
     typeof value === "string" &&

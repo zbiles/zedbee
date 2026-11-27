@@ -148,15 +148,18 @@ export function decodeJson(bytes: Buffer): unknown {
   }
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
 }
-export function encodeFrame(value: unknown, limit = MAX_FRAME): Buffer {
-  const json = JSON.stringify(value);
-  if (json === undefined) throw new ServiceUnavailableError();
+export function encodeJsonFrame(json: string, limit = MAX_FRAME): Buffer {
   const length = Buffer.byteLength(json);
   if (!length || length > limit) throw new AnalyzerCapacityError("request");
   const frame = Buffer.allocUnsafe(length + 4);
   frame.writeUInt32BE(length);
   frame.write(json, 4);
   return frame;
+}
+export function encodeFrame(value: unknown, limit = MAX_FRAME): Buffer {
+  const json = JSON.stringify(value);
+  if (json === undefined) throw new ServiceUnavailableError();
+  return encodeJsonFrame(json, limit);
 }
 export function proof(
   secret: string,
@@ -196,4 +199,10 @@ export function verifyProof(
       ),
     )
   );
+}
+export function throwFirstRejection(
+  results: readonly PromiseSettledResult<unknown>[],
+): void {
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") throw failure.reason;
 }

@@ -7,28 +7,33 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { openSynchronousKernelFileLease } from "../core/kernel-lease.js";
 import { openWindowsStateLease } from "../service/windows-pipe.js";
+import {
+  hasPrivateOwnership,
+  writePrivateFileAtomically,
+} from "./private-file.js";
 import { z } from "zod";
 import {
   telemetryV1EventSchema as telemetryEventSchema,
   type TelemetryV1Event as TelemetryEvent,
 } from "./schema.js";
 import type { TelemetryEnvironment } from "./policy.js";
-const WEEK = 7 * 24 * 60 * 60 * 1000;
+import {
+  TELEMETRY_MAX_QUEUE_BYTES,
+  TELEMETRY_MAX_QUEUED_EVENTS,
+  withinTelemetryRetention,
+} from "./retention.js";
 const stateSchema = z.strictObject({
   version: z.literal(1),
   enabled: z.boolean(),
   installation_id: z.string().uuid().optional(),
   notice_version: z.number().int().min(0).max(1),
-  events: z.array(telemetryEventSchema).max(100),
+  events: z.array(telemetryEventSchema).max(TELEMETRY_MAX_QUEUED_EVENTS),
 });
 export type TelemetryState = z.infer<typeof stateSchema>;
 const persistedSchema = z.strictObject({
@@ -56,10 +61,7 @@ export function telemetryDirectory(env: TelemetryEnvironment): string {
   return join(root, "zedbee", "telemetry");
 }
 function owned(stat: Stats): void {
-  if (
-    process.platform !== "win32" &&
-    (stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0)
-  )
+  if (!hasPrivateOwnership(stat))
     throw new Error("Unsafe telemetry permissions");
 }
 function readPrivate(
@@ -214,7 +216,6 @@ export class TelemetryStore {
     explicitlyEnable = false,
   ): TelemetryState {
     const release = this.lock();
-    let temporary: string | undefined;
     try {
       const snapshot = this.snapshot();
       const persisted: PersistedState = snapshot.persisted ?? {
@@ -231,19 +232,13 @@ export class TelemetryStore {
         persisted.acknowledged_legacy_optout = snapshot.legacyFingerprint;
       change(state);
       stateSchema.parse(state);
-      temporary = join(this.directory, `${randomUUID()}.tmp`);
-      writeFileSync(temporary, JSON.stringify(persisted), {
-        flag: "wx",
-        mode: 0o600,
-      });
-      renameSync(temporary, join(this.directory, "state-v2.json"));
+      writePrivateFileAtomically(
+        this.directory,
+        join(this.directory, "state-v2.json"),
+        JSON.stringify(persisted),
+      );
       return state;
     } finally {
-      if (temporary) {
-        try {
-          unlinkSync(temporary);
-        } catch {}
-      }
       release();
     }
   }
@@ -268,16 +263,19 @@ export class TelemetryStore {
     this.update((state) => {
       if (!state.enabled) return;
       state.events = [...state.events, event]
-        .filter((e) => Date.parse(e.timestamp) >= Date.now() - WEEK)
-        .slice(-100);
-      while (Buffer.byteLength(JSON.stringify(state.events)) > 256 * 1024)
+        .filter((e) => withinTelemetryRetention(e.timestamp))
+        .slice(-TELEMETRY_MAX_QUEUED_EVENTS);
+      while (
+        Buffer.byteLength(JSON.stringify(state.events)) >
+        TELEMETRY_MAX_QUEUE_BYTES
+      )
         state.events.shift();
     });
   }
   pending(): TelemetryEvent[] {
     const state = this.read();
     return state?.enabled
-      ? state.events.filter((e) => Date.parse(e.timestamp) >= Date.now() - WEEK)
+      ? state.events.filter((e) => withinTelemetryRetention(e.timestamp))
       : [];
   }
   acknowledge(ids: readonly string[]): void {

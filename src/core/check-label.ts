@@ -1,4 +1,6 @@
-const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
+import type { CheckId } from "./check-ids.js";
+
+const CHECK_LABELS: Readonly<Record<CheckId, string>> = Object.freeze({
   formatting: "Formatting",
   lint: "Lint",
   types: "TypeScript",
@@ -15,5 +17,5 @@ const CHECK_LABELS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 export function checkLabel(checkId: string): string {
-  return CHECK_LABELS[checkId] ?? checkId;
+  return (CHECK_LABELS as Readonly<Record<string, string>>)[checkId] ?? checkId;
 }

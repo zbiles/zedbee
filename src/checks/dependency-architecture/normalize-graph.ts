@@ -5,12 +5,15 @@ import type { ICruiseResult, IViolation } from "dependency-cruiser";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
-import { DEPENDENCY_RULE_NAMES, HOOK_INSTALLER_PATH } from "./rules.js";
+import {
+  DEPENDENCY_RULE_NAMES,
+  HOOK_INSTALLER_PATH,
+  TEST_PATH as TEST_PATH_PATTERN,
+} from "./rules.js";
 
 const HOOK_INSTALLER = new RegExp(HOOK_INSTALLER_PATH);
 const RULES = new Set<string>(Object.values(DEPENDENCY_RULE_NAMES));
-const TEST_PATH =
-  /(^|\/)(?:test|tests|__tests__|spec)(?:\/|$)|\.(?:test|spec)\.[^.]+$/u;
+const TEST_PATH = new RegExp(TEST_PATH_PATTERN, "u");
 
 export interface DependencyDeclarations {
   readonly production: ReadonlySet<string>;
@@ -112,13 +115,18 @@ function packageName(specifier: string): string | undefined {
   return name === undefined || name.length === 0 ? undefined : name;
 }
 
-function observation(rule: string, from: string, to: string): Observation {
+function observation(
+  rule: string,
+  from: string,
+  to: string,
+  text: string = message(rule),
+): Observation {
   return {
     check: "dependencyArchitecture",
     rule,
     identity: `edge:${rule}:${from}->${to}`,
     severity: "error",
-    message: message(rule),
+    message: text,
     location: { file: from },
   };
 }
@@ -199,15 +207,11 @@ function declarationObservations(
 }
 
 function cycleNodes(
-  violation: IViolation,
   from: string,
   to: string,
-  snapshotRoot: string,
+  reportedCycle: readonly string[],
 ): readonly string[] {
-  const reported = (violation.cycle ?? []).map(({ name }) =>
-    repositoryPath(name, snapshotRoot),
-  );
-  const nodes = [...new Set([from, to, ...reported])];
+  const nodes = [...new Set([from, to, ...reportedCycle])];
   return canonicalCycle(nodes);
 }
 
@@ -266,7 +270,7 @@ export function normalizeDependencyViolations(
       }
       const cycle =
         rule === DEPENDENCY_RULE_NAMES.circular
-          ? cycleNodes(violation, from, to, snapshotRoot)
+          ? cycleNodes(from, to, reportedCycle)
           : undefined;
       if (cycle !== undefined) {
         const identity = `cycle:${cycle.join(">")}`;
@@ -282,22 +286,19 @@ export function normalizeDependencyViolations(
           }));
       }
       return [
-        {
-          check: "dependencyArchitecture",
+        observation(
           rule,
-          identity: `edge:${rule}:${from}->${to}`,
-          severity: "error",
-          message:
-            rule === DEPENDENCY_RULE_NAMES.unresolved
-              ? `Import "${to}" cannot be resolved.${
-                  declarations.aliasConfigPath !== undefined &&
-                  matchesAlias(to, declarations.aliases ?? [])
-                    ? ` TypeScript configuration: ${declarations.aliasConfigPath}.`
-                    : ""
-                }`
-              : message(rule),
-          location: { file: from },
-        },
+          from,
+          to,
+          rule === DEPENDENCY_RULE_NAMES.unresolved
+            ? `Import "${to}" cannot be resolved.${
+                declarations.aliasConfigPath !== undefined &&
+                matchesAlias(to, declarations.aliases ?? [])
+                  ? ` TypeScript configuration: ${declarations.aliasConfigPath}.`
+                  : ""
+              }`
+            : message(rule),
+        ),
       ];
     },
   );

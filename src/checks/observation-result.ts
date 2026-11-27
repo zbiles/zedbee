@@ -1,3 +1,4 @@
+import pLimit from "p-limit";
 import { owningWorkspace } from "../inspection/workspace-owner.js";
 import { sourceMoves, workspaceOwns } from "./source-moves.js";
 import {
@@ -50,21 +51,13 @@ import type {
   CheckRunContext,
   CheckTarget,
 } from "./adapter.js";
-import { sanitizeCheckTarget } from "./sanitize-target.js";
+import { sameCheckTarget, sanitizeCheckTarget } from "./sanitize-target.js";
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
     throw new TypeError(`Expected ${field} to be an object`);
   }
   return value as Record<string, unknown>;
-}
-
-function sameTarget(left: CheckTarget, right: CheckTarget): boolean {
-  return (
-    left.id === right.id &&
-    left.kind === right.kind &&
-    left.relativeRoot === right.relativeRoot
-  );
 }
 
 function observations(value: unknown, checkId: string): readonly Observation[] {
@@ -104,7 +97,7 @@ function snapshotSet(
   ) {
     throw new TypeError("Expected projectDelta to be a boolean");
   }
-  if (returnedCheckId !== checkId || !sameTarget(returnedTarget, target)) {
+  if (returnedCheckId !== checkId || !sameCheckTarget(returnedTarget, target)) {
     throw new TypeError("Observation set does not match its check target");
   }
   if (!requiresBaseline && baseline.length > 0) {
@@ -146,13 +139,17 @@ async function changedEntities(
     throw new TypeError("Changed entity source was not validated");
   }
 
-  const entities: ChangedEntity[] = [];
-  for (const file of files) {
-    const ranges = context.changeSet.files.get(file)?.addedRanges ?? [];
-    const source = await readContainedFile(registry, file);
-    entities.push(...collectChangedEntities(source, file, ranges));
-  }
-  return Object.freeze(entities);
+  const limit = pLimit(4);
+  const perFile = await Promise.all(
+    files.map((file) =>
+      limit(async () => {
+        const ranges = context.changeSet.files.get(file)?.addedRanges ?? [];
+        const source = await readContainedFile(registry, file);
+        return collectChangedEntities(source, file, ranges);
+      }),
+    ),
+  );
+  return Object.freeze(perFile.flat());
 }
 
 function observationPaths(input: readonly Observation[]): readonly string[] {
@@ -175,11 +172,13 @@ function validateObservationPaths(
   registry: SnapshotRegistry,
   renamedBaselinePaths?: ReadonlySet<string>,
 ): void {
+  const validated = new Set<string>();
   for (const observation of input) {
     const paths = [observation.location?.file, observation.entity?.file].filter(
       (path): path is string => path !== undefined,
     );
     for (const path of paths) {
+      if (validated.has(path)) continue;
       if (registry.resolve(path)?.targetKind !== "file") {
         throw new TypeError(`Unknown ${side} observation path`);
       }
@@ -193,6 +192,7 @@ function validateObservationPaths(
           `Observation path does not belong to its ${side} target`,
         );
       }
+      validated.add(path);
     }
   }
 }
@@ -300,16 +300,6 @@ function metricFindings(
     const fingerprint = fingerprintObservation(observation);
     baselineByFingerprint.set(fingerprint, observation);
   }
-
-  const targetMetricFingerprints = new Set<string>();
-  for (const observation of target.filter(
-    (candidate) => candidate.metric !== undefined,
-  )) {
-    const fingerprint = fingerprintObservation(observation);
-    targetMetricFingerprints.add(fingerprint);
-  }
-
-  if (targetMetricFingerprints.size === 0) return [];
 
   const attributeMetric = prepareMetricAttribution(entities);
   return target

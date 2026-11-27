@@ -7,6 +7,7 @@ import {
   BrandedCommandPanel,
   brandedCommandContentWidth,
 } from "./branded-command-frame.js";
+import { isFixCancellationInput } from "./fix-app.js";
 import { InitActionButton, initRenderOptions } from "./init-app.js";
 import { PlainWordmark } from "./pixel-wordmark.js";
 import { TerminalViewport } from "./terminal-viewport.js";
@@ -58,11 +59,7 @@ export function InstallProjectApp({
     };
   }, [signal]);
   useInput((input, key) => {
-    if (
-      key.escape ||
-      (key.ctrl && input.toLowerCase() === "c") ||
-      input === "\u0003"
-    ) {
+    if (isFixCancellationInput(input, key)) {
       canceled.current = true;
       if (operation.current !== null) operation.current.abort();
       else finish(false);

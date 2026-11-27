@@ -12,15 +12,9 @@ import {
   realpathSync,
   statSync,
 } from "node:fs";
-import {
-  basename,
-  dirname,
-  isAbsolute,
-  relative,
-  resolve,
-  sep,
-} from "node:path";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isContainedPath as contained } from "../inspection/paths.js";
 import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
   DEPENDENCY_LIMITS,
@@ -56,13 +50,6 @@ type Entry = {
 };
 const digest = (value: string | Buffer): string =>
   createHash("sha256").update(value).digest("hex");
-function contained(root: string, path: string): boolean {
-  const part = relative(root, path);
-  return (
-    part === "" ||
-    (!isAbsolute(part) && part !== ".." && !part.startsWith(`..${sep}`))
-  );
-}
 function canonical(path: string): string | undefined {
   try {
     return realpathSync(path);
@@ -191,15 +178,11 @@ export class CapturedDependencies {
     const repository = this.roots.repository!;
     // Knip may read installed command metadata, never installed source code.
     // Canonical containment also rejects package links into live source/outside.
+    const installedRead = this.snapshotOnly
+      ? this.snapshotOnly === "knip" && basename(real) === "package.json"
+      : true;
     if (
-      this.snapshotOnly === "knip" &&
-      basename(real) === "package.json" &&
-      contained(repository, real) &&
-      isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
-    )
-      return ["repository", repository];
-    if (
-      !this.snapshotOnly &&
+      installedRead &&
       contained(repository, real) &&
       isInstalledDependencyPath(relative(repository, real).split(sep).join("/"))
     )

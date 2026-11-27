@@ -1,5 +1,5 @@
 import * as yarnLockfile from "@yarnpkg/lockfile";
-import { isMap, isScalar, parseDocument } from "yaml";
+import { isMap, isScalar } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
   finalizeDependencyRecords,
@@ -12,6 +12,10 @@ import {
 import { createSourcePositionIndex } from "./source-position.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 import { validateParsedStructure } from "./validate-structure.js";
+import {
+  parseYamlLockfileDocument,
+  readYamlLockfileData,
+} from "./yaml-document.js";
 
 const parseYarnClassic =
   typeof yarnLockfile.parse === "function"
@@ -76,18 +80,24 @@ function parseClassic(contents: string, lockfilePath: string): DependencyInvento
   return finalizeDependencyRecords(records);
 }
 
+function modernNpmLocator(resolution: string, version: unknown): string | undefined {
+  if (/^(?:@[^/]+\/)?[^@]+@workspace:/u.test(resolution)) return undefined;
+  const plain = /^((?:@[^/]+\/)?[^@]+)@npm:/u.exec(resolution);
+  if (plain !== null) return validatePackageName(plain[1]);
+  const patch = /^((?:@[^/]+\/)?[^@]+)@patch:([^#]+)#(.+)$/u.exec(resolution);
+  if (patch !== null) {
+    let underlying: string | undefined;
+    try { underlying = decodeURIComponent(patch[2]!); } catch {}
+    const source = underlying === undefined ? null : /^((?:@[^/]+\/)?[^@]+)@npm:(.+)$/u.exec(underlying);
+    if (source !== null && source[1] === patch[1] && source[2] === version)
+      return validatePackageName(source[1]);
+  }
+  throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains an unsupported package resolution.");
+}
+
 function parseModern(contents: string, lockfilePath: string): DependencyInventory {
-  const document = parseDocument(contents, { prettyErrors: false, strict: true, uniqueKeys: true });
-  if (document.errors.length > 0 || document.contents === null) {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not parse the Yarn Modern lockfile.");
-  }
-  let rawData: unknown;
-  try {
-    rawData = document.toJS({ maxAliasCount: 0 });
-  } catch {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not safely read the Yarn Modern lockfile structure.");
-  }
-  validateParsedStructure(rawData, "Yarn Modern");
+  const document = parseYamlLockfileDocument(contents, "Yarn Modern");
+  const rawData = readYamlLockfileData(document, "Yarn Modern");
   const data = plainRecord(rawData);
   const metadata = plainRecord(data.__metadata, "The Yarn Modern lockfile is missing metadata.");
   if (typeof metadata.version !== "number" || metadata.version < 4 || metadata.version > 8) {
@@ -111,12 +121,8 @@ function parseModern(contents: string, lockfilePath: string): DependencyInventor
     if (typeof resolution !== "string") {
       throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains a package without a resolution.");
     }
-    if (resolution.includes("@workspace:")) continue;
-    const npmMarker = resolution.indexOf("@npm:");
-    if (npmMarker <= 0) {
-      throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains an unsupported package resolution.");
-    }
-    const name = validatePackageName(resolution.slice(0, npmMarker));
+    const name = modernNpmLocator(resolution, entry.version);
+    if (name === undefined) continue;
     const offset = offsets.get(descriptor);
     records.push({
       name,

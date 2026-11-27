@@ -4,7 +4,7 @@ import {
   createLocalAnalyzerExecutor,
   type AnalyzerExecutionSession,
 } from "../checks/runner/executor.js";
-import { LeaseRemovalDeferredError, type StateLease } from "./state.js";
+import { removeLeaseUnlessDeferred, type StateLease } from "./state.js";
 import {
   ByteBudget,
   GLOBAL_BYTES,
@@ -171,12 +171,7 @@ export async function startServiceServer(
         if (request.drain) drainRequests--;
         if (!retained && lease !== undefined) {
           await lease.close();
-          try {
-            await state.removeLease(id);
-          } catch (error) {
-            // A surviving Windows client pins and removes the exact lease.
-            if (!(error instanceof LeaseRemovalDeferredError)) throw error;
-          }
+          await removeLeaseUnlessDeferred(state, id);
         }
       }
     },

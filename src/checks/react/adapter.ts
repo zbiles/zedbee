@@ -3,6 +3,7 @@ import { findWorkspace } from "../../inspection/workspaces.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
+import { COMPILER_SOURCE as SOURCE } from "../compiler-paths.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { validatedBatchResults } from "../eslint/batch-results.js";
 import type { ESLint } from "eslint";
@@ -54,6 +55,31 @@ interface PreparedSide {
   readonly reactVersion?: string;
 }
 
+type PreparedGroup = PreparedSide["groups"][number];
+
+function groupEngineOptions(
+  prepared: PreparedSide,
+  group: PreparedGroup,
+  mode: ManagedEslintMode,
+  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
+): ManagedEslintOptions {
+  return {
+    cwd: prepared.canonicalRoot,
+    mode,
+    managedIgnores: [],
+    ruleOverrides: group.rules,
+    ...(group.accessibilitySettings === undefined
+      ? {}
+      : { accessibilitySettings: group.accessibilitySettings }),
+    ...(prepared.reactVersion === undefined
+      ? {}
+      : {
+          reactVersion: prepared.reactVersion,
+          reactCorrectnessConfigFactory,
+        }),
+  };
+}
+
 type ReactVersionResolverFactory = (
   inspection: RepositoryInspection,
 ) => Promise<ReactVersionResolver>;
@@ -79,6 +105,17 @@ function reactAnalysisFailure(
       "Verify that the source file uses supported JavaScript or TypeScript syntax, then retry. If it does, report a Zedbee React analyzer compatibility issue.",
     ...(path === undefined ? {} : { path }),
   });
+}
+
+function groupAnalysisFailure(
+  error: unknown,
+  signal: AbortSignal,
+  id: "reactCorrectness" | "reactAccessibility",
+  files: readonly string[],
+): Error {
+  signal.throwIfAborted();
+  if (error instanceof CheckIncompleteError) return error;
+  return reactAnalysisFailure(id, files.length === 1 ? files[0] : undefined);
 }
 
 async function prepareSide(
@@ -146,21 +183,14 @@ async function collectPreparedSide(
   for (const group of prepared.groups) {
     signal.throwIfAborted();
     try {
-      const engine = engineFactory({
-        cwd: prepared.canonicalRoot,
-        mode,
-        managedIgnores: [],
-        ruleOverrides: group.rules,
-        ...(group.accessibilitySettings === undefined
-          ? {}
-          : { accessibilitySettings: group.accessibilitySettings }),
-        ...(prepared.reactVersion === undefined
-          ? {}
-          : {
-              reactVersion: prepared.reactVersion,
-              reactCorrectnessConfigFactory,
-            }),
-      });
+      const engine = engineFactory(
+        groupEngineOptions(
+          prepared,
+          group,
+          mode,
+          reactCorrectnessConfigFactory,
+        ),
+      );
       const results = await engine.lintFiles([...group.files]);
       signal.throwIfAborted();
       for (const { file: path, result } of validatedBatchResults(
@@ -175,12 +205,7 @@ async function collectPreparedSide(
         );
       }
     } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof CheckIncompleteError) throw error;
-      throw reactAnalysisFailure(
-        id,
-        group.files.length === 1 ? group.files[0] : undefined,
-      );
+      throw groupAnalysisFailure(error, signal, id, group.files);
     }
   }
   return Object.freeze(
@@ -259,28 +284,24 @@ export function createReactAdapter(
                       checkId: "reactCorrectness",
                       files: group.files,
                       createEngine: () =>
-                        engineFactory({
-                          cwd: prepared.canonicalRoot,
-                          mode,
-                          managedIgnores: [],
-                          ruleOverrides: group.rules,
-                          ...(prepared.reactVersion === undefined
-                            ? {}
-                            : {
-                                reactVersion: prepared.reactVersion,
-                                reactCorrectnessConfigFactory,
-                              }),
-                        }),
+                        engineFactory(
+                          groupEngineOptions(
+                            prepared,
+                            group,
+                            mode,
+                            reactCorrectnessConfigFactory,
+                          ),
+                        ),
                     },
                     findings,
                   )),
                 );
               } catch (error) {
-                context.signal.throwIfAborted();
-                if (error instanceof CheckIncompleteError) throw error;
-                throw reactAnalysisFailure(
+                throw groupAnalysisFailure(
+                  error,
+                  context.signal,
                   "reactCorrectness",
-                  group.files.length === 1 ? group.files[0] : undefined,
+                  group.files,
                 );
               }
             }

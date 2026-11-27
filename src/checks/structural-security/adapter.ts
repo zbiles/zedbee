@@ -23,6 +23,7 @@ import type {
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 import { collectStructuralSecurityObservations } from "./rules.js";
 
 import { StructuralParseError } from "./parser.js";

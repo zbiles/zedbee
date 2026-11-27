@@ -30,6 +30,26 @@ describe("parseYarnLockfile", () => {
     expect(records.some(({ name }) => name === "workspace-only")).toBe(false);
   });
 
+  it("skips Yarn Modern patch resolutions and keeps the unpatched entry", () => {
+    const contents = [
+      "__metadata:",
+      "  version: 8",
+      '"resolve@npm:^1.22.8":',
+      "  version: 1.22.8",
+      '  resolution: "resolve@npm:1.22.8"',
+      "",
+      '"resolve@patch:resolve@npm%3A^1.22.8#optional!builtin<compat/resolve>":',
+      "  version: 1.22.8",
+      '  resolution: "resolve@patch:resolve@npm%3A1.22.8#optional!builtin<compat/resolve>::version=1.22.8&hash=c3c19d"',
+      "",
+    ].join("\n");
+    const records = parseYarnLockfile(contents, "yarn.lock");
+    expect(records.map(({ name, version, line }) => ({ name, version, line }))).toEqual([
+      { name: "resolve", version: "1.22.8", line: 3 },
+    ]);
+    expect(records).toHaveLength(1);
+  });
+
   it("rejects malformed classic and modern lockfiles", () => {
     expect(() => parseYarnLockfile("# yarn lockfile v1\nalpha@^1:\n", "yarn.lock")).toThrowError(
       expect.objectContaining({ code: "LOCKFILE_VERSION_MISSING" }),
@@ -77,4 +97,10 @@ describe("parseYarnLockfile", () => {
       expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
     );
   });
+});
+
+it("inventories patch-only scoped dependencies at their exact npm version", () => {
+  const lock = '__metadata:\n  version: 8\n"@scope/pkg@patch:fixture":\n  version: 1.2.3\n  resolution: "@scope/pkg@patch:@scope/pkg@npm%3A1.2.3#./fixture.patch"\n';
+  expect(parseYarnLockfile(lock, "yarn.lock")).toMatchObject([{ name: "@scope/pkg", version: "1.2.3" }]);
+  expect(() => parseYarnLockfile(lock.replace("npm%3A1.2.3", "file%3Afixture"), "yarn.lock")).toThrow();
 });

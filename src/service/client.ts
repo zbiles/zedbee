@@ -50,6 +50,10 @@ function decodeStatus(value: unknown): ServiceStatus {
     throw new ServiceUnavailableError();
   return value as unknown as ServiceStatus;
 }
+function expectStopped(result: unknown): void {
+  if (!exactFields(result, ["state"]) || result.state !== "stopped")
+    throw new ServiceUnavailableError();
+}
 export async function acquireServiceExecutor(
   options: ServiceOptions = {},
 ): Promise<AnalyzerExecutor> {
@@ -110,8 +114,7 @@ export async function acquireServiceExecutor(
         }
         return undefined;
       }
-      if (!exactFields(result, ["state"]) || result.state !== "stopped")
-        throw new ServiceUnavailableError();
+      expectStopped(result);
       return undefined;
     } finally {
       // The provisional reply/socket loss is not cleanup proof. This awaits
@@ -187,8 +190,7 @@ async function manage(
     client = await connectService(state, record);
     const result = await client.request(op);
     if (op === "stop") {
-      if (!exactFields(result, ["state"]) || result.state !== "stopped")
-        throw new ServiceUnavailableError();
+      expectStopped(result);
       return { state: "stopped" };
     }
     return decodeStatus(result);

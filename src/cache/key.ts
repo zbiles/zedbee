@@ -154,12 +154,7 @@ export function changeSetCacheDigest(changeSet: ChangeSet): string {
         .sort((left, right) => left.start - right.start || left.end - right.end)
         .map(({ start, end }) => ({ start, end })),
     }));
-  return createHash("sha256")
-    .update(
-      JSON.stringify(stable({ isEmpty: changeSet.isEmpty, files })),
-      "utf8",
-    )
-    .digest("hex");
+  return stableDigest({ isEmpty: changeSet.isEmpty, files });
 }
 
 function stable(value: unknown): unknown {
@@ -170,6 +165,12 @@ function stable(value: unknown): unknown {
       .sort(([left], [right]) => compareCodeUnits(left, right))
       .map(([key, nested]) => [key, stable(nested)]),
   );
+}
+
+function stableDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(JSON.stringify(stable(value)), "utf8")
+    .digest("hex");
 }
 
 type SnapshotInputIdentity =
@@ -232,9 +233,7 @@ async function snapshotIdentity(
     ),
   );
   // Canonicalize the full inventory once per snapshot, shared by every target.
-  const digest = createHash("sha256")
-    .update(JSON.stringify(stable(identities)), "utf8")
-    .digest("hex");
+  const digest = stableDigest(identities);
   return {
     root: canonicalRoot,
     digest,
@@ -356,9 +355,9 @@ function observationCacheKey(
   baselineSnapshot: string,
   target: string,
 ): string {
-  const payload = stable({
+  return stableDigest({
     // v4 also binds dispatch keys to a shared canonical changeset digest.
-    schema: "zedbee-observation-cache-key-v4",
+    schema: "zedbee-observation-cache-key-v5",
     mode: source.mode,
     baseline: source.baseline,
     target: source.target,
@@ -374,7 +373,4 @@ function observationCacheKey(
     arch: input.arch ?? process.arch,
     zedbeeVersion: input.zedbeeVersion ?? ZEDBEE_VERSION,
   });
-  return createHash("sha256")
-    .update(JSON.stringify(payload), "utf8")
-    .digest("hex");
 }

@@ -43,13 +43,14 @@ export async function resolveFormattingSetup(
   // setup that would misrepresent the project.
   const discoveries = await discoverProjectPrettier(repositoryRoot);
   const projectRoots = discoveries.map((entry) => entry.projectRoot);
-  const storedTrustRoots: string[] = [];
-  for (const root of projectRoots) {
-    const stored = await readProjectPrettierTrust(repositoryRoot, root).catch(
-      () => undefined,
-    );
-    if (stored === "v1") storedTrustRoots.push(root);
-  }
+  const storedTrust = await Promise.all(
+    projectRoots.map((root) =>
+      readProjectPrettierTrust(repositoryRoot, root).catch(() => undefined),
+    ),
+  );
+  const storedTrustRoots = projectRoots.filter(
+    (_root, index) => storedTrust[index] === "v1",
+  );
   const projectRoot =
     discoveries.find((entry) => entry.projectRoot === ".")?.projectRoot ??
     discoveries[0]?.projectRoot ??

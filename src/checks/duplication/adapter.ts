@@ -8,6 +8,7 @@ import { AnalyzerJobError, analyzerDiagnostic } from "../diagnostics.js";
 import { duplicationInputPaths } from "./input-paths.js";
 import type { NormalizedDuplicationReport } from "./types.js";
 import { loadDuplicationSources } from "./source-tokens.js";
+import { forEachConcurrently } from "./concurrency.js";
 import { compareCloneOccurrences } from "./clone-comparison.js";
 import { canonicalizeSnapshotRoot } from "../../inspection/read-json.js";
 import { digestContainedLineRange } from "../../inspection/read-json.js";
@@ -25,6 +26,7 @@ import {
   writeManagedJsonConfig,
 } from "../project/config-boundary.js";
 import {
+  isPercentage,
   missingCloneFragmentLocations,
   parseJscpdReport,
 } from "./normalize-clone.js";
@@ -63,11 +65,10 @@ export async function createFallbackTokenHashes(
 
   const ranges = [...uniqueRanges.values()];
   const hashes = new Map<number, string>();
-  let cursor = 0;
-  const worker = async (): Promise<void> => {
-    while (cursor < ranges.length) {
-      const range = ranges[cursor++];
-      if (range === undefined) return;
+  await forEachConcurrently(
+    ranges,
+    FALLBACK_DIGEST_CONCURRENCY,
+    async (range) => {
       const hash = await digest(
         registry,
         range.location.file,
@@ -75,13 +76,7 @@ export async function createFallbackTokenHashes(
         range.location.endLine,
       );
       for (const index of range.indexes) hashes.set(index, hash);
-    }
-  };
-  await Promise.all(
-    Array.from(
-      { length: Math.min(FALLBACK_DIGEST_CONCURRENCY, ranges.length) },
-      worker,
-    ),
+    },
   );
   return hashes;
 }
@@ -89,12 +84,7 @@ export async function createFallbackTokenHashes(
 const JSCPD_REPORT = "jscpd-report.json";
 
 function threshold(policyThreshold: number | undefined): number {
-  if (
-    typeof policyThreshold !== "number" ||
-    !Number.isFinite(policyThreshold) ||
-    policyThreshold < 0 ||
-    policyThreshold > 100
-  ) {
+  if (!isPercentage(policyThreshold)) {
     throw new TypeError(
       "Duplication analysis requires a percentage threshold.",
     );
@@ -223,6 +213,11 @@ async function collectSide(
   }
 }
 
+function settledValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
+}
+
 export const duplicationAdapter: ObservationCheckAdapter = {
   id: "duplication",
   output: "observations",
@@ -232,22 +227,26 @@ export const duplicationAdapter: ObservationCheckAdapter = {
     try {
       const policy = context.policy as ResolvedDuplicationPolicy;
       const policyThreshold = threshold(policy.threshold);
-      const baseline = await collectSide(
-        context.snapshots.baselineDir,
-        context.baselineInspection,
-        context.target,
-        policyThreshold,
-        policy.settings,
-        context.signal,
-      );
-      const target = await collectSide(
-        context.snapshots.targetDir,
-        context.targetInspection,
-        context.target,
-        policyThreshold,
-        policy.settings,
-        context.signal,
-      );
+      const [baselineResult, targetResult] = await Promise.allSettled([
+        collectSide(
+          context.snapshots.baselineDir,
+          context.baselineInspection,
+          context.target,
+          policyThreshold,
+          policy.settings,
+          context.signal,
+        ),
+        collectSide(
+          context.snapshots.targetDir,
+          context.targetInspection,
+          context.target,
+          policyThreshold,
+          policy.settings,
+          context.signal,
+        ),
+      ]);
+      const baseline = settledValue(baselineResult);
+      const target = settledValue(targetResult);
       if (
         target.report.percentage <= policyThreshold ||
         target.report.clones.length === 0

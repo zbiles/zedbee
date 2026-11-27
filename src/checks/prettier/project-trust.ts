@@ -78,10 +78,11 @@ async function trustKeys(
     "--porcelain",
     "-z",
   ]);
-  const keys = [shared];
-  for (const field of worktrees.stdout.split("\0")) {
-    if (field.startsWith("worktree ")) {
+  const worktreeKeys = await Promise.all(
+    worktrees.stdout.split("\0").map(async (field) => {
+      if (!field.startsWith("worktree ")) return [];
       const path = field.slice("worktree ".length);
+      const keys: string[] = [];
       // Revocation also removes grants for temporarily unavailable worktrees,
       // so returning a checkout cannot resurrect withdrawn consent.
       if (revoking) keys.push(projectPrettierTrustKey(path, projectRoot));
@@ -94,9 +95,10 @@ async function trustKeys(
       ) {
         keys.push(projectPrettierTrustKey(checkout, projectRoot));
       }
-    }
-  }
-  return [...new Set(keys)];
+      return keys;
+    }),
+  );
+  return [...new Set([shared, ...worktreeKeys.flat()])];
 }
 
 export function projectPrettierTrustKey(
@@ -158,11 +160,11 @@ export async function readProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
 ): Promise<string | undefined> {
-  for (const key of await trustKeys(repositoryRoot, projectRoot)) {
-    const value = await readLocalValue(repositoryRoot, key);
-    if (value === TRUST_VALUE) return value;
-  }
-  return undefined;
+  const keys = await trustKeys(repositoryRoot, projectRoot);
+  const values = await Promise.all(
+    keys.map((key) => readLocalValue(repositoryRoot, key)),
+  );
+  return values.includes(TRUST_VALUE) ? TRUST_VALUE : undefined;
 }
 
 export interface ProjectPrettierTrustSnapshot {

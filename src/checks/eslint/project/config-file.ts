@@ -2,22 +2,8 @@ import { lstat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isContainedPath } from "../../../inspection/read-json.js";
 
-const FLAT_CONFIG_NAMES = [
-  "eslint.config.js",
-  "eslint.config.mjs",
-  "eslint.config.cjs",
-];
-const OTHER_CONFIG_NAMES = [
-  "eslint.config.ts",
-  "eslint.config.mts",
-  "eslint.config.cts",
-  ".eslintrc",
-  ".eslintrc.json",
-  ".eslintrc.js",
-  ".eslintrc.cjs",
-  ".eslintrc.yml",
-  ".eslintrc.yaml",
-];
+import { ESLINT_CONFIG_FILE_NAMES, SUPPORTED_ESLINT_CONFIG_FILE_NAMES } from "./config-files.js";
+const FLAT_CONFIG_NAMES: readonly string[] = SUPPORTED_ESLINT_CONFIG_FILE_NAMES;
 
 export async function findProjectEslintConfig(
   root: string,
@@ -31,7 +17,7 @@ export async function findProjectEslintConfig(
     dir = dirname(dir)
   ) {
     for (const name of mode === "doctor"
-      ? [...FLAT_CONFIG_NAMES, ...OTHER_CONFIG_NAMES]
+      ? ESLINT_CONFIG_FILE_NAMES
       : FLAT_CONFIG_NAMES) {
       const path = join(dir, name);
       const state = await lstat(path).catch((error: NodeJS.ErrnoException) => {

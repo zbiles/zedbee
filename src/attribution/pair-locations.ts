@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { diffLines } from "diff";
 import type { Observation, SourceLocation } from "../core/types.js";
 import type { ChangeSet } from "../git/change-set.js";
+import { renamedPaths } from "./source-moves.js";
 
 export interface SnapshotLocationObservations {
   readonly observations: readonly Observation[];
@@ -43,11 +44,7 @@ export function pairLocationObservations(
   readonly baselineObservations: readonly Observation[];
   readonly targetObservations: readonly Observation[];
 } {
-  const renamedPaths = new Map<string, string>();
-  for (const file of changeSet.files.values()) {
-    if (file.status === "renamed" && file.previousPath !== undefined)
-      renamedPaths.set(file.previousPath, file.path);
-  }
+  const renames = renamedPaths(changeSet.files);
   const lineMaps = new Map<
     string,
     readonly {
@@ -60,7 +57,7 @@ export function pairLocationObservations(
     location: SourceLocation,
     anchor: boolean,
   ): SourceLocation | undefined => {
-    const targetPath = renamedPaths.get(location.file) ?? location.file;
+    const targetPath = renames.get(location.file) ?? location.file;
     const unchangedPosition = { ...location, file: targetPath };
     const before = baseline.files[location.file];
     const after = target.files[targetPath];

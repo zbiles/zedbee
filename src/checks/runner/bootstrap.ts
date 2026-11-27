@@ -8,27 +8,33 @@ let started = false;
 process.on("disconnect", () => process.exit(0));
 if (!process.connected) process.exit(0);
 process.on("message", async (message: unknown) => {
-  const input = message as {
-    type?: string;
-    workerEntry?: string;
-    request?: unknown;
-  };
-  if (
-    started ||
-    input.type !== "owned-start" ||
-    typeof input.workerEntry !== "string"
-  )
-    return;
-  started = true;
-  try {
-    await import(pathToFileURL(input.workerEntry).href);
-    process.emit("message", input.request, undefined);
-  } catch {
-    await sendWorkerReply({
-      version: 1,
-      ok: false,
-      category: "startup",
-    }).finally(() => process.exit(1));
-  }
+    const input = message as {
+      type?: string;
+      workerEntry?: string;
+      request?: unknown;
+    };
+    if (
+      started ||
+      input == null ||
+      input.type !== "owned-start" ||
+      typeof input.workerEntry !== "string"
+    )
+      return;
+    started = true;
+    try {
+      await import(pathToFileURL(input.workerEntry).href);
+      process.emit("message", input.request, undefined);
+    } catch {
+      const envelope = input.request as
+        | { sessionId?: unknown; jobId?: unknown }
+        | undefined;
+      await sendWorkerReply({
+        version: 1,
+        type: "result",
+        sessionId: envelope?.sessionId,
+        jobId: envelope?.jobId,
+        response: { version: 1, ok: false, category: "startup" },
+      }).finally(() => process.exit(1));
+    }
 });
 process.send?.({ type: "ready-for-ownership" });

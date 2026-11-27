@@ -15,6 +15,7 @@ import {
   type AnalyzerResult,
 } from "./protocol.js";
 import { types } from "node:util";
+import type { AnalyzerJobOptions } from "./run-job.js";
 
 const arrayBufferBytes = Object.getOwnPropertyDescriptor(
   ArrayBuffer.prototype,
@@ -220,4 +221,20 @@ export function decodeWorkerResponse<R extends AnalyzerRequest>(
         ? new AnalyzerJobError(diagnostic)
         : new CheckIncompleteError({ ...incomplete, diagnostic }),
   };
+}
+/** Report elapsed time to an observer; observer failures never affect a job. */
+export function reportJobTiming(
+  options: AnalyzerJobOptions,
+  kind: "queue" | "result",
+  startedAt: number,
+): void {
+  try {
+    options.onTiming?.(
+      kind,
+      Math.min(
+        604800000,
+        Math.max(0, Math.round(performance.now() - startedAt)),
+      ),
+    );
+  } catch {}
 }

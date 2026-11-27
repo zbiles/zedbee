@@ -1,10 +1,11 @@
 import { extname } from "node:path";
 import * as ts from "typescript";
 import { analysisKey, analysisStore } from "../checks/analysis-reuse.js";
+import { compareCodeUnits } from "../core/compare.js";
 import type { ChangedEntity } from "../core/types.js";
 import type { LineRange } from "../git/change-set.js";
 import { normalizeRepositoryRelativePath } from "./fingerprint.js";
-import { sourceEntityName } from "./source-identity.js";
+import { entityIdentityPrefix, sourceEntityName } from "./source-identity.js";
 
 const SUPPORTED_EXTENSIONS = new Set([
   ".js",
@@ -300,7 +301,7 @@ function entityIdentity(
   owners: readonly LexicalOwner[],
 ): string {
   if (owners.length === 0 && declaration.identityQualifiers === undefined) {
-    return `${declaration.kind}:${file}:${declaration.name}`;
+    return entityIdentityPrefix(declaration.kind, file) + declaration.name;
   }
   const qualified = [
     ...owners,
@@ -309,7 +310,7 @@ function entityIdentity(
   ]
     .map(({ kind, name }) => `${kind}=${encodeURIComponent(name)}`)
     .join("/");
-  return `${declaration.kind}:${file}:${qualified}`;
+  return entityIdentityPrefix(declaration.kind, file) + qualified;
 }
 
 function normalizedRanges(
@@ -351,10 +352,6 @@ function intersects(
   return ranges.some(
     (range) => startLine <= range.end && endLine >= range.start,
   );
-}
-
-function compareCodeUnits(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 interface ValidatedEntities {
@@ -471,6 +468,28 @@ function collectValidatedEntities(
     });
   }
   visit(parsedSourceFile, [], [], { nextOrdinal: 0 });
+
+  const byIdentity = new Map<string, number>();
+  const replacements = new Map<ChangedEntity, ChangedEntity>();
+  for (const entity of entities) {
+    const ordinal = (byIdentity.get(entity.identity) ?? 0) + 1;
+    byIdentity.set(entity.identity, ordinal);
+    if (ordinal === 1) continue;
+    const prefix = entityIdentityPrefix(entity.kind, entity.file);
+    const payload = entity.identity.slice(prefix.length);
+    const qualified = payload === entity.name
+      ? `${entity.kind}=${encodeURIComponent(entity.name)}`
+      : payload;
+    const identity = `${prefix}occurrence=${ordinal}/${qualified}`;
+    replacements.set(entity, Object.freeze({ ...entity, identity }));
+  }
+  for (const [index, entity] of entities.entries()) {
+    entities[index] = replacements.get(entity) ?? entity;
+  }
+  for (const [index, span] of spans.entries()) {
+    const entity = replacements.get(span.entity);
+    if (entity !== undefined) spans[index] = Object.freeze({ ...span, entity });
+  }
 
   entities.sort(
     (left, right) =>

@@ -33,7 +33,7 @@ function dependencyPath(key: string): readonly string[] {
   const path = key.startsWith("@")
     ? [`${parts[0]}/${parts[1]}`, ...parts.slice(2)]
     : parts;
-  path.forEach(validatePackageName);
+  path.forEach((name) => validatePackageName(name));
   return Object.freeze(path);
 }
 

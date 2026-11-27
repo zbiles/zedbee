@@ -78,23 +78,46 @@ export function wrapTerminalWords(value: string, width: number): string[] {
   const words = value.trim().split(/\s+/u).filter(Boolean);
   const lines: string[] = [];
   let current = "";
+  let currentWidth = 0;
   for (const word of words.flatMap((item) =>
     chunkTerminalCells(item, available),
   )) {
+    const wordWidth = terminalCellWidth(word);
     if (current === "") {
       current = word;
-    } else if (
-      terminalCellWidth(current) + 1 + terminalCellWidth(word) <=
-      available
-    ) {
+      currentWidth = wordWidth;
+    } else if (currentWidth + 1 + wordWidth <= available) {
       current += ` ${word}`;
+      currentWidth += 1 + wordWidth;
     } else {
       lines.push(current);
       current = word;
+      currentWidth = wordWidth;
     }
   }
   if (current !== "" || lines.length === 0) lines.push(current);
   return lines;
+}
+
+export function wrapPrefixedTerminalWords(
+  value: string,
+  width: number,
+  prefix = "",
+): string[] {
+  const available = Math.max(1, width - terminalCellWidth(prefix));
+  return wrapTerminalWords(value, available).map((line) => `${prefix}${line}`);
+}
+
+export function wrapLabeledTerminalWords(
+  prefix: string,
+  value: string,
+  width: number,
+): string[] {
+  const prefixWidth = terminalCellWidth(prefix);
+  const continuation = " ".repeat(prefixWidth);
+  return wrapTerminalWords(value, Math.max(1, width - prefixWidth)).map(
+    (line, index) => `${index === 0 ? prefix : continuation}${line}`,
+  );
 }
 
 export function padStartTerminalCells(value: string, width: number): string {

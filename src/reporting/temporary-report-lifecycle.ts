@@ -67,6 +67,23 @@ class StateLimitError extends Error {
   readonly code = "STATE_LIMIT";
 }
 
+function isTrackedReportName(fileName: unknown): fileName is string {
+  return (
+    typeof fileName === "string" &&
+    basename(fileName) === fileName &&
+    REPORT_NAME.test(fileName)
+  );
+}
+
+function hasTrackedReportName(report: unknown): boolean {
+  return (
+    typeof report === "object" &&
+    report !== null &&
+    "fileName" in report &&
+    isTrackedReportName(report.fileName)
+  );
+}
+
 function parseState(serialized: string): ParsedReportLifecycleState {
   const value = JSON.parse(serialized) as Record<string, unknown> | null;
   if (value === null || typeof value !== "object") {
@@ -85,9 +102,7 @@ function parseState(serialized: string): ParsedReportLifecycleState {
           typeof report !== "object" ||
           report === null ||
           !hasOnlyKeys(report, ["fileName", "createdGeneration"]) ||
-          typeof report.fileName !== "string" ||
-          basename(report.fileName) !== report.fileName ||
-          !REPORT_NAME.test(report.fileName) ||
+          !hasTrackedReportName(report) ||
           !Number.isSafeInteger(report.createdGeneration) ||
           report.createdGeneration < 1 ||
           report.createdGeneration > (value.generation as number),
@@ -105,9 +120,7 @@ function parseState(serialized: string): ParsedReportLifecycleState {
           typeof report !== "object" ||
           report === null ||
           !hasOnlyKeys(report, ["fileName", "createdAtMs"]) ||
-          typeof report.fileName !== "string" ||
-          basename(report.fileName) !== report.fileName ||
-          !REPORT_NAME.test(report.fileName) ||
+          !hasTrackedReportName(report) ||
           !Number.isSafeInteger(report.createdAtMs) ||
           report.createdAtMs < 0,
       )
@@ -210,6 +223,23 @@ export async function loadState(
   }
 }
 
+async function syncDirectoryOrWarn(
+  directory: string,
+  subject: string,
+  warnings: ReportMaintenanceWarning[],
+): Promise<void> {
+  try {
+    await syncTemporaryReportDirectory(directory);
+  } catch (error) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `${subject} could not be synchronized (${errorCode(error)}).`,
+      ),
+    );
+  }
+}
+
 export async function rollbackReport(
   reportPath: string,
   warnings: ReportMaintenanceWarning[],
@@ -246,16 +276,11 @@ export async function rollbackReport(
     );
     return;
   }
-  try {
-    await syncTemporaryReportDirectory(dirname(reportPath));
-  } catch (error) {
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `A rolled-back report's directory could not be synchronized (${errorCode(error)}).`,
-      ),
-    );
-  }
+  await syncDirectoryOrWarn(
+    dirname(reportPath),
+    "A rolled-back report's directory",
+    warnings,
+  );
 }
 
 export async function writeUniqueReport(
@@ -335,27 +360,79 @@ async function removeReportTemporary(
     }
     return;
   }
-  try {
-    await syncTemporaryReportDirectory(repositoryDirectory);
-  } catch (error) {
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `A report temporary-file removal could not be synchronized (${errorCode(error)}).`,
-      ),
-    );
-  }
+  await syncDirectoryOrWarn(
+    repositoryDirectory,
+    "A report temporary-file removal",
+    warnings,
+  );
 }
 
 function trackedReportPath(
   repositoryDirectory: string,
   fileName: string,
 ): string | undefined {
-  if (basename(fileName) !== fileName || !REPORT_NAME.test(fileName)) {
+  if (!isTrackedReportName(fileName)) {
     return undefined;
   }
   const path = resolve(repositoryDirectory, fileName);
   return dirname(path) === repositoryDirectory ? path : undefined;
+}
+
+async function removeExpiredReport(
+  repositoryDirectory: string,
+  report: ReportLifecycleState["reports"][number],
+  warnings: ReportMaintenanceWarning[],
+  diagnostics?: ReportMaintenanceDiagnostics,
+): Promise<"removed" | "retained" | "dropped"> {
+  const path = trackedReportPath(repositoryDirectory, report.fileName);
+  if (path === undefined) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        "An invalid lifecycle entry was ignored and no file was removed.",
+      ),
+    );
+    return "dropped";
+  }
+  let metadata;
+  try {
+    metadata = await lstat(path);
+  } catch (error) {
+    if (errorCode(error) === "ENOENT") {
+      if (diagnostics) diagnostics.alreadyMissing++;
+      return "dropped";
+    }
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `A tracked report could not be validated and was left untouched (${errorCode(error)}).`,
+      ),
+    );
+    return "retained";
+  }
+  if (!metadata.isFile() || metadata.isSymbolicLink()) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        "A tracked report was not a regular file and was left untouched.",
+      ),
+    );
+    return "retained";
+  }
+  try {
+    await unlink(path);
+    if (diagnostics) diagnostics.removedExpired++;
+    return "removed";
+  } catch (error) {
+    warnings.push(
+      warning(
+        "TEMP_REPORT_CLEANUP_FAILED",
+        `A validated tracked report could not be removed (${errorCode(error)}).`,
+        path,
+      ),
+    );
+    return "retained";
+  }
 }
 
 export async function removeExpiredReports(
@@ -367,72 +444,27 @@ export async function removeExpiredReports(
   diagnostics?: ReportMaintenanceDiagnostics,
 ): Promise<ReportLifecycleState["reports"]> {
   const retained: ReportLifecycleState["reports"][number][] = [];
+  let removedAny = false;
   for (const report of reports) {
     if (nowMs - report.createdAtMs < maxAgeMs) {
       retained.push(report);
       continue;
     }
-    const path = trackedReportPath(repositoryDirectory, report.fileName);
-    if (path === undefined) {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          "An invalid lifecycle entry was ignored and no file was removed.",
-        ),
-      );
-      continue;
-    }
-    let metadata;
-    try {
-      metadata = await lstat(path);
-    } catch (error) {
-      if (errorCode(error) === "ENOENT") {
-        if (diagnostics) diagnostics.alreadyMissing++;
-        continue;
-      }
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `A tracked report could not be validated and was left untouched (${errorCode(error)}).`,
-        ),
-      );
-      retained.push(report);
-      continue;
-    }
-    if (!metadata.isFile() || metadata.isSymbolicLink()) {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          "A tracked report was not a regular file and was left untouched.",
-        ),
-      );
-      retained.push(report);
-      continue;
-    }
-    try {
-      await unlink(path);
-      if (diagnostics) diagnostics.removedExpired++;
-    } catch (error) {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `A validated tracked report could not be removed (${errorCode(error)}).`,
-          path,
-        ),
-      );
-      retained.push(report);
-      continue;
-    }
-    try {
-      await syncTemporaryReportDirectory(repositoryDirectory);
-    } catch (error) {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `A removed report's directory could not be synchronized (${errorCode(error)}).`,
-        ),
-      );
-    }
+    const outcome = await removeExpiredReport(
+      repositoryDirectory,
+      report,
+      warnings,
+      diagnostics,
+    );
+    if (outcome === "retained") retained.push(report);
+    else if (outcome === "removed") removedAny = true;
+  }
+  if (removedAny) {
+    await syncDirectoryOrWarn(
+      repositoryDirectory,
+      "A removed report's directory",
+      warnings,
+    );
   }
   return retained;
 }

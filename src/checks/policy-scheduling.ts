@@ -19,9 +19,11 @@ import {
   compilerInputRelevance,
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
+import {
+  COMPILER_SOURCE as JAVASCRIPT_SOURCE,
+  TYPESCRIPT_SOURCE,
+} from "./compiler-paths.js";
 
-const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const FILE_SCOPED_CHECKS = new Set<CheckId>([
   "formatting",
   "lint",

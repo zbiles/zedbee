@@ -5,6 +5,7 @@ import {
   incompleteComparisonContext,
   sanitizeComparisonContext,
 } from "./comparison-context.js";
+import { ATTRIBUTION_KINDS as ATTRIBUTION_KIND_LIST } from "../core/types.js";
 import type {
   Attribution,
   CheckError,
@@ -26,15 +27,9 @@ import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
 import { sanitizeSourceLine } from "../reporting/source-line.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { sanitizeAnalyzerDiagnostic } from "./diagnostics.js";
+import { isDiagnosticRedaction } from "./diagnostic-redaction.js";
 
-const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>([
-  "range-overlap",
-  "syntax-ownership",
-  "transformation-diff",
-  "baseline-comparison",
-  "metric-delta",
-  "none",
-]);
+const ATTRIBUTION_KINDS = new Set<Attribution["kind"]>(ATTRIBUTION_KIND_LIST);
 
 export const SOURCE_EXCERPT_MAX_CODE_POINTS = 500;
 
@@ -151,19 +146,7 @@ interface CheckResultOverrides {
 function sanitizeMessageRedaction(
   value: Finding["messageRedaction"],
 ): NonNullable<Finding["messageRedaction"]> {
-  const allowed = new Set([
-    "sensitive-value",
-    "context-unavailable",
-    "unsupported-template",
-    "source-free-policy",
-  ]);
-  if (
-    !value ||
-    value.redacted !== true ||
-    !Array.isArray(value.reasons) ||
-    value.reasons.length > 4 ||
-    value.reasons.some((reason) => !allowed.has(reason))
-  )
+  if (!isDiagnosticRedaction(value))
     throw new TypeError("Invalid message redaction");
   return { redacted: true, reasons: [...value.reasons] };
 }
@@ -291,6 +274,14 @@ function sanitizeFinding(finding: Finding): Finding {
   };
 }
 
+function normalizedPathList(paths: readonly string[]): readonly string[] {
+  return Object.freeze(
+    [...new Set(paths.map(normalizeRepositoryRelativePath))].sort(
+      compareCodeUnits,
+    ),
+  );
+}
+
 function sanitizeError(
   error: CheckError,
   temporaryPath: ValidatedSnapshotPath | undefined,
@@ -329,11 +320,7 @@ function sanitizeError(
     ...(error.paths === undefined
       ? {}
       : {
-          paths: Object.freeze(
-            [...new Set(error.paths.map(normalizeRepositoryRelativePath))].sort(
-              compareCodeUnits,
-            ),
-          ),
+          paths: normalizedPathList(error.paths),
         }),
     ...(error.snapshot === undefined
       ? {}
@@ -345,13 +332,7 @@ function sanitizeError(
     ...(error.projectPaths === undefined
       ? {}
       : {
-          projectPaths: Object.freeze(
-            [
-              ...new Set(
-                error.projectPaths.map(normalizeRepositoryRelativePath),
-              ),
-            ].sort(compareCodeUnits),
-          ),
+          projectPaths: normalizedPathList(error.projectPaths),
         }),
     ...(temporaryPath === undefined ? {} : { temporaryPath }),
     ...(error.remediation === undefined

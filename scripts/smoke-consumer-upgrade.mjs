@@ -455,6 +455,15 @@ function smokeConsumerUpgrade({
   renameSync(installation, removedInstallation);
   writeFileSync(join(web, "value.ts"), "export const value = 2;\n");
   commit(["web/value.ts"], { workspace: "web", skipped: "e2e" });
+  if (archive !== undefined && previous === linkedWorktreeScenario) {
+    const jsPath = "web/added.js";
+    writeFileSync(join(fixture, jsPath), "export const answer = 42;\n");
+    git(["add", "--", jsPath]);
+    const output = git(["commit", "--no-gpg-sign", "-m", "Supervised JavaScript hook"], {combinedOutput: true});
+    const report = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
+    assert.equal(report.outcome, "pass");
+    assert.ok(report.checks.some(check => check.checkId === "lint" && check.target === "web" && check.status === "completed"));
+  }
   mkdirSync(join(fixture, "api"));
   writeFileSync(
     join(fixture, "api", "pyproject.toml"),

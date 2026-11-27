@@ -31,6 +31,17 @@ export class LeaseRemovalDeferredError extends ServiceUnavailableError {
     this.name = "LeaseRemovalDeferredError";
   }
 }
+/** Remove an I/O lease; a surviving Windows client may own its removal instead. */
+export async function removeLeaseUnlessDeferred(
+  state: Pick<ServiceState, "removeLease">,
+  id: string,
+): Promise<void> {
+  try {
+    await state.removeLease(id);
+  } catch (error) {
+    if (!(error instanceof LeaseRemovalDeferredError)) throw error;
+  }
+}
 function validRecord(value: unknown): value is ServiceRecord {
   return (
     exactFields(value, ["version", "identity", "instance", "secret"]) &&
@@ -171,9 +182,9 @@ export class ServiceState {
     );
   }
   private async leaseFile(name: string, create: boolean): Promise<StateLease> {
-    await this.checkDirectory();
     const path = join(this.directory, name);
     if (process.platform === "win32") {
+      await this.checkDirectory();
       const lease = (await import("./windows-pipe.js")).openWindowsStateLease(
         path,
         create,
@@ -262,16 +273,16 @@ export class ServiceState {
       0o600,
     );
     try {
-      if (process.platform === "win32")
-        (await import("./windows-pipe.js")).restrictCreatedWindowsPath(
-          temporary,
-        );
-      await file.writeFile(JSON.stringify(value));
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-    try {
+      try {
+        if (process.platform === "win32")
+          (await import("./windows-pipe.js")).restrictCreatedWindowsPath(
+            temporary,
+          );
+        await file.writeFile(JSON.stringify(value));
+        await file.sync();
+      } finally {
+        await file.close();
+      }
       await this.checkDirectory();
       await rename(temporary, join(this.directory, "endpoint.json"));
     } finally {

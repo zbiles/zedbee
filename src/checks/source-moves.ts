@@ -9,6 +9,7 @@ import { selectedChangedPaths } from "./changed-file-paths.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { analysisKey, analysisStore } from "./analysis-reuse.js";
 import type { CheckRunContext } from "./adapter.js";
+import { workspaceSourceFiles } from "./changed-file-paths.js";
 import type { CheckId } from "../config/schema.js";
 import {
   captureSnapshotRegistry,
@@ -237,11 +238,7 @@ export function workspaceOwns(
 ): boolean {
   const inspection =
     side === "baseline" ? context.baselineInspection : context.targetInspection;
-  return (
-    inspection.workspaces
-      .find(
-        (workspace) => workspace.relativeRoot === context.target.relativeRoot,
-      )
-      ?.sourceFiles.includes(file) ?? false
+  return workspaceSourceFiles(inspection, context.target.relativeRoot).has(
+    file,
   );
 }
