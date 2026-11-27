@@ -63,17 +63,29 @@ export interface FileRuleGroup {
   readonly rules: Readonly<Record<string, EslintRuleConfiguration>>;
 }
 
+const frozenRuleValueFingerprints = new WeakMap<object, string>();
+
 function stableRuleValue(value: unknown): string {
+  const frozen =
+    typeof value === "object" && value !== null && Object.isFrozen(value);
+  if (frozen) {
+    const cached = frozenRuleValueFingerprints.get(value);
+    if (cached !== undefined) return cached;
+  }
   if (Array.isArray(value)) {
-    return `[${value.map((item) => stableRuleValue(item)).join(",")}]`;
+    const encoded = `[${value.map((item) => stableRuleValue(item)).join(",")}]`;
+    if (frozen) frozenRuleValueFingerprints.set(value, encoded);
+    return encoded;
   }
   if (typeof value === "object" && value !== null) {
     const entries = Object.entries(value).sort(([left], [right]) =>
       compareCodeUnits(left, right),
     );
-    return `{${entries
+    const encodedObject = `{${entries
       .map(([key, item]) => `${JSON.stringify(key)}:${stableRuleValue(item)}`)
       .join(",")}}`;
+    if (frozen) frozenRuleValueFingerprints.set(value, encodedObject);
+    return encodedObject;
   }
   const encoded = JSON.stringify(value);
   if (encoded === undefined) {
