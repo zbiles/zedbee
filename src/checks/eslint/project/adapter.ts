@@ -109,15 +109,15 @@ async function hasConfiguration(
 ): Promise<boolean> {
   let directory = resolve(root, project);
   for (;;) {
-    for (const name of ESLINT_CONFIG_FILE_NAMES) {
-      if (
-        await access(join(directory, name)).then(
+    const present = await Promise.all(
+      ESLINT_CONFIG_FILE_NAMES.map((name) =>
+        access(join(directory, name)).then(
           () => true,
           () => false,
-        )
-      )
-        return true;
-    }
+        ),
+      ),
+    );
+    if (present.includes(true)) return true;
     const manifest = await readFile(
       join(directory, "package.json"),
       "utf8",
