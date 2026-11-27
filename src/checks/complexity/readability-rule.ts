@@ -8,6 +8,18 @@ const functionTypes = new Set([
   "FunctionExpression",
 ]);
 
+const decisionTypes = [
+  "IfStatement",
+  "ForStatement",
+  "ForInStatement",
+  "ForOfStatement",
+  "WhileStatement",
+  "DoWhileStatement",
+  "SwitchStatement",
+  "CatchClause",
+  "ConditionalExpression",
+] as const;
+
 interface Frame {
   readonly node: Rule.Node;
   score: number;
@@ -57,7 +69,7 @@ export const readabilityComplexityRule: Rule.RuleModule = {
       }
     };
 
-    return {
+    const listeners: Rule.RuleListener = {
       onCodePathStart(_codePath, node) {
         if (isFunction(node)) frames.push({ node, score: 0, nesting: 0 });
       },
@@ -73,26 +85,14 @@ export const readabilityComplexityRule: Rule.RuleModule = {
           data: { score: frame.score },
         });
       },
-      IfStatement: enterDecision,
-      "IfStatement:exit": exitDecision,
-      ForStatement: enterDecision,
-      "ForStatement:exit": exitDecision,
-      ForInStatement: enterDecision,
-      "ForInStatement:exit": exitDecision,
-      ForOfStatement: enterDecision,
-      "ForOfStatement:exit": exitDecision,
-      WhileStatement: enterDecision,
-      "WhileStatement:exit": exitDecision,
-      DoWhileStatement: enterDecision,
-      "DoWhileStatement:exit": exitDecision,
-      SwitchStatement: enterDecision,
-      "SwitchStatement:exit": exitDecision,
-      CatchClause: enterDecision,
-      "CatchClause:exit": exitDecision,
-      ConditionalExpression: enterDecision,
-      "ConditionalExpression:exit": exitDecision,
       LogicalExpression: logical,
     };
+
+    for (const type of decisionTypes) {
+      listeners[type] = enterDecision;
+      listeners[`${type}:exit`] = exitDecision;
+    }
+    return listeners;
   },
 };
 
