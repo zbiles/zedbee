@@ -295,18 +295,22 @@ export async function discoverProjectPrettierInRegistry(
 ): Promise<readonly ProjectPrettierDiscovery[]> {
   const workspaces = await discoverWorkspaces(registry);
   const projectRoots = workspaces.map((workspace) => workspace.relativeRoot);
-  const results: ProjectPrettierDiscovery[] = [];
-  for (const workspace of workspaces) {
-    const discovery = await discoveryForProject(
-      registry,
-      canonicalRoot,
-      workspace.relativeRoot,
-      workspace.manifestPath,
-      workspace.manifest,
-      projectRoots,
-    );
-    if (discovery !== undefined) results.push(discovery);
-  }
+  const discovered = await Promise.all(
+    workspaces.map((workspace) =>
+      discoveryForProject(
+        registry,
+        canonicalRoot,
+        workspace.relativeRoot,
+        workspace.manifestPath,
+        workspace.manifest,
+        projectRoots,
+      ),
+    ),
+  );
+  const results = discovered.filter(
+    (discovery): discovery is ProjectPrettierDiscovery =>
+      discovery !== undefined,
+  );
   return Object.freeze(
     results.sort((left, right) =>
       compareCodeUnits(left.projectRoot, right.projectRoot),
