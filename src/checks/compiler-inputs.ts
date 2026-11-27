@@ -4,6 +4,7 @@ import {
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
   COMPILER_ORDINARY,
+  TYPESCRIPT_SOURCE,
   changedCompilerPaths,
 } from "./compiler-paths.js";
 import {
@@ -17,7 +18,6 @@ import type { WorkspaceInspection } from "../inspection/types.js";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const DATA = /\.jsonc?$/iu;
 
 export function hasTypeScriptInputs(workspace: WorkspaceInspection): boolean {
