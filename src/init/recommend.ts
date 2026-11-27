@@ -220,6 +220,15 @@ export function initContentHash(contents: string): string {
   return createHash("sha256").update(contents, "utf8").digest("hex");
 }
 
+/** Shows terminal control bytes as text so file contents cannot drive the terminal. */
+function terminalSafeLine(line: string): string {
+  return line.replace(
+    /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/gu,
+    (character) =>
+      `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  );
+}
+
 export function exactFilePreview(
   relativePath: string,
   before: string | null,
@@ -232,8 +241,8 @@ export function exactFilePreview(
     `--- ${relativePath}`,
     `+++ ${relativePath}`,
     "@@ exact before / after @@",
-    ...beforeLines.map((line) => `-${line}`),
-    ...afterLines.map((line) => `+${line}`),
+    ...beforeLines.map((line) => `-${terminalSafeLine(line)}`),
+    ...afterLines.map((line) => `+${terminalSafeLine(line)}`),
   ].join("\n");
 }
 
