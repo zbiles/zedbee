@@ -133,15 +133,18 @@ export function padStartTerminalCells(value: string, width: number): string {
 
 export function truncateTerminalCells(value: string, width: number): string {
   const available = Math.max(1, width);
-  if (terminalCellWidth(value) <= available) return value;
+  const parts = graphemes(value);
+  const widths = parts.map(graphemeWidth);
+  const total = widths.reduce((sum, next) => sum + next, 0);
+  if (total <= available) return value;
   if (available === 1) return "…";
   const contentWidth = available - 1;
   let content = "";
   let used = 0;
-  for (const grapheme of graphemes(value)) {
-    const nextWidth = graphemeWidth(grapheme);
+  for (let index = 0; index < parts.length; index += 1) {
+    const nextWidth = widths[index]!;
     if (used + nextWidth > contentWidth) break;
-    content += grapheme;
+    content += parts[index];
     used += nextWidth;
   }
   return `${content}…`;
