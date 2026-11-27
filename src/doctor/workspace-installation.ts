@@ -202,7 +202,7 @@ export async function inspectWorkspaceInstallations(
     if (grouped.size > 0) {
       const locations = [...grouped].map(([workspace, names]) => {
         const label = workspaceLabel(workspace);
-        return `${label.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`)}: ${names.join(", ")}`;
+        return `${label}: ${names.join(", ")}`;
       });
       parts.push(
         `${kind === "missing" ? "Missing" : "Readiness could not verify"} declared @types packages (${locations.join("; ")}).`,
