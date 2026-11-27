@@ -136,8 +136,20 @@ export function managedAutomaticFixFor(
   return MANAGED_AUTOMATIC_FIXES[check as keyof typeof MANAGED_AUTOMATIC_FIXES];
 }
 
-function codePointLength(value: string): number {
-  return Array.from(value).length;
+function exceedsCodePoints(value: string, limit: number): boolean {
+  if (value.length <= limit) return false;
+  let count = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    count += 1;
+    if (count > limit) return true;
+    if (
+      value.charCodeAt(index) >= 0xd800 &&
+      value.charCodeAt(index) <= 0xdbff
+    ) {
+      index += 1;
+    }
+  }
+  return false;
 }
 
 function invalidPath(file: unknown): never {
@@ -149,7 +161,7 @@ export function normalizeRepositoryRelativePath(file: string): string {
     typeof file !== "string" ||
     file.length === 0 ||
     UNSAFE_PATH_CHARACTER.test(file) ||
-    codePointLength(file) > MAX_REPOSITORY_PATH_CODE_POINTS
+    exceedsCodePoints(file, MAX_REPOSITORY_PATH_CODE_POINTS)
   ) {
     return invalidPath(file);
   }
@@ -168,7 +180,7 @@ export function normalizeRepositoryRelativePath(file: string): string {
     if (
       segment === ".." ||
       UNSAFE_PATH_CHARACTER.test(segment) ||
-      codePointLength(segment) > MAX_REPOSITORY_SEGMENT_CODE_POINTS
+      exceedsCodePoints(segment, MAX_REPOSITORY_SEGMENT_CODE_POINTS)
     ) {
       return invalidPath(file);
     }
