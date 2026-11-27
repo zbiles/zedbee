@@ -1,7 +1,8 @@
 import { ESLint } from "eslint";
 import { realpath, stat } from "node:fs/promises";
 import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
+import { isContainedPath } from "../../inspection/paths.js";
 import { managedConfig, type ManagedConfigOptions } from "./managed-config.js";
 import { ManagedEslintFailure } from "./failure.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
@@ -26,14 +27,6 @@ function invalidInspectorPath(path: string): Error {
   return new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
 }
 
-function escapesRoot(relativePath: string): boolean {
-  return (
-    relativePath === ".." ||
-    relativePath.startsWith(`..${sep}`) ||
-    isAbsolute(relativePath)
-  );
-}
-
 async function assertInspectorPath(
   cwd: string,
   path: string,
@@ -41,7 +34,6 @@ async function assertInspectorPath(
 ): Promise<void> {
   const segments = path.split("/");
   const target = resolve(cwd, ...segments);
-  const fromRoot = relative(cwd, target);
   if (
     path.length === 0 ||
     path.includes("\\") ||
@@ -50,9 +42,7 @@ async function assertInspectorPath(
     segments.some(
       (segment) => segment === "" || segment === "." || segment === "..",
     ) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith(`..${sep}`) ||
-    isAbsolute(fromRoot) ||
+    !isContainedPath(cwd, target) ||
     !MANAGED_SOURCE_PATH.test(path)
   ) {
     throw invalidInspectorPath(path);
@@ -70,8 +60,7 @@ async function assertInspectorPath(
       canonicalRoot(),
       realpath(target),
     ]);
-    const canonicalRelative = relative(root, canonicalTarget);
-    if (escapesRoot(canonicalRelative)) {
+    if (!isContainedPath(root, canonicalTarget)) {
       throw invalidInspectorPath(path);
     }
     const targetStats = await stat(canonicalTarget);
