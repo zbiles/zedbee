@@ -158,11 +158,11 @@ export async function readProjectPrettierTrust(
   repositoryRoot: string,
   projectRoot: string,
 ): Promise<string | undefined> {
-  for (const key of await trustKeys(repositoryRoot, projectRoot)) {
-    const value = await readLocalValue(repositoryRoot, key);
-    if (value === TRUST_VALUE) return value;
-  }
-  return undefined;
+  const keys = await trustKeys(repositoryRoot, projectRoot);
+  const values = await Promise.all(
+    keys.map((key) => readLocalValue(repositoryRoot, key)),
+  );
+  return values.includes(TRUST_VALUE) ? TRUST_VALUE : undefined;
 }
 
 export interface ProjectPrettierTrustSnapshot {
