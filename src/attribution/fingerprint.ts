@@ -364,17 +364,14 @@ export function normalizeObservation(observation: Observation): Observation {
   });
 }
 
-function locationScope(location: SourceLocation): FindingIdentityScope {
-  const normalized = normalizeSourceLocation(location);
-  return { kind: "location", ...normalized };
-}
-
 export function findingIdentityFromSnapshot(
   observation: Observation,
 ): FindingIdentity {
   // Validate the report location even when the entity is the preferred identity.
-  if (observation.location !== undefined)
-    normalizeSourceLocation(observation.location);
+  const location =
+    observation.location === undefined
+      ? undefined
+      : normalizeSourceLocation(observation.location);
 
   let scope: FindingIdentityScope;
   if (observation.entity !== undefined) {
@@ -384,8 +381,8 @@ export function findingIdentityFromSnapshot(
       name: canonicalText(observation.entity.name, "entity name"),
       file: normalizeRepositoryRelativePath(observation.entity.file),
     };
-  } else if (observation.location !== undefined) {
-    scope = locationScope(observation.location);
+  } else if (location !== undefined) {
+    scope = { kind: "location", ...location };
   } else {
     scope = { kind: "repository" };
   }
