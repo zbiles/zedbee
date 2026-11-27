@@ -273,16 +273,16 @@ export class ServiceState {
       0o600,
     );
     try {
-      if (process.platform === "win32")
-        (await import("./windows-pipe.js")).restrictCreatedWindowsPath(
-          temporary,
-        );
-      await file.writeFile(JSON.stringify(value));
-      await file.sync();
-    } finally {
-      await file.close();
-    }
-    try {
+      try {
+        if (process.platform === "win32")
+          (await import("./windows-pipe.js")).restrictCreatedWindowsPath(
+            temporary,
+          );
+        await file.writeFile(JSON.stringify(value));
+        await file.sync();
+      } finally {
+        await file.close();
+      }
       await this.checkDirectory();
       await rename(temporary, join(this.directory, "endpoint.json"));
     } finally {
