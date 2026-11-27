@@ -42,6 +42,7 @@ const SOURCE = /\.(?:[cm]?[jt]sx?)$/iu;
 const LOADABLE = /(?:\.(?:[cm]?[jt]sx?|json))$/iu;
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
+const METADATA_BATCH_SIZE = 64;
 
 function containedRepositoryPath(from: string, requested: string): string {
   if (
@@ -278,21 +279,29 @@ interface CachedSnapshotProgramFiles {
 async function metadataFor(
   registry: SnapshotRegistry,
 ): Promise<Map<string, string>> {
-  const metadata = new Map<string, string>();
-  for (const entry of registry.entries()) {
-    // Captured bytes/absence belong to their immutable source owner. Live
-    // directories and links still validate inventory and containment changes.
-    if (
-      entry.kind === "file" &&
-      capturedSourceInput(registry.snapshotRoot, entry.repositoryPath) !==
-        undefined
-    )
-      continue;
-    const value = await lstat(entry.absolutePath, { bigint: true });
-    metadata.set(
-      entry.absolutePath,
-      `${value.dev}:${value.ino}:${value.mode}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`,
+  // Captured bytes/absence belong to their immutable source owner. Live
+  // directories and links still validate inventory and containment changes.
+  const entries = registry
+    .entries()
+    .filter(
+      (entry) =>
+        entry.kind !== "file" ||
+        capturedSourceInput(registry.snapshotRoot, entry.repositoryPath) ===
+          undefined,
     );
+  const metadata = new Map<string, string>();
+  for (let start = 0; start < entries.length; start += METADATA_BATCH_SIZE) {
+    const batch = entries.slice(start, start + METADATA_BATCH_SIZE);
+    const values = await Promise.all(
+      batch.map((entry) => lstat(entry.absolutePath, { bigint: true })),
+    );
+    batch.forEach((entry, index) => {
+      const value = values[index]!;
+      metadata.set(
+        entry.absolutePath,
+        `${value.dev}:${value.ino}:${value.mode}:${value.size}:${value.mtimeNs}:${value.ctimeNs}`,
+      );
+    });
   }
   return metadata;
 }
