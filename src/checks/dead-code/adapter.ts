@@ -40,6 +40,8 @@ import { parseKnipReport } from "./parse-report.js";
 import { createKnipImportValidator } from "./import-boundary.js";
 import { INERT_TSCONFIG } from "./captured-filesystem.js";
 
+const SOURCE_READ_BATCH = 32;
+
 async function validateSnapshotInputs(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
@@ -58,14 +60,23 @@ async function validateSnapshotInputs(
   if (registry.resolve(INERT_TSCONFIG) !== undefined) {
     throw new TypeError("Reserved managed Knip path is present");
   }
-  for (const sourcePath of workspace.sourceFiles) {
-    const source = await readContainedFile(registry, sourcePath);
-    for (const specifier of sourceModuleSpecifiers(
-      sourcePath,
-      source,
-      collectCommentImports,
-    )) {
-      await validateImport(sourcePath, specifier);
+  for (
+    let index = 0;
+    index < workspace.sourceFiles.length;
+    index += SOURCE_READ_BATCH
+  ) {
+    const batch = workspace.sourceFiles.slice(index, index + SOURCE_READ_BATCH);
+    const sources = await Promise.all(
+      batch.map((sourcePath) => readContainedFile(registry, sourcePath)),
+    );
+    for (const [offset, sourcePath] of batch.entries()) {
+      for (const specifier of sourceModuleSpecifiers(
+        sourcePath,
+        sources[offset]!,
+        collectCommentImports,
+      )) {
+        await validateImport(sourcePath, specifier);
+      }
     }
   }
 }
