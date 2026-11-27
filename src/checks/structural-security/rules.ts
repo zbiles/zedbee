@@ -13,9 +13,15 @@ export interface StructuralRule {
   matches(root: SgRoot): readonly SgNode[];
 }
 
+interface BindingSource {
+  readonly kind: "import" | "declaration";
+  readonly text: string;
+}
+
 interface RuleContext {
   readonly nodes: readonly SgNode[];
   text(node: SgNode | undefined): string | undefined;
+  bindingSources(): readonly BindingSource[];
   readonly nonImportBindings: Map<string, boolean>;
 }
 
@@ -27,14 +33,29 @@ function createRuleContext(
   nodes: readonly SgNode[],
   original?: string,
 ): RuleContext {
+  const text = (node: SgNode | undefined): string | undefined => {
+    if (node === undefined) return undefined;
+    if (original === undefined) return node.text();
+    const { start, end } = node.range();
+    return original.slice(start.index, end.index);
+  };
+  let sources: readonly BindingSource[] | undefined;
   return {
     nodes,
     nonImportBindings: new Map(),
     text(node) {
-      if (node === undefined) return undefined;
-      if (original === undefined) return node.text();
-      const { start, end } = node.range();
-      return original.slice(start.index, end.index);
+      return node === undefined ? undefined : text(node);
+    },
+    bindingSources() {
+      sources ??= nodes.flatMap((node): BindingSource[] => {
+        const kind = node.kind();
+        if (kind === "import_statement")
+          return [{ kind: "import", text: text(node)! }];
+        if (kind === "lexical_declaration" || kind === "variable_declaration")
+          return [{ kind: "declaration", text: text(node)! }];
+        return [];
+      });
+      return sources;
     },
   };
 }
@@ -106,13 +127,8 @@ function parseImportClause(text: string): ImportClause {
   return { namespace, defaultImport, specifiers };
 }
 
-function importLocalNames(
-  context: RuleContext,
-  node: SgNode,
-): ReadonlySet<string> {
-  const { namespace, defaultImport, specifiers } = parseImportClause(
-    context.text(node)!,
-  );
+function importLocalNames(text: string): ReadonlySet<string> {
+  const { namespace, defaultImport, specifiers } = parseImportClause(text);
   const locals = new Set<string>();
   if (namespace !== undefined) locals.add(namespace);
   if (defaultImport !== undefined) locals.add(defaultImport);
@@ -169,11 +185,12 @@ function hasNonImportBinding(context: RuleContext, name: string): boolean {
 function hasAnyBinding(context: RuleContext, name: string): boolean {
   return (
     hasNonImportBinding(context, name) ||
-    context.nodes.some(
-      (node) =>
-        node.kind() === "import_statement" &&
-        importLocalNames(context, node).has(name),
-    )
+    context
+      .bindingSources()
+      .some(
+        (source) =>
+          source.kind === "import" && importLocalNames(source.text).has(name),
+      )
   );
 }
 
@@ -209,6 +226,20 @@ function addRequireBindings(
   }
 }
 
+function addImportBindings(
+  text: string,
+  importPattern: RegExp,
+  namespaces: Set<string>,
+  named: Map<string, string>,
+): void {
+  if (!importPattern.test(text)) return;
+  const clause = parseImportClause(text);
+  if (clause.namespace !== undefined) namespaces.add(clause.namespace);
+  if (clause.defaultImport !== undefined) namespaces.add(clause.defaultImport);
+  for (const { imported, local } of clause.specifiers)
+    named.set(local, imported);
+}
+
 function moduleBindings(
   context: RuleContext,
   moduleNames: readonly string[],
@@ -223,28 +254,12 @@ function moduleBindings(
     `require\\(\\s*['"](?:${modulePattern})['"]\\s*\\)`,
     "u",
   );
-  for (const node of context.nodes) {
-    if (node.kind() === "import_statement") {
-      const text = context.text(node)!;
-      if (!importPattern.test(text)) continue;
-      const clause = parseImportClause(text);
-      if (clause.namespace !== undefined) namespaces.add(clause.namespace);
-      if (clause.defaultImport !== undefined)
-        namespaces.add(clause.defaultImport);
-      for (const { imported, local } of clause.specifiers)
-        named.set(local, imported);
+  for (const source of context.bindingSources()) {
+    if (source.kind === "import") {
+      addImportBindings(source.text, importPattern, namespaces, named);
+      continue;
     }
-    if (
-      node.kind() === "lexical_declaration" ||
-      node.kind() === "variable_declaration"
-    ) {
-      addRequireBindings(
-        context.text(node)!,
-        requirePattern,
-        namespaces,
-        named,
-      );
-    }
+    addRequireBindings(source.text, requirePattern, namespaces, named);
   }
   return { namespaces, named };
 }
@@ -444,9 +459,7 @@ function hasCredentialValue(context: RuleContext, node: SgNode): boolean {
   if (!CREDENTIAL_PROPERTY.test(propertyName(context, node) ?? ""))
     return false;
   const value = context.text(propertyValue(node))?.trim();
-  return (
-    value !== undefined && !EMPTY_CREDENTIAL_VALUES.has(value)
-  );
+  return value !== undefined && !EMPTY_CREDENTIAL_VALUES.has(value);
 }
 
 function callHasStaticHttpUrl(context: RuleContext, node: SgNode): boolean {
