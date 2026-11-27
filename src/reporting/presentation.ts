@@ -12,6 +12,7 @@ import { validateTemporaryReportPath } from "./report-path.js";
 import type {
   ReportMaintenanceWarning,
   ReportMaintenanceDiagnostics,
+  TemporaryReportResult,
   TemporaryReportStore,
 } from "./temporary-reports.js";
 
@@ -113,6 +114,16 @@ function writeFailureWarning(): ReportMaintenanceWarning {
   });
 }
 
+function maintenanceDiagnosticsField(
+  maintained: TemporaryReportResult | undefined,
+): {
+  readonly maintenanceDiagnostics?: Readonly<ReportMaintenanceDiagnostics>;
+} {
+  return maintained?.diagnostics === undefined
+    ? {}
+    : { maintenanceDiagnostics: maintained.diagnostics };
+}
+
 export async function prepareTerminalPresentation(
   report: ScanReport,
   options: PreparePresentationOptions,
@@ -146,9 +157,7 @@ export async function prepareTerminalPresentation(
       totalFindingCount: orderedFindings.length,
       abbreviated: false,
       warnings: maintained.warnings,
-      ...(maintained.diagnostics === undefined
-        ? {}
-        : { maintenanceDiagnostics: maintained.diagnostics }),
+      ...maintenanceDiagnosticsField(maintained),
     });
   }
 
@@ -160,13 +169,14 @@ export async function prepareTerminalPresentation(
   } catch {
     const maintained = await options.store
       .maintain(maintenanceRequest)
-      .catch(() => ({ warnings: [] }));
+      .catch((): TemporaryReportResult => ({ warnings: [] }));
     return presentation({
       automatic,
       reportStatus: "unavailable",
       findings: orderedFindings,
       totalFindingCount: orderedFindings.length,
       abbreviated: false,
+      ...maintenanceDiagnosticsField(maintained),
       warnings: [...maintained.warnings, writeFailureWarning()],
       completeOutputFallback: true,
     });
@@ -182,9 +192,7 @@ export async function prepareTerminalPresentation(
       findings: orderedFindings,
       totalFindingCount: orderedFindings.length,
       abbreviated: false,
-      ...(maintained?.diagnostics === undefined
-        ? {}
-        : { maintenanceDiagnostics: maintained.diagnostics }),
+      ...maintenanceDiagnosticsField(maintained),
       warnings:
         maintained === undefined
           ? [writeFailureWarning()]
@@ -202,9 +210,7 @@ export async function prepareTerminalPresentation(
     totalFindingCount: orderedFindings.length,
     abbreviated,
     warnings: maintained.warnings,
-    ...(maintained.diagnostics === undefined
-      ? {}
-      : { maintenanceDiagnostics: maintained.diagnostics }),
+    ...maintenanceDiagnosticsField(maintained),
     reportPath: maintained.reportPath,
     maximumAge: policy.temporaryReportMaxAge,
   });
