@@ -109,14 +109,11 @@ async function collectSide(
     throw new Error("Duplication analysis failed.");
   }
   const workspace = findWorkspace(inspection, target.relativeRoot);
-  if (workspace === undefined)
-    return {
-      report: { percentage: 0, clones: [] },
-      files: [],
-      root: canonicalRoot,
-    };
-  const sourceFiles = await duplicationInputPaths(inspection, workspace);
-  if (sourceFiles.length === 0)
+  const sourceFiles =
+    workspace === undefined
+      ? []
+      : await duplicationInputPaths(inspection, workspace);
+  if (workspace === undefined || sourceFiles.length === 0)
     return {
       report: { percentage: 0, clones: [] },
       files: [],
