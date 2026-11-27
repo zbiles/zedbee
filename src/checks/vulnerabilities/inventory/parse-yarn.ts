@@ -80,6 +80,10 @@ function parseClassic(contents: string, lockfilePath: string): DependencyInvento
   return finalizeDependencyRecords(records);
 }
 
+function isSkippedModernResolution(resolution: string): boolean {
+  return resolution.includes("@workspace:") || resolution.includes("@patch:");
+}
+
 function parseModern(contents: string, lockfilePath: string): DependencyInventory {
   const document = parseYamlLockfileDocument(contents, "Yarn Modern");
   const rawData = readYamlLockfileData(document, "Yarn Modern");
@@ -106,7 +110,7 @@ function parseModern(contents: string, lockfilePath: string): DependencyInventor
     if (typeof resolution !== "string") {
       throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains a package without a resolution.");
     }
-    if (resolution.includes("@workspace:")) continue;
+    if (isSkippedModernResolution(resolution)) continue;
     const npmMarker = resolution.indexOf("@npm:");
     if (npmMarker <= 0) {
       throw inventoryError("LOCKFILE_INVALID", "The Yarn Modern lockfile contains an unsupported package resolution.");
