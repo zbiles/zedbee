@@ -75,16 +75,36 @@ export function assertEffectiveFormattingPolicy(
   }
 }
 
+interface OverrideMatchers {
+  readonly includes: readonly ((path: string) => boolean)[];
+  readonly excludes: readonly ((path: string) => boolean)[];
+}
+
+const compiledOverrideMatchers = new WeakMap<
+  ResolvedPolicyOverride,
+  OverrideMatchers
+>();
+
+function overrideMatchers(override: ResolvedPolicyOverride): OverrideMatchers {
+  const cached = compiledOverrideMatchers.get(override);
+  if (cached !== undefined) return cached;
+  const matchers = {
+    includes: override.files.map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    ),
+    excludes: (override.excludeFiles ?? []).map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    ),
+  };
+  compiledOverrideMatchers.set(override, matchers);
+  return matchers;
+}
+
 function overrideMatchesAny(
   override: ResolvedPolicyOverride,
   candidates: readonly string[],
 ): boolean {
-  const includes = override.files.map((pattern) =>
-    picomatch(pattern, { dot: true }),
-  );
-  const excludes = (override.excludeFiles ?? []).map((pattern) =>
-    picomatch(pattern, { dot: true }),
-  );
+  const { includes, excludes } = overrideMatchers(override);
   return candidates.some(
     (candidate) =>
       includes.some((match) => match(candidate)) &&
