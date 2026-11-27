@@ -5,7 +5,12 @@ import {
 } from "./eslint-setup.js";
 import { createHash } from "node:crypto";
 import { applyEdits, modify, parse, type ParseError } from "jsonc-parser";
-import { CHECK_IDS, type CheckId } from "../config/schema.js";
+import {
+  CHECK_IDS,
+  PROFILE_IDS,
+  type ProfileId,
+  type CheckId,
+} from "../config/schema.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { OSV_NETWORK_DISCLOSURE } from "./types.js";
@@ -164,9 +169,7 @@ const COMMON_CHECKS = new Set<CheckId>([
   "duplication",
   "deadCode",
 ]);
-const PROFILE_CHECKS: Readonly<
-  Record<CreateInitProposalOptions["profile"], ReadonlySet<CheckId>>
-> = {
+const PROFILE_CHECKS: Readonly<Record<ProfileId, ReadonlySet<CheckId>>> = {
   fast: new Set([
     "formatting",
     "lint",
@@ -206,6 +209,14 @@ export function initContentHash(contents: string): string {
   return createHash("sha256").update(contents, "utf8").digest("hex");
 }
 
+function terminalSafeLine(line: string): string {
+  return line.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) =>
+    character === "\t"
+      ? character
+      : `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  );
+}
+
 export function exactFilePreview(
   relativePath: string,
   before: string | null,
@@ -215,11 +226,11 @@ export function exactFilePreview(
   const beforeLines = previous.length === 0 ? [] : previous.split("\n");
   const afterLines = after.length === 0 ? [] : after.split("\n");
   return [
-    `--- ${relativePath}`,
-    `+++ ${relativePath}`,
+    `--- ${terminalSafeLine(relativePath)}`,
+    `+++ ${terminalSafeLine(relativePath)}`,
     "@@ exact before / after @@",
-    ...beforeLines.map((line) => `-${line}`),
-    ...afterLines.map((line) => `+${line}`),
+    ...beforeLines.map((line) => `-${terminalSafeLine(line)}`),
+    ...afterLines.map((line) => `+${terminalSafeLine(line)}`),
   ].join("\n");
 }
 
@@ -252,13 +263,15 @@ interface FormattingConfigInput {
 }
 
 function configContents(
-  profile: CreateInitProposalOptions["profile"],
+  profile: ProfileId,
   before: string | null,
   checks: readonly CheckId[] | undefined,
   vulnerabilitiesEnabled: boolean,
   osvUnavailable: InitOsvUnavailable,
   formatting: FormattingConfigInput | undefined,
   schemaReference = "./node_modules/zedbee/schema/zedbee.schema.json",
+  changedChecks?: readonly CheckId[],
+  profileExplicit = true,
 ): string {
   const configuredChecks =
     checks === undefined
@@ -335,15 +348,31 @@ function configContents(
     modify(updated, ["$schema"], schemaReference, options),
   );
   updated = applyEdits(updated, modify(updated, ["schemaVersion"], 1, options));
-  updated = applyEdits(updated, modify(updated, ["profile"], profile, options));
-  if (configuredChecks !== undefined) {
+  if (profileExplicit)
     updated = applyEdits(
       updated,
-      modify(updated, ["checks"], configuredChecks, options),
+      modify(updated, ["profile"], profile, options),
     );
-  } else if (vulnerabilitiesEnabled) {
-    const root = parsed as Record<string, unknown>;
-    const checksValue = root.checks;
+  if (checks !== undefined) {
+    const existing =
+      (parsed as { checks?: Record<string, unknown> }).checks ?? {};
+    for (const id of changedChecks ?? CHECK_IDS) {
+      const prior = existing[id];
+      const selected = checks.includes(id);
+      const isObject = typeof prior === "object" && prior !== null;
+      const severity = isObject
+        ? (prior as { severity?: unknown }).severity
+        : prior;
+      if (selected && (severity === "warn" || severity === "error")) continue;
+      const path = isObject ? ["checks", id, "severity"] : ["checks", id];
+      updated = applyEdits(
+        updated,
+        modify(updated, path, selected ? "error" : "off", options),
+      );
+    }
+  }
+  if (vulnerabilitiesEnabled) {
+    const checksValue = parse(updated)?.checks;
     const existingVulnerability =
       typeof checksValue === "object" &&
       checksValue !== null &&
@@ -524,41 +553,6 @@ function applyFormattingChoice(
   );
 }
 
-function existingVulnerabilitySeverity(
-  before: string | null,
-): "off" | "warn" | "error" | undefined {
-  if (before === null) return undefined;
-  const errors: ParseError[] = [];
-  const root: unknown = parse(before, errors, { allowTrailingComma: true });
-  if (
-    errors.length > 0 ||
-    typeof root !== "object" ||
-    root === null ||
-    Array.isArray(root)
-  ) {
-    return undefined;
-  }
-  const checks = (root as Record<string, unknown>).checks;
-  if (typeof checks !== "object" || checks === null || Array.isArray(checks)) {
-    return undefined;
-  }
-  const vulnerability = (checks as Record<string, unknown>).vulnerabilities;
-  if (["off", "warn", "error"].includes(vulnerability as string)) {
-    return vulnerability as "off" | "warn" | "error";
-  }
-  if (
-    typeof vulnerability === "object" &&
-    vulnerability !== null &&
-    !Array.isArray(vulnerability)
-  ) {
-    const severity = (vulnerability as Record<string, unknown>).severity;
-    if (["off", "warn", "error"].includes(severity as string)) {
-      return severity as "off" | "warn" | "error";
-    }
-  }
-  return undefined;
-}
-
 function environments(
   inspection: RepositoryInspection,
 ): readonly Environment[] {
@@ -573,7 +567,7 @@ function environments(
 function recommendedChecks(
   inspection: RepositoryInspection,
   detected: readonly Environment[],
-  profile: CreateInitProposalOptions["profile"],
+  profile: ProfileId,
 ): readonly CheckId[] {
   const checks = new Set(COMMON_CHECKS);
   if (detected.includes("typescript")) checks.add("types");
@@ -599,28 +593,45 @@ function recommendedChecks(
   );
 }
 
+export function effectiveInitProfile(
+  before: string | null,
+  selected?: ProfileId,
+): ProfileId {
+  const prior = before === null ? undefined : parse(before)?.profile;
+  return (
+    selected ??
+    (PROFILE_IDS.includes(prior) ? (prior as ProfileId) : "recommended")
+  );
+}
+
 export function createInitProposal(
   inspection: RepositoryInspection,
   options: CreateInitProposalOptions,
 ): InitProposal {
   const detected = environments(inspection);
   const before = options.configBefore ?? null;
-  const selectedChecks =
-    options.checks === undefined
-      ? recommendedChecks(inspection, detected, options.profile)
-      : Object.freeze(
-          CHECK_IDS.filter((check) => options.checks?.includes(check)),
-        );
+  const existingChecks = before === null ? {} : (parse(before)?.checks ?? {});
+  const profile = effectiveInitProfile(before, options.profile);
+  const recommended = recommendedChecks(inspection, detected, profile);
+  const selectedChecks = Object.freeze(
+    CHECK_IDS.filter((id) => {
+      if (options.checks !== undefined) return options.checks.includes(id);
+      const prior = existingChecks[id];
+      const severity = typeof prior === "string" ? prior : prior?.severity;
+      if (severity === "off") return false;
+      return (
+        severity === "warn" || severity === "error" || recommended.includes(id)
+      );
+    }),
+  );
   const vulnerabilityScanningAvailable = inspection.lockfiles.length > 0;
-  const configuredVulnerabilitySeverity = existingVulnerabilitySeverity(before);
   const vulnerabilitiesEnabled =
     vulnerabilityScanningAvailable &&
-    (options.checks === undefined
-      ? configuredVulnerabilitySeverity === undefined
-        ? selectedChecks.includes("vulnerabilities")
-        : configuredVulnerabilitySeverity !== "off"
-      : selectedChecks.includes("vulnerabilities"));
-  const osvUnavailable = options.osvUnavailable ?? "block";
+    selectedChecks.includes("vulnerabilities");
+  const osvUnavailable =
+    options.osvUnavailable ??
+    existingChecks.vulnerabilities?.onUnavailable ??
+    "block";
   // Repeat init preserves an existing explicit engine choice unless the user
   // selects a different one, so the preview never misstates current policy.
   const formattingChoice: InitFormattingChoice =
@@ -644,13 +655,15 @@ export function createInitProposal(
     ".zedbeerc.jsonc",
     before,
     configContents(
-      options.profile,
+      profile,
       before,
       options.checks,
       vulnerabilitiesEnabled,
       osvUnavailable,
       formattingConfig,
       options.schemaReference,
+      options.changedChecks,
+      options.profile !== undefined,
     ),
     0o644,
   );
@@ -753,7 +766,7 @@ export function createInitProposal(
     ...(options.workflowMessage === undefined
       ? {}
       : { workflowMessage: options.workflowMessage }),
-    profile: options.profile,
+    profile,
     hook,
     hookActivation,
     ...(options.hooksPathChange === undefined

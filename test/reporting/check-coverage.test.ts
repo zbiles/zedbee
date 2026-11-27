@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import {
   allowedScanDetail,
   checkCoverage,
+  scanOutcomeHeading,
+  scanOutcomeDetail,
 } from "../../src/reporting/check-coverage.js";
 import { createReport } from "../helpers/scan-report.js";
 it("distinguishes skipped work and empty execution from successful checks", () => {
@@ -83,9 +85,22 @@ it("preserves base and empty input wording", () => {
     },
   ];
   expect(allowedScanDetail(createReport({ checks, mode: "base" }))).toBe(
-    "No applicable checks for the selected committed changes. Commit allowed.",
+    "No applicable checks for the selected committed changes. Scan passed.",
   );
   expect(
     allowedScanDetail(createReport({ checks: [], changedFileCount: 0 })),
   ).toBe("No staged changes. Commit allowed.");
 });
+
+it.each([
+  ["pass", "SCAN PASSED"],
+  ["blocked", "SCAN BLOCKED"],
+  ["incomplete", "SCAN INCOMPLETE"],
+] as const)(
+  "describes a committed %s without predicting a commit",
+  (outcome, heading) => {
+    const report = createReport({ mode: "base", outcome });
+    expect(scanOutcomeHeading(report)).toBe(heading);
+    expect(scanOutcomeDetail(report)).not.toMatch(/Commit (blocked|allowed)/u);
+  },
+);

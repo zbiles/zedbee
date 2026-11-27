@@ -56,15 +56,53 @@ async function indexState(path: string) {
     ctime: after.ctimeNs,
   };
 }
-async function head(
+export async function resolveIndexBaseline(
   git: GitClient,
   signal?: AbortSignal,
 ): Promise<string | null> {
   const result = await git.tryRun(
-    ["rev-parse", "--verify", "HEAD"],
+    ["rev-parse", "--verify", "HEAD^{commit}"],
     signal ? { signal } : {},
   );
-  if (result.exitCode !== 0) return null;
+  if (result.exitCode !== 0) {
+    const options = signal ? { signal } : {};
+    const symbolic = await git.tryRun(
+      ["symbolic-ref", "--quiet", "HEAD"],
+      options,
+    );
+    if (symbolic.exitCode !== 0 || !symbolic.stdout.startsWith("refs/heads/"))
+      return invalidSelection();
+    const existence = await git.tryRun(
+      ["show-ref", "--exists", symbolic.stdout],
+      options,
+    );
+    if (existence.exitCode === 2) return null;
+    // Older Git lacks --exists. A missing ref must also have no loose ref
+    // file and no packed matching ref. Ref lookup warnings are failures.
+    if (existence.exitCode === 129) {
+      const path = await git.run(
+        ["rev-parse", "--git-path", symbolic.stdout],
+        options,
+      );
+      try {
+        await lstat(resolve(git.repositoryRoot, path.stdout));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+          return invalidSelection();
+        const refs = await git.tryRun(
+          ["for-each-ref", "--format=%(refname)", symbolic.stdout],
+          options,
+        );
+        if (
+          refs.exitCode === 0 &&
+          refs.stderr === "" &&
+          !refs.stdout.split("\n").includes(symbolic.stdout)
+        )
+          return null;
+      }
+    }
+    return invalidSelection();
+  }
   if (!isGitObjectId(result.stdout)) return invalidSelection();
   return result.stdout;
 }
@@ -86,7 +124,7 @@ export async function captureSelectedIndexComparison(
   signal?.throwIfAborted();
   const options = signal ? { signal } : {};
   const [baseline, merge, index] = await Promise.allSettled([
-    head(git, signal),
+    resolveIndexBaseline(git, signal),
     git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options),
     git.run(["rev-parse", "--git-path", "index"], options),
   ]);
@@ -130,7 +168,7 @@ export async function captureSelectedIndexComparison(
     }
     const after = await indexState(indexPath);
     if (
-      baselineCommit !== (await head(git, signal)) ||
+      baselineCommit !== (await resolveIndexBaseline(git, signal)) ||
       incoming !== (await mergeHeads(mergePath)) ||
       (before === undefined) !== (after === undefined) ||
       (before &&

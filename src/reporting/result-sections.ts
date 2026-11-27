@@ -1,9 +1,10 @@
+import { repairFindingForMode } from "./comparison-repair.js";
 import { omittedFindingLines, isUnresolvedModule } from "./finding-priority.js";
-import type {
-  CheckResult,
-  Finding,
-  ManagedAutomaticFix,
-} from "../core/types.js";
+import type { Finding, ManagedAutomaticFix } from "../core/types.js";
+import {
+  presentIncompleteChecks,
+  type IncompleteCheckPresentation,
+} from "./incomplete-checks.js";
 import { compareCodeUnits } from "../core/compare.js";
 import type { ScanReport } from "../scan/report.js";
 import type { TerminalPresentation } from "./presentation.js";
@@ -13,7 +14,7 @@ export interface ScanResultSections {
   readonly blockingFindings: readonly Finding[];
   readonly warningFindings: readonly Finding[];
   readonly disclosures: ScanReport["networkDisclosures"];
-  readonly incompleteChecks: readonly CheckResult[];
+  readonly incompleteChecks: readonly IncompleteCheckPresentation[];
   readonly reportWarnings: readonly ReportMaintenanceWarning[];
   readonly previewNotes: readonly string[];
   readonly automaticFixes: readonly ManagedAutomaticFix[];
@@ -23,6 +24,7 @@ function automaticFixes(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): readonly ManagedAutomaticFix[] {
+  if (report.mode !== "index") return [];
   const unique = new Map<string, ManagedAutomaticFix>();
   for (const finding of [
     ...presentation.findings,
@@ -43,16 +45,19 @@ export function buildScanResultSections(
   report: ScanReport,
   presentation: TerminalPresentation,
 ): ScanResultSections {
+  const findings = presentation.findings.map((finding) =>
+    repairFindingForMode(finding, report.mode),
+  );
   return Object.freeze({
     blockingFindings: Object.freeze(
-      presentation.findings.filter(({ severity }) => severity === "error"),
+      findings.filter(({ severity }) => severity === "error"),
     ),
     warningFindings: Object.freeze(
-      presentation.findings.filter(({ severity }) => severity !== "error"),
+      findings.filter(({ severity }) => severity !== "error"),
     ),
     disclosures: Object.freeze([...report.networkDisclosures]),
     incompleteChecks: Object.freeze(
-      report.checks.filter(({ status }) => status === "incomplete"),
+      presentIncompleteChecks(report.checks, report),
     ),
     reportWarnings: Object.freeze([...presentation.warnings]),
     previewNotes: Object.freeze([

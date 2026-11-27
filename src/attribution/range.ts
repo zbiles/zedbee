@@ -1,11 +1,11 @@
-import type { Finding } from "../core/types.js";
+import type { Attribution, Finding } from "../core/types.js";
 import type { ChangeSet } from "../git/change-set.js";
 
-const NO_ATTRIBUTION = {
+export const NO_ATTRIBUTION: Attribution = Object.freeze({
   kind: "none",
   staged: false,
-  evidence: [],
-} as const;
+  evidence: Object.freeze([]),
+});
 
 export function attributeByRange(
   finding: Finding,

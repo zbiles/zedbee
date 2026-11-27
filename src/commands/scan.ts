@@ -1,3 +1,9 @@
+import { selectOutputFormat } from "../reporting/scan-output.js";
+export {
+  selectOutputFormat,
+  normalizeTerminalWidth,
+  signalExitCode,
+} from "../reporting/scan-output.js";
 import {
   localScanDiagnostics,
   type LocalScanDiagnostics,
@@ -9,7 +15,6 @@ import type {
   CommandTelemetry,
 } from "../telemetry/client.js";
 import { validConfigPath } from "../config/selection-path.js";
-import { GitClient } from "../git/client.js";
 import { renderJson } from "../renderers/json.js";
 import { renderSarif } from "../renderers/sarif.js";
 import { renderText } from "../renderers/text.js";
@@ -40,6 +45,7 @@ import {
   timeCommandStage,
   type DiagnosticTimings,
 } from "./diagnostics.js";
+import { resolveGitRepositoryRoot } from "./repository-root.js";
 import type {
   ReportingSurface,
   RequestedOutputFormat,
@@ -141,62 +147,8 @@ function writeGitSoftTimeoutWarning(io: ScanCommandIO): void {
   );
 }
 
-export function selectOutputFormat(
-  requested: RequestedOutputFormat,
-  _stdinIsTTY: boolean,
-  stdoutIsTTY: boolean,
-  width?: number,
-  env: Readonly<Record<string, string | undefined>> = {},
-): OutputFormat {
-  if (requested !== "auto") {
-    return requested;
-  }
-  return usesLinearAutomaticOutput(stdoutIsTTY, width, env) ? "text" : "ink";
-}
-
-function positiveTerminalWidth(value: unknown): number | undefined {
-  return typeof value === "number" &&
-    Number.isFinite(value) &&
-    Number.isInteger(value) &&
-    value > 0
-    ? value
-    : undefined;
-}
-
-export function normalizeTerminalWidth(value: unknown): number {
-  return positiveTerminalWidth(value) ?? 80;
-}
-
-function isTruthyEnvironmentValue(value: string | undefined): boolean {
-  if (value === undefined) return false;
-  const normalized = value.trim().toLowerCase();
-  return !["", "0", "false", "no", "off"].includes(normalized);
-}
-
-function usesLinearAutomaticOutput(
-  stdoutIsTTY: boolean,
-  width: number | undefined,
-  env: Readonly<Record<string, string | undefined>>,
-): boolean {
-  const knownWidth = positiveTerminalWidth(width);
-  return (
-    !stdoutIsTTY ||
-    (knownWidth !== undefined && knownWidth < 80) ||
-    isTruthyEnvironmentValue(env.CI) ||
-    env.TERM === "dumb" ||
-    env.INK_SCREEN_READER === "true"
-  );
-}
-
-export function signalExitCode(signal: "SIGINT" | "SIGTERM"): 130 | 143 {
-  return signal === "SIGINT" ? 130 : 143;
-}
-
 const DEFAULT_DEPENDENCIES: ScanCommandDependencies = {
-  async resolveRepositoryRoot(cwd) {
-    return (await new GitClient(cwd).run(["rev-parse", "--show-toplevel"]))
-      .stdout;
-  },
+  resolveRepositoryRoot: resolveGitRepositoryRoot,
   scan: runScan,
   async openInk(options, onError) {
     const { openInkSession } = await import("../ui/render-ink.js");
@@ -383,8 +335,10 @@ export async function executeScanCommand(
         : { diagnostic: check.error.diagnostic }),
     }));
     options.signal?.throwIfAborted();
-    const { installedCliCommand, hookUpdate } =
-      await inspectHookMaintenance(repositoryRoot);
+    const { installedCliCommand, hookUpdate } = await inspectHookMaintenance(
+      repositoryRoot,
+      io.env.HUSKY === "0",
+    );
     if (installedCliCommand !== undefined)
       report = { ...report, installedCliCommand };
     if (hookUpdate !== undefined) report = { ...report, hookUpdate };

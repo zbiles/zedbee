@@ -1,20 +1,22 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
+/** Fixed, bounded OS process inventory with the requested `ps -o` columns. */
+async function readProcessInventory(columns: string): Promise<string> {
+  const { stdout } = await promisify(execFile)("/bin/ps", ["-axo", columns], {
+    encoding: "utf8",
+    maxBuffer: 4 * 1024 * 1024,
+    timeout: 2_000,
+    killSignal: "SIGKILL",
+  });
+  return stdout;
+}
+
 /** POSIX has no group-member count syscall; use the fixed OS process inventory. */
 export async function processGroupHasDescendants(
   pid: number,
 ): Promise<boolean> {
-  const { stdout } = await promisify(execFile)(
-    "/bin/ps",
-    ["-axo", "pid=,pgid="],
-    {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-      timeout: 2_000,
-      killSignal: "SIGKILL",
-    },
-  );
+  const stdout = await readProcessInventory("pid=,pgid=");
   return stdout
     .trim()
     .split("\n")
@@ -55,16 +57,7 @@ async function signalStoppingGroup(
     // Such a group still needs ESRCH proof after its parent reaps it. A live
     // member or unavailable inventory instead preserves the permission failure.
     try {
-      const { stdout } = await promisify(execFile)(
-        "/bin/ps",
-        ["-axo", "pid=,pgid=,stat="],
-        {
-          encoding: "utf8",
-          maxBuffer: 4 * 1024 * 1024,
-          timeout: 2_000,
-          killSignal: "SIGKILL",
-        },
-      );
+      const stdout = await readProcessInventory("pid=,pgid=,stat=");
       for (const line of stdout.trim().split("\n").filter(Boolean)) {
         const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s*$/u.exec(line);
         if (!row || (Number(row[2]) === pid && !row[3]!.startsWith("Z")))

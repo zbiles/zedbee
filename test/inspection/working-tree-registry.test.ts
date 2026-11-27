@@ -1,4 +1,4 @@
-import { realpath } from "node:fs/promises";
+import { realpath, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitClient } from "../../src/git/client.js";
@@ -131,4 +131,18 @@ describe("captureWorkingTreeRegistry", () => {
       "web/package.json",
     ]);
   });
+});
+
+it("retains a replacement file when its formerly tracked directory moved", async () => {
+  const fixture = await createInspectionFixture();
+  const git = new GitClient(fixture.root);
+  await git.run(["init"]);
+  await fixture.write("old/source.ts", "export const value = 1;");
+  await git.run(["add", "--all"]);
+  await rename(join(fixture.root, "old"), join(fixture.root, "moved"));
+  await fixture.write("old", "replacement");
+  expect(filePaths(await captureWorkingTreeRegistry(fixture.root))).toEqual([
+    "moved/source.ts",
+    "old",
+  ]);
 });

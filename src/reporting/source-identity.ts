@@ -16,7 +16,7 @@ export function scanSourceIdentityLine(report: ScanReport): string | undefined {
 
 export function emptyChangesCopy(report: ScanReport): string {
   return report.mode === "base"
-    ? "No committed changes. Commit allowed."
+    ? "No committed changes. Scan passed."
     : "No staged changes. Commit allowed.";
 }
 

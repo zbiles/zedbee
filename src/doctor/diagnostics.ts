@@ -1,6 +1,12 @@
+import { formattingRequirements } from "../checks/prettier/formatting-requirements.js";
+import { createFilePolicyResolver } from "../config/file-policy.js";
+import { readStagedChangeSet } from "../git/change-set.js";
+import { loadConfigFromIndex } from "../config/load-config.js";
+import { analyzableLockfiles } from "../checks/vulnerabilities/inventory/select-lockfiles.js";
+import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { inspectWorkspaceInstallations } from "./workspace-installation.js";
 import { diagnoseProjectEslint } from "./project-eslint.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lintSource } from "@secretlint/core";
@@ -20,7 +26,11 @@ import { GitClient } from "../git/client.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { hasZedbeeScanCommand } from "../hooks/husky.js";
-import { hasZedbeeLefthookConfig } from "../hooks/lefthook.js";
+import { readHookData } from "../hooks/read-hook-data.js";
+import {
+  lefthookFilename,
+  hasZedbeeLefthookConfig,
+} from "../hooks/lefthook.js";
 import { hasZedbeeSimpleGitHooksConfig } from "../hooks/simple-git-hooks.js";
 import { hasLefthookRunCommand } from "../hooks/state.js";
 import { inspectHookMaintenance } from "../hooks/update-notice.js";
@@ -28,7 +38,7 @@ import {
   isSupportedNodeVersion,
   NODE_ENGINE_RANGE,
 } from "../runtime/node-support.js";
-import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import { inspectProjectPrettierDiscovery } from "../init/prettier-discovery.js";
 import {
   openProjectFormatter,
   resolveProjectPrettierInstallation,
@@ -91,8 +101,10 @@ export async function runDiagnostics(
 ): Promise<readonly Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const id of DOCTOR_DIAGNOSTIC_IDS) {
+    context.signal?.throwIfAborted();
     try {
       const diagnostic = await probe(id, context);
+      context.signal?.throwIfAborted();
       if (
         diagnostic.id !== id ||
         !["pass", "warning", "fail"].includes(diagnostic.status) ||
@@ -103,6 +115,7 @@ export async function runDiagnostics(
         diagnostics.push(Object.freeze({ ...diagnostic }));
       }
     } catch {
+      context.signal?.throwIfAborted();
       diagnostics.push(failure(id));
     }
   }
@@ -114,19 +127,14 @@ async function repositoryRoot(cwd: string): Promise<string> {
     .stdout;
 }
 
-async function regularFileContents(path: string): Promise<string | undefined> {
-  try {
-    const state = await lstat(path);
-    if (state.isSymbolicLink() || !state.isFile()) return undefined;
-    return readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
-  const { hookUpdate, sharedHuskyPreCommit } = await inspectHookMaintenance(root);
+async function hookStateDiagnostic(
+  root: string,
+  huskyOptedOut: boolean,
+): Promise<Diagnostic> {
+  const { hookUpdate, huskyPreCommit } = await inspectHookMaintenance(
+    root,
+    huskyOptedOut,
+  );
   if (hookUpdate !== undefined) {
     return {
       id: "hook-state",
@@ -135,12 +143,27 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
       remediation: hookUpdate.remediation,
     };
   }
-  if (sharedHuskyPreCommit !== undefined) {
-    return sharedHuskyPreCommit
-      ? { id: "hook-state", status: "pass", message: "The shared Husky pre-commit hook invokes Zedbee." }
-      : { id: "hook-state", status: "warning",
-          message: "The shared Husky pre-commit hook does not invoke Zedbee.",
-          remediation: "Run zedbee init in the main checkout to add Zedbee to the shared hook.",
+  if (huskyPreCommit !== undefined) {
+    const owner = huskyPreCommit.shared ? "shared Husky" : "Husky";
+    return huskyPreCommit.active
+      ? {
+          id: "hook-state",
+          status: "pass",
+          message: `The ${owner} pre-commit hook invokes Zedbee.`,
+        }
+      : {
+          id: "hook-state",
+          status: "warning",
+          message: huskyOptedOut
+            ? "Husky is explicitly disabled in this environment."
+            : `The ${owner} pre-commit hook does not invoke Zedbee.`,
+          ...(huskyOptedOut
+            ? {}
+            : {
+                remediation: huskyPreCommit.shared
+                  ? "Run zedbee init in the main checkout to add Zedbee to the shared hook."
+                  : "Run zedbee init to add Zedbee to the existing hook.",
+              }),
         };
   }
   const hookOutput = await new GitClient(root).run([
@@ -151,17 +174,15 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
   const hookPath = isAbsolute(hookOutput.stdout)
     ? resolve(hookOutput.stdout)
     : resolve(root, hookOutput.stdout);
-  const [installedHook, huskyHook, lefthookYaml, lefthookYml, manifest] =
-    await Promise.all([
-      regularFileContents(hookPath),
-      regularFileContents(join(root, ".husky/pre-commit")),
-      regularFileContents(join(root, "lefthook.yaml")),
-      regularFileContents(join(root, "lefthook.yml")),
-      regularFileContents(join(root, "package.json")),
-    ]);
+  const [installedHook, huskyHook, lefthook, manifest] = await Promise.all([
+    readHookData(hookPath, true),
+    readHookData(join(root, ".husky/pre-commit")),
+    readHookData(join(root, await lefthookFilename(root))),
+    readHookData(join(root, "package.json")),
+  ]);
   if (
-    (installedHook !== undefined && hasZedbeeScanCommand(installedHook)) ||
-    (huskyHook !== undefined && hasZedbeeScanCommand(huskyHook))
+    installedHook !== undefined &&
+    hasZedbeeScanCommand(installedHook, "pre-commit")
   ) {
     return {
       id: "hook-state",
@@ -169,9 +190,8 @@ async function hookStateDiagnostic(root: string): Promise<Diagnostic> {
       message: "The active pre-commit path invokes Zedbee.",
     };
   }
-  const lefthookConfigured = [lefthookYaml, lefthookYml].some(
-    (source) => source !== undefined && hasZedbeeLefthookConfig(source),
-  );
+  const lefthookConfigured =
+    lefthook !== undefined && hasZedbeeLefthookConfig(lefthook);
   if (
     lefthookConfigured &&
     installedHook !== undefined &&
@@ -256,15 +276,6 @@ const DEFAULT_PROBE_DEPENDENCIES: DefaultDiagnosticDependencies = {
   parseLockfileInventory,
   osvClient: createOsvClient({ timeoutMs: 5_000, retries: 0 }),
 };
-
-function analyzableLockfiles(lockfiles: readonly string[]): readonly string[] {
-  const hasTextBunLock = lockfiles.some(
-    (path) => path.split("/").at(-1) === "bun.lock",
-  );
-  return lockfiles.filter(
-    (path) => !(hasTextBunLock && path.split("/").at(-1) === "bun.lockb"),
-  );
-}
 
 export function createDefaultDiagnosticProbe(
   overrides: Partial<DefaultDiagnosticDependencies> = {},
@@ -397,9 +408,72 @@ export function createDefaultDiagnosticProbe(
       }
       case "project-prettier": {
         const root = await repositoryRoot(context.cwd);
-        const discovered = await discoverProjectPrettier(root).catch(
-          () => [] as const,
+        const configured = await withSnapshots(
+          context.cwd,
+          async (targetDir) => {
+            const git = new GitClient(root);
+            const config = await loadConfigFromIndex(
+              root,
+              git,
+              context.configPath,
+            );
+            const changeSet = await readStagedChangeSet(git);
+            const inspection = await inspectRepository(targetDir);
+            const requirements = formattingRequirements(
+              inspection,
+              createFilePolicyResolver(config, changeSet),
+              [...changeSet.files.values()]
+                .filter(({ status }) => status !== "deleted")
+                .map(({ path }) => path),
+            );
+            return await Promise.all(
+              requirements.projectRoots.map(async (projectRoot) => {
+                try {
+                  const installation = await resolveProjectPrettierInstallation(
+                    root,
+                    projectRoot,
+                    targetDir,
+                  );
+                  return {
+                    projectRoot,
+                    status: "available",
+                    version: installation.version,
+                  };
+                } catch {
+                  return { projectRoot, status: "missing", version: undefined };
+                }
+              }),
+            );
+          },
         );
+        if (configured.some(({ status }) => status !== "available")) {
+          return {
+            id,
+            status: "fail",
+            message: `Required project Prettier could not be resolved for ${configured
+              .filter(({ status }) => status !== "available")
+              .map(({ projectRoot }) => projectRoot)
+              .join("; ")} in the selected index.`,
+            remediation:
+              "Restore the selected workspace's declared, supported Prettier installation or select the managed engine.",
+          };
+        }
+        const discovery =
+          configured.length > 0
+            ? undefined
+            : await inspectProjectPrettierDiscovery(root);
+        if (discovery?.status === "failed")
+          return {
+            id,
+            status: "fail",
+            message: "Project Prettier setup could not be inspected.",
+            remediation:
+              "Check workspace manifests and file permissions, then retry.",
+          };
+        // Optional discovery remains useful for setup; explicitly configured
+        // project scopes, however, must all be resolvable in the selected index.
+        const discovered =
+          configured.length > 0 ? configured : (discovery?.entries ?? []);
         if (discovered.length === 0) {
           return {
             id,
@@ -420,8 +494,14 @@ export function createDefaultDiagnosticProbe(
         if (context.projectPrettierTrust !== true) {
           return {
             id,
-            status: "pass",
+            status: configured.length > 0 ? "warning" : "pass",
             message: `Detected project Prettier (${summary}). Configuration was inspected as data only and was not executed.`,
+            ...(configured.length === 0
+              ? {}
+              : {
+                  remediation:
+                    "Review the project's configuration and rerun doctor with --trust-project-prettier to verify the required formatter.",
+                }),
           };
         }
         try {
@@ -541,7 +621,7 @@ export function createDefaultDiagnosticProbe(
             };
           }
           try {
-            const inventories = await Promise.all(
+            const inventories = await joinSnapshotReaders(
               lockfiles.map((path) =>
                 dependencies.parseLockfileInventory(inspection, path),
               ),
@@ -584,7 +664,9 @@ export function createDefaultDiagnosticProbe(
           };
         }
         try {
-          await dependencies.osvClient.probe(new AbortController().signal);
+          await dependencies.osvClient.probe(
+            context.signal ?? new AbortController().signal,
+          );
           return {
             id,
             status: "pass",
@@ -635,7 +717,7 @@ export function createDefaultDiagnosticProbe(
             };
       case "hook-state": {
         const root = await repositoryRoot(context.cwd);
-        return hookStateDiagnostic(root);
+        return hookStateDiagnostic(root, context.environment.HUSKY === "0");
       }
       case "online-service-disclosure": {
         const root = await repositoryRoot(context.cwd);

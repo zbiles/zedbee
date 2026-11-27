@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { renderText } from "../../src/renderers/text.js";
 import { createReport } from "../helpers/scan-report.js";
-it("explains skips in explicitly requested verbose text", () => {
+it("explains skips in the default text display", () => {
   const report = createReport({
     checks: [
       {
@@ -14,8 +14,8 @@ it("explains skips in explicitly requested verbose text", () => {
     ],
   });
   expect(
-    renderText(report, { width: 120, color: false, verbose: true }),
-  ).toContain("types: skipped — No supported changed TypeScript source files");
+    renderText(report, { width: 120, color: false }),
+  ).toContain("No supported changed TypeScript source files — TypeScript");
 });
 it.each([40, 80, 120])(
   "adapts saved generated guidance in automatic text at %i columns",

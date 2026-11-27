@@ -1,15 +1,14 @@
 import { memoizeCompilerDecision } from "./compiler-decision-cache.js";
 import {
   COMPILER_SOURCE,
+  TYPESCRIPT_SOURCE,
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
-  COMPILER_ORDINARY,
+  isOrdinaryCompilerPath,
+  ordinaryOpenApiEdits,
   changedCompilerPaths,
 } from "./compiler-paths.js";
-import {
-  classifyCompilerChanges,
-  compilerPolicyInputPaths,
-} from "./compiler-change-inputs.js";
+import { compilerPolicyInputPaths } from "./compiler-change-inputs.js";
 import { recordChangeCategory } from "../diagnostics/scan-performance.js";
 import { proveCompilerWorkspaceIndependence } from "./typescript/compiler-scope-graph.js";
 import { posix } from "node:path";
@@ -17,7 +16,6 @@ import type { WorkspaceInspection } from "../inspection/types.js";
 import type { InspectionContext } from "./adapter.js";
 import { compilerConfigurationInputsForInspection } from "./typescript/configuration-paths.js";
 
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const DATA = /\.jsonc?$/iu;
 
 export function hasTypeScriptInputs(workspace: WorkspaceInspection): boolean {
@@ -36,10 +34,13 @@ export type CompilerInputRelevance = Readonly<{
     | "independent";
 }>;
 
-const scopedDecisions = new WeakMap<
+type ScopedDecisions = WeakMap<
   Promise<CompilerInputRelevance>,
   WeakMap<WorkspaceInspection, Promise<CompilerInputRelevance>>
->();
+>;
+const scopedDecisions: ScopedDecisions = new WeakMap();
+const scopedMergeDecisions: ScopedDecisions = new WeakMap();
+const scopedBaseDecisions: ScopedDecisions = new WeakMap();
 
 /** Metadata only. Known source/configuration membership takes precedence over
  * ordinary extensions. A possible input selects every compiler consumer: sibling
@@ -77,6 +78,7 @@ async function resolveRelevance(
       if (!complete) return { relevant: true, reason: "unknown" };
     }
   }
+  const ordinaryDocs = await ordinaryOpenApiEdits(context);
   for (const path of paths) {
     const name = posix.basename(path);
     if (COMPILER_SOURCE.test(path)) return { relevant: true, reason: "source" };
@@ -85,7 +87,7 @@ async function resolveRelevance(
     if (COMPILER_CONFIGURATION.test(name))
       return { relevant: true, reason: "configuration" };
     if (DATA.test(path)) return { relevant: true, reason: "data" };
-    if (name.toLowerCase() !== ".gitignore" && !COMPILER_ORDINARY.test(path))
+    if (!isOrdinaryCompilerPath(path) && !ordinaryDocs.has(path))
       return { relevant: true, reason: "unknown" };
   }
   return complete
@@ -106,14 +108,21 @@ export function compilerInputRelevance(
       recordChangeCategory(value.reason);
     })
     .catch(() => {});
-  let scoped = scopedDecisions.get(decision);
+  const decisions = context.mergeComparison
+    ? scopedMergeDecisions
+    : context.baseComparison
+      ? scopedBaseDecisions
+      : scopedDecisions;
+  let scoped = decisions.get(decision);
   if (scoped === undefined) {
     scoped = new WeakMap();
-    scopedDecisions.set(decision, scoped);
+    decisions.set(decision, scoped);
   }
   const previous = scoped.get(workspace);
   if (
     previous !== undefined &&
+    !context.mergeComparison &&
+    !context.baseComparison &&
     ![...changedCompilerPaths(context.changeSet)].some(
       (path) =>
         COMPILER_SOURCE.test(path) ||
@@ -134,18 +143,14 @@ export function compilerInputRelevance(
     });
   const narrowed = decision.then(
     async (result): Promise<CompilerInputRelevance> => {
-      if (!result.relevant || !["source", "dependency"].includes(result.reason))
+      if (
+        !result.relevant ||
+        result.reason === "configuration" ||
+        (!context.mergeComparison &&
+          !["source", "dependency"].includes(result.reason) &&
+          !context.baseComparison)
+      )
         return result;
-      const classification = await classifyCompilerChanges(context);
-      if (!classification.complete || classification.requiresBroadComparison)
-        return result;
-      const paths = [
-        ...classification.sourcePaths,
-        ...classification.localNpmInputs,
-      ];
-      const prefix =
-        workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
-      if (paths.some((path) => path.startsWith(prefix))) return result;
       if (
         !(await proveCompilerWorkspaceIndependence(context, workspace))
           .independent

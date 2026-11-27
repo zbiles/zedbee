@@ -1,6 +1,7 @@
 import { ESLint } from "eslint";
 import { realpath, stat } from "node:fs/promises";
-import { extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { managedConfig, type ManagedConfigOptions } from "./managed-config.js";
 import { ManagedEslintFailure } from "./failure.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
@@ -19,19 +20,25 @@ export interface ManagedEslintOptions extends ManagedConfigOptions {
   readonly cwd: string;
 }
 
-const sourceExtensions = new Set([
-  ".js",
-  ".jsx",
-  ".mjs",
-  ".cjs",
-  ".ts",
-  ".tsx",
-  ".mts",
-  ".cts",
-]);
 const windowsDrivePath = /^[A-Za-z]:/u;
 
-async function assertInspectorPath(cwd: string, path: string): Promise<void> {
+function invalidInspectorPath(path: string): Error {
+  return new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+}
+
+function escapesRoot(relativePath: string): boolean {
+  return (
+    relativePath === ".." ||
+    relativePath.startsWith(`..${sep}`) ||
+    isAbsolute(relativePath)
+  );
+}
+
+async function assertInspectorPath(
+  cwd: string,
+  path: string,
+  canonicalRoot: () => Promise<string>,
+): Promise<void> {
   const segments = path.split("/");
   const target = resolve(cwd, ...segments);
   const fromRoot = relative(cwd, target);
@@ -46,34 +53,30 @@ async function assertInspectorPath(cwd: string, path: string): Promise<void> {
     fromRoot === ".." ||
     fromRoot.startsWith(`..${sep}`) ||
     isAbsolute(fromRoot) ||
-    !sourceExtensions.has(extname(path))
+    !MANAGED_SOURCE_PATH.test(path)
   ) {
-    throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    throw invalidInspectorPath(path);
   }
 
   const captured = capturedSourceInput(cwd, path);
   if (captured !== undefined) {
     if (captured.entry !== undefined && captured.entry.targetKind !== "file") {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+      throw invalidInspectorPath(path);
     }
     return;
   }
   try {
-    const [canonicalRoot, canonicalTarget] = await Promise.all([
-      realpath(cwd),
+    const [root, canonicalTarget] = await Promise.all([
+      canonicalRoot(),
       realpath(target),
     ]);
-    const canonicalRelative = relative(canonicalRoot, canonicalTarget);
-    if (
-      canonicalRelative === ".." ||
-      canonicalRelative.startsWith(`..${sep}`) ||
-      isAbsolute(canonicalRelative)
-    ) {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+    const canonicalRelative = relative(root, canonicalTarget);
+    if (escapesRoot(canonicalRelative)) {
+      throw invalidInspectorPath(path);
     }
     const targetStats = await stat(canonicalTarget);
     if (!targetStats.isFile()) {
-      throw new Error(`Invalid inspector source path: ${JSON.stringify(path)}`);
+      throw invalidInspectorPath(path);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
@@ -102,7 +105,11 @@ class ManagedEslint extends ESLint {
     patterns: string | string[],
   ): Promise<ESLint.LintResult[]> {
     const paths = typeof patterns === "string" ? [patterns] : patterns;
-    for (const path of paths) await assertInspectorPath(this.#cwd, path);
+    let rootPromise: Promise<string> | undefined;
+    const canonicalRoot = (): Promise<string> =>
+      (rootPromise ??= realpath(this.#cwd));
+    for (const path of paths)
+      await assertInspectorPath(this.#cwd, path, canonicalRoot);
     const store = analysisStore<Promise<ESLint.LintResult[]>>(rawComplexity);
     if (store === undefined && !hasAnalysisSourceCapture())
       return super.lintFiles(patterns);

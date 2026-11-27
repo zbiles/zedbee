@@ -297,66 +297,72 @@ describe("dependencyArchitectureAdapter", () => {
     ).rejects.toThrow("Dependency architecture analysis failed.");
   });
 
-  it("schedules a workspace when a source is deleted", async () => {
-    const [baseline, staged, live] = await Promise.all([
-      createInspectionFixture(),
-      createInspectionFixture(),
-      createInspectionFixture(),
-    ]);
-    for (const fixture of [baseline, staged, live]) {
-      await fixture.writeJson("package.json", { name: "fixture" });
-      await fixture.write(
-        "src/consumer.ts",
-        "import { removed } from './removed.js'; export const value = removed;\n",
-      );
-    }
-    await baseline.write("src/removed.ts", "export const removed = 1;\n");
-    await live.write("src/removed.ts", "export const removed = 1;\n");
-    const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
-    const deletedFiles = new Map([
-      [
-        "src/removed.ts",
-        {
-          path: "src/removed.ts",
-          status: "deleted" as const,
-          addedRanges: [],
+  it.each(["deleted", "renamed"] as const)(
+    "attributes a broken import when a source is %s",
+    async (status) => {
+      const [baseline, staged, live] = await Promise.all([
+        createInspectionFixture(),
+        createInspectionFixture(),
+        createInspectionFixture(),
+      ]);
+      for (const fixture of [baseline, staged, live]) {
+        await fixture.writeJson("package.json", { name: "fixture" });
+        await fixture.write(
+          "src/consumer.ts",
+          "import { removed } from './removed.js'; export const value = removed;\n",
+        );
+      }
+      await baseline.write("src/removed.ts", "export const removed = 1;\n");
+      await live.write("src/removed.ts", "export const removed = 1;\n");
+      const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+      if (status === "renamed")
+        await staged.write("src/renamed.ts", "export const removed = 1;\n");
+      const deletedFiles = new Map([
+        [
+          status === "deleted" ? "src/removed.ts" : "src/renamed.ts",
+          {
+            path: status === "deleted" ? "src/removed.ts" : "src/renamed.ts",
+            ...(status === "renamed" ? { previousPath: "src/removed.ts" } : {}),
+            status,
+            addedRanges: [],
+          },
+        ],
+      ]);
+      const context: CheckRunContext = {
+        repositoryRoot: live.root,
+        changeSet: {
+          files: deletedFiles,
+          isEmpty: false,
+          containsAddedLine: () => false,
         },
-      ],
-    ]);
-    const context: CheckRunContext = {
-      repositoryRoot: live.root,
-      changeSet: {
-        files: deletedFiles,
-        isEmpty: false,
-        containsAddedLine: () => false,
-      },
-      config,
-      snapshots: {
-        baselineDir: baseline.root,
-        targetDir: staged.root,
-        baselineRef: "HEAD",
-        targetRef: "index",
-        unsupportedEntries: [],
-      },
-      baselineInspection: await inspectRepository(baseline.root),
-      targetInspection: await inspectRepository(staged.root),
-      target,
-      policy: config.checks.dependencyArchitecture,
-      policyForFile: testFilePolicyResolver(config),
-      signal: new AbortController().signal,
-    };
-    await expect(
-      dependencyArchitectureAdapter.inspect(context),
-    ).resolves.toMatchObject({
-      applies: true,
-      targets: [target],
-    });
-    expect(await stagedFindings(context)).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ rule: DEPENDENCY_RULE_NAMES.unresolved }),
-      ]),
-    );
-  });
+        config,
+        snapshots: {
+          baselineDir: baseline.root,
+          targetDir: staged.root,
+          baselineRef: "HEAD",
+          targetRef: "index",
+          unsupportedEntries: [],
+        },
+        baselineInspection: await inspectRepository(baseline.root),
+        targetInspection: await inspectRepository(staged.root),
+        target,
+        policy: config.checks.dependencyArchitecture,
+        policyForFile: testFilePolicyResolver(config),
+        signal: new AbortController().signal,
+      };
+      await expect(
+        dependencyArchitectureAdapter.inspect(context),
+      ).resolves.toMatchObject({
+        applies: true,
+        targets: [target],
+      });
+      expect(await stagedFindings(context)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ rule: DEPENDENCY_RULE_NAMES.unresolved }),
+        ]),
+      );
+    },
+  );
 
   it("attributes a graph regression caused only by a manifest change", async () => {
     const [baseline, staged, live] = await Promise.all([
@@ -487,6 +493,138 @@ describe("dependencyArchitectureAdapter", () => {
           }),
         ]),
       );
+    },
+  );
+
+  it("runs surviving graph targets and attributes unchanged consumers when another workspace is removed", async () => {
+    const [baseline, staged] = await Promise.all([
+      createInspectionFixture(),
+      createInspectionFixture(),
+    ]);
+    for (const fixture of [baseline, staged]) {
+      await fixture.writeJson("apps/web/package.json", {
+        name: "web",
+        dependencies: { shared: "*" },
+      });
+      await fixture.write(
+        "apps/web/index.js",
+        "import { shared } from 'shared'; export const web = shared;\n",
+      );
+    }
+    await baseline.writeJson("packages/shared/package.json", {
+      name: "shared",
+      main: "index.js",
+    });
+    await baseline.write(
+      "packages/shared/index.js",
+      "export const shared = 1;\n",
+    );
+    const config = resolveConfig({ schemaVersion: 1, profile: "thorough" });
+    const changes = new Map(
+      ["packages/shared/package.json", "packages/shared/index.js"].map(
+        (path) => [path, { path, status: "deleted" as const, addedRanges: [] }],
+      ),
+    );
+    const changeSet: ChangeSet = {
+      files: changes,
+      isEmpty: false,
+      containsAddedLine: () => false,
+    };
+    const context: CheckRunContext = {
+      repositoryRoot: staged.root,
+      changeSet,
+      config,
+      snapshots: {
+        baselineDir: baseline.root,
+        targetDir: staged.root,
+        baselineRef: "HEAD",
+        targetRef: "index",
+        unsupportedEntries: [],
+      },
+      baselineInspection: await inspectRepository(baseline.root),
+      targetInspection: await inspectRepository(staged.root),
+      target: { id: "apps/web", kind: "workspace", relativeRoot: "apps/web" },
+      policy: config.checks.dependencyArchitecture,
+      policyForFile: testFilePolicyResolver(config),
+      signal: new AbortController().signal,
+    };
+    expect(await dependencyArchitectureAdapter.inspect(context)).toMatchObject({
+      applies: true,
+      targets: [context.target],
+    });
+    expect(await stagedFindings(context)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          rule: DEPENDENCY_RULE_NAMES.unresolved,
+          location: { file: "apps/web/index.js" },
+        }),
+      ]),
+    );
+  });
+
+  it("reports an introduced self-import as a real finding", async () => {
+    const context = await edgeContext(
+      "import { changed } from './changed.js'; export { changed };\n",
+      async () => undefined,
+    );
+    expect(await stagedFindings(context)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ rule: DEPENDENCY_RULE_NAMES.circular }),
+      ]),
+    );
+  });
+
+  it("accepts explicit null and conditional package exports", async () => {
+    const context = await edgeContext(
+      "export const changed = 2;\n",
+      async (fixture) => {
+        await fixture.writeJson("package.json", {
+          name: "fixture",
+          exports: {
+            ".": ["./src/changed.ts", null],
+            "./private": null,
+            "./browser": { browser: null, default: "./src/changed.ts" },
+          },
+        });
+      },
+    );
+    expect(await stagedFindings(context)).toEqual([]);
+  });
+
+  it.each([
+    { exportTarget: null, blocked: true },
+    {
+      exportTarget: { import: null, default: "./src/private.ts" },
+      blocked: true,
+    },
+    {
+      exportTarget: { browser: null, default: "./src/private.ts" },
+      blocked: false,
+    },
+    {
+      exportTarget: [null, { browser: null }, "./src/private.ts"],
+      blocked: false,
+    },
+  ])(
+    "honors package export selection: $exportTarget",
+    async ({ exportTarget, blocked }) => {
+      const context = await edgeContext(
+        "import { value } from 'fixture/private'; export const changed = value;\n",
+        async (fixture) => {
+          await fixture.writeJson("package.json", {
+            name: "fixture",
+            dependencies: { fixture: "*" },
+            exports: { ".": "./src/changed.ts", "./private": exportTarget },
+          });
+          await fixture.write("src/private.ts", "export const value = 1;\n");
+        },
+      );
+      const findings = await stagedFindings(context);
+      expect(
+        findings.some(
+          (finding) => finding.rule === DEPENDENCY_RULE_NAMES.unresolved,
+        ),
+      ).toBe(blocked);
     },
   );
 

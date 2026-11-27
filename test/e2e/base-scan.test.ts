@@ -41,6 +41,11 @@ const strictConfig = `${JSON.stringify({
   },
 })}\n`;
 
+const boundedFormattingConfig = `${JSON.stringify({
+  ...JSON.parse(strictConfig),
+  resources: { git: { outputLimitBytes: 1024 } },
+})}\n`;
+
 const weakConfig = `${JSON.stringify({
   schemaVersion: 1,
   profile: "fast",
@@ -287,29 +292,7 @@ describe("committed base scans", () => {
 
   it("does not send an irrelevant changed binary through the bounded text diff", async () => {
     const repository = await createGitRepository();
-    await repository.write(
-      ".zedbeerc.jsonc",
-      `${JSON.stringify({
-        schemaVersion: 1,
-        profile: "fast",
-        resources: { git: { outputLimitBytes: 1024 } },
-        checks: {
-          formatting: "error",
-          lint: "off",
-          types: "off",
-          cyclomaticComplexity: "off",
-          readabilityComplexity: "off",
-          structuralSecurity: "off",
-          secrets: "off",
-          duplication: "off",
-          dependencyArchitecture: "off",
-          deadCode: "off",
-          reactCorrectness: "off",
-          reactAccessibility: "off",
-          vulnerabilities: "off",
-        },
-      })}\n`,
-    );
+    await repository.write(".zedbeerc.jsonc", boundedFormattingConfig);
     await repository.write("src/value.ts", "export const value = 1;\n");
     await repository.commitAll("baseline");
     await repository.git(["switch", "-c", "feature"]);
@@ -331,29 +314,7 @@ describe("committed base scans", () => {
 
   it("does not force a large binary baseline through the bounded text diff", async () => {
     const repository = await createGitRepository();
-    await repository.write(
-      ".zedbeerc.jsonc",
-      `${JSON.stringify({
-        schemaVersion: 1,
-        profile: "fast",
-        resources: { git: { outputLimitBytes: 1024 } },
-        checks: {
-          formatting: "error",
-          lint: "off",
-          types: "off",
-          cyclomaticComplexity: "off",
-          readabilityComplexity: "off",
-          structuralSecurity: "off",
-          secrets: "off",
-          duplication: "off",
-          dependencyArchitecture: "off",
-          deadCode: "off",
-          reactCorrectness: "off",
-          reactAccessibility: "off",
-          vulnerabilities: "off",
-        },
-      })}\n`,
-    );
+    await repository.write(".zedbeerc.jsonc", boundedFormattingConfig);
     await writeFile(join(repository.root, "value.dat"), Buffer.alloc(4096, 0));
     await writeFile(
       join(repository.root, "old.dat"),
@@ -763,5 +724,166 @@ describe("committed base scans", () => {
     expect(await gitIdentity(repository)).toEqual(before);
     await expectNoSnapshots(snapshotRoot);
     expect(controller.signal.aborted).toBe(true);
+  });
+});
+
+describe("committed range compiler scope with JSON data", () => {
+  it("skips independent missing installations for mixed source and data changes", async () => {
+    const { createSeparateCompilerWorkspaces } =
+      await import("../helpers/separate-compiler-workspaces.js");
+    const repo = await createSeparateCompilerWorkspaces({
+      "docs/data.json": '{"value":1}\n',
+      "extension/src/local.json": '{"value":true}\n',
+      "extension/src/style.css": "body { color: red; }\n",
+      "extension/src/index.ts":
+        'import "./style.css"; import data from "./local.json"; export const flag = data.value; export { value } from "fixture-package";\n',
+    });
+    await repo.git(["branch", "base-control"]);
+    await repo.write("web/src/index.ts", "export const value = 2;\n");
+    await repo.write("docs/data.json", '{"value":2}\n');
+    await repo.write("api/value.py", "value = 2\n");
+    await repo.commitAll("source and documentation data");
+    const report = await runScan({
+      repositoryRoot: repo.root,
+      baseRef: "base-control",
+    });
+    expect(report.outcome).toBe("pass");
+    for (const checkId of ["lint", "types"]) {
+      expect(report.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            checkId,
+            target: "web",
+            status: "completed",
+          }),
+          expect.objectContaining({
+            checkId,
+            target: "e2e",
+            status: "skipped",
+          }),
+          expect.objectContaining({
+            checkId,
+            target: "extension",
+            status: "skipped",
+          }),
+        ]),
+      );
+    }
+  });
+
+  it.each(["relative", "alias"])(
+    "retains a sibling importing the changed JSON through a %s",
+    async (kind) => {
+      const { createSeparateCompilerWorkspaces } =
+        await import("../helpers/separate-compiler-workspaces.js");
+      const repo = await createSeparateCompilerWorkspaces({
+        "docs/data.json": '{"value":"before"}\n',
+        "extension/src/index.ts": `import data from "${kind === "alias" ? "@data" : "../../docs/data.json"}"; export const value: string = data.value;\n`,
+        ...(kind === "alias"
+          ? {
+              "extension/tsconfig.json": JSON.stringify({
+                compilerOptions: {
+                  module: "ESNext",
+                  moduleResolution: "Bundler",
+                  resolveJsonModule: true,
+                  types: [],
+                  strict: true,
+                  paths: { "@data": ["../docs/data.json"] },
+                },
+                include: ["src"],
+              }),
+            }
+          : {}),
+      });
+      await repo.git(["branch", "base-control"]);
+      await repo.write("docs/data.json", '{"value":2}\n');
+      await repo.commitAll("change imported documentation data");
+      const report = await runScan({
+        repositoryRoot: repo.root,
+        baseRef: "base-control",
+      });
+      expect(report.outcome).toBe("blocked");
+      expect(report.checks).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            checkId: "types",
+            target: "extension",
+            status: "completed",
+            findings: expect.arrayContaining([
+              expect.objectContaining({ rule: "typescript/TS2322" }),
+            ]),
+          }),
+          expect.objectContaining({
+            checkId: "types",
+            target: "e2e",
+            status: "skipped",
+          }),
+        ]),
+      );
+    },
+  );
+  it("retains ordinary index behavior and uncertain committed JSON identities", async () => {
+    const { createSeparateCompilerWorkspaces } =
+      await import("../helpers/separate-compiler-workspaces.js");
+    const repo = await createSeparateCompilerWorkspaces({
+      "docs/data.json": '{"value":1}\n',
+    });
+    await repo.git(["branch", "base-control"]);
+    await repo.write("docs/data.json", '{"value":2}\n');
+    await repo.git(["add", "docs/data.json"]);
+    const indexReport = await runScan({ repositoryRoot: repo.root });
+    expect(indexReport.outcome).toBe("incomplete");
+    await repo.git(["mv", "docs/data.json", "docs/renamed.json"]);
+    await repo.commitAll("rename documentation data");
+    const baseReport = await runScan({
+      repositoryRoot: repo.root,
+      baseRef: "base-control",
+    });
+    expect(baseReport.outcome).toBe("incomplete");
+    expect(baseReport.checks).toContainEqual(
+      expect.objectContaining({
+        checkId: "types",
+        target: "extension",
+        status: "incomplete",
+        error: expect.objectContaining({
+          code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+        }),
+      }),
+    );
+  });
+
+  it("keeps the check incomplete when changed JSON and an unavailable package are both consumed", async () => {
+    const { createSeparateCompilerWorkspaces } =
+      await import("../helpers/separate-compiler-workspaces.js");
+    const repo = await createSeparateCompilerWorkspaces({
+      "docs/data.json": '{"value":"before"}\n',
+      "extension/src/index.ts":
+        'import data from "../../docs/data.json"; export const value: string = data.value; export { value as other } from "fixture-package";\n',
+    });
+    await repo.git(["branch", "base-control"]);
+    await repo.write("docs/data.json", '{"value":"after"}\n');
+    await repo.commitAll("change imported data");
+    const report = await runScan({
+      repositoryRoot: repo.root,
+      baseRef: "base-control",
+    });
+    expect(report.outcome).toBe("incomplete");
+    expect(report.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkId: "types",
+          target: "extension",
+          status: "incomplete",
+          error: expect.objectContaining({
+            code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+          }),
+        }),
+        expect.objectContaining({
+          checkId: "types",
+          target: "e2e",
+          status: "skipped",
+        }),
+      ]),
+    );
   });
 });

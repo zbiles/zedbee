@@ -15,6 +15,7 @@ import { execa } from "execa";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   downloadCli,
+  exactVersion,
   MAX_RELEASE_BYTES,
 } from "../../plugins/swarm/scripts/download-cli.mjs";
 import {
@@ -212,3 +213,35 @@ describe("verified CLI download", () => {
     expect(await readdir(root)).toEqual([]);
   });
 });
+
+it("checks the independent pinned CLI metadata before packing", async () => {
+  const root = await fixture();
+  const pin = join(root, "plugins/swarm/references/cli-release.json");
+  await writeFile(pin, JSON.stringify(release));
+  await expect(checkPlugin(root)).resolves.toBeDefined();
+  for (const override of [
+    { version: "latest" },
+    { url: "bad" },
+    { sha256: "bad" },
+  ]) {
+    await writeFile(pin, JSON.stringify({ ...release, ...override }));
+    await expect(checkPlugin(root)).rejects.toThrow(
+      "Invalid pinned CLI release",
+    );
+  }
+});
+
+it.each([
+  ["0.1.0-beta.22", true],
+  ["1.2.3", true],
+  ["1.2.3+metadata", false],
+  ["01.2.3", false],
+  ["1.2.3-beta.01", false],
+  ["1.2.3-beta..1", false],
+  ["1.2.3-" + "x".repeat(130), false],
+])(
+  "uses canonical release versions across release consumers: %s",
+  (version, expected) => {
+    expect(exactVersion(version)).toBe(expected);
+  },
+);

@@ -256,3 +256,39 @@ it("does not declare external referenced roots covered by a workspace-only sourc
     false,
   );
 });
+
+it("uses the file for an extensionless extends and the directory for a reference with the same name", async () => {
+  const { f } = await fixture();
+  await f.writeJson("extension/lib.json", {
+    compilerOptions: { strict: true },
+  });
+  await f.write("extension/lib/child.ts", "export const child = true;");
+  await f.writeJson("extension/lib/tsconfig.json", { files: ["child.ts"] });
+  await f.writeJson("extension/tsconfig.json", {
+    extends: "./lib",
+    references: [{ path: "./lib" }],
+    include: ["src"],
+  });
+  const inspection = await inspectRepository(f.root);
+  const workspace = inspection.workspaces.find(
+    (w) => w.relativeRoot === "extension",
+  )!;
+  // Limit discovery to the selected root so the reference must find its own child.
+  const inputs = await loadCompilerScopeInputs(inspection, {
+    ...workspace,
+    tsconfigPaths: ["extension/tsconfig.json"],
+  });
+  expect(inputs.complete).toBe(true);
+  if (!inputs.complete) throw new Error("Expected complete scope");
+  expect(inputs.inputPaths).toContain("extension/lib.json");
+  expect(
+    inputs.projects.find(
+      (project) => project.configPath === "extension/tsconfig.json",
+    )?.options.strict,
+  ).toBe(true);
+  expect(
+    inputs.projects.find(
+      (project) => project.configPath === "extension/lib/tsconfig.json",
+    )?.rootPaths,
+  ).toContain("extension/lib/child.ts");
+});

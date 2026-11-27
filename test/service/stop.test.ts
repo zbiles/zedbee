@@ -297,3 +297,49 @@ it.each([false, true])(
     }
   },
 );
+
+it.each(["close", "rollback"])(
+  "fails the service closed when its session lease cannot be confirmed on %s",
+  async (path) => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "zx-")));
+    const state = new ServiceState(join(root, "s"));
+    await state.prepare();
+    const release = (await state.lock())!;
+    const server = await startServiceServer(state, "a".repeat(64), 1, release);
+    const client = await connectService(
+      new ServiceState(state.directory),
+      (await state.read())!,
+    );
+    const actualLease = state.lease.bind(state);
+    const spy = vi.spyOn(state, "lease").mockImplementation(async (...args) => {
+      const lease = await actualLease(...args);
+      if (args[0] === undefined) return lease;
+      return {
+        ...lease,
+        async close() {
+          await lease.close();
+          throw new Error("Lost lease confirmation");
+        },
+      };
+    });
+    try {
+      if (path === "rollback") {
+        await expect(
+          client.request("open", { options: { sourceSelections: "invalid" } }),
+        ).rejects.toThrow();
+      } else {
+        const session = await executorForConnection(client).openSession();
+        await session.close().catch(() => {});
+      }
+      await expect(server.close()).rejects.toThrow();
+      expect(server.status()).toMatchObject({ activeSessions: 0 });
+      expect(await state.lock()).toBeUndefined();
+    } finally {
+      spy.mockRestore();
+      await client.close().catch(() => {});
+      await server.close().catch(() => {});
+      await release();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

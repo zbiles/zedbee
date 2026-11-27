@@ -1,7 +1,9 @@
+import { bootstrapGitPolicy } from "./resource-policy.js";
+import { joinSnapshotReaders } from "../git/snapshot-work.js";
+import { isGitObjectId } from "../git/base-ref.js";
 import { scanOutcome } from "../policy/evaluate.js";
 import { changeSetFromMap } from "../git/change-set.js";
 import type { SnapshotPair } from "../git/snapshot.js";
-import { resolveScanResourcePolicy } from "./resource-policy.js";
 import type { RunScanDependencies, RunScanOptions } from "./run-scan.js";
 import type { ScanReport } from "./report.js";
 import type { CheckResult, Finding } from "../core/types.js";
@@ -16,8 +18,8 @@ import {
   createIncompleteReport,
   withUnreportableCleanupFailure,
 } from "./incomplete-report.js";
-import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
-import { sanitizeCheckResult } from "../checks/sanitize-result.js";
+import { PRECONFIGURATION_PRESENTATION_POLICY } from "./report.js";
+import { resultForProgress } from "../checks/progress-result.js";
 import { announceScanPhase } from "./progress.js";
 import {
   SelectedIndexCleanupError,
@@ -54,13 +56,22 @@ function checkKey(check: CheckResult): string {
 }
 
 function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
-  const keys = [
-    ...new Set(reports.flatMap((report) => report.checks.map(checkKey))),
-  ].sort(compareCodeUnits);
+  const indexes = reports.map((report) => {
+    const index = new Map<string, CheckResult>();
+    for (const check of report.checks) {
+      const key = checkKey(check);
+      if (!index.has(key)) index.set(key, check);
+    }
+    return index;
+  });
+  const keys = [...new Set(indexes.flatMap((index) => [...index.keys()]))].sort(
+    compareCodeUnits,
+  );
+  const parentEvidence = reports.map(
+    (report) => `merge-parent:${report.baseline}`,
+  );
   return keys.map((key) => {
-    const checks = reports.map((report) =>
-      report.checks.find((check) => checkKey(check) === key),
-    );
+    const checks = indexes.map((index) => index.get(key));
     const present = checks.filter(
       (check): check is CheckResult => check !== undefined,
     );
@@ -70,11 +81,17 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
           check.status === "incomplete" &&
           check.incompleteDisposition === "block",
       ) ?? present.find((check) => check.status === "incomplete");
-    if (incomplete !== undefined)
+    if (incomplete !== undefined) {
+      const parent = reports[checks.indexOf(incomplete)]?.baseline;
+      const { error } = incomplete;
       return {
         ...incomplete,
+        ...(error?.snapshot === "last-commit" && isGitObjectId(parent)
+          ? { error: { ...error, comparisonParent: parent } }
+          : {}),
         durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
       };
+    }
     const first =
       present.find((check) => check.status === "completed") ?? present[0]!;
     if (checks.some((check) => check === undefined))
@@ -117,10 +134,9 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
         ...finding,
         attribution: {
           ...finding.attribution,
-          evidence: [
-            ...finding.attribution.evidence,
-            ...reports.map((report) => `merge-parent:${report.baseline}`),
-          ].sort(compareCodeUnits),
+          evidence: [...finding.attribution.evidence, ...parentEvidence].sort(
+            compareCodeUnits,
+          ),
         },
       }));
     return {
@@ -176,12 +192,7 @@ export async function runMergeScan(
           configuredPathExclusions: [],
           appliedPathExclusions: [],
           networkDisclosures: [],
-          presentationPolicy: {
-            terminalFindingLimit: 25,
-            temporaryReportMaxAge: "24h",
-            persistSourceExcerpts: false,
-            agentGuidance: EMPTY_AGENT_GUIDANCE,
-          },
+          presentationPolicy: PRECONFIGURATION_PRESENTATION_POLICY,
         },
         {
           code:
@@ -202,13 +213,7 @@ export async function runMergeScan(
   try {
     if (options.baseRef !== undefined)
       throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    const resourcePolicy = resolveScanResourcePolicy(
-      { gitHardTimeout: "30s" },
-      {
-        ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-        ...(options.noTimeout ? { noTimeout: true } : {}),
-      },
-    );
+    const resourcePolicy = bootstrapGitPolicy(options);
     let git = dependencies.createGitClient(options.repositoryRoot, {
       resourcePolicy,
     });
@@ -236,7 +241,7 @@ export async function runMergeScan(
     }
     parents = comparison.parents;
     announceScanPhase(options.onEvent, "change-discovery", dependencies.clock);
-    const changes = await Promise.all(
+    const changes = await joinSnapshotReaders(
       parents.map((parent) =>
         dependencies.readCommitChangeSet(
           git,
@@ -367,7 +372,7 @@ export async function runMergeScan(
           checkId: result.checkId,
           target: result.target ?? ".",
           timestamp: dependencies.clock(),
-          result: sanitizeCheckResult(result),
+          result: resultForProgress(result),
         });
       } catch {
         // Display observers must not change the merge outcome.

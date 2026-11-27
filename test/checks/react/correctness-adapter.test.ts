@@ -1,3 +1,4 @@
+import { cleanEslintResults } from "../../helpers/eslint-results.js";
 import { access } from "node:fs/promises";
 import { join, posix } from "node:path";
 import type { ESLint, Linter } from "eslint";
@@ -602,8 +603,8 @@ describe("reactCorrectnessAdapter", () => {
             : { version: options.reactVersion }),
         });
         return {
-          async lintFiles() {
-            return [];
+          async lintFiles(patterns) {
+            return cleanEslintResults(options.cwd, patterns);
           },
         };
       },
@@ -946,12 +947,12 @@ it.each([
       id,
       mode,
       managedReactCorrectnessConfig,
-      () => ({
+      (options) => ({
         lintFiles: async (patterns) => {
           observed.push(
             typeof patterns === "string" ? [patterns] : [...patterns],
           );
-          return [];
+          return cleanEslintResults(options.cwd, patterns);
         },
       }),
     );
@@ -999,12 +1000,12 @@ it.each([
     "reactCorrectness",
     "react-correctness",
     managedReactCorrectnessConfig,
-    () => ({
+    (options) => ({
       lintFiles: async (patterns) => {
         observed.push(
           typeof patterns === "string" ? [patterns] : [...patterns],
         );
-        return [];
+        return cleanEslintResults(options.cwd, patterns);
       },
     }),
   );

@@ -2,24 +2,15 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Argument, Command, CommanderError, Option } from "commander";
-import { startTelemetry, type CommandTelemetry } from "./telemetry/client.js";
-import {
-  TELEMETRY_COMMANDS,
-  type TelemetryCommand,
-  type TelemetryEvent,
-} from "./telemetry/schema.js";
-import { executeTelemetryCommand } from "./commands/telemetry.js";
+import type { startTelemetry, CommandTelemetry } from "./telemetry/client.js";
+import type { TelemetryCommand, TelemetryEvent } from "./telemetry/schema.js";
 import { ZEDBEE_VERSION } from "./core/package-version.js";
 import { terminalColorEnabled } from "./renderers/terminal-style.js";
-import { getUpdateNotice, renderUpdateNotice } from "./updates/notification.js";
 import type { UpdateNotice } from "./updates/metadata.js";
-import { executeChecksCommand } from "./commands/checks.js";
-import { executeAgentCommand } from "./commands/agent.js";
-import { executeDoctorCommand } from "./commands/doctor.js";
-import { executeServiceCommand } from "./commands/service.js";
-import { executeFixCommand } from "./commands/fix.js";
-import { executeInitCommand, parseCheckSelection } from "./commands/init.js";
-import { installTrackedHooks } from "./hooks/install.js";
+import type { executeAgentCommand } from "./commands/agent.js";
+import type { executeFixCommand } from "./commands/fix.js";
+import { parseCheckSelection } from "./init/check-selection.js";
+import type { executeInitCommand } from "./commands/init.js";
 import type { CheckId, ProfileId } from "./config/schema.js";
 import { FIXABLE_CHECK_IDS, type FixableCheckId } from "./fixes/types.js";
 import type {
@@ -29,12 +20,12 @@ import type {
   InitOsvUnavailable,
 } from "./init/types.js";
 import type { RequestedOutputFormat } from "./scan/reporting-options.js";
+import type { executeScanCommand } from "./commands/scan.js";
 import {
-  executeScanCommand,
   normalizeTerminalWidth,
   selectOutputFormat,
   signalExitCode,
-} from "./commands/scan.js";
+} from "./reporting/scan-output.js";
 
 interface CommanderScanOptions {
   cache: boolean;
@@ -74,10 +65,10 @@ interface CommanderInitOptions {
   eslintEngine?: "managed" | "project";
   trustProjectEslint?: boolean;
   allowProjectEslintMessages?: boolean;
-  profile: ProfileId;
+  profile?: ProfileId;
   hook: InitHookChoice;
   checks?: readonly CheckId[];
-  osvUnavailable: InitOsvUnavailable;
+  osvUnavailable?: InitOsvUnavailable;
   formatting?: InitFormattingChoice;
   formattingScope?: InitFormattingScope;
   workflow?: "github" | "none";
@@ -145,16 +136,21 @@ export async function runCli(
   let updateNotice: UpdateNotice | undefined;
   let updateColor = false;
   let updateIndented = false;
-  program.hook("preAction", (_program, action) => {
+  program.hook("preAction", async (_program, action) => {
     const options = action.opts();
     if (action.parent === program && action.name() === "init")
       initStartedAt = performance.now();
     if (
       action.parent === program &&
       action.name() !== "init" &&
-      TELEMETRY_COMMANDS.includes(action.name() as TelemetryCommand)
+      (await import("./telemetry/schema.js")).TELEMETRY_COMMANDS.includes(
+        action.name() as TelemetryCommand,
+      )
     ) {
-      telemetry = (dependencies.startTelemetry ?? startTelemetry)({
+      telemetry = (
+        dependencies.startTelemetry ??
+        (await import("./telemetry/client.js")).startTelemetry
+      )({
         command: action.name() as TelemetryCommand,
         env: process.env,
         scanMode: options.base === undefined ? "staged" : "base",
@@ -173,6 +169,7 @@ export async function runCli(
         normalizeTerminalWidth(process.stdout.columns),
         process.env,
       ) === "ink";
+    const { getUpdateNotice } = await import("./updates/notification.js");
     updateNotice = getUpdateNotice({
       env: process.env,
       isTTY: process.stdout.isTTY === true,
@@ -208,8 +205,10 @@ export async function runCli(
           .choices(["text", "json"])
           .default("text"),
       )
-      .action((options: { format: "text" | "json" }) => {
-        exitCode = executeTelemetryCommand(
+      .action(async (options: { format: "text" | "json" }) => {
+        exitCode = (
+          await import("./commands/telemetry.js")
+        ).executeTelemetryCommand(
           operation,
           process.env,
           {
@@ -243,7 +242,8 @@ export async function runCli(
     )
     .action(async (options: { install?: "codex" | "claude"; yes: boolean }) => {
       exitCode = await (
-        dependencies.executeAgentCommand ?? executeAgentCommand
+        dependencies.executeAgentCommand ??
+        (await import("./commands/agent.js")).executeAgentCommand
       )(
         { cwd: process.cwd(), ...options },
         {
@@ -274,7 +274,9 @@ export async function runCli(
           .default("text"),
       )
       .action(async (options: { format: "text" | "json" }) => {
-        exitCode = await executeServiceCommand(operation, options.format, {
+        exitCode = await (
+          await import("./commands/service.js")
+        ).executeServiceCommand(operation, options.format, {
           writeStdout: (value) => process.stdout.write(value),
           writeStderr: (value) => process.stderr.write(value),
         });
@@ -313,9 +315,11 @@ export async function runCli(
       ).choices(["github", "none"]),
     )
     .addOption(
-      new Option("--profile <profile>", "initial check profile")
-        .choices(["fast", "recommended", "thorough"])
-        .default("recommended"),
+      new Option("--profile <profile>", "initial check profile").choices([
+        "fast",
+        "recommended",
+        "thorough",
+      ]),
     )
     .addOption(
       new Option(
@@ -340,9 +344,7 @@ export async function runCli(
       new Option(
         "--osv-unavailable <policy>",
         "commit policy when the online OSV service is unavailable",
-      )
-        .choices(["block", "warn"])
-        .default("block"),
+      ).choices(["block", "warn"]),
     )
     .addOption(
       new Option(
@@ -374,14 +376,20 @@ export async function runCli(
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderInitOptions) => {
-      exitCode = await (dependencies.executeInitCommand ?? executeInitCommand)(
+      const beginTelemetry =
+        dependencies.startTelemetry ??
+        (await import("./telemetry/client.js")).startTelemetry;
+      exitCode = await (
+        dependencies.executeInitCommand ??
+        (await import("./commands/init.js")).executeInitCommand
+      )(
         {
           cwd: process.cwd(),
           telemetrySummary: (value) => {
             // Setup must save the user's choice before telemetry creates state
             // or queues any event. Cancelled/previewed setup collects nothing.
             if (value.outcome !== "completed") return;
-            telemetry = (dependencies.startTelemetry ?? startTelemetry)({
+            telemetry = beginTelemetry({
               command: "init",
               env: process.env,
               ...(initStartedAt === undefined
@@ -390,7 +398,9 @@ export async function runCli(
             });
             telemetry.summary(value);
           },
-          profile: options.profile,
+          ...(options.profile === undefined
+            ? {}
+            : { profile: options.profile }),
           ...(options.diagnosticMessages === undefined
             ? {}
             : { diagnosticMessages: options.diagnosticMessages }),
@@ -399,7 +409,9 @@ export async function runCli(
             : { workflow: options.workflow }),
           hook: options.hook,
           ...(options.checks === undefined ? {} : { checks: options.checks }),
-          osvUnavailable: options.osvUnavailable,
+          ...(options.osvUnavailable === undefined
+            ? {}
+            : { osvUnavailable: options.osvUnavailable }),
           ...(options.formatting === undefined
             ? {}
             : { formatting: options.formatting }),
@@ -424,14 +436,7 @@ export async function runCli(
           animations: options.animations,
           signal: controller.signal,
         },
-        {
-          stdinIsTTY: process.stdin.isTTY === true,
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        },
+        commandTerminalIO(),
       );
     });
 
@@ -442,7 +447,9 @@ export async function runCli(
     .description("activate the reviewed tracked hooks using bundled tooling")
     .action(async () => {
       try {
-        await installTrackedHooks(process.cwd());
+        await (
+          await import("./hooks/install.js")
+        ).installTrackedHooks(process.cwd());
       } catch {
         process.stderr.write(
           "Zedbee could not activate tracked hooks safely.\n",
@@ -515,7 +522,10 @@ export async function runCli(
     .option("--no-color", "disable color")
     .option("--no-animations", "disable animations")
     .action(async (options: CommanderScanOptions) => {
-      exitCode = await (dependencies.executeScanCommand ?? executeScanCommand)(
+      exitCode = await (
+        dependencies.executeScanCommand ??
+        (await import("./commands/scan.js")).executeScanCommand
+      )(
         {
           cwd: process.cwd(),
           telemetrySummary: (value) => telemetry?.summary(value),
@@ -583,7 +593,10 @@ export async function runCli(
         check: FixableCheckId | undefined,
         options: CommanderFixOptions,
       ) => {
-        exitCode = await (dependencies.executeFixCommand ?? executeFixCommand)(
+        exitCode = await (
+          dependencies.executeFixCommand ??
+          (await import("./commands/fix.js")).executeFixCommand
+        )(
           {
             cwd: process.cwd(),
             telemetrySummary: (value) => telemetry?.summary(value),
@@ -618,7 +631,9 @@ export async function runCli(
     .option("--config <path>", "path to a JSONC Zedbee configuration")
     .option("--no-color", "disable color")
     .action(async (options: CommanderChecksOptions) => {
-      const result = await executeChecksCommand(
+      const result = await (
+        await import("./commands/checks.js")
+      ).executeChecksCommand(
         {
           cwd: process.cwd(),
           format: options.format,
@@ -627,13 +642,7 @@ export async function runCli(
             ? {}
             : { configPath: options.config }),
         },
-        {
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        },
+        commandTerminalIO(),
       );
       exitCode = result.exitCode;
     });
@@ -654,7 +663,9 @@ export async function runCli(
     )
     .option("--no-color", "disable color")
     .action(async (options: CommanderDoctorOptions) => {
-      const result = await executeDoctorCommand(
+      const result = await (
+        await import("./commands/doctor.js")
+      ).executeDoctorCommand(
         {
           cwd: process.cwd(),
           format: options.format,
@@ -668,13 +679,7 @@ export async function runCli(
             : {}),
           signal: controller.signal,
         },
-        {
-          stdoutIsTTY: process.stdout.isTTY === true,
-          width: process.stdout.columns ?? 80,
-          env: process.env,
-          writeStdout: (value) => process.stdout.write(value),
-          writeStderr: (value) => process.stderr.write(value),
-        },
+        commandTerminalIO(),
       );
       exitCode = result.exitCode;
     });
@@ -685,7 +690,9 @@ export async function runCli(
     if (interrupted === undefined && updateNotice !== undefined) {
       try {
         process.stdout.write(
-          renderUpdateNotice(updateNotice, {
+          await (
+            await import("./updates/notification.js")
+          ).renderUpdateNotice(updateNotice, {
             cwd: process.cwd(),
             color: updateColor,
             indent: updateIndented,

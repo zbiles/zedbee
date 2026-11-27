@@ -38,14 +38,63 @@ export function mergeLineRanges(ranges: readonly LineRange[]): LineRange[] {
   return merged;
 }
 
-function normalizePath(path: string | undefined): string | undefined {
-  if (path === undefined || path === "/dev/null") {
-    return undefined;
+// Read Git's original headers. parse-diff unquotes names and strips prefixes
+// before exposing them, losing information needed to distinguish literal bytes.
+function decodePatchName(raw: string): string {
+  if (!raw.startsWith('"')) return raw;
+  if (!raw.endsWith('"')) return invalidPatch();
+  const chunks: Buffer[] = [];
+  const escaped: Record<string, number> = {
+    a: 7,
+    b: 8,
+    t: 9,
+    n: 10,
+    v: 11,
+    f: 12,
+    r: 13,
+    '"': 34,
+    "\\": 92,
+  };
+  for (const token of raw
+    .slice(1, -1)
+    .match(/[^\\]+|\\[0-3][0-7]{2}|\\[\s\S]|\\$/gu) ?? []) {
+    if (!token.startsWith("\\")) chunks.push(Buffer.from(token));
+    else {
+      const code =
+        token.length === 4
+          ? Number.parseInt(token.slice(1), 8)
+          : escaped[token.slice(1)];
+      if (code === undefined) return invalidPatch();
+      chunks.push(Buffer.from([code]));
+    }
   }
-  const normalized = path.replaceAll("\\", "/");
-  return normalized.startsWith("a/") || normalized.startsWith("b/")
-    ? normalized.slice(2)
-    : normalized;
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+    Buffer.concat(chunks),
+  );
+}
+
+function patchNames(
+  header: string,
+  renamedFrom?: string,
+  renamedTo?: string,
+): readonly [string, string] {
+  if (renamedFrom !== undefined && renamedTo !== undefined)
+    return [decodePatchName(renamedFrom), decodePatchName(renamedTo)];
+  // Non-renames always repeat the same name. Their midpoint is unambiguous,
+  // even when a legitimate name itself contains " b/".
+  const middle = (header.length - 1) / 2;
+  let fields =
+    Number.isInteger(middle) && header[middle] === " "
+      ? [header.slice(0, middle), header.slice(middle + 1)]
+      : undefined;
+  if (!fields || !/^"?a\//u.test(fields[0]!) || !/^"?b\//u.test(fields[1]!)) {
+    fields = /^(.*) ("?b\/.*)$/u.exec(header)?.slice(1);
+  }
+  if (!fields) return invalidPatch();
+  const [left, right] = fields.map(decodePatchName);
+  if (!left?.startsWith("a/") || !right?.startsWith("b/"))
+    return invalidPatch();
+  return [left.slice(2), right.slice(2)];
 }
 
 function addedRanges(file: parseDiff.File): LineRange[] {
@@ -65,16 +114,14 @@ function addedRanges(file: parseDiff.File): LineRange[] {
   );
 }
 
-function toChangedFile(file: parseDiff.File): ChangedFile | undefined {
-  const from = normalizePath(file.from);
-  const to = normalizePath(file.to);
-
-  if (file.deleted === true || to === undefined) {
-    return from === undefined
-      ? undefined
-      : { path: from, status: "deleted", addedRanges: [] };
+function toChangedFile(
+  file: parseDiff.File,
+  [from, to]: readonly [string, string],
+): ChangedFile {
+  if (file.deleted === true) {
+    return { path: from, status: "deleted", addedRanges: [] };
   }
-  if (file.new === true || from === undefined) {
+  if (file.new === true) {
     return { path: to, status: "added", addedRanges: addedRanges(file) };
   }
   if (from !== to) {
@@ -93,11 +140,6 @@ function invalidPatch(): never {
 }
 
 function validPatchFile(file: parseDiff.File): boolean {
-  const from = normalizePath(file.from);
-  const to = normalizePath(file.to);
-  if (from === undefined && to === undefined) {
-    return false;
-  }
   return file.chunks.every((chunk) => {
     if (
       !Number.isInteger(chunk.oldStart) ||
@@ -142,26 +184,51 @@ function changeSetFromPatch(patch: string): ChangeSet {
   } catch {
     return invalidPatch();
   }
-  const headers = patch.match(/^diff --git /gmu) ?? [];
+  const headers = [
+    ...patch.matchAll(
+      /^diff --git ([^\n]*)(?:\n(?:old mode|new mode|similarity index|dissimilarity index) [^\n]*)*(?:\nrename from ([^\n]*)\nrename to ([^\n]*))?/gm,
+    ),
+  ];
   if (headers.length === 0 || headers.length !== files.length) {
     return invalidPatch();
   }
-  const changedFiles = files
-    .map((file) => {
-      const changedFile = toChangedFile(file);
-      if (changedFile === undefined || !validPatchFile(file)) {
-        return invalidPatch();
-      }
-      return changedFile;
-    })
-    .sort((left, right) => compareCodeUnits(left.path, right.path));
-  if (
-    new Set(changedFiles.map((file) => file.path)).size !== changedFiles.length
-  ) {
-    return invalidPatch();
+  const changedFiles = new Map<string, { file: ChangedFile; mode?: string }>();
+  for (const [index, file] of files.entries()) {
+    const header = headers[index]!;
+    const changedFile = toChangedFile(
+      file,
+      patchNames(header[1]!, header[2], header[3]),
+    );
+    if (!validPatchFile(file)) return invalidPatch();
+    const sectionStart = header.index! + header[0].length;
+    const mode =
+      /^\n(?:deleted file mode|new file mode) (100644|100755|120000|160000)(?:\n|$)/u.exec(
+        patch.slice(sectionStart),
+      )?.[1];
+    const previous = changedFiles.get(changedFile.path);
+    if (previous === undefined) {
+      changedFiles.set(changedFile.path, {
+        file: changedFile,
+        ...(mode === undefined ? {} : { mode }),
+      });
+      continue;
+    }
+    // Git represents a change between file types as two complementary
+    // sections at the same path. The modes distinguish it from duplicates.
+    if (
+      previous.file.status !== "deleted" ||
+      changedFile.status !== "added" ||
+      previous.mode === undefined ||
+      mode === undefined ||
+      previous.mode.slice(0, 2) === mode.slice(0, 2)
+    )
+      return invalidPatch();
+    changedFiles.set(changedFile.path, {
+      file: { ...changedFile, status: "modified" },
+    });
   }
 
-  return changeSetFromFiles(changedFiles);
+  return changeSetFromFiles([...changedFiles.values()].map(({ file }) => file));
 }
 
 function changeSetFromFiles(changedFiles: readonly ChangedFile[]): ChangeSet {
@@ -182,11 +249,10 @@ export function changeSetFromMap(
     isEmpty,
     containsAddedLine(file, line) {
       return (
-        files
-          .get(file.replaceAll("\\", "/"))
-          ?.addedRanges.some(
-            ({ start, end }) => start <= line && line <= end,
-          ) ?? false
+        (
+          files.get(file) ?? files.get(file.replaceAll("\\", "/"))
+        )?.addedRanges.some(({ start, end }) => start <= line && line <= end) ??
+        false
       );
     },
   };
@@ -354,25 +420,54 @@ export async function discoverCommitChangeSet(
   return changeSetFromNameStatus(metadata.stdout);
 }
 
-function textTargets(
+// Keep each rename's source and destination together. The conservative byte
+// budget also leaves room for the fixed arguments and platform encoding.
+const PATHSPEC_BYTE_BUDGET = (process.platform === "win32" ? 24 : 128) * 1024;
+
+function* textTargetBatches(
   metadata: ChangeSet,
   excludedPaths: ReadonlySet<string>,
-): string[] {
-  return [
-    ...new Set(
-      [...metadata.files.values()].flatMap((file) =>
-        file.status === "deleted" || excludedPaths.has(file.path)
-          ? []
-          : file.previousPath === undefined
-            ? [file.path]
-            : [file.previousPath, file.path],
-      ),
-    ),
-  ];
+  byteBudget: number,
+): Iterable<string[]> {
+  let batch: string[] = [];
+  let bytes = 0;
+  for (const file of metadata.files.values()) {
+    if (file.status === "deleted" || excludedPaths.has(file.path)) continue;
+    const paths = [file.previousPath, file.path]
+      .filter((path): path is string => path !== undefined)
+      .map((path) => `:(literal)${path}`);
+    const cost = paths.reduce(
+      (size, path) => size + Buffer.byteLength(path) + 3,
+      0,
+    );
+    if (batch.length && bytes + cost > byteBudget) {
+      yield batch;
+      batch = [];
+      bytes = 0;
+    }
+    batch.push(...paths);
+    bytes += cost;
+  }
+  if (batch.length) yield batch;
 }
 
-function literalPathspecs(paths: readonly string[]): string[] {
-  return paths.map((path) => `:(literal)${path}`);
+async function collectLineRanges(
+  git: GitClient,
+  metadata: ChangeSet,
+  excludedPaths: ReadonlySet<string>,
+  args: readonly string[],
+  options: Parameters<GitClient["run"]>[1],
+  byteBudget: number,
+): Promise<ChangeSet> {
+  const patches = new Map<string, ChangedFile>();
+  for (const paths of textTargetBatches(metadata, excludedPaths, byteBudget)) {
+    const patch = await git.run([...args, "--", ...paths], options);
+    for (const [path, file] of changeSetFromPatch(patch.stdout).files) {
+      if (patches.has(path)) return invalidPatch();
+      patches.set(path, file);
+    }
+  }
+  return applyAddedRanges(metadata, changeSetFromMap(patches));
 }
 
 export async function addStagedLineRanges(
@@ -380,10 +475,12 @@ export async function addStagedLineRanges(
   metadata: ChangeSet,
   excludedPaths: ReadonlySet<string>,
   signal?: AbortSignal,
+  byteBudget = PATHSPEC_BYTE_BUDGET,
 ): Promise<ChangeSet> {
-  const paths = textTargets(metadata, excludedPaths);
-  if (paths.length === 0) return metadata;
-  const patch = await git.run(
+  return collectLineRanges(
+    git,
+    metadata,
+    excludedPaths,
     [
       "diff",
       "--cached",
@@ -392,12 +489,10 @@ export async function addStagedLineRanges(
         : [git.selectedComparison.diffBase]),
       ...STAGED_DIFF_OPTIONS,
       "--text",
-      "--",
-      ...literalPathspecs(paths),
     ],
     signal === undefined ? {} : { signal },
+    byteBudget,
   );
-  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
 }
 
 export async function addCommitLineRanges(
@@ -407,24 +502,19 @@ export async function addCommitLineRanges(
   baselineCommit: string,
   targetCommit: string,
   signal?: AbortSignal,
+  byteBudget = PATHSPEC_BYTE_BUDGET,
 ): Promise<ChangeSet> {
-  const paths = textTargets(metadata, excludedPaths);
-  if (paths.length === 0) return metadata;
-  const patch = await git.run(
-    [
-      "diff",
-      ...COMMIT_DIFF_OPTIONS,
-      baselineCommit,
-      targetCommit,
-      "--",
-      ...literalPathspecs(paths),
-    ],
+  return collectLineRanges(
+    git,
+    metadata,
+    excludedPaths,
+    ["diff", ...COMMIT_DIFF_OPTIONS, baselineCommit, targetCommit],
     {
       env: { GIT_ATTR_SOURCE: targetCommit },
       ...(signal === undefined ? {} : { signal }),
     },
+    byteBudget,
   );
-  return applyAddedRanges(metadata, changeSetFromPatch(patch.stdout));
 }
 
 export async function readStagedChangeSet(

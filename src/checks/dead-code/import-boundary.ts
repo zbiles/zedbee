@@ -3,11 +3,11 @@ import {
   WINDOWS_PATH,
   URL_SCHEME,
 } from "../project/import-specifier.js";
-import { managedKnipEntry } from "./managed-knip.js";
+import { pinnedKnipModuleUrl } from "./managed-knip.js";
+import type { CommentImports } from "../typescript/aliases.js";
 import { lstat } from "node:fs/promises";
 import { isBuiltin } from "node:module";
 import { dirname, join, posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { readJsonData } from "../../inspection/read-json.js";
 import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
 
@@ -20,8 +20,7 @@ function unsafeImport(): never {
 }
 
 function validateSpecifier(sourcePath: string, specifier: string): void {
-  if (!isContainedImportSpecifier(sourcePath, specifier))
-    throw new TypeError("Dead-code import escaped the snapshot");
+  if (!isContainedImportSpecifier(sourcePath, specifier)) unsafeImport();
 }
 
 async function assertMissing(path: string): Promise<void> {
@@ -140,33 +139,26 @@ interface Selection {
   readonly imports?: Record<string, unknown>;
 }
 
-export interface KnipComment {
-  readonly type: "Block" | "Line";
-  readonly start: number;
-  readonly end: number;
-  readonly value: string;
-}
-
-type CommentCollector = (
-  comments: readonly KnipComment[],
-  firstStatementStart: number,
-  addImport: (specifier: string) => void,
-) => void;
-
 export async function createKnipImportValidator(
   registry: SnapshotRegistry,
-  missing: (path: string) => Promise<void> = assertMissing,
+  probeMissing: (path: string) => Promise<void> = assertMissing,
   resolveAlias?: (sourcePath: string, specifier: string) => string | undefined,
 ): Promise<{
   validateImport: (sourcePath: string, specifier: string) => Promise<void>;
-  collectCommentImports: CommentCollector;
+  collectCommentImports: CommentImports;
 }> {
+  const probes = new Map<string, Promise<void>>();
+  const missing = (path: string): Promise<void> => {
+    let probe = probes.get(path);
+    if (probe === undefined) {
+      probe = probeMissing(path);
+      probes.set(path, probe);
+    }
+    return probe;
+  };
   // Reuse the pinned engine's spelling rules (loader prefixes, queries, fragments),
   // so validation sees the same source specifier as Knip. Never load project code.
-  const knipModule = fileURLToPath(managedKnipEntry);
-  const module = (await import(
-    pathToFileURL(join(dirname(knipModule), "util", "modules.js")).href
-  )) as {
+  const module = (await import(pinnedKnipModuleUrl("util", "modules.js"))) as {
     sanitizeSpecifier?: unknown;
   };
   if (typeof module.sanitizeSpecifier !== "function")
@@ -175,7 +167,7 @@ export async function createKnipImportValidator(
     value: string,
   ) => string;
   const commentsModule = (await import(
-    pathToFileURL(join(dirname(knipModule), "typescript", "comments.js")).href
+    pinnedKnipModuleUrl("typescript", "comments.js")
   )) as { extractImportsFromComments?: unknown };
   if (typeof commentsModule.extractImportsFromComments !== "function")
     throw new TypeError("Invalid pinned Knip comment helpers");
@@ -336,6 +328,6 @@ export async function createKnipImportValidator(
   return {
     validateImport,
     collectCommentImports:
-      commentsModule.extractImportsFromComments as CommentCollector,
+      commentsModule.extractImportsFromComments as CommentImports,
   };
 }

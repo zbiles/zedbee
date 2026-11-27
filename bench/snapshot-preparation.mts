@@ -233,25 +233,41 @@ async function coordinator() {
   )
     throw new Error("Invalid benchmark mode");
   const output = resolve(option("--output"));
-  const temporary = await mkdtemp(join(tmpdir(), "zedbee-preparation-bench-"));
   const results: unknown[] = [];
-  const identities = await Promise.all(
-    roots.map(async (root) => ({
-      root,
-      commit: (await execa("git", ["rev-parse", "HEAD"], { cwd: root })).stdout,
-      tree: (await execa("git", ["rev-parse", "HEAD^{tree}"], { cwd: root }))
-        .stdout,
-      dirty: (await execa("git", ["status", "--porcelain"], { cwd: root }))
-        .stdout,
-    })),
-  );
-  if (identities.some((identity) => identity.dirty !== ""))
+  const readIdentities = () =>
+    Promise.all(
+      roots.map(async (root) => ({
+        root,
+        commit: (await execa("git", ["rev-parse", "HEAD"], { cwd: root }))
+          .stdout,
+        tree: (await execa("git", ["rev-parse", "HEAD^{tree}"], { cwd: root }))
+          .stdout,
+        dirty: (await execa("git", ["status", "--porcelain"], { cwd: root }))
+          .stdout,
+      })),
+    );
+  const identities = await readIdentities();
+  const selectedRevisions =
+    identities.length === 2
+      ? {
+          baseline: option("--baseline-commit", identities[0]!.commit),
+          candidate: option("--candidate-commit", identities[1]!.commit),
+        }
+      : undefined;
+  if (
+    identities.some((identity) => identity.dirty !== "") ||
+    (selectedRevisions &&
+      (selectedRevisions.baseline !== identities[0]!.commit ||
+        selectedRevisions.candidate !== identities[1]!.commit ||
+        selectedRevisions.baseline === selectedRevisions.candidate))
+  )
     throw new Error(
-      "Benchmark requires clean immutable implementation checkouts",
+      "Benchmark requires distinct clean selected implementation revisions",
     );
   const { measureCli } = (await import(
     new URL("./snapshot-cli.mts", import.meta.url).href
   )) as typeof Cli;
+  const temporary = await mkdtemp(join(tmpdir(), "zedbee-preparation-bench-"));
   try {
     for (const count of sizes)
       for (const scenario of scenarios) {
@@ -321,6 +337,10 @@ async function coordinator() {
           }
         }
       }
+    if (JSON.stringify(await readIdentities()) !== JSON.stringify(identities))
+      throw new Error(
+        "Benchmark implementation revisions changed during measurement",
+      );
     const artifact = {
       schemaVersion: 1,
       kind,
@@ -328,6 +348,7 @@ async function coordinator() {
       executorModes,
       samples,
       identities,
+      ...(selectedRevisions ? { selectedRevisions } : {}),
       harnessHash: createHash("sha256")
         .update(
           Buffer.concat(

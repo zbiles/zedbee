@@ -6,7 +6,10 @@ import type {
 } from "../inspection/types.js";
 import type { CheckId, ResolvedCheckPolicy, ResolvedConfig } from "./schema.js";
 import type { ResolvedCheckPolicies } from "./schema.js";
-import type { ResolvedCheckPolicyPatch } from "./schema.js";
+import type {
+  ResolvedCheckPolicyPatch,
+  ResolvedPolicyOverride,
+} from "./schema.js";
 import { freezeRuleSettings } from "../checks/eslint/freeze-rule-settings.js";
 
 function policyCandidates(
@@ -35,12 +38,22 @@ function policyCandidates(
 function workspaceCandidates(
   workspace: WorkspaceInspection,
 ): readonly string[] {
-  return [
+  const paths = [
     workspace.relativeRoot,
     workspace.manifestPath,
     ...workspace.sourceFiles,
     ...workspace.tsconfigPaths,
   ];
+  return workspace.canonicalRelativeRoot === undefined
+    ? paths
+    : [
+        ...paths,
+        ...paths.map(
+          (path) =>
+            workspace.canonicalRelativeRoot +
+            path.slice(workspace.relativeRoot.length),
+        ),
+      ];
 }
 
 /**
@@ -72,13 +85,69 @@ export function assertEffectiveFormattingPolicy(
   }
 }
 
+interface OverrideMatchers {
+  readonly includes: readonly ((path: string) => boolean)[];
+  readonly excludes: readonly ((path: string) => boolean)[];
+}
+
+const compiledOverrideMatchers = new WeakMap<
+  ResolvedPolicyOverride,
+  OverrideMatchers
+>();
+
+function overrideMatchers(override: ResolvedPolicyOverride): OverrideMatchers {
+  const cached = compiledOverrideMatchers.get(override);
+  if (cached !== undefined) return cached;
+  const matchers = {
+    includes: override.files.map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    ),
+    excludes: (override.excludeFiles ?? []).map((pattern) =>
+      picomatch(pattern, { dot: true }),
+    ),
+  };
+  compiledOverrideMatchers.set(override, matchers);
+  return matchers;
+}
+
+function overrideMatchesAny(
+  override: ResolvedPolicyOverride,
+  candidates: readonly string[],
+): boolean {
+  const { includes, excludes } = overrideMatchers(override);
+  return candidates.some(
+    (candidate) =>
+      includes.some((match) => match(candidate)) &&
+      !excludes.some((match) => match(candidate)),
+  );
+}
+
+const validatedProjectEslintConfigurations = new WeakMap<
+  ResolvedConfig,
+  WeakSet<RepositoryInspection>
+>();
+
+function assertProjectEslintConfigurationOnce(
+  config: ResolvedConfig,
+  inspection: RepositoryInspection,
+): void {
+  const validated = validatedProjectEslintConfigurations.get(config);
+  if (validated?.has(inspection) === true) return;
+  assertProjectEslintConfiguration(config, inspection);
+  if (validated === undefined) {
+    validatedProjectEslintConfigurations.set(config, new WeakSet([inspection]));
+  } else {
+    validated.add(inspection);
+  }
+}
+
 export function resolveTargetPolicy(
   config: ResolvedConfig,
   checkId: CheckId,
   target: CheckTarget,
   inspection: RepositoryInspection,
 ): ResolvedCheckPolicy {
-  assertProjectEslintConfiguration(config, inspection);
+  assertProjectEslintConfigurationOnce(config, inspection);
   let policy: ResolvedCheckPolicy = { ...config.checks[checkId] };
   const candidates = policyCandidates(target, inspection);
 
@@ -91,18 +160,7 @@ export function resolveTargetPolicy(
         "Vulnerability availability policy cannot be overridden by file scope",
       );
     }
-    const includes = override.files.map((pattern) =>
-      picomatch(pattern, { dot: true }),
-    );
-    const excludes = (override.excludeFiles ?? []).map((pattern) =>
-      picomatch(pattern, { dot: true }),
-    );
-    const matches = candidates.some(
-      (candidate) =>
-        includes.some((match) => match(candidate)) &&
-        !excludes.some((match) => match(candidate)),
-    );
-    if (matches) matched.push(patch);
+    if (overrideMatchesAny(override, candidates)) matched.push(patch);
   }
   for (const patch of matched) {
     if (checkId === "formatting") {
@@ -199,14 +257,7 @@ export function resolveWorkspaceLintPolicy(
   let policy = config.checks.lint;
   for (const override of config.overrides) {
     if (override.checks.lint === undefined) continue;
-    if (
-      override.files.some((pattern) =>
-        picomatch(pattern, { dot: true })(workspace.manifestPath),
-      ) &&
-      !(override.excludeFiles ?? []).some((pattern) =>
-        picomatch(pattern, { dot: true })(workspace.manifestPath),
-      )
-    ) {
+    if (overrideMatchesAny(override, [workspace.manifestPath])) {
       policy = mergePolicyPatch<"lint">(policy, override.checks.lint);
     }
   }

@@ -1,7 +1,10 @@
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { displayLabel } from "../core/display-text.js";
-import type { FormattingSettings } from "../checks/prettier/settings.js";
+import {
+  formattingSettingsSchema,
+  type FormattingSettings,
+} from "../checks/prettier/settings.js";
 import type { FormattingFixSelection } from "../checks/prettier/project-types.js";
 import type {
   CheckFixCandidate,
@@ -135,75 +138,15 @@ function sanitizeExactCandidate(input: CandidateRecord): ExactFileFixCandidate {
   return freeze({ kind: "exact-file", checkId, file, baseSource, edits });
 }
 
-function positiveInteger(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new TypeError(`Expected ${field} to be a positive safe integer`);
-  }
-  return value;
-}
-
-function boolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw new TypeError(`Expected ${field} to be a boolean`);
-  }
-  return value;
-}
-
-function oneOf<T extends string>(
-  value: unknown,
-  field: string,
-  values: readonly T[],
-): T {
-  if (!values.includes(value as T)) {
-    throw new TypeError(`Expected ${field} to be a supported value`);
-  }
-  return value as T;
-}
-
 function sanitizeSettings(value: unknown): Readonly<FormattingSettings> {
   const input = record(value, "format-file settings");
-  return freeze({
-    printWidth: positiveInteger(ownData(input, "printWidth"), "printWidth"),
-    tabWidth: positiveInteger(ownData(input, "tabWidth"), "tabWidth"),
-    useTabs: boolean(ownData(input, "useTabs"), "useTabs"),
-    semi: boolean(ownData(input, "semi"), "semi"),
-    singleQuote: boolean(ownData(input, "singleQuote"), "singleQuote"),
-    quoteProps: oneOf(ownData(input, "quoteProps"), "quoteProps", [
-      "as-needed",
-      "consistent",
-      "preserve",
+  const fields = Object.fromEntries(
+    Object.keys(formattingSettingsSchema.shape).map((key) => [
+      key,
+      ownData(input, key),
     ]),
-    jsxSingleQuote: boolean(ownData(input, "jsxSingleQuote"), "jsxSingleQuote"),
-    trailingComma: oneOf(ownData(input, "trailingComma"), "trailingComma", [
-      "all",
-      "es5",
-      "none",
-    ]),
-    bracketSpacing: boolean(ownData(input, "bracketSpacing"), "bracketSpacing"),
-    bracketSameLine: boolean(
-      ownData(input, "bracketSameLine"),
-      "bracketSameLine",
-    ),
-    arrowParens: oneOf(ownData(input, "arrowParens"), "arrowParens", [
-      "always",
-      "avoid",
-    ]),
-    proseWrap: oneOf(ownData(input, "proseWrap"), "proseWrap", [
-      "always",
-      "never",
-      "preserve",
-    ]),
-    endOfLine: oneOf(ownData(input, "endOfLine"), "endOfLine", [
-      "lf",
-      "crlf",
-      "cr",
-      "auto",
-    ]),
-    singleAttributePerLine: boolean(
-      ownData(input, "singleAttributePerLine"),
-      "singleAttributePerLine",
-    ),
-  });
+  );
+  return freeze(formattingSettingsSchema.parse(fields));
 }
 
 function sanitizeSelection(value: unknown): FormattingFixSelection {
@@ -293,9 +236,10 @@ function snapshotScope(scope: FixCandidateScope): FixCandidateScope {
 
 function validateCandidateScope(
   candidate: CheckFixCandidate,
-  scope: FixCandidateScope,
+  checkId: string,
+  allowedFindingIds: ReadonlySet<string>,
 ): CheckFixCandidate {
-  if (candidate.checkId !== scope.checkId) {
+  if (candidate.checkId !== checkId) {
     throw new TypeError(
       "Expected fix candidate to belong to the dispatched check",
     );
@@ -304,7 +248,7 @@ function validateCandidateScope(
     candidate.kind === "exact-file"
       ? candidate.edits.map((edit) => edit.findingId)
       : candidate.findingIds;
-  if (findingIds.some((findingId) => !scope.findingIds.includes(findingId))) {
+  if (findingIds.some((findingId) => !allowedFindingIds.has(findingId))) {
     throw new TypeError(
       "Expected fix candidate findings to belong to the policy result",
     );
@@ -321,17 +265,43 @@ export function sanitizeFixCandidates(
   scope: FixCandidateScope,
 ): readonly CheckFixCandidate[] {
   const snapshot = snapshotScope(scope);
+  const allowedFindingIds: ReadonlySet<string> = new Set(snapshot.findingIds);
   return freeze(
     ownArray(candidates, "fix candidates").map((candidate) => {
       const input = record(candidate, "fix candidate");
       const kind = ownData(input, "kind");
       if (kind === "exact-file") {
-        return validateCandidateScope(sanitizeExactCandidate(input), snapshot);
+        return validateCandidateScope(
+          sanitizeExactCandidate(input),
+          snapshot.checkId,
+          allowedFindingIds,
+        );
       }
       if (kind === "format-file") {
-        return validateCandidateScope(sanitizeFormatCandidate(input), snapshot);
+        return validateCandidateScope(
+          sanitizeFormatCandidate(input),
+          snapshot.checkId,
+          allowedFindingIds,
+        );
       }
       throw new TypeError("Expected a supported fix candidate kind");
+    }),
+  );
+}
+
+/** Sanitizes candidates and rejects any whose kind is not the expected one. */
+export function sanitizeFixCandidatesOfKind<
+  K extends CheckFixCandidate["kind"],
+>(
+  kind: K,
+  candidates: readonly unknown[],
+  scope: FixCandidateScope,
+  message: string,
+): readonly Extract<CheckFixCandidate, { kind: K }>[] {
+  return Object.freeze(
+    sanitizeFixCandidates(candidates, scope).map((candidate) => {
+      if (candidate.kind !== kind) throw new TypeError(message);
+      return candidate as Extract<CheckFixCandidate, { kind: K }>;
     }),
   );
 }

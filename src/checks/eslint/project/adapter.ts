@@ -17,6 +17,83 @@ import {
   projectEslintSourceMessagesAllowed,
 } from "./trust.js";
 import { ProjectEslintFailureError } from "./types.js";
+import { ESLINT_CONFIG_FILE_NAMES } from "./config-files.js";
+import type { Observation } from "../../../core/types.js";
+import { renamedPaths } from "../../../attribution/source-moves.js";
+
+const LINTABLE_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+
+const readSources = async (root: string, files: readonly string[]) =>
+  Object.fromEntries(
+    await Promise.all(
+      files.map(async (file) => [
+        file,
+        await readFile(join(root, file), "utf8"),
+      ]),
+    ),
+  );
+
+function projectEslintIncomplete(error: unknown): CheckIncompleteError {
+  return new CheckIncompleteError(
+    error instanceof ProjectEslintFailureError
+      ? {
+          code: error.code,
+          message: error.message,
+          remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
+        }
+      : {
+          code: "PROJECT_ESLINT_ANALYSIS_FAILED",
+          message:
+            "Project ESLint could not complete analysis of the captured configuration and source.",
+          remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
+        },
+  );
+}
+
+/** Reads only sources needed to relocate an observation, including renames. */
+export async function pairingSources(
+  input: {
+    readonly baselineDir: string;
+    readonly targetDir: string;
+    readonly baselineFiles: readonly string[];
+    readonly targetFiles: readonly string[];
+    readonly baselineObservations: readonly Observation[];
+    readonly targetObservations: readonly Observation[];
+    readonly changeSet: CheckRunContext["changeSet"];
+  },
+  read = readSources,
+) {
+  if (
+    input.baselineObservations.length === 0 ||
+    input.targetObservations.length === 0
+  )
+    return { baseline: {}, target: {} };
+  const renames = renamedPaths(input.changeSet.files);
+  const baselineFiles = new Set(input.baselineFiles);
+  const targetFiles = new Set(input.targetFiles);
+  const targetLocations = new Set(
+    input.targetObservations.map(({ location }) => location?.file),
+  );
+  const baselineNeeded = new Set<string>();
+  const targetNeeded = new Set<string>();
+  for (const { location } of input.baselineObservations) {
+    if (location === undefined) continue;
+    const file = location.file;
+    const target = renames.get(file) ?? file;
+    if (
+      !baselineFiles.has(file) ||
+      !targetFiles.has(target) ||
+      !targetLocations.has(target)
+    )
+      continue;
+    baselineNeeded.add(file);
+    targetNeeded.add(target);
+  }
+  return {
+    baseline: await read(input.baselineDir, [...baselineNeeded].sort()),
+    target: await read(input.targetDir, [...targetNeeded].sort()),
+  };
+}
 
 async function hasConfiguration(
   root: string,
@@ -24,20 +101,7 @@ async function hasConfiguration(
 ): Promise<boolean> {
   let directory = resolve(root, project);
   for (;;) {
-    for (const name of [
-      "eslint.config.js",
-      "eslint.config.mjs",
-      "eslint.config.cjs",
-      "eslint.config.ts",
-      "eslint.config.mts",
-      "eslint.config.cts",
-      ".eslintrc",
-      ".eslintrc.json",
-      ".eslintrc.js",
-      ".eslintrc.cjs",
-      ".eslintrc.yml",
-      ".eslintrc.yaml",
-    ]) {
+    for (const name of ESLINT_CONFIG_FILE_NAMES) {
       if (
         await access(join(directory, name)).then(
           () => true,
@@ -65,6 +129,8 @@ export async function collectProjectEslint(
   try {
     const checkoutRoot = await realpath(context.repositoryRoot);
     const projectRoot = context.target.relativeRoot;
+    const workspaceIn = (inspection: CheckRunContext["targetInspection"]) =>
+      inspection.workspaces.find((w) => w.relativeRoot === projectRoot);
     const permit = await requireProjectEslintTrust(checkoutRoot, projectRoot);
     const full =
       context.config.reporting.projectEslintMessages === "full" &&
@@ -75,13 +141,11 @@ export async function collectProjectEslint(
           ? context.baselineInspection
           : context.targetInspection;
       return (
-        inspection.workspaces
-          .find((w) => w.relativeRoot === projectRoot)
-          ?.sourceFiles.filter(
-            (file) =>
-              /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu.test(file) &&
-              context.policyForFile("lint", file, side).severity !== "off",
-          ) ?? []
+        workspaceIn(inspection)?.sourceFiles.filter(
+          (file) =>
+            LINTABLE_SOURCE.test(file) &&
+            context.policyForFile("lint", file, side).severity !== "off",
+        ) ?? []
       );
     };
     const before = filesFor("baseline"),
@@ -117,9 +181,7 @@ export async function collectProjectEslint(
       () => loadConfig(context.snapshots.baselineDir, baselineConfigPath),
       () => resolveConfig(undefined),
     );
-    const baselineWorkspace = context.baselineInspection.workspaces.find(
-      (w) => w.relativeRoot === projectRoot,
-    );
+    const baselineWorkspace = workspaceIn(context.baselineInspection);
     const previousPolicy =
       baselineWorkspace === undefined
         ? undefined
@@ -136,28 +198,30 @@ export async function collectProjectEslint(
             files: before,
           })
         : undefined;
-    const loadSources = async (root: string, files: readonly string[]) =>
-      Object.fromEntries(
-        await Promise.all(
-          files.map(async (file) => [
-            file,
-            await readFile(join(root, file), "utf8"),
-          ]),
-        ),
-      );
+    const baselineObservations =
+      baseline?.diagnostics.map((diagnostic) =>
+        convertProjectEslintDiagnostic(diagnostic, full),
+      ) ?? [];
+    const targetObservations = target.diagnostics.map((diagnostic) =>
+      convertProjectEslintDiagnostic(diagnostic, full),
+    );
+    const sources = await pairingSources({
+      baselineDir: context.snapshots.baselineDir,
+      targetDir: context.snapshots.targetDir,
+      baselineFiles: before,
+      targetFiles: after,
+      baselineObservations,
+      targetObservations,
+      changeSet: context.changeSet,
+    });
     const paired = pairLocationObservations(
       {
-        observations:
-          baseline?.diagnostics.map((d) =>
-            convertProjectEslintDiagnostic(d, full),
-          ) ?? [],
-        files: await loadSources(context.snapshots.baselineDir, before),
+        observations: baselineObservations,
+        files: sources.baseline,
       },
       {
-        observations: target.diagnostics.map((d) =>
-          convertProjectEslintDiagnostic(d, full),
-        ),
-        files: await loadSources(context.snapshots.targetDir, after),
+        observations: targetObservations,
+        files: sources.target,
       },
       context.changeSet,
     );
@@ -171,11 +235,9 @@ export async function collectProjectEslint(
       eslintAnalysis: {
         version: target.version,
         excludedFiles:
-          (context.targetInspection.workspaces
-            .find((w) => w.relativeRoot === projectRoot)
-            ?.sourceFiles.filter((file) =>
-              /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu.test(file),
-            ).length ?? 0) - after.length,
+          (workspaceIn(context.targetInspection)?.sourceFiles.filter((file) =>
+            LINTABLE_SOURCE.test(file),
+          ).length ?? 0) - after.length,
         checkedFiles: target.checkedFiles.length,
         ignoredFiles: target.ignoredFiles.length,
         baseline: baseline === undefined ? "new-coverage" : "compared",
@@ -187,16 +249,6 @@ export async function collectProjectEslint(
     };
   } catch (error) {
     context.signal.throwIfAborted();
-    throw new CheckIncompleteError({
-      code:
-        error instanceof ProjectEslintFailureError
-          ? error.code
-          : "PROJECT_ESLINT_ANALYSIS_FAILED",
-      message:
-        error instanceof ProjectEslintFailureError
-          ? error.message
-          : "Project ESLint could not complete analysis of the captured configuration and source.",
-      remediation: `Verify the selected project's ESLint ${SUPPORTED_PROJECT_ESLINT_VERSION} installation, npm lockfile, supported flat configuration, and explicit ESLint trust. Run zedbee doctor for setup details. No managed fallback was used.`,
-    });
+    throw projectEslintIncomplete(error);
   }
 }

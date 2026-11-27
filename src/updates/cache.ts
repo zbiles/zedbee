@@ -23,6 +23,13 @@ export interface UpdateCache {
   readonly metadata: ReleaseMetadata | null;
 }
 
+export function isUpdateCacheFresh(
+  cache: UpdateCache | undefined,
+  now: number,
+): cache is UpdateCache {
+  return cache !== undefined && now - cache.checkedAt < UPDATE_INTERVAL;
+}
+
 export function updateCachePath(
   env: Readonly<Record<string, string | undefined>>,
 ): string {

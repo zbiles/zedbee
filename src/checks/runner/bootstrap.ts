@@ -15,6 +15,7 @@ process.on("message", async (message: unknown) => {
   };
   if (
     started ||
+    input == null ||
     input.type !== "owned-start" ||
     typeof input.workerEntry !== "string"
   )
@@ -24,10 +25,14 @@ process.on("message", async (message: unknown) => {
     await import(pathToFileURL(input.workerEntry).href);
     process.emit("message", input.request, undefined);
   } catch {
+    const envelope = input.request as
+      { sessionId?: unknown; jobId?: unknown } | undefined;
     await sendWorkerReply({
       version: 1,
-      ok: false,
-      category: "startup",
+      type: "result",
+      sessionId: envelope?.sessionId,
+      jobId: envelope?.jobId,
+      response: { version: 1, ok: false, category: "startup" },
     }).finally(() => process.exit(1));
   }
 });

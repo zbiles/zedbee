@@ -17,6 +17,11 @@ import {
 } from "./pixel-wordmark.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { checkLabel } from "../reporting/check-label.js";
+import {
+  BrandedCommandPanel,
+  BrandedCommandPanelRule,
+  SOLID_BORDER,
+} from "./branded-command-frame.js";
 
 type LiveStatus =
   "QUEUED" | "RUNNING" | "PASS" | "WARN" | "FAIL" | "SKIPPED" | "INCOMPLETE";
@@ -208,45 +213,6 @@ function activityColor(event: ScanEvent): string {
   return ZEDBEE_THEME.muted;
 }
 
-function HorizontalRule({
-  width,
-  color,
-  tone = ZEDBEE_THEME.border,
-}: {
-  width: number;
-  color: boolean;
-  tone?: string;
-}) {
-  return (
-    <Box marginX={-1}>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>├</Text>
-      <Text {...colorProp(color, tone)}>
-        {"─".repeat(Math.max(1, width - 2))}
-      </Text>
-      <Text {...colorProp(color, ZEDBEE_THEME.border)}>┤</Text>
-    </Box>
-  );
-}
-
-function PanelHeading({
-  label,
-  width,
-  color,
-}: {
-  label: string;
-  width: number;
-  color: boolean;
-}) {
-  return (
-    <Box flexDirection="column">
-      <Box paddingX={2}>
-        <Text {...colorProp(color, ZEDBEE_THEME.muted)}>{label}</Text>
-      </Box>
-      <HorizontalRule width={width} color={color} />
-    </Box>
-  );
-}
-
 function SummaryChip({
   count,
   label,
@@ -317,18 +283,7 @@ function CheckPanel({
   const fullHeading = `CHECKS (${elapsedLabel})`;
   const heading = width >= fullHeading.length + 6 ? fullHeading : "CHECKS";
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.border,
-            borderBackgroundColor: "#000000",
-          }
-        : {})}
-    >
-      <PanelHeading label={heading} width={width} color={color} />
+    <BrandedCommandPanel title={heading} width={width} color={color}>
       {phase === undefined ? null : (
         <Box flexDirection="column" paddingX={2}>
           <Text {...colorProp(color, ZEDBEE_THEME.primary)}>
@@ -372,7 +327,7 @@ function CheckPanel({
             </Text>
           </Box>
           {index < states.length - 1 ? (
-            <HorizontalRule
+            <BrandedCommandPanelRule
               width={width}
               color={color}
               tone={ZEDBEE_THEME.divider}
@@ -383,7 +338,7 @@ function CheckPanel({
       <Box paddingX={2}>
         <Text> </Text>
       </Box>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 
@@ -397,19 +352,12 @@ function ActivityPanel({
   width: number;
 }) {
   return (
-    <Box
-      flexDirection="column"
+    <BrandedCommandPanel
+      title="ACTIVITY"
       width={width}
-      borderStyle="single"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.border,
-            borderBackgroundColor: "#000000",
-          }
-        : {})}
+      color={color}
       minHeight={8}
     >
-      <PanelHeading label="ACTIVITY" width={width} color={color} />
       <Box
         flexDirection="column"
         flexGrow={1}
@@ -423,7 +371,7 @@ function ActivityPanel({
           </Text>
         ))}
       </Box>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 
@@ -468,18 +416,7 @@ function SummaryPanel({
           ? ZEDBEE_THEME.muted
           : ZEDBEE_THEME.pass;
   return (
-    <Box
-      flexDirection="column"
-      width={width}
-      borderStyle="single"
-      {...(color
-        ? {
-            borderColor: ZEDBEE_THEME.border,
-            borderBackgroundColor: "#000000",
-          }
-        : {})}
-    >
-      <PanelHeading label="SUMMARY" width={width} color={color} />
+    <BrandedCommandPanel title="SUMMARY" width={width} color={color}>
       <Box flexDirection="column" paddingX={2}>
         <Box marginBottom={1}>
           <Text>
@@ -516,7 +453,7 @@ function SummaryPanel({
           <Text> </Text>
         </Box>
       </Box>
-    </Box>
+    </BrandedCommandPanel>
   );
 }
 
@@ -612,29 +549,19 @@ export function LiveDashboard({
   const summary = (
     <SummaryPanel states={states} color={color} width={activitySummaryWidth} />
   );
-  const solidBorder = {
-    top: "█",
-    bottom: "█",
-    left: "█",
-    right: "█",
-    topLeft: "█",
-    topRight: "█",
-    bottomLeft: "█",
-    bottomRight: "█",
-  };
   const dashboard = (
     <Box width={frameWidth} {...(color ? { backgroundColor: "#000000" } : {})}>
       <Box
         flexDirection="column"
         width={frameWidth}
-        borderStyle={solidBorder}
+        borderStyle={SOLID_BORDER}
         {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}
         borderBackgroundColor="#000000"
       >
         <Box
           flexDirection="column"
           width={frameWidth - 2}
-          borderStyle={solidBorder}
+          borderStyle={SOLID_BORDER}
           borderTop={false}
           borderBottom={false}
           {...(color ? { borderColor: ZEDBEE_THEME.yellow } : {})}

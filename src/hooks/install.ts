@@ -25,17 +25,64 @@ export const TRACKED_HOOK_NAMES = Object.freeze([
   "pre-auto-gc",
 ]);
 
+const HUSKY_DISPATCHER = '#!/usr/bin/env sh\n. "$(dirname "$0")/h"';
+
+export function isStockHuskyDispatcher(source: string | undefined): boolean {
+  // Earlier Swarm setups emitted a final newline. A stock Husky prepare does not.
+  const normalized = source?.replaceAll("\r\n", "\n");
+  return (
+    normalized === HUSKY_DISPATCHER || normalized === `${HUSKY_DISPATCHER}\n`
+  );
+}
+/** Only bundled stock runtime bytes establish verified dispatch. */
+async function bundledHuskyRuntime(): Promise<string> {
+  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
+  return readFile(join(huskyRoot, "husky"), "utf8");
+}
+
+export async function isStockHuskyHelper(
+  source: string | undefined,
+): Promise<boolean> {
+  return source !== undefined && source === (await bundledHuskyRuntime());
+}
+
+const HUSKY_LICENSE = ".husky/_/LICENSE.zedbee-husky";
+const HUSKY_DISPATCHER_PATHS = TRACKED_HOOK_NAMES.map(
+  (name) => `.husky/_/${name}`,
+);
+export const TRACKED_HUSKY_STAGING = `For fresh worktrees, commit the hook bodies, .husky/.gitattributes, and the Husky runtime files. Stage the dispatchers with git add --chmod=+x -f -- ${HUSKY_DISPATCHER_PATHS.join(" ")}. Stage the helper and license with git add -f -- .husky/_/h ${HUSKY_LICENSE}.`;
+
 export function hasHookExecutePermission(mode: number): boolean {
   // Git for Windows ignores X_OK; chmod cannot disable a regular hook there.
   return process.platform === "win32" || (mode & 0o111) !== 0;
 }
 
+export interface HookFile {
+  readonly contents: string;
+  readonly mode: number;
+}
+
+export async function readRegularHookFile(
+  path: string,
+  unsafeMessage: string,
+): Promise<HookFile | undefined> {
+  try {
+    const state = await lstat(path);
+    if (!state.isFile() || state.isSymbolicLink())
+      throw new Error(unsafeMessage);
+    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 export async function hookFile(
   root: string,
   relativePath: string,
-): Promise<{ contents: string; mode: number } | undefined> {
+): Promise<HookFile | undefined> {
+  const path = join(root, relativePath);
   try {
-    const path = join(root, relativePath);
     let ancestor = resolve(root);
     for (const part of relative(resolve(root), dirname(path))
       .split(sep)
@@ -45,14 +92,11 @@ export async function hookFile(
       if (state.isSymbolicLink() || !state.isDirectory())
         throw new Error("Unsafe hook directory.");
     }
-    const state = await lstat(path);
-    if (!state.isFile() || state.isSymbolicLink())
-      throw new Error("Unsafe hook file.");
-    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+  return readRegularHookFile(path, "Unsafe hook file.");
 }
 
 export async function hooksPathValue(root: string): Promise<string | null> {
@@ -65,26 +109,72 @@ export async function hooksPathValue(root: string): Promise<string | null> {
   return configured.exitCode === 1 ? null : configured.stdout;
 }
 
+/**
+ * Use exact Husky 9.1.7 bytes so an ordinary prepare does not dirty a
+ * checkout. Preserve custom dispatcher contents even on explicit activation.
+ */
 export async function trackedRuntimeChanges(
   root: string,
-): Promise<readonly InitFileChange[]> {
+): Promise<readonly InitFileChange[] | undefined> {
   const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
-  const runtime = await readFile(join(huskyRoot, "husky"), "utf8");
+  const [runtime, license] = await Promise.all([
+    bundledHuskyRuntime(),
+    readFile(join(huskyRoot, "LICENSE"), "utf8"),
+  ]);
   const entries: Array<[string, string, number]> = [
-    [".husky/_/.gitignore", "*\n", 0o644],
+    [".husky/_/.gitignore", "*", 0o644],
     [".husky/_/h", runtime, 0o644],
+    [HUSKY_LICENSE, license, 0o644],
     ...TRACKED_HOOK_NAMES.map((name): [string, string, number] => [
       `.husky/_/${name}`,
-      '#!/usr/bin/env sh\n. "$(dirname "$0")/h"\n',
+      HUSKY_DISPATCHER,
       0o755,
     ]),
   ];
-  return Promise.all(
-    entries.map(async ([path, after, mode]) => {
-      const before = await hookFile(root, path);
-      return initFileChange(path, before?.contents ?? null, after, mode);
-    }),
+  const existing = await Promise.all(
+    entries.map(([path]) => hookFile(root, path)),
   );
+  if (
+    entries.some(([path, after], index) => {
+      const before = existing[index]?.contents.replaceAll("\r\n", "\n");
+      return (
+        before !== undefined &&
+        before !== after &&
+        !(path === ".husky/_/.gitignore" && before === "*\n") &&
+        !(after === HUSKY_DISPATCHER && isStockHuskyDispatcher(before))
+      );
+    })
+  )
+    return undefined;
+  return entries.map(([path, after, mode], index) =>
+    initFileChange(path, existing[index]?.contents ?? null, after, mode),
+  );
+}
+
+/** Git must check out shell entry points as LF, including with core.autocrlf. */
+export async function huskyLineEndingChange(
+  root: string,
+): Promise<InitFileChange> {
+  const path = ".husky/.gitattributes";
+  const file = await hookFile(root, path);
+  const before = file?.contents ?? null;
+  const patterns = [
+    "/pre-commit",
+    "/pre-merge-commit",
+    "/_/h",
+    ...TRACKED_HOOK_NAMES.map((name) => `/_/${name}`),
+  ];
+  const rules = [
+    "# Keep Zedbee and Husky shell entry points executable across worktrees.",
+    ...patterns.map((pattern) => `${pattern} text eol=lf`),
+    "",
+  ].join("\n");
+  const after = before?.replaceAll("\r\n", "\n").endsWith(rules)
+    ? before
+    : before
+      ? `${before}${before.endsWith("\n") ? "" : "\n"}\n${rules}`
+      : rules;
+  return initFileChange(path, before, after, file?.mode ?? 0o644);
 }
 
 export async function validateLocalHookMigration(
@@ -153,6 +243,11 @@ export async function installTrackedHooks(root = process.cwd()): Promise<void> {
       "Zedbee will not replace another configured hook integration.",
     );
   if (before === null) await validateLocalHookMigration(root);
+  const runtime = await trackedRuntimeChanges(root);
+  if (runtime === undefined)
+    throw new Error(
+      "Zedbee will not replace a customized Husky dispatcher. Use the existing hook installation command.",
+    );
   const proposal: InitProposal = {
     repositoryRoot: root,
     profile: "recommended",
@@ -168,7 +263,7 @@ export async function installTrackedHooks(root = process.cwd()): Promise<void> {
     osvUnavailable: "block",
     networkChecks: [],
     limitations: [],
-    files: await trackedRuntimeChanges(root),
+    files: runtime,
   };
   const { applyInitProposal } = await import("../init/write-config.js");
   await applyInitProposal(proposal);

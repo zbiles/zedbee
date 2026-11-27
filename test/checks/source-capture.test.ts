@@ -180,7 +180,13 @@ describe("explicit immutable source input capture", () => {
         await fixture.symlink("real.js", path);
       }
       const inspection = await inspectRepository(fixture.root);
+      const config = resolveConfig({
+        schemaVersion: 1,
+        profile: "recommended",
+      });
       const context = {
+        target: { id: ".", kind: "repository", relativeRoot: "." },
+        policyForFile: testFilePolicyResolver(config),
         baselineInspection: inspection,
         targetInspection: inspection,
         changeSet: {

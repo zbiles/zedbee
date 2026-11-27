@@ -11,6 +11,7 @@ import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
 
 export const VIRTUAL_ROOT = "/snapshot";
 export const MANAGED_CONFIG = "/managed/knip.json";
+export const INERT_TSCONFIG = ".zedbee-managed-no-tsconfig.json";
 const require = createRequire(import.meta.url);
 
 /** One owned snapshot inventory, shared by JS reads and the WASI filesystem. */

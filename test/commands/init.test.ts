@@ -32,7 +32,10 @@ import {
 } from "../../src/commands/init.js";
 import { TelemetryStore } from "../../src/telemetry/state.js";
 import { applyInitProposal } from "../../src/init/write-config.js";
-import { initFileChange } from "../../src/init/recommend.js";
+import {
+  createInitProposal,
+  initFileChange,
+} from "../../src/init/recommend.js";
 import type { InitProposal } from "../../src/init/types.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createGitRepository } from "../helpers/git-repository.js";
@@ -2677,5 +2680,169 @@ it.each(["raw", "none"] as const)(
       "./web/node_modules/zedbee/schema/zedbee.schema.json",
     );
     expect(config).toContain("// Keep this comment.");
+  },
+);
+
+it.each(["before", "confirmation", "write"] as const)(
+  "does not retain setup files after cancellation at %s",
+  async (phase) => {
+    const repo = await createGitRepository();
+    await repo.write("package.json", '{"name":"demo"}');
+    const controller = new AbortController();
+    const deps = dependencies(repo.root);
+    const opts = {
+      cwd: repo.root,
+      profile: "recommended",
+      hook: "none",
+      format: "text",
+      yes: phase === "before",
+      color: false,
+      animations: false,
+      signal: controller.signal,
+    } as const;
+    if (phase === "before") controller.abort();
+    deps.confirm = async (proposal, prompt) => {
+      expect(prompt.signal).toBe(controller.signal);
+      if (phase === "confirmation") controller.abort();
+      else {
+        await expect(
+          applyInitProposal(proposal, {
+            signal: controller.signal,
+            beforeWrite: () => controller.abort(),
+          }),
+        ).rejects.toThrow();
+      }
+      return proposal;
+    };
+    expect(await executeInitCommand(opts, terminal(true), deps)).toBe(2);
+    await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it.each(["absent", "local", "inherited"] as const)(
+  "restores the %s hook setting after a late trust-write failure",
+  async (scope) => {
+    const repo = await createGitRepository();
+    const old = scope === "absent" ? null : "prior-hooks";
+    if (scope === "local")
+      await repo.git(["config", "--local", "core.hooksPath", "prior-hooks"]);
+    if (scope === "inherited") {
+      await repo.write(
+        "included.gitconfig",
+        "[core]\n  hooksPath = prior-hooks\n",
+      );
+      await repo.git([
+        "config",
+        "--local",
+        "include.path",
+        join(repo.root, "included.gitconfig"),
+      ]);
+    }
+    const { canonicalTrustRoot } =
+      await import("../../src/git/common-directory.js");
+    const key = projectPrettierTrustKey(
+      await canonicalTrustRoot(repo.root),
+      ".",
+    );
+    for (let n = 0; n < 2; n++)
+      await repo.git(["config", "--local", "--add", key, "v1"]);
+    const initial = createInitProposal(await inspectRepository(repo.root), {
+      repositoryRoot: repo.root,
+      profile: "recommended",
+      hook: "none",
+    });
+    const proposal: InitProposal = {
+      ...initial,
+      files: [initFileChange(".zedbeerc.jsonc", null, "{}", 0o644)],
+      hooksPathChange: { before: old, after: ".husky/_" },
+      projectPrettierTrustRoots: ["."],
+      projectPrettierTrustConfirmed: true,
+    };
+    const before = await repo.git([
+      "rev-parse",
+      "--git-path",
+      "hooks/pre-commit",
+    ]);
+    await expect(applyInitProposal(proposal)).rejects.toThrow(
+      /was rolled back/u,
+    );
+    expect(
+      await repo.git(["rev-parse", "--git-path", "hooks/pre-commit"]),
+    ).toEqual(before);
+    expect(
+      (await repo.git(["config", "--local", "--get", "core.hooksPath"]))
+        .exitCode,
+    ).toBe(scope === "local" ? 0 : 1);
+    await expect(repo.read(".zedbeerc.jsonc")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  },
+);
+
+it("reports an applied setup separately when the usage preference is busy", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"name":"demo"}');
+  const deps = dependencies(repo.root);
+  deps.confirm = async (p) => ({ ...p, telemetryEnabled: false });
+  deps.saveTelemetryPreference = () => {
+    throw new Error("busy");
+  };
+  let collected = false;
+  const io = terminal(true);
+  expect(
+    await executeInitCommand(
+      {
+        cwd: repo.root,
+        profile: "fast",
+        hook: "none",
+        format: "text",
+        yes: false,
+        animations: false,
+        color: false,
+        telemetrySummary: () => {
+          collected = true;
+        },
+      },
+      io,
+      deps,
+    ),
+  ).toBe(0);
+  expect(await repo.read(".zedbeerc.jsonc")).toContain("schemaVersion");
+  expect(io.stderr.join("")).toContain("TELEMETRY_PREFERENCE_SAVE_FAILED");
+  expect(collected).toBe(false);
+});
+
+it.each(["fast", "thorough"] as const)(
+  "preserves %s on a noninteractive rerun without an explicit profile",
+  async (profile) => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}');
+    const config = `{\n  // retain this comment\n  "schemaVersion": 1,\n  "profile": "${profile}"\n}\n`;
+    await repository.write(".zedbeerc.jsonc", config);
+    const options = {
+      cwd: repository.root,
+      hook: "none",
+      yes: true,
+      format: "json",
+      color: false,
+      animations: false,
+    } as const;
+    const output = terminal();
+    expect(await executeInitCommand(options, output)).toBe(0);
+    const after = await repository.read(".zedbeerc.jsonc");
+    expect(after).toContain(`"profile": "${profile}"`);
+    expect(after).toContain("// retain this comment");
+    expect(JSON.parse(output.stdout.join("")).proposal.profile).toBe(profile);
+    expect(
+      await executeInitCommand(
+        { ...options, profile: "recommended" },
+        terminal(),
+      ),
+    ).toBe(0);
+    expect(await repository.read(".zedbeerc.jsonc")).toContain(
+      '"profile": "recommended"',
+    );
   },
 );

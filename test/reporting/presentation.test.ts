@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { compareFindings } from "../../src/core/summarize.js";
-import type { Finding } from "../../src/core/types.js";
+import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../../src/checks/eslint/project/supported-version.js";
+import { omitSourceExcerpts } from "../../src/scan/source-excerpts.js";
+import type { Finding, CheckResult } from "../../src/core/types.js";
 import {
   prepareTerminalPresentation,
   type PreparePresentationOptions,
@@ -591,5 +593,78 @@ it.each([29, 300])(
     expect(text).toContain("Complete details are in the full report.");
     expect(text).toContain("Review the staged diff for unresolved imports");
     expect(text).not.toContain("unstaged changes");
+  },
+);
+
+it.each([false, true])(
+  "preserves all check metadata across excerpt and JSON projections (persist=%s)",
+  async (persist) => {
+    const { store, maintain } = recordingStore({
+      reportPath: "/tmp/zedbee/complete.json",
+      warnings: [],
+    });
+    // Exhaustiveness makes a newly introduced CheckResult field require an explicit parity expectation.
+    const check = {
+      checkId: "formatting",
+      target: ".",
+      status: "incomplete",
+      durationMs: 3,
+      findings: [],
+      error: { code: "INCOMPLETE", message: "Analysis incomplete." },
+      skipReason: "Other files were skipped.",
+      incompleteDisposition: "warn",
+      eslintAnalysis: {
+        version: SUPPORTED_PROJECT_ESLINT_VERSION,
+        checkedFiles: 1,
+        ignoredFiles: 0,
+        baseline: "compared",
+        messages: "redacted",
+      },
+      comparisonContext: {
+        version: 1,
+        status: "comparable",
+        reason: "captured-inputs",
+        swarmVersion: "1",
+        analyzerVersion: "1",
+        analyzerRevision: "comparison-context-v1",
+      },
+      formattingCoverage: {
+        checkedFiles: 1,
+        ignoredFiles: 0,
+        unsupportedFiles: 0,
+      },
+      formattingProvenance: [
+        {
+          engine: "managed",
+          projectRoot: ".",
+          version: "3.8.0",
+          configFiles: [],
+        },
+      ],
+    } satisfies Required<CheckResult>;
+    const report = reportWithFindings(1);
+    const full = {
+      ...report,
+      checks: [check, ...report.checks],
+      presentationPolicy: {
+        ...report.presentationPolicy,
+        persistSourceExcerpts: persist,
+      },
+    };
+    await prepareTerminalPresentation(full, options(store, "auto", "text"));
+    const saved = JSON.parse(
+      (maintain.mock.calls[0]![0] as TemporaryReportRequest).json!,
+    );
+    const direct = JSON.parse(renderJson(full));
+    expect(omitSourceExcerpts(full.checks)[0]).toEqual(check);
+    expect(
+      saved.checks.find((item: CheckResult) => item.status === "incomplete"),
+    ).toEqual(
+      direct.checks.find((item: CheckResult) => item.status === "incomplete"),
+    );
+    expect(
+      direct.checks.find((item: CheckResult) => item.status === "incomplete"),
+    ).toEqual(check);
+    expect(JSON.stringify(saved).includes("const value")).toBe(persist);
   },
 );

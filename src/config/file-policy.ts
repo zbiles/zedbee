@@ -54,6 +54,7 @@ function normalizeTargetPath(
 export function createFilePolicyResolver(
   config: ResolvedConfig,
   changeSet: ChangeSet,
+  alternatePath?: (path: string, side: SnapshotSide) => string,
 ): FilePolicyResolver {
   const renames = baselineRenameMap(changeSet);
   const overrides = config.overrides.map((override) => ({
@@ -86,6 +87,11 @@ export function createFilePolicyResolver(
     side: SnapshotSide,
   ): Readonly<ResolvedCheckPolicies[K]> => {
     const targetPath = normalizeTargetPath(renames, repositoryPath, side);
+    const alternate = alternatePath?.(targetPath, side);
+    const paths =
+      alternate !== undefined && alternate !== targetPath
+        ? [targetPath, alternate]
+        : [targetPath];
     let policy = mergePolicyPatch(config.checks[checkId], {}) as Readonly<
       ResolvedCheckPolicies[K]
     >;
@@ -95,8 +101,8 @@ export function createFilePolicyResolver(
       const patch = override.checks[checkId];
       if (
         patch === undefined ||
-        !override.matches.some((matches) => matches(targetPath)) ||
-        override.excludes.some((matches) => matches(targetPath))
+        !override.matches.some((matches) => paths.some(matches)) ||
+        override.excludes.some((matches) => paths.some(matches))
       ) {
         continue;
       }
@@ -112,7 +118,7 @@ export function createFilePolicyResolver(
     for (const exclusion of pathExclusions) {
       if (
         !exclusion.exclusion.checks.includes(checkId) ||
-        !exclusion.matches(targetPath)
+        !paths.some(exclusion.matches)
       ) {
         continue;
       }
@@ -127,9 +133,14 @@ export function createFilePolicyResolver(
     side: SnapshotSide,
   ): readonly PathExclusion[] => {
     const targetPath = normalizeTargetPath(renames, repositoryPath, side);
+    const alternate = alternatePath?.(targetPath, side);
+    const paths =
+      alternate !== undefined && alternate !== targetPath
+        ? [targetPath, alternate]
+        : [targetPath];
     return Object.freeze(
       pathExclusions
-        .filter(({ matches }) => matches(targetPath))
+        .filter(({ matches }) => paths.some(matches))
         .map(({ exclusion }) => exclusion),
     );
   };

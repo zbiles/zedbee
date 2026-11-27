@@ -1,11 +1,14 @@
 import { selectedChangesLine } from "../reporting/source-identity.js";
 import {
   allowedScanDetail,
+  blockedFindingLines,
   scanOutcomeDetail,
+  scanOutcomeHeading,
   scanResultCountLine,
   coverageLine,
 } from "../reporting/check-coverage.js";
 import { Box, Text } from "ink";
+import type { Finding } from "../core/types.js";
 import type { ScanReport } from "../scan/report.js";
 import {
   emptyChangesCopy,
@@ -23,23 +26,31 @@ function copyFor(
   const warningLabel = warnings === 1 ? "warning" : "warnings";
   if (report.outcome === "blocked") {
     return [
-      "THAT STINGS",
-      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      report.mode === "base" ? scanOutcomeHeading(report) : "THAT STINGS",
+      narrow && report.mode !== "base"
+        ? "Commit blocked."
+        : scanOutcomeDetail(report),
       scanResultCountLine(report, true),
     ];
   }
   if (report.outcome === "incomplete") {
     return [
       "SCAN INCOMPLETE",
-      narrow ? "Commit blocked." : scanOutcomeDetail(report),
+      narrow && report.mode !== "base"
+        ? "Commit blocked."
+        : scanOutcomeDetail(report),
       scanResultCountLine(report, true),
     ];
   }
   if (report.changedFileCount === 0) {
-    return ["BEE-UTIFUL", emptyChangesCopy(report), "0 passed · 0 warnings"];
+    return [
+      report.mode === "base" ? scanOutcomeHeading(report) : "BEE-UTIFUL",
+      emptyChangesCopy(report),
+      "0 passed · 0 warnings",
+    ];
   }
   return [
-    "BEE-UTIFUL",
+    report.mode === "base" ? scanOutcomeHeading(report) : "BEE-UTIFUL",
     narrow && allowedScanDetail(report) === "All checks passed. Commit allowed."
       ? "Commit allowed."
       : allowedScanDetail(report),
@@ -89,8 +100,10 @@ export function OutcomeStrip({
   report,
   width,
   color,
+  findings = report.summary.findings,
 }: {
   report: ScanReport;
+  findings?: readonly Finding[];
   width: number;
   color: boolean;
 }) {
@@ -106,6 +119,7 @@ export function OutcomeStrip({
   const showMotion = showBee && prefersMotion;
   const beeWidth = showMotion ? 53 : showBee ? 20 : 0;
   const copyWidth = Math.max(1, width - 3 - beeWidth);
+  const blocker = blockedFindingLines(report, findings, copyWidth);
 
   return (
     <Box width={width} flexDirection="row" flexWrap="nowrap">
@@ -114,7 +128,11 @@ export function OutcomeStrip({
         <Text bold {...colorProp(color, outcomeColor(report))}>
           {headline}
         </Text>
-        <Text {...colorProp(color, ZEDBEE_THEME.primary)}>{subline}</Text>
+        {(blocker.length > 0 ? blocker : [subline]).map((line, index) => (
+          <Text key={index} {...colorProp(color, ZEDBEE_THEME.primary)}>
+            {line}
+          </Text>
+        ))}
         {selectedChangesLine(report) === undefined ? null : (
           <Text wrap="wrap">{selectedChangesLine(report)}</Text>
         )}

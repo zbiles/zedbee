@@ -8,6 +8,11 @@ export function sourceEntityName(name: string): string {
     .digest("hex")}`;
 }
 
+/** Prefix shared by every canonical syntax entity identity. */
+export function entityIdentityPrefix(kind: string, file: string): string {
+  return `${kind}:${file}:`;
+}
+
 const OPAQUE_NAME = /^name-[a-f0-9]{64}$/u;
 const SYNTAX_NAME =
   /^(?:name-[a-f0-9]{64}(?:@\d+(?:\.\d+)*)?|anonymous@\d+(?:\.\d+)*|default|constructor)$/u;
@@ -37,7 +42,7 @@ export function assertSourceSafeEntityObservation(
     !SYNTAX_NAME.test(entity.name)
   )
     throw new TypeError("Expected opaque syntax entity metadata");
-  const prefix = `${entity.kind}:${entity.file}:`;
+  const prefix = entityIdentityPrefix(entity.kind, entity.file);
   if (!observation.identity.startsWith(prefix))
     throw new TypeError("Expected canonical syntax entity identity");
   const payload = observation.identity.slice(prefix.length);
@@ -48,18 +53,23 @@ export function assertSourceSafeEntityObservation(
     const kind = segment.slice(0, separator);
     const encoded = segment.slice(separator + 1);
     const name = decodeURIComponent(encoded);
-    const safe = ["function", "method", "class", "variable"].includes(kind)
-      ? SYNTAX_NAME.test(name)
-      : kind === "class-scope"
-        ? /^class@\d+$/u.test(name)
-        : kind === "object-scope"
-          ? /^object@\d+(?:\.\d+)*$/u.test(name)
-          : kind === "field-scope"
-            ? /^field@\d+(?:\.\d+)*$/u.test(name)
-            : kind === "member-scope"
-              ? /^(?:static|instance)$/u.test(name)
-              : kind === "member-role" &&
-                /^(?:method|get|set|constructor|field|property)$/u.test(name);
+    const safe =
+      kind === "occurrence"
+        ? index === 0 && /^(?:[2-9]|[1-9][0-9]+)$/u.test(name)
+        : ["function", "method", "class", "variable"].includes(kind)
+          ? SYNTAX_NAME.test(name)
+          : kind === "class-scope"
+            ? /^class@\d+$/u.test(name)
+            : kind === "object-scope"
+              ? /^object@\d+(?:\.\d+)*$/u.test(name)
+              : kind === "field-scope"
+                ? /^field@\d+(?:\.\d+)*$/u.test(name)
+                : kind === "member-scope"
+                  ? /^(?:static|instance)$/u.test(name)
+                  : kind === "member-role" &&
+                    /^(?:method|get|set|constructor|field|property)$/u.test(
+                      name,
+                    );
     if (
       !safe ||
       encoded !== encodeURIComponent(name) ||

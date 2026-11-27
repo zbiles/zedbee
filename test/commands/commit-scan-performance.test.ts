@@ -56,7 +56,7 @@ it("benchmarks the same staged tree against one parent or all merge parents", as
       const incoming = Object.keys(process.env).filter((key) => key.startsWith("GITHEAD_")).map((key) => key.slice(8));
       if (process.argv.includes("--merge") !== (incoming.length > 0)) process.exit(3);
       const mergeParents = incoming.length === 0 ? undefined : ["${baseline}", ...incoming];
-      console.log(JSON.stringify({ outcome: "pass", checks: [{ status: "completed" }], mergeParents }));
+      console.log(JSON.stringify({ outcome: "pass", exitCode: 0, checks: [{ status: "completed" }], mergeParents }));
     }
   `,
   );
@@ -205,7 +205,7 @@ it("runs the explicit CLI with isolated state and saves individual canonical rep
 
   await writeFile(
     cli,
-    `if(process.argv.includes('--help')) console.log('--no-cache'); else console.log(JSON.stringify({outcome:'pass',durationMs:1,checks:[],summary:{passed:0,failed:0,warnings:0,incomplete:0}}));`,
+    `if(process.argv.includes('--help')) console.log('--no-cache'); else console.log(JSON.stringify({outcome:'pass',exitCode:0,durationMs:1,checks:[],summary:{passed:0,failed:0,warnings:0,incomplete:0}}));`,
   );
   if (process.platform !== "win32") {
     const bin = join(scratch, "bin");
@@ -235,5 +235,20 @@ it("runs the explicit CLI with isolated state and saves individual canonical rep
     } finally {
       vi.unstubAllEnvs();
     }
+  }
+});
+
+it("accepts measurements only when outcome, reported status and process exit agree", async () => {
+  const { validScanVerdict } =
+    await import("../../.github/actions/scan/verdict.mjs");
+  for (const [outcome, code] of [
+    ["pass", 0],
+    ["blocked", 1],
+    ["incomplete", 2],
+  ]) {
+    expect(validScanVerdict(outcome, code, code)).toBe(true);
+    expect(validScanVerdict(outcome, code, null)).toBe(false);
+    expect(validScanVerdict(outcome, undefined, code)).toBe(false);
+    expect(validScanVerdict(outcome, code, 3)).toBe(false);
   }
 });

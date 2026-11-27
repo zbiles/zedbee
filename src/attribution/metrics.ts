@@ -1,3 +1,4 @@
+import { canonicalText } from "../core/canonical-text.js";
 import type {
   Attribution,
   ChangedEntity,
@@ -8,20 +9,16 @@ import type {
 import {
   findingIdentity,
   fingerprintObservation,
+  isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
 } from "./fingerprint.js";
+import { NO_ATTRIBUTION } from "./range.js";
 
 export interface MetricDeltaPolicy {
   readonly limit: number;
   readonly blockWorsening: boolean;
 }
-
-const NONE: Attribution = Object.freeze({
-  kind: "none",
-  staged: false,
-  evidence: Object.freeze([]),
-});
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null) {
@@ -30,17 +27,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function canonicalText(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
-    throw new TypeError(`Expected canonical ${field}`);
-  }
-  return value;
-}
 
 function normalizeChangedEntities(
   entities: readonly ChangedEntity[],
@@ -272,7 +258,12 @@ function attributePreparedMetricDelta(
 
   const changedEntity = changed.get(targetSnapshot.identity);
   if (!matchesChangedEntity(targetSnapshot, changedEntity))
-    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
+    return toFinding(
+      targetSnapshot,
+      NO_ATTRIBUTION,
+      policySnapshot,
+      baselineSnapshot,
+    );
 
   const targetValue = targetSnapshot.metric!.value;
   const baselineValue = baselineSnapshot?.metric?.value;
@@ -288,7 +279,12 @@ function attributePreparedMetricDelta(
     policySnapshot.blockWorsening;
   const targetOnlyAboveLimit = baselineValue === undefined && aboveLimit;
   if (!crossesLimit && !worsensAboveLimit && !targetOnlyAboveLimit) {
-    return toFinding(targetSnapshot, NONE, policySnapshot, baselineSnapshot);
+    return toFinding(
+      targetSnapshot,
+      NO_ATTRIBUTION,
+      policySnapshot,
+      baselineSnapshot,
+    );
   }
 
   const evidence = [

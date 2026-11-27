@@ -1,6 +1,10 @@
 import { captureDiagnosticDetails } from "../diagnostic-details.js";
 import { restoreCheckContext, markAnalyzerWorker } from "./context.js";
-import { validateAnalyzerRequest, type AnalyzerRequest } from "./protocol.js";
+import {
+  TYPESCRIPT_PARSER_CHECK_IDS,
+  validateAnalyzerRequest,
+  type AnalyzerRequest,
+} from "./protocol.js";
 import { loadAnalyzerAdapter } from "./registry.js";
 import {
   CheckIncompleteError,
@@ -112,15 +116,7 @@ async function executeAndReply(message: Record<string, unknown>) {
   const identity = { version: 1, sessionId, jobId: message.jobId as string };
   controller = new AbortController();
   const request = message.request as AnalyzerRequest;
-  if (
-    [
-      "lint",
-      "reactCorrectness",
-      "reactAccessibility",
-      "cyclomaticComplexity",
-      "readabilityComplexity",
-    ].includes(request?.checkId)
-  )
+  if (TYPESCRIPT_PARSER_CHECK_IDS.includes(request?.checkId))
     loaded.add("syntax");
   if (request?.checkId === "formatting") loaded.add("formatting");
   const run = () =>

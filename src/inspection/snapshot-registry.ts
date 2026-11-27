@@ -12,6 +12,11 @@ import {
 } from "node:path";
 import { RepositoryInspectionError } from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
+import {
+  isContainedPath,
+  normalizeRepositoryPath,
+  unsafePath,
+} from "./paths.js";
 
 export const IGNORED_DIRECTORY_NAMES = [
   "node_modules",
@@ -50,27 +55,6 @@ export interface SnapshotRegistry {
   exact(repositoryPath: string): SnapshotRegistryEntry | undefined;
   resolve(repositoryPath: string): SnapshotRegistryEntry | undefined;
   entries(): readonly SnapshotRegistryEntry[];
-}
-
-function normalizePath(path: string): string {
-  return path.split(sep).join("/");
-}
-
-function isContained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot === "" ||
-    (!isAbsolute(fromRoot) &&
-      fromRoot !== ".." &&
-      !fromRoot.startsWith(`..${sep}`))
-  );
-}
-
-function unsafePath(): RepositoryInspectionError {
-  return new RepositoryInspectionError(
-    "UNSAFE_SNAPSHOT_PATH",
-    "Zedbee refused a path outside the snapshot.",
-  );
 }
 
 function invalidSnapshot(): RepositoryInspectionError {
@@ -120,7 +104,7 @@ export async function captureSnapshotRegistry(
     }
     try {
       canonicalPath = await realpath(absolutePath);
-      if (!isContained(snapshotRoot, canonicalPath)) {
+      if (!isContainedPath(snapshotRoot, canonicalPath)) {
         throw new RepositoryInspectionError(
           "UNSAFE_SNAPSHOT_PATH",
           "Zedbee refused a path outside the snapshot.",
@@ -212,6 +196,7 @@ export async function captureSnapshotRegistry(
       await captureEntry(components.slice(0, index).join("/"));
   };
   for (const path of requestedPaths ?? []) await captureRequestedPath(path);
+  const unavailableEntries = new Set<string>();
   for (const entry of capturedEntries) {
     if (entry.kind !== "symlink") continue;
     if (requestedPaths !== undefined) {
@@ -221,27 +206,53 @@ export async function captureSnapshotRegistry(
       let destination: string;
       try {
         const parent = await realpath(dirname(entry.absolutePath));
-        if (!isContained(snapshotRoot, parent)) throw unsafePath();
+        if (!isContainedPath(snapshotRoot, parent)) throw unsafePath();
         const linkPath = join(parent, basename(entry.absolutePath));
         destination = resolve(parent, await readlink(linkPath));
         if (linkPath !== entry.absolutePath)
           await captureRequestedPath(
-            normalizePath(relative(snapshotRoot, linkPath)),
+            normalizeRepositoryPath(relative(snapshotRoot, linkPath)),
           );
       } catch {
         throw invalidSnapshot();
       }
-      if (!isContained(snapshotRoot, destination)) throw unsafePath();
+      if (!isContainedPath(snapshotRoot, destination)) throw unsafePath();
       if (destination !== snapshotRoot)
         await captureRequestedPath(
-          normalizePath(relative(snapshotRoot, destination)),
+          normalizeRepositoryPath(relative(snapshotRoot, destination)),
         );
     }
     if (requestedPaths !== undefined && entry.canonicalPath !== snapshotRoot)
       await captureRequestedPath(
-        normalizePath(relative(snapshotRoot, entry.canonicalPath)),
+        normalizeRepositoryPath(relative(snapshotRoot, entry.canonicalPath)),
       );
     const registeredTarget = absoluteEntries.get(entry.canonicalPath);
+    if (
+      registeredTarget === undefined &&
+      requestedPaths === undefined &&
+      relative(snapshotRoot, entry.canonicalPath)
+        .split(sep)
+        .some((part) =>
+          IGNORED_DIRECTORY_NAMES.some((ignored) => ignored === part),
+        )
+    ) {
+      unavailableSymlinks.set(
+        entry.repositoryPath,
+        new RepositoryInspectionError(
+          "INVALID_SNAPSHOT_DATA",
+          "Zedbee could not inventory a symbolic link into an excluded directory.",
+          {
+            path: entry.repositoryPath,
+            reason: "excluded-symlink",
+            targetKind: entry.targetKind,
+          },
+        ),
+      );
+      unavailableEntries.add(entry.repositoryPath);
+      exactEntries.delete(entry.repositoryPath);
+      absoluteEntries.delete(entry.absolutePath);
+      continue;
+    }
     if (
       registeredTarget === undefined ||
       registeredTarget.kind === "symlink" ||
@@ -251,12 +262,16 @@ export async function captureSnapshotRegistry(
       throw invalidSnapshot();
     }
   }
-  const frozenEntries = Object.freeze([...capturedEntries]);
+  const frozenEntries = Object.freeze(
+    capturedEntries.filter(
+      (entry) => !unavailableEntries.has(entry.repositoryPath),
+    ),
+  );
 
   const resolveEntry = (
     repositoryPath: string,
   ): SnapshotRegistryEntry | undefined => {
-    const normalized = normalizePath(repositoryPath).replace(/^\.\//, "");
+    const normalized = normalizeRepositoryPath(repositoryPath).replace(/^\.\//, "");
     const exact = exactEntries.get(normalized);
     if (exact !== undefined) return exact;
     const components = normalized.split("/");
@@ -286,7 +301,7 @@ export async function captureSnapshotRegistry(
     snapshotRoot,
     unavailableSymlinks,
     exact: (repositoryPath: string) =>
-      exactEntries.get(normalizePath(repositoryPath)),
+      exactEntries.get(normalizeRepositoryPath(repositoryPath)),
     resolve: resolveEntry,
     entries: () => frozenEntries,
   });

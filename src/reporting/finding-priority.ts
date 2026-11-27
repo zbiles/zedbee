@@ -22,11 +22,18 @@ const ACTIONABLE_COMPILER_CODES = new Set([
   "TS5109",
   "TS5110", // configuration
 ]);
+const UNRESOLVED_MODULE_RULES = new Set([
+  "typescript/TS2307",
+  "typescript/TS2792",
+]);
+const IMPLICIT_ANY_RULES = new Set([
+  "typescript/TS7005",
+  "typescript/TS7006",
+  "typescript/TS7019",
+  "typescript/TS7031",
+]);
 export function isUnresolvedModule(finding: Finding): boolean {
-  return (
-    finding.check === "types" &&
-    ["typescript/TS2307", "typescript/TS2792"].includes(finding.rule)
-  );
+  return finding.check === "types" && UNRESOLVED_MODULE_RULES.has(finding.rule);
 }
 function priority(finding: Finding): number {
   if (finding.severity !== "error") return 4;
@@ -40,12 +47,7 @@ function priority(finding: Finding): number {
     return 1;
   if (
     finding.rule.startsWith("@typescript-eslint/no-unsafe-") ||
-    [
-      "typescript/TS7005",
-      "typescript/TS7006",
-      "typescript/TS7019",
-      "typescript/TS7031",
-    ].includes(finding.rule)
+    IMPLICIT_ANY_RULES.has(finding.rule)
   )
     return 3;
   return 2;

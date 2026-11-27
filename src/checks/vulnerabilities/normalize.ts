@@ -3,6 +3,7 @@ import type { Observation } from "../../core/types.js";
 import type { DependencyRecord } from "./inventory/types.js";
 import { osvQueryKey } from "./osv/client.js";
 import type { OsvAdvisory } from "./osv/types.js";
+import semver from "semver";
 
 function maximumNumericSeverity(advisory: OsvAdvisory): number | undefined {
   const values = advisory.severity
@@ -15,7 +16,7 @@ function fixedVersion(
   advisory: OsvAdvisory,
   dependency: DependencyRecord,
 ): string | undefined {
-  return advisory.affected
+  const fixedVersions = advisory.affected
     .filter(
       (affected) =>
         affected.package.ecosystem.toLowerCase() === "npm" &&
@@ -24,7 +25,14 @@ function fixedVersion(
     .flatMap(({ ranges }) => ranges)
     .flatMap(({ events }) => events)
     .flatMap(({ fixed }) => (fixed === undefined ? [] : [fixed]))
-    .sort(compareCodeUnits)[0];
+    .filter((fixed) => semver.valid(fixed) !== null);
+  const candidates =
+    semver.valid(dependency.version) === null
+      ? fixedVersions
+      : fixedVersions.filter((fixed) =>
+          semver.gt(fixed, dependency.version),
+        );
+  return [...candidates].sort(semver.compare)[0];
 }
 
 export function normalizeOsvInventory(

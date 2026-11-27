@@ -23,6 +23,19 @@ export interface WorkspaceInstallationReadiness {
   readonly summary: string;
 }
 
+const UNSAFE_LABEL_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+export function escapeLabelControls(value: string): string {
+  return value.replace(
+    UNSAFE_LABEL_CHARACTER,
+    (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`,
+  );
+}
+
+export function workspaceLabel(relativeRoot: string): string {
+  return relativeRoot === "." ? "root" : escapeLabelControls(relativeRoot);
+}
+
 function supportedInstalledPath(
   checkout: string,
   rootPackages: string | undefined,
@@ -188,7 +201,7 @@ export async function inspectWorkspaceInstallations(
     }
     if (grouped.size > 0) {
       const locations = [...grouped].map(([workspace, names]) => {
-        const label = workspace === "." ? "root" : workspace;
+        const label = workspaceLabel(workspace);
         return `${label.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`)}: ${names.join(", ")}`;
       });
       parts.push(

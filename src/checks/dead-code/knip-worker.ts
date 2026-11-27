@@ -11,27 +11,18 @@ import {
 } from "../../inspection/source-capture.js";
 import {
   createKnipFilesystem,
+  INERT_TSCONFIG,
   MANAGED_CONFIG,
   VIRTUAL_ROOT,
 } from "./captured-filesystem.js";
 import { loadCapturedResolver } from "./wasi.js";
 import type { KnipJob } from "./executor.js";
 import { createPackageMetadataReader } from "./package-metadata.js";
+import { ISSUE_TYPES as KNIP_ISSUE_TYPES } from "./parse-report.js";
 
 const require = createRequire(import.meta.url);
 const globals = globalThis as unknown as Record<string, unknown>;
-const ISSUE_TYPES = new Set([
-  "files",
-  "dependencies",
-  "devDependencies",
-  "unlisted",
-  "unresolved",
-  "exports",
-  "types",
-  "nsExports",
-  "nsTypes",
-  "duplicates",
-]);
+const ISSUE_TYPES = new Set<string>(KNIP_ISSUE_TYPES);
 
 function reportFor(result: {
   issues: Record<
@@ -177,7 +168,7 @@ async function run(job: KnipJob) {
       args: {
         config: MANAGED_CONFIG,
         workspace: job.workspace,
-        tsConfig: ".zedbee-managed-no-tsconfig.json",
+        tsConfig: INERT_TSCONFIG,
         "no-progress": true,
         "no-config-hints": true,
         "no-tag-hints": true,

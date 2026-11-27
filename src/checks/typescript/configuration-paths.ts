@@ -1,3 +1,4 @@
+import { configCandidates } from "./config-candidates.js";
 import { posix, relative, sep } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
 import {
@@ -194,13 +195,15 @@ function createResolver(
       )
         complete = false;
       const requests = [
-        ...extensions.filter(
-          (extension) =>
-            typeof extension === "string" && extension.startsWith("."),
-        ),
-        ...references,
+        ...extensions
+          .filter(
+            (extension) =>
+              typeof extension === "string" && extension.startsWith("."),
+          )
+          .map((path) => ({ path, kind: "extends" as const })),
+        ...references.map((path) => ({ path, kind: "reference" as const })),
       ];
-      for (const request of requests) {
+      for (const { path: request, kind } of requests) {
         signal?.throwIfAborted();
         if (exhausted) {
           complete = false;
@@ -221,25 +224,20 @@ function createResolver(
           complete = false;
           continue;
         }
-        const candidates = [
-          base,
-          `${base}.json`,
-          posix.join(base, "tsconfig.json"),
-        ];
+        const candidates = configCandidates(base, kind);
         let found = false;
         for (const candidate of candidates) {
           signal?.throwIfAborted();
-          if ((await fileRegistry(candidate)) === undefined) continue;
+          if ((await fileRegistry(candidate)) === undefined) {
+            if (retainMissingCandidates) paths.add(candidate);
+            continue;
+          }
           found = true;
           paths.add(candidate);
           if (!parsed.has(candidate)) pending.push(candidate);
           break;
         }
-        if (!found) {
-          complete = false;
-          if (retainMissingCandidates)
-            for (const candidate of candidates) paths.add(candidate);
-        }
+        if (!found) complete = false;
       }
     }
     return Object.freeze({

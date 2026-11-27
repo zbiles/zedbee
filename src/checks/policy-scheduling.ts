@@ -13,14 +13,17 @@ import type {
   WorkspaceInspection,
 } from "../inspection/types.js";
 import type { CheckTarget, InspectionContext } from "./adapter.js";
+import { selectedChangedPaths } from "./changed-file-paths.js";
 import { isFormattingCandidate } from "./prettier/supported-path.js";
 import {
   compilerInputRelevance,
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
+import {
+  COMPILER_SOURCE as JAVASCRIPT_SOURCE,
+  TYPESCRIPT_SOURCE,
+} from "./compiler-paths.js";
 
-const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const FILE_SCOPED_CHECKS = new Set<CheckId>([
   "formatting",
   "lint",
@@ -173,10 +176,10 @@ export async function shouldScheduleTarget(
       )
     );
   }
-  const changed = new Set(
-    [...changeSet.files.values()]
-      .filter(({ status }) => status !== "deleted")
-      .map(({ path }) => normalizeRepositoryRelativePath(path)),
+  const changed = selectedChangedPaths(
+    { ...context, target, policyForFile },
+    checkId,
+    "target",
   );
   const compilerInputChange =
     checkId === "lint" &&

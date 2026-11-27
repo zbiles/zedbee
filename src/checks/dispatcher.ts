@@ -1,3 +1,4 @@
+import { projectWorkspaceComparison } from "./workspace-comparison.js";
 import {
   validateCompilerScopeProofs,
   releaseCompilerScopeProofs,
@@ -199,11 +200,12 @@ export async function prepareCheckDispatch(
     }
     if (inspectPolicy === undefined) continue;
     const inspectExecutionPolicy = immutablePolicy(adapter.id, inspectPolicy);
+    const checkContext = projectWorkspaceComparison(adapterContext, adapter.id);
     let applicability;
     try {
       applicability = snapshotApplicability(
         await Reflect.apply(adapter.inspect, undefined, [
-          inspectionContext(adapterContext, adapter.id, inspectPolicy),
+          inspectionContext(checkContext, adapter.id, inspectPolicy),
         ]),
       );
     } catch (error) {
@@ -234,6 +236,27 @@ export async function prepareCheckDispatch(
       continue;
     }
 
+    const uncoveredPaths = applicability.uncoveredPaths ?? [];
+    if (uncoveredPaths.length > 0) {
+      scheduled.push(
+        Promise.resolve(
+          executionResult(
+            incompleteResult({
+              checkId: adapter.id,
+              durationMs: 0,
+              code: "PROJECT_NOT_DISCOVERED",
+              path: uncoveredPaths[0]!,
+              paths: uncoveredPaths,
+              message:
+                "Changed source files are present without a discovered project owner in the selected target.",
+              remediation:
+                "Verify that the selected target contains the project's package.json and that project discovery includes its source files, then retry.",
+            }),
+            inspectExecutionPolicy,
+          ),
+        ),
+      );
+    }
     for (const target of applicability.independentTargets ?? []) {
       scheduled.push(
         Promise.resolve(
@@ -254,7 +277,8 @@ export async function prepareCheckDispatch(
     }
 
     if (!applicability.applies) {
-      if (applicability.independentTargets?.length) continue;
+      if (applicability.independentTargets?.length || uncoveredPaths.length > 0)
+        continue;
       scheduled.push(
         Promise.resolve(
           executionResult(
@@ -292,6 +316,7 @@ export async function prepareCheckDispatch(
       );
       continue;
     }
+    let excludedTargets = 0;
     for (const target of targets) {
       let policy: ResolvedCheckPolicy;
       try {
@@ -299,10 +324,13 @@ export async function prepareCheckDispatch(
           context.config,
           adapter.id as CheckId,
           target,
-          context,
-          adapterContext.policyForFile,
+          checkContext,
+          checkContext.policyForFile,
         );
-        if (scheduledPolicy === undefined) continue;
+        if (scheduledPolicy === undefined) {
+          excludedTargets += 1;
+          continue;
+        }
         policy = scheduledPolicy;
       } catch {
         const label = checkLabel(adapter.id);
@@ -367,7 +395,7 @@ export async function prepareCheckDispatch(
         });
         return executeDispatchTarget(
           adapter,
-          adapterContext,
+          checkContext,
           target,
           executionPolicy,
           applicability.requiresBaseline,
@@ -379,6 +407,22 @@ export async function prepareCheckDispatch(
           },
         );
       });
+    }
+    if (excludedTargets === targets.length) {
+      scheduled.push(
+        Promise.resolve(
+          executionResult(
+            {
+              checkId: adapter.id,
+              status: "skipped",
+              durationMs: 0,
+              findings: [],
+              skipReason: "No applicable targets enabled by configuration",
+            },
+            null,
+          ),
+        ),
+      );
     }
   }
 

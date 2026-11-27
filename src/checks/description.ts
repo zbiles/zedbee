@@ -3,6 +3,7 @@ import type { ExecutionClass } from "./adapter.js";
 
 export interface CheckApplicabilityDescription {
   readonly applicable: boolean;
+  readonly uncoveredPaths?: readonly string[];
   readonly targets: readonly string[];
   readonly executionClass: ExecutionClass;
   readonly reason?: string;
@@ -29,7 +30,8 @@ export interface CheckDescription {
   readonly description: string;
   readonly severity: string;
   readonly timing: string;
-  readonly applicability: "applicable" | "not-applicable";
+  readonly applicability: "applicable" | "not-applicable" | "incomplete";
+  readonly uncoveredPaths?: readonly string[];
   readonly targets: readonly string[];
   readonly executionClass: ExecutionClass;
   readonly network: "none" | "online-package-metadata-only";

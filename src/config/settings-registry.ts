@@ -57,26 +57,6 @@ export function managedSettingDefinition(
   ] as ManagedSettingsDefinition<object> | undefined;
 }
 
-const MANAGED_POLICY_SCALAR_KEYS = Object.freeze({
-  formatting: ["engine"],
-  lint: ["engine"],
-  types: [],
-  cyclomaticComplexity: ["blockWorsening", "max"],
-  readabilityComplexity: ["blockWorsening", "max"],
-  structuralSecurity: [],
-  secrets: [],
-  duplication: ["threshold"],
-  dependencyArchitecture: [],
-  deadCode: ["entryPoints"],
-  reactCorrectness: [],
-  reactAccessibility: [],
-  vulnerabilities: ["onUnavailable"],
-} as const satisfies Readonly<Record<CheckId, readonly string[]>>);
-
-export function managedPolicyScalarKeys(checkId: CheckId): readonly string[] {
-  return MANAGED_POLICY_SCALAR_KEYS[checkId];
-}
-
 export function managedSettingKeys(checkId: CheckId): readonly string[] {
   const definition = managedSettingDefinition(checkId);
   if (definition === undefined) return Object.freeze([]);
@@ -93,6 +73,11 @@ export function isConfigurableRuleCheckId(
 
 export { immutableConfigurationSnapshot } from "./immutable-configuration.js";
 import { immutableConfigurationSnapshot } from "./immutable-configuration.js";
+
+/** Common fields have their own checks-command columns. Nested fields are expanded separately. */
+export function managedPolicyScalarKeys(checkId: CheckId): readonly string[] {
+  return POLICY_KEYS[checkId].filter((key) => !["severity", "when", "settings", "rules"].includes(key));
+}
 
 function unsupportedConfiguration(): TypeError {
   return new TypeError(
@@ -115,6 +100,16 @@ const POLICY_KEYS = Object.freeze({
   reactAccessibility: ["rules", "settings", "severity", "when"],
   vulnerabilities: ["onUnavailable", "severity", "when"],
 } as const satisfies Readonly<Record<CheckId, readonly string[]>>);
+
+/**
+ * The policy keys a given check reads — the names the `policies` map keys
+ * by. The single source of truth for help text and validation so a new
+ * policy key cannot drift between what a check actually reads and what the
+ * user is told they may set.
+ */
+export function managedPolicyKeys(checkId: CheckId): readonly string[] {
+  return POLICY_KEYS[checkId];
+}
 
 export function snapshotManagedPolicy<
   T extends ResolvedCheckPolicy | ResolvedCheckPolicyPatch,

@@ -29,7 +29,7 @@ type SupportedExtension = keyof typeof PARSERS;
 export type PrettierParser = (typeof PARSERS)[SupportedExtension];
 
 export function prettierParserFor(file: string): PrettierParser | undefined {
-  if (GENERATED_LOCKFILES.has(basename(file.replaceAll("\\", "/")))) {
+  if (isGeneratedLockfile(file)) {
     return undefined;
   }
   return PARSERS[extname(file).toLowerCase() as SupportedExtension];

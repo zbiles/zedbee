@@ -7,6 +7,7 @@ import { fixCommandText } from "./fix-command.js";
 
 export interface NextStepsInput {
   readonly outcome: ScanReport["outcome"];
+  readonly mode?: ScanReport["mode"];
   readonly shown: number;
   readonly total: number;
   readonly reportPath: string;
@@ -38,10 +39,13 @@ export function managedFixGuidanceLines(
 
 function outcomeInstructions(
   outcome: ScanReport["outcome"],
+  mode?: ScanReport["mode"],
 ): readonly string[] {
   if (outcome === "blocked") {
     return [
-      "Fix every blocking finding, stage the changes, then run Zedbee again.",
+      mode === "base"
+        ? "Correct every blocking finding, commit the fixes, then rerun Zedbee over the same base range."
+        : "Fix every blocking finding, stage the changes, then run Zedbee again.",
     ];
   }
   if (outcome === "incomplete") {
@@ -69,7 +73,7 @@ export function nextStepsLines(input: NextStepsInput): readonly string[] {
     `Zedbee will remove this report on the first run after ${age}.`,
     "The operating system may remove it sooner.",
     "",
-    ...outcomeInstructions(input.outcome),
+    ...outcomeInstructions(input.outcome, input.mode),
     ...managedFixes,
     "The terminal output is abbreviated; do not treat it as the complete report.",
   ]);

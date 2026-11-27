@@ -137,3 +137,50 @@ describe("workspace declarations and runtime names", () => {
     },
   );
 });
+
+it("records an unavailable unrelated asset link into an ignored tree", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("web/package.json", { name: "web" });
+  await fixture.write("web/src/value.ts", "export const value = 1;");
+  await fixture.write("vendor/logo.svg", "<svg/>");
+  await mkdir(join(fixture.root, "assets"));
+  await symlink(
+    "../vendor/logo.svg",
+    join(fixture.root, "assets/logo.svg"),
+    "file",
+  );
+  const registry = await captureSnapshotRegistry(
+    await canonicalizeSnapshotRoot(fixture.root),
+  );
+  expect(
+    (await inspectRepository(fixture.root, { registry })).workspaces.map(
+      (w) => w.relativeRoot,
+    ),
+  ).toEqual(["web"]);
+  expect(() => registry.resolve("assets/logo.svg")).toThrow();
+  expect(registry.exact("vendor/logo.svg")).toBeUndefined();
+});
+
+it("ignores an excluded asset link in a root workspace but retains required input failures", async () => {
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "root", workspaces: ["*"] });
+  await fixture.write("value.ts", "export const value = 1;");
+  await fixture.write("vendor/logo.svg", "<svg/>");
+  await fixture.write("vendor/pkg/package.json", "{}");
+  await mkdir(join(fixture.root, "assets"));
+  await symlink(
+    "../vendor/logo.svg",
+    join(fixture.root, "assets/logo.svg"),
+    "file",
+  );
+  expect(
+    (await inspectRepository(fixture.root)).workspaces.map(
+      (w) => w.relativeRoot,
+    ),
+  ).toEqual(["."]);
+  await symlink("vendor/pkg", join(fixture.root, "required"), "dir");
+  await expect(inspectRepository(fixture.root)).rejects.toMatchObject({
+    path: "required",
+    reason: "excluded-symlink",
+  });
+});

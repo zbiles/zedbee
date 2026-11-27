@@ -43,3 +43,15 @@ test("closes the executor when a sample fails", async () => {
   ).rejects.toThrow("sample");
   expect(closed).toBe(1);
 });
+
+test("uses the arithmetic middle for every sample size and distinguishes disabled cache from forced misses", async () => {
+  const { median, matchesCacheMode } =
+    await import("../../bench/sample-modes.mjs");
+  expect(median([9, 1])).toBe(5);
+  expect(median([1, 9, 2])).toBe(2);
+  expect(median([3, 3])).toBe(3);
+  expect(matchesCacheMode("off", { gets: 0, hits: 0, sets: 0 })).toBe(true);
+  expect(matchesCacheMode("off", { gets: 2, hits: 0, sets: 0 })).toBe(false);
+  expect(matchesCacheMode("cold", { gets: 2, hits: 0, sets: 1 })).toBe(true);
+  expect(matchesCacheMode("warm", { gets: 2, hits: 1, sets: 0 })).toBe(true);
+});

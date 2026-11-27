@@ -7,10 +7,50 @@ import type {
   NormalizedCloneFragment,
   NormalizedDuplicationReport,
 } from "./types.js";
-import type { DuplicationSourceIndex, SourceToken } from "./source-tokens.js";
+import type {
+  DuplicationSourceIndex,
+  SourceToken,
+  TokenizedSource,
+} from "./source-tokens.js";
 
 function signature(tokens: readonly SourceToken[]): string {
   return JSON.stringify(tokens.map(({ kind, text }) => [kind, text]));
+}
+function sameTokens(
+  left: readonly SourceToken[],
+  right: readonly SourceToken[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index++) {
+    const a = left[index]!;
+    const b = right[index]!;
+    if (a.kind !== b.kind || a.text !== b.text) return false;
+  }
+  return true;
+}
+function sameSource(
+  prior: TokenizedSource | undefined,
+  source: TokenizedSource | undefined,
+  mode: string,
+): boolean {
+  return Boolean(
+    prior?.valid &&
+    source?.valid &&
+    (mode === "mild"
+      ? sameTokens(prior.tokens, source.tokens)
+      : prior.text === source.text),
+  );
+}
+
+function tokenIndexes(
+  sources: DuplicationSourceIndex,
+): Map<string, Map<SourceToken, number>> {
+  return new Map(
+    [...sources].map(([file, source]) => [
+      file,
+      new Map(source.tokens.map((token, index) => [token, index])),
+    ]),
+  );
 }
 function occurrences(report: NormalizedDuplicationReport): Observation[] {
   const unique = new Map<string, Observation>();
@@ -74,30 +114,13 @@ export function compareCloneOccurrences(
     changes.files.get(file)?.previousPath ?? file;
   const unchanged =
     targetSources.size === baselineSources.size &&
-    [...targetSources].every(([file, source]) => {
-      const prior = baselineSources.get(previousPath(file));
-      return (
-        prior?.valid &&
-        source.valid &&
-        (mode === "mild"
-          ? signature(prior.tokens) === signature(source.tokens)
-          : prior.text === source.text)
-      );
-    });
+    [...targetSources].every(([file, source]) =>
+      sameSource(baselineSources.get(previousPath(file)), source, mode),
+    );
   const canPair = baseline.percentage > threshold || unchanged;
   const used = new Set<number>();
-  const oldIndexes = new Map(
-    [...baselineSources].map(([file, source]) => [
-      file,
-      new Map(source.tokens.map((token, index) => [token, index])),
-    ]),
-  );
-  const newIndexes = new Map(
-    [...targetSources].map(([file, source]) => [
-      file,
-      new Map(source.tokens.map((token, index) => [token, index])),
-    ]),
-  );
+  const oldIndexes = tokenIndexes(baselineSources);
+  const newIndexes = tokenIndexes(targetSources);
   const oldOrdinals = new Map<string, number>();
   old.forEach((item, index) => {
     const loc = item.location as NormalizedCloneFragment;
@@ -152,13 +175,7 @@ export function compareCloneOccurrences(
     const prior = baselineSources.get(previousPath(loc.file));
     let fullEqual = fileEquality.get(loc.file);
     if (fullEqual === undefined) {
-      fullEqual = Boolean(
-        source?.valid &&
-        prior?.valid &&
-        (mode === "mild"
-          ? signature(source.tokens) === signature(prior.tokens)
-          : source.text === prior.text),
-      );
+      fullEqual = sameSource(prior, source, mode);
       fileEquality.set(loc.file, fullEqual);
     }
     const addedSignificant =

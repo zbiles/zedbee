@@ -1,3 +1,5 @@
+import { attributeMetricDelta } from "../../src/attribution/metrics.js";
+import { assertSourceSafeEntityObservation } from "../../src/attribution/source-identity.js";
 import {
   sourceEntityName,
   syntaxIdentity,
@@ -581,4 +583,33 @@ describe("collectChangedEntities", () => {
       String.prototype.localeCompare = original;
     }
   });
+});
+
+it("uses the same unique identity in metric and changed-entity views", () => {
+  const source =
+    "function outer(key: boolean) {\n if (key) { function helper() { return 1; } helper(); }\n else { function helper() { return 2; } helper(); }\n}";
+  const spans = collectMetricEntitySpans(source, "sample.ts");
+  const first = spans.find(({ entity }) => entity.startLine === 2)!.entity;
+  const second = spans.find(({ entity }) => entity.startLine === 3)!.entity;
+  expect(second.identity).not.toBe(first.identity);
+  const changed = collectChangedEntities(source, "sample.ts", [
+    { start: 3, end: 3 },
+  ]);
+  expect(changed).toContainEqual(second);
+  const observation = {
+    check: "cyclomaticComplexity",
+    rule: "complexity",
+    identity: second.identity,
+    severity: "error" as const,
+    message: "Complexity exceeds policy.",
+    entity: { kind: second.kind, name: second.name, file: second.file },
+    metric: { name: "cyclomatic", value: 12 },
+  };
+  expect(() => assertSourceSafeEntityObservation(observation)).not.toThrow();
+  expect(
+    attributeMetricDelta(undefined, observation, changed, {
+      limit: 10,
+      blockWorsening: true,
+    }).attribution.staged,
+  ).toBe(true);
 });

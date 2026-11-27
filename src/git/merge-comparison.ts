@@ -29,31 +29,22 @@ export async function resolveMergeComparison(
   signal?: AbortSignal,
 ): Promise<{ parents: readonly string[]; tree: string } | undefined> {
   const options = signal === undefined ? {} : { signal };
-  const path = (
-    await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
-  ).stdout;
-  let incoming: string[];
-  try {
-    if (
-      git.selectedComparison !== undefined &&
-      git.selectedComparison.mergeHeads === undefined
-    ) {
-      throw Object.assign(new Error("No captured merge parents"), {
-        code: "ENOENT",
-      });
+  let incoming = git.selectedComparison?.mergeHeads;
+  if (git.selectedComparison === undefined) {
+    const path = (
+      await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
+    ).stdout;
+    try {
+      incoming = (await readFile(resolve(git.repositoryRoot, path), "utf8"))
+        .trim()
+        .split(/\r?\n/u);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-    incoming =
-      git.selectedComparison?.mergeHeads !== undefined
-        ? [...git.selectedComparison.mergeHeads]
-        : (await readFile(resolve(git.repositoryRoot, path), "utf8"))
-            .trim()
-            .split(/\r?\n/u);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    incoming = Object.keys(environment)
-      .filter((key) => /^GITHEAD_/u.test(key))
-      .map((key) => key.slice("GITHEAD_".length));
   }
+  incoming ??= Object.keys(environment)
+    .filter((key) => key.startsWith("GITHEAD_"))
+    .map((key) => key.slice("GITHEAD_".length));
   if (incoming.length === 0) {
     if (required) throw new MergeComparisonError("MERGE_PARENTS_UNAVAILABLE");
     return undefined;

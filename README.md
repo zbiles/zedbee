@@ -37,6 +37,10 @@ Zedbee scans the version you staged, even if you have edited the file again sinc
 
 With the hooks installed, Zedbee runs when you commit and before Git creates an automatic merge commit. Merge commits are checked against every parent; fast-forward merges create no commit and do not run these hooks. You can also run it manually at any time. Hooks are local and can be bypassed, so use CI with a required check if your team needs to enforce the gate before merging.
 
+If your team uses Husky with Git worktrees, commit the dispatchers listed by
+setup so a new worktree can reach the hooks as soon as it is created. See the
+[Husky worktree setup](docs/cli-reference.md#fresh-worktrees-with-husky).
+
 ## What it checks
 
 - Exposed secrets, known dependency vulnerabilities, and unsafe code patterns.

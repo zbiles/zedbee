@@ -29,16 +29,26 @@ function cannotAnalyze(
 function decisionForEntry(
   entry: UnsupportedIndexEntry,
   policyForFile: FilePolicyResolver,
+  checkIds: readonly CheckId[],
 ): UnsupportedInputDecision | undefined {
   const artifact: Exclude<ArtifactKind, "text"> = entry.kind;
   const affectedChecks = Object.freeze(
-    CHECK_IDS.filter((checkId) => {
-      const contract = inputContractFor(checkId);
-      return (
-        cannotAnalyze(contract, entry.path, artifact) &&
-        policyForFile(checkId, entry.path, "target").severity !== "off"
-      );
-    }).sort(compareCodeUnits),
+    checkIds
+      .filter((checkId) => {
+        const contract = inputContractFor(checkId);
+        // Project parser and ignore classification must happen inside the
+        // trusted formatter session; managed extensions cannot decide it.
+        if (
+          checkId === "formatting" &&
+          policyForFile("formatting", entry.path, "target").engine === "project"
+        )
+          return false;
+        return (
+          cannotAnalyze(contract, entry.path, artifact) &&
+          policyForFile(checkId, entry.path, "target").severity !== "off"
+        );
+      })
+      .sort(compareCodeUnits),
   );
   if (affectedChecks.length === 0) return undefined;
   return Object.freeze({
@@ -52,6 +62,7 @@ export function planUnsupportedInputs(
   entries: readonly UnsupportedIndexEntry[],
   changedPaths: ReadonlySet<string>,
   policyForFile: FilePolicyResolver,
+  checkIds: readonly CheckId[] = CHECK_IDS,
 ): readonly UnsupportedInputDecision[] {
   return Object.freeze(
     [...entries]
@@ -62,7 +73,7 @@ export function planUnsupportedInputs(
           compareCodeUnits(left.kind, right.kind),
       )
       .flatMap((entry) => {
-        const decision = decisionForEntry(entry, policyForFile);
+        const decision = decisionForEntry(entry, policyForFile, checkIds);
         return decision === undefined ? [] : [decision];
       }),
   );
@@ -114,9 +125,10 @@ export function unsupportedEntryFailures(
   changedPaths: ReadonlySet<string>,
   policyForFile: FilePolicyResolver,
   mode: ScanMode,
+  checkIds: readonly CheckId[] = CHECK_IDS,
 ): readonly ScanFailureInput[] {
   return Object.freeze(
-    planUnsupportedInputs(entries, changedPaths, policyForFile).map(
+    planUnsupportedInputs(entries, changedPaths, policyForFile, checkIds).map(
       (decision) => failureForDecision(decision, mode),
     ),
   );

@@ -14,9 +14,10 @@ function cell() {
   return {
     samples: 15,
     identities: [
-      { root: "base", dirty: "" },
-      { root: "head", dirty: "" },
+      { root: "base", dirty: "", commit: "a".repeat(40), tree: "c".repeat(40) },
+      { root: "head", dirty: "", commit: "b".repeat(40), tree: "d".repeat(40) },
     ],
+    selectedRevisions: { baseline: "a".repeat(40), candidate: "b".repeat(40) },
     results: ["base", "head"].flatMap((root) =>
       Array.from({ length: 15 }, (_, sample) => ({
         root,
@@ -28,7 +29,7 @@ function cell() {
         cacheMode: "warm",
         executorMode: "warm-service",
         durationMs: root === "base" ? 1000 : 900,
-        observed: { gets: 1, hits: 1, serviceSessions: 1 },
+        observed: { gets: 1, hits: 1, sets: 0, serviceSessions: 1 },
         service: { state: "running" },
         serviceTreeMemory: {
           verified: true,
@@ -90,4 +91,14 @@ it("rejects missing or duplicated samples, mixed cells and dirty builds", () => 
   const dirty = cell();
   dirty.identities[0]!.dirty = "modified";
   expect(() => assess(dirty)).toThrow();
+});
+
+it("rejects identical revisions and switched comparison roles", () => {
+  const same = cell();
+  same.identities[1]!.commit = same.identities[0]!.commit;
+  same.selectedRevisions.candidate = same.selectedRevisions.baseline;
+  expect(() => assess(same)).toThrow();
+  const switched = cell();
+  switched.identities.reverse();
+  expect(() => assess(switched)).toThrow();
 });

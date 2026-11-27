@@ -1,14 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import {
-  lstat,
-  open,
-  readFile,
-  rename,
-  unlink,
-  type FileHandle,
-} from "node:fs/promises";
+import { lstat, open, rename, unlink, type FileHandle } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import {
+  openWithoutFollowing,
+  readBoundedBytes,
+} from "../inspection/read-json.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 
 export interface WorkingFileIdentity {
@@ -52,9 +49,11 @@ export interface WriteWorkingFileRequest {
   readonly source: string;
   readonly expectedIdentity?: WorkingFileIdentity;
   readonly expectedSha256?: string;
+  readonly signal?: AbortSignal;
   readonly dependencies?: WriteWorkingFileDependencies;
 }
 
+export const MAX_WORKING_FILE_BYTES = 4 * 1024 * 1024;
 const activeTargets = new Set<string>();
 
 function unsafePath(): Error {
@@ -69,8 +68,8 @@ function duplicateTarget(): Error {
   return new Error("Zedbee refused a duplicate in-flight working-file target.");
 }
 
-function digest(source: string): string {
-  return createHash("sha256").update(source, "utf8").digest("hex");
+function digest(source: Buffer): string {
+  return createHash("sha256").update(source).digest("hex");
 }
 
 function identity(state: { dev: bigint; ino: bigint }): WorkingFileIdentity {
@@ -177,6 +176,47 @@ async function validateTarget(
   };
 }
 
+async function readWorkingBytes(
+  target: TargetState,
+  file: string,
+): Promise<Buffer> {
+  const handle = await openWithoutFollowing(target.path);
+  try {
+    const state = await handle.stat({ bigint: true });
+    if (!state.isFile() || !sameIdentity(identity(state), target.identity))
+      throw changedFile();
+    if (state.size > BigInt(MAX_WORKING_FILE_BYTES)) throw changedFile();
+    const bytes = await readBoundedBytes(handle, file, MAX_WORKING_FILE_BYTES);
+    await validateAncestors(target.ancestors);
+    const current = await lstat(target.path, { bigint: true });
+    if (
+      !current.isFile() ||
+      !sameIdentity(identity(current), target.identity) ||
+      Number(current.mode & 0o777n) !== target.mode
+    )
+      throw changedFile();
+    return bytes;
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function observeWorkingFile(
+  repositoryRoot: string,
+  file: string,
+): Promise<{ bytes: Buffer; identity: WorkingFileIdentity }> {
+  const target = await validateTarget(
+    repositoryRoot,
+    file,
+    undefined,
+    undefined,
+  );
+  return {
+    bytes: await readWorkingBytes(target, file),
+    identity: target.identity,
+  };
+}
+
 async function validatedTemporary(
   temporary: string,
   expectedIdentity: WorkingFileIdentity,
@@ -216,6 +256,7 @@ async function cleanupTemporary(
 export async function writeWorkingFile(
   request: WriteWorkingFileRequest,
 ): Promise<void> {
+  request.signal?.throwIfAborted();
   if (typeof request.source !== "string") {
     throw new TypeError("Expected source");
   }
@@ -267,19 +308,22 @@ export async function writeWorkingFile(
       await request.dependencies.syncTemporary(temporaryHandle);
     }
 
-    await validateTarget(
+    const current = await validateTarget(
       request.repositoryRoot,
       request.file,
       request.expectedIdentity ?? target.identity,
       target.ancestors,
     );
+    if (current.mode !== target.mode) throw changedFile();
     if (
       request.expectedSha256 !== undefined &&
-      digest(await readFile(target.path, "utf8")) !== request.expectedSha256
+      digest(await readWorkingBytes(current, request.file)) !==
+        request.expectedSha256
     ) {
       throw changedFile();
     }
     await validatedTemporary(temporary, temporaryIdentity, target.ancestors);
+    request.signal?.throwIfAborted();
     await rename(temporary, target.path);
     renamed = true;
     if (process.platform !== "win32") {

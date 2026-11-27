@@ -1,6 +1,7 @@
+import { findProjectEslintConfig } from "./config-file.js";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import {
   createProjectWorkspace,
   type ProjectWorkspace,
@@ -99,23 +100,17 @@ export async function createProjectEslintWorkspace(
         : "PROJECT_ESLINT_LAYOUT_UNSUPPORTED",
     );
   }
-  let directory = resolve(workspace.treeRoot, input.projectRoot);
-  while (isContainedPath(workspace.treeRoot, directory)) {
-    for (const name of [
-      "eslint.config.js",
-      "eslint.config.mjs",
-      "eslint.config.cjs",
-    ]) {
-      const file = join(directory, name);
-      if (
-        await lstat(file)
-          .then((value) => value.isFile() || value.isSymbolicLink())
-          .catch(() => false)
-      )
-        return { workspace, configFile: file };
-    }
-    if (directory === workspace.treeRoot) break;
-    directory = dirname(directory);
+  try {
+    const selected = await findProjectEslintConfig(
+      workspace.treeRoot,
+      input.projectRoot,
+      "mirror",
+    );
+    if (selected.supported && selected.path !== undefined)
+      return { workspace, configFile: selected.path };
+  } catch (error) {
+    await workspace.dispose();
+    throw error;
   }
   await workspace.dispose();
   throw new ProjectEslintFailureError("PROJECT_ESLINT_CONFIG_UNSUPPORTED");

@@ -1,9 +1,18 @@
 import { filterCapturedCompilerFiles } from "./captured-directory.js";
-import { dependencyResolutionContainingFile } from "./dependency-resolution-path.js";
+import {
+  dependencyResolutionContainingFile,
+  physicalWorkspaceRelativePath,
+  type WorkspaceDirectoryAlias,
+} from "./dependency-resolution-path.js";
 import { rememberConfiguredTypes } from "./compiler-options-provenance.js";
 import { CapturedDependencies } from "../../cache/captured-dependencies.js";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import {
+  isContainedPath,
+  normalizeRepositoryPath,
+} from "../../inspection/read-json.js";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import * as ts from "typescript";
+import { containedRelativeRequest } from "./config-requests.js";
 import { analysisKey, analysisStore } from "../analysis-reuse.js";
 import {
   captureAnalysisDependencies,
@@ -17,6 +26,7 @@ export interface SnapshotProgramInput {
   readonly reusePurpose?: CompilerProgramPurpose;
   readonly repositoryRoot: string;
   readonly snapshotRoot?: string;
+  readonly workspaceAlias?: WorkspaceDirectoryAlias;
   readonly files: Readonly<Record<string, string>>;
   readonly rootNames: readonly string[];
   readonly options: ts.CompilerOptions;
@@ -34,20 +44,6 @@ export interface SnapshotProgram {
 
 const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 
-function normalized(path: string): string {
-  return path.split(sep).join("/");
-}
-
-function contained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot === "" ||
-    (!isAbsolute(fromRoot) &&
-      fromRoot !== ".." &&
-      !fromRoot.startsWith(`..${sep}`))
-  );
-}
-
 function directoryKey(path: string): string {
   // Match path.relative's case-insensitive containment on Windows.
   return sep === "\\" ? path.toLowerCase() : path;
@@ -58,8 +54,8 @@ function repositoryPath(
   path: string,
 ): string | undefined {
   const absolute = resolve(path);
-  if (!contained(snapshotRoot, absolute)) return undefined;
-  const result = normalized(relative(snapshotRoot, absolute));
+  if (!isContainedPath(snapshotRoot, absolute)) return undefined;
+  const result = normalizeRepositoryPath(relative(snapshotRoot, absolute));
   return result.length === 0 ? "." : result;
 }
 
@@ -76,17 +72,11 @@ function isBareSpecifier(specifier: string): boolean {
 function validateProjectSpecifier(sourcePath: string, specifier: string): void {
   if (isBareSpecifier(specifier)) return;
   if (
-    specifier.includes("\\") ||
-    WINDOWS_DRIVE_PATH.test(specifier) ||
-    /^[A-Za-z][A-Za-z0-9+.-]*:/u.test(specifier) ||
-    specifier.startsWith("/")
+    containedRelativeRequest(
+      normalizeRepositoryPath(sourcePath),
+      specifier,
+    ) === undefined
   ) {
-    throw new TypeError("Unsafe TypeScript module path");
-  }
-  const candidate = posix.normalize(
-    posix.join(posix.dirname(normalized(sourcePath)), specifier),
-  );
-  if (candidate === ".." || candidate.startsWith("../")) {
     throw new TypeError("Unsafe TypeScript module path");
   }
 }
@@ -142,7 +132,7 @@ function createFreshSnapshotProgram(
     input.dependencies ?? new CapturedDependencies({ repositoryRoot });
   const files = new Map(
     Object.entries(input.files).map(([path, source]) => [
-      resolve(snapshotRoot, ...normalized(path).split("/")),
+      resolve(snapshotRoot, ...normalizeRepositoryPath(path).split("/")),
       source,
     ]),
   );
@@ -184,7 +174,7 @@ function createFreshSnapshotProgram(
   // speculative alias lookup (including a Node builtin such as node:events)
   // is an inventory miss, not a lookup in the live installation.
   const isSnapshotPath = (candidate: string): boolean =>
-    snapshotRoot !== repositoryRoot && contained(snapshotRoot, candidate);
+    snapshotRoot !== repositoryRoot && isContainedPath(snapshotRoot, candidate);
   const dependencyFileAllowed = (candidate: string): boolean =>
     !isSnapshotPath(candidate) && dependencies.fileExists(candidate);
   const prepareProjectOptions = (
@@ -205,7 +195,10 @@ function createFreshSnapshotProgram(
         // Custom declarations remain in the snapshot; only installed type roots
         // use the project's dependency directory.
         return path?.split("/").includes("node_modules")
-          ? resolve(repositoryRoot, path)
+          ? resolve(
+              repositoryRoot,
+              physicalWorkspaceRelativePath(path, input.workspaceAlias),
+            )
           : typeRoot;
       });
     } else {
@@ -215,9 +208,12 @@ function createFreshSnapshotProgram(
           : resolve(snapshotRoot, projectRootNames[0] ?? "index.ts"),
       );
       const projectPath = repositoryPath(snapshotRoot, projectDirectory) ?? ".";
-      let directory = resolve(repositoryRoot, projectPath);
+      let directory = resolve(
+        repositoryRoot,
+        physicalWorkspaceRelativePath(projectPath, input.workspaceAlias),
+      );
       prepared.typeRoots = [];
-      while (contained(repositoryRoot, directory)) {
+      while (isContainedPath(repositoryRoot, directory)) {
         prepared.typeRoots.push(resolve(directory, "node_modules/@types"));
         if (directory === repositoryRoot) break;
         directory = dirname(directory);
@@ -278,22 +274,26 @@ function createFreshSnapshotProgram(
       directoryExists: (path) => {
         const absolute = absolutePath(path);
         if (snapshotDirectories.has(directoryKey(absolute))) return true;
-        if (contained(repositoryRoot, absolute)) return true;
+        if (isContainedPath(repositoryRoot, absolute)) return true;
         return (
-          (contained(packageRoot, absolute) ||
-            contained(typescriptLibraryRoot, absolute)) &&
+          (isContainedPath(packageRoot, absolute) ||
+            isContainedPath(typescriptLibraryRoot, absolute)) &&
           dependencies.directoryExists(absolute)
         );
       },
-      getDirectories: (path) =>
-        contained(repositoryRoot, absolutePath(path)) ||
-        contained(typescriptLibraryRoot, absolutePath(path))
-          ? dependencies.getDirectories(absolutePath(path))
-          : [],
-      realpath: (path) =>
-        files.has(absolutePath(path)) || isSnapshotPath(absolutePath(path))
-          ? absolutePath(path)
-          : dependencies.realpath(absolutePath(path)),
+      getDirectories: (path) => {
+        const absolute = absolutePath(path);
+        return isContainedPath(repositoryRoot, absolute) ||
+          isContainedPath(typescriptLibraryRoot, absolute)
+          ? dependencies.getDirectories(absolute)
+          : [];
+      },
+      realpath: (path) => {
+        const absolute = absolutePath(path);
+        return files.has(absolute) || isSnapshotPath(absolute)
+          ? absolute
+          : dependencies.realpath(absolute);
+      },
     };
 
     // Resolve project aliases and relative imports in the captured tree first.
@@ -383,6 +383,7 @@ function createFreshSnapshotProgram(
             repositoryRoot,
             snapshotRoot,
             containingFile,
+            input.workspaceAlias,
           );
           const resolved = ts.resolveModuleName(
             specifier,
@@ -409,7 +410,7 @@ function createFreshSnapshotProgram(
   };
 
   const rootNames = input.rootNames.map((path) => {
-    const normalizedPath = normalized(path);
+    const normalizedPath = normalizeRepositoryPath(path);
     if (
       normalizedPath.length === 0 ||
       normalizedPath.includes("\\") ||

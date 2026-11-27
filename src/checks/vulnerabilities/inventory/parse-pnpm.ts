@@ -1,14 +1,13 @@
 import {
   isCollection,
+  isMap,
   isNode,
   isPair,
   isScalar,
-  parseDocument,
   type Node,
 } from "yaml";
 import { inventoryError } from "./errors.js";
 import {
-  MAX_DEPENDENCY_RECORDS,
   MAX_LOCKFILE_NESTING,
   MAX_LOCKFILE_NODES,
   MAX_LOCKFILE_STRING_LENGTH,
@@ -16,13 +15,18 @@ import {
 import {
   finalizeDependencyRecords,
   plainRecord,
+  validateDependencyRecordCount,
   validateExactVersion,
   validateLockfileInput,
   validatePackageName,
 } from "./normalize.js";
 import { createSourcePositionIndex } from "./source-position.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
-import { validateParsedStructure } from "./validate-structure.js";
+import {
+  parseYamlLockfileDocument,
+  readYamlLockfileData,
+  type YamlLockfileDocument,
+} from "./yaml-document.js";
 
 function validateYamlTree(root: Node | null): void {
   let count = 0;
@@ -99,24 +103,24 @@ function directContexts(data: Record<string, unknown>, format: "6.0" | "9.0") {
   return contexts;
 }
 
+function packageValueOffsets(document: YamlLockfileDocument): ReadonlyMap<string, number> {
+  const offsets = new Map<string, number>();
+  const packages = document.get("packages", true);
+  if (!isMap(packages)) return offsets;
+  for (const pair of packages.items) {
+    if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+    if (offsets.has(pair.key.value)) continue;
+    const value = pair.value;
+    if (isNode(value) && value.range != null) offsets.set(pair.key.value, value.range[0]);
+  }
+  return offsets;
+}
+
 export function parsePnpmLockfile(contents: string, repositoryPath: string): DependencyInventory {
   const lockfilePath = validateLockfileInput(contents, repositoryPath);
-  const document = parseDocument(contents, {
-    prettyErrors: false,
-    strict: true,
-    uniqueKeys: true,
-  });
-  if (document.errors.length > 0 || document.contents === null) {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not parse the pnpm lockfile.");
-  }
+  const document = parseYamlLockfileDocument(contents, "pnpm");
   validateYamlTree(document.contents);
-  let rawData: unknown;
-  try {
-    rawData = document.toJS({ maxAliasCount: 0 });
-  } catch {
-    throw inventoryError("LOCKFILE_INVALID", "Zedbee could not safely read the pnpm lockfile structure.");
-  }
-  validateParsedStructure(rawData, "pnpm");
+  const rawData = readYamlLockfileData(document, "pnpm");
   const data = plainRecord(rawData);
   const format = data.lockfileVersion;
   if (format !== "6.0" && format !== "9.0") {
@@ -124,12 +128,13 @@ export function parsePnpmLockfile(contents: string, repositoryPath: string): Dep
   }
   const packages = plainRecord(data.packages ?? {}, "The pnpm lockfile packages must be an object.");
   const positions = createSourcePositionIndex(contents);
+  const offsets = packageValueOffsets(document);
   const contexts = directContexts(data, format);
   const records: DependencyRecord[] = [];
   for (const key of Object.keys(packages)) {
     const { name, version } = locatorPackage(key);
-    const node = document.getIn(["packages", key], true) as Node | undefined;
-    const line = node?.range == null ? undefined : positions.lineAt(node.range[0]);
+    const offset = offsets.get(key);
+    const line = offset === undefined ? undefined : positions.lineAt(offset);
     const matches = contexts.get(`${name}\0${version}`) ?? [];
     const scopes = matches.length === 0 ? [{ dependencyPath: Object.freeze([name]) }] : matches;
     for (const scope of scopes) {
@@ -142,9 +147,7 @@ export function parsePnpmLockfile(contents: string, repositoryPath: string): Dep
         ...scope,
       });
     }
-    if (records.length > MAX_DEPENDENCY_RECORDS) {
-      throw inventoryError("LOCKFILE_LIMIT_EXCEEDED", "The pnpm lockfile contains too many dependency records.");
-    }
+    validateDependencyRecordCount(records.length, "pnpm");
   }
   return finalizeDependencyRecords(records);
 }

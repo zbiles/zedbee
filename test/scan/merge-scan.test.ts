@@ -714,3 +714,166 @@ it("allows an inherited empty lockfile deletion when one parent has no dependenc
   });
   expect(report.summary.findings).toEqual([]);
 });
+
+it("skips proven independent compiler targets across both mixed merge parents", async () => {
+  const { createSeparateCompilerWorkspaces } =
+    await import("../helpers/separate-compiler-workspaces.js");
+  const repo = await createSeparateCompilerWorkspaces({
+    "web/src/style.css": "body { margin: 1px; }\n",
+    "web/src/data.json": '{"value":1}\n',
+    "docs/openapi.yaml": 'openapi: "3.0.0"\n',
+    "scripts/check.sh": "#!/bin/sh\nexit 0\n",
+  });
+  expect((await repo.git(["switch", "-c", "incoming"])).exitCode).toBe(0);
+  await repo.write("web/src/index.ts", "export const value = 2;\n");
+  await repo.write("web/src/style.css", "body { margin: 2px; }\n");
+  await repo.write("web/src/data.json", '{"value":2}\n');
+  await repo.commitAll("storefront changes");
+  expect((await repo.git(["switch", "main"])).exitCode).toBe(0);
+  await repo.write("docs/openapi.yaml", 'openapi: "3.1.0"\n');
+  await repo.write("scripts/check.sh", "#!/bin/sh\nexit 1\n");
+  await repo.commitAll("API notes and helper");
+  expect(
+    (await repo.git(["merge", "--no-commit", "--no-ff", "incoming"])).exitCode,
+  ).toBe(0);
+
+  const report = await scan(repo.root);
+  expect(report.outcome, JSON.stringify(report)).toBe("pass");
+  expect(report.mergeParents).toHaveLength(2);
+  for (const checkId of ["lint", "types"]) {
+    expect(
+      report.checks
+        .filter((check) => check.checkId === checkId)
+        .map(({ target, status, skipReason }) => ({
+          target,
+          status,
+          skipReason,
+        })),
+    ).toEqual([
+      {
+        target: "e2e",
+        status: "skipped",
+        skipReason:
+          "Workspace compiler inputs are independent of the selected changes",
+      },
+      {
+        target: "extension",
+        status: "skipped",
+        skipReason:
+          "Workspace compiler inputs are independent of the selected changes",
+      },
+      { target: "web", status: "completed", skipReason: undefined },
+    ]);
+  }
+});
+
+it("keeps an unchanged workspace that imports changed cross-workspace JSON", async () => {
+  const { createSeparateCompilerWorkspaces } =
+    await import("../helpers/separate-compiler-workspaces.js");
+  const repo = await createSeparateCompilerWorkspaces({
+    "web/src/data.json": '{"value":"before"}\n',
+    "extension/src/index.ts":
+      'import data from "../../web/src/data.json"; export const value: string = data.value;\n',
+  });
+  expect((await repo.git(["switch", "-c", "incoming"])).exitCode).toBe(0);
+  await repo.write("docs/openapi.yaml", 'openapi: "3.1.0"\n');
+  await repo.commitAll("API notes");
+  expect((await repo.git(["switch", "main"])).exitCode).toBe(0);
+  await repo.write("scripts/check.sh", "#!/bin/sh\nexit 0\n");
+  await repo.commitAll("API helper");
+  expect(
+    (await repo.git(["merge", "--no-commit", "--no-ff", "incoming"])).exitCode,
+  ).toBe(0);
+  await repo.write("web/src/data.json", '{"value":1}\n');
+  expect((await repo.git(["add", "web/src/data.json"])).exitCode).toBe(0);
+
+  const report = await scan(repo.root);
+  expect(report.outcome, JSON.stringify(report)).toBe("blocked");
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({
+      checkId: "types",
+      target: "extension",
+      status: "completed",
+      findings: [
+        expect.objectContaining({
+          rule: "typescript/TS2322",
+          location: expect.objectContaining({ file: "extension/src/index.ts" }),
+        }),
+      ],
+    }),
+  );
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({
+      checkId: "types",
+      target: "e2e",
+      status: "skipped",
+      skipReason:
+        "Workspace compiler inputs are independent of the selected changes",
+    }),
+  );
+});
+
+it("finds the same compiler error from a conflict resolution with narrowed and broad plans", async () => {
+  const { createSeparateCompilerWorkspaces } =
+    await import("../helpers/separate-compiler-workspaces.js");
+  const repo = await createSeparateCompilerWorkspaces({
+    "web/src/index.ts": 'export const value: string = "base";\n',
+  });
+  expect((await repo.git(["switch", "-c", "incoming"])).exitCode).toBe(0);
+  await repo.write(
+    "web/src/index.ts",
+    'export const value: string = "incoming";\n',
+  );
+  await repo.write("docs/openapi.yaml", 'openapi: "3.1.0"\n');
+  await repo.commitAll("incoming version");
+  expect((await repo.git(["switch", "main"])).exitCode).toBe(0);
+  await repo.write(
+    "web/src/index.ts",
+    'export const value: string = "main";\n',
+  );
+  await repo.write("web/src/style.css", "body { margin: 1px; }\n");
+  await repo.commitAll("main version");
+  expect(
+    (await repo.git(["merge", "--no-commit", "--no-ff", "incoming"])).exitCode,
+  ).toBe(1);
+  await repo.write("web/src/index.ts", "export const value: string = 1;\n");
+  expect((await repo.git(["add", "web/src/index.ts"])).exitCode).toBe(0);
+
+  const narrow = await scan(repo.root);
+  expect(narrow.outcome, JSON.stringify(narrow)).toBe("blocked");
+  expect(narrow.checks).toContainEqual(
+    expect.objectContaining({
+      checkId: "types",
+      target: "e2e",
+      status: "skipped",
+    }),
+  );
+  expect(narrow.summary.findings).toContainEqual(
+    expect.objectContaining({
+      rule: "typescript/TS2322",
+      location: expect.objectContaining({ file: "web/src/index.ts" }),
+    }),
+  );
+
+  for (const name of ["e2e", "extension"]) {
+    await repo.write(
+      `${name}/node_modules/fixture-package/package.json`,
+      '{"name":"fixture-package","version":"1.0.0","types":"index.d.ts"}',
+    );
+    await repo.write(
+      `${name}/node_modules/fixture-package/index.d.ts`,
+      "export declare const value: number;\n",
+    );
+  }
+
+  const broad = await scan(repo.root);
+  expect(broad.outcome, JSON.stringify(broad)).toBe(narrow.outcome);
+  expect(broad.checks).toContainEqual(
+    expect.objectContaining({
+      checkId: "types",
+      target: "e2e",
+      status: "completed",
+    }),
+  );
+  expect(broad.summary.findings).toEqual(narrow.summary.findings);
+});

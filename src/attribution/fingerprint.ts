@@ -203,6 +203,16 @@ function canonicalIdentityText(value: unknown, field: string): string {
   return value;
 }
 
+/** Non-empty, trimmed text without C0 control characters or DEL. */
+export function isCanonicalSyntaxText(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.trim() === value &&
+    !/[\u0000-\u001f\u007f]/u.test(value)
+  );
+}
+
 function coordinate(value: unknown, field: string): number | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
@@ -347,7 +357,7 @@ function locationScope(location: SourceLocation): FindingIdentityScope {
   return { kind: "location", ...normalized };
 }
 
-function findingIdentityFromSnapshot(
+export function findingIdentityFromSnapshot(
   observation: Observation,
 ): FindingIdentity {
   // Validate the report location even when the entity is the preferred identity.
@@ -410,9 +420,12 @@ function canonicalIdentity(identity: FindingIdentity): string {
   ]);
 }
 
-export function fingerprintObservation(observation: Observation): string {
-  const snapshot = normalizeObservation(observation);
+export function fingerprintSnapshot(snapshot: Observation): string {
   return createHash("sha256")
     .update(canonicalIdentity(findingIdentityFromSnapshot(snapshot)), "utf8")
     .digest("hex");
+}
+
+export function fingerprintObservation(observation: Observation): string {
+  return fingerprintSnapshot(normalizeObservation(observation));
 }

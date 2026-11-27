@@ -13,7 +13,6 @@ import {
 export { PROJECT_PRETTIER_DISCLOSURE, InitActionButton } from "./init-view.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  measureElement,
   Text,
   render,
   useApp,
@@ -45,16 +44,18 @@ import {
 } from "./branded-command-frame.js";
 import {
   clampScrollOffset,
-  minimalRevealOffset,
+  isSgrMouseReport,
   pageScrollStep,
   parseSgrWheelDelta,
 } from "./terminal-viewport-model.js";
 import {
+  revealOffsetForTarget,
   TerminalViewport,
   type TerminalViewportMetrics,
 } from "./terminal-viewport.js";
 import { disableTerminalMouse, enableTerminalMouse } from "./terminal-mouse.js";
 import { InitOperation, type InitOperationState } from "./init-operation.js";
+import { alternateScreenRenderOptions } from "./alternate-screen-render.js";
 
 export interface InitAppProps extends InitPromptOptions {
   readonly proposal: InitProposal;
@@ -70,26 +71,13 @@ export interface InitAppProps extends InitPromptOptions {
 }
 
 const INIT_EVENT_MAX_FPS = 30;
-const CURSOR_HOME = "\u001b[H";
-const SGR_MOUSE_REPORT = /(?:\u001b)?\[<\d+;\d+;\d+[Mm]/u;
 
 export function initMaxFps(): number {
   return INIT_EVENT_MAX_FPS;
 }
 
 export function initRenderOptions() {
-  let homeTemporaryScreen = true;
-  return Object.freeze({
-    exitOnCtrlC: false,
-    patchConsole: false,
-    maxFps: initMaxFps(),
-    alternateScreen: true,
-    onRender() {
-      if (!homeTemporaryScreen) return;
-      homeTemporaryScreen = false;
-      process.stdout.write(CURSOR_HOME);
-    },
-  });
+  return alternateScreenRenderOptions(initMaxFps());
 }
 
 export function InitApp({
@@ -151,6 +139,7 @@ export function InitApp({
       visibleHeight: rows,
     });
   const [baseProfile, setBaseProfile] = useState<ProfileId>(proposal.profile);
+  const [profileSelected, setProfileSelected] = useState(false);
   const [customized, setCustomized] = useState(false);
   const [hookSelection, setHookSelection] = useState<InitHookChoice>(
     proposal.hookSelection ?? proposal.hook,
@@ -206,11 +195,15 @@ export function InitApp({
     () => ({
       ...proposalForSelection({
         profile: baseProfile,
+        ...(profileSelected ? { profileExplicit: true } : {}),
         eslintEngine,
         eslintTrust,
         eslintMessages,
         eslintMessageTrust,
         checks: Object.freeze(CHECK_IDS.filter((check) => selected.has(check))),
+        changedChecks: CHECK_IDS.filter(
+          (id) => selected.has(id) !== proposal.recommendedChecks.includes(id),
+        ),
         osvUnavailable,
         hook: hookSelection,
         formatting,
@@ -230,7 +223,9 @@ export function InitApp({
       eslintMessageTrust,
       telemetryEnabled,
       proposal.telemetryDisabledByEnvironment,
+      proposal.recommendedChecks,
       baseProfile,
+      profileSelected,
       osvUnavailable,
       hookSelection,
       formatting,
@@ -247,11 +242,11 @@ export function InitApp({
       ? (preparedReview ?? selectedProposal)
       : selectedProposal;
   const eslintReviewBlocked =
-    effectiveEslintEngine === "project" &&
-    (!eslintTrust ||
-      (selectedProposal.projectEslintMessages === "full" &&
-        !eslintMessageTrust) ||
-      (selectedProposal.eslintConflicts?.length ?? 0) > 0);
+    (selectedProposal.eslintConflicts?.length ?? 0) > 0 ||
+    (effectiveEslintEngine === "project" &&
+      (!eslintTrust ||
+        (selectedProposal.projectEslintMessages === "full" &&
+          !eslintMessageTrust)));
   const beginReview = () => {
     if (eslintReviewBlocked) return;
     evaluation.cancel();
@@ -304,26 +299,16 @@ export function InitApp({
     pendingSetupGeometryRef.current = false;
     lastSetupRevealRef.current = { columns, rows, focus };
     if (!shouldReveal) return;
-    const target = activeTargetRef.current;
-    const content = contentRef.current;
-    if (target === null || content === null) return;
-    const targetBounds = measureElement(target);
-    const contentBounds = measureElement(content);
-    if (targetBounds.height <= 0 || contentBounds.height <= 0) return;
-    const terminalHeight = Math.max(1, Math.trunc(rows));
-    const visibleHeight =
-      contentBounds.height > terminalHeight && terminalHeight >= 3
-        ? terminalHeight - 2
-        : terminalHeight;
     const currentOffset = setupOffsetRef.current;
-    const nextOffset = minimalRevealOffset(
+    const nextOffset = revealOffsetForTarget(
+      activeTargetRef.current,
+      contentRef.current,
+      rows,
       currentOffset,
-      visibleHeight,
-      targetBounds.y - contentBounds.y,
-      targetBounds.height,
-      contentBounds.height,
     );
-    if (nextOffset !== currentOffset) setSetupOffset(nextOffset);
+    if (nextOffset !== undefined && nextOffset !== currentOffset) {
+      setSetupOffset(nextOffset);
+    }
   }, [columns, focus, phase, rows]);
 
   const scrollBy = (delta: number) => {
@@ -339,8 +324,13 @@ export function InitApp({
 
   useInput((input, key) => {
     const normalized = input.toLowerCase();
+    if (input === "\u0003" || (key.ctrl && normalized === "c")) {
+      onDecision(false);
+      exit();
+      return;
+    }
     const wheelDelta = parseSgrWheelDelta(input);
-    if (SGR_MOUSE_REPORT.test(input)) {
+    if (isSgrMouseReport(input)) {
       if (wheelDelta !== 0) scrollBy(wheelDelta);
       return;
     }
@@ -441,6 +431,7 @@ export function InitApp({
         ]!;
       const nextProposal = proposalForSelection({
         profile: nextProfile,
+        profileExplicit: true,
         eslintEngine,
         eslintTrust,
         eslintMessages,
@@ -454,6 +445,7 @@ export function InitApp({
         workflow,
       });
       setBaseProfile(nextProfile);
+      setProfileSelected(true);
       setCustomized(false);
       setSelected(new Set(nextProposal.recommendedChecks));
     } else if (
@@ -594,8 +586,12 @@ export async function runInitPrompt(
 ): Promise<false | InitProposal> {
   let decision: false | InitProposal = false;
   let cleanupMouse = () => disableTerminalMouse(process.stdout);
+  let app: ReturnType<typeof render> | undefined;
+  const abort = () => app?.unmount();
+  options.signal?.throwIfAborted();
+  options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    const app = render(
+    app = render(
       <InitApp
         proposal={proposal}
         proposalForSelection={proposalForSelection}
@@ -613,9 +609,12 @@ export async function runInitPrompt(
       />,
       initRenderOptions(),
     );
+    if (options.signal?.aborted) abort();
     await app.waitUntilExit();
+    options.signal?.throwIfAborted();
     return decision;
   } finally {
+    options.signal?.removeEventListener("abort", abort);
     cleanupMouse();
   }
 }

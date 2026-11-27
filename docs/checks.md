@@ -66,9 +66,9 @@ When structural security cannot parse selected source, the incomplete check list
 ## TypeScript diagnostics
 
 `types` and typed `lint` inspect changed paths against source and configuration
-metadata from both selected snapshots. Ordinary Python, documentation and
-`.gitignore` changes do not select compiler jobs when that metadata establishes
-that they are unrelated. JavaScript/TypeScript source, deletions and renames,
+metadata from both selected snapshots. Ordinary Python changes, including
+`pyproject.toml`, documentation and `.gitignore` skip compiler jobs when
+the metadata establishes that they are unrelated. JavaScript/TypeScript source, deletions and renames,
 JSON/JSONC data, manifests, lockfiles and compiler configuration remain relevant.
 A contained inherited configuration is relevant even with an unusual filename
 such as `compiler.md`. Known source/configuration membership takes precedence
@@ -76,9 +76,8 @@ over the filename extension. Unknown inputs and incomplete configuration
 metadata conservatively retain analysis; policy configuration edits may also
 select compiler jobs even when only reporting settings changed.
 
-When a possible compiler input changes, both checks still conservatively check
-every discovered workspace containing TypeScript sources, including unchanged
-consumers and sibling workspaces. Both compare findings across the project,
+When a possible compiler input changes, both checks include unchanged workspaces
+that can consume it. Both compare findings across each selected project,
 including unchanged files. Existing
 baseline findings remain non-blocking when their supported comparison identities
 remain unchanged. File renames and unchanged spans retain location pairing.
@@ -567,15 +566,17 @@ for its scope and the distinction from native project ESLint behavior.
 
 Managed type and lint checks distinguish verified unavailable installation inputs from source errors. An incomplete comparison reports setup guidance; it does not suppress genuine new unresolved imports or removed exports. Existing relevance decisions still skip unaffected workspaces. Diagnostic messages can retain reviewed local names; see [reporting](reporting.md#diagnostic-message-detail) for contextual and source-free output.
 
-Managed lint and type checks can omit an unchanged workspace when a bounded,
-scan-local proof establishes that neither side of the comparison depends on the
-changed inputs. Ordinary documentation or Python edits do not invalidate that
-proof. Configuration, declaration, dependency and unknown input changes retain
-conservative coverage. The proof follows supported local aliases, references and
-installed declarations, then validates its input witnesses again before the scan
-finishes. Unsupported resolution, missing installations or exhausted proof bounds
-run the existing checks. Forced checks, merge comparisons and project ESLint keep
-their existing coverage.
+Managed lint and type checks can skip an unchanged workspace when a bounded proof
+establishes that its compiler inputs are independent of the changes. In a merge,
+each parent comparison can apply this proof to projects with separate npm
+lockfiles and evidence of a missing declared dependency. This can skip a sibling
+whose dependencies are uninstalled. Installed projects can use cached analyzer
+results. The proof
+follows supported imports, aliases, project references and installed declarations,
+then validates its inputs before finalizing that comparison. A changed shared
+configuration, changed declaration, unresolved alias or exhausted proof bound
+can keep a workspace selected. The proof applies to checks set to run when relevant
+under Swarm's managed compiler policies.
 
 The proof accounts for conditional import/require type branches, automatic JSX
 runtime imports in ordinary TypeScript modules, and aliases that shadow Node

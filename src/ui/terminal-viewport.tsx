@@ -1,6 +1,9 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
-import { Box, Text, useBoxMetrics, type DOMElement } from "ink";
-import { clampScrollOffset } from "./terminal-viewport-model.js";
+import { Box, Text, measureElement, useBoxMetrics, type DOMElement } from "ink";
+import {
+  clampScrollOffset,
+  revealOffsetForTarget as revealOffsetForBounds,
+} from "./terminal-viewport-model.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 
 export interface TerminalViewportMetrics {
@@ -17,6 +20,24 @@ export interface TerminalViewportProps {
   readonly contentRef?: RefObject<DOMElement | null>;
   onOffsetChange(offset: number): void;
   onMetricsChange?(metrics: TerminalViewportMetrics): void;
+}
+
+export function revealOffsetForTarget(
+  target: DOMElement | null,
+  content: DOMElement | null,
+  rows: number,
+  currentOffset: number,
+): number | undefined {
+  if (target === null || content === null) return undefined;
+  const targetBounds = measureElement(target);
+  const contentBounds = measureElement(content);
+  if (targetBounds.height <= 0 || contentBounds.height <= 0) return undefined;
+  return revealOffsetForBounds(
+    currentOffset,
+    rows,
+    targetBounds,
+    contentBounds,
+  );
 }
 
 interface IndicatorRowProps {

@@ -5,12 +5,16 @@ import { resolveConfig } from "../config/profiles.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
 import { prettierOptions } from "../checks/prettier/settings.js";
 import { initFileChange } from "./recommend.js";
+import { INIT_JSONC_EDIT_OPTIONS } from "./types.js";
 import type { InitProposal } from "./types.js";
 
 /** Format inert setup data before binding the review, hashes, and writes. */
 export async function formatInitProposal(
   proposal: InitProposal,
 ): Promise<InitProposal> {
+  // Show the conflicting proposal for review; formatting must not rethrow the
+  // same validation failure before the UI can present it.
+  if ((proposal.eslintConflicts?.length ?? 0) > 0) return proposal;
   const files = await Promise.all(
     proposal.files.map(async (file) => {
       if (file.relativePath !== ".zedbeerc.jsonc") return file;
@@ -41,9 +45,7 @@ export async function formatInitProposal(
               },
               generated: "prettier-engine",
             },
-            {
-              formattingOptions: { insertSpaces: true, tabSize: 2, eol: "\n" },
-            },
+            INIT_JSONC_EDIT_OPTIONS,
           ),
         );
       }

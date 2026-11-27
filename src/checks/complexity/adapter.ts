@@ -1,8 +1,9 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { changedFilePaths } from "../changed-file-paths.js";
-import { relative, sep } from "node:path";
+import { selectedChangedPaths } from "../changed-file-paths.js";
+import { validatedBatchResults } from "../eslint/batch-results.js";
 import { Linter } from "eslint";
 import type { Linter as LinterTypes } from "eslint";
 import {
@@ -36,8 +37,7 @@ import {
   pairClassMetricObservations,
   type ComplexitySnapshot,
 } from "./pair-class-metrics.js";
-
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
 function lineStarts(source: string): readonly number[] {
   const starts = [0];
@@ -46,6 +46,25 @@ function lineStarts(source: string): readonly number[] {
   }
   return starts;
 }
+
+const METRIC_OBSERVATION: Readonly<
+  Record<
+    ComplexityMetricName,
+    {
+      readonly check: "cyclomaticComplexity" | "readabilityComplexity";
+      readonly message: string;
+    }
+  >
+> = {
+  "cyclomatic-complexity": {
+    check: "cyclomaticComplexity",
+    message: "Cyclomatic complexity metric.",
+  },
+  "readability-complexity": {
+    check: "readabilityComplexity",
+    message: "Readability complexity metric.",
+  },
+};
 
 const metricObservations = Symbol("canonical complexity metrics");
 const metricMessages = Symbol("in-memory complexity traversal");
@@ -150,7 +169,6 @@ function rawObservationsFromMessages(
   file: string,
   source: string,
   messages: readonly LinterTypes.LintMessage[],
-  limit?: number,
 ): readonly Observation[] {
   const spanAt = metricSpanLookup(
     collectMetricEntitySpans(source, file),
@@ -171,20 +189,14 @@ function rawObservationsFromMessages(
     const span = spanAt(offset);
     if (span === undefined)
       throw new Error("Complexity metric had no canonical syntax entity.");
-    const check =
-      metric.name === "cyclomatic-complexity"
-        ? "cyclomaticComplexity"
-        : "readabilityComplexity";
+    const { check, message: text } = METRIC_OBSERVATION[metric.name];
     return [
       {
         check,
         rule: metric.name,
         identity: span.entity.identity,
         severity: "error",
-        message:
-          metric.name === "cyclomatic-complexity"
-            ? "Cyclomatic complexity metric."
-            : "Readability complexity metric.",
+        message: text,
         location: {
           file,
           startLine: span.entity.startLine,
@@ -198,7 +210,6 @@ function rawObservationsFromMessages(
         metric: {
           name: metric.name,
           value: metric.value,
-          ...(limit === undefined ? {} : { limit }),
         },
       },
     ];
@@ -281,12 +292,14 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((path) => SOURCE.test(path))
-    .filter(
-      (path) =>
-        selectedPaths.has(path) ||
-        policyForFile(checkId, path, side).when === "always",
-    )
+    .filter((path) => MANAGED_SOURCE_PATH.test(path))
+    .filter((path) => {
+      const policy = policyForFile(checkId, path, side);
+      return (
+        policy.severity !== "off" &&
+        (selectedPaths.has(path) || policy.when === "always")
+      );
+    })
     .sort(compareCodeUnits);
   if (files.length === 0) return { observations: [], files: {} };
   const engine = createManagedEslint({
@@ -295,12 +308,13 @@ async function collectSide(
     managedIgnores: [],
   });
   const results = await engine.lintFiles(files);
-  const allowed = new Set(files);
   const observations: Observation[] = [];
   const sources: Record<string, string> = {};
-  for (const result of results) {
-    const file = relative(canonicalRoot, result.filePath).split(sep).join("/");
-    if (!allowed.has(file)) throw new Error("Complexity analysis failed.");
+  for (const { file, result } of validatedBatchResults(
+    canonicalRoot,
+    files,
+    results,
+  )) {
     if (result.messages.length === 0) continue;
     if (result.source === undefined)
       throw new Error("Complexity analysis failed.");
@@ -315,11 +329,10 @@ async function collectSide(
           (policy as ResolvedComplexityPolicy).max,
         ).filter(({ metric }) => metric?.name === metricName),
       );
-    } catch {
+    } catch (error) {
       throw new CheckIncompleteError({
         code: "COMPLEXITY_FILE_ANALYSIS_FAILED",
-        message:
-          "Complexity analysis could not attribute metrics for a source file.",
+        message: `Complexity analysis could not complete for a source file: ${(error instanceof Error ? error.message : String(error))}`,
         path: file,
         remediation:
           "Verify that the file contains valid JavaScript or TypeScript, then retry. If the project accepts the syntax, report a Zedbee analyzer compatibility issue.",
@@ -349,7 +362,9 @@ function createComplexityAdapter(
       try {
         context.signal.throwIfAborted();
         const moves = await sourceMoves(context, id, { crossFileOnly: true });
-        const donorPaths = new Set(changedFilePaths(context, "baseline"));
+        const donorPaths = new Set(
+          selectedChangedPaths(context, id, "baseline"),
+        );
         for (const pair of moves.pairs) {
           if (workspaceOwns(context, "target", pair.target.entity.file))
             donorPaths.add(pair.baseline.entity.file);
@@ -372,7 +387,7 @@ function createComplexityAdapter(
           metricName,
           context.policyForFile,
           "target",
-          changedFilePaths(context, "target"),
+          selectedChangedPaths(context, id, "target"),
         );
         const movedIdentities = new Set(
           moves.pairs

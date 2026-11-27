@@ -223,11 +223,18 @@ describe("default managed execution descriptors", () => {
           .inspect(deletedOnly),
       ).toMatchObject({
         applies: true,
+        // Graph checks must retain surviving consumers of removed endpoints
+        // even if their own source files were unchanged.
         targets: [
           {
             id: "packages/deleted",
             kind: "workspace",
             relativeRoot: "packages/deleted",
+          },
+          {
+            id: "packages/new",
+            kind: "workspace",
+            relativeRoot: "packages/new",
           },
         ],
       });

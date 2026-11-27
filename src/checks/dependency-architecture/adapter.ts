@@ -1,3 +1,4 @@
+import { packageExportTargetsForConditions } from "../package-export-targets.js";
 import {
   isContainedImportSpecifier,
   WINDOWS_PATH,
@@ -22,7 +23,10 @@ import {
   readContainedFile,
   readJsonData,
 } from "../../inspection/read-json.js";
-import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
+import {
+  captureSnapshotRegistry,
+  type SnapshotRegistry,
+} from "../../inspection/snapshot-registry.js";
 import type {
   RepositoryInspection,
   WorkspaceInspection,
@@ -36,8 +40,8 @@ import type {
 import { normalizeDependencyViolations } from "./normalize-graph.js";
 import { createManagedDependencyRules } from "./rules.js";
 import { loadSnapshotProgramInput } from "../typescript/config.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const GENERATED = "(^|/)(?:node_modules|dist|build|coverage|vendor)(?:/|$)";
 const UNSAFE_RESOLUTION = "^(?:\\.\\.(?:/|$)|/|[A-Za-z]:[/\\\\])";
 
@@ -57,10 +61,9 @@ function validateSpecifier(sourcePath: string, specifier: string): void {
 }
 
 async function validateContainedImports(
-  snapshotRoot: string,
+  registry: SnapshotRegistry,
   sourceFiles: readonly string[],
 ): Promise<void> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   // Dependency-cruiser uses native reads; its entire input tree must be safe.
   for (const [path] of registry.unavailableSymlinks ?? []) {
     throw new CheckIncompleteError({
@@ -104,23 +107,21 @@ function entrypointRecord(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function exportTargets(value: unknown, depth = 0): readonly string[] {
-  if (depth > 8) throw new TypeError("Workspace exports are too deeply nested");
-  if (typeof value === "string") return [value];
-  if (Array.isArray(value)) {
-    return value.flatMap((candidate) => exportTargets(candidate, depth + 1));
-  }
-  const object = entrypointRecord(value);
-  return Object.keys(object)
-    .sort(compareCodeUnits)
-    .flatMap((key) => exportTargets(object[key], depth + 1));
-}
-
+// Match dependency-cruiser's shared resolver conditions rather than
+// treating every package condition as an unconditional alias.
+const GRAPH_CONDITIONS = [
+  "import",
+  "require",
+  "node",
+  "default",
+  "types",
+] as const;
+const graphConditions = new Set<string>(GRAPH_CONDITIONS);
 function manifestEntrypoints(
   value: unknown,
-): ReadonlyMap<string, readonly string[]> {
+): ReadonlyMap<string, readonly (string | null)[]> {
   const manifest = entrypointRecord(value);
-  const result = new Map<string, readonly string[]>();
+  const result = new Map<string, readonly (string | null)[]>();
   const exportsValue = manifest.exports;
   if (exportsValue !== undefined) {
     if (
@@ -132,17 +133,26 @@ function manifestEntrypoints(
       const exportsRecord = exportsValue as Record<string, unknown>;
       for (const key of Object.keys(exportsRecord).sort(compareCodeUnits)) {
         if (key === "." || (/^\.\/[^*]+$/u.test(key) && !key.includes(".."))) {
-          result.set(key, exportTargets(exportsRecord[key]));
+          result.set(
+            key,
+            packageExportTargetsForConditions(
+              exportsRecord[key],
+              graphConditions,
+            ),
+          );
         }
       }
     } else {
-      result.set(".", exportTargets(exportsValue));
+      result.set(
+        ".",
+        packageExportTargetsForConditions(exportsValue, graphConditions),
+      );
     }
   }
   const legacy = [manifest.module, manifest.main, manifest.types].filter(
     (candidate): candidate is string => typeof candidate === "string",
   );
-  if (legacy.length > 0) {
+  if (exportsValue === undefined && legacy.length > 0) {
     result.set(".", [...(result.get(".") ?? []), ...legacy]);
   }
   return result;
@@ -161,6 +171,7 @@ const ENTRY_EXTENSIONS = [
 
 function containedEntrypoint(
   workspace: WorkspaceInspection,
+  sourceFiles: ReadonlySet<string>,
   target: string,
 ): string | undefined {
   if (
@@ -192,22 +203,22 @@ function containedEntrypoint(
       candidates.add(`${candidate}/index${extension}`);
     }
   }
-  return [...candidates].find((candidate) =>
-    workspace.sourceFiles.includes(candidate),
-  );
+  return [...candidates].find((candidate) => sourceFiles.has(candidate));
 }
 
 async function workspaceAliases(
   inspection: RepositoryInspection,
   snapshotRoot: string,
+  registry: SnapshotRegistry,
 ): Promise<Readonly<Record<string, string>>> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
   const aliases: Record<string, string> = {};
   for (const workspace of inspection.workspaces) {
     if (workspace.name === undefined) continue;
-    const entrypoints = manifestEntrypoints(
+    const sourceFiles = new Set(workspace.sourceFiles);
+    const manifest = entrypointRecord(
       await readJsonData(registry, workspace.manifestPath),
     );
+    const entrypoints = manifestEntrypoints(manifest);
     const root =
       workspace.relativeRoot === "." ? "" : `${workspace.relativeRoot}/`;
     const rootFallbacks = [
@@ -223,11 +234,12 @@ async function workspaceAliases(
     )) {
       const entry =
         (entrypoints.get(exportKey) ?? [])
-          .map((target) => containedEntrypoint(workspace, target))
+          .filter((target): target is string => target !== null)
+          .map((target) => containedEntrypoint(workspace, sourceFiles, target))
           .find((candidate) => candidate !== undefined) ??
-        (exportKey === "."
+        (exportKey === "." && manifest.exports === undefined
           ? rootFallbacks.find((candidate) =>
-              workspace.sourceFiles.includes(candidate),
+              sourceFiles.has(candidate),
             )
           : undefined);
       if (entry === undefined) continue;
@@ -241,6 +253,13 @@ async function workspaceAliases(
   return aliases;
 }
 
+/** Most specific workspace root first; the repository root "." last. */
+function compareScopeRoots(left: string, right: string): number {
+  return (
+    Number(left === ".") - Number(right === ".") || right.length - left.length
+  );
+}
+
 /** Redirect only to pre-resolved captured files, scoped to the importing workspace. */
 function capturedAliasPlugin(
   snapshotRoot: string,
@@ -249,9 +268,7 @@ function capturedAliasPlugin(
   NonNullable<NonNullable<Parameters<typeof cruise>[2]>["plugins"]>[number],
   { apply: unknown }
 > {
-  const scopes = [...prepared.workspaces.keys()].sort(
-    (a, b) => Number(a === ".") - Number(b === ".") || b.length - a.length,
-  );
+  const scopes = [...prepared.workspaces.keys()].sort(compareScopeRoots);
   return {
     apply(resolver) {
       const target = resolver.ensureHook("resolve");
@@ -308,6 +325,7 @@ async function collectSide(
   inspection: RepositoryInspection,
   target: CheckTarget,
   signal: AbortSignal,
+  baselineWorkspacePackages: readonly string[] = [],
 ): Promise<readonly Observation[]> {
   signal.throwIfAborted();
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
@@ -317,7 +335,7 @@ async function collectSide(
   const workspace = findWorkspace(inspection, target.relativeRoot);
   if (workspace === undefined) return Object.freeze([]);
   const sourceFiles = workspace.sourceFiles
-    .filter((path) => SOURCE.test(path))
+    .filter((path) => COMPILER_SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
   const aliases = await prepareSnapshotAliases(
@@ -325,7 +343,8 @@ async function collectSide(
     inspection,
     workspace,
   );
-  await validateContainedImports(canonicalRoot, aliases.sourceFiles);
+  const registry = await captureSnapshotRegistry(canonicalRoot);
+  await validateContainedImports(registry, aliases.sourceFiles);
   const tsconfig = selectedTsconfig(workspace);
   const programInput =
     tsconfig === undefined
@@ -347,8 +366,9 @@ async function collectSide(
     },
     {
       modules: [join(canonicalRoot, ".zedbee-unavailable-node-modules")],
+      conditionNames: [...GRAPH_CONDITIONS],
       bustTheCache: true,
-      alias: await workspaceAliases(inspection, canonicalRoot),
+      alias: await workspaceAliases(inspection, canonicalRoot, registry),
       plugins: [capturedAliasPlugin(canonicalRoot, aliases)],
     },
     programInput === undefined
@@ -367,10 +387,8 @@ async function collectSide(
   const aliasConfigPath = aliases.workspaces.get(
     workspace.relativeRoot,
   )?.configPath;
-  const aliasScopes = [...inspection.workspaces].sort(
-    (left, right) =>
-      Number(left.relativeRoot === ".") - Number(right.relativeRoot === ".") ||
-      right.relativeRoot.length - left.relativeRoot.length,
+  const aliasScopes = [...inspection.workspaces].sort((left, right) =>
+    compareScopeRoots(left.relativeRoot, right.relativeRoot),
   );
   return normalizeDependencyViolations(
     result,
@@ -396,11 +414,12 @@ async function collectSide(
           )
           .map(([specifier]) => specifier),
       ),
-      workspacePackages: new Set(
-        inspection.workspaces
+      workspacePackages: new Set([
+        ...baselineWorkspacePackages,
+        ...inspection.workspaces
           .map(({ name }) => name)
           .filter((name): name is string => name !== undefined),
-      ),
+      ]),
     },
   );
 }
@@ -423,6 +442,9 @@ export const dependencyArchitectureAdapter: ObservationCheckAdapter = {
         context.targetInspection,
         context.target,
         context.signal,
+        context.baselineInspection.workspaces.flatMap(({ name }) =>
+          name === undefined ? [] : [name],
+        ),
       );
       return {
         checkId: "dependencyArchitecture",

@@ -37,6 +37,8 @@ export interface InspectionContext {
   readonly signal?: AbortSignal;
   /** A staged merge must retain target-only findings throughout each affected project. */
   readonly mergeComparison?: boolean;
+  /** Explicit comparison of committed revisions. */
+  readonly baseComparison?: boolean;
   repositoryRoot: string;
   changeSet: ChangeSet;
   config: ResolvedConfig;
@@ -65,6 +67,7 @@ export interface CheckExecutionResult {
 
 export type CheckApplicability = Readonly<{
   independentTargets?: readonly CheckTarget[];
+  uncoveredPaths?: readonly string[];
 }> &
   (
     | { applies: false; reason: string }

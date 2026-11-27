@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { execa } from "execa";
-import { FixApplyCleanupError } from "../../src/fixes/apply-plan.js";
+import {
+  FixApplyCleanupError,
+  FixApplyInterruptedError,
+} from "../../src/fixes/apply-plan.js";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -250,6 +253,41 @@ describe("parseFixCheck", () => {
 });
 
 describe("executeFixCommand", () => {
+  it("reports committed progress in JSON when cancelled after publication", async () => {
+    const deps = dependencies();
+    const controller = new AbortController();
+    deps.applyFixPlan = async () => {
+      controller.abort();
+      throw new FixApplyInterruptedError({
+        exitCode: 1,
+        appliedFixes: 1,
+        changedFiles: ["src/value.ts"],
+        unchangedFiles: [],
+        issues: [],
+      });
+    };
+    const output = io();
+    expect(
+      await executeFixCommand(
+        {
+          cwd: "/repo",
+          yes: true,
+          format: "json",
+          color: false,
+          animations: false,
+          signal: controller.signal,
+        },
+        output,
+        deps,
+      ),
+    ).toBe(2);
+    expect(JSON.parse(output.stdout.join(""))).toMatchObject({
+      interrupted: true,
+      exitCode: 2,
+      result: { changedFiles: ["src/value.ts"], appliedFixes: 1 },
+    });
+    expect(output.stderr.join("")).toContain("interrupted");
+  });
   it("retains applied progress when the command-owned executor cannot close", async () => {
     const executor = vi
       .spyOn(commandExecutor, "createCommandExecutor")
@@ -1260,4 +1298,28 @@ describe("fix CLI registration", () => {
     expect(result.stdout).toContain("Usage: zedbee fix [options] [check]");
     expect(result.stdout).not.toContain("[check] [check]");
   });
+});
+
+it("prints the final skipped item when full-plan storage fails", async () => {
+  const items = Array.from({ length: 26 }, (_, i) => ({
+    ...applicablePlan().publicPlan.items[0]!,
+    file: "file-" + i + ".ts",
+    status: "skipped" as const,
+    reason: "skipped item " + i,
+  }));
+  const prepared = plan({
+    items,
+    summary: { fixes: 26, files: 26, blocking: 0, warnings: 0, skipped: 26 },
+  });
+  const deps = {
+    ...dependencies(prepared),
+    store: {
+      maintain: async () => {
+        throw new Error("unavailable");
+      },
+    },
+  };
+  const terminal = io(false);
+  await executeFixCommand(base, terminal, deps);
+  expect(terminal.stdout.join("")).toContain("skipped item 25");
 });

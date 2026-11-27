@@ -1,3 +1,4 @@
+import { workspaceComparisonFilePolicy } from "../workspace-comparison.js";
 import { changeSetFromMap } from "../../git/change-set.js";
 import type { CheckRunContext } from "../adapter.js";
 import type { ChangedFile } from "../../git/change-set.js";
@@ -42,7 +43,14 @@ export function restoreCheckContext(
     ...rest,
     changeSet,
     signal,
-    policyForFile: createFilePolicyResolver(filePolicyConfig, changeSet),
+    policyForFile:
+      input.target.kind === "workspace"
+        ? workspaceComparisonFilePolicy({
+            ...rest,
+            changeSet,
+            filePolicyConfig,
+          })
+        : createFilePolicyResolver(filePolicyConfig, changeSet),
     filePolicyConfig,
   };
 }

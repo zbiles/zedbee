@@ -1,3 +1,4 @@
+import { configCandidates } from "./config-candidates.js";
 import type * as ts from "typescript";
 import { posix, resolve, relative, sep } from "node:path";
 import { parse, type ParseError } from "jsonc-parser";
@@ -75,7 +76,11 @@ export async function loadCompilerScopeInputs(
       [import("./config.js"), import("typescript")],
     );
     signal?.throwIfAborted();
-    const locate = async (from: string, request: unknown) => {
+    const locate = async (
+      from: string,
+      request: unknown,
+      kind: "extends" | "reference",
+    ) => {
       if (
         typeof request !== "string" ||
         !request ||
@@ -86,11 +91,7 @@ export async function loadCompilerScopeInputs(
         throw new Unsupported();
       const base = posix.normalize(posix.join(posix.dirname(from), request));
       if (base === ".." || base.startsWith("../")) throw new Unsupported();
-      for (const candidate of [
-        base,
-        `${base}.json`,
-        posix.join(base, "tsconfig.json"),
-      ]) {
+      for (const candidate of configCandidates(base, kind)) {
         signal?.throwIfAborted();
         const registry = await captureSnapshotRegistry(
           inspection.snapshotRoot,
@@ -127,12 +128,12 @@ export async function loadCompilerScopeInputs(
             ? config.extends
             : [config.extends];
       for (const extension of extensions) {
-        const next = await locate(path, extension);
+        const next = await locate(path, extension, "extends");
         extended.add(next);
         await load(next);
       }
       for (const ref of (config.references ?? []) as { path: unknown }[]) {
-        const next = await locate(path, ref.path);
+        const next = await locate(path, ref.path, "reference");
         referenced.add(next);
         await load(next);
       }

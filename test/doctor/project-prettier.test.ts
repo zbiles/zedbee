@@ -154,3 +154,33 @@ describe("doctor project Prettier diagnosis", () => {
     expect(diagnostic.message).toMatch(/web \(3\.9\.6\)/u);
   });
 });
+it("reports unreadable discovery as failed without claiming absence", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", "{ bad JSON");
+  const result = await createDefaultDiagnosticProbe()("project-prettier", {
+    cwd: repo.root,
+    environment: {},
+  });
+  expect(result.status).toBe("fail");
+  expect(result.message).toMatch(/could not be inspected/u);
+});
+
+it.each([false, true])(
+  "cannot pass a required project formatter with no declaration or installation (trust=%s)",
+  async (projectPrettierTrust) => {
+    const repo = await createGitRepository();
+    await repo.write("package.json", '{"name":"fixture"}');
+    await repo.write(
+      ".zedbeerc.jsonc",
+      '{"schemaVersion":1,"checks":{"formatting":{"engine":"project"}}}',
+    );
+    await repo.git(["add", "--all"]);
+    const result = await createDefaultDiagnosticProbe()("project-prettier", {
+      cwd: repo.root,
+      environment: {},
+      projectPrettierTrust,
+    });
+    expect(result.status).toBe("fail");
+    expect(result.message).toContain("Required project Prettier");
+  },
+);

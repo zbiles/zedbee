@@ -16,6 +16,7 @@ import {
   MAX_FRAME,
   ServiceUnavailableError,
   encodeFrame,
+  encodeJsonFrame,
 } from "./protocol.js";
 export function serviceEndpoint(state: ServiceState, instance: string): string {
   return process.platform === "win32"
@@ -79,8 +80,8 @@ export class ServiceConnection {
       });
     });
   }
-  private async writeResultFrame(value: unknown): Promise<void> {
-    const frame = encodeFrame(value);
+  private async writeResultJson(json: string): Promise<void> {
+    const frame = encodeJsonFrame(json);
     // Payload writes wait for room; control/error/ownership exchanges retain
     // a dedicated margin in the unchanged shared frame budget.
     const release = await this.output.acquire(
@@ -107,20 +108,24 @@ export class ServiceConnection {
       const send = this.sendingResults
         .then(async () => {
           if (length <= MAX_FRAME) {
-            await this.writeResultFrame(value);
+            await this.writeResultJson(json);
             return;
           }
           const body = Buffer.from(json);
-          await this.writeResultFrame({ type: "result-start", bytes: length });
+          await this.writeResultJson(
+            JSON.stringify({ type: "result-start", bytes: length }),
+          );
           for (let offset = 0; offset < length; offset += RESULT_CHUNK_BYTES) {
-            await this.writeResultFrame({
-              type: "result-chunk",
-              data: body
-                .subarray(offset, offset + RESULT_CHUNK_BYTES)
-                .toString("base64"),
-            });
+            await this.writeResultJson(
+              JSON.stringify({
+                type: "result-chunk",
+                data: body
+                  .subarray(offset, offset + RESULT_CHUNK_BYTES)
+                  .toString("base64"),
+              }),
+            );
           }
-          await this.writeResultFrame({ type: "result-end" });
+          await this.writeResultJson(JSON.stringify({ type: "result-end" }));
         })
         .finally(release);
       this.sendingResults = send.catch(() => {});

@@ -1,3 +1,4 @@
+import { matchesCacheMode } from "./sample-modes.mjs";
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -13,12 +14,48 @@ interface Sample {
   peakRssBytes: number;
 }
 
+interface BuildIdentity {
+  root: string;
+  dirty: string;
+  commit: string;
+  tree: string;
+}
+interface SelectedRevisions {
+  baseline: string;
+  candidate: string;
+}
+function validateIdentities(
+  identities: readonly BuildIdentity[],
+  selected?: SelectedRevisions,
+) {
+  const oid = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u;
+  if (
+    identities.some(
+      (entry) =>
+        typeof entry.root !== "string" ||
+        !entry.root ||
+        entry.dirty !== "" ||
+        !oid.test(entry.commit) ||
+        !oid.test(entry.tree),
+    ) ||
+    new Set(identities.map((entry) => entry.root)).size !== 2 ||
+    new Set(identities.map((entry) => entry.commit)).size !== 2 ||
+    !selected ||
+    selected.baseline !== identities[0]?.commit ||
+    selected.candidate !== identities[1]?.commit
+  )
+    throw new Error(
+      "Benchmark builds are not clean and distinct or do not match selected revisions",
+    );
+}
+
 /** Primary 4,000-file gate only; this never certifies a full fixture/platform matrix. */
 export function assessSnapshotPreparation(input: unknown) {
   const artifact = input as
     | {
         samples?: number;
-        identities?: Array<{ root: string; dirty: string }>;
+        identities?: BuildIdentity[];
+        selectedRevisions?: SelectedRevisions;
         results?: Sample[];
       }
     | undefined;
@@ -29,16 +66,7 @@ export function assessSnapshotPreparation(input: unknown) {
   )
     throw new Error("Missing paired benchmark evidence");
   const identities = artifact.identities;
-  if (
-    identities.some(
-      (entry) =>
-        typeof entry.root !== "string" ||
-        entry.root === "" ||
-        entry.dirty !== "",
-    ) ||
-    new Set(identities.map((entry) => entry.root)).size !== 2
-  )
-    throw new Error("Benchmark builds are not clean and distinct");
+  validateIdentities(identities, artifact.selectedRevisions);
   const rows = artifact.results.filter(
     (row) =>
       row.kind === "preparation" &&
@@ -117,7 +145,12 @@ interface MatrixSample {
   durationMs?: number;
   cacheMode?: string;
   executorMode?: string;
-  observed?: { gets: number; hits: number; serviceSessions: number };
+  observed?: {
+    gets: number;
+    hits: number;
+    sets: number;
+    serviceSessions: number;
+  };
   service?: { state: string };
   serviceTreeMemory?: {
     verified: boolean;
@@ -136,7 +169,8 @@ interface MatrixSample {
 export function assessSnapshotMatrixCell(input: unknown) {
   const data = input as {
     samples?: number;
-    identities?: Array<{ root: string; dirty: string }>;
+    identities?: BuildIdentity[];
+    selectedRevisions?: SelectedRevisions;
     results?: MatrixSample[];
   };
   if (
@@ -146,13 +180,7 @@ export function assessSnapshotMatrixCell(input: unknown) {
   )
     throw new Error("Missing paired matrix evidence");
   const identities = data.identities;
-  if (
-    identities.some(
-      (i) => typeof i.root !== "string" || !i.root || i.dirty !== "",
-    ) ||
-    new Set(identities.map((i) => i.root)).size !== 2
-  )
-    throw new Error("Matrix builds are not clean and distinct");
+  validateIdentities(identities, data.selectedRevisions);
   const rows = data.results;
   const first = rows[0]!;
   if (
@@ -195,10 +223,7 @@ export function assessSnapshotMatrixCell(input: unknown) {
         m = r.serviceTreeMemory;
       if (
         !o ||
-        !positive(o.gets) ||
-        !Number.isInteger(o.hits) ||
-        o.hits < 0 ||
-        (r.cacheMode === "warm" ? o.hits === 0 : o.hits !== 0) ||
+        !matchesCacheMode(r.cacheMode!, o) ||
         (r.executorMode === "local"
           ? o.serviceSessions !== 0 || r.service?.state !== "stopped"
           : !positive(o.serviceSessions) || r.service?.state !== "running") ||

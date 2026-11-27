@@ -82,8 +82,14 @@ it("does not claim all checks were disabled when selected targets are excluded",
   await repo.git(["add", "fixture.txt"]);
   const report = await runScan({ repositoryRoot: repo.root, cache: false });
   expect(report.outcome).toBe("pass");
-  expect(report.checks).toEqual([]);
+  expect(report.checks).toEqual([
+    expect.objectContaining({
+      checkId: "secrets",
+      status: "skipped",
+      skipReason: "No applicable targets enabled by configuration",
+    }),
+  ]);
   expect(allowedScanDetail(report)).toBe(
-    "No checks ran for the selected changes. Commit allowed.",
+    "No applicable checks for the staged changes. Commit allowed.",
   );
 });

@@ -2,6 +2,10 @@ import { expect, it, vi } from "vitest";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { runScan } from "../../src/scan/run-scan.js";
 import { createLocalAnalyzerExecutor } from "../../src/checks/runner/executor.js";
+import {
+  compilerChecks,
+  createSeparateCompilerWorkspaces,
+} from "../helpers/separate-compiler-workspaces.js";
 import { CHECK_IDS } from "../../src/config/schema.js";
 
 it("does not prepare or open an analyzer session when every check is disabled", async () => {
@@ -119,4 +123,91 @@ it("scans multiple Markdown files alongside formatting with a partial source cap
   expect(
     report.checks.find((check) => check.checkId === "secrets")?.status,
   ).toBe("completed");
+});
+
+it("runs only secrets for API source, metadata and docs with missing sibling dependencies", async () => {
+  const repo = await createSeparateCompilerWorkspaces();
+  await repo.write("api/app.py", "value = 1\n");
+  await repo.write("api/pyproject.toml", '[project]\nname = "fixture"\n');
+  await repo.write("api/requirements.txt", "fixture==1.0.0\n");
+  await repo.write("api/README.md", "API notes.\n");
+  expect((await repo.git(["add", "api"])).exitCode).toBe(0);
+
+  const jobs: string[] = [];
+  const report = await runScan({
+    repositoryRoot: repo.root,
+    cache: false,
+    onEvent(event) {
+      if (event.type === "check-running") jobs.push(event.checkId);
+    },
+  });
+  expect(report.outcome, JSON.stringify(report)).toBe("pass");
+  expect(jobs).toEqual(["secrets"]);
+  expect(report.checks).toEqual(
+    expect.arrayContaining(
+      ["lint", "types"].map((checkId) =>
+        expect.objectContaining({ checkId, status: "skipped" }),
+      ),
+    ),
+  );
+});
+
+it("skips managed compilers for Python and OpenAPI edits with missing sibling dependencies", async () => {
+  const paths = Array.from(
+    { length: 5 },
+    (_, index) => `api/module${index}.py`,
+  );
+  const spec = "docs/openapi.yaml";
+  const repo = await createSeparateCompilerWorkspaces(
+    Object.fromEntries([
+      ...paths.map((path) => [path, "value = 1\n"]),
+      [spec, "openapi: 3.1.0\n"],
+    ]),
+  );
+  for (const path of paths) await repo.write(path, "value = 2\n");
+  await repo.write(spec, "openapi: 3.1.1\n");
+  expect((await repo.git(["add", ...paths, spec])).exitCode).toBe(0);
+
+  const jobs: string[] = [];
+  const report = await runScan({
+    repositoryRoot: repo.root,
+    cache: false,
+    onEvent(event) {
+      if (event.type === "check-running") jobs.push(event.checkId);
+    },
+  });
+  expect(report.exitCode, JSON.stringify(report)).toBe(0);
+  expect(report.changedFileCount).toBe(6);
+  expect(jobs).toEqual(["secrets"]);
+  for (const checkId of ["lint", "types"]) {
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ checkId, status: "skipped" }),
+    );
+  }
+});
+
+it("keeps YAML formatting active for a modified OpenAPI document", async () => {
+  const path = "docs/openapi.yaml";
+  const repo = await createSeparateCompilerWorkspaces({
+    ".zedbeerc.jsonc": JSON.stringify({
+      schemaVersion: 1,
+      checks: { ...compilerChecks, formatting: "error" },
+    }),
+    [path]: "openapi: 3.1.0\ninfo:\n  title: Example\n",
+  });
+  await repo.write(path, "openapi: 3.1.0\ninfo:  {title: Example}\n");
+  expect((await repo.git(["add", path])).exitCode).toBe(0);
+  const report = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(report.exitCode).toBe(1);
+  expect(report.summary.findings).toContainEqual(
+    expect.objectContaining({
+      check: "formatting",
+      location: expect.objectContaining({ file: path }),
+    }),
+  );
+  for (const checkId of ["lint", "types"]) {
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({ checkId, status: "skipped" }),
+    );
+  }
 });

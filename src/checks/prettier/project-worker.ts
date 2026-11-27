@@ -12,7 +12,13 @@ import type {
   ProjectPrettierRequest,
   ProjectPrettierReply,
 } from "./project-types.js";
-import { parseProjectRequest } from "./project-protocol.js";
+import {
+  IMPORT_MAX_LIMITATION_LENGTH,
+  IMPORT_MAX_LIMITATIONS,
+  IMPORT_MAX_OVERRIDES,
+  isPatternList,
+  parseProjectRequest,
+} from "./project-protocol.js";
 import {
   formattingSettingsSchema,
   type FormattingSettings,
@@ -41,8 +47,57 @@ class WorkerConfigError extends Error {
 let state: WorkerState | undefined;
 let busy = false;
 
+interface ProjectIgnoreFiles {
+  readonly prettierIgnore?: string;
+  readonly gitIgnore?: string;
+}
+let ignoreFiles: ProjectIgnoreFiles | undefined;
+
+/** The project-root ignore files, checked once per worker session. */
+function projectIgnoreFiles(): ProjectIgnoreFiles {
+  if (ignoreFiles !== undefined) return ignoreFiles;
+  const directory = projectDirectory();
+  const prettierIgnore = join(directory, ".prettierignore");
+  const gitIgnore = join(directory, ".gitignore");
+  ignoreFiles = {
+    ...(existsSync(prettierIgnore) ? { prettierIgnore } : {}),
+    ...(existsSync(gitIgnore) ? { gitIgnore } : {}),
+  };
+  return ignoreFiles;
+}
+
+/** Trims an import reply so the parent's protocol limits always accept it. */
+function boundedImport(config: ImportableNativeConfig): ImportableNativeConfig {
+  const limitations = [...config.limitations];
+  if (config.overrides.length > IMPORT_MAX_OVERRIDES) {
+    limitations.push(
+      `Only the first ${IMPORT_MAX_OVERRIDES} configuration overrides were copied.`,
+    );
+  }
+  const bounded = limitations.map((entry) =>
+    entry.length > IMPORT_MAX_LIMITATION_LENGTH
+      ? `${entry.slice(0, IMPORT_MAX_LIMITATION_LENGTH - 3)}...`
+      : entry,
+  );
+  return {
+    settings: config.settings,
+    overrides: config.overrides.slice(0, IMPORT_MAX_OVERRIDES),
+    limitations:
+      bounded.length > IMPORT_MAX_LIMITATIONS
+        ? [
+            ...bounded.slice(0, IMPORT_MAX_LIMITATIONS - 1),
+            `${bounded.length - (IMPORT_MAX_LIMITATIONS - 1)} further limitations were omitted.`,
+          ]
+        : bounded,
+  };
+}
+
 function send(reply: ProjectPrettierReply): void {
-  process.send?.({ type: "reply", reply });
+  const bounded =
+    reply.operation === "importConfig"
+      ? { ...reply, result: boundedImport(reply.result) }
+      : reply;
+  process.send?.({ type: "reply", reply: bounded });
 }
 
 function failure(
@@ -64,12 +119,10 @@ function projectDirectory(): string {
 
 /** Explicit project-root ignore files only; other projects' files are not read. */
 function projectIgnorePaths(): readonly string[] {
-  const directory = projectDirectory();
-  const candidates = [
-    join(directory, ".prettierignore"),
-    join(directory, ".gitignore"),
-  ];
-  return candidates.filter((path) => existsSync(path));
+  const { prettierIgnore, gitIgnore } = projectIgnoreFiles();
+  return [prettierIgnore, gitIgnore].filter(
+    (path): path is string => path !== undefined,
+  );
 }
 
 async function fileInfoIgnoredBy(
@@ -89,18 +142,18 @@ async function fileInfoIgnoredBy(
 async function ignoreReason(
   file: string,
 ): Promise<"prettierignore" | "gitignore"> {
-  const directory = projectDirectory();
-  const prettierIgnore = join(directory, ".prettierignore");
-  const gitIgnore = join(directory, ".gitignore");
-  if (existsSync(prettierIgnore)) {
-    if (await fileInfoIgnoredBy(state!.prettier, file, [prettierIgnore])) {
-      return "prettierignore";
-    }
+  const { prettierIgnore, gitIgnore } = projectIgnoreFiles();
+  if (
+    prettierIgnore !== undefined &&
+    (await fileInfoIgnoredBy(state!.prettier, file, [prettierIgnore]))
+  ) {
+    return "prettierignore";
   }
-  if (existsSync(gitIgnore)) {
-    if (await fileInfoIgnoredBy(state!.prettier, file, [gitIgnore])) {
-      return "gitignore";
-    }
+  if (
+    gitIgnore !== undefined &&
+    (await fileInfoIgnoredBy(state!.prettier, file, [gitIgnore]))
+  ) {
+    return "gitignore";
   }
   return "prettierignore";
 }
@@ -291,6 +344,20 @@ function sanitizeSettings(
   return result as Partial<FormattingSettings>;
 }
 
+/** An own data property's value; undefined when absent or an accessor. */
+function ownDataValue(object: object, key: string): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  return descriptor !== undefined && "value" in descriptor
+    ? descriptor.value
+    : undefined;
+}
+
+/** True when the own property exists but is an accessor. */
+function isOwnAccessor(object: object, key: string): boolean {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  return descriptor !== undefined && !("value" in descriptor);
+}
+
 function sanitizeOverrideEntry(
   entry: unknown,
   limitations: string[],
@@ -307,50 +374,25 @@ function sanitizeOverrideEntry(
     );
     return undefined;
   }
-  const filesDescriptor = Object.getOwnPropertyDescriptor(entry, "files");
-  const files =
-    filesDescriptor !== undefined && "value" in filesDescriptor
-      ? filesDescriptor.value
-      : undefined;
-  const hasFiles =
-    typeof files === "string" ||
-    (Array.isArray(files) &&
-      files.every((item) => typeof item === "string" && item.length > 0));
-  if (!hasFiles || files === undefined) {
+  const files = ownDataValue(entry, "files");
+  if (!isPatternList(files)) {
     limitations.push(
       "An exported configuration override has no usable files pattern and was not copied.",
     );
     return undefined;
   }
-  const excludeDescriptor = Object.getOwnPropertyDescriptor(
-    entry,
-    "excludeFiles",
-  );
-  const excludeFiles =
-    excludeDescriptor !== undefined && "value" in excludeDescriptor
-      ? excludeDescriptor.value
-      : undefined;
+  const excludeFiles = ownDataValue(entry, "excludeFiles");
   if (
-    (excludeDescriptor !== undefined && !("value" in excludeDescriptor)) ||
-    (excludeFiles !== undefined &&
-      !(
-        typeof excludeFiles === "string" ||
-        (Array.isArray(excludeFiles) &&
-          excludeFiles.every(
-            (item) => typeof item === "string" && item.length > 0,
-          ))
-      ))
+    isOwnAccessor(entry, "excludeFiles") ||
+    (excludeFiles !== undefined && !isPatternList(excludeFiles))
   ) {
     limitations.push(
       "An override has invalid or non-data excludeFiles and was not copied.",
     );
     return undefined;
   }
-  const optionsDescriptor = Object.getOwnPropertyDescriptor(entry, "options");
   const settings = sanitizeSettings(
-    optionsDescriptor !== undefined && "value" in optionsDescriptor
-      ? optionsDescriptor.value
-      : undefined,
+    ownDataValue(entry, "options"),
     limitations,
     "override",
   );
@@ -361,10 +403,8 @@ function sanitizeOverrideEntry(
     return undefined;
   }
   return {
-    files: files as string | readonly string[],
-    ...(excludeFiles === undefined
-      ? {}
-      : { excludeFiles: excludeFiles as string | readonly string[] }),
+    files,
+    ...(excludeFiles === undefined ? {} : { excludeFiles }),
     settings,
   };
 }
@@ -446,14 +486,7 @@ async function importConfig(
     files: string | readonly string[];
     settings: Partial<FormattingSettings>;
   }[] = [];
-  const overridesDescriptor = Object.getOwnPropertyDescriptor(
-    exported,
-    "overrides",
-  );
-  const overridesValue =
-    overridesDescriptor !== undefined && "value" in overridesDescriptor
-      ? overridesDescriptor.value
-      : undefined;
+  const overridesValue = ownDataValue(exported, "overrides");
   if (overridesValue !== undefined && !Array.isArray(overridesValue)) {
     limitations.push(
       "The exported overrides value is not an array and was not copied.",

@@ -61,6 +61,7 @@ export interface ServiceConnectionHost {
   releaseOperation(): void;
   reserveSession(): void;
   releaseSession(): void;
+  failCleanup(): void;
   ownSession(session: AnalyzerExecutionSession, owner: SessionOwner): void;
   cleaning(peer: ServiceConnection, cleanup: Promise<void>): void;
   stop(request: ServiceStopRequest): Promise<void>;
@@ -292,19 +293,37 @@ export function acceptServiceConnection(
   async function closeSession(id: string): Promise<void> {
     const session = sessions.get(id);
     if (!session) throw new ServiceUnavailableError();
-    // Keep the reservation until cancellation/reset and tree cleanup finish.
+    // Concurrent close/disconnect callers share the session's shutdown. Only
+    // the caller that removes the reservation may hand the lease back.
     try {
       await session.close();
+    } catch (error) {
+      host.failCleanup();
+      throw error;
     } finally {
       if (sessions.delete(id)) {
-        await leases.get(id)?.close();
+        const lease = leases.get(id);
         leases.delete(id);
-        host.releaseSession();
-        if (!socket.destroyed && !host.stopping)
-          await exchange("io-release", { sessionId: id });
-        else await removeAbandonedLease(id);
+        await releaseReservation(id, lease);
       }
     }
+  }
+  async function releaseReservation(
+    id: string,
+    lease?: StateLease,
+  ): Promise<void> {
+    try {
+      await lease?.close();
+    } catch (error) {
+      host.failCleanup();
+      throw error;
+    } finally {
+      host.releaseSession();
+    }
+    if (!lease) return;
+    if (!socket.destroyed && !host.stopping)
+      await exchange("io-release", { sessionId: id });
+    else await removeAbandonedLease(id);
   }
   async function removeAbandonedLease(id: string): Promise<void> {
     try {
@@ -364,11 +383,7 @@ export function acceptServiceConnection(
       } finally {
         opening--;
         if (!retained) {
-          await lease?.close();
-          host.releaseSession();
-          if (lease && !socket.destroyed && !host.stopping)
-            await exchange("io-release", { sessionId });
-          else if (lease) await removeAbandonedLease(sessionId);
+          await releaseReservation(sessionId, lease);
         }
       }
     }

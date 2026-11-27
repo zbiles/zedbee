@@ -1,7 +1,7 @@
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 import { OutcomeStrip } from "../../src/ui/outcome-strip.js";
-import { createReport } from "../helpers/scan-report.js";
+import { createFinding, createReport } from "../helpers/scan-report.js";
 
 function maxLineWidth(frame: string): number {
   return Math.max(...frame.split("\n").map((line) => [...line].length));
@@ -62,6 +62,30 @@ describe("OutcomeStrip", () => {
     );
   });
 
+  it("identifies a locationless blocker without inventing a file", () => {
+    const { location: _location, ...finding } = createFinding({
+      check: "types",
+      rule: "typescript/TS5023",
+    });
+    const report = createReport({
+      outcome: "blocked",
+      exitCode: 1,
+      summary: {
+        passed: 0,
+        warnings: 0,
+        failed: 1,
+        incomplete: 0,
+        findings: [finding],
+      },
+    });
+    const frame = render(
+      <OutcomeStrip report={report} width={40} color={false} />,
+    ).lastFrame()!;
+
+    expect(frame).toContain("TypeScript · typescript/TS5023");
+    expect(frame).not.toContain("src/value.ts");
+  });
+
   it("preserves the exact passing copy", () => {
     const report = createReport({
       summary: {
@@ -110,7 +134,7 @@ describe("OutcomeStrip", () => {
       <OutcomeStrip report={report} width={160} color={false} />,
     ).lastFrame()!;
 
-    expect(frame).toContain("No committed changes. Commit allowed.");
+    expect(frame).toContain("No committed changes. Scan passed.");
     expect(frame).toContain(
       "Committed changes · base origin/main · aaaaaaaaaaaa..bbbbbbbbbbbb",
     );
@@ -179,7 +203,9 @@ describe("OutcomeStrip", () => {
       <OutcomeStrip report={report} width={120} color={false} />,
     ).lastFrame()!;
 
-    expect(frame).toContain("No checks ran for the selected changes. Commit allowed.");
+    expect(frame).toContain(
+      "No checks ran for the selected changes. Commit allowed.",
+    );
     expect(frame).not.toContain("No staged changes");
   });
 

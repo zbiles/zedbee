@@ -9,8 +9,8 @@ import {
   AnalysisSessionCleanupError,
   retainCleanupFailure,
 } from "../scan/analysis-failure.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { realpath } from "node:fs/promises";
+import { dirname } from "node:path";
 import { GitClient } from "../git/client.js";
 import {
   buildSnapshotPair,
@@ -18,7 +18,7 @@ import {
   type SnapshotPair,
 } from "../git/snapshot.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
-import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
+import { decodeLosslessUtf8 } from "../core/utf8.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { composeExactFixes, exactFixesOverlap } from "./exact-edits.js";
 import { formatWorkingSource } from "./prettier-provider.js";
@@ -38,6 +38,7 @@ import {
 import {
   CommittedWriteError,
   writeWorkingFile,
+  observeWorkingFile,
   type WorkingFileIdentity,
   type WriteWorkingFileRequest,
 } from "./write-working-file.js";
@@ -58,11 +59,7 @@ export interface ApplyFixPlanDependencies {
    * memory from the fix command; it is never serialized into the plan.
    */
   readonly projectPrettierTrust?: boolean;
-  readWorkingFile?(repositoryRoot: string, file: string): Promise<string>;
-  lstatWorkingFile?(
-    repositoryRoot: string,
-    file: string,
-  ): Promise<WorkingFileIdentity>;
+  observeWorkingFile?: typeof observeWorkingFile;
   writeWorkingFile?(request: WriteWorkingFileRequest): Promise<void>;
   formatWorkingSource?: typeof formatWorkingSource;
 }
@@ -77,6 +74,14 @@ class FixPlanStaleError extends Error {
 
 class FixPlanIgnoredError extends Error {
   readonly kind = "ignored";
+}
+
+/** Cancellation after publication must retain source-free write progress. */
+export class FixApplyInterruptedError extends Error {
+  constructor(readonly result: FixResult) {
+    super("Zedbee fix was interrupted after a working file changed.");
+    this.name = "FixApplyInterruptedError";
+  }
 }
 
 /** Cleanup failure carries source-free apply progress to command callers. */
@@ -140,14 +145,14 @@ class ProjectFixFormattingOwner {
 
   async closeFormatters(): Promise<boolean> {
     let closed = true;
-    for (const session of this.sessions.values()) {
-      try {
-        await session.close();
-      } catch (error) {
-        closed = false;
-        this.cleanupFailed = true;
-        this.cleanupCause ??= error;
-      }
+    const outcomes = await Promise.allSettled(
+      [...this.sessions.values()].map((session) => session.close()),
+    );
+    for (const outcome of outcomes) {
+      if (outcome.status === "fulfilled") continue;
+      closed = false;
+      this.cleanupFailed = true;
+      this.cleanupCause ??= outcome.reason;
     }
     return closed;
   }
@@ -233,8 +238,8 @@ interface FileCandidates {
   readonly candidates: readonly CheckFixCandidate[];
 }
 
-function digest(source: string): string {
-  return createHash("sha256").update(source, "utf8").digest("hex");
+function digest(source: Buffer): string {
+  return createHash("sha256").update(source).digest("hex");
 }
 
 function issue(
@@ -307,29 +312,6 @@ function exactEdits(candidates: readonly CheckFixCandidate[]): {
       (edit, index) => index > 0 && exactFixesOverlap(edits[index - 1]!, edit),
     );
   return { baseSource, edits, invalid };
-}
-
-function contained(root: string, candidate: string): boolean {
-  const fromRoot = relative(root, candidate);
-  return (
-    fromRoot !== ".." &&
-    !fromRoot.startsWith(`..${sep}`) &&
-    !isAbsolute(fromRoot)
-  );
-}
-
-async function currentIdentity(
-  root: string,
-  file: string,
-): Promise<WorkingFileIdentity> {
-  const normalized = normalizeRepositoryRelativePath(file);
-  const absolute = resolve(root, normalized);
-  if (!contained(resolve(root), absolute))
-    throw new Error("unsafe working-file path");
-  const state = await lstat(absolute, { bigint: true });
-  if (state.isSymbolicLink() || !state.isFile())
-    throw new Error("unsafe working-file path");
-  return { device: state.dev, inode: state.ino };
 }
 
 interface ApplyFixProgress {
@@ -422,7 +404,11 @@ export async function applyFixPlan(
     );
     throw failed ? retainCleanupFailure(primary, cleanup) : cleanup;
   }
-  if (failed) throw primary;
+  if (failed) {
+    if (dependencies.signal?.aborted && progress.changedFiles.length > 0)
+      throw new FixApplyInterruptedError(completedFixResult(progress, true));
+    throw primary;
+  }
   return result!;
 }
 
@@ -451,10 +437,7 @@ async function applyWithinSession(
       unchangedFiles.push(file.path);
     }
   }
-  const read =
-    dependencies.readWorkingFile ??
-    ((root, file) => readFile(resolve(root, file), "utf8"));
-  const stat = dependencies.lstatWorkingFile ?? currentIdentity;
+  const observe = dependencies.observeWorkingFile ?? observeWorkingFile;
   const write = dependencies.writeWorkingFile ?? writeWorkingFile;
   const format = dependencies.formatWorkingSource ?? formatWorkingSource;
 
@@ -477,9 +460,16 @@ async function applyWithinSession(
     }
     let working: string;
     let identity: WorkingFileIdentity;
+    let workingDigest: string;
     try {
-      working = await read(plan.repositoryRoot, group.file);
-      identity = await stat(plan.repositoryRoot, group.file);
+      const observed = await observe(plan.repositoryRoot, group.file);
+      workingDigest = digest(observed.bytes);
+      // Check the raw identity before attempting to decode new bytes.
+      working =
+        workingDigest === preview.sha256
+          ? decodeLosslessUtf8(observed.bytes)
+          : "";
+      identity = observed.identity;
     } catch {
       dependencies.signal?.throwIfAborted();
       unchangedFiles.push(group.file);
@@ -494,7 +484,7 @@ async function applyWithinSession(
       );
       continue;
     }
-    if (digest(working) !== preview.sha256) {
+    if (workingDigest !== preview.sha256) {
       unchangedFiles.push(group.file);
       issues.push(
         issue(
@@ -623,7 +613,10 @@ async function applyWithinSession(
         file: group.file,
         source: next,
         expectedIdentity: identity,
-        expectedSha256: digest(working),
+        expectedSha256: workingDigest,
+        ...(dependencies.signal === undefined
+          ? {}
+          : { signal: dependencies.signal }),
       });
       changedFiles.push(group.file);
       progress.appliedFixes +=
@@ -644,6 +637,7 @@ async function applyWithinSession(
         );
         continue;
       }
+      dependencies.signal?.throwIfAborted();
       unchangedFiles.push(group.file);
       issues.push(
         issue(

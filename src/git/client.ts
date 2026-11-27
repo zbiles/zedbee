@@ -234,6 +234,43 @@ async function drainDiagnosticStream(
   }
 }
 
+function gitDeadline(options: GitClientOptions, parent?: AbortSignal) {
+  const controller = new AbortController();
+  const signal = parent
+    ? AbortSignal.any([parent, controller.signal])
+    : controller.signal;
+  const policy = options.resourcePolicy;
+  const soft =
+    policy?.gitSoftTimeoutMs === undefined
+      ? undefined
+      : setTimeout(() => options.onSoftTimeout?.(), policy.gitSoftTimeoutMs);
+  const hard =
+    policy?.gitHardTimeoutMs === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), policy.gitHardTimeoutMs);
+  return {
+    signal,
+    check(outputExceeded = false, canceled = false) {
+      if (controller.signal.aborted)
+        throw new GitCommandError(
+          "GIT_HARD_TIMEOUT",
+          "Git command exceeded its configured hard timeout.",
+        );
+      if (outputExceeded)
+        throw new GitCommandError(
+          "GIT_OUTPUT_LIMIT_EXCEEDED",
+          "Git command exceeded its configured output limit.",
+        );
+      if (parent?.aborted || canceled)
+        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
+    },
+    close() {
+      clearTimeout(soft);
+      clearTimeout(hard);
+    },
+  };
+}
+
 export class GitClient {
   private gitCommand: Promise<ResolvedGitCommand> | undefined;
 
@@ -304,36 +341,17 @@ export class GitClient {
     const resourcePolicy = this.clientOptions.resourcePolicy;
     const maxOutputBytes =
       options.maxOutputBytes ?? resourcePolicy?.gitOutputLimitBytes;
-    const controller = new AbortController();
-    const signal =
-      options.signal === undefined
-        ? controller.signal
-        : AbortSignal.any([options.signal, controller.signal]);
-    let hardTimedOut = false;
-    const softTimer =
-      resourcePolicy?.gitSoftTimeoutMs === undefined
-        ? undefined
-        : setTimeout(
-            () => this.clientOptions.onSoftTimeout?.(),
-            resourcePolicy.gitSoftTimeoutMs,
-          );
-    const hardTimer =
-      resourcePolicy?.gitHardTimeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            hardTimedOut = true;
-            controller.abort();
-          }, resourcePolicy.gitHardTimeoutMs);
-
+    const deadline = gitDeadline(this.clientOptions, options.signal);
+    const { signal } = deadline;
     try {
       if (this.clientOptions.runCommand !== undefined) {
         const output = await this.clientOptions.runCommand(args, { signal });
-        if (hardTimedOut) {
-          throw new GitCommandError(
-            "GIT_HARD_TIMEOUT",
-            "Git command exceeded its configured hard timeout.",
-          );
-        }
+        deadline.check(
+          maxOutputBytes !== undefined &&
+            [output.stdout, output.stderr].some(
+              (value) => Buffer.byteLength(value) > maxOutputBytes,
+            ),
+        );
         if ((options.reject ?? true) && output.exitCode !== 0) {
           throw new GitCommandError(
             "GIT_COMMAND_FAILED",
@@ -360,43 +378,22 @@ export class GitClient {
         ...(maxOutputBytes === undefined ? {} : { maxBuffer: maxOutputBytes }),
         cancelSignal: signal,
       } as const;
-      const result = binary
-        ? await execa(command.executable, args, {
-            ...commandOptions,
-            encoding: "buffer",
-            stripFinalNewline: false,
-          })
-        : await execa(command.executable, args, commandOptions);
+      const result = await execa(command.executable, args, {
+        ...commandOptions,
+        encoding: "buffer",
+        stripFinalNewline: false,
+      });
+      deadline.check(isOutputLimitExceeded(result), result.isCanceled);
 
-      if (isOutputLimitExceeded(result)) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
-      }
-      if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
-      }
-      if (result.isCanceled || isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
-      }
-
-      const stderr =
-        typeof result.stderr === "string"
-          ? result.stderr
-          : Buffer.from(result.stderr).toString("utf8");
+      const stdout = Buffer.from(result.stdout as Uint8Array);
+      const stderr = Buffer.from(result.stderr as Uint8Array).toString("utf8");
+      const text = (value: string) =>
+        value.endsWith("\n") ? value.replace(/\r?\n$/u, "") : value;
       const output: GitOutput | GitBinaryOutput = binary
-        ? {
-            stdout: Buffer.from(result.stdout as Uint8Array),
-            stderr,
-            exitCode: result.exitCode ?? -1,
-          }
+        ? { stdout, stderr, exitCode: result.exitCode ?? -1 }
         : {
-            stdout: result.stdout as string,
-            stderr,
+            stdout: text(stdout.toString("utf8")),
+            stderr: text(stderr),
             exitCode: result.exitCode ?? -1,
           };
 
@@ -413,28 +410,13 @@ export class GitClient {
       if (error instanceof GitCommandError) {
         throw error;
       }
-      if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
-      }
-      if (isOutputLimitExceeded(error)) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
-      }
-      if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
-      }
+      deadline.check(isOutputLimitExceeded(error));
       throw new GitCommandError(
         "GIT_COMMAND_FAILED",
         "Git command could not be started.",
       );
     } finally {
-      if (softTimer !== undefined) clearTimeout(softTimer);
-      if (hardTimer !== undefined) clearTimeout(hardTimer);
+      deadline.close();
     }
   }
 
@@ -471,12 +453,6 @@ export class GitClient {
       options.maxOutputBytes ??
       resourcePolicy?.gitOutputLimitBytes ??
       DEFAULT_DIAGNOSTIC_LIMIT_BYTES;
-    const controller = new AbortController();
-    const signal =
-      options.signal === undefined
-        ? controller.signal
-        : AbortSignal.any([options.signal, controller.signal]);
-    let hardTimedOut = false;
     let diagnosticLimitExceeded = false;
     let visitorFailed = false;
     let visitorFailure: unknown;
@@ -505,23 +481,11 @@ export class GitClient {
       child.kill();
       forceKillTimer ??= setTimeout(() => child.kill("SIGKILL"), 2_000);
     };
+    const deadline = gitDeadline(this.clientOptions, options.signal);
+    const { signal } = deadline;
     const abort = () => terminate();
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) terminate();
-    const softTimer =
-      resourcePolicy?.gitSoftTimeoutMs === undefined
-        ? undefined
-        : setTimeout(
-            () => this.clientOptions.onSoftTimeout?.(),
-            resourcePolicy.gitSoftTimeoutMs,
-          );
-    const hardTimer =
-      resourcePolicy?.gitHardTimeoutMs === undefined
-        ? undefined
-        : setTimeout(() => {
-            hardTimedOut = true;
-            controller.abort();
-          }, resourcePolicy.gitHardTimeoutMs);
     const exit = new Promise<number>((resolveExit, rejectExit) => {
       child.once("error", rejectExit);
       child.once("close", (code) => resolveExit(code ?? -1));
@@ -559,21 +523,7 @@ export class GitClient {
         diagnostics,
         exit,
       ]);
-      if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
-      }
-      if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
-      }
-      if (diagnosticLimitExceeded) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
-      }
+      deadline.check(diagnosticLimitExceeded);
       if (exitCode !== 0) {
         throw new GitCommandError(
           "GIT_COMMAND_FAILED",
@@ -584,21 +534,7 @@ export class GitClient {
     } catch (error) {
       terminate();
       await Promise.allSettled([input, output, diagnostics, exit]);
-      if (hardTimedOut) {
-        throw new GitCommandError(
-          "GIT_HARD_TIMEOUT",
-          "Git command exceeded its configured hard timeout.",
-        );
-      }
-      if (diagnosticLimitExceeded) {
-        throw new GitCommandError(
-          "GIT_OUTPUT_LIMIT_EXCEEDED",
-          "Git command exceeded its configured output limit.",
-        );
-      }
-      if (isAborted(options.signal)) {
-        throw new GitCommandError("GIT_ABORTED", "Git command was aborted.");
-      }
+      deadline.check(diagnosticLimitExceeded);
       if (visitorFailed) throw visitorFailure;
       if (error instanceof GitCommandError) throw error;
       throw new GitCommandError(
@@ -607,8 +543,7 @@ export class GitClient {
       );
     } finally {
       signal.removeEventListener("abort", abort);
-      if (softTimer !== undefined) clearTimeout(softTimer);
-      if (hardTimer !== undefined) clearTimeout(hardTimer);
+      deadline.close();
       if (forceKillTimer !== undefined) clearTimeout(forceKillTimer);
     }
   }

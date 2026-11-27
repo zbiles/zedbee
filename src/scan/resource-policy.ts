@@ -100,3 +100,9 @@ export function resolveScanResourcePolicy(
     gitOutputLimitBytes: outputLimit(values.gitOutputLimitBytes),
   });
 }
+
+export function bootstrapGitPolicy(
+  overrides: ScanResourceOverrides,
+): ScanResourcePolicy {
+  return resolveScanResourcePolicy({ gitHardTimeout: "30s" }, overrides);
+}

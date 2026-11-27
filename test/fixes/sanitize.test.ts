@@ -285,3 +285,37 @@ describe("sanitizeFixCandidates", () => {
     ).toThrow(TypeError);
   });
 });
+
+it("projects formatter fields without reading extra or accessor-backed settings", () => {
+  const candidate = (values: object) => ({
+    kind: "format-file",
+    checkId: "formatting",
+    file: "app.ts",
+    findingIds: ["f"],
+    severities: ["error"],
+    settings: values,
+  });
+  const scope = candidateScope("formatting", ["f"]);
+  let reads = 0;
+  const extra = Object.defineProperty({ ...settings }, "extra", {
+    get() {
+      reads++;
+      return "extra";
+    },
+  });
+  const [result] = sanitizeFixCandidates([candidate(extra)], scope);
+  expect(result).toMatchObject({ settings });
+  expect(result?.kind === "format-file" && "extra" in result.settings).toBe(
+    false,
+  );
+  const accessor = Object.defineProperty({ ...settings }, "semi", {
+    get() {
+      reads++;
+      return false;
+    },
+  });
+  expect(() => sanitizeFixCandidates([candidate(accessor)], scope)).toThrow(
+    /own data property/,
+  );
+  expect(reads).toBe(0);
+});

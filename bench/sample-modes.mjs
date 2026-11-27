@@ -28,3 +28,25 @@ export async function benchmarkSamples({ mode, samples, open, close, run }) {
   }
   return results;
 }
+
+export function median(values) {
+  if (!values.length) throw new Error("Cannot summarize an empty sample.");
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? sorted[middle]
+    : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+export function matchesCacheMode(mode, { gets, hits, sets }) {
+  if (
+    ![gets, hits, sets].every(
+      (count) => Number.isSafeInteger(count) && count >= 0,
+    ) ||
+    hits > gets
+  )
+    return false;
+  if (mode === "off") return gets === 0 && sets === 0;
+  if (mode === "cold") return gets > 0 && hits === 0;
+  return mode === "warm" && hits > 0;
+}

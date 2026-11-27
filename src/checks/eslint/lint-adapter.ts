@@ -1,10 +1,14 @@
+import {
+  MANAGED_SOURCE_PATH,
+  MANAGED_TYPESCRIPT_PATH,
+} from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { verifyComparisonInputs } from "../comparison-context.js";
 import { collectProjectEslint } from "./project/adapter.js";
 import { inspectManagedCheck } from "../applicability.js";
 import { collectRenamedBaselines } from "../renamed-baselines.js";
 import { compilerInputRelevance } from "../compiler-inputs.js";
-import { relative, sep } from "node:path";
+import { InvalidEslintBatch, validatedBatchResults } from "./batch-results.js";
 import type * as ts from "typescript";
 import type { ESLint } from "eslint";
 import type {
@@ -45,9 +49,6 @@ import type {
 import { groupFilesByRules } from "./managed-config.js";
 import type { ManagedEslintOptions } from "./load-engine.js";
 
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/u;
-const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs)$/u;
-
 type LintEslintEngineFactory = (
   options: ManagedEslintOptions,
 ) => Pick<ESLint, "lintFiles">;
@@ -67,10 +68,10 @@ function lintBatches(
 ): readonly Readonly<{ files: readonly string[]; basic: boolean }>[] {
   const covered = prepared.coveredTypeScript ?? new Set<string>();
   const typedFiles = files.filter(
-    (path) => !TYPESCRIPT_SOURCE.test(path) || covered.has(path),
+    (path) => !MANAGED_TYPESCRIPT_PATH.test(path) || covered.has(path),
   );
   const basicFiles = files.filter(
-    (path) => TYPESCRIPT_SOURCE.test(path) && !covered.has(path),
+    (path) => MANAGED_TYPESCRIPT_PATH.test(path) && !covered.has(path),
   );
   return Object.freeze([
     ...(typedFiles.length === 0
@@ -89,6 +90,24 @@ function snapshotLabel(side: SnapshotSide, ref?: string | null): string {
   return typeof ref === "string" && /^(?:HEAD|[a-f0-9]{40,64})$/iu.test(ref)
     ? `${label} (${ref})`
     : label;
+}
+
+function lintEngineOptions(
+  prepared: PreparedLintSide,
+  group: PreparedLintSide["groups"][number],
+  batch: Readonly<{ files: readonly string[]; basic: boolean }>,
+): ManagedEslintOptions {
+  return {
+    cwd: prepared.canonicalRoot,
+    mode: "lint",
+    managedIgnores: [],
+    ruleOverrides: group.rules,
+    ...(batch.basic
+      ? { typeInformation: "basic" as const }
+      : prepared.typedProject === undefined
+        ? {}
+        : { typedProject: prepared.typedProject }),
+  };
 }
 
 function typedFailure(options: {
@@ -116,7 +135,7 @@ function typedFailure(options: {
     options.reason === "parser"
       ? "The TypeScript parser rejected a requested file without a source location."
       : options.reason === "invalid-response"
-        ? "ESLint returned a file outside the requested batch."
+        ? "ESLint returned incomplete or unexpected file coverage for the requested batch."
         : failedPath === undefined
           ? "ESLint failed while analyzing the requested batch; the failing file is unknown."
           : "ESLint failed while analyzing the identified file; the remaining batch was not completed.";
@@ -176,16 +195,14 @@ async function prepareSide(
   if (workspace === undefined) return undefined;
   const files = workspace.sourceFiles
     .filter((path) => requestedPaths === undefined || requestedPaths.has(path))
-    .filter(
-      (path) => JAVASCRIPT_SOURCE.test(path) || TYPESCRIPT_SOURCE.test(path),
-    )
+    .filter((path) => MANAGED_SOURCE_PATH.test(path))
     .sort(compareCodeUnits);
   if (files.length === 0) return undefined;
   const groups = groupFilesByRules(files, side, policyForFile, "lint");
   if (groups.length === 0) return undefined;
   const typescriptFiles = groups
     .flatMap(({ files: groupFiles }) => groupFiles)
-    .filter((path) => TYPESCRIPT_SOURCE.test(path));
+    .filter((path) => MANAGED_TYPESCRIPT_PATH.test(path));
   if (typescriptFiles.length === 0) return { canonicalRoot, groups };
 
   if (workspace.tsconfigPaths.length === 0) {
@@ -300,40 +317,19 @@ async function collectSide(
     signal.throwIfAborted();
     for (const batch of lintBatches(prepared, group.files)) {
       const groupHasTypescript = batch.files.some((path) =>
-        TYPESCRIPT_SOURCE.test(path),
+        MANAGED_TYPESCRIPT_PATH.test(path),
       );
       try {
-        const engine = engineFactory({
-          cwd: prepared.canonicalRoot,
-          mode: "lint",
-          managedIgnores: [],
-          ruleOverrides: group.rules,
-          ...(batch.basic
-            ? { typeInformation: "basic" as const }
-            : prepared.typedProject === undefined
-              ? {}
-              : { typedProject: prepared.typedProject }),
-        });
+        const engine = engineFactory(lintEngineOptions(prepared, group, batch));
         const results = await engine.lintFiles([...batch.files]);
         signal.throwIfAborted();
-        const allowed = new Set(batch.files);
-        for (const result of results) {
-          const path = relative(prepared.canonicalRoot, result.filePath)
-            .split(sep)
-            .join("/");
-          if (!allowed.has(path)) {
-            if (groupHasTypescript)
-              throw typedFailure({
-                side,
-                ref: snapshotRef,
-                files: batch.files,
-                projectPaths: prepared.projectPaths,
-                reason: "invalid-response",
-              });
-            throw new TypeError("ESLint returned an unrequested file");
-          }
+        for (const { file: path, result } of validatedBatchResults(
+          prepared.canonicalRoot,
+          batch.files,
+          results,
+        )) {
           if (
-            TYPESCRIPT_SOURCE.test(path) &&
+            MANAGED_TYPESCRIPT_PATH.test(path) &&
             result.messages.some(
               (message) =>
                 message.fatal === true &&
@@ -363,7 +359,10 @@ async function collectSide(
             ref: snapshotRef,
             files: batch.files,
             projectPaths: prepared.projectPaths,
-            reason: "execution",
+            reason:
+              error instanceof InvalidEslintBatch
+                ? "invalid-response"
+                : "execution",
             error,
           });
         }
@@ -426,7 +425,7 @@ export function createLintAdapter(
         context.signal.throwIfAborted();
         for (const batch of lintBatches(prepared, group.files)) {
           const groupHasTypescript = batch.files.some((path) =>
-            TYPESCRIPT_SOURCE.test(path),
+            MANAGED_TYPESCRIPT_PATH.test(path),
           );
           try {
             candidates.push(
@@ -436,17 +435,7 @@ export function createLintAdapter(
                   checkId: "lint",
                   files: batch.files,
                   createEngine: () =>
-                    engineFactory({
-                      cwd: prepared.canonicalRoot,
-                      mode: "lint",
-                      managedIgnores: [],
-                      ruleOverrides: group.rules,
-                      ...(batch.basic
-                        ? { typeInformation: "basic" as const }
-                        : prepared.typedProject === undefined
-                          ? {}
-                          : { typedProject: prepared.typedProject }),
-                    }),
+                    engineFactory(lintEngineOptions(prepared, group, batch)),
                 },
                 findings,
               )),

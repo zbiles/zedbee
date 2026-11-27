@@ -52,13 +52,25 @@ export async function verifyExecutableImportProvenance(
       await workspace.dispose();
     }
   }
-  for (const entry of evaluated) {
-    if (entry.capture !== undefined) continue;
+  await verifyUncapturedImportHashes(repositoryRoot, evaluated);
+}
+
+/** Uncaptured imports are bound to the hash of their exact working-copy bytes. */
+async function verifyUncapturedImportHashes(
+  repositoryRoot: string,
+  evaluated: readonly ExecutableEvaluatedConfig[],
+): Promise<void> {
+  const uncaptured = evaluated.filter((entry) => entry.capture === undefined);
+  if (uncaptured.length === 0) return;
+  const canonicalRoot = await realpath(repositoryRoot).catch(() => {
+    throw new ExecutableImportStaleError();
+  });
+  for (const entry of uncaptured) {
     let current: Buffer | undefined;
     try {
       current = await readBoundedImportFile(
         join(repositoryRoot, normalizeRepositoryRelativePath(entry.path)),
-        await realpath(repositoryRoot),
+        canonicalRoot,
       );
     } catch {
       /* Stale or unsafe path. */

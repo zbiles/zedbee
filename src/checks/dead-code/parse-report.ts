@@ -1,9 +1,10 @@
+import { canonicalText as text } from "../../core/canonical-text.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import { normalizeRepositoryRelativePath } from "../../attribution/fingerprint.js";
 import { sourceEntityName } from "../../attribution/source-identity.js";
 
-const ISSUE_TYPES = [
+export const ISSUE_TYPES = [
   "files",
   "dependencies",
   "devDependencies",
@@ -25,17 +26,6 @@ function record(value: unknown, field: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function text(value: unknown, field: string): string {
-  if (
-    typeof value !== "string" ||
-    value.length === 0 ||
-    value.trim() !== value ||
-    /[\u0000-\u001f\u007f]/u.test(value)
-  ) {
-    throw new TypeError(`Expected canonical ${field}`);
-  }
-  return value;
-}
 
 function coordinate(value: unknown): number | undefined {
   if (value === undefined) return undefined;

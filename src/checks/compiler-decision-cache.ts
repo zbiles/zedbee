@@ -19,16 +19,27 @@ export function memoizeCompilerDecision<T>(
   type ByTarget = WeakMap<object, ByChanges>;
   type ByBaseline = WeakMap<object, ByTarget>;
   type ByPolicy = WeakMap<object, ByBaseline>;
-  const defaultPolicies: ByPolicy = new WeakMap();
-  const owners = new WeakMap<AbortSignal, ByPolicy>();
+  type ByMode = Map<string, ByPolicy>;
+  const defaultModes: ByMode = new Map();
+  const owners = new WeakMap<AbortSignal, ByMode>();
 
   return (context) => {
     const { signal, baselineInspection, targetInspection, changeSet } = context;
     if (signal?.aborted === true) return Promise.reject(signal.reason);
-    const policies =
+    const modes =
       signal === undefined
-        ? defaultPolicies
-        : getOrCreate(owners, signal, () => new WeakMap());
+        ? defaultModes
+        : getOrCreate(owners, signal, () => new Map());
+    const mode = context.mergeComparison
+      ? "merge"
+      : context.baseComparison
+        ? "base"
+        : "index";
+    let policies = modes.get(mode);
+    if (policies === undefined) {
+      policies = new WeakMap();
+      modes.set(mode, policies);
+    }
     const byBaseline = getOrCreate(
       policies,
       context.filePolicyConfig ?? context.config,

@@ -4,8 +4,10 @@ function shellQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+const GIT_ROOT = '(cd "$(git rev-parse --show-toplevel)" && ';
+
 /** Self-contained: this guard must still run when the npm package is absent. */
-export function installedHookCommand(
+function installationGuard(
   cliPath: string,
   hookName: ScanHookName = "pre-commit",
 ): string {
@@ -22,7 +24,31 @@ export function installedHookCommand(
   ]
     .map(shellQuote)
     .join(" ");
-  return `(cd "$(git rev-parse --show-toplevel)" && { if [ ! -f ${cli} ] || [ ! -r ${cli} ]; then printf '%s\\n' ${messages} >&2; exit 2; fi; } && node ${cli} scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`;
+  return `{ if [ ! -f ${cli} ] || [ ! -r ${cli} ]; then printf '%s\\n' ${messages} >&2; exit 2; fi; }`;
+}
+
+export function installedHookCommand(
+  cliPath: string,
+  hookName: ScanHookName = "pre-commit",
+): string {
+  return `${GIT_ROOT}${installationGuard(cliPath, hookName)} && node ${shellQuote(cliPath)} scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`;
+}
+
+export function installedHookPreflight(
+  cliPath: string,
+  hookName: ScanHookName,
+): string {
+  return `${GIT_ROOT}${installationGuard(cliPath, hookName)}) || exit $?`;
+}
+
+export function isInstalledHookPreflight(line: string): boolean {
+  const match = / && \{ if \[ ! -f '(.+)' \] \|\| \[ ! -r /u.exec(line);
+  if (match === null) return false;
+  const cliPath = match[1]!.replaceAll("'\\''", "'");
+  return (
+    installedHookPreflight(cliPath, "pre-commit") === line ||
+    installedHookPreflight(cliPath, "pre-merge-commit") === line
+  );
 }
 
 /** Exact reconstruction recognizes only our generated guard, not custom shell. */

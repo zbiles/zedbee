@@ -27,6 +27,7 @@ export interface DependencyDeclaration {
 export interface WorkspaceInspection {
   readonly name?: string;
   readonly relativeRoot: string;
+  readonly canonicalRelativeRoot?: string;
   readonly manifestPath: string;
   readonly sourceFiles: readonly string[];
   readonly tsconfigPaths: readonly string[];
@@ -38,6 +39,10 @@ export interface WorkspaceInspection {
 
 export interface RepositoryInspection {
   readonly snapshotRoot: string;
+  /** Canonical repository paths exposed through file symlinks in this snapshot. */
+  readonly fileSymlinkTargets?: readonly string[];
+  /** Discovered physical source files without a declared workspace owner. */
+  readonly unownedSourceFiles?: readonly string[];
   readonly packageManager: PackageManager;
   readonly lockfiles: readonly string[];
   readonly workspaces: readonly WorkspaceInspection[];
@@ -46,16 +51,24 @@ export interface RepositoryInspection {
 export type RepositoryInspectionErrorCode =
   "INVALID_SNAPSHOT_DATA" | "UNSAFE_SNAPSHOT_PATH";
 
+type SymlinkFailureReason =
+  "unresolved-symlink" | "external-symlink" | "excluded-symlink";
+
 export class RepositoryInspectionError extends Error {
   readonly code: RepositoryInspectionErrorCode;
 
   readonly path?: string;
-  readonly reason?: "unresolved-symlink" | "external-symlink";
+  readonly reason?: SymlinkFailureReason;
+  readonly targetKind?: "directory" | "file";
 
   constructor(
     code: RepositoryInspectionErrorCode,
     message: string,
-    link?: { path: string; reason: "unresolved-symlink" | "external-symlink" },
+    link?: {
+      path: string;
+      reason: SymlinkFailureReason;
+      targetKind?: "directory" | "file";
+    },
   ) {
     super(message);
     this.name = "RepositoryInspectionError";
@@ -63,6 +76,7 @@ export class RepositoryInspectionError extends Error {
     if (link !== undefined) {
       this.path = link.path;
       this.reason = link.reason;
+      if (link.targetKind !== undefined) this.targetKind = link.targetKind;
     }
   }
 }

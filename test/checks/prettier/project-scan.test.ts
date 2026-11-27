@@ -321,6 +321,40 @@ describe("project Prettier scan integration", () => {
     });
   });
 
+  it.each([
+    ["page.html", false],
+    ["custom.fixturetxt", true],
+  ] as const)(
+    "reports supported binary %s instead of silently skipping it",
+    async (path, plugin) => {
+      const repository = await scanFixture({ plugin });
+      await writeFile(join(repository.root, path), Buffer.from([0, 1, 2]));
+      await repository.git(["add", "--", path]);
+      const result = await runScan(repository, {
+        config: projectConfig(),
+        invocationTrust: true,
+      });
+      expect(result).toMatchObject({
+        status: "incomplete",
+        error: { code: "UNSUPPORTED_BINARY_INPUT", path },
+      });
+    },
+  );
+
+  it("classifies an ordinary binary image as unsupported", async () => {
+    const repository = await scanFixture();
+    await writeFile(join(repository.root, "asset.png"), Buffer.from([0, 1, 2]));
+    await repository.git(["add", "--", "asset.png"]);
+    const result = await runScan(repository, {
+      config: projectConfig(),
+      invocationTrust: true,
+    });
+    expect(result).toMatchObject({
+      status: "skipped",
+      formattingCoverage: { checkedFiles: 0, unsupportedFiles: 1 },
+    });
+  });
+
   it("reports a supported file that exceeds the project source limit", async () => {
     const repository = await scanFixture();
     await writeFile(

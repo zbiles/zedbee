@@ -1,3 +1,7 @@
+import {
+  MANAGED_SOURCE_PATH,
+  MANAGED_TYPESCRIPT_PATH,
+} from "../inspection/source-paths.js";
 import { joinSnapshotReaders } from "../git/snapshot-work.js";
 import { resolveWorkspaceLintPolicy } from "../config/target-policy.js";
 import pLimit from "p-limit";
@@ -12,8 +16,11 @@ import type { WorkspaceInspection } from "../inspection/types.js";
 import { compareCodeUnits } from "../core/compare.js";
 import { isFormattingCandidate } from "./prettier/supported-path.js";
 import { createFilePolicyResolver } from "../config/file-policy.js";
+import {
+  projectWorkspaceComparison,
+  workspaceComparisonFilePolicy,
+} from "./workspace-comparison.js";
 import { IGNORED_DIRECTORY_NAMES } from "../inspection/snapshot-registry.js";
-import { CheckIncompleteError } from "./incomplete-error.js";
 import {
   duplicationInputPaths,
   duplicationInputsMayHaveChanged,
@@ -24,8 +31,6 @@ import {
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(
   IGNORED_DIRECTORY_NAMES,
 );
@@ -69,26 +74,16 @@ async function selectProjectGraphWorkspaces(
   checkId: "dependencyArchitecture" | "deadCode",
   always: boolean,
 ): Promise<readonly WorkspaceInspection[]> {
-  const all = [...context.baselineInspection.workspaces, ...workspaces];
-  const candidates = new Map(
-    all.map((workspace) => [workspace.relativeRoot, workspace]),
-  );
-  const targetRoots =
-    context.mergeComparison === true
-      ? new Set(workspaces.map((workspace) => workspace.relativeRoot))
-      : undefined;
-  // A removed workspace cannot create findings in the merged target.
-  const eligible = [...candidates.values()].filter(
-    (workspace) =>
-      targetRoots === undefined || targetRoots.has(workspace.relativeRoot),
-  );
+  // Result policy belongs to surviving target workspaces; baseline-only
+  // projects remain part of comparison inputs.
+  const eligible = workspaces;
   const acquire = pLimit(4);
   const selected = await joinSnapshotReaders(
     eligible.map((workspace) =>
       acquire(async () => ({
         workspace,
         relevant: always
-          ? workspace.sourceFiles.some((path) => SOURCE.test(path))
+          ? workspace.sourceFiles.some((path) => MANAGED_SOURCE_PATH.test(path))
           : await projectInputsMayHaveChanged(
               context,
               targetFor(workspace),
@@ -141,7 +136,7 @@ async function selectCompilerWorkspaces(
 }
 
 /** Applicability is metadata only; it never opens an analyzer or executes config. */
-export async function inspectManagedCheck(
+async function inspectManagedCheckTargets(
   checkId: CheckId,
   context: InspectionContext,
 ): Promise<CheckApplicability> {
@@ -192,31 +187,6 @@ export async function inspectManagedCheck(
         metadata: ["package names", "exact versions", "ecosystem identifiers"],
       },
     };
-  }
-  if (context.targetInspection.workspaces.length === 0) {
-    const policyForFile = createFilePolicyResolver(
-      context.filePolicyConfig ?? context.config,
-      context.changeSet,
-    );
-    const undiscovered = [...changed].sort(compareCodeUnits).find(
-      (path) =>
-        (checkId === "types" ? TYPESCRIPT : SOURCE).test(path) &&
-        !path
-          .split("/")
-          .slice(0, -1)
-          .some((part) => IGNORED_DIRECTORIES.has(part)) &&
-        policyForFile(checkId, path, "target").severity !== "off",
-    );
-    if (undiscovered !== undefined) {
-      throw new CheckIncompleteError({
-        code: "PROJECT_NOT_DISCOVERED",
-        path: undiscovered,
-        message:
-          "Changed source files are present, but no project was discovered in the selected target.",
-        remediation:
-          "Verify that the selected target contains the project's package.json and that project discovery includes its source files, then retry.",
-      });
-    }
   }
   let workspaces = context.targetInspection.workspaces;
   const projectEngine = (workspace: WorkspaceInspection) =>
@@ -294,7 +264,8 @@ export async function inspectManagedCheck(
     }
     workspaces = workspaces.filter((workspace) =>
       workspace.sourceFiles.some(
-        (path) => SOURCE.test(path) && (always || changed.has(path)),
+        (path) =>
+          MANAGED_SOURCE_PATH.test(path) && (always || changed.has(path)),
       ),
     );
   }
@@ -310,4 +281,39 @@ export async function inspectManagedCheck(
               ? "No supported changed project files"
               : "No supported changed source files",
       };
+}
+
+/** Keep uncovered changed inputs alongside the eligible targets, rather than
+ * allowing an unrelated workspace to suppress incomplete coverage. */
+export async function inspectManagedCheck(
+  checkId: CheckId,
+  context: InspectionContext,
+): Promise<CheckApplicability> {
+  context = projectWorkspaceComparison(context, checkId);
+  const applicability = await inspectManagedCheckTargets(checkId, context);
+  if (["formatting", "secrets", "vulnerabilities"].includes(checkId))
+    return applicability;
+  const policyForFile = workspaceComparisonFilePolicy(context);
+  const inspection = context.targetInspection;
+  const unowned = new Set(inspection.unownedSourceFiles ?? []);
+  const uncoveredPaths = [...context.changeSet.files.values()]
+    .filter(
+      ({ path, status }) =>
+        status !== "deleted" &&
+        (inspection.workspaces.length === 0 || unowned.has(path)) &&
+        (checkId === "types"
+          ? MANAGED_TYPESCRIPT_PATH
+          : MANAGED_SOURCE_PATH
+        ).test(path) &&
+        !path
+          .split("/")
+          .slice(0, -1)
+          .some((part) => IGNORED_DIRECTORIES.has(part)) &&
+        policyForFile(checkId, path, "target").severity !== "off",
+    )
+    .map(({ path }) => path)
+    .sort(compareCodeUnits);
+  return uncoveredPaths.length === 0
+    ? applicability
+    : { ...applicability, uncoveredPaths };
 }

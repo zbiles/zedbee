@@ -1,5 +1,4 @@
 import { posix } from "node:path";
-import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprint.js";
 import {
   ContainedFileSizeError,
   readContainedFile,
@@ -12,21 +11,27 @@ import { parsePnpmLockfile } from "./parse-pnpm.js";
 import { parseYarnLockfile } from "./parse-yarn.js";
 import { parseBunLockfile } from "./parse-bun.js";
 import { MAX_LOCKFILE_BYTES } from "./limits.js";
+import { normalizeLockfilePath } from "./normalize.js";
 import type { DependencyInventory } from "./types.js";
+
+const LOCKFILE_PARSERS: Readonly<
+  Record<
+    string,
+    (contents: string, repositoryPath: string) => DependencyInventory
+  >
+> = Object.freeze({
+  "package-lock.json": parseNpmLockfile,
+  "npm-shrinkwrap.json": parseNpmLockfile,
+  "pnpm-lock.yaml": parsePnpmLockfile,
+  "yarn.lock": parseYarnLockfile,
+  "bun.lock": parseBunLockfile,
+});
 
 export async function parseLockfileInventory(
   inspection: RepositoryInspection,
   repositoryPath: string,
 ): Promise<DependencyInventory> {
-  let lockfilePath: string;
-  try {
-    lockfilePath = normalizeRepositoryRelativePath(repositoryPath);
-  } catch {
-    throw inventoryError(
-      "LOCKFILE_NOT_DISCOVERED",
-      "Zedbee refused a lockfile path outside the inspected snapshot.",
-    );
-  }
+  const lockfilePath = normalizeLockfilePath(repositoryPath);
   if (!inspection.lockfiles.includes(lockfilePath)) {
     throw inventoryError(
       "LOCKFILE_NOT_DISCOVERED",
@@ -41,13 +46,10 @@ export async function parseLockfileInventory(
       "Run bun install --save-text-lockfile --frozen-lockfile --lockfile-only, then remove bun.lockb.",
     );
   }
-  if (
-    filename !== "package-lock.json" &&
-    filename !== "npm-shrinkwrap.json" &&
-    filename !== "pnpm-lock.yaml" &&
-    filename !== "yarn.lock" &&
-    filename !== "bun.lock"
-  ) {
+  const parse = Object.hasOwn(LOCKFILE_PARSERS, filename)
+    ? LOCKFILE_PARSERS[filename]
+    : undefined;
+  if (parse === undefined) {
     throw inventoryError(
       "LOCKFILE_UNSUPPORTED",
       "The discovered lockfile format is not supported by this parser.",
@@ -58,13 +60,7 @@ export async function parseLockfileInventory(
     const contents = await readContainedFile(registry, lockfilePath, {
       maxBytes: MAX_LOCKFILE_BYTES,
     });
-    if (filename === "pnpm-lock.yaml")
-      return parsePnpmLockfile(contents, lockfilePath);
-    if (filename === "yarn.lock")
-      return parseYarnLockfile(contents, lockfilePath);
-    if (filename === "bun.lock")
-      return parseBunLockfile(contents, lockfilePath);
-    return parseNpmLockfile(contents, lockfilePath);
+    return parse(contents, lockfilePath);
   } catch (error) {
     if (error instanceof LockfileInventoryError) throw error;
     if (error instanceof ContainedFileSizeError) {

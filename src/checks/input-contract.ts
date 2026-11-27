@@ -1,5 +1,13 @@
+import {
+  MANAGED_SOURCE_PATH,
+  MANAGED_TYPESCRIPT_PATH,
+} from "../inspection/source-paths.js";
 import type { CheckId } from "../config/schema.js";
 import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import {
+  COMPILER_SOURCE as JAVASCRIPT_SOURCE,
+  TYPESCRIPT_SOURCE,
+} from "./compiler-paths.js";
 
 export type ArtifactKind =
   | "text"
@@ -13,8 +21,6 @@ export interface CheckInputContract {
   readonly acceptedArtifacts: ReadonlySet<ArtifactKind>;
 }
 
-const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const VULNERABILITY_LOCKFILE =
   /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock|bun\.lockb)$/u;
 
@@ -57,11 +63,11 @@ const TEXT_AND_BINARY_ARTIFACTS = immutableSet<ArtifactKind>([
 ]);
 
 function supportsJavaScriptSource(repositoryPath: string): boolean {
-  return JAVASCRIPT_SOURCE.test(repositoryPath);
+  return MANAGED_SOURCE_PATH.test(repositoryPath);
 }
 
 function supportsTypeScriptSource(repositoryPath: string): boolean {
-  return TYPESCRIPT_SOURCE.test(repositoryPath);
+  return MANAGED_TYPESCRIPT_PATH.test(repositoryPath);
 }
 
 function supportsVulnerabilityLockfile(repositoryPath: string): boolean {

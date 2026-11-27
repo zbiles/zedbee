@@ -1,25 +1,15 @@
 import { constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
+import { decodeLosslessUtf8, InvalidUtf8Error } from "../core/utf8.js";
 import { capturedSourceInput } from "./source-capture.js";
+import { isContainedPath, normalizeRepositoryPath, unsafePath } from "./paths.js";
 
-export function normalizeRepositoryPath(path: string): string {
-  return path.split(sep).join("/");
-}
-
-export function isContainedPath(root: string, candidate: string): boolean {
-  const pathFromRoot = relative(root, candidate);
-  return (
-    pathFromRoot === "" ||
-    (!isAbsolute(pathFromRoot) &&
-      pathFromRoot !== ".." &&
-      !pathFromRoot.startsWith(`..${sep}`))
-  );
-}
+export { isContainedPath, normalizeRepositoryPath } from "./paths.js";
 
 export async function canonicalizeSnapshotRoot(
   snapshotRoot: string,
@@ -45,10 +35,7 @@ function resolveLexicalPath(
 ): string {
   const candidate = resolve(snapshotRoot, repositoryPath);
   if (isAbsolute(repositoryPath) || !isContainedPath(snapshotRoot, candidate)) {
-    throw new RepositoryInspectionError(
-      "UNSAFE_SNAPSHOT_PATH",
-      "Zedbee refused a path outside the snapshot.",
-    );
+    throw unsafePath();
   }
   return candidate;
 }
@@ -62,16 +49,10 @@ export async function resolveContainedRealPath(
   try {
     canonicalPath = await realpath(candidate);
   } catch {
-    throw new RepositoryInspectionError(
-      "INVALID_SNAPSHOT_DATA",
-      `Zedbee could not read ${normalizeRepositoryPath(repositoryPath)} from the snapshot.`,
-    );
+    throw unreadablePath(repositoryPath);
   }
   if (!isContainedPath(snapshotRoot, canonicalPath)) {
-    throw new RepositoryInspectionError(
-      "UNSAFE_SNAPSHOT_PATH",
-      "Zedbee refused a path outside the snapshot.",
-    );
+    throw unsafePath();
   }
   return canonicalPath;
 }
@@ -88,6 +69,7 @@ export interface ContainedFileReadHooks {
 
 export interface ContainedFileReadOptions extends ContainedFileReadHooks {
   readonly maxBytes?: number;
+  readonly requireValidUtf8?: boolean;
 }
 
 export interface ContainedLineReadOptions extends ContainedFileReadHooks {
@@ -114,13 +96,6 @@ const NO_FOLLOW_UNSUPPORTED_CODES = new Set([
   "EOPNOTSUPP",
 ]);
 
-function unsafePath(): RepositoryInspectionError {
-  return new RepositoryInspectionError(
-    "UNSAFE_SNAPSHOT_PATH",
-    "Zedbee refused a path outside the snapshot.",
-  );
-}
-
 function unreadablePath(repositoryPath: string): RepositoryInspectionError {
   return new RepositoryInspectionError(
     "INVALID_SNAPSHOT_DATA",
@@ -128,7 +103,7 @@ function unreadablePath(repositoryPath: string): RepositoryInspectionError {
   );
 }
 
-async function openWithoutFollowing(
+export async function openWithoutFollowing(
   canonicalPath: string,
 ): Promise<FileHandle> {
   const noFollow = constants.O_NOFOLLOW;
@@ -217,7 +192,8 @@ async function withValidatedContainedFile<T>(
   } catch (error) {
     if (
       error instanceof RepositoryInspectionError ||
-      error instanceof ContainedFileSizeError
+      error instanceof ContainedFileSizeError ||
+      error instanceof InvalidUtf8Error
     ) {
       throw error;
     }
@@ -227,23 +203,46 @@ async function withValidatedContainedFile<T>(
   }
 }
 
+function assertFileSizeLimit(maxBytes: number): void {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
+    throw new TypeError("Expected a non-negative safe file-size limit");
+}
+
+export async function readBoundedBytes(
+  handle: FileHandle,
+  repositoryPath: string,
+  maxBytes: number,
+): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  while (true) {
+    const buffer = Buffer.allocUnsafe(
+      Math.min(64 * 1024, maxBytes - total + 1),
+    );
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    total += bytesRead;
+    if (total > maxBytes)
+      throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    chunks.push(buffer.subarray(0, bytesRead));
+  }
+  return Buffer.concat(chunks, total);
+}
+
 export async function readContainedFile(
   registry: SnapshotRegistry,
   repositoryPath: string,
   options: ContainedFileReadOptions = {},
 ): Promise<string> {
   const maxBytes = options.maxBytes;
-  if (
-    maxBytes !== undefined &&
-    (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
-  ) {
-    throw new TypeError("Expected a non-negative safe file-size limit");
-  }
+  if (maxBytes !== undefined) assertFileSizeLimit(maxBytes);
   const captured = capturedSourceInput(registry.snapshotRoot, repositoryPath);
   if (captured !== undefined) {
     if (captured.text === undefined) throw unreadablePath(repositoryPath);
     if (maxBytes !== undefined && captured.byteLength > maxBytes)
       throw new ContainedFileSizeError(repositoryPath, maxBytes);
+    if (options.requireValidUtf8 === true && captured.validUtf8 !== true)
+      throw new InvalidUtf8Error();
     return captured.text;
   }
   return withValidatedContainedFile(
@@ -251,26 +250,15 @@ export async function readContainedFile(
     repositoryPath,
     options,
     async (handle, size) => {
-      if (maxBytes !== undefined && size > BigInt(maxBytes)) {
-        throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      }
       if (maxBytes === undefined) {
-        return handle.readFile({ encoding: "utf8" });
+        return options.requireValidUtf8 === true
+          ? decodeLosslessUtf8(await handle.readFile())
+          : handle.readFile({ encoding: "utf8" });
       }
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const remaining = maxBytes - total;
-        const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, remaining + 1));
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes) {
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        }
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total).toString("utf8");
+      const bytes = await readBoundedBytes(handle, repositoryPath, maxBytes);
+      return options.requireValidUtf8 === true
+        ? decodeLosslessUtf8(bytes)
+        : bytes.toString("utf8");
     },
   );
 }
@@ -282,8 +270,7 @@ export async function readContainedBytes(
   options: ContainedFileReadOptions & { readonly maxBytes: number },
 ): Promise<Buffer> {
   const { maxBytes } = options;
-  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0)
-    throw new TypeError("Expected a non-negative safe file-size limit");
+  assertFileSizeLimit(maxBytes);
   return withValidatedContainedFile(
     registry,
     repositoryPath,
@@ -291,20 +278,7 @@ export async function readContainedBytes(
     async (handle, size) => {
       if (size > BigInt(maxBytes))
         throw new ContainedFileSizeError(repositoryPath, maxBytes);
-      const chunks: Buffer[] = [];
-      let total = 0;
-      while (true) {
-        const buffer = Buffer.allocUnsafe(
-          Math.min(64 * 1024, maxBytes - total + 1),
-        );
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        total += bytesRead;
-        if (total > maxBytes)
-          throw new ContainedFileSizeError(repositoryPath, maxBytes);
-        chunks.push(buffer.subarray(0, bytesRead));
-      }
-      return Buffer.concat(chunks, total);
+      return readBoundedBytes(handle, repositoryPath, maxBytes);
     },
   );
 }

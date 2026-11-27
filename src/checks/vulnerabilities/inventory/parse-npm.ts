@@ -7,16 +7,18 @@ import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprin
 import { inventoryError, LockfileInventoryError } from "./errors.js";
 import {
   MAX_DEPENDENCY_PATH_LENGTH,
-  MAX_DEPENDENCY_RECORDS,
   MAX_LOCKFILE_BYTES,
   MAX_LOCKFILE_NESTING,
   MAX_LOCKFILE_NODES,
   MAX_LOCKFILE_STRING_LENGTH,
-  MAX_PACKAGE_NAME_LENGTH,
-  MAX_PACKAGE_VERSION_LENGTH,
 } from "./limits.js";
 import { createSourcePositionIndex } from "./source-position.js";
-import { finalizeDependencyRecords } from "./normalize.js";
+import {
+  finalizeDependencyRecords,
+  validateDependencyRecordCount,
+  validateExactVersion,
+  validatePackageName,
+} from "./normalize.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 
 interface JsonProperty {
@@ -46,8 +48,19 @@ function properties(node: JsonNode, field: string): readonly JsonProperty[] {
   });
 }
 
+const propertyLookups = new WeakMap<JsonNode, ReadonlyMap<string, JsonNode>>();
+
 function property(node: JsonNode, name: string): JsonNode | undefined {
-  return properties(node, "data").find(({ key }) => key === name)?.valueNode;
+  let lookup = propertyLookups.get(node);
+  if (lookup === undefined) {
+    const entries = new Map<string, JsonNode>();
+    for (const { key, valueNode } of properties(node, "data")) {
+      if (!entries.has(key)) entries.set(key, valueNode);
+    }
+    lookup = entries;
+    propertyLookups.set(node, lookup);
+  }
+  return lookup.get(name);
 }
 
 function validateTree(root: JsonNode): void {
@@ -87,51 +100,6 @@ function booleanValue(node: JsonNode | undefined): boolean | undefined {
     : undefined;
 }
 
-function packageName(value: string): string {
-  if (
-    value.length === 0 ||
-    value.length > MAX_PACKAGE_NAME_LENGTH ||
-    /[\s\\]/u.test(value) ||
-    value.startsWith(".") ||
-    (value.startsWith("@")
-      ? !/^@[^/]+\/[^/]+$/u.test(value)
-      : value.includes("/"))
-  ) {
-    const code =
-      value.length > MAX_PACKAGE_NAME_LENGTH
-        ? "LOCKFILE_LIMIT_EXCEEDED"
-        : "LOCKFILE_INVALID";
-    throw inventoryError(
-      code,
-      "The npm lockfile contains an invalid package name.",
-    );
-  }
-  return value;
-}
-
-function exactVersion(node: JsonNode | undefined): string {
-  const value = stringValue(node);
-  if (value === undefined || value.length === 0) {
-    throw inventoryError(
-      "LOCKFILE_VERSION_MISSING",
-      "The npm lockfile contains a package without an exact version.",
-    );
-  }
-  if (value.length > MAX_PACKAGE_VERSION_LENGTH) {
-    throw inventoryError(
-      "LOCKFILE_LIMIT_EXCEEDED",
-      "The npm lockfile contains an oversized package version.",
-    );
-  }
-  if (/[\s|]/u.test(value) || /^[~^<>=*]/u.test(value)) {
-    throw inventoryError(
-      "LOCKFILE_VERSION_INVALID",
-      "The npm lockfile contains a package version that is not exact.",
-    );
-  }
-  return value;
-}
-
 function dependencyPathFromPackageKey(packageKey: string):
   | {
       readonly importer?: string;
@@ -163,7 +131,7 @@ function dependencyPathFromPackageKey(packageKey: string):
       "The npm lockfile contains an oversized dependency path.",
     );
   }
-  dependencyPath.forEach(packageName);
+  dependencyPath.forEach((name) => validatePackageName(name, "npm"));
   return {
     ...(importer === undefined ? {} : { importer }),
     dependencyPath: Object.freeze(dependencyPath),
@@ -171,12 +139,7 @@ function dependencyPathFromPackageKey(packageKey: string):
 }
 
 function finalize(records: readonly DependencyRecord[]): DependencyInventory {
-  if (records.length > MAX_DEPENDENCY_RECORDS) {
-    throw inventoryError(
-      "LOCKFILE_LIMIT_EXCEEDED",
-      "The npm lockfile contains too many dependency records.",
-    );
-  }
+  validateDependencyRecordCount(records.length, "npm");
   return finalizeDependencyRecords(records);
 }
 
@@ -190,9 +153,9 @@ function parseV1(
   const records: DependencyRecord[] = [];
   const walk = (node: JsonNode, parents: readonly string[]): void => {
     for (const entry of properties(node, "dependencies")) {
-      const name = packageName(entry.key);
+      const name = validatePackageName(entry.key, "npm");
       const versionNode = property(entry.valueNode, "version");
-      const version = exactVersion(versionNode);
+      const version = validateExactVersion(stringValue(versionNode), "npm");
       const path = Object.freeze([...parents, name]);
       records.push({
         name,
@@ -203,12 +166,7 @@ function parseV1(
         importer: ".",
         dependencyPath: path,
       });
-      if (records.length > MAX_DEPENDENCY_RECORDS) {
-        throw inventoryError(
-          "LOCKFILE_LIMIT_EXCEEDED",
-          "The npm lockfile contains too many dependency records.",
-        );
-      }
+      validateDependencyRecordCount(records.length, "npm");
       const nested = property(entry.valueNode, "dependencies");
       if (nested !== undefined) walk(nested, path);
     }
@@ -243,22 +201,20 @@ function parseModern(
     }
     const explicitName = stringValue(property(entry.valueNode, "name"));
     const installedName = context.dependencyPath.at(-1);
-    const name = packageName(explicitName ?? installedName ?? "");
+    const name = validatePackageName(
+      explicitName ?? installedName ?? "",
+      "npm",
+    );
     records.push({
       name,
-      version: exactVersion(versionNode),
+      version: validateExactVersion(stringValue(versionNode), "npm"),
       ecosystem: "npm",
       lockfilePath,
       line: lineAt((versionNode ?? entry.keyNode).offset),
       ...(context.importer === undefined ? {} : { importer: context.importer }),
       dependencyPath: context.dependencyPath,
     });
-    if (records.length > MAX_DEPENDENCY_RECORDS) {
-      throw inventoryError(
-        "LOCKFILE_LIMIT_EXCEEDED",
-        "The npm lockfile contains too many dependency records.",
-      );
-    }
+    validateDependencyRecordCount(records.length, "npm");
   }
   return finalize(records);
 }

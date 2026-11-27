@@ -14,7 +14,7 @@ export async function executeServiceCommand(
       format === "json"
         ? `${JSON.stringify(status)}\n`
         : status.state === "running"
-          ? `Zedbee analyzer service is running (${status.activeSessions} active sessions, ${status.concurrency} workers).\n`
+          ? `Zedbee analyzer service is ${status.draining ? "draining" : "running"} (${status.activeSessions} active sessions, ${status.concurrency} workers).\n`
           : `Zedbee analyzer service is ${status.state}.\n`,
     );
     return status.state === "unavailable" ? 2 : 0;

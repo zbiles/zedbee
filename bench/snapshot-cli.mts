@@ -1,3 +1,4 @@
+import { matchesCacheMode } from "./sample-modes.mjs";
 import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -76,6 +77,7 @@ export async function measureCli(options: {
         "--format",
         "json",
         "--no-source",
+        ...(options.cache === "off" ? ["--no-cache"] : []),
         ...(options.executor === "local" ? ["--no-service"] : []),
       ],
       env: {
@@ -83,7 +85,6 @@ export async function measureCli(options: {
         ZEDBEE_TELEMETRY_DISABLED: "1",
         ZEDBEE_BENCH_IMPLEMENTATION: install,
         ZEDBEE_BENCH_OBSERVATIONS: observations,
-        ZEDBEE_BENCH_CACHE: options.cache,
         // runCompleteCli clears NODE_OPTIONS; pass the observer as an explicit
         // Node argument using the harness's nodeArguments option below.
       },
@@ -122,10 +123,7 @@ export async function measureCli(options: {
       )
     )
       throw new Error("CLI sample did not execute required checks");
-    if (
-      observed.gets === 0 ||
-      (options.cache === "warm" ? observed.hits === 0 : observed.hits !== 0)
-    )
+    if (!matchesCacheMode(options.cache, observed))
       throw new Error("Declared cache mode was not exercised");
     const after = await client.serviceStatus();
     if (options.executor === "local") {

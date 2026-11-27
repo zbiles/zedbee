@@ -1,3 +1,4 @@
+import { median } from "./sample-modes.mjs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -35,14 +36,6 @@ const smoke =
   process.argv.includes("--smoke") ||
   process.env.ZEDBEE_BENCHMARK_MODE === "smoke";
 const inProcessReference = process.argv.includes("--in-process-reference");
-
-function median(values: readonly number[]): number {
-  const sorted = [...values].sort((left, right) => left - right);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? (sorted[middle - 1]! + sorted[middle]!) / 2
-    : sorted[middle]!;
-}
 
 async function measure(phase: Phase, iterations: number): Promise<number> {
   const durations: number[] = [];

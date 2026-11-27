@@ -4,7 +4,7 @@ import {
   createLocalAnalyzerExecutor,
   type AnalyzerExecutionSession,
 } from "../checks/runner/executor.js";
-import { LeaseRemovalDeferredError, type StateLease } from "./state.js";
+import { removeLeaseUnlessDeferred, type StateLease } from "./state.js";
 import {
   ByteBudget,
   GLOBAL_BYTES,
@@ -26,6 +26,7 @@ export type ServiceStatus =
       readonly state: "running";
       readonly pid: number;
       readonly activeSessions: number;
+      readonly draining?: true;
       readonly concurrency: 1 | 2 | 4;
     };
 export class IdleLifetime {
@@ -81,7 +82,7 @@ export async function startServiceServer(
     output = new ByteBudget(GLOBAL_BYTES);
   const clients = new Set<ServiceConnection>(),
     cleaning = new Set<Promise<void>>();
-  let draining = false,
+  let drainRequests = 0,
     stopping = false,
     cleanupFailed = false,
     closing: Promise<void> | undefined,
@@ -90,6 +91,7 @@ export async function startServiceServer(
     state: "running",
     pid: process.pid,
     activeSessions: idle.active,
+    ...(drainRequests !== 0 || stopping ? { draining: true as const } : {}),
     concurrency,
   });
   const host: ServiceConnectionHost = {
@@ -105,7 +107,7 @@ export async function startServiceServer(
       return stopping;
     },
     get draining() {
-      return draining;
+      return drainRequests !== 0;
     },
     get activeSessions() {
       return idle.active;
@@ -123,6 +125,10 @@ export async function startServiceServer(
     },
     releaseSession() {
       idle.close();
+    },
+    failCleanup() {
+      cleanupFailed = true;
+      void close().catch(() => {});
     },
     ownSession(session, owner) {
       owners.set(session, owner);
@@ -143,11 +149,12 @@ export async function startServiceServer(
     async stop(request) {
       // Drain admission changes synchronously before an already admitted open
       // can yield. Those sessions retain their ownership until they close.
-      if (request.drain) draining = true;
+      if (request.drain) drainRequests++;
       const id = randomBytes(32).toString("hex");
-      const lease = await state.lease(id);
+      let lease: StateLease | undefined;
       let retained = false;
       try {
+        lease = await state.lease(id);
         if (!lease.acquire()) throw new ServiceUnavailableError();
         // Hand off the source-free cleanup witness before the provisional reply.
         await request.exchange("io-acquire", { sessionId: id });
@@ -161,14 +168,10 @@ export async function startServiceServer(
         request.accepted();
         await close(request.peer, request.id, lease);
       } finally {
-        if (!retained) {
+        if (request.drain) drainRequests--;
+        if (!retained && lease !== undefined) {
           await lease.close();
-          try {
-            await state.removeLease(id);
-          } catch (error) {
-            // A surviving Windows client pins and removes the exact lease.
-            if (!(error instanceof LeaseRemovalDeferredError)) throw error;
-          }
+          await removeLeaseUnlessDeferred(state, id);
         }
       }
     },

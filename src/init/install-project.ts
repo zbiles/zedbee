@@ -4,7 +4,10 @@ import { execa } from "execa";
 import { installArguments, installDependency } from "./install-dependency.mjs";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
-import { discoverWorkspaces } from "../inspection/workspaces.js";
+import {
+  discoverWorkspaces,
+  type DiscoveredWorkspace,
+} from "../inspection/workspaces.js";
 import { resolveHookCommand } from "../hooks/command.js";
 import { discoverProjectPrettier } from "./prettier-discovery.js";
 
@@ -20,10 +23,44 @@ const LOCKFILES = [
   ["package-lock.json", "npm"],
   ["npm-shrinkwrap.json", "npm"],
   ["pnpm-lock.yaml", "pnpm"],
+  ["pnpm-workspace.yaml", "pnpm"],
   ["yarn.lock", "yarn"],
   ["bun.lock", "bun"],
   ["bun.lockb", "bun"],
 ] as const;
+
+export function projectInstallManager(
+  project: DiscoveredWorkspace,
+  projects: readonly DiscoveredWorkspace[],
+  paths: ReadonlySet<string>,
+) {
+  let manager: ProjectInstallTarget["manager"] = "npm";
+  let classicYarn = false;
+  let directory = project.relativeRoot;
+  while (true) {
+    const manifest = projects.find(
+      (candidate) => candidate.relativeRoot === directory,
+    )?.manifest;
+    const declared = /^(npm|pnpm|yarn|bun)@/u.exec(
+      manifest?.packageManager ?? "",
+    )?.[1];
+    const lock = LOCKFILES.find(([filename]) =>
+      paths.has(posix.join(directory, filename)),
+    );
+    if (declared !== undefined || lock !== undefined) {
+      manager = (declared ?? lock![1]) as ProjectInstallTarget["manager"];
+      classicYarn = manifest?.packageManager?.startsWith("yarn@1.") === true;
+      break;
+    }
+    if (directory === ".") break;
+    directory = posix.dirname(directory);
+  }
+  const workspaceRoot =
+    project.relativeRoot === "." &&
+    (project.manifest.workspacePatterns.length > 0 ||
+      paths.has("pnpm-workspace.yaml"));
+  return { manager, classicYarn, workspaceRoot };
+}
 
 export async function projectInstallTargets(
   repositoryRoot: string,
@@ -40,32 +77,11 @@ export async function projectInstallTargets(
   return projects
     .filter((project) => projectRoots.includes(project.relativeRoot))
     .map((project) => {
-      let manager: ProjectInstallTarget["manager"] = "npm";
-      let classicYarn = false;
-      let directory = project.relativeRoot;
-      while (true) {
-        const manifest = projects.find(
-          (candidate) => candidate.relativeRoot === directory,
-        )?.manifest;
-        const declared = /^(npm|pnpm|yarn|bun)@/u.exec(
-          manifest?.packageManager ?? "",
-        )?.[1];
-        const lock = LOCKFILES.find(([filename]) =>
-          paths.has(posix.join(directory, filename)),
-        );
-        if (declared !== undefined || lock !== undefined) {
-          manager = (declared ?? lock![1]) as ProjectInstallTarget["manager"];
-          classicYarn =
-            manifest?.packageManager?.startsWith("yarn@1.") === true;
-          break;
-        }
-        if (directory === ".") break;
-        directory = posix.dirname(directory);
-      }
-      const workspaceRoot =
-        project.relativeRoot === "." &&
-        (project.manifest.workspacePatterns.length > 0 ||
-          paths.has("pnpm-workspace.yaml"));
+      const { manager, classicYarn, workspaceRoot } = projectInstallManager(
+        project,
+        projects,
+        paths,
+      );
       const args = installArguments(
         manager,
         workspaceRoot,

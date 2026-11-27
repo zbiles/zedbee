@@ -1,3 +1,5 @@
+import { median } from "./sample-modes.mjs";
+import { validScanVerdict } from "../.github/actions/scan/verdict.mjs";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -350,6 +352,7 @@ async function runBenchmarkSample(
   let report: {
     durationMs?: number;
     outcome?: string;
+    exitCode?: number;
     checks?: { status?: string }[];
     mergeParents?: string[];
   };
@@ -359,7 +362,7 @@ async function runBenchmarkSample(
     throw Error("Selected CLI did not produce a canonical JSON report.");
   }
   if (
-    !["pass", "blocked", "incomplete"].includes(report.outcome ?? "") ||
+    !validScanVerdict(report.outcome, report.exitCode, result.exitCode) ||
     !Array.isArray(report.checks)
   )
     throw Error("Invalid benchmark scan report.");
@@ -496,8 +499,6 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
         "Benchmark source/index or installation changed during measurement; discard this run.",
       );
     await noMergeHead();
-    const ordered = samples.map((x) => x.wallMs).sort((a, b) => a - b),
-      middle = Math.floor(ordered.length / 2);
     const result = {
       schemaVersion: 1,
       runKind: "commit-scan-performance",
@@ -520,10 +521,7 @@ export async function runCommitScanBenchmark(options: CommitBenchmarkOptions) {
         : "historical-default",
       loadAverageAtEnd: loadavg(),
       samples,
-      medianWallMs:
-        ordered.length % 2
-          ? ordered[middle]!
-          : (ordered[middle - 1]! + ordered[middle]!) / 2,
+      medianWallMs: median(samples.map((sample) => sample.wallMs)),
       limitations:
         "Worker and elapsed timings are wall time, not CPU. Warm cache does not guarantee warm engines. Process sampling can miss short-lived or reparented processes; roles contain executable basenames only. Results are private measurement evidence, not a regression verdict.",
     };

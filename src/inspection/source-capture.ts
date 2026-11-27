@@ -1,9 +1,12 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   ContainedFileSizeError,
+  isContainedPath,
+  normalizeRepositoryPath,
   readContainedBytes,
 } from "./read-json.js";
 import {
@@ -24,6 +27,7 @@ export interface CapturedSourceInput {
   readonly entry: SnapshotRegistryEntry | undefined;
   readonly text: string | undefined;
   readonly byteLength: number;
+  readonly validUtf8: boolean | undefined;
   readonly digest: string | undefined;
 }
 
@@ -114,6 +118,7 @@ export async function captureAnalysisSources(
         let text: string | undefined;
         let digest: string | undefined;
         let byteLength = 0;
+        let validUtf8: boolean | undefined;
         if (entry?.targetKind === "file") {
           // This raw checked read deliberately does not consult the active view.
           const bytes = await readContainedBytes(registry, path, {
@@ -121,12 +126,13 @@ export async function captureAnalysisSources(
           });
           byteLength = bytes.length;
           totalBytes += byteLength;
+          validUtf8 = isUtf8(bytes);
           text = bytes.toString("utf8");
           digest = createHash("sha256").update(bytes).digest("hex");
         }
         input.files.set(
           path,
-          Object.freeze({ entry, text, byteLength, digest }),
+          Object.freeze({ entry, text, byteLength, digest, validUtf8 }),
         );
       }
     }
@@ -281,10 +287,6 @@ function validateSourceTransport(
     item.device <= 0xffffffffffffffffn &&
     item.inode >= 0n &&
     item.inode <= 0xffffffffffffffffn;
-  const contained = (root: string, path: string) => {
-    const from = relative(root, path);
-    return !isAbsolute(from) && from !== ".." && !from.startsWith(`..${sep}`);
-  };
   const entry = (
     item: unknown,
     root: string,
@@ -316,8 +318,8 @@ function validateSourceTransport(
       identity(item.targetIdentity) &&
       isAbsolute(item.absolutePath) &&
       isAbsolute(item.canonicalPath) &&
-      contained(root, item.absolutePath) &&
-      contained(root, item.canonicalPath) &&
+      isContainedPath(root, item.absolutePath) &&
+      isContainedPath(root, item.canonicalPath) &&
       resolve(root, item.repositoryPath) === item.absolutePath
     );
   };
@@ -363,7 +365,7 @@ function validateSourceTransport(
         pair.length !== 2 ||
         !string(pair[0]) ||
         paths.has(pair[0]) ||
-        !fields(pair[1], ["entry", "text", "byteLength", "digest"])
+        !fields(pair[1], ["entry", "text", "byteLength", "digest", "validUtf8"])
       )
         return invalid();
       const [path, file] = pair;
@@ -375,7 +377,7 @@ function validateSourceTransport(
           .some(
             (part: string) => part === "" || part === "." || part === "..",
           ) ||
-        !contained(root.snapshotRoot, resolve(root.snapshotRoot, path))
+        !isContainedPath(root.snapshotRoot, resolve(root.snapshotRoot, path))
       )
         return invalid();
       paths.add(path);
@@ -397,6 +399,7 @@ function validateSourceTransport(
         return invalid();
       if (file.entry?.targetKind === "file") {
         if (
+          typeof file.validUtf8 !== "boolean" ||
           typeof file.text !== "string" ||
           file.text.length > file.byteLength ||
           typeof file.digest !== "string" ||
@@ -404,6 +407,7 @@ function validateSourceTransport(
         )
           return invalid();
       } else if (
+        file.validUtf8 !== undefined ||
         file.text !== undefined ||
         file.digest !== undefined ||
         file.byteLength !== 0
@@ -438,9 +442,9 @@ export function importAnalysisSourceCapture(
     const exact = new Map(entries.map((item) => [item.repositoryPath, item]));
     const registry: SnapshotRegistry = Object.freeze({
       snapshotRoot: root.snapshotRoot,
-      exact: (path: string) => exact.get(path.split(sep).join("/")),
+      exact: (path: string) => exact.get(normalizeRepositoryPath(path)),
       resolve: (path: string) => {
-        const normalized = path.split(sep).join("/").replace(/^\.\//u, "");
+        const normalized = normalizeRepositoryPath(path).replace(/^\.\//u, "");
         return files.get(normalized)?.entry ?? exact.get(normalized);
       },
       entries: () => entries,

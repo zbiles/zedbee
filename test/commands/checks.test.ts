@@ -398,10 +398,34 @@ describe("executeChecksCommand", () => {
       const lint = described.checks.find(({ id }) => id === "lint");
 
       expect(dispatchedRuns).toBe(expectedRuns);
-      expect(executions).toHaveLength(expectedRuns);
+      expect(executions.map(({ result }) => result.status)).toEqual([
+        expectedRuns > 0 ? "completed" : "skipped",
+      ]);
       expect(lint?.applicability).toBe(expectedApplicability);
       expect(lint?.targets).toEqual(expectedTargets);
       expect(io.stdout.join("")).not.toMatch(/\u001B\[[0-9;]*m/u);
+    },
+  );
+
+  it.each([false, true])(
+    "reports uncovered sources with covered targets: %s",
+    async (mixed) => {
+      const repository = await createGitRepository("zedbee-checks-uncovered-");
+      await repository.write("pkg/package.json", '{"name":"pkg"}');
+      await repository.write("tools/orphan.js", "export const orphan = 1;\n");
+      if (mixed)
+        await repository.write("pkg/covered.js", "export const covered = 1;\n");
+      await repository.git(["add", "--all"]);
+      const io = terminal();
+      const result = await executeChecksCommand(
+        { cwd: repository.root, format: "json", color: false },
+        io,
+      );
+      expect(result.checks.find((check) => check.id === "lint")).toMatchObject({
+        applicability: "incomplete",
+        targets: mixed ? ["pkg"] : [],
+        uncoveredPaths: ["tools/orphan.js"],
+      });
     },
   );
 
@@ -618,6 +642,7 @@ describe("executeChecksCommand", () => {
       "engine",
       "rules.eqeqeq",
       "rules.no-console",
+      "typeInformation",
     ]);
     expect(lint?.configuration.overrides).toEqual([
       {
@@ -1132,4 +1157,148 @@ it("describes project lint ownership instead of claiming project config is never
   expect(
     result.checks.find((check) => check.id === "lint")?.limitation,
   ).not.toContain("never loads");
+});
+
+it("describes lint type information in profile, repository and file scopes", async () => {
+  for (const explicit of [false, true]) {
+    const config = resolveConfig(
+      explicit
+        ? {
+            schemaVersion: 1,
+            checks: { lint: { typeInformation: "when-available" } },
+            overrides: [
+              {
+                files: ["legacy/**"],
+                checks: { lint: { typeInformation: "required" } },
+              },
+            ],
+          }
+        : undefined,
+    );
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      configuredDependencies(config),
+    );
+    const description = result.checks.find(
+      ({ id }) => id === "lint",
+    )!.configuration;
+    expect(description.values.typeInformation).toEqual({
+      value: config.checks.lint.typeInformation,
+      source: explicit ? "repository" : "profile",
+      customized: explicit,
+    });
+    expect(config.configurationOrigins.lint.typeInformation?.kind).toBe(
+      explicit ? "repository" : "profile",
+    );
+    if (explicit)
+      expect(description.overrides[0]?.values).toEqual({
+        typeInformation: "required",
+      });
+  }
+});
+
+it("preserves complete check descriptions when a static render fails", async () => {
+  const io = { ...terminal(), stdoutIsTTY: true };
+  const result = await executeChecksCommand(
+    { cwd: "/repo", format: "auto", color: false },
+    io,
+    {
+      ...dependencies,
+      renderDashboard: async () => {
+        throw new Error("render");
+      },
+    },
+  );
+  expect(result.exitCode).toBe(0);
+  expect(io.stdout).toHaveLength(1);
+  for (const id of CHECK_IDS) expect(io.stdout[0]).toContain(id);
+});
+
+it.each(["empty", "failed"] as const)(
+  "distinguishes %s project Prettier discovery",
+  async (kind) => {
+    const deps = configuredDependencies(
+      resolveConfig({
+        schemaVersion: 1,
+        checks: { formatting: { engine: "project" } },
+      }),
+    );
+    const result = await executeChecksCommand(
+      { cwd: "/repo", format: "json", color: false },
+      terminal(),
+      {
+        ...deps,
+        discoverProjectPrettier: async () => {
+          if (kind === "failed") throw new Error("fixture failure");
+          return [];
+        },
+      },
+    );
+    const engine = result.checks.find(
+      (check) => check.id === "formatting",
+    )!.engine;
+    expect(engine.version).toMatch(
+      kind === "failed" ? /^unavailable$/u : /^missing$/u,
+    );
+  },
+);
+
+it("reports selected formatting owners rather than untracked or managed-only sibling manifests", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    '{"name":"fixture","workspaces":["packages/*"]}',
+  );
+  await repo.write(
+    "packages/app/package.json",
+    '{"name":"app","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  await repo.write(
+    "packages/managed/package.json",
+    '{"name":"managed","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["packages/app/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    }),
+  );
+  await repo.git(["add", "--all"]);
+  await repo.write("packages/app/package.json", '{"name":"app"}');
+  // Installation metadata can be read locally, but the declaration's range
+  // must still come from the staged manifest that selected this owner.
+  await repo.write(
+    "packages/app/node_modules/prettier/package.json",
+    '{"version":"3.9.6"}',
+  );
+  await repo.write(
+    "packages/app/node_modules/prettier/index.mjs",
+    "export {};",
+  );
+  await repo.write(
+    "packages/untracked/package.json",
+    '{"name":"untracked","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  const result = await executeChecksCommand(
+    { cwd: repo.root, format: "json", color: false },
+    terminal(),
+  );
+  expect(result.exitCode).toBe(0);
+  expect(
+    result.checks.find(({ id }) => id === "formatting")?.effectiveEngines,
+  ).toEqual([
+    expect.objectContaining({ kind: "managed", projectRoot: "." }),
+    expect.objectContaining({
+      kind: "project",
+      projectRoot: "packages/app",
+      version: "3.9.6",
+    }),
+  ]);
 });

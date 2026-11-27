@@ -10,12 +10,14 @@ import { buildScanResultSections } from "../reporting/result-sections.js";
 import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
+import { repairFindingForMode } from "../reporting/comparison-repair.js";
 import { FindingsList } from "./findings-list.js";
 import { IncompleteList } from "./incomplete-list.js";
 import { LiveDashboard, type ScanProgress } from "./live-dashboard.js";
 import { OutcomeStrip } from "./outcome-strip.js";
 import { colorProp, ZEDBEE_THEME } from "./theme.js";
 import { chunkTerminalCells } from "../renderers/terminal-cells.js";
+import { networkDisclosureLine } from "./network-disclosure-line.js";
 
 function opaquePathLines(
   label: "Path" | "Full report",
@@ -133,6 +135,7 @@ function NextSteps({
   }
   const [heading, ...lines] = nextStepsLines({
     outcome: report.outcome,
+    mode: report.mode,
     shown: presentation.findings.length,
     total: presentation.totalFindingCount,
     reportPath: presentation.reportPath,
@@ -213,9 +216,13 @@ export function ScanApp(props: ScanAppProps) {
 
   const instruction =
     props.report.outcome === "pass"
-      ? "✓ Commit allowed."
+      ? props.report.mode === "base"
+        ? "✓ Scan passed."
+        : "✓ Commit allowed."
       : props.report.outcome === "blocked"
-        ? "✕ Resolve the findings above, then stage the result."
+        ? props.report.mode === "base"
+          ? "✕ Resolve the findings above, then scan the updated committed changes."
+          : "✕ Resolve the findings above, then stage the result."
         : "✕ Restore the incomplete check, then scan again.";
   return (
     <Box flexDirection="column" width={props.width}>
@@ -226,24 +233,29 @@ export function ScanApp(props: ScanAppProps) {
       ))}
       <OutcomeStrip
         report={props.report}
+        findings={(
+          props.presentation?.findings ?? props.report.summary.findings
+        ).map((finding) => repairFindingForMode(finding, props.report!.mode))}
         width={props.width}
         color={props.color}
       />
       <IncompleteList
         checks={props.report.checks}
+        comparison={props.report}
         width={props.width}
         color={props.color}
       />
       <FindingsList
-        findings={props.presentation?.findings ?? props.report.summary.findings}
+        findings={(
+          props.presentation?.findings ?? props.report.summary.findings
+        ).map((finding) => repairFindingForMode(finding, props.report!.mode))}
         width={props.width}
         color={props.color}
       />
       {props.report.networkDisclosures.map((disclosure) => (
         <Box key={`${disclosure.checkId}:${disclosure.target}`} marginTop={1}>
           <Text {...colorProp(props.color, ZEDBEE_THEME.secondary)}>
-            ↗ {disclosure.checkId} sent {disclosure.metadata.join(", ")} to{" "}
-            {disclosure.services.join(", ")}.
+            {networkDisclosureLine(disclosure)}
           </Text>
         </Box>
       ))}

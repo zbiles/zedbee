@@ -16,6 +16,11 @@ const permits = new WeakMap<
   object,
   { checkoutRoot: string; projectRoot: string; sourceMessages: boolean }
 >();
+function recordedPermit(permit: ProjectEslintPermit) {
+  return typeof permit === "object" && permit !== null
+    ? permits.get(permit)
+    : undefined;
+}
 export function normalizeProjectRoot(root: string): string {
   const path = root.replaceAll("\\", "/");
   if (
@@ -27,24 +32,25 @@ export function normalizeProjectRoot(root: string): string {
   return posix.normalize(path || ".").replace(/\/$/u, "") || ".";
 }
 type Capability = "execute" | "messages";
-async function trustKey(
-  root: string,
+function capabilityKey(
+  common: string,
   projectRoot: string,
   capability: Capability,
-): Promise<string> {
-  const common = await canonicalTrustRoot(root);
+): string {
   const digest = createHash("sha256")
     .update(`${common}\0${normalizeProjectRoot(projectRoot)}`)
     .digest("hex");
   return `zedbee.projectEslint-${digest}.${capability}`;
 }
-async function stored(
+async function trustKey(
   root: string,
   projectRoot: string,
   capability: Capability,
-): Promise<boolean> {
+): Promise<string> {
+  return capabilityKey(await canonicalTrustRoot(root), projectRoot, capability);
+}
+async function storedKey(root: string, key: string): Promise<boolean> {
   try {
-    const key = await trustKey(root, projectRoot, capability);
     const value = await new GitClient(root).tryRun([
       "config",
       "--local",
@@ -56,6 +62,16 @@ async function stored(
   } catch {
     return false;
   }
+}
+async function stored(
+  root: string,
+  projectRoot: string,
+  capability: Capability,
+): Promise<boolean> {
+  const key = await trustKey(root, projectRoot, capability).catch(
+    () => undefined,
+  );
+  return key === undefined ? false : storedKey(root, key);
 }
 export async function hasProjectEslintTrust(
   root: string,
@@ -69,12 +85,15 @@ export async function revokeProjectEslintCapability(
   projectRoot: string,
   capability: Capability,
 ): Promise<void> {
-  await new GitClient(root).tryRun([
+  const result = await new GitClient(root).tryRun([
     "config",
     "--local",
     "--unset-all",
     await trustKey(root, projectRoot, capability),
   ]);
+  // Git returns 5 when the key is already absent.
+  if (result.exitCode !== 0 && result.exitCode !== 5)
+    throw new Error("Could not remove the local project ESLint trust grant.");
 }
 export async function persistProjectEslintTrust(
   root: string,
@@ -103,7 +122,12 @@ export async function requireProjectEslintTrust(
 ): Promise<ProjectEslintPermit> {
   const checkoutRoot = await realpath(root),
     normalized = normalizeProjectRoot(projectRoot);
-  if (!explicitConsent && !(await stored(root, normalized, "execute")))
+  const common = await canonicalTrustRoot(root).catch(() => undefined);
+  const isStored = async (capability: Capability): Promise<boolean> =>
+    common === undefined
+      ? false
+      : storedKey(root, capabilityKey(common, normalized, capability));
+  if (!explicitConsent && !(await isStored("execute")))
     throw new ProjectEslintFailureError("PROJECT_ESLINT_TRUST_REQUIRED");
   const permit = Object.freeze({
     projectRoot: normalized,
@@ -114,7 +138,7 @@ export async function requireProjectEslintTrust(
     projectRoot: normalized,
     sourceMessages:
       (explicitConsent && options.sourceMessages === true) ||
-      (await stored(root, normalized, "messages")),
+      (await isStored("messages")),
   });
   return permit;
 }
@@ -124,10 +148,7 @@ export function projectEslintPermitAllows(
   projectRoot: string,
   messages = false,
 ): boolean {
-  const recorded =
-    typeof permit === "object" && permit !== null
-      ? permits.get(permit)
-      : undefined;
+  const recorded = recordedPermit(permit);
   return (
     recorded !== undefined &&
     recorded.checkoutRoot === checkoutRoot &&
@@ -138,9 +159,5 @@ export function projectEslintPermitAllows(
 export function projectEslintSourceMessagesAllowed(
   permit: ProjectEslintPermit,
 ): boolean {
-  return (
-    typeof permit === "object" &&
-    permit !== null &&
-    permits.get(permit)?.sourceMessages === true
-  );
+  return recordedPermit(permit)?.sourceMessages === true;
 }

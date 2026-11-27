@@ -112,16 +112,16 @@ it("retries a busy startup after discovery was cleared but ownership is still re
   expect(await state.read()).toBeUndefined();
   const originalRead = ServiceState.prototype.read;
   let reads = 0;
-  const read = vi.spyOn(ServiceState.prototype, "read").mockImplementation(
-    async function (this: ServiceState) {
+  const read = vi
+    .spyOn(ServiceState.prototype, "read")
+    .mockImplementation(async function (this: ServiceState) {
       const record = await originalRead.call(this);
       // The second parent-side discovery read follows the real candidate's
       // busy reply. Keep ownership held until that reply has been observed.
       if (this.directory === state.directory && ++reads === 2)
         allowRelease.resolve();
       return record;
-    },
-  );
+    });
   let executor: Awaited<ReturnType<typeof acquireServiceExecutor>> | undefined;
   try {
     executor = await acquireServiceExecutor({ directory: state.directory });
@@ -292,6 +292,63 @@ it("keeps a matching service published after the initial stale discovery", async
     read.mockRestore();
     await executor?.close();
     await current.close();
+    await release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("recovers admission when a provisional drain disconnects", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zu-")));
+  const state = new ServiceState(join(root, "s"));
+  await state.prepare();
+  const release = (await state.lock())!;
+  const server = await startServiceServer(state, "a".repeat(64), 2, release);
+  const existing = await connectService(state, (await state.read())!);
+  const executor = executorForConnection(existing);
+  const drainer = await connectService(state, (await state.read())!);
+  const session = await executor.openSession();
+  const request = drainer.request("drain").catch((error) => error);
+  try {
+    await vi.waitFor(async () =>
+      expect(await existing.request("status")).toMatchObject({
+        draining: true,
+      }),
+    );
+    await drainer.close();
+    await request;
+    await vi.waitFor(async () =>
+      expect(await existing.request("status")).not.toHaveProperty("draining"),
+    );
+    await (await executor.openSession()).close();
+  } finally {
+    await session.close();
+    await drainer.close();
+    await executor.close();
+    await server.close();
+    await release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+it("recovers admission if the drain lease cannot be created", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "zu-")));
+  const state = new ServiceState(join(root, "s"));
+  await state.prepare();
+  const release = (await state.lock())!;
+  const server = await startServiceServer(state, "a".repeat(64), 2, release);
+  const client = await connectService(state, (await state.read())!);
+  const executor = executorForConnection(client);
+  const lease = vi
+    .spyOn(state, "lease")
+    .mockRejectedValueOnce(new Error("lease unavailable"));
+  try {
+    await expect(client.request("drain")).rejects.toThrow();
+    expect(await client.request("status")).not.toHaveProperty("draining");
+    await (await executor.openSession()).close();
+  } finally {
+    lease.mockRestore();
+    await executor.close();
+    await server.close();
     await release();
     await rm(root, { recursive: true, force: true });
   }

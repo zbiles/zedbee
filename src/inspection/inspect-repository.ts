@@ -1,4 +1,9 @@
-import { posix } from "node:path";
+import { MANAGED_SOURCE_PATH } from "./source-paths.js";
+import {
+  workspaceContainsFile,
+  physicalWorkspaceOrder,
+} from "./workspace-owner.js";
+import { posix, relative, sep } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   normalizeRepositoryPath,
@@ -17,7 +22,7 @@ import type {
 } from "./types.js";
 import { compareCodeUnits } from "../core/compare.js";
 
-const LOCKFILE_MANAGERS = {
+export const LOCKFILE_MANAGERS = {
   "package-lock.json": "npm",
   "npm-shrinkwrap.json": "npm",
   "pnpm-lock.yaml": "pnpm",
@@ -26,8 +31,13 @@ const LOCKFILE_MANAGERS = {
   "bun.lockb": "bun",
 } as const satisfies Record<string, Exclude<PackageManager, "unknown">>;
 
+function lockfileManager(name: string): PackageManager | undefined {
+  return Object.hasOwn(LOCKFILE_MANAGERS, name)
+    ? LOCKFILE_MANAGERS[name as keyof typeof LOCKFILE_MANAGERS]
+    : undefined;
+}
+
 const LOCKFILE_PRECEDENCE = ["npm", "pnpm", "yarn", "bun"] as const;
-const SOURCE_EXTENSION = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/;
 const TSCONFIG_NAME = /^tsconfig.*\.json$/;
 const ENVIRONMENT_ORDER: readonly Environment[] = [
   "javascript",
@@ -64,12 +74,7 @@ function detectPackageManager(
     return declared;
   }
   const detected = new Set(
-    lockfiles.map(
-      (path) =>
-        LOCKFILE_MANAGERS[
-          path.split("/").at(-1) as keyof typeof LOCKFILE_MANAGERS
-        ],
-    ),
+    lockfiles.map((path) => lockfileManager(posix.basename(path))),
   );
   return (
     LOCKFILE_PRECEDENCE.find((manager) => detected.has(manager)) ?? "unknown"
@@ -104,21 +109,6 @@ function lockfilesAtProjectRoots(
     projectRoots.add(workspace.canonicalRelativeRoot);
   }
   return lockfiles.filter((path) => projectRoots.has(posix.dirname(path)));
-}
-
-function ownsPath(workspaceRoot: string, path: string): boolean {
-  return workspaceRoot === "." || path.startsWith(`${workspaceRoot}/`);
-}
-
-function owningWorkspace(
-  workspaces: readonly DiscoveredWorkspace[],
-  path: string,
-): DiscoveredWorkspace | undefined {
-  return workspaces
-    .filter((workspace) => ownsPath(workspace.relativeRoot, path))
-    .sort(
-      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
-    )[0];
 }
 
 function inferEnvironments(
@@ -200,15 +190,16 @@ export async function inspectRepository(
   for (const [path, failure] of registry.unavailableSymlinks ?? []) {
     const name = posix.basename(path);
     const required =
-      SOURCE_EXTENSION.test(path) ||
+      MANAGED_SOURCE_PATH.test(path) ||
       TSCONFIG_NAME.test(name) ||
       name === "package.json" ||
       name === "pnpm-workspace.yaml" ||
-      Object.hasOwn(LOCKFILE_MANAGERS, name) ||
+      lockfileManager(name) !== undefined ||
       workspaces.some(({ relativeRoot, canonicalRelativeRoot }) =>
         [relativeRoot, canonicalRelativeRoot].some(
           (root) =>
-            ownsPath(root, path) ||
+            (failure.reason !== "excluded-symlink" &&
+              workspaceContainsFile(root, path)) ||
             root === path ||
             root.startsWith(`${path}/`),
         ),
@@ -217,7 +208,7 @@ export async function inspectRepository(
   }
 
   const sourceFiles = discoverRepositoryFiles(registry, (path) =>
-    SOURCE_EXTENSION.test(path),
+    MANAGED_SOURCE_PATH.test(path),
   );
   const tsconfigPaths = discoverRepositoryFiles(
     registry,
@@ -227,7 +218,7 @@ export async function inspectRepository(
   const discoveredLockfiles = lockfilesAtProjectRoots(
     discoverRepositoryFiles(
       registry,
-      (path) => posix.basename(path) in LOCKFILE_MANAGERS,
+      (path) => lockfileManager(posix.basename(path)) !== undefined,
     ),
     workspaces,
   );
@@ -238,45 +229,30 @@ export async function inspectRepository(
     sourcesByWorkspace.set(workspace, []);
     configsByWorkspace.set(workspace, []);
   }
-  const claimedSourceFiles = new Set<string>();
-  const claimedConfigPaths = new Set<string>();
-  for (const workspace of workspaces) {
-    if (workspace.canonicalRelativeRoot === workspace.relativeRoot) continue;
-    for (const path of sourceFiles) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      sourcesByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedSourceFiles.add(path);
-    }
-    for (const path of tsconfigPaths) {
-      if (!ownsPath(workspace.canonicalRelativeRoot, path)) continue;
-      const suffix = path
-        .slice(workspace.canonicalRelativeRoot.length)
-        .replace(/^\//, "");
-      configsByWorkspace
-        .get(workspace)
-        ?.push(posix.join(workspace.relativeRoot, suffix));
-      claimedConfigPaths.add(path);
-    }
+  const unownedSourceFiles: string[] = [];
+  // Registry members use canonical spellings. Choose the deepest physical
+  // project first, then project the path into that declared owner's spelling.
+  // Equal physical roots prefer the real declaration, then a stable alias.
+  const owners = physicalWorkspaceOrder(workspaces);
+  function assign(
+    path: string,
+    byWorkspace: Map<DiscoveredWorkspace, string[]>,
+  ): boolean {
+    const owner = owners.find(({ canonicalRelativeRoot }) =>
+      workspaceContainsFile(canonicalRelativeRoot, path),
+    );
+    if (owner === undefined) return false;
+    const suffix =
+      owner.canonicalRelativeRoot === "."
+        ? path
+        : path.slice(owner.canonicalRelativeRoot.length + 1);
+    byWorkspace.get(owner)!.push(posix.join(owner.relativeRoot, suffix));
+    return true;
   }
   for (const path of sourceFiles) {
-    if (claimedSourceFiles.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      sourcesByWorkspace.get(owner)?.push(path);
-    }
+    if (!assign(path, sourcesByWorkspace)) unownedSourceFiles.push(path);
   }
-  for (const path of tsconfigPaths) {
-    if (claimedConfigPaths.has(path)) continue;
-    const owner = owningWorkspace(workspaces, path);
-    if (owner !== undefined) {
-      configsByWorkspace.get(owner)?.push(path);
-    }
-  }
+  for (const path of tsconfigPaths) assign(path, configsByWorkspace);
 
   const inspectedWorkspaces = workspaces.map((workspace) => {
     const workspaceSources = sourcesByWorkspace.get(workspace) ?? [];
@@ -286,6 +262,9 @@ export async function inspectRepository(
         ? {}
         : { name: workspace.manifest.name }),
       relativeRoot: workspace.relativeRoot,
+      ...(workspace.canonicalRelativeRoot === workspace.relativeRoot
+        ? {}
+        : { canonicalRelativeRoot: workspace.canonicalRelativeRoot }),
       manifestPath: workspace.manifestPath,
       sourceFiles: workspaceSources,
       tsconfigPaths: workspaceConfigs,
@@ -305,8 +284,19 @@ export async function inspectRepository(
   const rootPackageManager = workspaces.find(
     ({ relativeRoot }) => relativeRoot === ".",
   )?.manifest.packageManager;
+  const symlinkTargets = new Set<string>();
+  for (const entry of registry.entries()) {
+    if (entry.kind === "symlink" && entry.targetKind === "file")
+      symlinkTargets.add(
+        relative(canonicalRoot, entry.canonicalPath).split(sep).join("/"),
+      );
+  }
   const inspection: RepositoryInspection = {
     snapshotRoot: canonicalRoot,
+    fileSymlinkTargets: Object.freeze(
+      [...symlinkTargets].sort(compareCodeUnits),
+    ),
+    unownedSourceFiles: Object.freeze(unownedSourceFiles),
     packageManager: detectPackageManager(rootPackageManager, lockfiles),
     lockfiles,
     workspaces: inspectedWorkspaces,

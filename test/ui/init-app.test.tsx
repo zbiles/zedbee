@@ -195,9 +195,14 @@ describe("GitHub workflow setup choice", () => {
     view.unmount();
   });
 
-  it.each(["configure", "review"])(
-    "cancels an initially selected workflow from %s without applying",
-    async (phase) => {
+  it.each([
+    ["configure", "n"],
+    ["review", "n"],
+    ["configure", "\u0003"],
+    ["review", "\u0003"],
+  ])(
+    "cancels an initially selected workflow from %s with %j without applying",
+    async (phase, key) => {
       const onDecision = vi.fn();
       const selected = { ...available, workflow: "github" as const };
       const view = render(
@@ -222,7 +227,7 @@ describe("GitHub workflow setup choice", () => {
           expect(view.lastFrame()).toContain(".github/workflows/zedbee.yml"),
         );
       }
-      view.stdin.write("n");
+      view.stdin.write(key!);
       await waitForAssertion(() =>
         expect(onDecision).toHaveBeenCalledExactlyOnceWith(false),
       );

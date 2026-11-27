@@ -1,5 +1,12 @@
+import { projectWorkspaceComparison } from "../checks/workspace-comparison.js";
+import { formattingRequirements } from "../checks/prettier/formatting-requirements.js";
+import { resolveProjectPrettierInstallation } from "../checks/prettier/project-installation.js";
+import { ProjectPrettierFailureError } from "../checks/prettier/project-error.js";
 import { inspectionContext } from "../checks/dispatch-context.js";
-import { useStaticDashboard } from "../reporting/static-dashboard.js";
+import {
+  deliverDashboard,
+  useStaticDashboard,
+} from "../reporting/static-dashboard.js";
 import {
   joinSnapshotReaders,
   settleSnapshotWork,
@@ -28,7 +35,10 @@ import { GitClient } from "../git/client.js";
 import { captureSelectedIndexComparison } from "../git/selected-comparison.js";
 import { buildSnapshotPair } from "../git/snapshot.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
-import { discoverProjectPrettier } from "../init/prettier-discovery.js";
+import {
+  inspectProjectPrettierDiscovery,
+  discoverProjectPrettier,
+} from "../init/prettier-discovery.js";
 import { DEFAULT_CHECK_ADAPTERS } from "../scan/run-scan.js";
 import {
   immutableConfigurationSnapshot,
@@ -87,13 +97,27 @@ export interface ChecksCommandDependencies {
     repositoryRoot: string,
     config: ResolvedConfig,
     git: GitClient,
-  ): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>>;
+  ): Promise<SelectedCheckApplicability>;
   captureIndexComparison?: typeof captureSelectedIndexComparison;
   discoverProjectPrettier?: typeof discoverProjectPrettier;
   renderDashboard?(
     checks: readonly CheckDescription[],
     options: { readonly width: number; readonly color: boolean },
   ): Promise<void>;
+}
+
+interface SelectedCheckApplicability extends ReadonlyMap<
+  CheckId,
+  CheckApplicabilityDescription
+> {
+  readonly selectedFormatting?: {
+    readonly managed: boolean;
+    readonly projects: readonly {
+      projectRoot: string;
+      version?: string;
+      status: string;
+    }[];
+  };
 }
 
 interface CatalogEntry {
@@ -240,7 +264,7 @@ async function inspectConfiguredChecks(
   repositoryRoot: string,
   config: ResolvedConfig,
   git: GitClient,
-): Promise<ReadonlyMap<CheckId, CheckApplicabilityDescription>> {
+): Promise<SelectedCheckApplicability> {
   const changeSet = await readStagedChangeSet(git);
   const snapshots = await buildSnapshotPair(repositoryRoot, git);
   try {
@@ -259,8 +283,16 @@ async function inspectConfiguredChecks(
     const entries = await joinSnapshotReaders(
       DEFAULT_CHECK_ADAPTERS.map(async (adapter: CheckAdapter) => {
         const id = adapter.id as CheckId;
+        const checkContext = projectWorkspaceComparison(
+          { ...context, policyForFile },
+          id,
+        );
         const applicability = await adapter.inspect(
-          inspectionContext(context, id, resolveInspectionPolicy(config, id)),
+          inspectionContext(
+            checkContext,
+            id,
+            resolveInspectionPolicy(config, id),
+          ),
         );
         const targets = applicability.applies
           ? (
@@ -270,8 +302,8 @@ async function inspectConfiguredChecks(
                     config,
                     id,
                     target,
-                    context,
-                    policyForFile,
+                    checkContext,
+                    checkContext.policyForFile,
                   )) !== undefined
                     ? target
                     : undefined,
@@ -279,6 +311,13 @@ async function inspectConfiguredChecks(
               )
             ).filter((target) => target !== undefined)
           : [];
+        const coverage = applicability.uncoveredPaths?.length
+          ? {
+              uncoveredPaths: applicability.uncoveredPaths,
+              reason:
+                "Changed sources without a discovered project owner require inspection.",
+            }
+          : {};
         return [
           id,
           applicability.applies && targets.length > 0
@@ -288,6 +327,7 @@ async function inspectConfiguredChecks(
                   .map(({ id: targetId }) => targetId)
                   .sort(compareCodeUnits),
                 executionClass: applicability.executionClass,
+                ...coverage,
               }
             : {
                 applicable: false,
@@ -296,11 +336,47 @@ async function inspectConfiguredChecks(
                 reason: applicability.applies
                   ? "No applicable targets under the configured check policy"
                   : applicability.reason,
+                ...coverage,
               },
         ] as const;
       }),
     );
-    return new Map(entries);
+    const requirements = formattingRequirements(
+      targetInspection,
+      policyForFile,
+      [...changeSet.files.values()]
+        .filter(({ status }) => status !== "deleted")
+        .map(({ path }) => path),
+    );
+    const projects = await Promise.all(
+      requirements.projectRoots.map(async (projectRoot) => {
+        try {
+          const installation = await resolveProjectPrettierInstallation(
+            repositoryRoot,
+            projectRoot,
+            snapshots.targetDir,
+          );
+          return {
+            projectRoot,
+            version: installation.version,
+            status: "available",
+          };
+        } catch (error) {
+          return {
+            projectRoot,
+            status:
+              error instanceof ProjectPrettierFailureError
+                ? error.code === "PROJECT_PRETTIER_VERSION_UNSUPPORTED"
+                  ? "unsupported"
+                  : "missing"
+                : "unavailable",
+          };
+        }
+      }),
+    );
+    return Object.assign(new Map(entries), {
+      selectedFormatting: { managed: requirements.managed, projects },
+    });
   } finally {
     await snapshots.cleanup();
   }
@@ -526,6 +602,15 @@ function renderText(result: ChecksCommandResult, color: boolean): string {
                 color,
               ),
             ]),
+        ...(check.uncoveredPaths?.length
+          ? [
+              terminalText(
+                `  Uncovered paths: ${check.uncoveredPaths.join(", ")}`,
+                "reason",
+                color,
+              ),
+            ]
+          : []),
         ...(check.reason === undefined
           ? []
           : [terminalText(`  Reason: ${check.reason}`, "reason", color)]),
@@ -554,21 +639,31 @@ export async function executeChecksCommand(
       config.overrides.some(
         (override) => override.checks.lint?.engine === "project",
       );
-    const formattingUsesProject =
+    const selectedFormatting = applicability.selectedFormatting;
+    const configuredProjectFormatting =
       config.checks.formatting.engine === "project" ||
       config.overrides.some(
         (override) => override.checks.formatting?.engine === "project",
       );
-    const discoveredProjectPrettier = formattingUsesProject
-      ? await (dependencies.discoverProjectPrettier ?? discoverProjectPrettier)(
-          repositoryRoot,
-        ).catch(() => [] as const)
-      : [];
+    const formattingUsesProject =
+      selectedFormatting === undefined
+        ? configuredProjectFormatting
+        : selectedFormatting.projects.length > 0;
+    const discovery =
+      formattingUsesProject && selectedFormatting === undefined
+        ? await inspectProjectPrettierDiscovery(
+            repositoryRoot,
+            dependencies.discoverProjectPrettier,
+          )
+        : undefined;
+    const discoveredProjectPrettier =
+      selectedFormatting?.projects ?? discovery?.entries ?? [];
     const formattingUsesManaged =
-      config.checks.formatting.engine === "managed" ||
-      config.overrides.some(
-        (override) => override.checks.formatting?.engine === "managed",
-      );
+      selectedFormatting?.managed ??
+      (config.checks.formatting.engine === "managed" ||
+        config.overrides.some(
+          (override) => override.checks.formatting?.engine === "managed",
+        ));
     const engineVersions = new Map<string, string>();
     const effectiveFormattingEngines = Object.freeze([
       ...(formattingUsesManaged
@@ -595,24 +690,27 @@ export async function executeChecksCommand(
               kind: "project" as const,
               projectRoot: ".",
               name: "Project Prettier",
-              version: "missing",
+              version:
+                discovery?.status === "failed" ? "unavailable" : "missing",
               license: "project-installed",
             }),
           ]
         : []),
     ]);
     const formattingEngine =
-      effectiveFormattingEngines.length === 1
-        ? Object.freeze({
-            name: effectiveFormattingEngines[0]!.name,
-            version: effectiveFormattingEngines[0]!.version,
-            license: effectiveFormattingEngines[0]!.license,
-          })
-        : Object.freeze({
-            name: "Mixed Prettier engines",
-            version: `${effectiveFormattingEngines.length} configurations`,
-            license: "mixed",
-          });
+      effectiveFormattingEngines.length === 0
+        ? describeManagedEngine("formatting", engineVersions)
+        : effectiveFormattingEngines.length === 1
+          ? Object.freeze({
+              name: effectiveFormattingEngines[0]!.name,
+              version: effectiveFormattingEngines[0]!.version,
+              license: effectiveFormattingEngines[0]!.license,
+            })
+          : Object.freeze({
+              name: "Mixed Prettier engines",
+              version: `${effectiveFormattingEngines.length} configurations`,
+              license: "mixed",
+            });
     const checks = Object.freeze(
       CHECK_IDS.map((id): CheckDescription => {
         const runtime = applicability.get(id) ?? {
@@ -627,7 +725,14 @@ export async function executeChecksCommand(
           description: CATALOG[id].description,
           severity: policy.severity,
           timing: policy.when,
-          applicability: runtime.applicable ? "applicable" : "not-applicable",
+          applicability: runtime.uncoveredPaths?.length
+            ? "incomplete"
+            : runtime.applicable
+              ? "applicable"
+              : "not-applicable",
+          ...(runtime.uncoveredPaths?.length
+            ? { uncoveredPaths: Object.freeze([...runtime.uncoveredPaths]) }
+            : {}),
           targets: Object.freeze([...runtime.targets]),
           executionClass: runtime.executionClass,
           network:
@@ -642,9 +747,11 @@ export async function executeChecksCommand(
           limitation:
             id === "lint" && lintUsesProject
               ? "Uses project ESLint configuration in selected workspaces under explicit trust; other workspaces retain managed rules. Project-rule automatic fixes are unavailable."
-              : id === "formatting" && formattingUsesProject
-                ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
-                : CATALOG[id].limitation,
+              : id === "formatting" && discovery?.status === "failed"
+                ? "Project Prettier setup could not be inspected. Check workspace manifests and file permissions."
+                : id === "formatting" && formattingUsesProject
+                  ? "Uses the project's installed Prettier, native configuration, and plugins under explicit trust."
+                  : CATALOG[id].limitation,
           ...(CATALOG[id].automaticFix === undefined
             ? {}
             : { automaticFix: CATALOG[id].automaticFix }),
@@ -654,22 +761,25 @@ export async function executeChecksCommand(
       }),
     );
     const result = Object.freeze({ exitCode: 0 as const, checks });
-    const dashboard = useStaticDashboard(options.format, io);
-    if (options.format === "json") {
-      io.writeStdout(`${JSON.stringify(result, null, 2)}\n`);
-    } else if (dashboard) {
-      await (dependencies.renderDashboard ?? renderDashboard)(result.checks, {
-        width: io.width,
-        color: options.color && io.env.NO_COLOR === undefined,
-      });
-    } else {
+    const writeText = () =>
       io.writeStdout(
         renderText(
           result,
           terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
         ),
       );
-    }
+    if (options.format === "json") {
+      io.writeStdout(JSON.stringify(result, null, 2) + "\n");
+    } else if (useStaticDashboard(options.format, io)) {
+      await deliverDashboard(
+        () =>
+          (dependencies.renderDashboard ?? renderDashboard)(result.checks, {
+            width: io.width,
+            color: options.color && io.env.NO_COLOR === undefined,
+          }),
+        writeText,
+      );
+    } else writeText();
     return result;
   } catch {
     io.writeStderr("Zedbee could not describe the configured checks.\n");

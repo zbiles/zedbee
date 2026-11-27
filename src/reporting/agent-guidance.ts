@@ -41,6 +41,8 @@ export function resolveAgentNextStep(
   const nextStep = resolveScanNextStep(report, guidance);
   const notice = hookUpdateNotice(report);
   if (nextStep === "" || notice === undefined) return nextStep;
+  if (notice.code !== "HOOK_UPDATE_NEEDED")
+    return `${nextStep} ${notice.remediation}`;
   const checkout = "hookOwner" in notice ? " in the main checkout" : "";
   return `${nextStep} Recommend updating Swarm’s hooks and offer to run zedbee init${checkout} for the user.`;
 }

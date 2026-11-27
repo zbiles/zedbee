@@ -174,6 +174,20 @@ async function attribute(
   );
 }
 
+function projectFailureResult(
+  error: ProjectPrettierFailureError,
+  remediation: string,
+): CheckResult {
+  return incompleteResult({
+    checkId: "formatting",
+    durationMs: 0,
+    code: error.code,
+    message: error.message,
+    ...(error.failure.file === undefined ? {} : { path: error.failure.file }),
+    remediation,
+  });
+}
+
 async function runProjectFiles(
   context: CheckRunContext,
   files: readonly string[],
@@ -182,6 +196,9 @@ async function runProjectFiles(
   ignored: { file: string; reason: string }[],
   checked: Set<string>,
 ): Promise<CheckResult | undefined> {
+  const unsupportedByPath = new Map(
+    context.snapshots.unsupportedEntries.map((entry) => [entry.path, entry]),
+  );
   const grouped = new Map<string, string[]>();
   for (const file of files) {
     const projectRoot = owningProjectRoot(
@@ -223,14 +240,10 @@ async function runProjectFiles(
       );
     } catch (error) {
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          remediation:
-            "Install a supported Prettier version in the project, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Install a supported Prettier version in the project, then retry.",
+        );
       }
       throw error;
     }
@@ -246,14 +259,10 @@ async function runProjectFiles(
       });
     } catch (error) {
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          remediation:
-            "Review the project Prettier installation and configuration, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Review the project Prettier installation and configuration, then retry.",
+        );
       }
       throw error;
     }
@@ -266,6 +275,24 @@ async function runProjectFiles(
         if (support.kind === "ignored") {
           ignored.push({ file, reason: support.reason });
           continue;
+        }
+        const unsupported = unsupportedByPath.get(file);
+        if (unsupported !== undefined) {
+          return incompleteResult({
+            checkId: "formatting",
+            durationMs: 0,
+            code:
+              unsupported.kind === "binary"
+                ? "UNSUPPORTED_BINARY_INPUT"
+                : unsupported.kind === "git-lfs-pointer"
+                  ? "GIT_LFS_POINTER"
+                  : "GIT_SUBMODULE_UNAVAILABLE",
+            message:
+              "The selected project formatter supports this path, but its contents are not available as text.",
+            path: file,
+            remediation:
+              "Provide valid text in the selected revision, or explicitly exclude the path from formatting if it is not intended to be formatted.",
+          });
         }
         if (support.configFile !== undefined) {
           selectedConfigFiles.add(support.configFile);
@@ -291,17 +318,10 @@ async function runProjectFiles(
     } catch (error) {
       if (context.signal.aborted) throw error;
       if (error instanceof ProjectPrettierFailureError) {
-        return incompleteResult({
-          checkId: "formatting",
-          durationMs: 0,
-          code: error.code,
-          message: error.message,
-          ...(error.failure.file === undefined
-            ? {}
-            : { path: error.failure.file }),
-          remediation:
-            "Fix the project Prettier configuration or plugin, then retry.",
-        });
+        return projectFailureResult(
+          error,
+          "Fix the project Prettier configuration or plugin, then retry.",
+        );
       }
       if (error instanceof ProjectFormattingSourceLimitError) {
         return incompleteResult({
@@ -445,7 +465,11 @@ export const prettierAdapter: LegacyCheckResultAdapter = {
       context.snapshots.unsupportedEntries.map((entry) => entry.path),
     );
     files = files.filter(
-      (file) => !unsupported.has(file) && !isGeneratedLockfile(file),
+      (file) =>
+        !isGeneratedLockfile(file) &&
+        (!unsupported.has(file) ||
+          context.policyForFile("formatting", file, "target").engine ===
+            "project"),
     );
     if (files.length === 0) {
       return skipped("No supported target files");

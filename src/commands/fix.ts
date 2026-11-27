@@ -9,7 +9,11 @@ import { maintainPlan } from "../reporting/fix-plan-store.js";
 import type { TelemetrySummary } from "../telemetry/client.js";
 import { validConfigPath } from "../config/selection-path.js";
 import { buildFixPlan } from "../fixes/build-plan.js";
-import { applyFixPlan, FixApplyCleanupError } from "../fixes/apply-plan.js";
+import {
+  applyFixPlan,
+  FixApplyCleanupError,
+  FixApplyInterruptedError,
+} from "../fixes/apply-plan.js";
 import { createCommandExecutor } from "./executor.js";
 import type { AnalyzerExecutor } from "../checks/runner/executor.js";
 import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
@@ -36,7 +40,10 @@ import {
 } from "../reporting/temporary-reports.js";
 import { terminalColorEnabled } from "../renderers/terminal-style.js";
 
-const MINIMUM_RESULT_DASHBOARD_WIDTH = 80;
+import {
+  deliverDashboard,
+  useStaticDashboard,
+} from "../reporting/static-dashboard.js";
 
 export interface FixCommandOptions {
   readonly telemetrySummary?: (value: TelemetrySummary) => void;
@@ -304,34 +311,8 @@ export async function executeFixCommand(
     });
     diagnosticEntries.push(...result.issues);
     await closeExecutor();
-    if (format === "json") {
-      outputPlan(true, result);
-    } else if (
-      options.format === "auto" &&
-      io.stdoutIsTTY &&
-      io.width >= MINIMUM_RESULT_DASHBOARD_WIDTH &&
-      io.env.TERM !== "dumb" &&
-      io.env.CI === undefined
-    ) {
-      try {
-        await (dependencies.renderResultDashboard ?? renderResultDashboard)(
-          prepared.publicPlan,
-          result,
-          {
-            width: io.width,
-            color: options.color && io.env.NO_COLOR === undefined,
-          },
-        );
-      } catch {
-        io.writeStdout(
-          renderResultText(
-            prepared.publicPlan,
-            result,
-            terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
-          ),
-        );
-      }
-    } else {
+    if (options.signal?.aborted) throw new FixApplyInterruptedError(result);
+    const writeResult = () =>
       io.writeStdout(
         renderResultText(
           prepared.publicPlan,
@@ -339,7 +320,22 @@ export async function executeFixCommand(
           terminalColorEnabled(options.color, io.stdoutIsTTY, io.env),
         ),
       );
-    }
+    if (format === "json") {
+      outputPlan(true, result);
+    } else if (useStaticDashboard(options.format, io)) {
+      await deliverDashboard(
+        () =>
+          (dependencies.renderResultDashboard ?? renderResultDashboard)(
+            prepared.publicPlan,
+            result,
+            {
+              width: io.width,
+              color: options.color && io.env.NO_COLOR === undefined,
+            },
+          ),
+        writeResult,
+      );
+    } else writeResult();
     io.writeStderr(renderWarnings(maintenance.warnings));
     return Math.max(result.exitCode, prepared.publicPlan.exitCode) as 0 | 1;
   } catch (error) {
@@ -348,10 +344,14 @@ export async function executeFixCommand(
     const details =
       cleanup === undefined ? undefined : cleanupFailureDetails(cleanup);
     const retainedResult =
-      cleanup instanceof FixApplyCleanupError ? cleanup.result : appliedResult;
+      cleanup instanceof FixApplyCleanupError
+        ? cleanup.result
+        : error instanceof FixApplyInterruptedError
+          ? error.result
+          : appliedResult;
     if (
       applying !== undefined &&
-      cleanup !== undefined &&
+      (cleanup !== undefined || error instanceof FixApplyInterruptedError) &&
       retainedResult !== undefined
     ) {
       summarize({
@@ -361,7 +361,7 @@ export async function executeFixCommand(
         diagnosticEntries.push(...retainedResult.issues);
       if (formatFor(options) === "json") {
         io.writeStdout(
-          `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details), null, 2)}\n`,
+          `${JSON.stringify(publicPlan(applying.publicPlan, true, retainedResult, details, options.signal?.aborted === true), null, 2)}\n`,
         );
       } else {
         io.writeStdout(

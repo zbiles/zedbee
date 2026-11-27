@@ -97,6 +97,20 @@ function loadBindings() {
     offsetHigh: "uint32",
     event: "void *",
   });
+  function securityAttributes(descriptor: unknown): Buffer {
+    const bytes = Buffer.alloc(koffi.sizeof(attributes));
+    koffi.encode(bytes, attributes, {
+      length: bytes.length,
+      descriptor,
+      inherit: 0,
+    });
+    return bytes;
+  }
+  function rejectReparsePoint(handle: unknown): void {
+    const info = Buffer.alloc(8);
+    if (!fileInfo(handle, 9, info, info.length) || info.readUInt32LE() & 0x400)
+      throw new ServiceUnavailableError();
+  }
 
   function fail(): never {
     const code = errorCode();
@@ -247,12 +261,7 @@ function loadBindings() {
     );
     if (!validHandle(handle)) fail();
     try {
-      const info = Buffer.alloc(8);
-      if (
-        !fileInfo(handle, 9, info, info.length) ||
-        info.readUInt32LE() & 0x400
-      )
-        throw new ServiceUnavailableError();
+      rejectReparsePoint(handle);
       return handle;
     } catch (error) {
       checkedClose(handle);
@@ -270,12 +279,7 @@ function loadBindings() {
   }
   function createWindowsDirectory(path: string): void {
     withDescriptor((descriptor) => {
-      const bytes = Buffer.alloc(koffi.sizeof(attributes));
-      koffi.encode(bytes, attributes, {
-        length: bytes.length,
-        descriptor,
-        inherit: 0,
-      });
+      const bytes = securityAttributes(descriptor);
       if (!createDirectory(path, bytes) && errorCode() !== 183) fail();
     });
     verifyWindowsPath(path, true);
@@ -302,12 +306,7 @@ function loadBindings() {
   ): { acquire(): boolean; close(): void } {
     let handle: unknown;
     withDescriptor((descriptor) => {
-      const bytes = Buffer.alloc(koffi.sizeof(attributes));
-      koffi.encode(bytes, attributes, {
-        length: bytes.length,
-        descriptor,
-        inherit: 0,
-      });
+      const bytes = securityAttributes(descriptor);
       handle = open(
         path,
         0x80000000 | 0x40000000 | 0x20000,
@@ -320,12 +319,7 @@ function loadBindings() {
     });
     if (!validHandle(handle)) fail();
     try {
-      const info = Buffer.alloc(8);
-      if (
-        !fileInfo(handle, 9, info, info.length) ||
-        info.readUInt32LE() & 0x400
-      )
-        throw new ServiceUnavailableError();
+      rejectReparsePoint(handle);
       const standard = Buffer.alloc(24);
       if (
         !fileInfo(handle, 1, standard, standard.length) ||
@@ -418,12 +412,7 @@ function loadBindings() {
   function createOwnedWindowsJobHandle(name: string): unknown {
     jobName(name);
     return withDescriptor((descriptor) => {
-      const bytes = Buffer.alloc(koffi.sizeof(attributes));
-      koffi.encode(bytes, attributes, {
-        length: bytes.length,
-        descriptor,
-        inherit: 0,
-      });
+      const bytes = securityAttributes(descriptor);
       const handle = createJob(bytes, name);
       if (!handle) fail();
       try {

@@ -96,20 +96,25 @@ export function groupFilesByRules(
       accessibilitySettings?: Readonly<AccessibilitySettings>;
     }
   >();
+  const validatedByInput = new Map<object, FileRuleGroup["rules"]>();
   for (const file of [...files].sort(compareCodeUnits)) {
     const policy = resolve(checkId as CheckId, file, side);
     if (policy.severity === "off" || !("rules" in policy)) continue;
-    const validatedRules = validateManagedRuleConfiguration(
-      checkId,
-      policy.rules,
-    );
-    const rules = Object.freeze(
-      Object.fromEntries(
-        Object.entries(validatedRules).sort(([left], [right]) =>
-          compareCodeUnits(left, right),
+    let rules = validatedByInput.get(policy.rules);
+    if (rules === undefined) {
+      const validated = validateManagedRuleConfiguration(checkId, policy.rules);
+      rules = Object.freeze(
+        Object.fromEntries(
+          Object.entries(validated).sort(([left], [right]) =>
+            compareCodeUnits(left, right),
+          ),
         ),
-      ),
-    );
+      );
+      // Resolved rule maps are frozen. A caller-supplied mutable policy must
+      // still be validated on every visit.
+      if (Object.isFrozen(policy.rules))
+        validatedByInput.set(policy.rules, rules);
+    }
     const accessibilitySettings =
       checkId === "reactAccessibility" && "settings" in policy
         ? validateAccessibilitySettings(policy.settings)
@@ -222,59 +227,45 @@ export function managedConfig(
       files: JAVASCRIPT_FILES,
       rules: { ...js.configs.recommended.rules },
     });
-    if (options.typedProject !== undefined) {
-      for (const preset of tseslint.configs.recommendedTypeChecked) {
-        const presetConfig = preset as Linter.Config;
-        const parserOptions = presetConfig.languageOptions?.parserOptions;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
-            ...presetConfig.languageOptions,
-            parser: reuseTypescriptParser,
-            parserOptions: {
-              ...(typeof parserOptions === "object" && parserOptions !== null
-                ? parserOptions
-                : {}),
-              programs: [...options.typedProject.programs],
-            },
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
+    const presets =
+      options.typedProject !== undefined
+        ? tseslint.configs.recommendedTypeChecked
+        : options.typeInformation === "basic"
+          ? tseslint.configs.recommended
+          : [];
+    for (const preset of presets) {
+      const presetConfig = preset as Linter.Config;
+      const parserOptions = presetConfig.languageOptions?.parserOptions;
+      config.push({
+        ...presetConfig,
+        files: TYPESCRIPT_FILES,
+        languageOptions: {
+          ...presetConfig.languageOptions,
+          parser: reuseTypescriptParser,
+          ...(options.typedProject === undefined
             ? {}
             : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
+                parserOptions: {
+                  ...(typeof parserOptions === "object" &&
+                  parserOptions !== null
+                    ? parserOptions
+                    : {}),
+                  programs: [...options.typedProject.programs],
                 },
               }),
-        });
-      }
-    } else if (options.typeInformation === "basic") {
-      for (const preset of tseslint.configs.recommended) {
-        const presetConfig = preset as Linter.Config;
-        config.push({
-          ...presetConfig,
-          files: TYPESCRIPT_FILES,
-          languageOptions: {
-            ...presetConfig.languageOptions,
-            parser: reuseTypescriptParser,
-          },
-          ...(presetConfig.rules === undefined
-            ? {}
-            : { rules: { ...presetConfig.rules } }),
-          ...(presetConfig.plugins === undefined
-            ? {}
-            : {
-                plugins: {
-                  ...presetConfig.plugins,
-                  "@typescript-eslint": managedTypescriptPlugin,
-                },
-              }),
-        });
-      }
+        },
+        ...(presetConfig.rules === undefined
+          ? {}
+          : { rules: { ...presetConfig.rules } }),
+        ...(presetConfig.plugins === undefined
+          ? {}
+          : {
+              plugins: {
+                ...presetConfig.plugins,
+                "@typescript-eslint": managedTypescriptPlugin,
+              },
+            }),
+      });
     }
   }
   const plugins = modePlugins(options);

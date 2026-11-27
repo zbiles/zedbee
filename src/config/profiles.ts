@@ -40,7 +40,10 @@ import type {
   ResolvedConfigurationOrigins,
   SettingOrigin,
 } from "./settings-definition.js";
-import { isConfigurableRuleCheckId } from "./settings-registry.js";
+import {
+  isConfigurableRuleCheckId,
+  managedPolicyScalarKeys,
+} from "./settings-registry.js";
 
 const FAST_CHECKS = new Set<CheckId>([
   "formatting",
@@ -344,18 +347,17 @@ function originForRepository(configPath: string | undefined): SettingOrigin {
   );
 }
 
-function defaultPolicyKeys(policy: ResolvedCheckPolicy): readonly string[] {
-  const keys = ["severity", "when"];
-  if ("entryPoints" in policy) keys.push("entryPoints");
-  if ("engine" in policy) keys.push("engine");
-  if ("max" in policy) keys.push("max");
-  if ("blockWorsening" in policy) keys.push("blockWorsening");
-  if ("threshold" in policy) keys.push("threshold");
-  if ("onUnavailable" in policy) keys.push("onUnavailable");
-  if ("settings" in policy) {
+function policyOriginKeys(
+  checkId: CheckId,
+  policy: ResolvedCheckPolicy | ResolvedCheckPolicyPatch,
+): readonly string[] {
+  const keys = ["severity", "when", ...managedPolicyScalarKeys(checkId)].filter(
+    (key) => Object.hasOwn(policy, key),
+  );
+  if ("settings" in policy && policy.settings !== undefined) {
     keys.push(...Object.keys(policy.settings).map((key) => `settings.${key}`));
   }
-  if ("rules" in policy) {
+  if ("rules" in policy && policy.rules !== undefined) {
     keys.push(...Object.keys(policy.rules).map((key) => `rules.${key}`));
   }
   return keys;
@@ -368,37 +370,8 @@ function recordPatchOrigins(
   origin: SettingOrigin,
 ): void {
   if (patch === undefined) return;
-  if (patch.entryPoints !== undefined)
-    recordOrigin(origins, checkId, "entryPoints", origin);
-  if (patch.severity !== undefined) {
-    recordOrigin(origins, checkId, "severity", origin);
-  }
-  if (patch.when !== undefined) recordOrigin(origins, checkId, "when", origin);
-  if (patch.engine !== undefined)
-    recordOrigin(origins, checkId, "engine", origin);
-  if (patch.max !== undefined) recordOrigin(origins, checkId, "max", origin);
-  if (patch.blockWorsening !== undefined) {
-    recordOrigin(origins, checkId, "blockWorsening", origin);
-  }
-  if (patch.threshold !== undefined) {
-    recordOrigin(origins, checkId, "threshold", origin);
-  }
-  if (patch.onUnavailable !== undefined) {
-    recordOrigin(origins, checkId, "onUnavailable", origin);
-  }
-  if (patch.typeInformation !== undefined) {
-    recordOrigin(origins, checkId, "typeInformation", origin);
-  }
-  if (patch.settings !== undefined) {
-    for (const key of Object.keys(patch.settings)) {
-      recordOrigin(origins, checkId, `settings.${key}`, origin);
-    }
-  }
-  if (patch.rules !== undefined) {
-    for (const key of Object.keys(patch.rules)) {
-      recordOrigin(origins, checkId, `rules.${key}`, origin);
-    }
-  }
+  for (const key of policyOriginKeys(checkId, patch))
+    recordOrigin(origins, checkId, key, origin);
 }
 
 function resolveOverrides(
@@ -477,7 +450,7 @@ export function resolveConfig(
     profile,
   });
   for (const checkId of CHECK_IDS) {
-    for (const key of defaultPolicyKeys(checks[checkId])) {
+    for (const key of policyOriginKeys(checkId, checks[checkId])) {
       recordOrigin(mutableOrigins, checkId, key, profileOrigin);
     }
   }

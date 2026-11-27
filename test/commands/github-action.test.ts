@@ -1,4 +1,12 @@
-import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { join, relative } from "node:path";
@@ -475,4 +483,53 @@ it("enforces the tarball size cap even without a declared content length", async
   });
   await expect(runner.downloadRelease(f)).rejects.toThrow(/limit/i);
   await expect(stat(join(f.root, f.filename))).rejects.toThrow();
+});
+
+it("installs the verified archive and runs it from a temporary path containing spaces", async () => {
+  const f = await fixture();
+  const release = await releaseFixture();
+  const root = join(release.root, "package source");
+  await mkdir(join(root, "dist"), { recursive: true });
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({ name: "zedbee", version: release.version }),
+  );
+  await writeFile(
+    join(root, "dist", "cli.js"),
+    'console.log(JSON.stringify({schemaVersion:1,outcome:"pass",exitCode:0,checks:[]}))',
+  );
+  // npm here only produces the fixture. The Action independently locates and runs npm to install it.
+  await execa(
+    "npm",
+    [
+      "pack",
+      "--offline",
+      "--ignore-scripts",
+      "--pack-destination",
+      release.root,
+    ],
+    {
+      cwd: root,
+      env: { npm_config_cache: join(release.root, "fixture npm cache") },
+    },
+  );
+  const archive = await readFile(join(release.root, release.filename));
+  const checksum = createHash("sha256").update(archive).digest("hex");
+  release.responses.set(
+    release.baseUrl + "/" + release.filename,
+    () => new Response(archive),
+  );
+  release.responses.set(
+    release.baseUrl + "/SHA256SUMS",
+    () => new Response(checksum + "  " + release.filename),
+  );
+  f.env.INPUT_REPORT_FORMAT = "json";
+  f.env.RUNNER_TEMP = join(f.scratch, "temporary files");
+  f.env.npm_config_offline = "true";
+  await mkdir(f.env.RUNNER_TEMP);
+  const result = await runner.runAction({
+    env: f.env,
+    fetcher: release.fetcher,
+  });
+  expect(result).toMatchObject({ exitCode: 0, outcome: "pass" });
 });

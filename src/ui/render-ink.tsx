@@ -2,6 +2,7 @@ import { render } from "ink";
 import type { InkRenderOptions, InkSession } from "../commands/scan.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ScanReport } from "../scan/report.js";
+import { CURSOR_HOME } from "./alternate-screen-render.js";
 import { createScanProgress, updateScanProgress } from "./live-dashboard.js";
 import { renderStaticInk } from "./render-static.js";
 import { ScanApp } from "./scan-app.js";
@@ -15,7 +16,6 @@ export interface InkSessionDependencies {
 export const INK_ANIMATION_FRAME_MS = 80;
 export const INK_MINIMUM_DISPLAY_MS = 400;
 export const INK_EVENT_MAX_FPS = 30;
-const CURSOR_HOME = "\u001b[H";
 
 export function inkMaxFps(_animations: boolean): number {
   return INK_EVENT_MAX_FPS;

@@ -211,6 +211,7 @@ export async function buildFixPlan(
         : {}),
       dependencies: sessionDependencies(dependencies, selectedSet),
       resolveEmptyBaseline: false,
+      preflightCheckIds: selected,
       dispatchOptions: () => ({ collectFixes: true }),
     },
     async (session): Promise<PreparedFixPlan> => {

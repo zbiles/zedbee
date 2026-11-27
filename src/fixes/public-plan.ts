@@ -6,6 +6,7 @@ import type { PolicyDecision } from "../policy/evaluate.js";
 import type {
   FixPlan,
   FixPlanCheck,
+  FixPlanCheckIssue,
   FixPlanFile,
   FixPlanItem,
   FixPlanSummary,
@@ -13,7 +14,7 @@ import type {
   WorkingFilePreview,
 } from "./types.js";
 
-function fixesFor(item: FixPlanItem): number {
+export function fixesFor(item: FixPlanItem): number {
   return item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
 }
 
@@ -101,6 +102,20 @@ export function publicPlan(
   });
 }
 
+function publicCheckIssue(issue: FixPlanCheckIssue): FixPlanCheckIssue {
+  return {
+    code: issue.code,
+    ...(issue.diagnostic === undefined
+      ? {}
+      : { diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic) }),
+    message: issue.message,
+    ...(issue.path === undefined ? {} : { path: issue.path }),
+    ...(issue.remediation === undefined
+      ? {}
+      : { remediation: issue.remediation }),
+  };
+}
+
 export function planChecks(
   selected: readonly FixableCheckId[],
   executions: readonly CheckExecutionResult[],
@@ -129,21 +144,7 @@ export function planChecks(
                 message: "The check could not finish.",
               },
             ]
-          : [
-              {
-                code: error.code,
-                ...(error.diagnostic === undefined
-                  ? {}
-                  : {
-                      diagnostic: sanitizeAnalyzerDiagnostic(error.diagnostic),
-                    }),
-                message: error.message,
-                ...(error.path === undefined ? {} : { path: error.path }),
-                ...(error.remediation === undefined
-                  ? {}
-                  : { remediation: error.remediation }),
-              },
-            ];
+          : [publicCheckIssue(error)];
       });
       if (incomplete.length > 0) {
         return Object.freeze({
@@ -191,19 +192,7 @@ export function projectPublicFixPlan(plan: FixPlan): FixPlan {
             checkId: check.checkId,
             status: check.status,
             fixes: check.fixes,
-            issues: check.issues.map((issue) => ({
-              code: issue.code,
-              ...(issue.diagnostic === undefined
-                ? {}
-                : {
-                    diagnostic: sanitizeAnalyzerDiagnostic(issue.diagnostic),
-                  }),
-              message: issue.message,
-              ...(issue.path === undefined ? {} : { path: issue.path }),
-              ...(issue.remediation === undefined
-                ? {}
-                : { remediation: issue.remediation }),
-            })),
+            issues: check.issues.map(publicCheckIssue),
             ...(check.reason === undefined ? {} : { reason: check.reason }),
           })),
         }),

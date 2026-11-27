@@ -1,6 +1,7 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { changedFilePaths } from "../changed-file-paths.js";
+import { selectedChangedPaths } from "../changed-file-paths.js";
 import type { FilePolicyResolver } from "../../config/file-policy.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation, StructuralParseFailure } from "../../core/types.js";
@@ -22,6 +23,7 @@ import type {
   ObservationCheckAdapter,
 } from "../adapter.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
+import { COMPILER_SOURCE } from "../compiler-paths.js";
 import { collectStructuralSecurityObservations } from "./rules.js";
 
 import { StructuralParseError } from "./parser.js";
@@ -35,7 +37,6 @@ interface FailureCollection {
   omitted: number;
 }
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -59,16 +60,18 @@ async function collectSide(
     }
   }
   const files = [...candidates]
-    .filter((file) => SOURCE.test(file))
-    .filter(
-      (file) =>
-        selectedPaths.has(file) ||
-        policyForFile(
-          "structuralSecurity",
-          file,
-          side === "baseline" ? "baseline" : "target",
-        ).when === "always",
-    )
+    .filter((file) => MANAGED_SOURCE_PATH.test(file))
+    .filter((file) => {
+      const policy = policyForFile(
+        "structuralSecurity",
+        file,
+        side === "baseline" ? "baseline" : "target",
+      );
+      return (
+        policy.severity !== "off" &&
+        (selectedPaths.has(file) || policy.when === "always")
+      );
+    })
     .sort(compareCodeUnits);
   const liveRegistry = await captureSnapshotRegistry(
     canonicalRoot,
@@ -76,7 +79,7 @@ async function collectSide(
       ? files.filter(
           (file) => capturedSourceInput(canonicalRoot, file) === undefined,
         )
-      : undefined,
+      : files,
   );
   const observations: Observation[] = [];
   for (const file of files) {
@@ -125,7 +128,7 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
         context.target,
         context.signal,
         "baseline",
-        changedFilePaths(context, "baseline"),
+        selectedChangedPaths(context, "structuralSecurity", "baseline"),
         context.policyForFile,
         failures,
       );
@@ -135,7 +138,7 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
         context.target,
         context.signal,
         context.snapshots.targetRef === "index" ? "staged" : "target",
-        changedFilePaths(context, "target"),
+        selectedChangedPaths(context, "structuralSecurity", "target"),
         context.policyForFile,
         failures,
       );

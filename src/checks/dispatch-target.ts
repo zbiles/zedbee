@@ -1,7 +1,5 @@
-import {
-  INSTALLATION_MESSAGE,
-  INSTALLATION_REMEDIATION,
-} from "./installation-diagnostic.js";
+import { physicalWorkspacePath } from "./workspace-comparison.js";
+import { resultForProgress } from "./progress-result.js";
 import { recordPerformance } from "../diagnostics/scan-performance.js";
 import type { ResolvedCheckPolicy } from "../config/schema.js";
 import type { FilePolicyResolver } from "../config/file-policy.js";
@@ -71,6 +69,25 @@ export async function executeDispatchTarget(
   const durationMs = (): number => Math.max(0, clock() - started);
   const label = checkLabel(adapter.id);
   const metadata = managedCheckMetadata(adapter.id);
+  const invalidResult = () =>
+    incompleteResult({
+      checkId: adapter.id,
+      target: target.id,
+      durationMs: durationMs(),
+      code: "ADAPTER_RESULT_INVALID",
+      ...(metadata === undefined
+        ? {}
+        : {
+            diagnostic: analyzerDiagnostic(
+              metadata.id,
+              adapter.output === "observations" ? "collect" : "runLegacy",
+              "invalid-response",
+            ),
+          }),
+      message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
+      remediation:
+        "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
+    });
   try {
     adapterContext.signal.throwIfAborted();
     runContext = scopedContext(
@@ -109,24 +126,7 @@ export async function executeDispatchTarget(
       ]);
     }
     if (adapterResult === undefined) {
-      result = incompleteResult({
-        checkId: adapter.id,
-        target: target.id,
-        durationMs: durationMs(),
-        code: "ADAPTER_RESULT_INVALID",
-        ...(metadata === undefined
-          ? {}
-          : {
-              diagnostic: analyzerDiagnostic(
-                metadata.id,
-                adapter.output === "observations" ? "collect" : "runLegacy",
-                "invalid-response",
-              ),
-            }),
-        message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
-        remediation:
-          "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
-      });
+      result = invalidResult();
     } else {
       try {
         result = sanitizeCheckResult(adapterResult, {
@@ -135,24 +135,7 @@ export async function executeDispatchTarget(
           durationMs: durationMs(),
         });
       } catch {
-        result = incompleteResult({
-          checkId: adapter.id,
-          target: target.id,
-          durationMs: durationMs(),
-          code: "ADAPTER_RESULT_INVALID",
-          ...(metadata === undefined
-            ? {}
-            : {
-                diagnostic: analyzerDiagnostic(
-                  metadata.id,
-                  adapter.output === "observations" ? "collect" : "runLegacy",
-                  "invalid-response",
-                ),
-              }),
-          message: `${label} returned an invalid result for ${target.id === "." ? "the repository root" : target.id}.`,
-          remediation:
-            "Run zedbee doctor and share this diagnostic with the Swarm maintainer if analysis stays incomplete.",
-        });
+        result = invalidResult();
       }
     }
   } catch (error) {
@@ -192,15 +175,28 @@ export async function executeDispatchTarget(
     runContext !== undefined
   ) {
     try {
-      fixCandidates = sanitizeFixCandidates(
-        await Reflect.apply(adapter.planFixes, undefined, [
-          runContext,
-          policyDisplayResult.findings,
-        ]),
-        {
-          checkId: adapter.id,
-          findingIds: policyDisplayResult.findings.map((finding) => finding.id),
-        },
+      fixCandidates = Object.freeze(
+        sanitizeFixCandidates(
+          await Reflect.apply(adapter.planFixes, undefined, [
+            runContext,
+            policyDisplayResult.findings,
+          ]),
+          {
+            checkId: adapter.id,
+            findingIds: policyDisplayResult.findings.map(
+              (finding) => finding.id,
+            ),
+          },
+        ).map((candidate) => {
+          if (target.kind !== "workspace") return candidate;
+          const file = physicalWorkspacePath(
+            runContext!.targetInspection,
+            candidate.file,
+          );
+          return file === candidate.file
+            ? candidate
+            : Object.freeze({ ...candidate, file });
+        }),
       );
     } catch (error) {
       result = incompleteResult({
@@ -236,18 +232,7 @@ export async function executeDispatchTarget(
     checkId: adapter.id,
     target: target.id,
     timestamp: clock(),
-    result: sanitizeCheckResult(
-      displayResult.error?.code === "COMPARISON_INSTALLATION_UNAVAILABLE"
-        ? {
-            ...displayResult,
-            error: {
-              ...displayResult.error,
-              message: INSTALLATION_MESSAGE,
-              remediation: INSTALLATION_REMEDIATION,
-            },
-          }
-        : displayResult,
-    ),
+    result: resultForProgress(displayResult),
   });
   return executionResult(
     result,

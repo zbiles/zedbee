@@ -1,3 +1,7 @@
+import { chmod, symlink } from "node:fs/promises";
+import { join } from "node:path";
+import { classifyCompilerChanges } from "../../src/checks/compiler-change-inputs.js";
+import { compilerInputRelevance } from "../../src/checks/compiler-inputs.js";
 import { describe, expect, it } from "vitest";
 import { inspectManagedCheck } from "../../src/checks/applicability.js";
 import { resolveConfig } from "../../src/config/profiles.js";
@@ -5,11 +9,16 @@ import { inspectRepository } from "../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../inspection/fixture.js";
 import type { ChangedFile } from "../../src/git/change-set.js";
 
-async function fixtureContext(path: string, previousPath?: string) {
+async function fixtureContext(
+  path: string,
+  previousPath?: string,
+  contents?: string,
+) {
   const fixture = await createInspectionFixture();
   await fixture.writeJson("package.json", { name: "synthetic" });
   await fixture.writeJson("tsconfig.json", { include: ["src"] });
   await fixture.write("src/index.ts", "export const value = 1;\n");
+  if (contents !== undefined) await fixture.write(path, contents);
   const inspection = await inspectRepository(fixture.root);
   const file = {
     path,
@@ -33,6 +42,7 @@ async function fixtureContext(path: string, previousPath?: string) {
 describe("compiler input scheduling", () => {
   it.each([
     "script.py",
+    "api/pyproject.toml",
     "types.pyi",
     "README.md",
     "guide.markdown",
@@ -58,6 +68,8 @@ describe("compiler input scheduling", () => {
     "package-lock.json",
     "tsconfig.json",
     "input.custom",
+    "api/other.toml",
+    "docs/other.yaml",
   ])("keeps conservative compiler coverage for %s", async (path) => {
     const context = await fixtureContext(path);
     for (const check of ["types", "lint"] as const)
@@ -68,6 +80,8 @@ describe("compiler input scheduling", () => {
 
   it.each([
     ["removed.md", "src/old.ts"],
+    ["docs/openapi.yaml", "src/old.ts"],
+    ["api/pyproject.toml", "src/old.ts"],
     ["src/new.ts", "old.md"],
   ])("checks both rename names: %s from %s", async (path, previousPath) => {
     const context = await fixtureContext(path!, previousPath);
@@ -91,25 +105,27 @@ describe("compiler input scheduling", () => {
 });
 
 describe("compiler configuration metadata boundaries", () => {
-  it.each(["config/compiler.md", "config/compiler.py", "config/compiler.txt"])(
-    "does not classify inherited %s as unrelated",
-    async (path) => {
-      const fixture = await createInspectionFixture();
-      await fixture.writeJson("package.json", { name: "synthetic" });
-      await fixture.write("src/index.ts", "export const value = 1;\n");
-      await fixture.writeJson("tsconfig.json", { extends: `./${path}` });
-      await fixture.writeJson(path, {});
-      const inspection = await inspectRepository(fixture.root);
-      const context = {
-        ...(await fixtureContext(path)),
-        baselineInspection: inspection,
-        targetInspection: inspection,
-      };
-      expect(await inspectManagedCheck("types", context)).toMatchObject({
-        applies: true,
-      });
-    },
-  );
+  it.each([
+    "config/compiler.md",
+    "config/compiler.py",
+    "config/compiler.txt",
+    "api/pyproject.toml",
+  ])("does not classify inherited %s as unrelated", async (path) => {
+    const fixture = await createInspectionFixture();
+    await fixture.writeJson("package.json", { name: "synthetic" });
+    await fixture.write("src/index.ts", "export const value = 1;\n");
+    await fixture.writeJson("tsconfig.json", { extends: `./${path}` });
+    await fixture.writeJson(path, {});
+    const inspection = await inspectRepository(fixture.root);
+    const context = {
+      ...(await fixtureContext(path)),
+      baselineInspection: inspection,
+      targetInspection: inspection,
+    };
+    expect(await inspectManagedCheck("types", context)).toMatchObject({
+      applies: true,
+    });
+  });
 
   it.each([
     "{ broken",
@@ -177,12 +193,12 @@ describe("compiler metadata completeness", () => {
       inspection.snapshotRoot,
     )(workspace);
     expect(inputs.complete).toBe(false);
+    expect(inputs.paths.has("missing.md/tsconfig.json")).toBe(false);
     expect([...inputs.paths]).toEqual(
       expect.arrayContaining([
         "tsconfig.json",
         "missing.md",
         "missing.md.json",
-        "missing.md/tsconfig.json",
         "directory/tsconfig.json",
       ]),
     );
@@ -474,4 +490,134 @@ it("recognizes an explicitly selected Swarm policy even with an ordinary documen
   expect(await inspectManagedCheck("types", context)).toMatchObject({
     applies: true,
   });
+});
+
+it.each(["yaml", "yml"])(
+  "treats a modified regular OpenAPI %s document as ordinary",
+  async (extension) => {
+    const path = `docs/openapi.${extension}`;
+    const docs = await fixtureContext(path, undefined, "openapi: 3.1.0\n");
+    for (const check of ["types", "lint"] as const)
+      expect(await inspectManagedCheck(check, docs)).toMatchObject({
+        applies: false,
+      });
+    expect((await classifyCompilerChanges(docs)).unclassifiedPaths.size).toBe(
+      0,
+    );
+
+    const source = "src/index.ts";
+    const files = new Map(docs.changeSet.files);
+    files.set(source, { path: source, status: "modified", addedRanges: [] });
+    const mixed = { ...docs, changeSet: { ...docs.changeSet, files } };
+    expect(await inspectManagedCheck("types", mixed)).toMatchObject({
+      applies: true,
+    });
+    const classification = await classifyCompilerChanges(mixed);
+    expect([...classification.sourcePaths]).toEqual([source]);
+    expect(classification.unclassifiedPaths.size).toBe(0);
+  },
+);
+
+it.each([
+  "added",
+  "deleted",
+  "mode",
+  "symlink",
+  "aliased",
+  "configuration",
+] as const)("keeps OpenAPI edits relevant for a %s input", async (kind) => {
+  if (
+    process.platform === "win32" &&
+    ["mode", "symlink", "aliased"].includes(kind)
+  )
+    return;
+  const path = "docs/openapi.yaml";
+  const context = await fixtureContext(path);
+  const [base, target] = await Promise.all([
+    createInspectionFixture(),
+    createInspectionFixture(),
+  ]);
+  for (const snapshot of [base, target]) {
+    await snapshot.writeJson("package.json", { name: "fixture" });
+    await snapshot.write("src/index.ts", "export const value = 1;\n");
+    await snapshot.writeJson("tsconfig.json", {
+      include: ["src"],
+      ...(kind === "configuration" ? { extends: "./docs/openapi.yaml" } : {}),
+    });
+    await snapshot.write("docs/other.yaml", "openapi: 3.1.0\n");
+  }
+  if (kind !== "added") await base.write(path, "{}\n");
+  if (kind === "symlink") {
+    await symlink("other.yaml", join(target.root, path));
+  } else if (kind !== "deleted") {
+    await target.write(path, '{ "compilerOptions": { "strict": true } }\n');
+  }
+  if (kind === "mode") await chmod(join(target.root, path), 0o755);
+  if (kind === "aliased") {
+    for (const snapshot of [base, target])
+      await symlink(
+        "../docs/openapi.yaml",
+        join(snapshot.root, "src/input.ts"),
+      );
+  }
+  const baselineInspection = await inspectRepository(base.root);
+  const targetInspection = await inspectRepository(target.root);
+  const changed = {
+    ...context,
+    baselineInspection,
+    targetInspection,
+    changeSet: {
+      ...context.changeSet,
+      files: new Map<string, ChangedFile>([
+        [
+          path,
+          {
+            path,
+            status: kind === "added" || kind === "deleted" ? kind : "modified",
+            addedRanges: [],
+          },
+        ],
+      ]),
+    },
+  };
+  expect(
+    await compilerInputRelevance(changed, targetInspection.workspaces[0]!),
+  ).toMatchObject({
+    relevant: true,
+    reason: kind === "configuration" ? "configuration" : "unknown",
+  });
+  const classification = await classifyCompilerChanges(changed);
+  if (kind === "configuration") {
+    expect(classification.requiresBroadComparison).toBe(true);
+  } else {
+    expect(classification.unclassifiedPaths.has(path)).toBe(true);
+  }
+});
+
+it("resolves competing relative extends and project references as TypeScript does", async () => {
+  const { createCompilerConfigurationInputResolver } =
+    await import("../../src/checks/typescript/configuration-paths.js");
+  const fixture = await createInspectionFixture();
+  await fixture.writeJson("package.json", { name: "competing" });
+  await fixture.writeJson("lib.json", {});
+  await fixture.writeJson("lib/tsconfig.json", {});
+  const pathsFor = async (request: object) => {
+    await fixture.writeJson("tsconfig.json", request);
+    const inspection = await inspectRepository(fixture.root);
+    const workspace = {
+      ...inspection.workspaces[0]!,
+      tsconfigPaths: ["tsconfig.json"],
+    };
+    return (
+      await createCompilerConfigurationInputResolver(inspection.snapshotRoot)(
+        workspace,
+      )
+    ).paths;
+  };
+  const extended = await pathsFor({ extends: "./lib" });
+  expect(extended.has("lib.json")).toBe(true);
+  expect(extended.has("lib/tsconfig.json")).toBe(false);
+  const referenced = await pathsFor({ references: [{ path: "./lib" }] });
+  expect(referenced.has("lib/tsconfig.json")).toBe(true);
+  expect(referenced.has("lib.json")).toBe(false);
 });

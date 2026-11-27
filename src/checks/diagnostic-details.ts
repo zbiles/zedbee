@@ -8,12 +8,10 @@ import { capturedSourceRegistry } from "../inspection/source-capture.js";
 import { captureSnapshotRegistry } from "../inspection/snapshot-registry.js";
 import { managedRuleInventory } from "./eslint/rule-settings.js";
 import { readContainedFile } from "../inspection/read-json.js";
-
-export type DiagnosticRedactionReason =
-  | "sensitive-value"
-  | "context-unavailable"
-  | "unsupported-template"
-  | "source-free-policy";
+import { SOURCE_BEARING_MESSAGES } from "./diagnostic-messages.js";
+export type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
+import { isDiagnosticRedaction } from "./diagnostic-redaction.js";
+import type { DiagnosticRedactionReason } from "./diagnostic-redaction.js";
 export interface DiagnosticDetail {
   readonly findingId: string;
   readonly message: string;
@@ -46,18 +44,7 @@ const canonicalRoot = (root: string) => {
     return resolve(root);
   }
 };
-const managed = new Set([
-  "types",
-  "lint",
-  "reactCorrectness",
-  "reactAccessibility",
-]);
-const reasons = new Set<DiagnosticRedactionReason>([
-  "sensitive-value",
-  "context-unavailable",
-  "unsupported-template",
-  "source-free-policy",
-]);
+const managed: ReadonlySet<string> = SOURCE_BEARING_MESSAGES;
 const safeText = (s: string) =>
   s
     .replace(/[\p{Cc}\p{Cf}\u2028\u2029]+/gu, " ")
@@ -109,6 +96,14 @@ function withheld(
     redaction: { redacted: true, reasons: [reason] },
   };
 }
+function withheldForContext(observation: Observation): DiagnosticDetail {
+  return withheld(
+    observation,
+    supportsContextualRule(observation.rule)
+      ? "context-unavailable"
+      : "unsupported-template",
+  );
+}
 // Only reviewed built-in vocabulary is interpolated into package-owned templates.
 // Exact equality rejects arbitrary custom forbid/alternative options and controls.
 function reviewedReactEntityMessage(message: string): string | undefined {
@@ -131,48 +126,89 @@ function reviewedReactEntityMessage(message: string): string | undefined {
 }
 // Only template shapes whose substitutions are names/specifiers are supported.
 // Type representations and arbitrary compiler prose can embed source literals.
+const CONTEXTUAL_TEMPLATES: ReadonlyMap<string, (message: string) => boolean> =
+  new Map<string, (message: string) => boolean>([
+    [
+      "@typescript-eslint/require-await",
+      (message) =>
+        /^(?:Async (?:arrow function|function(?: '[^']+')?|method(?: '[^']+')?)|(?:Async generator function)) has no 'await' expression\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "@typescript-eslint/no-unused-vars",
+      (message) =>
+        /^'[^'\r\n]+' is (?:defined|assigned a value) but never used(?:\. Allowed unused [^\r\n]+)?\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "no-unused-vars",
+      (message) =>
+        /^'[^'\r\n]+' is (?:defined|assigned a value) but never used(?:\. Allowed unused [^\r\n]+)?\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "react/no-unknown-property",
+      (message) =>
+        /^Unknown property '[^'\r\n]+' found(?:, use '[^'\r\n]+' instead)?$/u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2305",
+      (message) =>
+        /^Module '[^'\r\n]+' has no exported member '[^'\r\n]+'\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2875",
+      (message) =>
+        /^This JSX tag requires the module path '[^'\r\n]+' to exist, but none could be found\./u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2307",
+      (message) =>
+        /^Cannot find module '[^'\r\n]+' or its corresponding type declarations\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2339",
+      (message) =>
+        /^Property '[A-Za-z_$][\w$]*' does not exist on type '[A-Za-z_$][\w$.]*(?:<[^'"<>]+>)?'\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2551",
+      (message) =>
+        /^Property '[A-Za-z_$][\w$]*' does not exist on type '[A-Za-z_$][\w$.]*'\. Did you mean '[A-Za-z_$][\w$]*'\?$/u.test(
+          message,
+        ),
+    ],
+    [
+      "typescript/TS2591",
+      (message) =>
+        /^Cannot find name '[A-Za-z_$][\w$]*'\. Do you need to install type definitions for node\? Try `npm i --save-dev @types\/node` and then add 'node' to the types field in your tsconfig\.$/u.test(
+          message,
+        ),
+    ],
+    [
+      "react/no-unescaped-entities",
+      (message) => reviewedReactEntityMessage(message) !== undefined,
+    ],
+    [
+      "typescript/TS2304",
+      (message) => /^Cannot find name '[^'\r\n]+'\.$/u.test(message),
+    ],
+  ]);
 function supported(rule: string, message: string): boolean {
-  if (rule === "@typescript-eslint/require-await")
-    return /^(?:Async (?:arrow function|function(?: '[^']+')?|method(?: '[^']+')?)|(?:Async generator function)) has no 'await' expression\.$/u.test(
-      message,
-    );
-  if (["@typescript-eslint/no-unused-vars", "no-unused-vars"].includes(rule))
-    return /^'[^'\r\n]+' is (?:defined|assigned a value) but never used(?:\. Allowed unused [^\r\n]+)?\.$/u.test(
-      message,
-    );
-  if (rule === "react/no-unknown-property")
-    return /^Unknown property '[^'\r\n]+' found(?:, use '[^'\r\n]+' instead)?$/u.test(
-      message,
-    );
-  if (rule === "typescript/TS2305")
-    return /^Module '[^'\r\n]+' has no exported member '[^'\r\n]+'\.$/u.test(
-      message,
-    );
-  if (rule === "typescript/TS2875")
-    return /^This JSX tag requires the module path '[^'\r\n]+' to exist, but none could be found\./u.test(
-      message,
-    );
-  if (rule === "typescript/TS2307")
-    return /^Cannot find module '[^'\r\n]+' or its corresponding type declarations\.$/u.test(
-      message,
-    );
-  if (rule === "typescript/TS2339")
-    return /^Property '[A-Za-z_$][\w$]*' does not exist on type '[A-Za-z_$][\w$.]*(?:<[^'"<>]+>)?'\.$/u.test(
-      message,
-    );
-  if (rule === "typescript/TS2551")
-    return /^Property '[A-Za-z_$][\w$]*' does not exist on type '[A-Za-z_$][\w$.]*'\. Did you mean '[A-Za-z_$][\w$]*'\?$/u.test(
-      message,
-    );
-  if (rule === "typescript/TS2591")
-    return /^Cannot find name '[A-Za-z_$][\w$]*'\. Do you need to install type definitions for node\? Try `npm i --save-dev @types\/node` and then add 'node' to the types field in your tsconfig\.$/u.test(
-      message,
-    );
-  if (rule === "react/no-unescaped-entities")
-    return reviewedReactEntityMessage(message) !== undefined;
-  if (rule === "typescript/TS2304")
-    return /^Cannot find name '[^'\r\n]+'\.$/u.test(message);
-  return false;
+  return CONTEXTUAL_TEMPLATES.get(rule)?.(message) === true;
 }
 async function reviewed(
   item: Pending,
@@ -203,13 +239,7 @@ async function reviewed(
       findingId: fingerprintObservation(observation),
       message: reviewedReactEntityMessage(original)!,
     };
-  if (source === undefined)
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+  if (source === undefined) return withheldForContext(observation);
   // JSX import source can come from configuration or a declaration outside this
   // diagnostic's captured file. Do not treat an arbitrary runtime name as proven.
   if (
@@ -218,12 +248,7 @@ async function reviewed(
       original,
     )
   )
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+    return withheldForContext(observation);
   let redacted = false;
   let rendered = original.replace(/'([^']+)'/gu, (quoted, value: string) => {
     if (
@@ -270,12 +295,7 @@ async function reviewed(
       }
     }
   } catch {
-    return withheld(
-      observation,
-      supportsContextualRule(observation.rule)
-        ? "context-unavailable"
-        : "unsupported-template",
-    );
+    return withheldForContext(observation);
   }
   return {
     findingId: fingerprintObservation(observation),
@@ -382,7 +402,7 @@ export function sanitizeDiagnosticDetails(
   if (!Array.isArray(value) || value.length > 256)
     throw new TypeError("Invalid diagnostic details");
   let bytes = 0;
-  return value.map((v) => {
+  return value.map((v: Record<string, unknown>) => {
     if (
       !v ||
       typeof v.findingId !== "string" ||
@@ -396,17 +416,14 @@ export function sanitizeDiagnosticDetails(
     if (bytes > 1024 * 1024)
       throw new TypeError("Diagnostic detail budget exceeded");
     let redaction: DiagnosticDetail["redaction"];
-    if (v.redaction !== undefined) {
-      if (
-        v.redaction.redacted !== true ||
-        !Array.isArray(v.redaction.reasons) ||
-        v.redaction.reasons.length > 4 ||
-        v.redaction.reasons.some(
-          (r: DiagnosticRedactionReason) => !reasons.has(r),
-        )
-      )
+    const redactionValue: unknown = v.redaction;
+    if (redactionValue !== undefined) {
+      if (!isDiagnosticRedaction(redactionValue))
         throw new TypeError("Invalid diagnostic redaction");
-      redaction = { redacted: true, reasons: [...v.redaction.reasons] };
+      redaction = {
+        redacted: true,
+        reasons: [...redactionValue.reasons],
+      };
     }
     return {
       findingId: v.findingId,
@@ -428,12 +445,7 @@ export function retainDiagnosticDetails(set: CheckObservationSet): void {
     if (store.size < 4096)
       store.set(id, {
         ...(observation.message.includes("[source]")
-          ? withheld(
-              observation,
-              supportsContextualRule(observation.rule)
-                ? "context-unavailable"
-                : "unsupported-template",
-            )
+          ? withheldForContext(observation)
           : { findingId: id, message: observation.message }),
         sourceFreeMessage: observation.message,
       });
@@ -505,20 +517,7 @@ export const hasDiagnosticDetailSession = () =>
   sessions.getStore() !== undefined;
 
 function supportsContextualRule(rule: string): boolean {
-  return [
-    "@typescript-eslint/require-await",
-    "@typescript-eslint/no-unused-vars",
-    "no-unused-vars",
-    "react/no-unknown-property",
-    "react/no-unescaped-entities",
-    "typescript/TS2591",
-    "typescript/TS2305",
-    "typescript/TS2875",
-    "typescript/TS2307",
-    "typescript/TS2304",
-    "typescript/TS2339",
-    "typescript/TS2551",
-  ].includes(rule);
+  return CONTEXTUAL_TEMPLATES.has(rule);
 }
 export function needsContextualDiagnosticDetails(
   set: CheckObservationSet,

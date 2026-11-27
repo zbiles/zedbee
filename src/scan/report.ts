@@ -1,3 +1,4 @@
+import { EMPTY_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import type { LocalScanDiagnostics } from "../diagnostics/local-scan-diagnostics.js";
 import type { ChangeSummary } from "./change-summary.js";
 import type { CheckResult, RunSummary } from "../core/types.js";
@@ -48,3 +49,11 @@ export interface ScanReport {
   summary: RunSummary;
   checks: readonly CheckResult[];
 }
+
+export const PRECONFIGURATION_PRESENTATION_POLICY: ScanPresentationPolicy =
+  Object.freeze({
+    terminalFindingLimit: 25,
+    temporaryReportMaxAge: "24h",
+    persistSourceExcerpts: false,
+    agentGuidance: EMPTY_AGENT_GUIDANCE,
+  });

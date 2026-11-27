@@ -1,3 +1,4 @@
+import { packageExportTargets } from "../package-export-targets.js";
 import { entryOwner, resolveViteEntrypoints } from "./vite-entrypoints.js";
 import { resolveFrameworkEntrypoints } from "./framework-entrypoints.js";
 import {
@@ -6,9 +7,9 @@ import {
 } from "../typescript/aliases.js";
 import { createKnipImportValidator } from "./import-boundary.js";
 import { readContainedFile } from "../../inspection/read-json.js";
-import { managedKnipEntry } from "./managed-knip.js";
-import { dirname, join, posix } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pinnedKnipModuleUrl } from "./managed-knip.js";
+import { posix } from "node:path";
+import { ISSUE_TYPES } from "./parse-report.js";
 import { compareCodeUnits } from "../../core/compare.js";
 import { readJsonData } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
@@ -16,19 +17,6 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
-
-const ISSUE_TYPES = [
-  "files",
-  "dependencies",
-  "devDependencies",
-  "unlisted",
-  "unresolved",
-  "exports",
-  "types",
-  "nsExports",
-  "nsTypes",
-  "duplicates",
-] as const;
 
 const IGNORE = [
   "**/node_modules/**",
@@ -75,7 +63,11 @@ function entrypointStrings(
     ...strings(manifest.main),
     ...strings(manifest.module),
     ...strings(manifest.types),
-    ...strings(manifest.exports),
+    ...(manifest.exports === undefined
+      ? []
+      : packageExportTargets(manifest.exports).filter(
+          (target): target is string => target !== null,
+        )),
     ...binEntries.flatMap((candidate) => strings(candidate)),
   ];
 }
@@ -130,9 +122,8 @@ export interface ManagedKnipConfig {
 async function disabledPinnedPlugins(): Promise<
   Readonly<Record<string, false>>
 > {
-  const knipModule = fileURLToPath(managedKnipEntry);
   const pluginModule = (await import(
-    pathToFileURL(join(dirname(knipModule), "types", "PluginNames.js")).href
+    pinnedKnipModuleUrl("types", "PluginNames.js")
   )) as { readonly pluginNames?: unknown };
   if (
     !Array.isArray(pluginModule.pluginNames) ||

@@ -1,9 +1,13 @@
+export function exactVersion(value: unknown): boolean;
 export const MAX_RELEASE_BYTES: number;
 export interface CliRelease {
   version: string;
   url: string;
   sha256: string;
 }
+export function validatePinnedRelease(
+  metadata: unknown,
+): asserts metadata is CliRelease;
 export function downloadCli(options?: {
   fetchRelease?: (
     url: string,

@@ -275,3 +275,27 @@ it("does not erase retained occurrences when directive-like text makes a file in
     ),
   ).toEqual([]);
 });
+
+it("pairs unchanged same-named siblings after an earlier sibling is inserted", () => {
+  const before =
+    "function outer() {\n{ function helper() { return 1; } }\n{ function helper() { return 2; } }\n}";
+  const after =
+    "function outer() {\n{ function helper() { return 0; } }\n{ function helper() { return 1; } }\n{ function helper() { return 2; } }\n}";
+  const moves = buildSourceMoveMap(
+    input({ "file.ts": before }, { "file.ts": after }),
+  );
+  expect(
+    moves.pairs
+      .filter((pair) => pair.syntaxEqual)
+      .map((pair) => [
+        pair.baseline.entity.startLine,
+        pair.target.entity.startLine,
+      ]),
+  ).toEqual([
+    [2, 3],
+    [3, 4],
+  ]);
+  expect(moves.unmatched.some((item) => item.entity.startLine === 2)).toBe(
+    true,
+  );
+});

@@ -1,3 +1,4 @@
+import { orderedConfigEntries } from "../../src/init/prettier-import.js";
 import { GitClient } from "../../src/git/client.js";
 import { configFileSchema } from "../../src/config/schema.js";
 import { cp, lstat, mkdir } from "node:fs/promises";
@@ -982,3 +983,25 @@ it.each(["prettier", "prettier-3-0-3"])(
     );
   },
 );
+
+it("orders nested Prettier requests and retains the original shared declaration", () => {
+  const a = {
+    projectRoot: "packages/app",
+    configPath: "packages/app/.prettierrc",
+    specifier: "first",
+  };
+  const nested = {
+    projectRoot: "packages/app/sub",
+    configPath: "packages/app/sub/.prettierrc",
+    specifier: "nested",
+  };
+  const root = {
+    projectRoot: ".",
+    configPath: ".prettierrc",
+    specifier: "root",
+  };
+  expect(
+    orderedConfigEntries([nested, a, root, { ...a, specifier: "later" }]),
+  ).toEqual([root, a, nested]);
+  expect(orderedConfigEntries([a, a])[0]).toBe(a);
+});

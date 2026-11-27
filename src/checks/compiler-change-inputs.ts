@@ -3,7 +3,8 @@ import {
   COMPILER_SOURCE,
   COMPILER_DEPENDENCY,
   COMPILER_CONFIGURATION,
-  COMPILER_ORDINARY,
+  isOrdinaryCompilerPath,
+  ordinaryOpenApiEdits,
   changedCompilerPaths,
 } from "./compiler-paths.js";
 import { posix, relative, resolve, sep, isAbsolute } from "node:path";
@@ -31,6 +32,7 @@ export function compilerPolicyInputPaths(
 }
 export interface CompilerChangeClassification {
   readonly sourcePaths: ReadonlySet<string>;
+  readonly unclassifiedPaths: ReadonlySet<string>;
   readonly localNpmInputs: ReadonlySet<string>;
   readonly separateNpmRoots: ReadonlySet<string>;
   readonly requiresBroadComparison: boolean;
@@ -43,11 +45,13 @@ async function acquireCompilerChanges(
   context.signal?.throwIfAborted();
   const paths = changedCompilerPaths(context.changeSet);
   const sourcePaths = new Set<string>();
+  const unclassifiedPaths = new Set<string>();
   const localNpmInputs = new Set<string>();
   const inspections = [context.baselineInspection, context.targetInspection];
   if (inspections.some((inspection) => inspection.workspaces.length > 32)) {
     return {
       sourcePaths,
+      unclassifiedPaths,
       localNpmInputs,
       separateNpmRoots: new Set(),
       complete: false,
@@ -102,6 +106,7 @@ async function acquireCompilerChanges(
       if (!complete)
         return {
           sourcePaths,
+          unclassifiedPaths,
           localNpmInputs,
           separateNpmRoots,
           complete: false,
@@ -111,6 +116,7 @@ async function acquireCompilerChanges(
     }
   }
   let requiresBroadComparison = !complete;
+  const ordinaryDocs = await ordinaryOpenApiEdits(context);
   for (const path of paths) {
     const name = posix.basename(path);
     if (COMPILER_SOURCE.test(path)) sourcePaths.add(path);
@@ -130,13 +136,14 @@ async function acquireCompilerChanges(
       requiresBroadComparison = true;
     else if (
       !sourcePaths.has(path) &&
-      name.toLowerCase() !== ".gitignore" &&
-      !COMPILER_ORDINARY.test(path)
+      !isOrdinaryCompilerPath(path) &&
+      !ordinaryDocs.has(path)
     )
-      requiresBroadComparison = true;
+      unclassifiedPaths.add(path);
   }
   return {
     sourcePaths,
+    unclassifiedPaths,
     localNpmInputs,
     separateNpmRoots,
     requiresBroadComparison,

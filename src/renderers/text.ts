@@ -1,6 +1,14 @@
 import {
+  reportForComparisonRepairs,
+  repairFindingForMode,
+} from "../reporting/comparison-repair.js";
+import {
+  blockedFindingLines,
+  coverageLine,
   scanOutcomeDetail,
+  scanOutcomeHeading,
   scanResultCountLine,
+  skippedCheckSummaries,
 } from "../reporting/check-coverage.js";
 import { projectEslintNotices } from "../reporting/project-eslint-notices.js";
 import {
@@ -8,8 +16,11 @@ import {
   HOOK_UPDATE_TITLE,
 } from "../reporting/hook-update-notice.js";
 import { selectedChangesLine } from "../reporting/source-identity.js";
-import { coverageLine } from "../reporting/check-coverage.js";
-import type { Finding, ManagedAutomaticFix } from "../core/types.js";
+import type {
+  CheckResult,
+  Finding,
+  ManagedAutomaticFix,
+} from "../core/types.js";
 import { CHECK_IDS } from "../config/schema.js";
 import type { ScanReport } from "../scan/report.js";
 import { validateReportDisplayStrings } from "../checks/sanitize-result.js";
@@ -31,6 +42,7 @@ import {
 import { buildScanResultSections } from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
+import { presentIncompleteChecks } from "../reporting/incomplete-checks.js";
 import { incompleteSectionLines } from "./incomplete.js";
 import { terminalText, type TerminalTextTone } from "./terminal-style.js";
 import {
@@ -38,7 +50,8 @@ import {
   padStartTerminalCells,
   terminalCellWidth,
   truncateTerminalCells,
-  wrapTerminalWords,
+  wrapLabeledTerminalWords,
+  wrapPrefixedTerminalWords as wrapWords,
 } from "./terminal-cells.js";
 
 export interface TextRendererOptions {
@@ -51,6 +64,8 @@ export interface TextRendererOptions {
 const PRIMARY_TEXT_HEADINGS = new Set([
   "THAT STINGS",
   "SCAN INCOMPLETE",
+  "SCAN PASSED",
+  "SCAN BLOCKED",
   "BEE-UTIFUL",
   "COMMIT BLOCKED",
   "COMMIT ALLOWED",
@@ -62,15 +77,16 @@ const PRIMARY_TEXT_HEADINGS = new Set([
   "REPORT MAINTENANCE WARNING",
   "REPORT DELIVERY WARNING",
   "INCOMPLETE CHECKS",
+  "SKIPPED CHECKS",
   "SCAN RESULT",
   HOOK_UPDATE_TITLE,
   "NEXT STEP",
   "COMPLETE REPORT",
 ]);
 
-const FINDING_TEXT_LABELS = new Set(
-  [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
-);
+const FINDING_TEXT_LABELS: readonly string[] = [
+  ...new Set([...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId))),
+];
 
 const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
 const FIX_CONTINUATION_PREFIX = " ".repeat("       Fix: ".length);
@@ -82,7 +98,7 @@ function textLineTone(line: string): TerminalTextTone {
   if (/^(?:Fix|Reason|Remediation): /u.test(trimmed)) return "reason";
   if (
     !line.startsWith(" ") &&
-    [...FINDING_TEXT_LABELS].some(
+    FINDING_TEXT_LABELS.some(
       (label) => line === label || line.startsWith(`${label}  `),
     )
   ) {
@@ -126,23 +142,13 @@ function styleFixExplanation(value: string): string {
     .join("");
 }
 
-function wrapWords(value: string, width: number, indent = ""): string[] {
-  const available = Math.max(1, width - terminalCellWidth(indent));
-  return wrapTerminalWords(value, available).map((line) => `${indent}${line}`);
-}
-
 function descriptionLines(
   label: "Issue" | "Fix" | "Attribution" | "Path",
   value: string,
   width: number,
 ): string[] {
   const indent = label === "Attribution" ? "    " : "       ";
-  const prefix = `${indent}${label}: `;
-  const prefixWidth = terminalCellWidth(prefix);
-  const continuation = " ".repeat(prefixWidth);
-  return wrapWords(value, Math.max(1, width - prefixWidth)).map(
-    (line, index) => `${index === 0 ? prefix : continuation}${line}`,
-  );
+  return wrapLabeledTerminalWords(`${indent}${label}: `, value, width);
 }
 
 function opaquePathLines(
@@ -175,19 +181,27 @@ function resultIdentityLines(report: ScanReport): string[] {
   );
 }
 
-function headline(report: ScanReport): string[] {
+function headline(
+  report: ScanReport,
+  visible: readonly Finding[],
+  width: number,
+): string[] {
   const title =
-    report.outcome === "pass"
-      ? "BEE-UTIFUL"
-      : report.outcome === "blocked"
-        ? "THAT STINGS"
-        : "SCAN INCOMPLETE";
+    report.mode === "base"
+      ? scanOutcomeHeading(report)
+      : report.outcome === "pass"
+        ? "BEE-UTIFUL"
+        : report.outcome === "blocked"
+          ? "THAT STINGS"
+          : "SCAN INCOMPLETE";
   return [
     title,
-    scanOutcomeDetail(report),
-    ...resultIdentityLines(report),
-    scanResultCountLine(report, report.outcome !== "pass"),
-    coverageLine(report),
+    ...resultDetailLines(report, visible, width),
+    ...[
+      ...resultIdentityLines(report),
+      scanResultCountLine(report, report.outcome !== "pass"),
+      coverageLine(report),
+    ].flatMap((line) => wrapWords(line, width)),
   ];
 }
 
@@ -266,18 +280,25 @@ function findingSectionLines(
   return ["", heading, ...renderedFindings(findings, width, verbose)];
 }
 
+function disclosureSentenceLines(
+  disclosures: ScanReport["networkDisclosures"],
+  width: number,
+): string[] {
+  return disclosures.flatMap((disclosure) =>
+    wrapWords(
+      `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
+      width,
+      "  ",
+    ),
+  );
+}
+
 function disclosureLines(report: ScanReport, width: number): string[] {
   if (report.networkDisclosures.length === 0) return [];
   return [
     "",
     "NETWORK DISCLOSURE",
-    ...report.networkDisclosures.flatMap((disclosure) =>
-      wrapWords(
-        `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
-        width,
-        "  ",
-      ),
-    ),
+    ...disclosureSentenceLines(report.networkDisclosures, width),
   ];
 }
 
@@ -286,16 +307,19 @@ function disclosureSectionLines(
   width: number,
 ): string[] {
   if (disclosures.length === 0) return [];
+  return ["", "DISCLOSURES", ...disclosureSentenceLines(disclosures, width)];
+}
+
+function warningBodyLines(
+  warning: ReportMaintenanceWarning,
+  width: number,
+): string[] {
   return [
-    "",
-    "DISCLOSURES",
-    ...disclosures.flatMap((disclosure) =>
-      wrapWords(
-        `${disclosure.checkId} sent ${disclosure.metadata.join(", ")} to ${disclosure.services.join(", ")}.`,
-        width,
-        "  ",
-      ),
-    ),
+    ...wrapWords(warning.code.replaceAll("_", " "), width),
+    ...descriptionLines("Issue", warning.message, width),
+    ...(warning.path === undefined
+      ? []
+      : opaquePathLines("Path", warning.path, width)),
   ];
 }
 
@@ -307,11 +331,7 @@ function maintenanceWarningLines(
   return warnings.flatMap((warning) => [
     "",
     "REPORT MAINTENANCE WARNING",
-    ...wrapWords(warning.code.replaceAll("_", " "), width),
-    ...descriptionLines("Issue", warning.message, width),
-    ...(warning.path === undefined
-      ? []
-      : opaquePathLines("Path", warning.path, width)),
+    ...warningBodyLines(warning, width),
   ]);
 }
 
@@ -325,11 +345,7 @@ function reportWarningsSectionLines(
     "REPORT WARNINGS",
     ...warnings.flatMap((warning, index) => [
       ...(index === 0 ? [] : [""]),
-      ...wrapWords(warning.code.replaceAll("_", " "), width),
-      ...descriptionLines("Issue", warning.message, width),
-      ...(warning.path === undefined
-        ? []
-        : opaquePathLines("Path", warning.path, width)),
+      ...warningBodyLines(warning, width),
     ]),
   ];
 }
@@ -382,47 +398,55 @@ function completeManagedFixLines(
       ];
 }
 
+function resultDetailLines(
+  report: ScanReport,
+  visible: readonly Finding[],
+  width: number,
+): readonly string[] {
+  const blocker = blockedFindingLines(report, visible, width);
+  return blocker.length > 0
+    ? blocker
+    : wrapWords(scanOutcomeDetail(report), width);
+}
+
 function automaticHeadline(
   report: ScanReport,
   presentation: TerminalPresentation,
+  visible: readonly Finding[],
+  width: number,
 ): string[] {
   const previewLine = presentation.abbreviated
     ? [
         `Showing ${presentation.findings.length} of ${presentation.totalFindingCount} findings.`,
       ]
     : [];
-  const title =
-    report.outcome === "pass"
-      ? "COMMIT ALLOWED"
-      : report.outcome === "blocked"
-        ? "COMMIT BLOCKED"
-        : "SCAN INCOMPLETE";
+  const title = scanOutcomeHeading(report);
   return [
     title,
-    report.outcome === "incomplete"
-      ? "A required check could not finish. Review INCOMPLETE CHECKS above for details. Commit blocked."
-      : scanOutcomeDetail(report),
-    ...resultIdentityLines(report),
-    automaticCountLine(report),
-    coverageLine(report),
-    ...previewLine,
+    ...(report.outcome === "incomplete"
+      ? wrapWords(scanOutcomeDetail(report, true), width)
+      : resultDetailLines(report, visible, width)),
+    ...[
+      ...resultIdentityLines(report),
+      automaticCountLine(report),
+      coverageLine(report),
+      ...previewLine,
+    ].flatMap((line) => wrapWords(line, width)),
   ];
 }
 
 function skippedReasonLines(
-  report: ScanReport,
+  checks: readonly CheckResult[],
   width: number,
-  verbose: boolean,
 ): string[] {
-  if (!verbose) return [];
-  return report.checks
-    .filter((check) => check.status === "skipped")
-    .flatMap((check) =>
-      wrapWords(
-        `${check.checkId}: skipped — ${check.skipReason ?? "Not applicable"}`,
-        width,
-      ),
-    );
+  const summaries = skippedCheckSummaries(checks);
+  return summaries.length === 0
+    ? []
+    : [
+        "",
+        "SKIPPED CHECKS",
+        ...summaries.flatMap((line) => wrapWords(line, width)),
+      ];
 }
 
 function hookUpdateLines(report: ScanReport, width: number): string[] {
@@ -447,7 +471,11 @@ function automaticTextLines(
 ): string[] {
   const selectedFindings = validateReportDisplayStrings({
     checks: [],
-    summary: { findings: presentation.findings },
+    summary: {
+      findings: presentation.findings.map((finding) =>
+        repairFindingForMode(finding, report.mode),
+      ),
+    },
   }).summaryFindings;
   const sections = buildScanResultSections(
     { ...report, checks: sanitized.checks },
@@ -475,15 +503,13 @@ function automaticTextLines(
     ),
     ...sections.previewNotes.flatMap((line) => wrapWords(line, width)),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
-    ...skippedReasonLines(report, width, verbose),
+    ...skippedReasonLines(sanitized.checks, width),
     ...disclosureSectionLines(sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
     ...incompleteSectionLines(sections.incompleteChecks, width),
     "",
     "SCAN RESULT",
-    ...automaticHeadline(report, presentation).flatMap((line) =>
-      wrapWords(line, width),
-    ),
+    ...automaticHeadline(report, presentation, selectedFindings, width),
     ...hookUpdateLines(report, width),
     "",
     ...calloutLines(
@@ -511,6 +537,7 @@ function guidanceLines(
     "",
     ...nextStepsLines({
       outcome: report.outcome,
+      mode: report.mode,
       shown: presentation.findings.length,
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
@@ -555,6 +582,7 @@ export function renderText(
   report: ScanReport,
   options: TextRendererOptions,
 ): string {
+  report = reportForComparisonRepairs(report);
   const sanitized = validateReportDisplayStrings(report);
   const width = Math.max(20, options.width);
   if (options.presentation?.automatic === true) {
@@ -574,14 +602,21 @@ export function renderText(
       ? sanitized.summaryFindings
       : validateReportDisplayStrings({
           checks: [],
-          summary: { findings: options.presentation.findings },
+          summary: {
+            findings: options.presentation.findings.map((finding) =>
+              repairFindingForMode(finding, report.mode),
+            ),
+          },
         }).summaryFindings;
   const lines = [
-    ...headline(report).flatMap((line) => wrapWords(line, width)),
+    ...headline(report, displayedFindings, width),
     ...hookUpdateLines(report, width),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
-    ...skippedReasonLines(report, width, options.verbose === true),
-    ...incompleteSectionLines(sanitized.checks, width),
+    ...skippedReasonLines(sanitized.checks, width),
+    ...incompleteSectionLines(
+      presentIncompleteChecks(sanitized.checks, report),
+      width,
+    ),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
     ...disclosureLines(report, width),
     ...completeManagedFixLines(

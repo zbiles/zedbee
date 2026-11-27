@@ -4,12 +4,17 @@ import { describe, expect, it } from "vitest";
 import { MAX_DEPENDENCY_RECORDS } from "../../../../src/checks/vulnerabilities/inventory/limits.js";
 import { parseYarnLockfile } from "../../../../src/checks/vulnerabilities/inventory/parse-yarn.js";
 
-const root = fileURLToPath(new URL("../../../fixtures/lockfiles/yarn/", import.meta.url));
+const root = fileURLToPath(
+  new URL("../../../fixtures/lockfiles/yarn/", import.meta.url),
+);
 const fixture = (name: string) => readFile(`${root}${name}`, "utf8");
 
 describe("parseYarnLockfile", () => {
   it("uses Yarn Classic semantics and a validated stanza line index", async () => {
-    const records = parseYarnLockfile(await fixture("yarn-classic-v1.lock"), "yarn.lock");
+    const records = parseYarnLockfile(
+      await fixture("yarn-classic-v1.lock"),
+      "yarn.lock",
+    );
     expect(records).toMatchObject([
       { name: "@scope/actual", version: "4.2.0" },
       { name: "@scope/direct", version: "3.1.0" },
@@ -20,7 +25,10 @@ describe("parseYarnLockfile", () => {
   });
 
   it("parses Yarn Modern YAML resolution names and excludes workspaces", async () => {
-    const records = parseYarnLockfile(await fixture("yarn-modern.lock"), "yarn.lock");
+    const records = parseYarnLockfile(
+      await fixture("yarn-modern.lock"),
+      "yarn.lock",
+    );
     expect(records).toMatchObject([
       { name: "@scope/actual", version: "4.2.0" },
       { name: "@scope/direct", version: "3.1.0" },
@@ -30,11 +38,35 @@ describe("parseYarnLockfile", () => {
     expect(records.some(({ name }) => name === "workspace-only")).toBe(false);
   });
 
+  it("skips Yarn Modern patch resolutions and keeps the unpatched entry", () => {
+    const contents = [
+      "__metadata:",
+      "  version: 8",
+      '"resolve@npm:^1.22.8":',
+      "  version: 1.22.8",
+      '  resolution: "resolve@npm:1.22.8"',
+      "",
+      '"resolve@patch:resolve@npm%3A^1.22.8#optional!builtin<compat/resolve>":',
+      "  version: 1.22.8",
+      '  resolution: "resolve@patch:resolve@npm%3A1.22.8#optional!builtin<compat/resolve>::version=1.22.8&hash=c3c19d"',
+      "",
+    ].join("\n");
+    const records = parseYarnLockfile(contents, "yarn.lock");
+    expect(
+      records.map(({ name, version, line }) => ({ name, version, line })),
+    ).toEqual([{ name: "resolve", version: "1.22.8", line: 3 }]);
+    expect(records).toHaveLength(1);
+  });
+
   it("rejects malformed classic and modern lockfiles", () => {
-    expect(() => parseYarnLockfile("# yarn lockfile v1\nalpha@^1:\n", "yarn.lock")).toThrowError(
+    expect(() =>
+      parseYarnLockfile("# yarn lockfile v1\nalpha@^1:\n", "yarn.lock"),
+    ).toThrowError(
       expect.objectContaining({ code: "LOCKFILE_VERSION_MISSING" }),
     );
-    expect(() => parseYarnLockfile("__metadata:\n  version: 99\n", "yarn.lock")).toThrowError(
+    expect(() =>
+      parseYarnLockfile("__metadata:\n  version: 99\n", "yarn.lock"),
+    ).toThrowError(
       expect.objectContaining({ code: "LOCKFILE_VERSION_UNSUPPORTED" }),
     );
   });
@@ -62,19 +94,57 @@ describe("parseYarnLockfile", () => {
     ]);
   });
 
-  it.each(["classic", "modern"])("bounds %s records before validating the remaining entries", (format) => {
-    const entries = Array.from({ length: MAX_DEPENDENCY_RECORDS + 1 }, (_, index) =>
-      format === "classic"
-        ? `"alias-${index}@npm:actual@^1":\n  version "1.0.0"\n`
-        : `"alias-${index}@npm:actual@^1":\n  version: 1.0.0\n  resolution: "actual@npm:1.0.0"\n`,
-    );
-    const header = format === "classic" ? "# yarn lockfile v1\n\n" : "__metadata:\n  version: 8\n\n";
-    const workspace = format === "classic" ? "" : '"local@workspace:.":\n  resolution: "local@workspace:."\n';
-    // The raw-record cap precedes deduplication; metadata and workspaces do not count.
-    expect(parseYarnLockfile(header + entries.slice(0, MAX_DEPENDENCY_RECORDS).join("\n") + workspace, "yarn.lock")).toHaveLength(1);
-    const invalidTail = format === "classic" ? '"invalid@^1":\n' : '"invalid@npm:^1": {}\n';
-    expect(() => parseYarnLockfile(header + entries.join("\n") + invalidTail, "yarn.lock")).toThrowError(
-      expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
-    );
-  });
+  it.each(["classic", "modern"])(
+    "bounds %s records before validating the remaining entries",
+    (format) => {
+      const entries = Array.from(
+        { length: MAX_DEPENDENCY_RECORDS + 1 },
+        (_, index) =>
+          format === "classic"
+            ? `"alias-${index}@npm:actual@^1":\n  version "1.0.0"\n`
+            : `"alias-${index}@npm:actual@^1":\n  version: 1.0.0\n  resolution: "actual@npm:1.0.0"\n`,
+      );
+      const header =
+        format === "classic"
+          ? "# yarn lockfile v1\n\n"
+          : "__metadata:\n  version: 8\n\n";
+      const workspace =
+        format === "classic"
+          ? ""
+          : '"local@workspace:.":\n  resolution: "local@workspace:."\n';
+      // The raw-record cap precedes deduplication; metadata and workspaces do not count.
+      expect(
+        parseYarnLockfile(
+          header +
+            entries.slice(0, MAX_DEPENDENCY_RECORDS).join("\n") +
+            workspace,
+          "yarn.lock",
+        ),
+      ).toHaveLength(1);
+      const invalidTail =
+        format === "classic" ? '"invalid@^1":\n' : '"invalid@npm:^1": {}\n';
+      expect(() =>
+        parseYarnLockfile(
+          header + entries.join("\n") + invalidTail,
+          "yarn.lock",
+        ),
+      ).toThrowError(
+        expect.objectContaining({ code: "LOCKFILE_LIMIT_EXCEEDED" }),
+      );
+    },
+  );
+});
+
+it("inventories patch-only scoped dependencies at their exact npm version", () => {
+  const lock =
+    '__metadata:\n  version: 8\n"@scope/pkg@patch:fixture":\n  version: 1.2.3\n  resolution: "@scope/pkg@patch:@scope/pkg@npm%3A1.2.3#./fixture.patch"\n';
+  expect(parseYarnLockfile(lock, "yarn.lock")).toMatchObject([
+    { name: "@scope/pkg", version: "1.2.3" },
+  ]);
+  expect(() =>
+    parseYarnLockfile(
+      lock.replace("npm%3A1.2.3", "file%3Afixture"),
+      "yarn.lock",
+    ),
+  ).toThrow();
 });

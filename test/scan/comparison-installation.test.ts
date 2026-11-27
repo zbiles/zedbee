@@ -200,6 +200,89 @@ it("never borrows installation results from another repository with the same sou
   }
 });
 
+it.each([
+  ["independent npm project", false, false, "npm --prefix e2e ci"],
+  ["npm workspace", true, false, "Run npm ci from the repository root"],
+  ["conflicting package manager", false, true, undefined],
+] as const)(
+  "describes the local installation for a %s",
+  async (_, shared, conflicting, command) => {
+    const repo = await createGitRepository("zedbee-install-advice-");
+    const placement = shared ? "" : "e2e/";
+    if (shared) {
+      await repo.write(
+        "package.json",
+        JSON.stringify({
+          name: "root",
+          workspaces: ["e2e"],
+        }),
+      );
+    }
+    await repo.write(
+      "e2e/package.json",
+      JSON.stringify({
+        name: "e2e",
+        ...(conflicting ? { packageManager: "pnpm@10.0.0" } : {}),
+        dependencies: { "fixture-missing-module": "1.0.0" },
+      }),
+    );
+    await repo.write(
+      `${placement}package-lock.json`,
+      JSON.stringify({
+        name: shared ? "root" : "e2e",
+        lockfileVersion: 3,
+        packages: {},
+      }),
+    );
+    await repo.write(
+      ".zedbeerc.jsonc",
+      JSON.stringify({
+        schemaVersion: 1,
+        checks: Object.fromEntries(
+          CHECK_IDS.map((id) => [id, id === "types" ? "error" : "off"]),
+        ),
+      }),
+    );
+    await repo.write(
+      "e2e/tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          module: "ESNext",
+          moduleResolution: "Bundler",
+        },
+        include: ["main.ts"],
+      }),
+    );
+    await repo.write("e2e/main.ts", "export const previous = 0;\n");
+    await repo.commitAll("baseline");
+    await repo.write(
+      "e2e/main.ts",
+      'import { fixture } from "fixture-missing-module";\nexport const value = fixture;\n',
+    );
+    await repo.git(["add", "e2e"]);
+    const scan = (diagnosticMessages: "source-free" | "contextual") =>
+      runScan({ repositoryRoot: repo.root, cache: false, diagnosticMessages });
+    const report = await scan("contextual");
+    const error = report.checks.find(({ target }) => target === "e2e")?.error;
+    expect(error?.code, JSON.stringify(report.checks)).toBe(
+      "COMPARISON_INSTALLATION_UNAVAILABLE",
+    );
+    expect(error?.message).toBe(
+      "This checkout cannot resolve 'fixture-missing-module' for workspace 'e2e'.",
+    );
+    if (command === undefined) {
+      expect(error?.remediation).toContain("repository's package-manager");
+      expect(error?.remediation).not.toContain("npm");
+    } else {
+      expect(error?.remediation).toContain(command);
+    }
+    const redacted = JSON.stringify((await scan("source-free")).checks);
+    expect(redacted).not.toContain("fixture-missing-module");
+    expect(redacted).not.toContain("npm");
+  },
+);
+
 it("accounts for installation declarations inherited from an intermediate workspace", async () => {
   const repo = await createGitRepository("zedbee-comparison-ancestor-");
   await repo.write(
@@ -256,4 +339,35 @@ it("accounts for installation declarations inherited from an intermediate worksp
       status: "incomplete",
     }),
   );
+});
+
+it("withholds an install command when the checkout changed its baseline install inputs", async () => {
+  const repo = await fixture(true);
+  await repo.write(
+    "package-lock.json",
+    JSON.stringify({
+      lockfileVersion: 3,
+      packages: { "": { dependencies: { react: "19.0.0" } } },
+    }),
+  );
+  await repo.commitAll("Baseline JSX and npm lock");
+  await repo.write(
+    "package.json",
+    JSON.stringify({ name: "fixture", private: true }),
+  );
+  await repo.write(
+    "package-lock.json",
+    JSON.stringify({ lockfileVersion: 3, packages: { "": {} } }),
+  );
+  await repo.write("src/value.tsx", "export const value = 1;\n");
+  await repo.git(["add", "."]);
+  const report = await runScan({ repositoryRoot: repo.root, cache: false });
+  expect(report.outcome).toBe("incomplete");
+  expect(
+    report.checks.find(({ checkId }) => checkId === "types")?.error,
+  ).toMatchObject({
+    code: "COMPARISON_INSTALLATION_UNAVAILABLE",
+    snapshot: "last-commit",
+    remediation: expect.stringContaining("repository's package-manager"),
+  });
 });

@@ -1,9 +1,11 @@
+import { MANAGED_SOURCE_PATH } from "../../inspection/source-paths.js";
 import { findWorkspace } from "../../inspection/workspaces.js";
 import { changedFilePaths } from "../changed-file-paths.js";
 import { classifyCompilerChanges } from "../compiler-change-inputs.js";
 import { sourceMoves, workspaceOwns } from "../source-moves.js";
+import { COMPILER_SOURCE as SOURCE } from "../compiler-paths.js";
 import { inspectManagedCheck } from "../applicability.js";
-import { relative, sep } from "node:path";
+import { validatedBatchResults } from "../eslint/batch-results.js";
 import type { ESLint } from "eslint";
 import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
@@ -42,7 +44,6 @@ import {
   type ReactVersionResolver,
 } from "./version.js";
 
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 
 type ReactEslintEngineFactory = (
   options: ManagedEslintOptions,
@@ -52,6 +53,31 @@ interface PreparedSide {
   readonly canonicalRoot: string;
   readonly groups: ReturnType<typeof groupFilesByRules>;
   readonly reactVersion?: string;
+}
+
+type PreparedGroup = PreparedSide["groups"][number];
+
+function groupEngineOptions(
+  prepared: PreparedSide,
+  group: PreparedGroup,
+  mode: ManagedEslintMode,
+  reactCorrectnessConfigFactory: ReactCorrectnessConfigFactory,
+): ManagedEslintOptions {
+  return {
+    cwd: prepared.canonicalRoot,
+    mode,
+    managedIgnores: [],
+    ruleOverrides: group.rules,
+    ...(group.accessibilitySettings === undefined
+      ? {}
+      : { accessibilitySettings: group.accessibilitySettings }),
+    ...(prepared.reactVersion === undefined
+      ? {}
+      : {
+          reactVersion: prepared.reactVersion,
+          reactCorrectnessConfigFactory,
+        }),
+  };
 }
 
 type ReactVersionResolverFactory = (
@@ -81,6 +107,17 @@ function reactAnalysisFailure(
   });
 }
 
+function groupAnalysisFailure(
+  error: unknown,
+  signal: AbortSignal,
+  id: "reactCorrectness" | "reactAccessibility",
+  files: readonly string[],
+): Error {
+  signal.throwIfAborted();
+  if (error instanceof CheckIncompleteError) return error;
+  return reactAnalysisFailure(id, files.length === 1 ? files[0] : undefined);
+}
+
 async function prepareSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -106,7 +143,7 @@ async function prepareSide(
     const files = workspace.sourceFiles
       .filter(
         (path) =>
-          SOURCE.test(path) &&
+          MANAGED_SOURCE_PATH.test(path) &&
           (selectedPaths === undefined ||
             selectedPaths.has(path) ||
             policyForFile(id, path, side).when === "always"),
@@ -146,29 +183,21 @@ async function collectPreparedSide(
   for (const group of prepared.groups) {
     signal.throwIfAborted();
     try {
-      const engine = engineFactory({
-        cwd: prepared.canonicalRoot,
-        mode,
-        managedIgnores: [],
-        ruleOverrides: group.rules,
-        ...(group.accessibilitySettings === undefined
-          ? {}
-          : { accessibilitySettings: group.accessibilitySettings }),
-        ...(prepared.reactVersion === undefined
-          ? {}
-          : {
-              reactVersion: prepared.reactVersion,
-              reactCorrectnessConfigFactory,
-            }),
-      });
+      const engine = engineFactory(
+        groupEngineOptions(
+          prepared,
+          group,
+          mode,
+          reactCorrectnessConfigFactory,
+        ),
+      );
       const results = await engine.lintFiles([...group.files]);
       signal.throwIfAborted();
-      const allowed = new Set(group.files);
-      for (const result of results) {
-        const path = relative(prepared.canonicalRoot, result.filePath)
-          .split(sep)
-          .join("/");
-        if (!allowed.has(path)) throw new Error("Unexpected ESLint result.");
+      for (const { file: path, result } of validatedBatchResults(
+        prepared.canonicalRoot,
+        group.files,
+        results,
+      )) {
         observations.push(
           ...result.messages.map((message) =>
             convertEslintMessage(path, message, prepared.canonicalRoot, id),
@@ -176,12 +205,7 @@ async function collectPreparedSide(
         );
       }
     } catch (error) {
-      signal.throwIfAborted();
-      if (error instanceof CheckIncompleteError) throw error;
-      throw reactAnalysisFailure(
-        id,
-        group.files.length === 1 ? group.files[0] : undefined,
-      );
+      throw groupAnalysisFailure(error, signal, id, group.files);
     }
   }
   return Object.freeze(
@@ -260,28 +284,24 @@ export function createReactAdapter(
                       checkId: "reactCorrectness",
                       files: group.files,
                       createEngine: () =>
-                        engineFactory({
-                          cwd: prepared.canonicalRoot,
-                          mode,
-                          managedIgnores: [],
-                          ruleOverrides: group.rules,
-                          ...(prepared.reactVersion === undefined
-                            ? {}
-                            : {
-                                reactVersion: prepared.reactVersion,
-                                reactCorrectnessConfigFactory,
-                              }),
-                        }),
+                        engineFactory(
+                          groupEngineOptions(
+                            prepared,
+                            group,
+                            mode,
+                            reactCorrectnessConfigFactory,
+                          ),
+                        ),
                     },
                     findings,
                   )),
                 );
               } catch (error) {
-                context.signal.throwIfAborted();
-                if (error instanceof CheckIncompleteError) throw error;
-                throw reactAnalysisFailure(
+                throw groupAnalysisFailure(
+                  error,
+                  context.signal,
                   "reactCorrectness",
-                  group.files.length === 1 ? group.files[0] : undefined,
+                  group.files,
                 );
               }
             }
@@ -298,7 +318,8 @@ export function createReactAdapter(
         !context.mergeComparison &&
         context.policy.when !== "always" &&
         changes?.complete === true &&
-        !changes.requiresBroadComparison;
+        !changes.requiresBroadComparison &&
+        changes.unclassifiedPaths.size === 0;
       const collectBaseline = await prepareSide(
         context.snapshots.baselineDir,
         context.baselineInspection,

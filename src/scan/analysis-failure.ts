@@ -197,6 +197,7 @@ export function phaseFailure(
     error instanceof RepositoryInspectionError &&
     error.path !== undefined &&
     (error.reason === "unresolved-symlink" ||
+      error.reason === "excluded-symlink" ||
       error.reason === "external-symlink")
   ) {
     try {
@@ -208,7 +209,9 @@ export function phaseFailure(
         message:
           error.reason === "external-symlink"
             ? `${failure.message} A required symbolic link points outside the snapshot.`
-            : `${failure.message} A required symbolic link has no resolvable target in the snapshot.`,
+            : error.reason === "excluded-symlink"
+              ? `${failure.message} A required symbolic link points into an excluded snapshot directory.`
+              : `${failure.message} A required symbolic link has no resolvable target in the snapshot.`,
         remediation:
           "Provide a regular file or a link to a tracked target inside the repository at this path, or remove the link from the selected change, then retry.",
       };

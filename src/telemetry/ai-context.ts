@@ -1,7 +1,8 @@
 import { lstat, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { isContainedPath as contained } from "../inspection/paths.js";
 import type { TelemetryEnvironment } from "./policy.js";
-import type { ScanDetails } from "./schema.js";
+import { callerAiToolFields, type ScanDetails } from "./schema.js";
 
 export type CallerContext = Pick<
   ScanDetails,
@@ -29,14 +30,8 @@ export function callerContext(env: TelemetryEnvironment): CallerContext {
   )
     candidates.push("codex");
   return {
-    caller_ai_tool:
-      candidates.length === 0
-        ? "unknown"
-        : candidates.length === 1
-          ? candidates[0]!
-          : "ambiguous",
+    ...callerAiToolFields(candidates),
     caller_ai_tool_candidates: candidates,
-    caller_ai_tool_source: candidates.length ? "environment_hint" : "none",
   };
 }
 export function emptyRepositoryContext(): RepositoryToolContext {
@@ -57,13 +52,6 @@ const markers = [
   ["AGENTS.override.md", "file", "generic"],
   [".agents", "directory", "generic"],
 ] as const;
-function contained(root: string, path: string): boolean {
-  const from = relative(root, path);
-  return (
-    from === "" ||
-    (!isAbsolute(from) && from !== ".." && !from.startsWith(`..${sep}`))
-  );
-}
 export async function detectRepositoryTools(
   root: string,
   cwd: string,
@@ -127,7 +115,6 @@ export async function detectRepositoryTools(
     }
     for (const [name, kind, tool] of markers) {
       if (
-        options.permitted?.() === false ||
         performance.now() - started >= budget ||
         probes >= maximumProbes
       ) {

@@ -1,4 +1,4 @@
-import { projectPublicFixPlan } from "../fixes/public-plan.js";
+import { fixesFor, projectPublicFixPlan } from "../fixes/public-plan.js";
 import { sanitizeAnalyzerDiagnostic } from "../checks/diagnostics.js";
 import { AnalysisSessionCleanupError } from "../scan/analysis-failure.js";
 import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
@@ -7,12 +7,16 @@ import {
   FIXABLE_CHECK_IDS,
   FIX_PLAN_FILE_SUMMARY_LIMIT,
   type FixPlan,
+  type FixPlanCheckIssue,
   type FixResult,
 } from "../fixes/types.js";
 import { displayProse } from "../core/display-text.js";
 import { opaqueTemporaryReportPath } from "./report-path.js";
 import type { ReportMaintenanceWarning } from "./temporary-reports.js";
-import { terminalText } from "../renderers/terminal-style.js";
+import {
+  terminalText,
+  type TerminalTextTone,
+} from "../renderers/terminal-style.js";
 export const COMPACT_DETAIL_LIMIT = 25;
 function safeText(value: unknown, field: string): string {
   try {
@@ -20,6 +24,33 @@ function safeText(value: unknown, field: string): string {
   } catch {
     return "unavailable";
   }
+}
+
+function checkIssueLines(
+  issue: FixPlanCheckIssue,
+): readonly { readonly text: string; readonly tone: TerminalTextTone }[] {
+  return [
+    {
+      text: `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
+      tone: "secondary",
+    },
+    ...(issue.path === undefined
+      ? []
+      : [
+          {
+            text: `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
+            tone: "secondary" as const,
+          },
+        ]),
+    ...(issue.remediation === undefined
+      ? []
+      : [
+          {
+            text: `Remediation: ${safeText(issue.remediation, "check remediation")}`,
+            tone: "reason" as const,
+          },
+        ]),
+  ];
 }
 
 export function renderPlanText(
@@ -31,8 +62,6 @@ export function renderPlanText(
     `${count} ${count === 1 ? "fix" : "fixes"}`;
   const fileLabel = (count: number): string =>
     `${count} ${count === 1 ? "file" : "files"}`;
-  const fixesFor = (item: FixPlan["items"][number]): number =>
-    item.fixes ?? (item.scope === "finding" ? item.findingIds.length : 1);
   const lines = [
     terminalText("Zedbee managed fix plan.", "primary", color),
     terminalText(
@@ -70,34 +99,17 @@ export function renderPlanText(
     );
     for (const issue of check.issues) {
       lines.push(
-        terminalText(
-          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
-          "secondary",
-          color,
+        ...checkIssueLines(issue).map((line) =>
+          terminalText(line.text, line.tone, color),
         ),
-        ...(issue.path === undefined
-          ? []
-          : [
-              terminalText(
-                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
-                "secondary",
-                color,
-              ),
-            ]),
-        ...(issue.remediation === undefined
-          ? []
-          : [
-              terminalText(
-                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
-                "reason",
-                color,
-              ),
-            ]),
       );
     }
   }
   if ((plan.checks?.length ?? 0) > 0 && plan.items.length > 0) lines.push("");
-  const items = plan.items.slice(0, COMPACT_DETAIL_LIMIT);
+  const items =
+    reportPath === undefined
+      ? plan.items
+      : plan.items.slice(0, COMPACT_DETAIL_LIMIT);
   for (const item of items) {
     if (item.status === "skipped") {
       lines.push(
@@ -163,12 +175,15 @@ export function publicPlan(
   applied: boolean,
   result?: FixResult,
   cleanupFailure?: CleanupFailureDetails,
+  interrupted = false,
 ) {
   const rendered = projectPublicFixPlan(plan);
   return {
     applied,
     ...rendered,
-    exitCode: cleanupFailure === undefined ? rendered.exitCode : 2,
+    exitCode:
+      cleanupFailure === undefined && !interrupted ? rendered.exitCode : 2,
+    ...(interrupted ? { interrupted: true } : {}),
     ...(cleanupFailure === undefined ? {} : { cleanupFailure }),
     ...(result === undefined
       ? {}
@@ -259,19 +274,7 @@ export function renderResultText(
     } else if (check.status === "incomplete") {
       lines.push(`${check.checkId}: INCOMPLETE`);
       for (const issue of check.issues) {
-        lines.push(
-          `Issue: ${safeText(issue.code.replaceAll("_", " "), "check error code")} — ${safeText(issue.message, "check error")}`,
-          ...(issue.path === undefined
-            ? []
-            : [
-                `Path: ${JSON.stringify(safeText(issue.path, "check error path"))}`,
-              ]),
-          ...(issue.remediation === undefined
-            ? []
-            : [
-                `Remediation: ${safeText(issue.remediation, "check remediation")}`,
-              ]),
-        );
+        lines.push(...checkIssueLines(issue).map((line) => line.text));
       }
     } else if (check.status === "not-applicable") {
       lines.push(
