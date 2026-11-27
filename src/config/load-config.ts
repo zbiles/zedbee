@@ -259,11 +259,17 @@ export async function loadConfig(
         configPath,
       );
     }
-    for (const filename of UNSUPPORTED_CONFIG_FILENAMES) {
-      const unsupportedPath = join(repositoryRoot, filename);
-      if (await exists(unsupportedPath)) {
-        throw unsupportedGitConfig(repositoryRoot, filename);
-      }
+    const present = await Promise.all(
+      UNSUPPORTED_CONFIG_FILENAMES.map((filename) =>
+        exists(join(repositoryRoot, filename)),
+      ),
+    );
+    const unsupportedIndex = present.indexOf(true);
+    if (unsupportedIndex !== -1) {
+      throw unsupportedGitConfig(
+        repositoryRoot,
+        UNSUPPORTED_CONFIG_FILENAMES[unsupportedIndex]!,
+      );
     }
     return resolveConfig(undefined);
   }
