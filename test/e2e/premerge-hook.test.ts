@@ -563,7 +563,7 @@ it("activates the tracked nested Husky hooks before a linked worktree installs d
       "--checks",
       "secrets",
       "--hook",
-      "husky",
+      "tracked",
       "--workflow",
       "none",
       "--yes",

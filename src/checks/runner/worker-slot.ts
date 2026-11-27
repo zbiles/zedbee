@@ -94,6 +94,10 @@ export class SupervisedWorkerSlot {
       ? jobFailure(this.job.request, category)
       : new Error(message);
   }
+  private holdChildOpen(): void {
+    this.child?.ref();
+    this.child?.channel?.ref();
+  }
   async dispatch(envelope: unknown): Promise<void> {
     if (!this.child) await this.start(envelope);
     else {
@@ -105,8 +109,7 @@ export class SupervisedWorkerSlot {
         );
         return;
       }
-      this.child.ref();
-      this.child.channel?.ref();
+      this.holdChildOpen();
       this.child.send(envelope as Serializable, (error) => {
         if (error)
           this.stop(
@@ -335,8 +338,7 @@ export class SupervisedWorkerSlot {
     if (failure && !slot.failure) slot.failure = failure;
     if (slot.stopping) return;
     slot.stopping = true;
-    slot.child?.ref();
-    slot.child?.channel?.ref();
+    slot.holdChildOpen();
     if (slot.child?.connected)
       slot.child.send({ type: cancelled ? "cancel" : "stop" }, () => {});
   }
@@ -428,8 +430,7 @@ export class SupervisedWorkerSlot {
       reject = no;
     });
     slot.releasing = { sessionId: slot.session!.id, promise, resolve, reject };
-    slot.child!.ref();
-    slot.child!.channel?.ref();
+    slot.holdChildOpen();
     slot.child!.send(
       { version: 1, type: "release", sessionId: slot.session!.id },
       (error) => {

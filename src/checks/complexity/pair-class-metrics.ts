@@ -5,6 +5,9 @@ import {
 } from "../../attribution/entities.js";
 import type { Observation } from "../../core/types.js";
 import type { ChangeSet } from "../../git/change-set.js";
+import { analysisKey, analysisStore } from "../analysis-reuse.js";
+
+const classMemberPairs = Symbol("complexity class member pairs");
 
 export interface ComplexitySnapshot {
   readonly observations: readonly Observation[];
@@ -256,6 +259,27 @@ function pairFileMembers(
   return identities;
 }
 
+function reusedFileMembers(
+  file: string,
+  before: string,
+  after: string,
+  changeSet: ChangeSet,
+): ReadonlyMap<string, string> {
+  const ranges = (changeSet.files.get(file)?.addedRanges ?? []).map(
+    ({ start, end }) => [start, end],
+  );
+  const store = analysisStore<ReadonlyMap<string, string>>(classMemberPairs);
+  const key =
+    store === undefined
+      ? undefined
+      : analysisKey([file, before, after, ranges]);
+  const retained = key === undefined ? undefined : store?.get(key);
+  if (retained !== undefined) return retained;
+  const identities = pairFileMembers(file, before, after, changeSet);
+  if (key !== undefined) store?.set(key, identities, identities.size * 512);
+  return identities;
+}
+
 /** Pair class-scoped baseline metrics to canonical target entities before delta attribution. */
 export function pairClassMetricObservations(
   baseline: ComplexitySnapshot,
@@ -278,7 +302,7 @@ export function pairClassMetricObservations(
         identities =
           before === undefined || after === undefined
             ? new Map()
-            : pairFileMembers(file, before, after, changeSet);
+            : reusedFileMembers(file, before, after, changeSet);
         mappings.set(file, identities);
       }
       const identity = identities.get(observation.identity);

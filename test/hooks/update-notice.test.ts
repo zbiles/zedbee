@@ -197,7 +197,8 @@ it("doctor reports an outdated hook as a warning rather than healthy", async () 
   const context = { cwd: repo.root, environment: {} };
   expect(await defaultDiagnosticProbe("hook-state", context)).toMatchObject({
     status: "warning",
-    message: "Swarm’s hooks need updating.",
+    message:
+      "Swarm’s hooks need updating. Update pre-commit to refresh the installed CLI command.",
     remediation: "Run zedbee init to refresh them.",
   });
   await repo.write(
@@ -300,4 +301,22 @@ it("lets an active raw hook take precedence over a leftover Husky body", async (
       environment: {},
     }),
   ).toMatchObject({ status: "pass" });
+});
+
+it("explains the duplicate guard and accepts the refreshed scan-only merge hook", async () => {
+  const repo = await fixture();
+  const { installedHookPreflight } =
+    await import("../../src/hooks/installed-command.js");
+  const command = mergeHookCommand(await resolveHookCommand(repo.root));
+  const source = `#!/bin/sh\n${installedHookPreflight("./web/node_modules/zedbee/dist/cli.js", "pre-merge-commit")}\n${command} || exit $?\n`;
+  await repo.write(".git/hooks/pre-merge-commit", source);
+  expect(await getHookUpdateNotice(repo.root)).toMatchObject({
+    code: "HOOK_UPDATE_NEEDED",
+    hook: "pre-merge-commit",
+    reason: "duplicate-installation-check",
+    message: expect.stringContaining("remove the repeated installation check"),
+  });
+  const canonical = updateHuskyHook(source, command, "pre-merge-commit");
+  await repo.write(".git/hooks/pre-merge-commit", canonical);
+  expect(await getHookUpdateNotice(repo.root)).toBeUndefined();
 });

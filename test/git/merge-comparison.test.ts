@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { setImmediate } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -258,4 +259,40 @@ it("uses captured absence without resolving a live merge metadata path", async (
     },
   } as unknown as GitClient;
   expect(await resolveMergeComparison(git, {}, false)).toBeUndefined();
+});
+
+it("bounds concurrent parent verification and retains parent order", async () => {
+  const parents = Array.from({ length: 9 }, (_, index) =>
+    String(index + 1).repeat(40),
+  );
+  let active = 0;
+  let peak = 0;
+  const git = {
+    selectedComparison: {
+      baselineCommit: parents[0],
+      mergeHeads: [...parents.slice(1), parents[0]],
+    },
+    async tryRun(args: readonly string[]) {
+      active += 1;
+      peak = Math.max(peak, active);
+      await setImmediate();
+      active -= 1;
+      return {
+        stdout: args.at(-1)!.replace("^{commit}", ""),
+        stderr: "",
+        exitCode: 0,
+      };
+    },
+    async run(args: readonly string[]) {
+      return {
+        stdout: args[0] === "write-tree" ? "a".repeat(40) : "",
+        stderr: "",
+        exitCode: 0,
+      };
+    },
+  } as unknown as GitClient;
+  const comparison = await resolveMergeComparison(git, {}, true);
+  expect(comparison?.parents).toEqual(parents);
+  expect(peak).toBeLessThanOrEqual(4);
+  expect(active).toBe(0);
 });

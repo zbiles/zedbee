@@ -195,3 +195,56 @@ describe("stock Husky adoption", () => {
     );
   });
 });
+
+it("keeps ordinary Husky refresh separate from explicit runtime tracking", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    '{"devDependencies":{"husky":"9.1.7"},"scripts":{"prepare":"husky"}}',
+  );
+  await installTrackedHooks(repo.root);
+  const preview = await detectHookIntegration(repo.root, "husky");
+  expect(preview.changes?.map((change) => change.relativePath)).toEqual([
+    ".husky/pre-merge-commit",
+  ]);
+  expect(preview.activation.remediation ?? "").not.toContain("git add");
+  const tracked = await detectHookIntegration(repo.root, "tracked");
+  expect(tracked.changes?.map((change) => change.relativePath)).toContain(
+    ".husky/_/h",
+  );
+  expect(tracked.activation.remediation).toContain("git add");
+  expect((await repo.git(["diff", "--cached", "--name-only"])).stdout).toBe("");
+});
+
+it("reports partially tracked runtime and maintains fully tracked stock dispatchers", async () => {
+  const repo = await createGitRepository();
+  await repo.write("package.json", '{"devDependencies":{"husky":"9.1.7"}}');
+  await installTrackedHooks(repo.root);
+  expect((await repo.git(["add", "-f", ".husky/_/h"])).exitCode).toBe(0);
+  const partial = await detectHookIntegration(repo.root, "auto");
+  expect(partial.activation.message).toContain("partially tracked");
+  expect(partial.changes?.map((change) => change.relativePath)).toEqual([
+    ".husky/pre-merge-commit",
+  ]);
+  const { TRACKED_HOOK_NAMES } = await import("../../src/hooks/install.js");
+  expect(
+    (
+      await repo.git([
+        "add",
+        "--chmod=+x",
+        "-f",
+        "--",
+        ...TRACKED_HOOK_NAMES.map((name) => ".husky/_/" + name),
+      ])
+    ).exitCode,
+  ).toBe(0);
+  expect(
+    (await repo.git(["add", "-f", "--", ".husky/_/LICENSE.zedbee-husky"]))
+      .exitCode,
+  ).toBe(0);
+  const current = await detectHookIntegration(repo.root, "husky");
+  expect(current.changes?.map((change) => change.relativePath)).toContain(
+    ".husky/_/h",
+  );
+  expect(current.activation.remediation).toBeUndefined();
+});

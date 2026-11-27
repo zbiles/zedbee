@@ -171,7 +171,12 @@ it.each([0, 1, 2] as const)(
       },
     );
     expect(result).toBe(exitCode);
-    expect(JSON.parse(stdout.join("")).hookUpdate).toEqual(HOOK_UPDATE_NOTICE);
+    expect(JSON.parse(stdout.join("")).hookUpdate).toMatchObject({
+      code: HOOK_UPDATE_NOTICE.code,
+      hook: "pre-commit",
+      reason: "outdated-command",
+      remediation: HOOK_UPDATE_NOTICE.remediation,
+    });
     expect(stderr).toEqual([]);
   },
 );

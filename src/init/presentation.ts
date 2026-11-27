@@ -10,6 +10,7 @@ import { ProjectPrettierFailureError } from "../checks/prettier/project-error.js
 import { ExecutableImportStaleError } from "./import-provenance.js";
 import { ProjectPrettierTrustRequiredError } from "./formatter-setup.js";
 import { HookInstallationError } from "../hooks/command.js";
+import { metadataSizeFailure } from "../inspection/metadata-limit.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { GithubWorkflowSetupError } from "./github-workflow.js";
 import { InitRollbackError } from "./write-config.js";
@@ -153,8 +154,11 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
   }
   if (proposal.hookActivation.remediation !== undefined) {
     lines.push(
-      `Hook activation required: ${proposal.hookActivation.remediation}`,
+      `${proposal.hookActivation.status === "active" ? "Files to stage" : "Hook activation required"}: ${proposal.hookActivation.remediation}`,
     );
+  }
+  if (proposal.hookActivation.staging !== undefined) {
+    lines.push(`Files to stage: ${proposal.hookActivation.staging}`);
   }
   const configUpdate = configChangeMessage(proposal, applied);
   if (configUpdate !== undefined) lines.push(configUpdate);
@@ -175,7 +179,16 @@ export function renderText(proposal: InitProposal, applied: boolean): string {
 
 export function renderInitFailure(error: unknown): string {
   const lines = ["Zedbee could not initialize this repository safely."];
-  if (
+  const metadataLimit = metadataSizeFailure(error);
+  if (metadataLimit !== undefined) {
+    lines.push(
+      `Reason: ${metadataLimit.message}`,
+      ...(metadataLimit.path === undefined
+        ? []
+        : [`File: ${metadataLimit.path}`]),
+      `Remediation: ${metadataLimit.remediation}`,
+    );
+  } else if (
     error instanceof ImportCaptureError ||
     error instanceof ProjectWorkspaceLayoutError
   ) {

@@ -43,6 +43,7 @@ import { INERT_TSCONFIG } from "./captured-filesystem.js";
 async function validateSnapshotInputs(
   snapshotRoot: string,
   workspace: WorkspaceInspection,
+  signal: AbortSignal,
   capture?: CapturedDependencies,
 ): Promise<void> {
   const registry = await captureSnapshotRegistry(snapshotRoot);
@@ -59,12 +60,14 @@ async function validateSnapshotInputs(
     throw new TypeError("Reserved managed Knip path is present");
   }
   for (const sourcePath of workspace.sourceFiles) {
+    signal.throwIfAborted();
     const source = await readContainedFile(registry, sourcePath);
     for (const specifier of sourceModuleSpecifiers(
       sourcePath,
       source,
       collectCommentImports,
     )) {
+      signal.throwIfAborted();
       await validateImport(sourcePath, specifier);
     }
   }
@@ -94,7 +97,7 @@ async function collectSide(
       observations: Object.freeze([]),
       dependencyInputs: guards.manifest()!,
     };
-  await validateSnapshotInputs(canonicalRoot, workspace, guards);
+  await validateSnapshotInputs(canonicalRoot, workspace, signal, guards);
   const sourceCapture = exportCurrentAnalysisSourceCapture();
   const result = await runCapturedKnip(
     {
@@ -117,7 +120,7 @@ async function collectSide(
     signal,
   );
   signal.throwIfAborted();
-  await validateSnapshotInputs(canonicalRoot, workspace);
+  await validateSnapshotInputs(canonicalRoot, workspace, signal);
   return {
     observations: parseKnipReport(
       result.report,

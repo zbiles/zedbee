@@ -146,7 +146,8 @@ function SetupSummary({
       </Box>
       {installsHook &&
       proposal.hookChoices?.includes("tracked") &&
-      proposal.hookChoices.includes("raw") ? (
+      (proposal.hookChoices.includes("raw") ||
+        proposal.hookChoices.includes("husky")) ? (
         <Box
           flexDirection="column"
           ref={hookFocus === 2 ? activeTargetRef : undefined}
@@ -157,8 +158,15 @@ function SetupSummary({
             with teammates
           </Text>
           <Text>
-            {"  "}[{proposal.hookSelection === "raw" ? "✽" : " "}] Local — this
-            checkout only
+            {"  "}[
+            {proposal.hookSelection === "raw" ||
+            proposal.hookSelection === "husky"
+              ? "✽"
+              : " "}
+            ]{" "}
+            {proposal.hookChoices.includes("husky")
+              ? "Husky — preserve existing runtime policy"
+              : "Local — this checkout only"}
           </Text>
         </Box>
       ) : installsHook && proposal.hookChoices !== undefined ? (
@@ -174,6 +182,12 @@ function SetupSummary({
           Method: {HOOK_METHODS[proposal.hook]}
         </Text>
       ) : null}
+      {proposal.hookActivation.status === "active" &&
+      proposal.hookActivation.runtimeTracking !== undefined ? (
+        <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.secondary)}>
+          {proposal.hookActivation.message}
+        </Text>
+      ) : null}
       {proposal.hookActivation.status === "pending" ? (
         <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
           Additional activation required: {proposal.hookActivation.message}
@@ -182,7 +196,17 @@ function SetupSummary({
       {proposal.hookActivation.remediation === undefined ? null : (
         <Box paddingLeft={2} marginY={1}>
           <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
-            Next step: {proposal.hookActivation.remediation}
+            {proposal.hookActivation.status === "active"
+              ? "Files to stage"
+              : "Next step"}
+            : {proposal.hookActivation.remediation}
+          </Text>
+        </Box>
+      )}
+      {proposal.hookActivation.staging === undefined ? null : (
+        <Box paddingLeft={2} marginY={1}>
+          <Text wrap="wrap" {...colorProp(color, ZEDBEE_THEME.warning)}>
+            Files to stage: {proposal.hookActivation.staging}
           </Text>
         </Box>
       )}
@@ -349,7 +373,8 @@ export function hookFocusCount(proposal: InitProposal): number {
   if (proposal.hookChoices === undefined) return 0;
   return proposal.hook !== "none" &&
     proposal.hookChoices.includes("tracked") &&
-    proposal.hookChoices.includes("raw")
+    (proposal.hookChoices.includes("raw") ||
+      proposal.hookChoices.includes("husky"))
     ? 2
     : 1;
 }

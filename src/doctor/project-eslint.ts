@@ -1,4 +1,7 @@
-import { escapeLabelControls, workspaceLabel } from "./workspace-installation.js";
+import {
+  escapeLabelControls,
+  workspaceLabel,
+} from "./workspace-installation.js";
 import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 import { findProjectEslintConfig } from "../checks/eslint/project/config-file.js";
 import { relative, sep } from "node:path";
@@ -10,9 +13,55 @@ import {
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { hasProjectEslintTrust } from "../checks/eslint/project/trust.js";
-import { resolveProjectEslintInstallation } from "../checks/eslint/project/installation.js";
-import { ProjectEslintFailureError } from "../checks/eslint/project/types.js";
+import { createProjectEslintInstallationResolver } from "../checks/eslint/project/installation.js";
+import {
+  ProjectEslintFailureError,
+  type ProjectEslintInstallation,
+} from "../checks/eslint/project/types.js";
 import type { Diagnostic } from "./diagnostics.js";
+
+interface ProjectEslintWorkspaceReport {
+  readonly description: string;
+  readonly failed: boolean;
+  readonly trusted: boolean;
+}
+
+async function installationDescription(
+  resolveInstallation: (project: string) => Promise<ProjectEslintInstallation>,
+  project: string,
+): Promise<{ readonly text: string; readonly failed: boolean }> {
+  try {
+    const found = await resolveInstallation(project);
+    return { text: `ESLint ${found.version}`, failed: false };
+  } catch (error) {
+    return {
+      text:
+        error instanceof ProjectEslintFailureError
+          ? error.message
+          : "Installed dependencies could not be verified.",
+      failed: true,
+    };
+  }
+}
+
+async function describeProjectEslintWorkspace(
+  root: string,
+  project: string,
+  invocationTrust: boolean,
+  resolveInstallation: (project: string) => Promise<ProjectEslintInstallation>,
+): Promise<ProjectEslintWorkspaceReport> {
+  const [selected, trusted, messagesTrusted, installation] = await Promise.all([
+    findProjectEslintConfig(root, project, "doctor"),
+    invocationTrust || hasProjectEslintTrust(root, project, "execute"),
+    hasProjectEslintTrust(root, project, "messages"),
+    installationDescription(resolveInstallation, project),
+  ]);
+  return {
+    failed: installation.failed || !selected.supported,
+    trusted,
+    description: `${workspaceLabel(project)}: project engine (experimental); config ${selected.path === undefined ? "missing" : escapeLabelControls(relative(root, selected.path).split(sep).join("/"))}${selected.supported ? "" : " (unsupported or absent)"}; ${installation.text}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
+  };
+}
 
 /** All discovery is metadata/data only; never import native ESLint configuration. */
 export async function diagnoseProjectEslint(
@@ -36,37 +85,24 @@ export async function diagnoseProjectEslint(
       message:
         "Using Zedbee's built-in ESLint. Static JSX accessibility checks use the managed rules and configured component mappings. Project configuration was not executed.",
     };
-  const descriptions: string[] = [];
-  let failed = false,
-    untrusted = false;
+  const resolveInstallation = createProjectEslintInstallationResolver(
+    root,
+    root,
+  );
+  const reports: ProjectEslintWorkspaceReport[] = [];
   for (const workspace of projects) {
-    const project = workspace.relativeRoot;
-    const selected = await findProjectEslintConfig(root, project, "doctor");
-    const trusted =
-      invocationTrust ||
-      (await hasProjectEslintTrust(root, project, "execute"));
-    const messagesTrusted = await hasProjectEslintTrust(
-      root,
-      project,
-      "messages",
-    );
-    let installation: string;
-    try {
-      const found = await resolveProjectEslintInstallation(root, project, root);
-      installation = `ESLint ${found.version}`;
-    } catch (error) {
-      failed = true;
-      installation =
-        error instanceof ProjectEslintFailureError
-          ? error.message
-          : "Installed dependencies could not be verified.";
-    }
-    if (!selected.supported) failed = true;
-    if (!trusted) untrusted = true;
-    descriptions.push(
-      `${workspaceLabel(project)}: project engine (experimental); config ${selected.path === undefined ? "missing" : escapeLabelControls(relative(root, selected.path).split(sep).join("/"))}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
+    reports.push(
+      await describeProjectEslintWorkspace(
+        root,
+        workspace.relativeRoot,
+        invocationTrust,
+        resolveInstallation,
+      ),
     );
   }
+  const descriptions = reports.map((report) => report.description);
+  const failed = reports.some((report) => report.failed);
+  const untrusted = reports.some((report) => !report.trusted);
   return {
     id: "project-eslint",
     status: failed ? "fail" : untrusted ? "warning" : "pass",

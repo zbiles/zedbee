@@ -4,7 +4,7 @@ import picomatch from "picomatch";
 import { parse as parseYaml } from "yaml";
 import {
   normalizeRepositoryPath,
-  readContainedFile,
+  readBoundedRepositoryData,
   readJsonData,
   type ContainedFileReadHooks,
 } from "./read-json.js";
@@ -69,7 +69,7 @@ function readStringArray(value: unknown, path: string): readonly string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw invalidData(path);
   }
-  return value;
+  return Object.freeze([...value]);
 }
 
 export function parsePackageManifest(
@@ -194,11 +194,23 @@ function compileWorkspacePatterns(input: readonly string[]) {
   }
 }
 
+const compiledWorkspacePatterns = new WeakMap<
+  readonly string[],
+  ReturnType<typeof compileWorkspacePatterns>
+>();
+
 export function matchesWorkspacePattern(
   path: string,
   patterns: readonly string[],
 ): boolean {
-  return compileWorkspacePatterns(patterns).matches(path);
+  if (!Object.isFrozen(patterns))
+    return compileWorkspacePatterns(patterns).matches(path);
+  let compiled = compiledWorkspacePatterns.get(patterns);
+  if (compiled === undefined) {
+    compiled = compileWorkspacePatterns(patterns);
+    compiledWorkspacePatterns.set(patterns, compiled);
+  }
+  return compiled.matches(path);
 }
 
 function discoverSelectedWorkspaceManifests(
@@ -243,7 +255,7 @@ export async function readPnpmWorkspacePatterns(
   if (!pathExists(registry, repositoryPath)) {
     return [];
   }
-  const contents = await readContainedFile(
+  const contents = await readBoundedRepositoryData(
     registry,
     repositoryPath,
     readHooks(repositoryPath),

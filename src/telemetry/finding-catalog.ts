@@ -110,6 +110,7 @@ export const findingCatalog: Readonly<Record<string, Readonly<Record<string, str
     "@typescript-eslint/no-unsafe-argument": "Disallow calling a function with a value with type `any`",
     "@typescript-eslint/no-unsafe-assignment": "Disallow assigning a value with type `any` to variables and properties",
     "@typescript-eslint/no-unsafe-call": "Disallow calling a value with type `any`",
+    "@typescript-eslint/no-unsafe-class-instance-assignment": "Disallow assigning non-instance values to class instance typed locations",
     "@typescript-eslint/no-unsafe-declaration-merging": "Disallow unsafe declaration merging",
     "@typescript-eslint/no-unsafe-enum-assignment": "Disallow assigning non-enum values to enum typed locations",
     "@typescript-eslint/no-unsafe-enum-comparison": "Disallow comparing an enum value with a non-enum value",

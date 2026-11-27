@@ -18,7 +18,10 @@ import {
 import { loadCapturedResolver } from "./wasi.js";
 import type { KnipJob } from "./executor.js";
 import { createPackageMetadataReader } from "./package-metadata.js";
-import { ISSUE_TYPES as KNIP_ISSUE_TYPES } from "./parse-report.js";
+import {
+  ISSUE_TYPES as KNIP_ISSUE_TYPES,
+  MAX_KNIP_REPORT_BYTES,
+} from "./parse-report.js";
 
 const require = createRequire(import.meta.url);
 const globals = globalThis as unknown as Record<string, unknown>;
@@ -178,7 +181,7 @@ async function run(job: KnipJob) {
     const result = await main(options);
     view.assertComplete();
     const report = reportFor(result);
-    if (Buffer.byteLength(JSON.stringify(report)) > 64 * 1024 * 1024)
+    if (Buffer.byteLength(JSON.stringify(report)) > MAX_KNIP_REPORT_BYTES)
       throw new RangeError("Knip output capacity");
     return { report, dependencyInputs: view.capture.manifest() };
   } finally {

@@ -3,6 +3,7 @@ import { lt, rcompare, valid } from "semver";
 import assert from "node:assert/strict";
 import {
   mkdirSync,
+  cpSync,
   mkdtempSync,
   readFileSync,
   renameSync,
@@ -25,6 +26,8 @@ const historicalReleases = {
 const predecessorReleases = {
   "0.1.0-beta.21":
     "sha512-3T6CJWOi2v4Oqr6bB8Rah16nV+6ZCfqPh8z9ZFbAYbZAcOdLXedFRbPMGsDO3oQVQu+0HCs1hBwjdrOuaLSGeA==",
+  "0.1.0-beta.22":
+    "sha512-Kx/TMgFkUxotRiu+O+alztLQ32nD+lMZzVYz4eW2b0RYw9+PNdWRcLjP0TL/7kdVMT1zQpa7xCv4FZylHg9pgA==",
 };
 const previousReleases = { ...historicalReleases, ...predecessorReleases };
 const linkedWorktreeScenario = "0.1.0-beta.15";
@@ -120,7 +123,7 @@ function smokeFreshLinkedWorktree({ hook, linked, git, cliRun }) {
     cliRun([
       "init",
       "--hook",
-      "husky",
+      "tracked",
       "--workflow",
       "none",
       "--yes",
@@ -255,6 +258,7 @@ function smokeConsumerUpgrade({
   iteration,
   cache,
 }) {
+  const refreshScenario = previous === "0.1.0-beta.22" && archive !== undefined;
   const fixture = join(iteration, "fixture");
   const web = join(fixture, "web");
   const e2e = join(fixture, "e2e");
@@ -301,7 +305,15 @@ function smokeConsumerUpgrade({
   git(["config", "user.email", "swarm-release@example.invalid"]);
   writeFileSync(join(fixture, ".gitignore"), "node_modules/\n.husky/_/\n");
   for (const [name, directory, devDependencies] of [
-    ["web", web, { husky: "9.1.7", zedbee: previous }],
+    [
+      "web",
+      web,
+      {
+        husky: "9.1.7",
+        zedbee: previous,
+        ...(refreshScenario ? { prettier: "3.9.6" } : {}),
+      },
+    ],
     ["extension", extension, {}],
     ["e2e", e2e, { "@playwright/test": "1.58.2", "@types/node": "26.1.0" }],
   ]) {
@@ -340,8 +352,25 @@ function smokeConsumerUpgrade({
   const goodTest =
     'import { expect, test } from "@playwright/test";\nimport { value } from "@fixture/value";\ntest("example", () => {\n  expect(value).toBe(1);\n});\n';
   writeFileSync(e2eTest, goodTest);
+  if (refreshScenario) {
+    mkdirSync(join(fixture, ".husky"), { recursive: true });
+    writeFileSync(
+      join(fixture, ".husky", "pre-commit"),
+      ": # existing project command\n",
+    );
+    writeJson(join(web, ".prettierrc.json"), {});
+  }
   cliRun([
     "init",
+    ...(refreshScenario
+      ? [
+          "--formatting",
+          "project",
+          "--formatting-scope",
+          "projects",
+          "--trust-project-prettier",
+        ]
+      : []),
     "--hook",
     "husky",
     "--workflow",
@@ -450,6 +479,144 @@ function smokeConsumerUpgrade({
     workspace: "web",
     healthySibling: "e2e",
   });
+  if (refreshScenario) {
+    const doctor = () =>
+      JSON.parse(cliRun(["doctor", "--format", "json"], [0, 2]));
+    const formatting = doctor().diagnostics.find(
+      ({ id }) => id === "project-prettier",
+    );
+    assert.equal(formatting?.status, "pass", JSON.stringify(formatting));
+    // Refresh the real prior-release bodies, then verify the canonical layout
+    // without the test-only JSON output flags.
+    writeFileSync(hook, hookContents);
+    const refreshOptions = [
+      "init",
+      "--hook",
+      "husky",
+      "--workflow",
+      "none",
+      "--format",
+      "json",
+    ];
+    const refreshed = JSON.parse(cliRun([...refreshOptions, "--yes"]));
+    assert.equal(refreshed.applied, true);
+    const refreshedBody = readFileSync(hook, "utf8");
+    assert.equal(
+      (refreshedBody.match(/Zedbee could not start/gu) ?? []).length,
+      1,
+    );
+    assert.match(refreshedBody, /existing project command/u);
+    const mergeHook = join(fixture, ".husky", "pre-merge-commit");
+    assert.equal(
+      (readFileSync(mergeHook, "utf8").match(/Zedbee could not start/gu) ?? [])
+        .length,
+      1,
+    );
+    const preview = JSON.parse(cliRun(refreshOptions));
+    assert.ok(
+      preview.proposal.files.every(
+        ({ relativePath, beforeHash, afterHash }) =>
+          !relativePath.startsWith(".husky/") || beforeHash === afterHash,
+      ),
+      JSON.stringify(preview.proposal.files),
+    );
+    assert.equal(
+      doctor().diagnostics.find(({ id }) => id === "hook-state")?.status,
+      "pass",
+    );
+    git(["add", "--all"]);
+    const refreshedScan = JSON.parse(
+      cliRun(["scan", "--format", "json", "--no-service"]),
+    );
+    assert.equal(refreshedScan.outcome, "pass");
+    assert.equal(refreshedScan.hookUpdate, undefined);
+    assert.equal(git(["ls-files", "--", ".husky/_"]), "");
+    writeFileSync(
+      hook,
+      refreshedBody.replace(
+        "scan --hook-invocation",
+        "scan --hook-invocation --format json --no-color --no-animations --no-service",
+      ),
+    );
+    git(["add", "--all"]);
+    git(["commit", "--no-gpg-sign", "-m", "Refresh existing hooks"]);
+    const ordinaryLinked = join(iteration, "ordinary-linked-worktree");
+    git(["worktree", "add", "--detach", ordinaryLinked, "HEAD"]);
+    try {
+      const linkedWeb = join(ordinaryLinked, "web");
+      cpSync(join(web, "node_modules"), join(linkedWeb, "node_modules"), {
+        recursive: true,
+        verbatimSymlinks: true,
+      });
+      run(
+        process.execPath,
+        [join(linkedWeb, "node_modules", "husky", "bin.js")],
+        {
+          cwd: ordinaryLinked,
+          env,
+          label: "Activate ordinary Husky in a fresh worktree",
+        },
+      );
+      writeFileSync(
+        join(ordinaryLinked, "ordinary.md"),
+        "Ordinary linked worktree.\n",
+      );
+      git(["add", "ordinary.md"], { cwd: ordinaryLinked });
+      const output = git(
+        ["commit", "--no-gpg-sign", "-m", "Ordinary linked worktree"],
+        { cwd: ordinaryLinked, combinedOutput: true },
+      );
+      const report = JSON.parse(
+        output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
+      );
+      assert.equal(report.outcome, "pass");
+      assert.equal(
+        git(["ls-files", "--", ".husky/_"], { cwd: ordinaryLinked }),
+        "",
+      );
+    } finally {
+      git(["worktree", "remove", "--force", ordinaryLinked]);
+    }
+  }
+  if (refreshScenario) {
+    const lintPath = "web/lint-example.ts";
+    const lintSource = "const unused = 1;\nexport const answer = 2;\n";
+    writeFileSync(join(fixture, lintPath), lintSource);
+    git(["add", "--", lintPath]);
+    const scan = (statuses) =>
+      JSON.parse(
+        cliRun(["scan", "--format", "json", "--no-service"], statuses),
+      );
+    const lintReport = scan([1]);
+    assert.ok(
+      lintReport.checks.some((check) =>
+        check.findings.some(
+          (finding) => finding.rule === "@typescript-eslint/no-unused-vars",
+        ),
+      ),
+      JSON.stringify(lintReport.checks),
+    );
+    // Establish a baseline containing the lint debt in this disposable fixture.
+    git([
+      "commit",
+      "--no-gpg-sign",
+      "--no-verify",
+      "-m",
+      "Fixture with pre-existing lint debt",
+    ]);
+    writeFileSync(
+      join(fixture, lintPath),
+      lintSource.replace("answer = 2", "answer = 3"),
+    );
+    git(["add", "--", lintPath]);
+    assert.equal(scan([0]).outcome, "pass");
+    git([
+      "commit",
+      "--no-gpg-sign",
+      "-m",
+      "Unrelated edit to existing lint debt",
+    ]);
+  }
   const installation = join(e2e, "node_modules");
   const removedInstallation = join(iteration, "e2e-install");
   renameSync(installation, removedInstallation);

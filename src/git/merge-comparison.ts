@@ -21,6 +21,69 @@ export class MergeComparisonError extends Error {
   }
 }
 
+function githeadParents(
+  environment: Readonly<Record<string, string | undefined>>,
+): string[] {
+  return Object.keys(environment)
+    .filter((key) => /^GITHEAD_/u.test(key))
+    .map((key) => key.slice("GITHEAD_".length));
+}
+
+async function readIncomingMergeHeads(
+  git: GitClient,
+  environment: Readonly<Record<string, string | undefined>>,
+  options: { signal?: AbortSignal },
+): Promise<string[]> {
+  const selected = git.selectedComparison;
+  if (selected !== undefined) {
+    return selected.mergeHeads === undefined
+      ? githeadParents(environment)
+      : [...selected.mergeHeads];
+  }
+  const path = (
+    await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
+  ).stdout;
+  try {
+    return (await readFile(resolve(git.repositoryRoot, path), "utf8"))
+      .trim()
+      .split(/\r?\n/u);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    return githeadParents(environment);
+  }
+}
+
+async function resolveParentCommits(
+  git: GitClient,
+  refs: readonly string[],
+  options: { signal?: AbortSignal },
+): Promise<string[]> {
+  const parents = new Set<string>();
+  // Join a bounded batch before validating or starting the next group.
+  // This keeps ordinary two-parent merges concurrent while limiting Git
+  // processes for octopus merges.
+  const batchSize = 4;
+  for (let index = 0; index < refs.length; index += batchSize) {
+    const outputs = await Promise.allSettled(
+      refs
+        .slice(index, index + batchSize)
+        .map((ref) =>
+          git.tryRun(
+            ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+            options,
+          ),
+        ),
+    );
+    for (const output of outputs) {
+      if (output.status === "rejected") throw output.reason;
+      if (output.value.exitCode !== 0 || !isGitObjectId(output.value.stdout))
+        throw new MergeComparisonError("MERGE_PARENTS_INVALID");
+      parents.add(output.value.stdout);
+    }
+  }
+  return [...parents];
+}
+
 /** Git writes MERGE_HEAD after the automatic merge hook, but supplies GITHEAD_<oid> before it. */
 export async function resolveMergeComparison(
   git: GitClient,
@@ -29,41 +92,18 @@ export async function resolveMergeComparison(
   signal?: AbortSignal,
 ): Promise<{ parents: readonly string[]; tree: string } | undefined> {
   const options = signal === undefined ? {} : { signal };
-  let incoming = git.selectedComparison?.mergeHeads;
-  if (git.selectedComparison === undefined) {
-    const path = (
-      await git.run(["rev-parse", "--git-path", "MERGE_HEAD"], options)
-    ).stdout;
-    try {
-      incoming = (await readFile(resolve(git.repositoryRoot, path), "utf8"))
-        .trim()
-        .split(/\r?\n/u);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-  incoming ??= Object.keys(environment)
-    .filter((key) => key.startsWith("GITHEAD_"))
-    .map((key) => key.slice("GITHEAD_".length));
+  const incoming = await readIncomingMergeHeads(git, environment, options);
   if (incoming.length === 0) {
     if (required) throw new MergeComparisonError("MERGE_PARENTS_UNAVAILABLE");
     return undefined;
   }
   if (incoming.length > 100 || incoming.some((id) => !isGitObjectId(id)))
     throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-  const parents: string[] = [];
-  for (const ref of [
-    git.selectedComparison?.baselineCommit ?? "HEAD",
-    ...incoming,
-  ]) {
-    const output = await git.tryRun(
-      ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
-      options,
-    );
-    if (output.exitCode !== 0 || !isGitObjectId(output.stdout))
-      throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    if (!parents.includes(output.stdout)) parents.push(output.stdout);
-  }
+  const parents = await resolveParentCommits(
+    git,
+    [git.selectedComparison?.baselineCommit ?? "HEAD", ...incoming],
+    options,
+  );
   if (parents.length < 2)
     throw new MergeComparisonError("MERGE_PARENTS_INVALID");
   const unresolved = await git.run(["ls-files", "--unmerged", "-z"], options);

@@ -385,6 +385,9 @@
                     "@typescript-eslint/no-unsafe-call": {
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
+                    "@typescript-eslint/no-unsafe-class-instance-assignment": {
+                      "$ref": "#/definitions/managedEslintRuleConfiguration"
+                    },
                     "@typescript-eslint/no-unsafe-declaration-merging": {
                       "$ref": "#/definitions/managedEslintRuleConfiguration"
                     },
@@ -2829,6 +2832,9 @@
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
                           "@typescript-eslint/no-unsafe-call": {
+                            "$ref": "#/definitions/managedEslintRuleConfiguration"
+                          },
+                          "@typescript-eslint/no-unsafe-class-instance-assignment": {
                             "$ref": "#/definitions/managedEslintRuleConfiguration"
                           },
                           "@typescript-eslint/no-unsafe-declaration-merging": {

@@ -1,3 +1,4 @@
+import { metadataSizeFailure } from "../inspection/metadata-limit.js";
 import { normalizeRepositoryRelativePath } from "../attribution/fingerprint.js";
 import { RepositoryInspectionError } from "../inspection/types.js";
 import { ConfigError } from "../config/load-config.js";
@@ -192,6 +193,12 @@ export function phaseFailure(
   phase: ActiveScanPhase,
   mode: ScanMode,
 ): ScanFailureInput {
+  if (phase === "baseline-inspection" || phase === "target-inspection") {
+    const sizeFailure = metadataSizeFailure(error);
+    if (sizeFailure !== undefined) {
+      return { ...sourcePhaseFailure(phase, mode), ...sizeFailure };
+    }
+  }
   if (
     (phase === "baseline-inspection" || phase === "target-inspection") &&
     error instanceof RepositoryInspectionError &&

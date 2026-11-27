@@ -142,6 +142,22 @@ describe("fingerprintObservation", () => {
     ).toBe("src/日本語/naïve.ts");
   });
 
+  it.each(["a", "\uD83D\uDE00", "\uD800", "\uDC00"])(
+    "validates the 255-code-point path segment limit for %j",
+    (character) => {
+      const path = character.repeat(255);
+      expect(
+        normalizeObservation(createObservation({ location: { file: path } }))
+          .location?.file,
+      ).toBe(path);
+      expect(() =>
+        normalizeObservation(
+          createObservation({ location: { file: character.repeat(256) } }),
+        ),
+      ).toThrow(/repository-relative path/i);
+    },
+  );
+
   it("accepts bounded internal identities longer than terminal labels", () => {
     const identity = `dependency-edge:${"nested/".repeat(1_300)}leaf`;
     const comparisonIdentity = `comparison:${"branch/".repeat(50)}leaf`;

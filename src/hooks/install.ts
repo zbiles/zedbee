@@ -5,7 +5,11 @@ import { GitClient } from "../git/client.js";
 import { initFileChange } from "../init/recommend.js";
 import type { InitFileChange, InitProposal } from "../init/types.js";
 import { mergeHookCommand, ZEDBEE_COMMAND } from "./husky.js";
-import { previousInstalledHookCommand } from "./installed-command.js";
+import {
+  guardedHookInvocation,
+  installedHookPreflight,
+  previousInstalledHookCommand,
+} from "./installed-command.js";
 import { updateRawGitHook } from "./raw-git.js";
 
 export const TRACKED_HOOK_NAMES = Object.freeze([
@@ -34,10 +38,21 @@ export function isStockHuskyDispatcher(source: string | undefined): boolean {
     normalized === HUSKY_DISPATCHER || normalized === `${HUSKY_DISPATCHER}\n`
   );
 }
+function huskyPackageRoot(): string {
+  return dirname(fileURLToPath(import.meta.resolve("husky")));
+}
+
+let bundledRuntime: Promise<string> | undefined;
+
 /** Only bundled stock runtime bytes establish verified dispatch. */
-async function bundledHuskyRuntime(): Promise<string> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
-  return readFile(join(huskyRoot, "husky"), "utf8");
+function bundledHuskyRuntime(): Promise<string> {
+  bundledRuntime ??= readFile(join(huskyPackageRoot(), "husky"), "utf8").catch(
+    (error: unknown) => {
+      bundledRuntime = undefined;
+      throw error;
+    },
+  );
+  return bundledRuntime;
 }
 
 export async function isStockHuskyHelper(
@@ -51,6 +66,43 @@ const HUSKY_DISPATCHER_PATHS = TRACKED_HOOK_NAMES.map(
   (name) => `.husky/_/${name}`,
 );
 export const TRACKED_HUSKY_STAGING = `For fresh worktrees, commit the hook bodies, .husky/.gitattributes, and the Husky runtime files. Stage the dispatchers with git add --chmod=+x -f -- ${HUSKY_DISPATCHER_PATHS.join(" ")}. Stage the helper and license with git add -f -- .husky/_/h ${HUSKY_LICENSE}.`;
+
+async function trackedRuntimeEntries(
+  root: string,
+): Promise<ReadonlyMap<string, string>> {
+  const { stdout } = await new GitClient(root).run(
+    ["ls-files", "--stage", "--", ".husky/_"],
+    { reject: false },
+  );
+  return new Map(
+    stdout.split("\n").flatMap((line) => {
+      const match = /^(\d+) [^ ]+ 0\t(.+)$/u.exec(line);
+      return match === null ? [] : [[match[2]!, match[1]!] as const];
+    }),
+  );
+}
+
+export async function trackedRuntimePolicy(
+  root: string,
+): Promise<"untracked" | "partial" | "tracked"> {
+  const entries = await trackedRuntimeEntries(root);
+  const required = [...HUSKY_DISPATCHER_PATHS, ".husky/_/h"];
+  if (!required.some((path) => entries.has(path))) return "untracked";
+  return required.every((path) => entries.has(path)) ? "tracked" : "partial";
+}
+
+export async function trackedRuntimeNeedsStaging(
+  root: string,
+): Promise<boolean> {
+  const entries = await trackedRuntimeEntries(root);
+  const required = [...HUSKY_DISPATCHER_PATHS, ".husky/_/h", HUSKY_LICENSE];
+  return !required.every(
+    (path) =>
+      entries.has(path) &&
+      (!HUSKY_DISPATCHER_PATHS.includes(path) ||
+        entries.get(path) === "100755"),
+  );
+}
 
 export function hasHookExecutePermission(mode: number): boolean {
   // Git for Windows ignores X_OK; chmod cannot disable a regular hook there.
@@ -116,7 +168,7 @@ export async function hooksPathValue(root: string): Promise<string | null> {
 export async function trackedRuntimeChanges(
   root: string,
 ): Promise<readonly InitFileChange[] | undefined> {
-  const huskyRoot = dirname(fileURLToPath(import.meta.resolve("husky")));
+  const huskyRoot = huskyPackageRoot();
   const [runtime, license] = await Promise.all([
     bundledHuskyRuntime(),
     readFile(join(huskyRoot, "LICENSE"), "utf8"),
@@ -214,8 +266,14 @@ export async function validateLocalHookMigration(
           ];
     const currentCommand = hookName === "pre-commit" ? command : mergeCommand;
     const previous = previousInstalledHookCommand(currentCommand);
-    if (hookName !== undefined && previous !== undefined)
+    if (hookName !== undefined && previous !== undefined) {
       stock.push(updateRawGitHook(null, previous, hookName));
+      const invocation = guardedHookInvocation(currentCommand);
+      if (invocation !== undefined)
+        stock.push(
+          `#!/bin/sh\n${installedHookPreflight(invocation.cliPath, hookName)}\n${currentCommand} || exit $?\n`,
+        );
+    }
     const recognized = stock.flatMap((script) => [
       script,
       script.replaceAll(" || exit $?", ""),

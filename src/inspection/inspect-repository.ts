@@ -1,9 +1,12 @@
-import { MANAGED_SOURCE_PATH } from "./source-paths.js";
+import {
+  MANAGED_SOURCE_PATH,
+  MANAGED_TYPESCRIPT_PATH,
+} from "./source-paths.js";
 import {
   workspaceContainsFile,
   physicalWorkspaceOrder,
 } from "./workspace-owner.js";
-import { posix, relative, sep } from "node:path";
+import { posix, relative } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   normalizeRepositoryPath,
@@ -119,7 +122,7 @@ function inferEnvironments(
   const dependencies = workspace.manifest.dependencyNames;
   const environments = new Set<Environment>(["javascript"]);
   const hasTypeScriptSource = sourceFiles.some((path) =>
-    /\.(?:ts|tsx|mts|cts)$/.test(path),
+    MANAGED_TYPESCRIPT_PATH.test(path),
   );
   if (
     dependencies.has("typescript") ||
@@ -288,7 +291,7 @@ export async function inspectRepository(
   for (const entry of registry.entries()) {
     if (entry.kind === "symlink" && entry.targetKind === "file")
       symlinkTargets.add(
-        relative(canonicalRoot, entry.canonicalPath).split(sep).join("/"),
+        normalizeRepositoryPath(relative(canonicalRoot, entry.canonicalPath)),
       );
   }
   const inspection: RepositoryInspection = {

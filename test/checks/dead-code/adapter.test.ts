@@ -4,7 +4,7 @@ import { access, mkdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execa } from "execa";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type {
   CheckRunContext,
   CheckTarget,
@@ -14,6 +14,7 @@ import { dispatchChecks } from "../../../src/checks/dispatcher.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet } from "../../../src/git/change-set.js";
+import * as sourceReads from "../../../src/inspection/read-json.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
@@ -112,6 +113,29 @@ async function stagedFindings(runContext: CheckRunContext) {
   );
   return result.findings.filter(({ attribution }) => attribution.staged);
 }
+
+describe("Knip source validation", () => {
+  it("stops before reading another source when validation cannot read a file", async () => {
+    const run = await context(
+      "export const used = 1;",
+      "export const used = 2;",
+    );
+    const read = sourceReads.readContainedFile;
+    const attempted: string[] = [];
+    const spy = vi
+      .spyOn(sourceReads, "readContainedFile")
+      .mockImplementation(async (...args) => {
+        if (!args[1].endsWith(".ts")) return read(...args);
+        attempted.push(args[1]);
+        throw new Error("Synthetic source read failure");
+      });
+    onTestFinished(() => spy.mockRestore());
+    await expect(deadCodeAdapter.collect(run)).rejects.toThrow(
+      "Dead-code analysis failed.",
+    );
+    expect(attempted).toHaveLength(1);
+  });
+});
 
 describe("captured Knip execution", () => {
   it.each(["node_modules", "web/node_modules"])(

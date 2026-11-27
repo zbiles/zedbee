@@ -7,8 +7,8 @@ import type {
   ObservationEntity,
 } from "../core/types.js";
 import {
-  findingIdentity,
-  fingerprintObservation,
+  findingIdentityFromSnapshot,
+  fingerprintSnapshot,
   isCanonicalSyntaxText,
   normalizeObservation,
   normalizeRepositoryRelativePath,
@@ -131,7 +131,7 @@ function assertSameMetric(baseline: Observation, target: Observation): void {
   const baselineEntity = requireMetricEntity(baseline, "baseline");
   const targetEntity = requireMetricEntity(target, "target");
   if (
-    fingerprintObservation(baseline) !== fingerprintObservation(target) ||
+    fingerprintSnapshot(baseline) !== fingerprintSnapshot(target) ||
     baseline.identity !== target.identity ||
     baseline.metric?.name !== target.metric?.name ||
     baselineEntity.kind !== targetEntity.kind ||
@@ -165,13 +165,13 @@ function toFinding(
   policy: MetricDeltaPolicy,
   baseline?: Observation,
 ): Finding {
-  const identity = findingIdentity(target);
+  const identity = findingIdentityFromSnapshot(target);
   const entity = requireMetricEntity(target, "target");
   if (identity.scope.kind !== "entity") {
     throw new TypeError("Expected an entity-scoped target metric observation");
   }
   return Object.freeze({
-    id: fingerprintObservation(target),
+    id: fingerprintSnapshot(target),
     check: target.check,
     rule: target.rule,
     severity: target.severity,

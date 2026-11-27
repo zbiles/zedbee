@@ -136,19 +136,22 @@ export function finalizeDependencyRecords(
     ]);
     if (!deduplicated.has(key)) deduplicated.set(key, record);
   }
-  return Object.freeze(
-    [...deduplicated.values()].sort(
-      (left, right) =>
-        compareCodeUnits(left.name, right.name) ||
-        compareCodeUnits(left.version, right.version) ||
-        compareCodeUnits(left.importer ?? "", right.importer ?? "") ||
-        compareCodeUnits(
-          left.dependencyPath?.join("\0") ?? "",
-          right.dependencyPath?.join("\0") ?? "",
-        ) ||
-        (left.line ?? 0) - (right.line ?? 0),
-    ),
+  const entries = [...deduplicated.values()].map((record) => ({
+    record,
+    path: record.dependencyPath?.join("\0") ?? "",
+  }));
+  entries.sort(
+    (left, right) =>
+      compareCodeUnits(left.record.name, right.record.name) ||
+      compareCodeUnits(left.record.version, right.record.version) ||
+      compareCodeUnits(
+        left.record.importer ?? "",
+        right.record.importer ?? "",
+      ) ||
+      compareCodeUnits(left.path, right.path) ||
+      (left.record.line ?? 0) - (right.record.line ?? 0),
   );
+  return Object.freeze(entries.map(({ record }) => record));
 }
 
 export function plainRecord(

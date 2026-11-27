@@ -1,7 +1,12 @@
-import { cp, lstat, mkdir } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished } from "vitest";
+import {
+  persistProjectPrettierTrust,
+  readProjectPrettierTrust,
+} from "../../src/checks/prettier/project-trust.js";
 import { createDefaultDiagnosticProbe } from "../../src/doctor/diagnostics.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 
@@ -184,3 +189,140 @@ it.each([false, true])(
     expect(result.message).toContain("Required project Prettier");
   },
 );
+
+it("recognizes saved scoped readiness without executing config and keeps required scopes separate", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    '{"name":"root","private":true,"workspaces":["web","api"]}',
+  );
+  for (const name of ["web", "api"]) {
+    await repo.write(
+      `${name}/package.json`,
+      JSON.stringify({ name, devDependencies: { prettier: "^3.0.0" } }),
+    );
+  }
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      overrides: [
+        {
+          files: ["web/**", "api/**"],
+          checks: { formatting: { engine: "project" } },
+        },
+      ],
+    }),
+  );
+  await repo.write(
+    "web/prettier.config.mjs",
+    "import { writeFileSync } from 'node:fs'; writeFileSync(" +
+      JSON.stringify(join(repo.root, "PROJECT_PRETTIER_MARKER")) +
+      ", 'executed'); export default {};",
+  );
+  await repo.git(["add", "--all"]);
+  await repo.commitAll("fixture");
+  await mkdir(join(repo.root, "node_modules"), { recursive: true });
+  await cp(
+    join(repositoryPackageRoot, "node_modules", "prettier"),
+    join(repo.root, "node_modules", "prettier"),
+    { recursive: true },
+  );
+  const probe = createDefaultDiagnosticProbe();
+  const context = { cwd: repo.root, environment: {} };
+  const initial = await probe("project-prettier", context);
+  expect(initial.status).toBe("warning");
+  expect(initial.message).toMatch(/api.*web/u);
+  await persistProjectPrettierTrust(repo.root, "web");
+  const mixed = await probe("project-prettier", context);
+  expect(mixed.status).toBe("warning");
+  expect(mixed.message).toContain("Missing execution consent for api");
+  await persistProjectPrettierTrust(repo.root, "api");
+  const ready = await probe("project-prettier", context);
+  expect(ready.status).toBe("pass");
+  expect(ready.message).toMatch(/execution probe was skipped/u);
+  expect(ready.message).toMatch(/web: available 3\.9\.6/u);
+  expect(await markerExists(repo.root, "PROJECT_PRETTIER_MARKER")).toBe(false);
+
+  await repo.write(
+    ".zedbeerc.jsonc",
+    JSON.stringify({
+      schemaVersion: 1,
+      overrides: [
+        { files: ["web/**"], checks: { formatting: { engine: "project" } } },
+      ],
+    }),
+  );
+  await repo.git(["add", "--", ".zedbeerc.jsonc"]);
+  // A new worktree keeps saved Git-local consent.
+  await repo.git(["commit", "-m", "scope"]);
+  const linked = await mkdtemp(join(tmpdir(), "zedbee-linked-doctor-"));
+  onTestFinished(async () => {
+    await repo.git(["worktree", "remove", "--force", linked]);
+    await rm(linked, { recursive: true, force: true });
+  });
+  expect(
+    (await repo.git(["worktree", "add", "--detach", linked])).exitCode,
+  ).toBe(0);
+  await mkdir(join(linked, "node_modules"), { recursive: true });
+  await cp(
+    join(repositoryPackageRoot, "node_modules", "prettier"),
+    join(linked, "node_modules", "prettier"),
+    { recursive: true },
+  );
+  expect(
+    (await probe("project-prettier", { ...context, cwd: linked })).status,
+  ).toBe("pass");
+
+  const clone = await mkdtemp(join(tmpdir(), "zedbee-clone-doctor-"));
+  onTestFinished(() => rm(clone, { recursive: true, force: true }));
+  expect(
+    (await repo.git(["clone", "--local", repo.root, clone])).exitCode,
+  ).toBe(0);
+  await mkdir(join(clone, "node_modules"), { recursive: true });
+  await cp(
+    join(repositoryPackageRoot, "node_modules", "prettier"),
+    join(clone, "node_modules", "prettier"),
+    { recursive: true },
+  );
+  expect(
+    (await probe("project-prettier", { ...context, cwd: clone })).status,
+  ).toBe("warning");
+  // Missing installations take precedence even with a grant.
+  await rm(join(linked, "node_modules", "prettier"), {
+    recursive: true,
+    force: true,
+  });
+  expect(
+    (await probe("project-prettier", { ...context, cwd: linked })).status,
+  ).toBe("fail");
+});
+
+it("does not persist one-time doctor consent", async () => {
+  const repo = await createGitRepository();
+  await repo.write(
+    "package.json",
+    '{"name":"fixture","devDependencies":{"prettier":"^3.0.0"}}',
+  );
+  await repo.write(
+    ".zedbeerc.jsonc",
+    '{"schemaVersion":1,"checks":{"formatting":{"engine":"project"}}}',
+  );
+  await repo.git(["add", "--all"]);
+  await mkdir(join(repo.root, "node_modules"), { recursive: true });
+  await cp(
+    join(repositoryPackageRoot, "node_modules", "prettier"),
+    join(repo.root, "node_modules", "prettier"),
+    { recursive: true },
+  );
+  expect(
+    (
+      await createDefaultDiagnosticProbe()("project-prettier", {
+        cwd: repo.root,
+        environment: {},
+        projectPrettierTrust: true,
+      })
+    ).status,
+  ).toBe("pass");
+  expect(await readProjectPrettierTrust(repo.root, ".")).toBeUndefined();
+});

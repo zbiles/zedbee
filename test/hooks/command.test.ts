@@ -126,7 +126,9 @@ describe("installed hook command", () => {
       "raw",
       command,
     );
-    expect(integration.change?.after).toContain(command);
+    expect(integration.change?.after).toContain(
+      "node './web/node_modules/zedbee/dist/cli.cjs' scan --hook-invocation",
+    );
     expect(integration.change?.after).toContain("printf existing");
   });
 });
@@ -375,5 +377,28 @@ it.each(["pre-commit", "pre-merge-commit"] as const)(
     await expect(
       validateLocalHookMigration(repo.root, command),
     ).rejects.toThrow("custom local hook");
+  },
+);
+
+it.each(["", "# comment\n", "printf existing\\n\n"])(
+  "generates one installation guard and checks before other commands: %s",
+  async (prefix) => {
+    const repo = await createGitRepository();
+    await installed(repo, "web");
+    const command = await resolveHookCommand(repo.root);
+    const { installedHookPreflight } =
+      await import("../../src/hooks/installed-command.js");
+    const old = `#!/bin/sh\n${installedHookPreflight("./web/node_modules/zedbee/dist/cli.cjs", "pre-commit")}\n${prefix}${command} || exit $?\n`;
+    const refreshed = updateHuskyHook(old, command);
+    expect(refreshed.match(/No scan ran\./gu)).toHaveLength(1);
+    expect(updateHuskyHook(refreshed, command)).toBe(refreshed);
+    await rm(join(repo.root, "web/node_modules"), { recursive: true });
+    const missing = await execa("sh", ["-c", refreshed], {
+      cwd: repo.root,
+      reject: false,
+    });
+    expect(missing.exitCode).toBe(2);
+    expect(missing.stdout).toBe("");
+    expect(missing.stderr).toContain("No scan ran.");
   },
 );

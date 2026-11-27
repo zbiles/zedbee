@@ -55,6 +55,19 @@ function checkKey(check: CheckResult): string {
   return JSON.stringify([check.checkId, check.target ?? "."]);
 }
 
+function totalDurationMs(checks: readonly CheckResult[]): number {
+  return checks.reduce((sum, check) => sum + check.durationMs, 0);
+}
+
+function countFindingKeys(findings: readonly Finding[]): Map<string, number> {
+  const count = new Map<string, number>();
+  for (const finding of findings) {
+    const key = findingKey(finding);
+    count.set(key, (count.get(key) ?? 0) + 1);
+  }
+  return count;
+}
+
 function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
   const indexes = reports.map((report) => {
     const index = new Map<string, CheckResult>();
@@ -89,7 +102,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
         ...(error?.snapshot === "last-commit" && isGitObjectId(parent)
           ? { error: { ...error, comparisonParent: parent } }
           : {}),
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+        durationMs: totalDurationMs(present),
       };
     }
     const first =
@@ -111,18 +124,12 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
     if (present.some((check) => check.status === "skipped"))
       return {
         ...first,
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+        durationMs: totalDurationMs(present),
         findings: [],
       };
-    const counts = present.slice(1).map((check) => {
-      const count = new Map<string, number>();
-      for (const finding of check.findings)
-        count.set(
-          findingKey(finding),
-          (count.get(findingKey(finding)) ?? 0) + 1,
-        );
-      return count;
-    });
+    const counts = present
+      .slice(1)
+      .map((check) => countFindingKeys(check.findings));
     const findings = first.findings
       .filter((finding) => {
         const key = findingKey(finding);
@@ -141,7 +148,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
       }));
     return {
       ...first,
-      durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+      durationMs: totalDurationMs(present),
       findings,
     };
   });

@@ -71,5 +71,26 @@ export function previousInstalledHookCommand(
 ): string | undefined {
   const invocation = guardedHookInvocation(command);
   if (invocation === undefined) return undefined;
-  return `(cd "$(git rev-parse --show-toplevel)" && node ${shellQuote(invocation.cliPath)} scan --hook-invocation${invocation.hookName === "pre-merge-commit" ? " --merge" : ""})`;
+  return unguardedInstalledHookCommand(invocation.cliPath, invocation.hookName);
+}
+
+export function unguardedInstalledHookCommand(
+  cliPath: string,
+  hookName: ScanHookName,
+): string {
+  return `${GIT_ROOT}node ${shellQuote(cliPath)} scan --hook-invocation${hookName === "pre-merge-commit" ? " --merge" : ""})`;
+}
+
+export function managedHookInvocation(command: string) {
+  const guarded = guardedHookInvocation(command);
+  if (guarded !== undefined) return guarded;
+  const match = / && node '(.*)' scan --hook-invocation( --merge)?\)$/u.exec(
+    command,
+  );
+  if (match === null) return undefined;
+  const cliPath = match[1]!.replaceAll("'\\''", "'");
+  const hookName = match[2] === undefined ? "pre-commit" : "pre-merge-commit";
+  return unguardedInstalledHookCommand(cliPath, hookName) === command
+    ? ({ cliPath, hookName } as const)
+    : undefined;
 }

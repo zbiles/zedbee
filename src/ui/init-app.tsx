@@ -421,7 +421,10 @@ export function InitApp({
       focus === 2 &&
       (input === " " || key.leftArrow || key.rightArrow)
     ) {
-      setHookSelection((value) => (value === "tracked" ? "raw" : "tracked"));
+      const ordinary = proposal.hookChoices!.includes("husky")
+        ? "husky"
+        : "raw";
+      setHookSelection((value) => (value === "tracked" ? ordinary : "tracked"));
     } else if (focus === 0 && (key.leftArrow || key.rightArrow)) {
       const currentIndex = PROFILE_IDS.indexOf(baseProfile);
       const offset = key.rightArrow ? 1 : -1;

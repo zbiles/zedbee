@@ -1,5 +1,5 @@
 import { resolveRawGitHookPath } from "./raw-hook-path.js";
-import { lstat, readFile, realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ScanHookName } from "./command.js";
 import { GitClient } from "../git/client.js";
@@ -13,13 +13,15 @@ import type {
 import {
   hasZedbeeScanCommand,
   mergeHookCommand,
-  replaceManagedZedbeeCommand,
+  managedUpdateReason,
+  refreshManagedHookBody,
   updateHuskyHook,
   ZEDBEE_COMMAND,
 } from "./husky.js";
 import { lefthookFilename, updateLefthookConfig } from "./lefthook.js";
 import { updateRawGitHook } from "./raw-git.js";
 import { updateSimpleGitHooksManifest } from "./simple-git-hooks.js";
+import { managedHookUpdateNotice } from "../reporting/hook-update-notice.js";
 import { hasLefthookRunCommand } from "./state.js";
 import { readHuskyHook } from "./husky-state.js";
 import {
@@ -31,7 +33,11 @@ import {
   TRACKED_HUSKY_STAGING,
   TRACKED_INSTALL_SCRIPT,
   trackedRuntimeChanges,
+  trackedRuntimePolicy,
+  trackedRuntimeNeedsStaging,
   validateLocalHookMigration,
+  readRegularHookFile,
+  type HookFile,
 } from "./install.js";
 
 export interface DetectedHookIntegration {
@@ -86,9 +92,10 @@ async function managerActivation(
           (hook === "lefthook"
             ? hasLefthookRunCommand(installed.contents, name)
             : hasZedbeeScanCommand(installed.contents, name) &&
-              replaceManagedZedbeeCommand(
+              refreshManagedHookBody(
                 installed.contents,
                 commands[name],
+                name,
               ) === installed.contents)
         );
       }),
@@ -105,10 +112,7 @@ async function managerActivation(
   return pendingManager(hook);
 }
 
-interface ExistingFile {
-  readonly contents: string;
-  readonly mode: number;
-}
+type ExistingFile = HookFile;
 
 async function existingFile(
   root: string,
@@ -120,16 +124,7 @@ async function existingFile(
 async function existingAbsoluteFile(
   path: string,
 ): Promise<ExistingFile | undefined> {
-  try {
-    const state = await lstat(path);
-    if (state.isSymbolicLink() || !state.isFile()) {
-      throw new Error("Zedbee refused an unsafe hook target.");
-    }
-    return { contents: await readFile(path, "utf8"), mode: state.mode & 0o777 };
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
+  return readRegularHookFile(path, "Zedbee refused an unsafe hook target.");
 }
 
 export function rawGitHookPath(
@@ -315,9 +310,12 @@ export async function detectHookIntegration(
   mergeCommand = mergeHookCommand(command),
 ): Promise<DetectedHookIntegration> {
   repositoryRoot = await realpath(repositoryRoot);
-  if (requested === "tracked") {
-    const existing = await detectHookChoice(repositoryRoot);
-    if (existing !== "raw" && existing !== "none")
+  const explicitTracked = requested === "tracked";
+  const existing = explicitTracked
+    ? await detectHookChoice(repositoryRoot)
+    : undefined;
+  if (explicitTracked && existing !== "husky") {
+    if (existing !== undefined && existing !== "raw" && existing !== "none")
       return detectHookIntegration(
         repositoryRoot,
         existing,
@@ -397,12 +395,17 @@ export async function detectHookIntegration(
         status: "active" as const,
         message:
           "Applying this proposal activates the tracked pre-commit and pre-merge-commit hooks for this checkout.",
+        runtimeTracking: "tracked" as const,
         remediation: `${TRACKED_HUSKY_STAGING} Commit the prepare script in package.json too. Teammates activate hooks during normal dependency installation.`,
       },
     });
   }
   const hook =
-    requested === "auto" ? await detectHookChoice(repositoryRoot) : requested;
+    requested === "auto"
+      ? await detectHookChoice(repositoryRoot)
+      : explicitTracked
+        ? "husky"
+        : requested;
   if (hook === "none") {
     return Object.freeze({
       hook,
@@ -414,10 +417,21 @@ export async function detectHookIntegration(
   }
   if (hook === "husky") {
     const existingPath = await hooksPathValue(repositoryRoot);
-    const runtime =
-      existingPath === ".husky/_"
-        ? await trackedRuntimeChanges(repositoryRoot).catch(() => undefined)
-        : undefined;
+    const policy = await trackedRuntimePolicy(repositoryRoot);
+    if (explicitTracked && existingPath !== null && existingPath !== ".husky/_")
+      throw new Error("Zedbee will not replace an existing hook integration.");
+    if (explicitTracked && existingPath === null)
+      await validateLocalHookMigration(repositoryRoot, command, mergeCommand);
+    const maintainRuntime = explicitTracked || policy === "tracked";
+    const runtime = maintainRuntime
+      ? await trackedRuntimeChanges(repositoryRoot).catch(() => undefined)
+      : undefined;
+    if (explicitTracked && runtime === undefined)
+      throw new Error("Zedbee will not replace a customized Husky dispatcher.");
+    const activation = await huskyActivation(repositoryRoot);
+    const stageRuntime =
+      runtime !== undefined &&
+      (await trackedRuntimeNeedsStaging(repositoryRoot));
     const changes = await Promise.all(
       (["pre-commit", "pre-merge-commit"] as const).map((name) =>
         changedFile(
@@ -433,17 +447,58 @@ export async function detectHookIntegration(
         ),
       ),
     );
+    const updateMessages = changes.flatMap((change, index) => {
+      if (change.before === null) return [];
+      const name = index === 0 ? "pre-commit" : "pre-merge-commit";
+      const reason = managedUpdateReason(change.before, command, name);
+      return reason === undefined
+        ? []
+        : [managedHookUpdateNotice(name, reason).message];
+    });
+    const describe = (message: string) =>
+      [message, ...updateMessages].join(" ");
     return Object.freeze({
       hook,
       activation:
         runtime === undefined
-          ? await huskyActivation(repositoryRoot)
+          ? {
+              ...activation,
+              runtimeTracking:
+                policy === "untracked" ? ("ordinary" as const) : policy,
+              message: describe(
+                policy === "partial"
+                  ? `${activation.message} The Husky runtime is partially tracked; ordinary refresh preserves it. Choose --hook tracked to complete tracking.`
+                  : policy === "untracked"
+                    ? `${activation.message} Run the repository's normal Husky setup in each fresh checkout.`
+                    : activation.message,
+              ),
+            }
           : {
-              status: "active" as const,
-              message:
-                "Applying this proposal installs the stock Husky dispatchers for both hooks.",
-              remediation: TRACKED_HUSKY_STAGING,
+              status:
+                explicitTracked || existingPath === ".husky/_"
+                  ? ("active" as const)
+                  : activation.status,
+              runtimeTracking: "tracked" as const,
+              message: describe(
+                "Applying this proposal installs the stock Husky dispatchers, helper, license and line-ending rules so fresh worktrees can dispatch before their first Husky installation." +
+                  (explicitTracked || existingPath === ".husky/_"
+                    ? ""
+                    : ` ${activation.message}`),
+              ),
+              ...(explicitTracked || existingPath === ".husky/_"
+                ? stageRuntime
+                  ? { remediation: TRACKED_HUSKY_STAGING }
+                  : {}
+                : {
+                    ...(activation.remediation === undefined
+                      ? {}
+                      : { remediation: activation.remediation }),
+                    ...(stageRuntime ? { staging: TRACKED_HUSKY_STAGING } : {}),
+                  }),
             },
+      ...(explicitTracked && existingPath === null
+        ? { hooksPathChange: { before: null, after: ".husky/_" as const } }
+        : {}),
       change: changes[0]!,
       changes: [
         ...changes.slice(1),

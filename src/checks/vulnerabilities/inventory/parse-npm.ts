@@ -7,7 +7,6 @@ import { normalizeRepositoryRelativePath } from "../../../attribution/fingerprin
 import { inventoryError, LockfileInventoryError } from "./errors.js";
 import {
   MAX_DEPENDENCY_PATH_LENGTH,
-  MAX_LOCKFILE_BYTES,
   MAX_LOCKFILE_NESTING,
   MAX_LOCKFILE_NODES,
   MAX_LOCKFILE_STRING_LENGTH,
@@ -18,6 +17,7 @@ import {
   validateDependencyRecordCount,
   validateExactVersion,
   validatePackageName,
+  validateLockfileInput,
 } from "./normalize.js";
 import type { DependencyInventory, DependencyRecord } from "./types.js";
 
@@ -122,10 +122,7 @@ function dependencyPathFromPackageKey(packageKey: string):
     .slice(first)
     .split("/node_modules/")
     .map((component) => component.replace(/^node_modules\//u, ""));
-  if (
-    dependencyPath.length === 0 ||
-    dependencyPath.length > MAX_DEPENDENCY_PATH_LENGTH
-  ) {
+  if (dependencyPath.length > MAX_DEPENDENCY_PATH_LENGTH) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
       "The npm lockfile contains an oversized dependency path.",
@@ -136,11 +133,6 @@ function dependencyPathFromPackageKey(packageKey: string):
     ...(importer === undefined ? {} : { importer }),
     dependencyPath: Object.freeze(dependencyPath),
   };
-}
-
-function finalize(records: readonly DependencyRecord[]): DependencyInventory {
-  validateDependencyRecordCount(records.length, "npm");
-  return finalizeDependencyRecords(records);
 }
 
 function parseV1(
@@ -172,7 +164,7 @@ function parseV1(
     }
   };
   walk(dependencies, []);
-  return finalize(records);
+  return finalizeDependencyRecords(records);
 }
 
 function parseModern(
@@ -216,28 +208,14 @@ function parseModern(
     });
     validateDependencyRecordCount(records.length, "npm");
   }
-  return finalize(records);
+  return finalizeDependencyRecords(records);
 }
 
 export function parseNpmLockfile(
   contents: string,
   repositoryPath: string,
 ): DependencyInventory {
-  let lockfilePath: string;
-  try {
-    lockfilePath = normalizeRepositoryRelativePath(repositoryPath);
-  } catch {
-    throw inventoryError(
-      "LOCKFILE_NOT_DISCOVERED",
-      "Zedbee refused an npm lockfile path outside the inspected snapshot.",
-    );
-  }
-  if (Buffer.byteLength(contents, "utf8") > MAX_LOCKFILE_BYTES) {
-    throw inventoryError(
-      "LOCKFILE_LIMIT_EXCEEDED",
-      "The npm lockfile exceeds Zedbee's file-size safety limit.",
-    );
-  }
+  const lockfilePath = validateLockfileInput(contents, repositoryPath);
   const errors: ParseError[] = [];
   const root = parseTree(contents, errors, {
     allowTrailingComma: false,

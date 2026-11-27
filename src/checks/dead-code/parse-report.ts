@@ -17,7 +17,22 @@ export const ISSUE_TYPES = [
   "duplicates",
 ] as const;
 
+export const MAX_KNIP_REPORT_BYTES = 64 * 1024 * 1024;
+
 type IssueType = (typeof ISSUE_TYPES)[number];
+
+const MESSAGES: Readonly<Record<IssueType, string>> = {
+  files: "File is unused.",
+  dependencies: "Production dependency is unused.",
+  devDependencies: "Development dependency is unused.",
+  unlisted: "Imported dependency is not declared.",
+  unresolved: "Import cannot be resolved.",
+  exports: "Export is unused.",
+  types: "Exported type is unused.",
+  nsExports: "Namespace export is unused.",
+  nsTypes: "Namespace type is unused.",
+  duplicates: "Export is duplicated.",
+};
 
 function record(value: unknown, field: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -36,19 +51,7 @@ function coordinate(value: unknown): number | undefined {
 }
 
 function message(type: IssueType): string {
-  const messages: Record<IssueType, string> = {
-    files: "File is unused.",
-    dependencies: "Production dependency is unused.",
-    devDependencies: "Development dependency is unused.",
-    unlisted: "Imported dependency is not declared.",
-    unresolved: "Import cannot be resolved.",
-    exports: "Export is unused.",
-    types: "Exported type is unused.",
-    nsExports: "Namespace export is unused.",
-    nsTypes: "Namespace type is unused.",
-    duplicates: "Export is duplicated.",
-  };
-  return messages[type];
+  return MESSAGES[type];
 }
 
 function itemObservations(

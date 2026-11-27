@@ -127,7 +127,13 @@ export async function requireProjectEslintTrust(
     common === undefined
       ? false
       : storedKey(root, capabilityKey(common, normalized, capability));
-  if (!explicitConsent && !(await isStored("execute")))
+  const [executeAllowed, messagesAllowed] = await Promise.all([
+    explicitConsent ? Promise.resolve(true) : isStored("execute"),
+    explicitConsent && options.sourceMessages === true
+      ? Promise.resolve(true)
+      : isStored("messages"),
+  ]);
+  if (!executeAllowed)
     throw new ProjectEslintFailureError("PROJECT_ESLINT_TRUST_REQUIRED");
   const permit = Object.freeze({
     projectRoot: normalized,
@@ -136,9 +142,7 @@ export async function requireProjectEslintTrust(
   permits.set(permit, {
     checkoutRoot,
     projectRoot: normalized,
-    sourceMessages:
-      (explicitConsent && options.sourceMessages === true) ||
-      (await isStored("messages")),
+    sourceMessages: messagesAllowed,
   });
   return permit;
 }

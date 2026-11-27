@@ -3,8 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
-import { parsePackageManifest } from "../../src/inspection/workspaces.js";
+import {
+  matchesWorkspacePattern,
+  parsePackageManifest,
+} from "../../src/inspection/workspaces.js";
 import { createInspectionFixture } from "./fixture.js";
+
+it("does not reuse a compiled pattern after the caller mutates its array", () => {
+  const patterns = ["web"];
+  expect(matchesWorkspacePattern("web", patterns)).toBe(true);
+  patterns[0] = "api";
+  expect(matchesWorkspacePattern("web", patterns)).toBe(false);
+  expect(matchesWorkspacePattern("api", patterns)).toBe(
+    matchesWorkspacePattern("api", ["api"]),
+  );
+});
 
 describe("workspace discovery", () => {
   it.each([{ main: "../src/dependency.ts" }, { type: "module" }])(

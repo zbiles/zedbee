@@ -68,6 +68,8 @@ export interface InitHookActivation {
   readonly status: "active" | "pending" | "not-requested";
   readonly message: string;
   readonly remediation?: string;
+  readonly runtimeTracking?: "ordinary" | "partial" | "tracked";
+  readonly staging?: string;
 }
 
 export interface InitNetworkCheck {
