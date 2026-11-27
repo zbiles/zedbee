@@ -7,7 +7,6 @@ import {
 import { findWorkspace } from "../../inspection/workspaces.js";
 import {
   prepareSnapshotAliases,
-  sourceModuleSpecifiers,
   normalizedAliasSpecifier,
   type PreparedSnapshotAliases,
 } from "../typescript/aliases.js";
@@ -20,7 +19,6 @@ import { compareCodeUnits } from "../../core/compare.js";
 import type { Observation } from "../../core/types.js";
 import {
   canonicalizeSnapshotRoot,
-  readContainedFile,
   readJsonData,
 } from "../../inspection/read-json.js";
 import {
@@ -60,10 +58,10 @@ function validateSpecifier(sourcePath: string, specifier: string): void {
     throw new TypeError("Dependency import escaped the snapshot");
 }
 
-async function validateContainedImports(
+function validateContainedImports(
   registry: SnapshotRegistry,
-  sourceFiles: readonly string[],
-): Promise<void> {
+  specifiers: readonly (readonly [string, string])[],
+): void {
   // Dependency-cruiser uses native reads; its entire input tree must be safe.
   for (const [path] of registry.unavailableSymlinks ?? []) {
     throw new CheckIncompleteError({
@@ -75,11 +73,8 @@ async function validateContainedImports(
         "Provide a link to a tracked target inside the repository or remove the runtime link from the selected snapshot, then retry.",
     });
   }
-  for (const sourcePath of sourceFiles) {
-    const source = await readContainedFile(registry, sourcePath);
-    for (const specifier of sourceModuleSpecifiers(sourcePath, source))
-      validateSpecifier(sourcePath, specifier);
-  }
+  for (const [sourcePath, specifier] of specifiers)
+    validateSpecifier(sourcePath, specifier);
 }
 
 function validateContainedGraph(result: ICruiseResult): void {
@@ -338,13 +333,21 @@ async function collectSide(
     .filter((path) => COMPILER_SOURCE.test(path))
     .sort(compareCodeUnits);
   if (sourceFiles.length === 0) return Object.freeze([]);
+  const specifiers: (readonly [string, string])[] = [];
+  const registry = await captureSnapshotRegistry(canonicalRoot);
   const aliases = await prepareSnapshotAliases(
     canonicalRoot,
     inspection,
     workspace,
+    undefined,
+    {
+      registry,
+      onSpecifier: (sourcePath, specifier) => {
+        specifiers.push([sourcePath, specifier]);
+      },
+    },
   );
-  const registry = await captureSnapshotRegistry(canonicalRoot);
-  await validateContainedImports(registry, aliases.sourceFiles);
+  validateContainedImports(registry, specifiers);
   const tsconfig = selectedTsconfig(workspace);
   const programInput =
     tsconfig === undefined

@@ -367,8 +367,7 @@ function enqueueSpecifierScope(
       scopes.find(
         (scope) =>
           scope.name !== undefined &&
-          (specifier === scope.name ||
-            specifier.startsWith(`${scope.name}/`)),
+          (specifier === scope.name || specifier.startsWith(`${scope.name}/`)),
       ),
     );
   }
@@ -389,8 +388,13 @@ export async function prepareSnapshotAliases(
   inspection: RepositoryInspection,
   selected: WorkspaceInspection,
   collectCommentImports?: CommentImports,
+  options?: {
+    readonly registry?: SnapshotRegistry;
+    readonly onSpecifier?: (sourcePath: string, specifier: string) => void;
+  },
 ): Promise<PreparedSnapshotAliases> {
-  const registry = await captureSnapshotRegistry(snapshotRoot);
+  const registry =
+    options?.registry ?? (await captureSnapshotRegistry(snapshotRoot));
   const workspaces = new Map<string, SnapshotAliases>();
   const paths = new Map<string, Readonly<Record<string, readonly string[]>>>();
   const sourceFiles = new Set<string>();
@@ -427,6 +431,7 @@ export async function prepareSnapshotAliases(
         source,
         collectCommentImports,
       )) {
+        options?.onSpecifier?.(sourcePath, specifier);
         enqueueSpecifierScope(
           sourcePath,
           specifier,
