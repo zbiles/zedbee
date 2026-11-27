@@ -495,12 +495,14 @@ async function openSession(
       } catch {
         /* Already gone. */
       }
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        exited.then(() => true),
-        new Promise<boolean>((resolveRace) =>
-          setTimeout(() => resolveRace(false), CLOSE_GRACE_MS),
-        ),
+        exited,
+        new Promise<void>((resolveRace) => {
+          graceTimer = setTimeout(resolveRace, CLOSE_GRACE_MS);
+        }),
       ]);
+      clearTimeout(graceTimer);
       await cleanup();
     },
   });
