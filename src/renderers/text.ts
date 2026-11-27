@@ -39,7 +39,10 @@ import {
   buildReportCallouts,
   type ReportCalloutLine,
 } from "../reporting/report-callouts.js";
-import { buildScanResultSections } from "../reporting/result-sections.js";
+import {
+  buildScanResultSections,
+  type ScanResultSections,
+} from "../reporting/result-sections.js";
 import type { TerminalPresentation } from "../reporting/presentation.js";
 import type { ReportMaintenanceWarning } from "../reporting/temporary-reports.js";
 import { presentIncompleteChecks } from "../reporting/incomplete-checks.js";
@@ -524,6 +527,7 @@ function automaticTextLines(
 function guidanceLines(
   report: ScanReport,
   presentation: TerminalPresentation | undefined,
+  automaticFixes: ScanResultSections["automaticFixes"],
   width: number,
 ): string[] {
   if (
@@ -542,8 +546,7 @@ function guidanceLines(
       total: presentation.totalFindingCount,
       reportPath: presentation.reportPath,
       maximumAge: presentation.maximumAge,
-      automaticFixes: buildScanResultSections(report, presentation)
-        .automaticFixes,
+      automaticFixes,
       ...(report.installedCliCommand === undefined
         ? {}
         : { installedCliCommand: report.installedCliCommand }),
@@ -608,6 +611,10 @@ export function renderText(
             ),
           },
         }).summaryFindings;
+  const sections =
+    options.presentation === undefined
+      ? undefined
+      : buildScanResultSections(report, options.presentation);
   const lines = [
     ...headline(report, displayedFindings, width),
     ...hookUpdateLines(report, width),
@@ -624,13 +631,13 @@ export function renderText(
       width,
       report.installedCliCommand,
     ),
-    ...(options.presentation === undefined
-      ? []
-      : buildScanResultSections(
-          report,
-          options.presentation,
-        ).previewNotes.flatMap((line) => wrapWords(line, width))),
-    ...guidanceLines(report, options.presentation, width),
+    ...(sections?.previewNotes ?? []).flatMap((line) => wrapWords(line, width)),
+    ...guidanceLines(
+      report,
+      options.presentation,
+      sections?.automaticFixes ?? [],
+      width,
+    ),
     ...maintenanceWarningLines(options.presentation?.warnings ?? [], width),
     ...deliveryFallbackLines(options.presentation, width),
   ];
