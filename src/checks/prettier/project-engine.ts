@@ -87,16 +87,17 @@ export function owningProjectRoot(
   workspaces: readonly { readonly relativeRoot: string }[],
   file: string,
 ): string {
-  const candidates = workspaces
-    .filter(
-      (workspace) =>
-        workspace.relativeRoot === "." ||
-        file.startsWith(`${workspace.relativeRoot}/`),
-    )
-    .sort(
-      (left, right) => right.relativeRoot.length - left.relativeRoot.length,
-    );
-  return candidates[0]?.relativeRoot ?? ".";
+  let owner = ".";
+  let ownerLength = -1;
+  for (const workspace of workspaces) {
+    const root = workspace.relativeRoot;
+    if (root !== "." && !file.startsWith(`${root}/`)) continue;
+    if (root.length > ownerLength) {
+      owner = root;
+      ownerLength = root.length;
+    }
+  }
+  return owner;
 }
 
 interface PendingRequest {
