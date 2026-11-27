@@ -4,7 +4,6 @@ import {
   readContainedFile,
 } from "../../inspection/read-json.js";
 import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
-import type { jscpdOptions } from "./settings.js";
 import { forEachConcurrently } from "./concurrency.js";
 
 export interface SourceToken {
@@ -25,7 +24,6 @@ export type DuplicationSourceIndex = ReadonlyMap<string, TokenizedSource>;
 export async function loadDuplicationSources(
   registry: SnapshotRegistry,
   files: readonly string[],
-  _settings: ReturnType<typeof jscpdOptions>,
   signal: AbortSignal,
 ): Promise<DuplicationSourceIndex> {
   const paths = [...new Set(files)].sort();

@@ -4,15 +4,12 @@ import { captureSnapshotRegistry } from "../../../src/inspection/snapshot-regist
 import { loadDuplicationSources } from "../../../src/checks/duplication/source-tokens.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 
-const settings = { minLines: 5, minTokens: 50, mode: "mild" as const };
 const signal = new AbortController().signal;
 async function tokenize(file: string, text: string) {
   const fixture = await createInspectionFixture();
   await fixture.write(file, text);
   const registry = await captureSnapshotRegistry(await realpath(fixture.root));
-  return (await loadDuplicationSources(registry, [file], settings, signal)).get(
-    file,
-  )!;
+  return (await loadDuplicationSources(registry, [file], signal)).get(file)!;
 }
 describe("contained duplication source evidence", () => {
   it.each([
@@ -64,17 +61,12 @@ describe("contained duplication source evidence", () => {
       await realpath(fixture.root),
     );
     await expect(
-      loadDuplicationSources(registry, ["../outside.ts"], settings, signal),
+      loadDuplicationSources(registry, ["../outside.ts"], signal),
     ).rejects.toThrow();
     const controller = new AbortController();
     controller.abort();
     await expect(
-      loadDuplicationSources(
-        registry,
-        ["src/a.ts"],
-        settings,
-        controller.signal,
-      ),
+      loadDuplicationSources(registry, ["src/a.ts"], controller.signal),
     ).rejects.toThrow();
   });
 });

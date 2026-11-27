@@ -282,13 +282,11 @@ export const duplicationAdapter: ObservationCheckAdapter = {
         loadDuplicationSources(
           baselineRegistry,
           baselineFiles,
-          policy.settings,
           context.signal,
         ),
         loadDuplicationSources(
           targetRegistry,
           targetFiles,
-          policy.settings,
           context.signal,
         ),
       ]);
