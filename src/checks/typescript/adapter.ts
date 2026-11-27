@@ -33,8 +33,7 @@ import {
   pairTypescriptObservations,
   type TypescriptSnapshotObservations,
 } from "./compare-diagnostics.js";
-
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
+import { TYPESCRIPT_SOURCE } from "../compiler-paths.js";
 
 function programObservations(
   programs: readonly ts.Program[],
