@@ -468,6 +468,14 @@ function configurationValueSnapshot(value: unknown): unknown {
   return immutableConfigurationSnapshot(value);
 }
 
+function ruleValueEntries(
+  rules: Readonly<Record<string, unknown>>,
+): [string, unknown][] {
+  return Object.keys(rules)
+    .sort(compareCodeUnits)
+    .map((key) => [`rules.${key}`, rules[key]]);
+}
+
 function policyValueEntries(
   checkId: CheckId,
   policy: ResolvedCheckPolicy,
@@ -489,9 +497,7 @@ function policyValueEntries(
     }
   }
   if ("rules" in policy && isConfigurableRuleCheckId(checkId)) {
-    for (const key of Object.keys(policy.rules).sort(compareCodeUnits)) {
-      entries.push([`rules.${key}`, policy.rules[key]]);
-    }
+    entries.push(...ruleValueEntries(policy.rules));
   }
   return entries;
 }
@@ -515,9 +521,7 @@ function patchValueEntries(
     }
   }
   if (patch.rules !== undefined && isConfigurableRuleCheckId(checkId)) {
-    for (const key of Object.keys(patch.rules).sort(compareCodeUnits)) {
-      entries.push([`rules.${key}`, patch.rules[key]]);
-    }
+    entries.push(...ruleValueEntries(patch.rules));
   }
   return entries;
 }
