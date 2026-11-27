@@ -307,6 +307,73 @@ export async function loadSnapshotAliases(
   };
 }
 
+const SOURCE_EXTENSION = /\.[cm]?[jt]sx?$/iu;
+
+interface ScopeModuleIndex {
+  readonly stems: ReadonlySet<string>;
+  readonly directories: ReadonlySet<string>;
+}
+
+const scopeModuleIndexes = new WeakMap<WorkspaceInspection, ScopeModuleIndex>();
+
+/** Source paths without their extension, plus every directory prefix. */
+function scopeModuleIndex(scope: WorkspaceInspection): ScopeModuleIndex {
+  let index = scopeModuleIndexes.get(scope);
+  if (index === undefined) {
+    const stems = new Set<string>();
+    const directories = new Set<string>();
+    for (const path of scope.sourceFiles) {
+      stems.add(path.replace(SOURCE_EXTENSION, ""));
+      for (
+        let slash = path.indexOf("/");
+        slash !== -1;
+        slash = path.indexOf("/", slash + 1)
+      )
+        directories.add(path.slice(0, slash));
+    }
+    index = { stems, directories };
+    scopeModuleIndexes.set(scope, index);
+  }
+  return index;
+}
+
+function enqueueSpecifierScope(
+  sourcePath: string,
+  specifier: string,
+  aliases: SnapshotAliases,
+  mappings: Record<string, readonly string[]>,
+  scopes: readonly WorkspaceInspection[],
+  scopeFor: (path: string) => WorkspaceInspection | undefined,
+  enqueue: (scope: WorkspaceInspection | undefined) => void,
+): void {
+  const target = aliases.resolve(sourcePath, specifier);
+  if (target !== undefined) {
+    mappings[normalizedAliasSpecifier(specifier)] = [target];
+    enqueue(scopeFor(target));
+  } else if (specifier.startsWith(".")) {
+    const candidate = posix.normalize(
+      posix.join(posix.dirname(sourcePath), specifier),
+    );
+    const scope = scopeFor(candidate);
+    if (scope === undefined) return;
+    const index = scopeModuleIndex(scope);
+    if (
+      index.stems.has(candidate.replace(SOURCE_EXTENSION, "")) ||
+      index.directories.has(candidate)
+    )
+      enqueue(scope);
+  } else {
+    enqueue(
+      scopes.find(
+        (scope) =>
+          scope.name !== undefined &&
+          (specifier === scope.name ||
+            specifier.startsWith(`${scope.name}/`)),
+      ),
+    );
+  }
+}
+
 export interface PreparedSnapshotAliases {
   readonly workspaces: ReadonlyMap<string, SnapshotAliases>;
   readonly paths: ReadonlyMap<
@@ -360,35 +427,15 @@ export async function prepareSnapshotAliases(
         source,
         collectCommentImports,
       )) {
-        const target = aliases.resolve(sourcePath, specifier);
-        if (target !== undefined) {
-          mappings[normalizedAliasSpecifier(specifier)] = [target];
-          enqueue(scopeFor(target));
-        } else if (specifier.startsWith(".")) {
-          const candidate = posix.normalize(
-            posix.join(posix.dirname(sourcePath), specifier),
-          );
-          const scope = scopeFor(candidate);
-          const withoutExtension = candidate.replace(/\.[cm]?[jt]sx?$/iu, "");
-          if (
-            scope?.sourceFiles.some(
-              (path) =>
-                path === candidate ||
-                path.replace(/\.[cm]?[jt]sx?$/iu, "") === withoutExtension ||
-                path.startsWith(`${candidate}/`),
-            )
-          )
-            enqueue(scope);
-        } else {
-          enqueue(
-            scopes.find(
-              (scope) =>
-                scope.name !== undefined &&
-                (specifier === scope.name ||
-                  specifier.startsWith(`${scope.name}/`)),
-            ),
-          );
-        }
+        enqueueSpecifierScope(
+          sourcePath,
+          specifier,
+          aliases,
+          mappings,
+          scopes,
+          scopeFor,
+          enqueue,
+        );
       }
     }
     paths.set(workspace.relativeRoot, mappings);
