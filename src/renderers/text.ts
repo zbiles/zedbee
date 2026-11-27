@@ -465,6 +465,20 @@ function hookUpdateLines(report: ScanReport, width: number): string[] {
       ];
 }
 
+function presentedFindings(
+  presentation: TerminalPresentation,
+  mode: ScanReport["mode"],
+): readonly Finding[] {
+  return validateReportDisplayStrings({
+    checks: [],
+    summary: {
+      findings: presentation.findings.map((finding) =>
+        repairFindingForMode(finding, mode),
+      ),
+    },
+  }).summaryFindings;
+}
+
 function automaticTextLines(
   report: ScanReport,
   sanitized: ReturnType<typeof validateReportDisplayStrings>,
@@ -472,14 +486,7 @@ function automaticTextLines(
   width: number,
   verbose: boolean,
 ): string[] {
-  const selectedFindings = validateReportDisplayStrings({
-    checks: [],
-    summary: {
-      findings: presentation.findings.map((finding) =>
-        repairFindingForMode(finding, report.mode),
-      ),
-    },
-  }).summaryFindings;
+  const selectedFindings = presentedFindings(presentation, report.mode);
   const sections = buildScanResultSections(
     { ...report, checks: sanitized.checks },
     { ...presentation, findings: selectedFindings },
@@ -603,14 +610,7 @@ export function renderText(
   const displayedFindings =
     options.presentation === undefined
       ? sanitized.summaryFindings
-      : validateReportDisplayStrings({
-          checks: [],
-          summary: {
-            findings: options.presentation.findings.map((finding) =>
-              repairFindingForMode(finding, report.mode),
-            ),
-          },
-        }).summaryFindings;
+      : presentedFindings(options.presentation, report.mode);
   const sections =
     options.presentation === undefined
       ? undefined
