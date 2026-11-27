@@ -75,6 +75,10 @@ function decode(buffer: Buffer): string {
 export class CapturedDependencies {
   private readonly roots: Readonly<Record<string, string>>;
   private readonly aliases: Readonly<Record<string, string>>;
+  /** Alias entries sorted for `identify()`: longest root first, then by
+   * specificity. `aliases` never changes after construction, so the order
+   * is computed once instead of per `identify()` call. */
+  private readonly aliasesByLength: readonly (readonly [string, string])[];
   private readonly allowed: Readonly<Record<string, string | undefined>>;
   private readonly rootsIdentity: string;
   private readonly entries = new Map<string, Entry>();
@@ -129,6 +133,16 @@ export class CapturedDependencies {
             target: resolve(context.snapshots.targetDir),
           }),
     };
+    const priority = (name: string) =>
+      snapshotOnly ? (name === "baseline" ? 2 : name === "target" ? 1 : 0) : 0;
+    this.aliasesByLength = Object.freeze(
+      Object.entries(this.aliases)
+        .sort(
+          (a, b) =>
+            b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
+        )
+        .map(([name, path]) => Object.freeze([name, path] as const)),
+    );
     this.roots = Object.fromEntries(
       Object.entries(this.aliases).map(([name, path]) => [
         name,
@@ -249,17 +263,7 @@ export class CapturedDependencies {
 
   private identify(path: string): string {
     const absolute = resolve(path);
-    const priority = (name: string) =>
-      this.snapshotOnly
-        ? name === "baseline"
-          ? 2
-          : name === "target"
-            ? 1
-            : 0
-        : 0;
-    for (const [name, root] of Object.entries(this.aliases).sort(
-      (a, b) => b[1].length - a[1].length || priority(b[0]) - priority(a[0]),
-    )) {
+    for (const [name, root] of this.aliasesByLength) {
       if (contained(root, absolute))
         return `${name}:${relative(root, absolute).split(sep).join("/") || "."}`;
     }
