@@ -143,6 +143,50 @@ function matchesAlias(specifier: string, aliases: readonly string[]): boolean {
   });
 }
 
+function isExemptDeclaration(
+  specifier: string,
+  dependencyName: string,
+  dependencyTypes: readonly string[],
+  declarations: DependencyDeclarations,
+): boolean {
+  const workspacePackage =
+    declarations.workspacePackages?.has(dependencyName) === true;
+  if (
+    (!workspacePackage ||
+      declarations.localAliasSpecifiers?.has(specifier) === true) &&
+    matchesAlias(specifier, declarations.aliases ?? [])
+  ) {
+    return true;
+  }
+  return (
+    !workspacePackage &&
+    dependencyTypes.some(
+      (type) =>
+        type === "core" ||
+        type === "local" ||
+        type === "localmodule" ||
+        type.startsWith("aliased"),
+    )
+  );
+}
+
+function declarationRule(
+  from: string,
+  dependencyName: string,
+  declarations: DependencyDeclarations,
+): string | undefined {
+  const production = declarations.production.has(dependencyName);
+  const development = declarations.development.has(dependencyName);
+  if (development && !production) {
+    return HOOK_INSTALLER.test(from)
+      ? undefined
+      : DEPENDENCY_RULE_NAMES.productionToDev;
+  }
+  return production || development
+    ? undefined
+    : DEPENDENCY_RULE_NAMES.missingDependency;
+}
+
 function declarationObservations(
   result: ICruiseResult,
   snapshotRoot: string,
@@ -160,46 +204,19 @@ function declarationObservations(
       );
       const dependencyName = packageName(specifier);
       if (dependencyName === undefined) continue;
-      const workspacePackage =
-        declarations.workspacePackages?.has(dependencyName) === true;
       if (
-        (!workspacePackage ||
-          declarations.localAliasSpecifiers?.has(specifier) === true) &&
-        matchesAlias(specifier, declarations.aliases ?? [])
-      ) {
-        continue;
-      }
-      if (
-        !workspacePackage &&
-        dependency.dependencyTypes.some(
-          (type) =>
-            type === "core" ||
-            type === "local" ||
-            type === "localmodule" ||
-            type.startsWith("aliased"),
+        isExemptDeclaration(
+          specifier,
+          dependencyName,
+          dependency.dependencyTypes,
+          declarations,
         )
       ) {
         continue;
       }
-      const production = declarations.production.has(dependencyName);
-      const development = declarations.development.has(dependencyName);
-      if (development && !production) {
-        if (HOOK_INSTALLER.test(from)) continue;
-        observations.push(
-          observation(
-            DEPENDENCY_RULE_NAMES.productionToDev,
-            from,
-            dependencyName,
-          ),
-        );
-      } else if (!production && !development) {
-        observations.push(
-          observation(
-            DEPENDENCY_RULE_NAMES.missingDependency,
-            from,
-            dependencyName,
-          ),
-        );
+      const rule = declarationRule(from, dependencyName, declarations);
+      if (rule !== undefined) {
+        observations.push(observation(rule, from, dependencyName));
       }
     }
   }
