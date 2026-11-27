@@ -55,6 +55,10 @@ function checkKey(check: CheckResult): string {
   return JSON.stringify([check.checkId, check.target ?? "."]);
 }
 
+function totalDurationMs(checks: readonly CheckResult[]): number {
+  return checks.reduce((sum, check) => sum + check.durationMs, 0);
+}
+
 function countFindingKeys(findings: readonly Finding[]): Map<string, number> {
   const count = new Map<string, number>();
   for (const finding of findings) {
@@ -98,7 +102,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
         ...(error?.snapshot === "last-commit" && isGitObjectId(parent)
           ? { error: { ...error, comparisonParent: parent } }
           : {}),
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+        durationMs: totalDurationMs(present),
       };
     }
     const first =
@@ -120,7 +124,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
     if (present.some((check) => check.status === "skipped"))
       return {
         ...first,
-        durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+        durationMs: totalDurationMs(present),
         findings: [],
       };
     const counts = present
@@ -144,7 +148,7 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
       }));
     return {
       ...first,
-      durationMs: present.reduce((sum, check) => sum + check.durationMs, 0),
+      durationMs: totalDurationMs(present),
       findings,
     };
   });
