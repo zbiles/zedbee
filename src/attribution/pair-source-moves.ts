@@ -48,9 +48,17 @@ function offset(
   return start + column - 1;
 }
 function position(source: string, value: number) {
-  const prefix = source.slice(0, value);
-  const line = prefix.split("\n").length;
-  return { line, column: value - prefix.lastIndexOf("\n") };
+  let line = 1;
+  let lineStart = 0;
+  for (
+    let index = source.indexOf("\n");
+    index !== -1 && index < value;
+    index = source.indexOf("\n", index + 1)
+  ) {
+    line += 1;
+    lineStart = index + 1;
+  }
+  return { line, column: value - lineStart + 1 };
 }
 function mappedLocation(
   location: SourceLocation,
