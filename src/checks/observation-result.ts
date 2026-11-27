@@ -186,15 +186,20 @@ function validateObservationPaths(
   registry: SnapshotRegistry,
   renamedBaselinePaths?: ReadonlySet<string>,
 ): void {
+  const validated = new Set<string>();
   for (const observation of input) {
     const paths = [observation.location?.file, observation.entity?.file].filter(
       (path): path is string => path !== undefined,
     );
     for (const path of paths) {
+      if (validated.has(path)) continue;
       if (registry.resolve(path)?.targetKind !== "file") {
         throw new TypeError(`Unknown ${side} observation path`);
       }
-      if (target.kind === "repository") continue;
+      if (target.kind === "repository") {
+        validated.add(path);
+        continue;
+      }
       const owner = mostSpecificWorkspace(inspection, path);
       if (
         owner?.relativeRoot !== target.relativeRoot &&
@@ -204,6 +209,7 @@ function validateObservationPaths(
           `Observation path does not belong to its ${side} target`,
         );
       }
+      validated.add(path);
     }
   }
 }
