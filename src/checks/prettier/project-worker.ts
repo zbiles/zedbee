@@ -13,6 +13,9 @@ import type {
   ProjectPrettierReply,
 } from "./project-types.js";
 import {
+  IMPORT_MAX_LIMITATION_LENGTH,
+  IMPORT_MAX_LIMITATIONS,
+  IMPORT_MAX_OVERRIDES,
   isPatternList,
   parseProjectRequest,
 } from "./project-protocol.js";
@@ -62,11 +65,6 @@ function projectIgnoreFiles(): ProjectIgnoreFiles {
   };
   return ignoreFiles;
 }
-
-// Must match parseImportableConfig in project-protocol.ts.
-const IMPORT_MAX_OVERRIDES = 256;
-const IMPORT_MAX_LIMITATIONS = 64;
-const IMPORT_MAX_LIMITATION_LENGTH = 1024;
 
 /** Trims an import reply so the parent's protocol limits always accept it. */
 function boundedImport(config: ImportableNativeConfig): ImportableNativeConfig {

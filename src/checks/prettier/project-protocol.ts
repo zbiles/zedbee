@@ -21,6 +21,10 @@ export const PROJECT_PROTOCOL_MAX_BYTES = 8 * 1024 * 1024;
 export const PROJECT_FORMAT_SOURCE_MAX_BYTES = 4 * 1024 * 1024;
 const MAX_CONFIG_BYTES = 1024 * 1024;
 
+export const IMPORT_MAX_OVERRIDES = 256;
+export const IMPORT_MAX_LIMITATIONS = 64;
+export const IMPORT_MAX_LIMITATION_LENGTH = 1024;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -247,7 +251,10 @@ function parseImportableConfig(value: unknown): ImportableNativeConfig {
     throw new TypeError("Invalid imported configuration reply");
   }
   const settings = parseSettings(value.settings, "imported settings");
-  if (!Array.isArray(value.overrides) || value.overrides.length > 256) {
+  if (
+    !Array.isArray(value.overrides) ||
+    value.overrides.length > IMPORT_MAX_OVERRIDES
+  ) {
     throw new TypeError("Invalid imported configuration overrides");
   }
   const overrides = value.overrides.map((entry) => {
@@ -279,10 +286,12 @@ function parseImportableConfig(value: unknown): ImportableNativeConfig {
   });
   if (
     !Array.isArray(value.limitations) ||
-    value.limitations.length > 64 ||
+    value.limitations.length > IMPORT_MAX_LIMITATIONS ||
     value.limitations.some(
       (entry) =>
-        typeof entry !== "string" || entry.length === 0 || entry.length > 1024,
+        typeof entry !== "string" ||
+        entry.length === 0 ||
+        entry.length > IMPORT_MAX_LIMITATION_LENGTH,
     )
   ) {
     throw new TypeError("Invalid imported configuration limitations");
