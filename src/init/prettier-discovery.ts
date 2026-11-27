@@ -3,7 +3,7 @@ import {
   manifestPrettierDeclaration,
 } from "../checks/prettier/project-version.js";
 import { lstat, readFile, realpath } from "node:fs/promises";
-import { dirname, isAbsolute, posix, relative, resolve, sep } from "node:path";
+import { dirname, posix, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { compareCodeUnits } from "../core/compare.js";
 import {
@@ -89,7 +89,6 @@ interface InstalledPrettier {
 
 async function installedPrettierAt(
   directory: string,
-  canonicalRoot: string,
 ): Promise<InstalledPrettier | undefined> {
   const manifestPath = resolve(
     directory,
@@ -130,7 +129,7 @@ async function findInstalledPrettier(
 ): Promise<InstalledPrettier | undefined> {
   let current = projectRootAbsolute;
   while (isContainedPath(canonicalRoot, current)) {
-    const found = await installedPrettierAt(current, canonicalRoot);
+    const found = await installedPrettierAt(current);
     if (found !== undefined) return found;
     if (current === canonicalRoot) break;
     const parent = dirname(current);
@@ -331,19 +330,3 @@ export async function discoverProjectPrettier(
   return discoverProjectPrettierInRegistry(registry, canonicalRoot);
 }
 
-/** Internal helper for tests and Task 4; never exported through the CLI surface. */
-export function repositoryRelativePath(
-  canonicalRoot: string,
-  path: string,
-): string | undefined {
-  const fromRoot = relative(canonicalRoot, path).split(sep).join("/");
-  if (
-    fromRoot === "" ||
-    isAbsolute(fromRoot) ||
-    fromRoot === ".." ||
-    fromRoot.startsWith("../")
-  ) {
-    return undefined;
-  }
-  return fromRoot;
-}
