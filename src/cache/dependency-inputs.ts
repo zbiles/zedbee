@@ -61,6 +61,7 @@ export function dependencyPathParts(
   if (typeof value !== "string" || value.length > 4096)
     throw new TypeError("Invalid dependency path");
   const separator = value.indexOf(":");
+  if (separator < 0) throw new TypeError("Invalid dependency path");
   const root = value.slice(0, separator);
   const path = value.slice(separator + 1);
   if (
