@@ -13,6 +13,7 @@ import type {
   RepositoryInspection,
   WorkspaceInspection,
 } from "../../inspection/types.js";
+import { owningWorkspace } from "../../inspection/workspace-owner.js";
 import { CheckIncompleteError } from "../incomplete-error.js";
 
 const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
@@ -97,11 +98,7 @@ export function entryOwner(
   inspection: RepositoryInspection,
   path: string,
 ): WorkspaceInspection | undefined {
-  return [...inspection.workspaces]
-    .sort((a, b) => b.relativeRoot.length - a.relativeRoot.length)
-    .find(
-      (w) => w.relativeRoot === "." || path.startsWith(`${w.relativeRoot}/`),
-    );
+  return owningWorkspace(inspection.workspaces, path);
 }
 interface HtmlNode {
   kind?: string;
