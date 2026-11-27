@@ -15,7 +15,7 @@ import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.
 import { hasProjectEslintTrust } from "../checks/eslint/project/trust.js";
 import { resolveProjectEslintInstallation } from "../checks/eslint/project/installation.js";
 import { ProjectEslintFailureError } from "../checks/eslint/project/types.js";
-import { workspaceLabel } from "./workspace-installation.js";
+import { escapeLabelControls, workspaceLabel } from "./workspace-installation.js";
 import type { Diagnostic } from "./diagnostics.js";
 
 async function configPath(
@@ -29,7 +29,7 @@ async function configPath(
       const state = await lstat(path).catch(() => undefined);
       if (state === undefined) continue;
       return {
-        path: relative(root, path).split(sep).join("/"),
+        path: escapeLabelControls(relative(root, path).split(sep).join("/")),
         supported:
           state.isFile() &&
           (SUPPORTED_ESLINT_CONFIG_FILE_NAMES as readonly string[]).includes(

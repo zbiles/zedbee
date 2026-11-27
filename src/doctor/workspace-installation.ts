@@ -23,8 +23,17 @@ export interface WorkspaceInstallationReadiness {
   readonly summary: string;
 }
 
+const UNSAFE_LABEL_CHARACTER = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+export function escapeLabelControls(value: string): string {
+  return value.replace(
+    UNSAFE_LABEL_CHARACTER,
+    (character) => `\\u{${character.codePointAt(0)!.toString(16)}}`,
+  );
+}
+
 export function workspaceLabel(relativeRoot: string): string {
-  return relativeRoot === "." ? "root" : relativeRoot;
+  return relativeRoot === "." ? "root" : escapeLabelControls(relativeRoot);
 }
 
 function supportedInstalledPath(
