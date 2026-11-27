@@ -2,13 +2,19 @@ import { z } from "zod";
 import type { ManagedSettingsDefinition } from "../../config/settings-definition.js";
 import { immutableConfigurationSnapshot } from "../../config/immutable-configuration.js";
 
+const UNSAFE_MAPPING_KEYS: readonly string[] = [
+  "__proto__",
+  "prototype",
+  "constructor",
+];
+
 const name = z
   .string()
   .min(1)
   .max(256)
   .regex(/^[^\p{Cc}\p{Cf}\s]+$/u);
 const key = name.refine(
-  (value) => !["__proto__", "prototype", "constructor"].includes(value),
+  (value) => !UNSAFE_MAPPING_KEYS.includes(value),
   "Unsafe mapping key",
 );
 
@@ -20,7 +26,7 @@ export const accessibilitySettingsSchema = z
       .refine(
         (value) =>
           !Object.keys(value).some((name) =>
-            ["__proto__", "prototype", "constructor"].includes(name),
+            UNSAFE_MAPPING_KEYS.includes(name),
           ),
         "Unsafe mapping key",
       )
