@@ -12,7 +12,10 @@ import type {
   ProjectPrettierRequest,
   ProjectPrettierReply,
 } from "./project-types.js";
-import { parseProjectRequest } from "./project-protocol.js";
+import {
+  isPatternList,
+  parseProjectRequest,
+} from "./project-protocol.js";
 import {
   formattingSettingsSchema,
   type FormattingSettings,
@@ -355,16 +358,6 @@ function ownDataValue(object: object, key: string): unknown {
 function isOwnAccessor(object: object, key: string): boolean {
   const descriptor = Object.getOwnPropertyDescriptor(object, key);
   return descriptor !== undefined && !("value" in descriptor);
-}
-
-/** Mirrors parsePatternList in project-protocol.ts: non-empty only. */
-function isPatternList(value: unknown): value is string | readonly string[] {
-  if (typeof value === "string") return value.length > 0;
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((item) => typeof item === "string" && item.length > 0)
-  );
 }
 
 function sanitizeOverrideEntry(

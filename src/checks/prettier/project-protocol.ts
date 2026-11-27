@@ -169,21 +169,28 @@ function parseSettings(
   return parsed.data as unknown as Partial<FormattingSettings>;
 }
 
+/** A non-empty pattern string or a non-empty list of non-empty patterns. */
+export function isPatternList(
+  value: unknown,
+): value is string | readonly string[] {
+  if (typeof value === "string") return value.length > 0;
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === "string" && item.length > 0)
+  );
+}
+
 function parsePatternList(
   value: unknown,
   field: string,
 ): string | readonly string[] {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every((item) => typeof item === "string" && item.length > 0)
-  ) {
-    return Object.freeze([...value]);
+  if (!isPatternList(value)) {
+    throw new TypeError(
+      `Invalid ${field} pattern in the project formatter reply`,
+    );
   }
-  throw new TypeError(
-    `Invalid ${field} pattern in the project formatter reply`,
-  );
+  return Array.isArray(value) ? Object.freeze([...value]) : value;
 }
 
 function parseFormatResult(value: unknown): ProjectFormatResult {
