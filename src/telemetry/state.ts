@@ -26,7 +26,7 @@ import type { TelemetryEnvironment } from "./policy.js";
 import {
   TELEMETRY_MAX_QUEUE_BYTES,
   TELEMETRY_MAX_QUEUED_EVENTS,
-  TELEMETRY_RETENTION_MS,
+  withinTelemetryRetention,
 } from "./retention.js";
 const stateSchema = z.strictObject({
   version: z.literal(1),
@@ -263,9 +263,7 @@ export class TelemetryStore {
     this.update((state) => {
       if (!state.enabled) return;
       state.events = [...state.events, event]
-        .filter(
-          (e) => Date.parse(e.timestamp) >= Date.now() - TELEMETRY_RETENTION_MS,
-        )
+        .filter((e) => withinTelemetryRetention(e.timestamp))
         .slice(-TELEMETRY_MAX_QUEUED_EVENTS);
       while (
         Buffer.byteLength(JSON.stringify(state.events)) >
@@ -277,9 +275,7 @@ export class TelemetryStore {
   pending(): TelemetryEvent[] {
     const state = this.read();
     return state?.enabled
-      ? state.events.filter(
-          (e) => Date.parse(e.timestamp) >= Date.now() - TELEMETRY_RETENTION_MS,
-        )
+      ? state.events.filter((e) => withinTelemetryRetention(e.timestamp))
       : [];
   }
   acknowledge(ids: readonly string[]): void {
