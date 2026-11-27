@@ -7,7 +7,6 @@ import {
   readdir,
   rename,
   unlink,
-  utimes,
   writeFile,
 } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -203,7 +202,11 @@ export class ObservationCacheStore implements ObservationCache {
     }
   }
 
-  private async readEntry(path: string): Promise<string | undefined> {
+  private async readEntry(
+    path: string,
+  ): Promise<CheckObservationSet | undefined> {
+    const entry = await lstat(path);
+    if (!isRegularFile(entry) || entry.size > this.maxBytes) return undefined;
     const handle = await open(
       path,
       constants.O_RDONLY |
@@ -212,26 +215,33 @@ export class ObservationCacheStore implements ObservationCache {
     );
     try {
       const metadata = await handle.stat();
-      if (!metadata.isFile() || metadata.size > this.maxBytes) return undefined;
-      const serialized = await handle.readFile("utf8");
-      return Buffer.byteLength(serialized) > this.maxBytes
-        ? undefined
-        : serialized;
-    } finally {
-      await handle.close();
-    }
-  }
-
-  async get(key: string): Promise<CheckObservationSet | undefined> {
-    try {
-      const rootMetadata = await lstat(this.root);
-      if (!isPrivateDirectory(rootMetadata)) {
+      if (
+        !metadata.isFile() ||
+        entry.dev !== metadata.dev ||
+        entry.ino !== metadata.ino ||
+        metadata.ino === 0 ||
+        metadata.size > this.maxBytes
+      )
         return undefined;
+      const bytes = Buffer.alloc(metadata.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const { bytesRead } = await handle.read(
+          bytes,
+          offset,
+          bytes.length - offset,
+          offset,
+        );
+        if (bytesRead === 0) return undefined;
+        offset += bytesRead;
       }
-      const path = this.path(key);
-      const serialized = await this.readEntry(path);
-      if (serialized === undefined) return undefined;
-      const envelope = JSON.parse(serialized) as Record<string, unknown>;
+      const end = await handle.stat();
+      if (end.size !== metadata.size || end.mtimeMs !== metadata.mtimeMs)
+        return undefined;
+      const envelope = JSON.parse(bytes.toString("utf8")) as Record<
+        string,
+        unknown
+      >;
       const payloadText = JSON.stringify(envelope.payload);
       if (
         envelope.schemaVersion !== SCHEMA_VERSION ||
@@ -244,8 +254,18 @@ export class ObservationCacheStore implements ObservationCache {
         envelope.payload as unknown as CheckObservationSet,
       );
       const now = new Date();
-      await utimes(path, now, now).catch(() => undefined);
+      await handle.utimes(now, now).catch(() => undefined);
       return payload;
+    } finally {
+      await handle.close();
+    }
+  }
+
+  async get(key: string): Promise<CheckObservationSet | undefined> {
+    try {
+      const rootMetadata = await lstat(this.root);
+      if (!isPrivateDirectory(rootMetadata)) return undefined;
+      return await this.readEntry(this.path(key));
     } catch {
       return undefined;
     }

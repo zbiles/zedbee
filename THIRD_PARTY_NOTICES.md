@@ -3201,6 +3201,69 @@ License: Apache-2.0
    limitations under the License.
 ---
 
+## @isaacs/nonrecursive-glob-match@1.1.0
+
+License: BlueOak-1.0.0
+
+### node_modules/@isaacs/nonrecursive-glob-match/LICENSE.md
+
+# Blue Oak Model License
+
+Version 1.0.0
+
+## Purpose
+
+This license gives everyone as much permission to work with
+this software as possible, while protecting contributors
+from liability.
+
+## Acceptance
+
+In order to receive this license, you must agree to its
+rules.  The rules of this license are both obligations
+under that agreement and conditions to your license.
+You must not do anything with this software that triggers
+a rule that you cannot or will not follow.
+
+## Copyright
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe that contributor's
+copyright in it.
+
+## Notices
+
+You must ensure that everyone who gets a copy of
+any part of this software from you, with or without
+changes, also gets the text of this license or a link to
+<https://blueoakcouncil.org/license/1.0.0>.
+
+## Excuse
+
+If anyone notifies you in writing that you have not
+complied with [Notices](#notices), you can keep your
+license by taking all practical steps to comply within 30
+days after the notice.  If you do not do so, your license
+ends immediately.
+
+## Patent
+
+Each contributor licenses you to do everything with this
+software that would otherwise infringe any patent claims
+they can license or become able to license.
+
+## Reliability
+
+No contributor can revoke this license.
+
+## No Liability
+
+***As far as the law allows, this software comes as is,
+without any warranty or condition, and no contributor
+will be liable to anyone for any damages related to this
+software or this license, under any kind of legal claim.***
+---
+
 ## @jridgewell/gen-mapping@0.3.13
 
 License: MIT
@@ -5481,7 +5544,7 @@ License: MIT
     SOFTWARE
 ---
 
-## @typescript-eslint/eslint-plugin@8.72.0
+## @typescript-eslint/eslint-plugin@8.74.0
 
 License: MIT
 
@@ -5510,7 +5573,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/parser@8.72.0
+## @typescript-eslint/parser@8.74.0
 
 License: MIT
 
@@ -5539,7 +5602,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/project-service@8.72.0
+## @typescript-eslint/project-service@8.74.0
 
 License: MIT
 
@@ -5568,7 +5631,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/scope-manager@8.72.0
+## @typescript-eslint/scope-manager@8.74.0
 
 License: MIT
 
@@ -5597,7 +5660,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/tsconfig-utils@8.72.0
+## @typescript-eslint/tsconfig-utils@8.74.0
 
 License: MIT
 
@@ -5626,7 +5689,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/type-utils@8.72.0
+## @typescript-eslint/type-utils@8.74.0
 
 License: MIT
 
@@ -5655,7 +5718,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/types@8.72.0
+## @typescript-eslint/types@8.74.0
 
 License: MIT
 
@@ -5684,7 +5747,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/typescript-estree@8.72.0
+## @typescript-eslint/typescript-estree@8.74.0
 
 License: MIT
 
@@ -5713,7 +5776,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/utils@8.72.0
+## @typescript-eslint/utils@8.74.0
 
 License: MIT
 
@@ -5742,7 +5805,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## @typescript-eslint/visitor-keys@8.72.0
+## @typescript-eslint/visitor-keys@8.74.0
 
 License: MIT
 
@@ -8159,7 +8222,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## brace-expansion@5.0.12
+## brace-expansion@5.1.0
 
 License: MIT
 
@@ -14843,7 +14906,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ---
 
-## minimatch@10.2.6
+## minimatch@11.0.9
 
 License: BlueOak-1.0.0
 
@@ -17859,7 +17922,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ---
 
-## typescript-eslint@8.72.0
+## typescript-eslint@8.74.0
 
 License: MIT
 

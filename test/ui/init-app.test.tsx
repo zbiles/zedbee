@@ -405,11 +405,11 @@ describe("hook setup choices", () => {
     );
     await settleInput();
     const lines = view.lastFrame()!.split("\n");
-    const next = lines.findIndex((line) => line.includes("Next step:"));
+    const next = lines.findIndex((line) => line.includes("Files to stage:"));
     const profile = lines.find((line) => line.includes("Profile:"))!;
     const detected = lines.find((line) => line.includes("Detected:"))!;
     expect(next).toBeGreaterThan(0);
-    expect(lines[next]!.indexOf("Next step:")).toBe(
+    expect(lines[next]!.indexOf("Files to stage:")).toBe(
       profile.indexOf("Profile:"),
     );
     expect(detected.indexOf("Detected:")).toBe(profile.indexOf("Profile:"));

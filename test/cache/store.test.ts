@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
@@ -226,6 +234,29 @@ describe("observation cache", () => {
     });
 
     await expect(store.get(cacheKey)).resolves.toBeUndefined();
+  });
+
+  it("bounds cache reads, ignores nonregular entries and refreshes valid entry recency", async () => {
+    const root = await cacheRoot("zedbee-cache-bounded-");
+    const store = new ObservationCacheStore({ root, maxBytes: 1024 });
+    const key = "f".repeat(64);
+    const path = join(root, `${key}.json`);
+    const payload = {
+      checkId: "structuralSecurity",
+      target: { id: ".", kind: "repository" as const, relativeRoot: "." },
+      baselineObservations: [],
+      targetObservations: [],
+    };
+    await store.set(key, payload);
+    const old = new Date("2000-01-01T00:00:00Z");
+    await utimes(path, old, old);
+    await expect(store.get(key)).resolves.toEqual(payload);
+    expect((await stat(path)).mtimeMs).toBeGreaterThan(old.getTime());
+    await writeFile(path, " ".repeat(1025));
+    await expect(store.get(key)).resolves.toBeUndefined();
+    await rm(path);
+    await mkdir(path);
+    await expect(store.get(key)).resolves.toBeUndefined();
   });
 
   it("treats filesystem failures as cache misses", async () => {

@@ -10,7 +10,6 @@ import {
   readContainedFile,
 } from "../../inspection/read-json.js";
 import { captureSnapshotRegistry } from "../../inspection/snapshot-registry.js";
-import type { SnapshotRegistry } from "../../inspection/snapshot-registry.js";
 import {
   capturedSourceInput,
   capturedSourceRegistry,
@@ -32,8 +31,6 @@ import {
   MAX_STRUCTURAL_PARSE_FAILURES,
   structuralParseReason,
 } from "./parse-failures.js";
-
-const STRUCTURAL_READ_BATCH = 16;
 
 interface FailureCollection {
   files: StructuralParseFailure[];
@@ -94,21 +91,6 @@ function recordParseFailure(
   });
 }
 
-function readStructuralSources(
-  canonicalRoot: string,
-  liveRegistry: SnapshotRegistry,
-  files: readonly string[],
-): Promise<string[]> {
-  return Promise.all(
-    files.map((file) =>
-      readContainedFile(
-        capturedSourceRegistry(canonicalRoot, [file]) ?? liveRegistry,
-        file,
-      ),
-    ),
-  );
-}
-
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -138,22 +120,17 @@ async function collectSide(
       : files,
   );
   const observations: Observation[] = [];
-  for (let start = 0; start < files.length; start += STRUCTURAL_READ_BATCH) {
-    if (signal.aborted) throw new Error("Structural security analysis failed.");
-    const batch = files.slice(start, start + STRUCTURAL_READ_BATCH);
-    const sources = await readStructuralSources(
-      canonicalRoot,
-      liveRegistry,
-      batch,
+  for (const file of files) {
+    signal.throwIfAborted();
+    const source = await readContainedFile(
+      capturedSourceRegistry(canonicalRoot, [file]) ?? liveRegistry,
+      file,
     );
-    for (const [offset, file] of batch.entries()) {
-      try {
-        observations.push(
-          ...collectStructuralSecurityObservations(file, sources[offset]!),
-        );
-      } catch (error) {
-        recordParseFailure(failures, file, side, error);
-      }
+    signal.throwIfAborted();
+    try {
+      observations.push(...collectStructuralSecurityObservations(file, source));
+    } catch (error) {
+      recordParseFailure(failures, file, side, error);
     }
   }
   return Object.freeze(

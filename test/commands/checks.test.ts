@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { configurationOverrideLine } from "../../src/checks/configuration-presentation.js";
-import { chmod, realpath, rm } from "node:fs/promises";
+import { chmod, mkdtemp, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   executeChecksCommand,
@@ -14,8 +15,19 @@ import { resolveConfig } from "../../src/config/profiles.js";
 import { createGitRepository } from "../helpers/git-repository.js";
 import { GitClient } from "../../src/git/client.js";
 import { readStagedChangeSet } from "../../src/git/change-set.js";
-import { buildSnapshotPair } from "../../src/git/snapshot.js";
+import * as changeSetModule from "../../src/git/change-set.js";
+import {
+  buildSnapshotPair,
+  SnapshotConstructionCleanupError,
+  SnapshotError,
+} from "../../src/git/snapshot.js";
+import * as snapshotModule from "../../src/git/snapshot.js";
+import {
+  SNAPSHOT_PREFIX,
+  validateSnapshotPath,
+} from "../../src/git/snapshot-path.js";
 import { inspectRepository } from "../../src/inspection/inspect-repository.js";
+import * as inspectionModule from "../../src/inspection/inspect-repository.js";
 import { loadConfig } from "../../src/config/load-config.js";
 import { dispatchChecks } from "../../src/checks/dispatcher.js";
 import { lintAdapter } from "../../src/checks/eslint/lint-adapter.js";
@@ -1301,4 +1313,118 @@ it("reports selected formatting owners rather than untracked or managed-only sib
       version: "3.9.6",
     }),
   ]);
+});
+
+describe("checks command snapshot error reporting", () => {
+  it("does not construct snapshots when change-set selection fails", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("fixture");
+    const read = vi
+      .spyOn(changeSetModule, "readStagedChangeSet")
+      .mockRejectedValueOnce(new Error("Read failed"));
+    const build = vi
+      .spyOn(snapshotModule, "buildSnapshotPair")
+      .mockRejectedValue(new Error("Snapshot should not be started"));
+    onTestFinished(() => {
+      read.mockRestore();
+      build.mockRestore();
+    });
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(build).not.toHaveBeenCalled();
+  });
+
+  it("reports an individual construction failure", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("fixture");
+    const build = vi
+      .spyOn(snapshotModule, "buildSnapshotPair")
+      .mockRejectedValueOnce(
+        new SnapshotError(
+          "SNAPSHOT_CONSTRUCTION_FAILED",
+          "Construction failed.",
+        ),
+      );
+    onTestFinished(() => build.mockRestore());
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(io.stderr.join("")).toContain("SNAPSHOT_CONSTRUCTION_FAILED");
+    expect(io.stderr.join("")).not.toContain("cleanup");
+  });
+
+  it("retains inspection and cleanup diagnoses when both fail", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("fixture");
+    const originalBuild = snapshotModule.buildSnapshotPair;
+    const inspection = vi
+      .spyOn(inspectionModule, "inspectRepository")
+      .mockRejectedValue(new Error("Synthetic inspection failure"));
+    onTestFinished(() => inspection.mockRestore());
+    const build = vi
+      .spyOn(snapshotModule, "buildSnapshotPair")
+      .mockImplementationOnce(async (...args) => {
+        const pair = await originalBuild(...args);
+        onTestFinished(pair.cleanup);
+        return {
+          ...pair,
+          cleanup: async () => {
+            throw new Error("Synthetic cleanup failure");
+          },
+        };
+      });
+    onTestFinished(() => build.mockRestore());
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(io.stderr.join("")).toContain(
+      "could not inspect the staged snapshot",
+    );
+    expect(io.stderr.join("")).toContain(
+      "could not remove its temporary snapshot",
+    );
+    expect(io.stderr.join("")).toContain("Retained snapshot");
+  });
+
+  it("reports a retained temporary tree when construction and cleanup fail", async () => {
+    const repository = await createGitRepository();
+    await repository.write("package.json", '{"name":"fixture"}\n');
+    await repository.commitAll("fixture");
+    const retained = await mkdtemp(join(tmpdir(), SNAPSHOT_PREFIX));
+    onTestFinished(() => rm(retained, { recursive: true, force: true }));
+    const temporaryPath = await validateSnapshotPath(retained);
+    const build = vi
+      .spyOn(snapshotModule, "buildSnapshotPair")
+      .mockRejectedValueOnce(
+        new SnapshotConstructionCleanupError(
+          new SnapshotError(
+            "SNAPSHOT_CONSTRUCTION_FAILED",
+            "Could not construct snapshots.",
+          ),
+          temporaryPath,
+        ),
+      );
+    onTestFinished(() => build.mockRestore());
+    const io = terminal();
+    const result = await executeChecksCommand(
+      { cwd: repository.root, format: "json", color: false },
+      io,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(io.stderr.join("")).toContain("snapshot construction and cleanup");
+    expect(io.stderr.join("")).toContain(temporaryPath);
+  });
 });

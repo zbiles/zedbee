@@ -1,3 +1,10 @@
+import { metadataSizeFailure } from "../inspection/metadata-limit.js";
+import { dirname } from "node:path";
+import {
+  AnalysisSessionCleanupError,
+  phaseFailure,
+} from "../scan/analysis-failure.js";
+import { cleanupFailureDetails } from "../reporting/fix-presentation.js";
 import { projectWorkspaceComparison } from "../checks/workspace-comparison.js";
 import { formattingRequirements } from "../checks/prettier/formatting-requirements.js";
 import { resolveProjectPrettierInstallation } from "../checks/prettier/project-installation.js";
@@ -33,7 +40,13 @@ import { compareCodeUnits } from "../core/compare.js";
 import { readStagedChangeSet } from "../git/change-set.js";
 import { GitClient } from "../git/client.js";
 import { captureSelectedIndexComparison } from "../git/selected-comparison.js";
-import { buildSnapshotPair } from "../git/snapshot.js";
+import {
+  buildSnapshotPair,
+  SnapshotConstructionCleanupError,
+  SnapshotError,
+} from "../git/snapshot.js";
+import { validateReportableSnapshotPath } from "../git/snapshot-path.js";
+import { opaqueTemporaryReportPath } from "../reporting/report-path.js";
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import {
   inspectProjectPrettierDiscovery,
@@ -260,33 +273,16 @@ function describeManagedEngine(
   return Object.freeze({ name: engine.name, license: engine.license, version });
 }
 
-async function readChangeSetAndSnapshots(
-  repositoryRoot: string,
-  git: GitClient,
-) {
-  const [changeSet, snapshots] = await Promise.allSettled([
-    readStagedChangeSet(git),
-    buildSnapshotPair(repositoryRoot, git),
-  ]);
-  if (changeSet.status === "rejected") {
-    // The change-set error stays the reported cause, as before.
-    if (snapshots.status === "fulfilled")
-      await snapshots.value.cleanup().catch(() => undefined);
-    throw changeSet.reason;
-  }
-  if (snapshots.status === "rejected") throw snapshots.reason;
-  return { changeSet: changeSet.value, snapshots: snapshots.value };
-}
-
 async function inspectConfiguredChecks(
   repositoryRoot: string,
   config: ResolvedConfig,
   git: GitClient,
 ): Promise<SelectedCheckApplicability> {
-  const { changeSet, snapshots } = await readChangeSetAndSnapshots(
-    repositoryRoot,
-    git,
-  );
+  const changeSet = await readStagedChangeSet(git);
+  const snapshots = await buildSnapshotPair(repositoryRoot, git);
+  let primaryFailure:
+    | { cause: unknown; primaryFailure: ReturnType<typeof phaseFailure> }
+    | undefined;
   try {
     const [baselineInspection, targetInspection] = await settleSnapshotWork(
       () => inspectRepository(snapshots.baselineDir),
@@ -397,8 +393,21 @@ async function inspectConfiguredChecks(
     return Object.assign(new Map(entries), {
       selectedFormatting: { managed: requirements.managed, projects },
     });
+  } catch (error) {
+    primaryFailure = {
+      cause: error,
+      primaryFailure: phaseFailure(error, "target-inspection", "index"),
+    };
+    throw error;
   } finally {
-    await snapshots.cleanup();
+    try {
+      await snapshots.cleanup();
+    } catch {
+      throw new AnalysisSessionCleanupError(
+        dirname(snapshots.targetDir),
+        primaryFailure,
+      );
+    }
   }
 }
 
@@ -805,8 +814,49 @@ export async function executeChecksCommand(
       );
     } else writeText();
     return result;
-  } catch {
+  } catch (error) {
     io.writeStderr("Zedbee could not describe the configured checks.\n");
+    if (error instanceof SnapshotConstructionCleanupError) {
+      io.writeStderr(
+        "Zedbee snapshot construction and cleanup both failed. Check temporary-directory permissions before retrying.\n",
+      );
+      try {
+        const path = validateReportableSnapshotPath(error.temporaryPath ?? "");
+        io.writeStderr(
+          `Retained snapshot: ${opaqueTemporaryReportPath(path)}\n`,
+        );
+      } catch {
+        // Only report a path which can still be verified as managed.
+      }
+    } else if (error instanceof AnalysisSessionCleanupError) {
+      if (error.primaryFailure !== undefined) {
+        io.writeStderr(`${error.primaryFailure.message}\n`);
+        if (error.primaryFailure.path !== undefined)
+          io.writeStderr(`Path: ${error.primaryFailure.path}\n`);
+        io.writeStderr(`${error.primaryFailure.remediation}\n`);
+      }
+      const details = cleanupFailureDetails(error);
+      io.writeStderr(`${details.message}\n`);
+      if (details.path !== undefined)
+        io.writeStderr(
+          `Retained snapshot: ${opaqueTemporaryReportPath(details.path)}\n`,
+        );
+      io.writeStderr(
+        "Check temporary-directory permissions before retrying.\n",
+      );
+    } else if (error instanceof SnapshotError) {
+      io.writeStderr(
+        `Snapshot operation failed (${error.code}). Check the selected index and temporary-directory permissions.\n`,
+      );
+    } else {
+      const sizeFailure = metadataSizeFailure(error);
+      if (sizeFailure !== undefined) {
+        io.writeStderr(`${sizeFailure.message}\n`);
+        if (sizeFailure.path !== undefined)
+          io.writeStderr(`Path: ${sizeFailure.path}\n`);
+        io.writeStderr(`${sizeFailure.remediation}\n`);
+      }
+    }
     return Object.freeze({ exitCode: 2, checks: Object.freeze([]) });
   }
 }

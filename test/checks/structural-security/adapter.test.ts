@@ -1,11 +1,13 @@
 import { unlink, symlink } from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { setImmediate } from "node:timers/promises";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import type { CheckRunContext } from "../../../src/checks/adapter.js";
 import { observationCheckResult } from "../../../src/checks/observation-result.js";
 import { structuralSecurityAdapter } from "../../../src/checks/structural-security/adapter.js";
 import { resolveConfig } from "../../../src/config/profiles.js";
 import type { ChangeSet, ChangedFile } from "../../../src/git/change-set.js";
+import * as sourceReads from "../../../src/inspection/read-json.js";
 import { inspectRepository } from "../../../src/inspection/inspect-repository.js";
 import { createInspectionFixture } from "../../inspection/fixture.js";
 import { testFilePolicyResolver } from "../../helpers/file-policy.js";
@@ -69,6 +71,39 @@ async function structuralSecurityContext() {
 }
 
 describe("structuralSecurityAdapter", () => {
+  it("reads one selected source at a time without retaining a batch", async () => {
+    const { run } = await structuralSecurityContext();
+    const read = sourceReads.readContainedFile;
+    let active = 0;
+    let peak = 0;
+    let count = 0;
+    const spy = vi
+      .spyOn(sourceReads, "readContainedFile")
+      .mockImplementation(async (...args) => {
+        if (!args[1].endsWith(".ts")) return read(...args);
+        count += 1;
+        active += 1;
+        peak = Math.max(peak, active);
+        try {
+          await setImmediate();
+          return await read(...args);
+        } finally {
+          active -= 1;
+        }
+      });
+    onTestFinished(() => spy.mockRestore());
+    await structuralSecurityAdapter.collect({
+      ...run,
+      policyForFile: (...args) => ({
+        ...run.policyForFile(...args),
+        when: "always",
+      }),
+    });
+    expect(count).toBeGreaterThan(2);
+    expect(peak).toBe(1);
+    expect(active).toBe(0);
+  });
+
   it("does not parse unrelated unchanged files", async () => {
     const { fixtures, run } = await structuralSecurityContext();
     for (const fixture of [fixtures.baseline, fixtures.staged]) {

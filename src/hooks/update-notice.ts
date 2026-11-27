@@ -6,9 +6,8 @@ import { GitClient } from "../git/client.js";
 import { isContainedPath } from "../inspection/paths.js";
 import { resolveInstalledCliCommand, type ScanHookName } from "./command.js";
 import {
-  guardedHookInvocation,
+  managedHookInvocation,
   installedHookCommand,
-  installedHookPreflight,
 } from "./installed-command.js";
 import { detectHookChoice } from "./detect.js";
 import { readHookData } from "./read-hook-data.js";
@@ -17,16 +16,16 @@ import {
   delegatesToPreCommit,
   hasZedbeeScanCommand,
   mergeHookCommand,
-  replaceManagedZedbeeCommand,
+  managedUpdateReason,
 } from "./husky.js";
 
 import {
-  HOOK_UPDATE_NOTICE,
+  managedHookUpdateNotice,
+  type ManagedHookUpdateReason,
   HUSKY_ACTIVATION_NOTICE,
   HUSKY_INSTALLATION_NOTICE,
   HUSKY_CUSTOM_RUNTIME_NOTICE,
   SHARED_HUSKY_ACTIVATION_NOTICE,
-  SHARED_HUSKY_UPDATE_NOTICE,
   type HookUpdateNotice,
 } from "../reporting/hook-update-notice.js";
 export { HOOK_UPDATE_NOTICE } from "../reporting/hook-update-notice.js";
@@ -67,20 +66,9 @@ interface HookMaintenance {
   readonly huskyPreCommit?: Readonly<{ active: boolean; shared: boolean }>;
 }
 
-function needsManagedUpdate(source: string, command: string): boolean {
-  // Check each hook kind against its own command, including its merge flags.
-  return source.split("\n").some((line) => {
-    const value = line.trim();
-    const expected = /(?:^|\s)--merge(?:\s|\)|$)/u.test(value)
-      ? mergeHookCommand(command)
-      : command;
-    return replaceManagedZedbeeCommand(value, expected) !== value;
-  });
-}
-
 function managedHuskyInvocation(source: string) {
   for (const line of source.split("\n")) {
-    const guarded = guardedHookInvocation(
+    const guarded = managedHookInvocation(
       line.trim().replace(/ \|\| exit \$\?$/u, ""),
     );
     if (guarded !== undefined) return guarded;
@@ -104,7 +92,8 @@ function resolveHuskyMaintenance(
     shared,
   };
   if (optedOut) return { huskyPreCommit };
-  let stale = false;
+  let stale:
+    { hook: ScanHookName; reason: ManagedHookUpdateReason } | undefined;
   let missingInstallation = false;
   for (const [name, hook] of hooks) {
     if (hook.source === undefined) continue;
@@ -128,13 +117,9 @@ function resolveHuskyMaintenance(
     if (command === undefined) {
       missingInstallation ||= managed !== undefined;
     } else {
-      stale ||=
-        needsManagedUpdate(hook.source, command) ||
-        (managed !== undefined &&
-          hook.source.includes(" || exit $?") &&
-          !hook.source
-            .split("\n")
-            .includes(installedHookPreflight(managed.cliPath, name)));
+      const reason = managedUpdateReason(hook.source, command, name);
+      if (stale === undefined && reason !== undefined)
+        stale = { hook: name, reason };
     }
   }
   return {
@@ -143,9 +128,11 @@ function resolveHuskyMaintenance(
       ? { hookUpdate: HUSKY_INSTALLATION_NOTICE }
       : stale
         ? {
-            hookUpdate: shared
-              ? SHARED_HUSKY_UPDATE_NOTICE
-              : HOOK_UPDATE_NOTICE,
+            hookUpdate: managedHookUpdateNotice(
+              stale.hook,
+              stale.reason,
+              shared,
+            ),
           }
         : {}),
   };
@@ -251,13 +238,22 @@ export async function inspectHookMaintenance(
         managers[(await lefthookFilename(root)) === "lefthook.yaml" ? 2 : 1];
       if (source !== undefined) managerSources = managerCommands(source, true);
     }
-    const commands = [
-      ...sources.filter((source): source is string => source !== undefined),
-      ...managerSources,
-    ];
-    return commands.some((source) => needsManagedUpdate(source, command))
-      ? { ...result, hookUpdate: HOOK_UPDATE_NOTICE }
-      : result;
+    for (const [source, layout] of [
+      ...sources
+        .filter((source): source is string => source !== undefined)
+        .map((source) => [source, true] as const),
+      ...managerSources.map(
+        (source) => [source, choice !== "lefthook"] as const,
+      ),
+    ]) {
+      const hook = hasZedbeeScanCommand(source, "pre-merge-commit")
+        ? "pre-merge-commit"
+        : "pre-commit";
+      const reason = managedUpdateReason(source, command, hook, layout);
+      if (reason !== undefined)
+        return { ...result, hookUpdate: managedHookUpdateNotice(hook, reason) };
+    }
+    return result;
   } catch {
     // Setup advice must never change analysis outcomes or prevent a scan.
     return result;

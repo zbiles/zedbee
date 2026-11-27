@@ -438,6 +438,19 @@ export async function executeInitCommand(
             "Tracked setup is unavailable: it needs a root package.json and hook files that can be safely preserved. Local or No remains available.",
           );
         }
+      } else if (
+        (options.hook === "auto" || options.hook === "husky") &&
+        hookIntegration.hook === "husky"
+      ) {
+        try {
+          integrations.set(
+            "tracked",
+            await detectHookIntegration(repositoryRoot, "tracked", hookCommand),
+          );
+          choices = ["none", "husky", "tracked"];
+        } catch {
+          // Refreshing ordinary Husky must remain available for custom runtimes.
+        }
       } else if (options.hook === "tracked") {
         integrations.set("tracked", hookIntegration);
         selection = "tracked";

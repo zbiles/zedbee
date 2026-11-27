@@ -96,14 +96,18 @@ async function dependencySteps(
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
       throw new Error("Invalid package manifest for workflow setup.");
     manifests.set(workspace.relativeRoot, parsed as Record<string, unknown>);
-    workspacePatterns.set(workspace.relativeRoot, [
-      ...parsePackageManifest(parsed, workspace.manifestPath).workspacePatterns,
-      ...(await readPnpmWorkspacePatterns(
-        registry,
-        () => undefined,
-        workspace.relativeRoot,
-      )),
-    ]);
+    workspacePatterns.set(
+      workspace.relativeRoot,
+      Object.freeze([
+        ...parsePackageManifest(parsed, workspace.manifestPath)
+          .workspacePatterns,
+        ...(await readPnpmWorkspacePatterns(
+          registry,
+          () => undefined,
+          workspace.relativeRoot,
+        )),
+      ]),
+    );
   }
   const installs = new Map<
     string,

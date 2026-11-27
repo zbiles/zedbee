@@ -58,23 +58,30 @@ async function resolveParentCommits(
   refs: readonly string[],
   options: { signal?: AbortSignal },
 ): Promise<string[]> {
-  const outputs = await Promise.allSettled(
-    refs.map((ref) =>
-      git.tryRun(
-        ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
-        options,
-      ),
-    ),
-  );
-  const parents: string[] = [];
-  for (const output of outputs) {
-    if (output.status === "rejected") throw output.reason;
-    if (output.value.exitCode !== 0 || !isGitObjectId(output.value.stdout))
-      throw new MergeComparisonError("MERGE_PARENTS_INVALID");
-    if (!parents.includes(output.value.stdout))
-      parents.push(output.value.stdout);
+  const parents = new Set<string>();
+  // Join a bounded batch before validating or starting the next group.
+  // This keeps ordinary two-parent merges concurrent while limiting Git
+  // processes for octopus merges.
+  const batchSize = 4;
+  for (let index = 0; index < refs.length; index += batchSize) {
+    const outputs = await Promise.allSettled(
+      refs
+        .slice(index, index + batchSize)
+        .map((ref) =>
+          git.tryRun(
+            ["rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`],
+            options,
+          ),
+        ),
+    );
+    for (const output of outputs) {
+      if (output.status === "rejected") throw output.reason;
+      if (output.value.exitCode !== 0 || !isGitObjectId(output.value.stdout))
+        throw new MergeComparisonError("MERGE_PARENTS_INVALID");
+      parents.add(output.value.stdout);
+    }
   }
-  return parents;
+  return [...parents];
 }
 
 /** Git writes MERGE_HEAD after the automatic merge hook, but supplies GITHEAD_<oid> before it. */

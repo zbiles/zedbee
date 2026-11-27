@@ -13,8 +13,11 @@ import {
 import { inspectRepository } from "../inspection/inspect-repository.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { hasProjectEslintTrust } from "../checks/eslint/project/trust.js";
-import { resolveProjectEslintInstallation } from "../checks/eslint/project/installation.js";
-import { ProjectEslintFailureError } from "../checks/eslint/project/types.js";
+import { createProjectEslintInstallationResolver } from "../checks/eslint/project/installation.js";
+import {
+  ProjectEslintFailureError,
+  type ProjectEslintInstallation,
+} from "../checks/eslint/project/types.js";
 import type { Diagnostic } from "./diagnostics.js";
 
 interface ProjectEslintWorkspaceReport {
@@ -24,11 +27,11 @@ interface ProjectEslintWorkspaceReport {
 }
 
 async function installationDescription(
-  root: string,
+  resolveInstallation: (project: string) => Promise<ProjectEslintInstallation>,
   project: string,
 ): Promise<{ readonly text: string; readonly failed: boolean }> {
   try {
-    const found = await resolveProjectEslintInstallation(root, project, root);
+    const found = await resolveInstallation(project);
     return { text: `ESLint ${found.version}`, failed: false };
   } catch (error) {
     return {
@@ -45,12 +48,13 @@ async function describeProjectEslintWorkspace(
   root: string,
   project: string,
   invocationTrust: boolean,
+  resolveInstallation: (project: string) => Promise<ProjectEslintInstallation>,
 ): Promise<ProjectEslintWorkspaceReport> {
   const [selected, trusted, messagesTrusted, installation] = await Promise.all([
     findProjectEslintConfig(root, project, "doctor"),
     invocationTrust || hasProjectEslintTrust(root, project, "execute"),
     hasProjectEslintTrust(root, project, "messages"),
-    installationDescription(root, project),
+    installationDescription(resolveInstallation, project),
   ]);
   return {
     failed: installation.failed || !selected.supported,
@@ -81,15 +85,21 @@ export async function diagnoseProjectEslint(
       message:
         "Using Zedbee's built-in ESLint. Static JSX accessibility checks use the managed rules and configured component mappings. Project configuration was not executed.",
     };
-  const reports = await Promise.all(
-    projects.map((workspace) =>
-      describeProjectEslintWorkspace(
+  const resolveInstallation = createProjectEslintInstallationResolver(
+    root,
+    root,
+  );
+  const reports: ProjectEslintWorkspaceReport[] = [];
+  for (const workspace of projects) {
+    reports.push(
+      await describeProjectEslintWorkspace(
         root,
         workspace.relativeRoot,
         invocationTrust,
+        resolveInstallation,
       ),
-    ),
-  );
+    );
+  }
   const descriptions = reports.map((report) => report.description);
   const failed = reports.some((report) => report.failed);
   const untrusted = reports.some((report) => !report.trusted);

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { phaseFailure } from "../../src/scan/analysis-failure.js";
 import * as readJson from "../../src/inspection/read-json.js";
 import {
   canonicalizeSnapshotRoot,
@@ -175,4 +176,36 @@ it("preserves UTF-8 across bounded reads and rejects descriptor growth in both A
       }),
     ).rejects.toMatchObject({ code: "FILE_SIZE_LIMIT_EXCEEDED" });
   }
+});
+
+describe("repository metadata size boundary", () => {
+  it.each([-1, 0, 1])(
+    "handles a valid manifest at the limit plus %i byte(s)",
+    async (offset) => {
+      const fixture = await createInspectionFixture();
+      const size = readJson.MAX_REPOSITORY_DATA_BYTES + offset;
+      // JSON whitespace keeps the manifest valid at each size.
+      await fixture.write("web/package.json", "{}" + " ".repeat(size - 2));
+      const registry = await captureSnapshotRegistry(
+        await canonicalizeSnapshotRoot(fixture.root),
+      );
+      const result = readJson.readJsonData(registry, "web/package.json");
+      if (offset <= 0) await expect(result).resolves.toEqual({});
+      else {
+        let error: unknown;
+        try {
+          await result;
+        } catch (caught) {
+          error = caught;
+        }
+        expect(phaseFailure(error, "target-inspection", "index")).toMatchObject(
+          {
+            path: "web/package.json",
+            message: expect.stringContaining("16 MiB"),
+            remediation: expect.stringContaining("16 MiB"),
+          },
+        );
+      }
+    },
+  );
 });

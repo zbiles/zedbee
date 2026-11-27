@@ -17,7 +17,7 @@ export const HUSKY_ACTIVATION_NOTICE = Object.freeze({
   code: "HUSKY_DISPATCHER_INACTIVE" as const,
   message: "Swarm's Husky dispatcher is missing or inactive in this checkout.",
   remediation:
-    "Run the repository's hook setup in this checkout. With Husky 9, rerun zedbee init and commit the listed dispatchers for future worktrees.",
+    "Run the repository's hook setup in this checkout. To opt into tracked dispatchers for future worktrees, use zedbee init --hook tracked.",
 });
 
 export const SHARED_HUSKY_ACTIVATION_NOTICE = Object.freeze({
@@ -42,7 +42,40 @@ export const HUSKY_INSTALLATION_NOTICE = Object.freeze({
     "Restore this checkout's dependencies using the repository's package-manager instructions.",
 });
 
+const MANAGED_UPDATE_REASONS = {
+  "outdated-command": "refresh the installed CLI command",
+  "early-installation-check": "check for Swarm before other hook commands",
+  "duplicate-installation-check": "remove the repeated installation check",
+} as const;
+
+export type ManagedHookUpdateReason = keyof typeof MANAGED_UPDATE_REASONS;
+type ManagedHook = "pre-commit" | "pre-merge-commit";
+
+interface ManagedHookUpdateNotice {
+  readonly code: "HOOK_UPDATE_NEEDED";
+  readonly message: string;
+  readonly remediation: string;
+  readonly hookOwner?: "main-checkout";
+  readonly hook: ManagedHook;
+  readonly reason: ManagedHookUpdateReason;
+}
+
+export function managedHookUpdateNotice(
+  hook: ManagedHook,
+  reason: ManagedHookUpdateReason,
+  shared = false,
+): ManagedHookUpdateNotice {
+  const base = shared ? SHARED_HUSKY_UPDATE_NOTICE : HOOK_UPDATE_NOTICE;
+  return Object.freeze({
+    ...base,
+    message: `${base.message} Update ${hook} to ${MANAGED_UPDATE_REASONS[reason]}.`,
+    hook,
+    reason,
+  });
+}
+
 export type HookUpdateNotice =
+  | ManagedHookUpdateNotice
   | typeof HOOK_UPDATE_NOTICE
   | typeof SHARED_HUSKY_UPDATE_NOTICE
   | typeof HUSKY_ACTIVATION_NOTICE
@@ -59,6 +92,13 @@ export function hookUpdateNotice(report: {
   const shared = "hookOwner" in notice && notice.hookOwner === "main-checkout";
   switch (notice.code) {
     case "HOOK_UPDATE_NEEDED":
+      if (
+        "hook" in notice &&
+        "reason" in notice &&
+        (notice.hook === "pre-commit" || notice.hook === "pre-merge-commit") &&
+        Object.hasOwn(MANAGED_UPDATE_REASONS, notice.reason)
+      )
+        return managedHookUpdateNotice(notice.hook, notice.reason, shared);
       return shared ? SHARED_HUSKY_UPDATE_NOTICE : HOOK_UPDATE_NOTICE;
     case "HUSKY_DISPATCHER_INACTIVE":
       return shared ? SHARED_HUSKY_ACTIVATION_NOTICE : HUSKY_ACTIVATION_NOTICE;

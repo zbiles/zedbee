@@ -136,15 +136,9 @@ export function managedAutomaticFixFor(
 function exceedsCodePoints(value: string, limit: number): boolean {
   if (value.length <= limit) return false;
   let count = 0;
-  for (let index = 0; index < value.length; index += 1) {
+  for (const _character of value) {
     count += 1;
     if (count > limit) return true;
-    if (
-      value.charCodeAt(index) >= 0xd800 &&
-      value.charCodeAt(index) <= 0xdbff
-    ) {
-      index += 1;
-    }
   }
   return false;
 }

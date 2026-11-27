@@ -72,28 +72,35 @@ describe("release test hook outcome", () => {
   });
 });
 
-it("requires the immediate beta.21 predecessor for beta.22 evidence", () => {
-  const identity = {
-    commit: "a".repeat(40),
-    version: "0.1.0-beta.22",
-    sha256: "b".repeat(64),
-  };
-  const upgradedFrom = [
-    "0.1.0-beta.15",
-    "0.1.0-beta.18",
-    "0.1.0-beta.19",
-    "0.1.0-beta.20",
-  ];
-  expect(() =>
-    verifyUpgradeEvidence({ ...identity, upgradedFrom }, identity),
-  ).toThrow();
-  expect(() =>
-    verifyUpgradeEvidence(
-      { ...identity, upgradedFrom: [...upgradedFrom, "0.1.0-beta.21"] },
-      identity,
-    ),
-  ).not.toThrow();
-});
+it.each([
+  ["0.1.0-beta.21", "0.1.0-beta.22"],
+  ["0.1.0-beta.22", "0.1.0-beta.23"],
+])(
+  "requires the immediate %s predecessor for %s evidence",
+  (previous, version) => {
+    const identity = {
+      commit: "a".repeat(40),
+      version,
+      sha256: "b".repeat(64),
+    };
+    const upgradedFrom = [
+      "0.1.0-beta.15",
+      "0.1.0-beta.18",
+      "0.1.0-beta.19",
+      "0.1.0-beta.20",
+      ...(previous === "0.1.0-beta.22" ? ["0.1.0-beta.21"] : []),
+    ];
+    expect(() =>
+      verifyUpgradeEvidence({ ...identity, upgradedFrom }, identity),
+    ).toThrow();
+    expect(() =>
+      verifyUpgradeEvidence(
+        { ...identity, upgradedFrom: [...upgradedFrom, previous] },
+        identity,
+      ),
+    ).not.toThrow();
+  },
+);
 
 it("removes the owned upgrade fixture even if its first command fails", async () => {
   const repo = await createGitRepository();

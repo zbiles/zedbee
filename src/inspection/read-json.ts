@@ -7,7 +7,11 @@ import { identitiesMatch, type SnapshotRegistry } from "./snapshot-registry.js";
 import { RepositoryInspectionError } from "./types.js";
 import { decodeLosslessUtf8, InvalidUtf8Error } from "../core/utf8.js";
 import { capturedSourceInput } from "./source-capture.js";
-import { isContainedPath, normalizeRepositoryPath, unsafePath } from "./paths.js";
+import {
+  isContainedPath,
+  normalizeRepositoryPath,
+  unsafePath,
+} from "./paths.js";
 
 export { isContainedPath, normalizeRepositoryPath } from "./paths.js";
 
@@ -271,6 +275,8 @@ export async function readContainedFile(
           ? decodeLosslessUtf8(await handle.readFile())
           : handle.readFile({ encoding: "utf8" });
       }
+      if (size > BigInt(maxBytes))
+        throw new ContainedFileSizeError(repositoryPath, maxBytes);
       const bytes = await readBoundedBytes(handle, repositoryPath, maxBytes);
       return options.requireValidUtf8 === true
         ? decodeLosslessUtf8(bytes)

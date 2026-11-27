@@ -69,7 +69,7 @@ function readStringArray(value: unknown, path: string): readonly string[] {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     throw invalidData(path);
   }
-  return value;
+  return Object.freeze([...value]);
 }
 
 export function parsePackageManifest(
@@ -203,6 +203,8 @@ export function matchesWorkspacePattern(
   path: string,
   patterns: readonly string[],
 ): boolean {
+  if (!Object.isFrozen(patterns))
+    return compileWorkspacePatterns(patterns).matches(path);
   let compiled = compiledWorkspacePatterns.get(patterns);
   if (compiled === undefined) {
     compiled = compileWorkspacePatterns(patterns);
