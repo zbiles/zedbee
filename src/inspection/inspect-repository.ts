@@ -29,7 +29,7 @@ export const LOCKFILE_MANAGERS = {
 const LOCKFILE_PRECEDENCE = ["npm", "pnpm", "yarn", "bun"] as const;
 const SOURCE_EXTENSION = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/;
 const TSCONFIG_NAME = /^tsconfig.*\.json$/;
-const ENVIRONMENT_ORDER: readonly Environment[] = [
+export const ENVIRONMENT_ORDER: readonly Environment[] = [
   "javascript",
   "typescript",
   "react",

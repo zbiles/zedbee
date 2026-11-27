@@ -12,6 +12,7 @@ import {
   type ParseError,
 } from "jsonc-parser";
 import { CHECK_IDS, type CheckId } from "../config/schema.js";
+import { ENVIRONMENT_ORDER } from "../inspection/inspect-repository.js";
 import type { Environment, RepositoryInspection } from "../inspection/types.js";
 import { RECOMMENDED_AGENT_GUIDANCE } from "../reporting/agent-guidance.js";
 import { INIT_JSONC_EDIT_OPTIONS, OSV_NETWORK_DISCLOSURE } from "./types.js";
@@ -203,18 +204,6 @@ const PROFILE_CHECKS: Readonly<
   ]),
   thorough: new Set(CHECK_IDS),
 };
-const ENVIRONMENT_ORDER: readonly Environment[] = [
-  "javascript",
-  "typescript",
-  "react",
-  "react-dom",
-  "ink",
-  "next",
-  "remix",
-  "vitest",
-  "jest",
-  "testing-library",
-];
 
 export function initContentHash(contents: string): string {
   return createHash("sha256").update(contents, "utf8").digest("hex");
