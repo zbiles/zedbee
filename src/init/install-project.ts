@@ -8,6 +8,7 @@ import { discoverWorkspaces } from "../inspection/workspaces.js";
 import { resolveHookCommand } from "../hooks/command.js";
 import { isContainedPath } from "../inspection/paths.js";
 import { discoverProjectPrettierInRegistry } from "./prettier-discovery.js";
+import { LOCKFILE_MANAGERS } from "../inspection/inspect-repository.js";
 
 export interface ProjectInstallTarget {
   readonly projectRoot: string;
@@ -17,14 +18,10 @@ export interface ProjectInstallTarget {
   readonly workspaceRoot?: boolean;
 }
 
-const LOCKFILES = [
-  ["package-lock.json", "npm"],
-  ["npm-shrinkwrap.json", "npm"],
-  ["pnpm-lock.yaml", "pnpm"],
-  ["yarn.lock", "yarn"],
-  ["bun.lock", "bun"],
-  ["bun.lockb", "bun"],
-] as const;
+const LOCKFILES = Object.entries(LOCKFILE_MANAGERS) as readonly (readonly [
+  string,
+  ProjectInstallTarget["manager"],
+])[];
 
 export async function projectInstallTargets(
   repositoryRoot: string,
