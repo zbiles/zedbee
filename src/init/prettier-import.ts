@@ -22,6 +22,7 @@ import {
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import {
   discoverProjectPrettier,
+  EXECUTABLE_CONFIG_EXTENSIONS as EXECUTABLE_EXTENSIONS,
   type ProjectPrettierDiscovery,
 } from "./prettier-discovery.js";
 import { editorConfigImport } from "./prettier-editorconfig.js";
@@ -81,15 +82,6 @@ function configPrecedence(version: string): readonly string[] {
   if (semver.gte(version, "3.3.0")) return PACKAGE_YAML_CONFIG_PRECEDENCE;
   return LEGACY_CONFIG_PRECEDENCE;
 }
-
-const EXECUTABLE_EXTENSIONS = new Set([
-  ".js",
-  ".cjs",
-  ".mjs",
-  ".ts",
-  ".cts",
-  ".mts",
-]);
 
 export interface PrettierSettingsImportPreview {
   readonly pathExclusions?: readonly PathExclusion[];
