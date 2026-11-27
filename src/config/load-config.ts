@@ -247,12 +247,29 @@ export async function loadConfig(
   return parseConfigSource(source, configPath);
 }
 
+function parseJsonc(
+  source: string,
+  configPath: string,
+  parseErrors: ParseError[],
+): unknown {
+  try {
+    return parse(source, parseErrors, {
+      allowTrailingComma: true,
+      disallowComments: false,
+    });
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    throw new ConfigError(
+      "CONFIG_INVALID",
+      `Invalid Zedbee configuration at ${basename(configPath)}: values are nested too deeply.`,
+      configPath,
+    );
+  }
+}
+
 function parseConfigSource(source: string, configPath: string): ResolvedConfig {
   const parseErrors: ParseError[] = [];
-  const value: unknown = parse(source, parseErrors, {
-    allowTrailingComma: true,
-    disallowComments: false,
-  });
+  const value: unknown = parseJsonc(source, configPath, parseErrors);
 
   const firstParseError = parseErrors[0];
   if (firstParseError !== undefined) {
