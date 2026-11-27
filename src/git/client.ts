@@ -132,13 +132,16 @@ async function repositoryTrustRoot(path: string): Promise<string> {
   }
 }
 
-async function resolveGitCommand(
-  repositoryRoot: string,
-): Promise<ResolvedGitCommand> {
-  const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
+async function trustedPathDirectories(
+  canonicalRoot: string,
+): Promise<string[]> {
+  const candidates = await Promise.all(
+    pathValue(process.env)
+      .split(delimiter)
+      .map((entry) => canonicalDirectory(entry)),
+  );
   const safeDirectories: string[] = [];
-  for (const entry of pathValue(process.env).split(delimiter)) {
-    const directory = await canonicalDirectory(entry);
+  for (const directory of candidates) {
     if (
       directory === undefined ||
       isContainedPath(canonicalRoot, directory) ||
@@ -148,9 +151,18 @@ async function resolveGitCommand(
     }
     safeDirectories.push(directory);
   }
+  return safeDirectories;
+}
+
+async function resolveGitCommand(
+  repositoryRoot: string,
+): Promise<ResolvedGitCommand> {
+  const canonicalRoot = await repositoryTrustRoot(repositoryRoot);
+  const safeDirectories = await trustedPathDirectories(canonicalRoot);
+  const names = executableNames(process.env);
 
   for (const directory of safeDirectories) {
-    for (const name of executableNames(process.env)) {
+    for (const name of names) {
       const candidate = join(directory, name);
       try {
         const canonical = await realpath(candidate);
