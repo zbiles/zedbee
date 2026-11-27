@@ -49,7 +49,6 @@ import type {
 import { groupFilesByRules } from "./managed-config.js";
 import type { ManagedEslintOptions } from "./load-engine.js";
 
-
 type LintEslintEngineFactory = (
   options: ManagedEslintOptions,
 ) => Pick<ESLint, "lintFiles">;
@@ -91,6 +90,24 @@ function snapshotLabel(side: SnapshotSide, ref?: string | null): string {
   return typeof ref === "string" && /^(?:HEAD|[a-f0-9]{40,64})$/iu.test(ref)
     ? `${label} (${ref})`
     : label;
+}
+
+function lintEngineOptions(
+  prepared: PreparedLintSide,
+  group: PreparedLintSide["groups"][number],
+  batch: Readonly<{ files: readonly string[]; basic: boolean }>,
+): ManagedEslintOptions {
+  return {
+    cwd: prepared.canonicalRoot,
+    mode: "lint",
+    managedIgnores: [],
+    ruleOverrides: group.rules,
+    ...(batch.basic
+      ? { typeInformation: "basic" as const }
+      : prepared.typedProject === undefined
+        ? {}
+        : { typedProject: prepared.typedProject }),
+  };
 }
 
 function typedFailure(options: {
@@ -303,17 +320,7 @@ async function collectSide(
         MANAGED_TYPESCRIPT_PATH.test(path),
       );
       try {
-        const engine = engineFactory({
-          cwd: prepared.canonicalRoot,
-          mode: "lint",
-          managedIgnores: [],
-          ruleOverrides: group.rules,
-          ...(batch.basic
-            ? { typeInformation: "basic" as const }
-            : prepared.typedProject === undefined
-              ? {}
-              : { typedProject: prepared.typedProject }),
-        });
+        const engine = engineFactory(lintEngineOptions(prepared, group, batch));
         const results = await engine.lintFiles([...batch.files]);
         signal.throwIfAborted();
         for (const { file: path, result } of validatedBatchResults(
@@ -428,17 +435,7 @@ export function createLintAdapter(
                   checkId: "lint",
                   files: batch.files,
                   createEngine: () =>
-                    engineFactory({
-                      cwd: prepared.canonicalRoot,
-                      mode: "lint",
-                      managedIgnores: [],
-                      ruleOverrides: group.rules,
-                      ...(batch.basic
-                        ? { typeInformation: "basic" as const }
-                        : prepared.typedProject === undefined
-                          ? {}
-                          : { typedProject: prepared.typedProject }),
-                    }),
+                    engineFactory(lintEngineOptions(prepared, group, batch)),
                 },
                 findings,
               )),

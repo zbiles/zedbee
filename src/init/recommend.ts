@@ -209,6 +209,14 @@ export function initContentHash(contents: string): string {
   return createHash("sha256").update(contents, "utf8").digest("hex");
 }
 
+function terminalSafeLine(line: string): string {
+  return line.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (character) =>
+    character === "\t"
+      ? character
+      : `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`,
+  );
+}
+
 export function exactFilePreview(
   relativePath: string,
   before: string | null,
@@ -218,11 +226,11 @@ export function exactFilePreview(
   const beforeLines = previous.length === 0 ? [] : previous.split("\n");
   const afterLines = after.length === 0 ? [] : after.split("\n");
   return [
-    `--- ${relativePath}`,
-    `+++ ${relativePath}`,
+    `--- ${terminalSafeLine(relativePath)}`,
+    `+++ ${terminalSafeLine(relativePath)}`,
     "@@ exact before / after @@",
-    ...beforeLines.map((line) => `-${line}`),
-    ...afterLines.map((line) => `+${line}`),
+    ...beforeLines.map((line) => `-${terminalSafeLine(line)}`),
+    ...afterLines.map((line) => `+${terminalSafeLine(line)}`),
   ].join("\n");
 }
 

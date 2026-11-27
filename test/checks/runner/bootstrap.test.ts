@@ -126,3 +126,37 @@ it("loads the selected worker only after release and delivers the first request"
     await closed;
   }
 });
+
+it("reports a worker import failure with the original job identity", async () => {
+  const child = spawn(
+    process.execPath,
+    ["--import", import.meta.resolve("tsx"), entry],
+    {
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      serialization: "advanced",
+    },
+  );
+  const closed = once(child, "exit");
+  try {
+    expect((await once(child, "message"))[0]).toEqual({
+      type: "ready-for-ownership",
+    });
+    const reply = once(child, "message");
+    child.send({
+      type: "owned-start",
+      workerEntry: entry + ".missing",
+      request: { sessionId: "session", jobId: "job" },
+    });
+    expect((await reply)[0]).toEqual({
+      version: 1,
+      type: "result",
+      sessionId: "session",
+      jobId: "job",
+      response: { version: 1, ok: false, category: "startup" },
+    });
+    expect(await closed).toEqual([1, null]);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await closed;
+  }
+});

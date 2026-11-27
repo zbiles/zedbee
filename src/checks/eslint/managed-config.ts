@@ -96,20 +96,25 @@ export function groupFilesByRules(
       accessibilitySettings?: Readonly<AccessibilitySettings>;
     }
   >();
+  const validatedByInput = new Map<object, FileRuleGroup["rules"]>();
   for (const file of [...files].sort(compareCodeUnits)) {
     const policy = resolve(checkId as CheckId, file, side);
     if (policy.severity === "off" || !("rules" in policy)) continue;
-    const validatedRules = validateManagedRuleConfiguration(
-      checkId,
-      policy.rules,
-    );
-    const rules = Object.freeze(
-      Object.fromEntries(
-        Object.entries(validatedRules).sort(([left], [right]) =>
-          compareCodeUnits(left, right),
+    let rules = validatedByInput.get(policy.rules);
+    if (rules === undefined) {
+      const validated = validateManagedRuleConfiguration(checkId, policy.rules);
+      rules = Object.freeze(
+        Object.fromEntries(
+          Object.entries(validated).sort(([left], [right]) =>
+            compareCodeUnits(left, right),
+          ),
         ),
-      ),
-    );
+      );
+      // Resolved rule maps are frozen. A caller-supplied mutable policy must
+      // still be validated on every visit.
+      if (Object.isFrozen(policy.rules))
+        validatedByInput.set(policy.rules, rules);
+    }
     const accessibilitySettings =
       checkId === "reactAccessibility" && "settings" in policy
         ? validateAccessibilitySettings(policy.settings)

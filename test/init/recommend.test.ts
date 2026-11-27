@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { createInitProposal } from "../../src/init/recommend.js";
+import {
+  createInitProposal,
+  exactFilePreview,
+} from "../../src/init/recommend.js";
 import type { RepositoryInspection } from "../../src/inspection/types.js";
 
 function inspection(
@@ -338,4 +341,10 @@ it("preserves handwritten check policies and comments for untouched review and a
       changedChecks.length ? /"types":\s*"off"/u : /"types":\s*"error"/u,
     );
   }
+});
+
+it("renders control characters in file previews as visible text", () => {
+  expect(exactFilePreview("sample", null, "first\u001b[31m")).toContain(
+    "first\\u001b[31m",
+  );
 });

@@ -459,10 +459,22 @@ function smokeConsumerUpgrade({
     const jsPath = "web/added.js";
     writeFileSync(join(fixture, jsPath), "export const answer = 42;\n");
     git(["add", "--", jsPath]);
-    const output = git(["commit", "--no-gpg-sign", "-m", "Supervised JavaScript hook"], {combinedOutput: true});
-    const report = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
+    const output = git(
+      ["commit", "--no-gpg-sign", "-m", "Supervised JavaScript hook"],
+      { combinedOutput: true },
+    );
+    const report = JSON.parse(
+      output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1),
+    );
     assert.equal(report.outcome, "pass");
-    assert.ok(report.checks.some(check => check.checkId === "lint" && check.target === "web" && check.status === "completed"));
+    assert.ok(
+      report.checks.some(
+        (check) =>
+          check.checkId === "lint" &&
+          check.target === "web" &&
+          check.status === "completed",
+      ),
+    );
   }
   mkdirSync(join(fixture, "api"));
   writeFileSync(

@@ -477,9 +477,10 @@ function collectValidatedEntities(
     if (ordinal === 1) continue;
     const prefix = entityIdentityPrefix(entity.kind, entity.file);
     const payload = entity.identity.slice(prefix.length);
-    const qualified = payload === entity.name
-      ? `${entity.kind}=${encodeURIComponent(entity.name)}`
-      : payload;
+    const qualified =
+      payload === entity.name
+        ? `${entity.kind}=${encodeURIComponent(entity.name)}`
+        : payload;
     const identity = `${prefix}occurrence=${ordinal}/${qualified}`;
     replacements.set(entity, Object.freeze({ ...entity, identity }));
   }

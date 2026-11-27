@@ -64,8 +64,12 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
     }
     return index;
   });
-  const keys = [...new Set(indexes.flatMap((index) => [...index.keys()]))].sort(compareCodeUnits);
-  const parentEvidence = reports.map((report) => `merge-parent:${report.baseline}`);
+  const keys = [...new Set(indexes.flatMap((index) => [...index.keys()]))].sort(
+    compareCodeUnits,
+  );
+  const parentEvidence = reports.map(
+    (report) => `merge-parent:${report.baseline}`,
+  );
   return keys.map((key) => {
     const checks = indexes.map((index) => index.get(key));
     const present = checks.filter(
@@ -130,10 +134,9 @@ function mergeChecks(reports: readonly ScanReport[]): CheckResult[] {
         ...finding,
         attribution: {
           ...finding.attribution,
-          evidence: [
-            ...finding.attribution.evidence,
-            ...parentEvidence,
-          ].sort(compareCodeUnits),
+          evidence: [...finding.attribution.evidence, ...parentEvidence].sort(
+            compareCodeUnits,
+          ),
         },
       }));
     return {

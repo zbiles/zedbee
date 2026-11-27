@@ -10,7 +10,9 @@ export function checkErrorDetailFields(
       : { parseFailures: error.parseFailures }),
     ...(error.paths === undefined ? {} : { paths: [...error.paths] }),
     ...(error.snapshot === undefined ? {} : { snapshot: error.snapshot }),
-    ...(error.comparisonParent === undefined ? {} : { comparisonParent: error.comparisonParent }),
+    ...(error.comparisonParent === undefined
+      ? {}
+      : { comparisonParent: error.comparisonParent }),
     ...(error.projectPaths === undefined
       ? {}
       : { projectPaths: [...error.projectPaths] }),

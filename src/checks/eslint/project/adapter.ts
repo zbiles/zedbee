@@ -33,9 +33,7 @@ const readSources = async (root: string, files: readonly string[]) =>
     ),
   );
 
-function projectEslintIncomplete(
-  error: unknown,
-): CheckIncompleteError {
+function projectEslintIncomplete(error: unknown): CheckIncompleteError {
   return new CheckIncompleteError(
     error instanceof ProjectEslintFailureError
       ? {
@@ -53,28 +51,40 @@ function projectEslintIncomplete(
 }
 
 /** Reads only sources needed to relocate an observation, including renames. */
-export async function pairingSources(input: {
-  readonly baselineDir: string;
-  readonly targetDir: string;
-  readonly baselineFiles: readonly string[];
-  readonly targetFiles: readonly string[];
-  readonly baselineObservations: readonly Observation[];
-  readonly targetObservations: readonly Observation[];
-  readonly changeSet: CheckRunContext["changeSet"];
-}, read = readSources) {
-  if (input.baselineObservations.length === 0 || input.targetObservations.length === 0)
+export async function pairingSources(
+  input: {
+    readonly baselineDir: string;
+    readonly targetDir: string;
+    readonly baselineFiles: readonly string[];
+    readonly targetFiles: readonly string[];
+    readonly baselineObservations: readonly Observation[];
+    readonly targetObservations: readonly Observation[];
+    readonly changeSet: CheckRunContext["changeSet"];
+  },
+  read = readSources,
+) {
+  if (
+    input.baselineObservations.length === 0 ||
+    input.targetObservations.length === 0
+  )
     return { baseline: {}, target: {} };
   const renames = renamedPaths(input.changeSet.files);
   const baselineFiles = new Set(input.baselineFiles);
   const targetFiles = new Set(input.targetFiles);
-  const targetLocations = new Set(input.targetObservations.map(({ location }) => location?.file));
+  const targetLocations = new Set(
+    input.targetObservations.map(({ location }) => location?.file),
+  );
   const baselineNeeded = new Set<string>();
   const targetNeeded = new Set<string>();
   for (const { location } of input.baselineObservations) {
     if (location === undefined) continue;
     const file = location.file;
     const target = renames.get(file) ?? file;
-    if (!baselineFiles.has(file) || !targetFiles.has(target) || !targetLocations.has(target))
+    if (
+      !baselineFiles.has(file) ||
+      !targetFiles.has(target) ||
+      !targetLocations.has(target)
+    )
       continue;
     baselineNeeded.add(file);
     targetNeeded.add(target);
