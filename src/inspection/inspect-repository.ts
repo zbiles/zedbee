@@ -6,7 +6,7 @@ import {
   workspaceContainsFile,
   physicalWorkspaceOrder,
 } from "./workspace-owner.js";
-import { posix, relative, sep } from "node:path";
+import { posix, relative } from "node:path";
 import {
   canonicalizeSnapshotRoot,
   normalizeRepositoryPath,
@@ -291,7 +291,7 @@ export async function inspectRepository(
   for (const entry of registry.entries()) {
     if (entry.kind === "symlink" && entry.targetKind === "file")
       symlinkTargets.add(
-        relative(canonicalRoot, entry.canonicalPath).split(sep).join("/"),
+        normalizeRepositoryPath(relative(canonicalRoot, entry.canonicalPath)),
       );
   }
   const inspection: RepositoryInspection = {
