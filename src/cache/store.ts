@@ -30,6 +30,7 @@ import {
 } from "./dependency-inputs.js";
 
 const KEY = /^[a-f0-9]{64}$/u;
+const ENTRY_SUFFIX = ".json";
 
 const SCHEMA_VERSION = 3;
 
@@ -191,7 +192,7 @@ export class ObservationCacheStore implements ObservationCache {
 
   private path(key: string): string {
     if (!KEY.test(key)) throw new TypeError("Invalid observation cache key");
-    return join(this.root, `${key}.json`);
+    return join(this.root, `${key}${ENTRY_SUFFIX}`);
   }
 
   private async ensureRoot(): Promise<void> {
@@ -277,8 +278,10 @@ export class ObservationCacheStore implements ObservationCache {
   }
 
   private async prune(): Promise<void> {
-    const names = (await readdir(this.root)).filter((name) =>
-      /^[a-f0-9]{64}\.json$/u.test(name),
+    const names = (await readdir(this.root)).filter(
+      (name) =>
+        name.endsWith(ENTRY_SUFFIX) &&
+        KEY.test(name.slice(0, -ENTRY_SUFFIX.length)),
     );
     const entries = (
       await Promise.all(
