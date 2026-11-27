@@ -142,15 +142,15 @@ class ProjectFixFormattingOwner {
   }
 
   async closeFormatters(): Promise<boolean> {
+    const outcomes = await Promise.allSettled(
+      [...this.sessions.values()].map((session) => session.close()),
+    );
     let closed = true;
-    for (const session of this.sessions.values()) {
-      try {
-        await session.close();
-      } catch (error) {
-        closed = false;
-        this.cleanupFailed = true;
-        this.cleanupCause ??= error;
-      }
+    for (const outcome of outcomes) {
+      if (outcome.status === "fulfilled") continue;
+      closed = false;
+      this.cleanupFailed = true;
+      this.cleanupCause ??= outcome.reason;
     }
     return closed;
   }
