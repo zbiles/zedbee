@@ -184,7 +184,9 @@ async function collectSide(
       }
       let fallbackTokenHashes: ReadonlyMap<number, string> = new Map();
       if (missingFragments.length > 0) {
-        const registry = await captureSnapshotRegistry(canonicalRoot);
+        const registry = await captureSnapshotRegistry(canonicalRoot, [
+          ...new Set(missingFragments.map(({ location }) => location.file)),
+        ]);
         fallbackTokenHashes = await createFallbackTokenHashes(
           registry,
           missingFragments,
