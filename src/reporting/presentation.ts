@@ -114,6 +114,13 @@ function writeFailureWarning(): ReportMaintenanceWarning {
   });
 }
 
+function cleanupFailureWarning(): ReportMaintenanceWarning {
+  return Object.freeze({
+    code: "TEMP_REPORT_CLEANUP_FAILED",
+    message: "Temporary-report maintenance could not run.",
+  });
+}
+
 function maintenanceDiagnosticsField(
   maintained: TemporaryReportResult | undefined,
 ): {
@@ -149,7 +156,11 @@ export async function prepareTerminalPresentation(
   };
 
   if (!shouldPersist) {
-    const maintained = await options.store.maintain(maintenanceRequest);
+    const maintained = await options.store
+      .maintain(maintenanceRequest)
+      .catch((): TemporaryReportResult => ({
+        warnings: [cleanupFailureWarning()],
+      }));
     return presentation({
       automatic,
       reportStatus: "not-requested",
