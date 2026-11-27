@@ -36,6 +36,13 @@ function isRealDirectory(metadata: Stats): boolean {
   return metadata.isDirectory() && !metadata.isSymbolicLink();
 }
 
+/** Only this user may be able to add or replace cache entries. */
+function isPrivateDirectory(metadata: Stats): boolean {
+  if (!isRealDirectory(metadata)) return false;
+  if (process.platform === "win32" || process.getuid === undefined) return true;
+  return metadata.uid === process.getuid() && (metadata.mode & 0o022) === 0;
+}
+
 function isRegularFile(metadata: Stats): boolean {
   return metadata.isFile() && !metadata.isSymbolicLink();
 }
@@ -128,7 +135,11 @@ export function sanitizeCacheableObservationSet(
     target: sanitizeCheckTarget(input.target as CheckTarget),
     baselineObservations: Object.freeze(baselineObservations),
     targetObservations: Object.freeze(targetObservations),
-    ...(input.comparisonContext === undefined ? {} : { comparisonContext: sanitizeComparisonContext(input.comparisonContext) }),
+    ...(input.comparisonContext === undefined
+      ? {}
+      : {
+          comparisonContext: sanitizeComparisonContext(input.comparisonContext),
+        }),
     ...(dependencyInputs === undefined ? {} : { dependencyInputs }),
     ...(input.projectDelta === undefined
       ? {}
@@ -185,7 +196,7 @@ export class ObservationCacheStore implements ObservationCache {
   private async ensureRoot(): Promise<void> {
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const metadata = await lstat(this.root);
-    if (!isRealDirectory(metadata)) {
+    if (!isPrivateDirectory(metadata)) {
       throw new TypeError("Invalid observation cache root");
     }
   }
@@ -193,7 +204,7 @@ export class ObservationCacheStore implements ObservationCache {
   async get(key: string): Promise<CheckObservationSet | undefined> {
     try {
       const rootMetadata = await lstat(this.root);
-      if (!isRealDirectory(rootMetadata)) {
+      if (!isPrivateDirectory(rootMetadata)) {
         return undefined;
       }
       const path = this.path(key);
