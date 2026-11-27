@@ -43,6 +43,24 @@ async function configPath(
   return { supported: false };
 }
 
+async function installationDescription(
+  root: string,
+  project: string,
+): Promise<{ readonly text: string; readonly failed: boolean }> {
+  try {
+    const found = await resolveProjectEslintInstallation(root, project, root);
+    return { text: `ESLint ${found.version}`, failed: false };
+  } catch (error) {
+    return {
+      text:
+        error instanceof ProjectEslintFailureError
+          ? error.message
+          : "Installed dependencies could not be verified.",
+      failed: true,
+    };
+  }
+}
+
 /** All discovery is metadata/data only; never import native ESLint configuration. */
 export async function diagnoseProjectEslint(
   root: string,
@@ -70,30 +88,19 @@ export async function diagnoseProjectEslint(
     untrusted = false;
   for (const workspace of projects) {
     const project = workspace.relativeRoot;
-    const selected = await configPath(root, project);
-    const trusted =
-      invocationTrust ||
-      (await hasProjectEslintTrust(root, project, "execute"));
-    const messagesTrusted = await hasProjectEslintTrust(
-      root,
-      project,
-      "messages",
-    );
-    let installation: string;
-    try {
-      const found = await resolveProjectEslintInstallation(root, project, root);
-      installation = `ESLint ${found.version}`;
-    } catch (error) {
-      failed = true;
-      installation =
-        error instanceof ProjectEslintFailureError
-          ? error.message
-          : "Installed dependencies could not be verified.";
-    }
+    const [selected, trusted, messagesTrusted, installation] =
+      await Promise.all([
+        configPath(root, project),
+        invocationTrust ||
+          hasProjectEslintTrust(root, project, "execute"),
+        hasProjectEslintTrust(root, project, "messages"),
+        installationDescription(root, project),
+      ]);
+    if (installation.failed) failed = true;
     if (!selected.supported) failed = true;
     if (!trusted) untrusted = true;
     descriptions.push(
-      `${workspaceLabel(project)}: project engine (experimental); config ${selected.path ?? "missing"}${selected.supported ? "" : " (unsupported or absent)"}; ${installation}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
+      `${workspaceLabel(project)}: project engine (experimental); config ${selected.path ?? "missing"}${selected.supported ? "" : " (unsupported or absent)"}; ${installation.text}; execution trust ${trusted ? "granted" : "not granted"}; source-bearing messages ${messagesTrusted ? "permitted" : "not granted"}`,
     );
   }
   return {
