@@ -1,12 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  link,
-  lstat,
-  open,
-  readdir,
-  unlink,
-  type FileHandle,
-} from "node:fs/promises";
+import { link, lstat, open, readdir, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { validateTemporaryReportPath } from "./report-path.js";
 import {
@@ -18,6 +11,7 @@ import {
 import {
   readBoundedRegularFile,
   syncTemporaryReportDirectory,
+  writeSyncedAndClose,
 } from "./temporary-report-filesystem.js";
 import { LOCK_FILE_NAME } from "./temporary-report-lock.js";
 
@@ -319,15 +313,16 @@ export async function writeUniqueReport(
   warnings: ReportMaintenanceWarning[],
 ): Promise<{ readonly fileName: string; readonly path: string }> {
   const temporary = join(repositoryDirectory, `.report-${randomUUID()}.tmp`);
-  let handle: FileHandle | undefined = await open(temporary, "wx", 0o600);
+  const handle = await open(temporary, "wx", 0o600);
   let publishedPath: string | undefined;
   let cleanupAttempted = false;
   try {
-    await handle.chmod(0o600);
-    await handle.writeFile(json, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
+    await writeSyncedAndClose(
+      handle,
+      json,
+      "A report temporary file",
+      warnings,
+    );
 
     const stem = `zedbee-${reportKind}-${reportTimestamp(nowMs)}`;
     for (let attempt = 0; attempt < MAX_STATE_REPORTS; attempt += 1) {
@@ -356,14 +351,6 @@ export async function writeUniqueReport(
     }
     throw error;
   } finally {
-    await handle?.close().catch((closeError: unknown) => {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `A report temporary file could not be closed (${errorCode(closeError)}).`,
-        ),
-      );
-    });
     if (!cleanupAttempted) {
       await removeReportTemporary(temporary, repositoryDirectory, warnings);
     }

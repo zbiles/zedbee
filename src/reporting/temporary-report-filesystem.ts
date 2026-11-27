@@ -91,6 +91,33 @@ export async function syncTemporaryReportDirectory(
   }
 }
 
+export async function writeSyncedAndClose(
+  handle: FileHandle,
+  contents: string,
+  subject: string,
+  warnings: ReportMaintenanceWarning[],
+): Promise<void> {
+  let open = true;
+  try {
+    await handle.chmod(0o600);
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+    await handle.close();
+    open = false;
+  } finally {
+    if (open) {
+      await handle.close().catch((error: unknown) => {
+        warnings.push(
+          warning(
+            "TEMP_REPORT_CLEANUP_FAILED",
+            `${subject} could not be closed (${errorCode(error)}).`,
+          ),
+        );
+      });
+    }
+  }
+}
+
 export async function atomicReplace(
   directory: string,
   destination: string,
@@ -98,26 +125,19 @@ export async function atomicReplace(
   warnings: ReportMaintenanceWarning[],
 ): Promise<void> {
   const temporary = join(directory, `.write-${randomUUID()}.tmp`);
-  let handle: FileHandle | undefined = await open(temporary, "wx", 0o600);
+  const handle = await open(temporary, "wx", 0o600);
   let renamed = false;
   try {
-    await handle.chmod(0o600);
-    await handle.writeFile(contents, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = undefined;
+    await writeSyncedAndClose(
+      handle,
+      contents,
+      "An atomic temporary file",
+      warnings,
+    );
     await rename(temporary, destination);
     renamed = true;
     await syncTemporaryReportDirectory(directory);
   } finally {
-    await handle?.close().catch((error: unknown) => {
-      warnings.push(
-        warning(
-          "TEMP_REPORT_CLEANUP_FAILED",
-          `An atomic temporary file could not be closed (${errorCode(error)}).`,
-        ),
-      );
-    });
     if (!renamed) {
       await unlink(temporary).catch((error: unknown) => {
         if (errorCode(error) !== "ENOENT") {
