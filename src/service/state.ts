@@ -182,9 +182,9 @@ export class ServiceState {
     );
   }
   private async leaseFile(name: string, create: boolean): Promise<StateLease> {
-    await this.checkDirectory();
     const path = join(this.directory, name);
     if (process.platform === "win32") {
+      await this.checkDirectory();
       const lease = (await import("./windows-pipe.js")).openWindowsStateLease(
         path,
         create,
