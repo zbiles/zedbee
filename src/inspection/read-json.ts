@@ -129,6 +129,41 @@ export async function openWithoutFollowing(
   }
 }
 
+async function assertAncestorsUnchanged(
+  registry: SnapshotRegistry,
+  repositoryPath: string,
+): Promise<void> {
+  const components = normalizeRepositoryPath(repositoryPath).split("/");
+  const ancestors = [
+    ".",
+    ...components.map((_, index) => components.slice(0, index + 1).join("/")),
+  ];
+  const checks = await Promise.allSettled(
+    ancestors.map(async (ancestor) => {
+      const registeredAncestor = registry.resolve(ancestor);
+      if (registeredAncestor === undefined) {
+        throw unsafePath();
+      }
+      const currentIdentity = await lstat(
+        ancestor === "."
+          ? registry.snapshotRoot
+          : resolve(registry.snapshotRoot, ancestor),
+        { bigint: true },
+      );
+      if (
+        !identitiesMatch(currentIdentity, registeredAncestor.lexicalIdentity)
+      ) {
+        throw unsafePath();
+      }
+    }),
+  );
+  for (const check of checks) {
+    if (check.status === "rejected") {
+      throw check.reason;
+    }
+  }
+}
+
 async function withValidatedContainedFile<T>(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -162,26 +197,7 @@ async function withValidatedContainedFile<T>(
     ) {
       throw unsafePath();
     }
-    const components = normalizeRepositoryPath(repositoryPath).split("/");
-    const ancestors = [
-      ".",
-      ...components.map((_, index) => components.slice(0, index + 1).join("/")),
-    ];
-    for (const ancestor of ancestors) {
-      const registeredAncestor = registry.resolve(ancestor);
-      if (registeredAncestor === undefined) throw unsafePath();
-      const currentIdentity = await lstat(
-        ancestor === "."
-          ? registry.snapshotRoot
-          : resolve(registry.snapshotRoot, ancestor),
-        { bigint: true },
-      );
-      if (
-        !identitiesMatch(currentIdentity, registeredAncestor.lexicalIdentity)
-      ) {
-        throw unsafePath();
-      }
-    }
+    await assertAncestorsUnchanged(registry, repositoryPath);
     const currentCanonicalPath = await realpath(
       resolve(registry.snapshotRoot, repositoryPath),
     );
