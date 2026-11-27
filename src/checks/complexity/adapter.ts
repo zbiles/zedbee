@@ -369,26 +369,32 @@ function createComplexityAdapter(
           if (workspaceOwns(context, "target", pair.target.entity.file))
             donorPaths.add(pair.baseline.entity.file);
         }
-        const baseline = await collectSide(
-          context.snapshots.baselineDir,
-          context.baselineInspection,
-          context.target,
-          id,
-          metricName,
-          context.policyForFile,
-          "baseline",
-          donorPaths,
-        );
-        const target = await collectSide(
-          context.snapshots.targetDir,
-          context.targetInspection,
-          context.target,
-          id,
-          metricName,
-          context.policyForFile,
-          "target",
-          selectedChangedPaths(context, id, "target"),
-        );
+        const [baselineSide, targetSide] = await Promise.allSettled([
+          collectSide(
+            context.snapshots.baselineDir,
+            context.baselineInspection,
+            context.target,
+            id,
+            metricName,
+            context.policyForFile,
+            "baseline",
+            donorPaths,
+          ),
+          collectSide(
+            context.snapshots.targetDir,
+            context.targetInspection,
+            context.target,
+            id,
+            metricName,
+            context.policyForFile,
+            "target",
+            selectedChangedPaths(context, id, "target"),
+          ),
+        ]);
+        if (baselineSide.status === "rejected") throw baselineSide.reason;
+        if (targetSide.status === "rejected") throw targetSide.reason;
+        const baseline = baselineSide.value;
+        const target = targetSide.value;
         const movedIdentities = new Set(
           moves.pairs
             .filter(
