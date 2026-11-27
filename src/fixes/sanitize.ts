@@ -293,9 +293,10 @@ function snapshotScope(scope: FixCandidateScope): FixCandidateScope {
 
 function validateCandidateScope(
   candidate: CheckFixCandidate,
-  scope: FixCandidateScope,
+  checkId: string,
+  allowedFindingIds: ReadonlySet<string>,
 ): CheckFixCandidate {
-  if (candidate.checkId !== scope.checkId) {
+  if (candidate.checkId !== checkId) {
     throw new TypeError(
       "Expected fix candidate to belong to the dispatched check",
     );
@@ -304,7 +305,7 @@ function validateCandidateScope(
     candidate.kind === "exact-file"
       ? candidate.edits.map((edit) => edit.findingId)
       : candidate.findingIds;
-  if (findingIds.some((findingId) => !scope.findingIds.includes(findingId))) {
+  if (findingIds.some((findingId) => !allowedFindingIds.has(findingId))) {
     throw new TypeError(
       "Expected fix candidate findings to belong to the policy result",
     );
@@ -321,15 +322,24 @@ export function sanitizeFixCandidates(
   scope: FixCandidateScope,
 ): readonly CheckFixCandidate[] {
   const snapshot = snapshotScope(scope);
+  const allowedFindingIds: ReadonlySet<string> = new Set(snapshot.findingIds);
   return freeze(
     ownArray(candidates, "fix candidates").map((candidate) => {
       const input = record(candidate, "fix candidate");
       const kind = ownData(input, "kind");
       if (kind === "exact-file") {
-        return validateCandidateScope(sanitizeExactCandidate(input), snapshot);
+        return validateCandidateScope(
+          sanitizeExactCandidate(input),
+          snapshot.checkId,
+          allowedFindingIds,
+        );
       }
       if (kind === "format-file") {
-        return validateCandidateScope(sanitizeFormatCandidate(input), snapshot);
+        return validateCandidateScope(
+          sanitizeFormatCandidate(input),
+          snapshot.checkId,
+          allowedFindingIds,
+        );
       }
       throw new TypeError("Expected a supported fix candidate kind");
     }),
