@@ -171,6 +171,13 @@ export class TelemetryDetailsStore {
     }
     return entries;
   }
+  private unlinkEntry(name: string): void {
+    try {
+      unlinkSync(join(this.path, name));
+    } catch {
+      /* A vanished or busy entry cannot stop the rest of the cleanup. */
+    }
+  }
   remove(ids: readonly string[]): void {
     const names = new Set(
       ids
@@ -179,13 +186,12 @@ export class TelemetryDetailsStore {
     );
     try {
       for (const entry of this.entries())
-        if (names.has(entry.name)) unlinkSync(join(this.path, entry.name));
+        if (names.has(entry.name)) this.unlinkEntry(entry.name);
     } catch {}
   }
   clear(): void {
     try {
-      for (const entry of this.entries())
-        unlinkSync(join(this.path, entry.name));
+      for (const entry of this.entries()) this.unlinkEntry(entry.name);
     } catch {}
   }
   prune(pendingIds?: readonly string[]): void {
