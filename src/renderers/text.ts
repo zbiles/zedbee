@@ -88,7 +88,9 @@ const PRIMARY_TEXT_HEADINGS = new Set([
 ]);
 
 const FINDING_TEXT_LABELS: readonly string[] = [
-  ...new Set([...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId))),
+  ...new Set(
+    [...CHECK_IDS, "zedbee"].map((checkId) => findingCheckLabel(checkId)),
+  ),
 ];
 
 const FIX_LABEL_PATTERN = /^(\s*Fix:)(.*)$/u;
@@ -296,21 +298,13 @@ function disclosureSentenceLines(
   );
 }
 
-function disclosureLines(report: ScanReport, width: number): string[] {
-  if (report.networkDisclosures.length === 0) return [];
-  return [
-    "",
-    "NETWORK DISCLOSURE",
-    ...disclosureSentenceLines(report.networkDisclosures, width),
-  ];
-}
-
 function disclosureSectionLines(
+  heading: "NETWORK DISCLOSURE" | "DISCLOSURES",
   disclosures: ScanReport["networkDisclosures"],
   width: number,
 ): string[] {
   if (disclosures.length === 0) return [];
-  return ["", "DISCLOSURES", ...disclosureSentenceLines(disclosures, width)];
+  return ["", heading, ...disclosureSentenceLines(disclosures, width)];
 }
 
 function warningBodyLines(
@@ -514,7 +508,7 @@ function automaticTextLines(
     ...sections.previewNotes.flatMap((line) => wrapWords(line, width)),
     ...projectEslintNotices(report).flatMap((line) => wrapWords(line, width)),
     ...skippedReasonLines(sanitized.checks, width),
-    ...disclosureSectionLines(sections.disclosures, width),
+    ...disclosureSectionLines("DISCLOSURES", sections.disclosures, width),
     ...reportWarningsSectionLines(sections.reportWarnings, width),
     ...incompleteSectionLines(sections.incompleteChecks, width),
     "",
@@ -625,7 +619,11 @@ export function renderText(
       width,
     ),
     ...renderedFindings(displayedFindings, width, options.verbose === true),
-    ...disclosureLines(report, width),
+    ...disclosureSectionLines(
+      "NETWORK DISCLOSURE",
+      report.networkDisclosures,
+      width,
+    ),
     ...completeManagedFixLines(
       sanitized.summaryFindings,
       width,
