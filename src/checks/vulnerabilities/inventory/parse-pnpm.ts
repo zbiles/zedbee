@@ -1,5 +1,6 @@
 import {
   isCollection,
+  isMap,
   isNode,
   isPair,
   isScalar,
@@ -24,6 +25,7 @@ import type { DependencyInventory, DependencyRecord } from "./types.js";
 import {
   parseYamlLockfileDocument,
   readYamlLockfileData,
+  type YamlLockfileDocument,
 } from "./yaml-document.js";
 
 function validateYamlTree(root: Node | null): void {
@@ -101,6 +103,19 @@ function directContexts(data: Record<string, unknown>, format: "6.0" | "9.0") {
   return contexts;
 }
 
+function packageValueOffsets(document: YamlLockfileDocument): ReadonlyMap<string, number> {
+  const offsets = new Map<string, number>();
+  const packages = document.get("packages", true);
+  if (!isMap(packages)) return offsets;
+  for (const pair of packages.items) {
+    if (!isScalar(pair.key) || typeof pair.key.value !== "string") continue;
+    if (offsets.has(pair.key.value)) continue;
+    const value = pair.value;
+    if (isNode(value) && value.range != null) offsets.set(pair.key.value, value.range[0]);
+  }
+  return offsets;
+}
+
 export function parsePnpmLockfile(contents: string, repositoryPath: string): DependencyInventory {
   const lockfilePath = validateLockfileInput(contents, repositoryPath);
   const document = parseYamlLockfileDocument(contents, "pnpm");
@@ -113,12 +128,13 @@ export function parsePnpmLockfile(contents: string, repositoryPath: string): Dep
   }
   const packages = plainRecord(data.packages ?? {}, "The pnpm lockfile packages must be an object.");
   const positions = createSourcePositionIndex(contents);
+  const offsets = packageValueOffsets(document);
   const contexts = directContexts(data, format);
   const records: DependencyRecord[] = [];
   for (const key of Object.keys(packages)) {
     const { name, version } = locatorPackage(key);
-    const node = document.getIn(["packages", key], true) as Node | undefined;
-    const line = node?.range == null ? undefined : positions.lineAt(node.range[0]);
+    const offset = offsets.get(key);
+    const line = offset === undefined ? undefined : positions.lineAt(offset);
     const matches = contexts.get(`${name}\0${version}`) ?? [];
     const scopes = matches.length === 0 ? [{ dependencyPath: Object.freeze([name]) }] : matches;
     for (const scope of scopes) {
