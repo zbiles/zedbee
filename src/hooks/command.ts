@@ -88,20 +88,30 @@ async function installationCandidates(repositoryRoot: string) {
   return { root, projects, declared };
 }
 
-export async function resolveHookCommand(
-  repositoryRoot: string,
+async function firstInstallation(
+  root: string,
+  declared: ReadonlyArray<{ readonly relativeRoot: string }>,
   hookName: ScanHookName = "pre-commit",
-): Promise<string> {
-  const { root, projects, declared } =
-    await installationCandidates(repositoryRoot);
+): Promise<Awaited<ReturnType<typeof installedCommand>>> {
   for (const project of declared) {
     const installation = await installedCommand(
       root,
       project.relativeRoot,
       hookName,
     );
-    if (installation !== undefined) return installation.command;
+    if (installation !== undefined) return installation;
   }
+  return undefined;
+}
+
+export async function resolveHookCommand(
+  repositoryRoot: string,
+  hookName: ScanHookName = "pre-commit",
+): Promise<string> {
+  const { root, projects, declared } =
+    await installationCandidates(repositoryRoot);
+  const installation = await firstInstallation(root, declared, hookName);
+  if (installation !== undefined) return installation.command;
   const candidates = declared.length > 0 ? declared : projects;
   const location =
     candidates.length === 0
@@ -122,13 +132,10 @@ export async function resolveInstalledCliCommand(
   repositoryRoot: string,
 ): Promise<readonly string[] | undefined> {
   const { root, declared } = await installationCandidates(repositoryRoot);
-  for (const project of declared) {
-    const installation = await installedCommand(root, project.relativeRoot);
-    if (installation !== undefined) {
-      return Object.freeze(["node", installation.cliPath]);
-    }
-  }
-  return undefined;
+  const installation = await firstInstallation(root, declared);
+  return installation === undefined
+    ? undefined
+    : Object.freeze(["node", installation.cliPath]);
 }
 
 /** Resolve the schema beside the same declared installation used for hooks. */
@@ -136,27 +143,20 @@ export async function resolveLocalSchemaReference(
   repositoryRoot: string,
 ): Promise<string | undefined> {
   const { root, declared } = await installationCandidates(repositoryRoot);
-  for (const project of declared) {
-    const installation = await installedCommand(root, project.relativeRoot);
-    if (installation === undefined) continue;
-    const schema = join(
-      installation.packageRoot,
-      "schema",
-      "zedbee.schema.json",
-    );
-    try {
-      if (
-        !(await stat(schema)).isFile() ||
-        !isContainedPath(
-          await realpath(installation.packageRoot),
-          await realpath(schema),
-        )
+  const installation = await firstInstallation(root, declared);
+  if (installation === undefined) return undefined;
+  const schema = join(installation.packageRoot, "schema", "zedbee.schema.json");
+  try {
+    if (
+      !(await stat(schema)).isFile() ||
+      !isContainedPath(
+        await realpath(installation.packageRoot),
+        await realpath(schema),
       )
-        return undefined;
-      return `./${relative(root, schema).split(sep).join("/")}`;
-    } catch {
+    )
       return undefined;
-    }
+    return `./${relative(root, schema).split(sep).join("/")}`;
+  } catch {
+    return undefined;
   }
-  return undefined;
 }
