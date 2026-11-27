@@ -6,6 +6,7 @@ import {
 } from "../../cache/dependency-inputs.js";
 import type { AnalysisSourceCaptureTransport } from "../../inspection/source-capture.js";
 import type { ManagedKnipConfig } from "./managed-config.js";
+import { MAX_KNIP_REPORT_BYTES } from "./parse-report.js";
 
 export interface KnipJob {
   readonly context: DependencyCaptureContext;
@@ -35,7 +36,7 @@ export function sanitizeKnipReply(value: unknown): {
     value.report === null ||
     !("issues" in value.report) ||
     !Array.isArray(value.report.issues) ||
-    Buffer.byteLength(JSON.stringify(value.report)) > 64 * 1024 * 1024
+    Buffer.byteLength(JSON.stringify(value.report)) > MAX_KNIP_REPORT_BYTES
   )
     throw new TypeError("Invalid Knip report");
   const metadata =

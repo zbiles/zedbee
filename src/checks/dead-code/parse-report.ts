@@ -17,6 +17,8 @@ export const ISSUE_TYPES = [
   "duplicates",
 ] as const;
 
+export const MAX_KNIP_REPORT_BYTES = 64 * 1024 * 1024;
+
 type IssueType = (typeof ISSUE_TYPES)[number];
 
 const MESSAGES: Readonly<Record<IssueType, string>> = {
