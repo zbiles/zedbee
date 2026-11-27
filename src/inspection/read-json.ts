@@ -283,6 +283,21 @@ export async function readContainedBytes(
   );
 }
 
+async function decodeUtf8Chunks(
+  handle: FileHandle,
+  consume: (text: string) => void,
+  finished: () => boolean,
+): Promise<void> {
+  const decoder = new StringDecoder("utf8");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  while (!finished()) {
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+    if (bytesRead === 0) break;
+    consume(decoder.write(buffer.subarray(0, bytesRead)));
+  }
+  if (!finished()) consume(decoder.end());
+}
+
 export async function readContainedLines(
   registry: SnapshotRegistry,
   repositoryPath: string,
@@ -311,7 +326,6 @@ export async function readContainedLines(
     options,
     async (handle) => {
       const result = new Map<number, string>();
-      const decoder = new StringDecoder("utf8");
       let line = 1;
       let retained: string[] = [];
       let retainedCodePoints = 0;
@@ -355,17 +369,9 @@ export async function readContainedLines(
         }
       };
 
-      while (!finished) {
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        consume(decoder.write(buffer.subarray(0, bytesRead)));
-      }
-      if (!finished) {
-        consume(decoder.end());
-        if (!finished && requested.has(line)) {
-          result.set(line, retained.join(""));
-        }
+      await decodeUtf8Chunks(handle, consume, () => finished);
+      if (!finished && requested.has(line)) {
+        result.set(line, retained.join(""));
       }
       return result;
     },
@@ -392,7 +398,6 @@ export async function digestContainedLineRange(
     {},
     async (handle) => {
       const hash = createHash("sha256");
-      const decoder = new StringDecoder("utf8");
       let line = 1;
       let skipLineFeed = false;
       let finished = false;
@@ -422,13 +427,7 @@ export async function digestContainedLineRange(
         }
       };
 
-      while (!finished) {
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
-        if (bytesRead === 0) break;
-        consume(decoder.write(buffer.subarray(0, bytesRead)));
-      }
-      if (!finished) consume(decoder.end());
+      await decodeUtf8Chunks(handle, consume, () => finished);
       return hash.digest("hex");
     },
   );
