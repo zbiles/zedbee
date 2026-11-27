@@ -35,6 +35,7 @@ import { sameCheckTarget } from "./sanitize-target.js";
 import type { AdapterSnapshot } from "./dispatch-adapter.js";
 import type { DispatchContext } from "./dispatch-context.js";
 import type { DispatchOptions } from "./dispatcher.js";
+import { COMPILER_SOURCE as REACT_COMPLEXITY_SOURCE_PATH } from "./compiler-paths.js";
 
 function cacheInspection(
   inspection: RepositoryInspection,
@@ -65,7 +66,6 @@ function cacheInspection(
 }
 
 const LINT_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/u;
-const REACT_COMPLEXITY_SOURCE_PATH = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
 const FILE_BEHAVIOR_CHECKS = new Set<CheckId>([
   "lint",
   "cyclomaticComplexity",

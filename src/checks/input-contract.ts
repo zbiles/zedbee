@@ -1,5 +1,9 @@
 import type { CheckId } from "../config/schema.js";
 import { isSupportedPrettierPath } from "./prettier/supported-path.js";
+import {
+  COMPILER_SOURCE as JAVASCRIPT_SOURCE,
+  TYPESCRIPT_SOURCE,
+} from "./compiler-paths.js";
 
 export type ArtifactKind =
   | "text"
@@ -13,8 +17,6 @@ export interface CheckInputContract {
   readonly acceptedArtifacts: ReadonlySet<ArtifactKind>;
 }
 
-const JAVASCRIPT_SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT_SOURCE = /\.(?:ts|tsx|mts|cts)$/iu;
 const VULNERABILITY_LOCKFILE =
   /(?:^|\/)(?:package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lock|bun\.lockb)$/u;
 

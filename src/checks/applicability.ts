@@ -23,9 +23,10 @@ import {
   compilerInputRelevance,
   hasTypeScriptInputs,
 } from "./compiler-inputs.js";
-
-const SOURCE = /\.(?:js|jsx|mjs|cjs|ts|tsx|mts|cts)$/iu;
-const TYPESCRIPT = /\.(?:ts|tsx|mts|cts)$/iu;
+import {
+  COMPILER_SOURCE as SOURCE,
+  TYPESCRIPT_SOURCE as TYPESCRIPT,
+} from "./compiler-paths.js";
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set(
   IGNORED_DIRECTORY_NAMES,
 );
