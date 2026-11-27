@@ -115,9 +115,6 @@ async function readTextSource(
     if (!(error instanceof ContainedFileSizeError)) throw error;
     throw secretFileTooLarge(repositoryPath);
   }
-  if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
-    throw secretFileTooLarge(repositoryPath);
-  }
   if (content.includes("\u0000")) return undefined;
   if (content.includes("\ufffd")) {
     throw new SecretContentError({
@@ -128,6 +125,9 @@ async function readTextSource(
       remediation:
         "Convert the selected target file to valid UTF-8 text and retry.",
     });
+  }
+  if (Buffer.byteLength(content, "utf8") > MAX_SECRET_FILE_BYTES) {
+    throw secretFileTooLarge(repositoryPath);
   }
   return Object.freeze({ content, reportPath: repositoryPath, identityPath });
 }
