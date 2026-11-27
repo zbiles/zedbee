@@ -20,6 +20,10 @@ export function emptyChangesCopy(report: ScanReport): string {
     : "No staged changes. Commit allowed.";
 }
 
+export function changedScopeLabel(mode: ScanReport["mode"]): string {
+  return mode === "base" ? "selected committed changes" : "staged changes";
+}
+
 export function selectedChangesLine(report: ScanReport): string | undefined {
   if (report.changeSummary === undefined || report.mergeParents !== undefined)
     return undefined;
