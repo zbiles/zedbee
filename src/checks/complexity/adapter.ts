@@ -269,6 +269,58 @@ export async function collectComplexityObservations(
   return observationsFromMessages(file, source, messages, limit);
 }
 
+function candidateSourcePaths(
+  inspection: RepositoryInspection,
+  target: CheckTarget,
+  side: SnapshotSide,
+  selectedPaths: ReadonlySet<string>,
+): Set<string> {
+  const workspace = findWorkspace(inspection, target.relativeRoot);
+  const candidates = new Set(workspace?.sourceFiles ?? []);
+  if (side === "baseline") {
+    for (const owner of inspection.workspaces) {
+      for (const file of owner.sourceFiles) {
+        if (selectedPaths.has(file)) candidates.add(file);
+      }
+    }
+  }
+  return candidates;
+}
+
+function complexityFileLimits(
+  candidates: Iterable<string>,
+  checkId: "cyclomaticComplexity" | "readabilityComplexity",
+  side: SnapshotSide,
+  selectedPaths: ReadonlySet<string>,
+  policyForFile: FilePolicyResolver,
+): Map<string, number> {
+  const limits = new Map<string, number>();
+  for (const path of candidates) {
+    if (!MANAGED_SOURCE_PATH.test(path)) continue;
+    const policy = policyForFile(checkId, path, side);
+    if (
+      policy.severity === "off" ||
+      !(selectedPaths.has(path) || policy.when === "always")
+    ) {
+      continue;
+    }
+    limits.set(path, (policy as ResolvedComplexityPolicy).max);
+  }
+  return limits;
+}
+
+function fileMetricObservations(
+  file: string,
+  source: string,
+  messages: readonly LinterTypes.LintMessage[],
+  metricName: ComplexityMetricName,
+  limit: number,
+): Observation[] {
+  return observationsFromMessages(file, source, messages, limit).filter(
+    ({ metric }) => metric?.name === metricName,
+  );
+}
+
 async function collectSide(
   snapshotRoot: string,
   inspection: RepositoryInspection,
@@ -282,25 +334,20 @@ async function collectSide(
   const canonicalRoot = await canonicalizeSnapshotRoot(snapshotRoot);
   if (canonicalRoot !== inspection.snapshotRoot)
     throw new Error("Complexity analysis failed.");
-  const workspace = findWorkspace(inspection, target.relativeRoot);
-  const candidates = new Set(workspace?.sourceFiles ?? []);
-  if (side === "baseline") {
-    for (const owner of inspection.workspaces) {
-      for (const file of owner.sourceFiles) {
-        if (selectedPaths.has(file)) candidates.add(file);
-      }
-    }
-  }
-  const files = [...candidates]
-    .filter((path) => MANAGED_SOURCE_PATH.test(path))
-    .filter((path) => {
-      const policy = policyForFile(checkId, path, side);
-      return (
-        policy.severity !== "off" &&
-        (selectedPaths.has(path) || policy.when === "always")
-      );
-    })
-    .sort(compareCodeUnits);
+  const candidates = candidateSourcePaths(
+    inspection,
+    target,
+    side,
+    selectedPaths,
+  );
+  const limits = complexityFileLimits(
+    candidates,
+    checkId,
+    side,
+    selectedPaths,
+    policyForFile,
+  );
+  const files = [...limits.keys()].sort(compareCodeUnits);
   if (files.length === 0) return { observations: [], files: {} };
   const engine = createManagedEslint({
     cwd: canonicalRoot,
@@ -320,14 +367,14 @@ async function collectSide(
       throw new Error("Complexity analysis failed.");
     sources[file] = result.source;
     try {
-      const policy = policyForFile(checkId, file, side);
       observations.push(
-        ...observationsFromMessages(
+        ...fileMetricObservations(
           file,
           result.source,
           result.messages,
-          (policy as ResolvedComplexityPolicy).max,
-        ).filter(({ metric }) => metric?.name === metricName),
+          metricName,
+          limits.get(file) ?? Number.POSITIVE_INFINITY,
+        ),
       );
     } catch (error) {
       throw new CheckIncompleteError({
