@@ -160,6 +160,73 @@ function hasOnlyKeys(value: object, expected: readonly string[]): boolean {
   );
 }
 
+async function legacyReportCreatedAtMs(
+  path: string | undefined,
+  nowMs: number,
+): Promise<number> {
+  if (path === undefined) return nowMs;
+  try {
+    const metadata = await lstat(path);
+    const mtimeMs = Math.floor(metadata.mtimeMs);
+    if (
+      metadata.isFile() &&
+      !metadata.isSymbolicLink() &&
+      Number.isSafeInteger(mtimeMs) &&
+      mtimeMs >= 0
+    ) {
+      return Math.min(mtimeMs, nowMs);
+    }
+  } catch {
+    // Preserve the tracked entry with a fresh age; cleanup validates it later.
+  }
+  return nowMs;
+}
+
+async function migrateLegacyState(
+  repositoryDirectory: string,
+  parsed: LegacyReportLifecycleState,
+  nowMs: number,
+): Promise<ReportLifecycleState> {
+  const reports: ReportLifecycleState["reports"][number][] = [];
+  for (const report of parsed.reports) {
+    reports.push({
+      fileName: report.fileName,
+      createdAtMs: await legacyReportCreatedAtMs(
+        trackedReportPath(repositoryDirectory, report.fileName),
+        nowMs,
+      ),
+    });
+  }
+  return { schemaVersion: 2, reports };
+}
+
+async function recoveredState(
+  repositoryDirectory: string,
+  error: unknown,
+  warnings: ReportMaintenanceWarning[],
+  diagnostics?: ReportMaintenanceDiagnostics,
+): Promise<ReportLifecycleState> {
+  if (errorCode(error) === "ENOENT") {
+    const entries = await readdir(repositoryDirectory).catch(() => undefined);
+    if (
+      entries !== undefined &&
+      entries.length === 1 &&
+      entries[0] === LOCK_FILE_NAME
+    ) {
+      if (diagnostics) diagnostics.state = "new";
+      return { schemaVersion: 2, reports: [] };
+    }
+  }
+  if (diagnostics) diagnostics.state = "recovered";
+  warnings.push(
+    warning(
+      "TEMP_REPORT_CLEANUP_FAILED",
+      `Temporary-report lifecycle state was unavailable (${errorCode(error)}); unknown entries were left untouched.`,
+    ),
+  );
+  return { schemaVersion: 2, reports: [] };
+}
+
 export async function loadState(
   repositoryDirectory: string,
   warnings: ReportMaintenanceWarning[],
@@ -178,48 +245,9 @@ export async function loadState(
       return parsed;
     }
     if (diagnostics) diagnostics.state = "migrated";
-    const reports: ReportLifecycleState["reports"][number][] = [];
-    for (const report of parsed.reports) {
-      const path = trackedReportPath(repositoryDirectory, report.fileName);
-      let createdAtMs = nowMs;
-      if (path !== undefined) {
-        try {
-          const metadata = await lstat(path);
-          if (
-            metadata.isFile() &&
-            !metadata.isSymbolicLink() &&
-            Number.isSafeInteger(metadata.mtimeMs) &&
-            metadata.mtimeMs >= 0
-          ) {
-            createdAtMs = Math.min(metadata.mtimeMs, nowMs);
-          }
-        } catch {
-          // Preserve the tracked entry with a fresh age; cleanup validates it later.
-        }
-      }
-      reports.push({ fileName: report.fileName, createdAtMs });
-    }
-    return { schemaVersion: 2, reports };
+    return await migrateLegacyState(repositoryDirectory, parsed, nowMs);
   } catch (error) {
-    if (errorCode(error) === "ENOENT") {
-      const entries = await readdir(repositoryDirectory).catch(() => undefined);
-      if (
-        entries !== undefined &&
-        entries.length === 1 &&
-        entries[0] === LOCK_FILE_NAME
-      ) {
-        if (diagnostics) diagnostics.state = "new";
-        return { schemaVersion: 2, reports: [] };
-      }
-    }
-    if (diagnostics) diagnostics.state = "recovered";
-    warnings.push(
-      warning(
-        "TEMP_REPORT_CLEANUP_FAILED",
-        `Temporary-report lifecycle state was unavailable (${errorCode(error)}); unknown entries were left untouched.`,
-      ),
-    );
-    return { schemaVersion: 2, reports: [] };
+    return recoveredState(repositoryDirectory, error, warnings, diagnostics);
   }
 }
 
