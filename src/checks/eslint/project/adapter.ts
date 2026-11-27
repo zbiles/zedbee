@@ -50,18 +50,25 @@ function projectEslintIncomplete(error: unknown): CheckIncompleteError {
   );
 }
 
+type PairingSourcesInput = {
+  readonly baselineDir: string;
+  readonly targetDir: string;
+  readonly baselineFiles: readonly string[];
+  readonly targetFiles: readonly string[];
+  readonly baselineObservations: readonly Observation[];
+  readonly targetObservations: readonly Observation[];
+  readonly changeSet: CheckRunContext["changeSet"];
+};
+
+type PairingSourcesReader = (
+  root: string,
+  files: readonly string[],
+) => Promise<Record<string, string>>;
+
 /** Reads only sources needed to relocate an observation, including renames. */
 export async function pairingSources(
-  input: {
-    readonly baselineDir: string;
-    readonly targetDir: string;
-    readonly baselineFiles: readonly string[];
-    readonly targetFiles: readonly string[];
-    readonly baselineObservations: readonly Observation[];
-    readonly targetObservations: readonly Observation[];
-    readonly changeSet: CheckRunContext["changeSet"];
-  },
-  read = readSources,
+  input: PairingSourcesInput,
+  read: PairingSourcesReader = readSources,
 ) {
   if (
     input.baselineObservations.length === 0 ||
@@ -89,10 +96,11 @@ export async function pairingSources(
     baselineNeeded.add(file);
     targetNeeded.add(target);
   }
-  return {
-    baseline: await read(input.baselineDir, [...baselineNeeded].sort()),
-    target: await read(input.targetDir, [...targetNeeded].sort()),
-  };
+  const [baseline, target] = await Promise.all([
+    read(input.baselineDir, [...baselineNeeded].sort()),
+    read(input.targetDir, [...targetNeeded].sort()),
+  ]);
+  return { baseline, target };
 }
 
 async function hasConfiguration(
