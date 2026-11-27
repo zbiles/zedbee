@@ -1,11 +1,12 @@
 import { realpath } from "node:fs/promises";
-import { isAbsolute, join, posix, relative, sep } from "node:path";
+import { join, posix } from "node:path";
 import { execa } from "execa";
 import { installArguments, installDependency } from "./install-dependency.mjs";
 import { ZEDBEE_VERSION } from "../core/package-version.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 import { resolveHookCommand } from "../hooks/command.js";
+import { isContainedPath } from "../inspection/paths.js";
 import { discoverProjectPrettierInRegistry } from "./prettier-discovery.js";
 
 export interface ProjectInstallTarget {
@@ -95,8 +96,7 @@ export async function installProjectDependency(
 ): Promise<void> {
   const root = await realpath(repositoryRoot);
   const cwd = await realpath(join(root, target.projectRoot));
-  const path = relative(root, cwd);
-  if (isAbsolute(path) || path === ".." || path.startsWith(`..${sep}`)) {
+  if (!isContainedPath(root, cwd)) {
     throw new Error("The selected project folder leaves this repository.");
   }
   const current = (await projectInstallTargets(root, [target.projectRoot]))[0];
