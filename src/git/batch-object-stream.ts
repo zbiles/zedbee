@@ -1,6 +1,6 @@
+import { isGitObjectId } from "./base-ref.js";
 import { GitCommandError } from "./errors.js";
 
-const OBJECT_ID = /^(?:[\da-f]{40}|[\da-f]{64})$/u;
 const BATCH_HEADER = /^([\da-f]{40}|[\da-f]{64}) blob (0|[1-9]\d*)$/u;
 const MAX_BATCH_HEADER_BYTES = 160;
 
@@ -114,7 +114,7 @@ export async function consumeGitBatchBlobOutput(
   expectedObjectIds: readonly string[],
   visit: GitBlobVisitor,
 ): Promise<void> {
-  if (expectedObjectIds.some((objectId) => !OBJECT_ID.test(objectId))) {
+  if (expectedObjectIds.some((objectId) => !isGitObjectId(objectId))) {
     return protocolFailure();
   }
   const reader = new ByteReader(source);
