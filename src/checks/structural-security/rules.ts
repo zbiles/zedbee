@@ -409,15 +409,22 @@ function isRequestOptions(
   );
 }
 
+const EMPTY_CREDENTIAL_VALUES: ReadonlySet<string> = new Set([
+  "undefined",
+  "null",
+  "false",
+  '""',
+  "''",
+  "``",
+  "void 0",
+]);
+
 function hasCredentialValue(context: RuleContext, node: SgNode): boolean {
   if (!CREDENTIAL_PROPERTY.test(propertyName(context, node) ?? ""))
     return false;
   const value = context.text(propertyValue(node))?.trim();
   return (
-    value !== undefined &&
-    !new Set(["undefined", "null", "false", '""', "''", "``", "void 0"]).has(
-      value,
-    )
+    value !== undefined && !EMPTY_CREDENTIAL_VALUES.has(value)
   );
 }
 
