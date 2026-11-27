@@ -169,7 +169,7 @@ export const structuralSecurityAdapter: ObservationCheckAdapter = {
       };
     } catch (error) {
       if (error instanceof CheckIncompleteError) throw error;
-      throw new Error("Structural security analysis failed.");
+      throw new Error("Structural security analysis failed.", { cause: error });
     }
   },
 };
