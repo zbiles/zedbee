@@ -14,6 +14,7 @@ import {
 } from "node:fs";
 import { basename, dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { compareCodeUnits } from "../core/compare.js";
 import { isContainedPath as contained } from "../inspection/paths.js";
 import { capturedSourceInput } from "../inspection/source-capture.js";
 import {
@@ -686,7 +687,7 @@ export class CapturedDependencies {
                 ? ("symlink" as const)
                 : ("other" as const),
         }))
-        .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+        .sort((a, b) => compareCodeUnits(a.name, b.name));
       this.names += names.length;
       if (this.names > DEPENDENCY_LIMITS.names) {
         this.capacity("names", this.names);
