@@ -419,7 +419,7 @@ function createComplexityAdapter(
         };
       } catch (error) {
         if (error instanceof CheckIncompleteError) throw error;
-        throw new Error("Complexity analysis failed.");
+        throw new Error("Complexity analysis failed.", { cause: error });
       }
     },
   };
