@@ -122,10 +122,7 @@ function dependencyPathFromPackageKey(packageKey: string):
     .slice(first)
     .split("/node_modules/")
     .map((component) => component.replace(/^node_modules\//u, ""));
-  if (
-    dependencyPath.length === 0 ||
-    dependencyPath.length > MAX_DEPENDENCY_PATH_LENGTH
-  ) {
+  if (dependencyPath.length > MAX_DEPENDENCY_PATH_LENGTH) {
     throw inventoryError(
       "LOCKFILE_LIMIT_EXCEEDED",
       "The npm lockfile contains an oversized dependency path.",
@@ -136,11 +133,6 @@ function dependencyPathFromPackageKey(packageKey: string):
     ...(importer === undefined ? {} : { importer }),
     dependencyPath: Object.freeze(dependencyPath),
   };
-}
-
-function finalize(records: readonly DependencyRecord[]): DependencyInventory {
-  validateDependencyRecordCount(records.length, "npm");
-  return finalizeDependencyRecords(records);
 }
 
 function parseV1(
@@ -172,7 +164,7 @@ function parseV1(
     }
   };
   walk(dependencies, []);
-  return finalize(records);
+  return finalizeDependencyRecords(records);
 }
 
 function parseModern(
@@ -216,7 +208,7 @@ function parseModern(
     });
     validateDependencyRecordCount(records.length, "npm");
   }
-  return finalize(records);
+  return finalizeDependencyRecords(records);
 }
 
 export function parseNpmLockfile(
