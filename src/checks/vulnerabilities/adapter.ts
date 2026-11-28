@@ -53,14 +53,19 @@ function queryUnion(
   target: DependencyInventory,
 ): readonly OsvPackageQuery[] {
   const unique = new Map<string, OsvPackageQuery>();
-  for (const dependency of [...baseline, ...target]) {
-    const query = Object.freeze({
-      name: dependency.name,
-      version: dependency.version,
-      ecosystem: dependency.ecosystem,
-    });
-    const key = osvQueryKey(query);
-    if (!unique.has(key)) unique.set(key, query);
+  for (const inventory of [baseline, target]) {
+    for (const dependency of inventory) {
+      const key = osvQueryKey(dependency);
+      if (unique.has(key)) continue;
+      unique.set(
+        key,
+        Object.freeze({
+          name: dependency.name,
+          version: dependency.version,
+          ecosystem: dependency.ecosystem,
+        }),
+      );
+    }
   }
   return Object.freeze([...unique.values()]);
 }
