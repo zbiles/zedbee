@@ -1,7 +1,8 @@
 import { launchBackgroundNode } from "../runtime/background-node.js";
-import { relative, isAbsolute, sep } from "node:path";
+import { relative, sep } from "node:path";
 import { realpath } from "node:fs/promises";
 import { GitClient } from "../git/client.js";
+import { isContainedPath } from "../inspection/paths.js";
 import { captureWorkingTreeRegistry } from "../inspection/working-tree-registry.js";
 import { discoverWorkspaces } from "../inspection/workspaces.js";
 import { owningWorkspace } from "../inspection/workspace-owner.js";
@@ -93,12 +94,9 @@ export async function updateCommand(cwd: string): Promise<string> {
     const declared = projects.filter(({ manifest }) =>
       manifest.dependencyNames.has("zedbee"),
     );
-    const location =
-      relative(root, await realpath(cwd))
-        .split(sep)
-        .join("/") || ".";
-    if (isAbsolute(location) || location === ".." || location.startsWith("../"))
-      throw new Error("outside checkout");
+    const current = await realpath(cwd);
+    if (!isContainedPath(root, current)) throw new Error("outside checkout");
+    const location = relative(root, current).split(sep).join("/") || ".";
     const project =
       owningWorkspace(declared, `${location}/`) ??
       (declared.length === 1 ? declared[0] : undefined);
