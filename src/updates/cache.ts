@@ -49,10 +49,17 @@ export function readUpdateCache(
   try {
     descriptor = openSync(
       path,
-      constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
+      constants.O_RDONLY |
+        (constants.O_NOFOLLOW ?? 0) |
+        (constants.O_NONBLOCK ?? 0),
     );
     const stat = fstatSync(descriptor);
-    if (!stat.isFile() || stat.size > 4096) return undefined;
+    if (
+      !stat.isFile() ||
+      stat.size > 4096 ||
+      (process.getuid !== undefined && stat.uid !== process.getuid())
+    )
+      return undefined;
     const entry = JSON.parse(readFileSync(descriptor, "utf8")) as Record<
       string,
       unknown

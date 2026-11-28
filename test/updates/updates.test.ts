@@ -1,5 +1,12 @@
 import { createGitRepository } from "../helpers/git-repository.js";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -302,6 +309,17 @@ it("keeps a delayed refresh's lease beyond the former expiration interval", asyn
   });
   expect(readUpdateCache(path, later)?.metadata?.version).toBe("0.3.0");
 });
+
+it.skipIf(process.platform === "win32")(
+  "treats a FIFO cache path as missing instead of blocking",
+  () => {
+    const directory = join(fixture(), "zedbee");
+    mkdirSync(directory, { recursive: true });
+    const cachePath = join(directory, "update.json");
+    execFileSync("mkfifo", [cachePath]);
+    expect(readUpdateCache(cachePath, now)).toBeUndefined();
+  },
+);
 
 it("identifies nested pnpm declaration from repository root and subdirectories", async () => {
   const repo = await createGitRepository();
