@@ -1,4 +1,5 @@
 import { configCandidates, referencedConfigPath } from "./config-candidates.js";
+import { containedRelativeRequest } from "./config-requests.js";
 import { filterCapturedCompilerFiles } from "./captured-directory.js";
 import { posix, relative, resolve, sep } from "node:path";
 import { lstat } from "node:fs/promises";
@@ -39,25 +40,14 @@ const preparedInputs = Symbol("validated snapshot compiler inputs");
 
 const SOURCE = /\.(?:[cm]?[jt]sx?)$/iu;
 const LOADABLE = /(?:\.(?:[cm]?[jt]sx?|json))$/iu;
-const WINDOWS_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
-const URL_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/u;
 
 function normalize(path: string): string {
   return path.split(sep).join("/");
 }
 
 function containedRepositoryPath(from: string, requested: string): string {
-  if (
-    requested.length === 0 ||
-    requested.includes("\\") ||
-    WINDOWS_DRIVE_PATH.test(requested) ||
-    URL_SCHEME.test(requested) ||
-    posix.isAbsolute(requested)
-  ) {
-    throw new TypeError("Unsafe TypeScript configuration path");
-  }
-  const result = posix.normalize(posix.join(posix.dirname(from), requested));
-  if (result === ".." || result.startsWith("../")) {
+  const result = containedRelativeRequest(from, requested);
+  if (result === undefined) {
     throw new TypeError("Unsafe TypeScript configuration path");
   }
   return result;
