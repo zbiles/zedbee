@@ -1,3 +1,4 @@
+import { readBoundedBody } from "../../../core/read-bounded-body.js";
 import { OsvAnalysisError } from "./errors.js";
 
 export const MAX_OSV_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -40,35 +41,13 @@ export async function readJsonResponse(response: Response): Promise<unknown> {
       "OSV returned an empty response body.",
     );
   }
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  const reader = response.body.getReader();
+  const bytes = await readBoundedBody(response.body, MAX_OSV_RESPONSE_BYTES);
+  if (bytes === undefined) throw responseTooLarge();
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > MAX_OSV_RESPONSE_BYTES) {
-        await reader.cancel().catch(() => undefined);
-        throw responseTooLarge();
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  let text: string;
-  try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return JSON.parse(text) as unknown;
+    return JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    ) as unknown;
   } catch {
-    text = "";
     throw new OsvAnalysisError(
       "OSV_RESPONSE_INVALID",
       "OSV returned invalid JSON data.",
