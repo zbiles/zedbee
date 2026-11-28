@@ -1,4 +1,4 @@
-import { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
+import type { SUPPORTED_PROJECT_ESLINT_VERSION } from "../checks/eslint/project/supported-version.js";
 export type Severity = "info" | "warning" | "error";
 export type CheckStatus = "completed" | "skipped" | "incomplete";
 export type IncompleteDisposition = "block" | "warn";
