@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { CHECK_IDS } from "../core/check-ids.js";
+import { compareCodeUnits } from "../core/compare.js";
 export const MAX_DIAGNOSTIC_DURATION_MS = 604_800_000;
 export const MAX_DIAGNOSTIC_COUNT = 1_000_000;
 export type PerformanceKind =
@@ -170,7 +171,7 @@ export class ScanPerformanceRecorder {
   snapshot(): ScanPerformanceSummary {
     return {
       checks: [...this.checks.values()]
-        .sort((a, b) => a.check_id.localeCompare(b.check_id))
+        .sort((a, b) => compareCodeUnits(a.check_id, b.check_id))
         .map((x) => ({ ...x })),
       partial: this.partial,
       executionMode: this.executionMode,
