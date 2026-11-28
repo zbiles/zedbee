@@ -12,7 +12,10 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
-import { isContainedPath } from "../../inspection/read-json.js";
+import {
+  isContainedPath,
+  readBoundedBytes,
+} from "../../inspection/read-json.js";
 
 const MANAGED_CONFIG_PREFIX = "zedbee-managed-config-";
 const MANAGED_OUTPUT_PREFIX = "zedbee-managed-output-";
@@ -173,7 +176,9 @@ export async function createManagedOutputDirectory(
           "Zedbee rejected a managed artifact whose identity changed.",
         );
       }
-      return await handle.readFile("utf8");
+      return (
+        await readBoundedBytes(handle, artifactName, MAX_MANAGED_JSON_BYTES)
+      ).toString("utf8");
     } finally {
       await handle.close();
     }
