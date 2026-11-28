@@ -3,7 +3,7 @@ import {
   type ResolvedCheckPolicy,
   type ResolvedConfig,
 } from "../config/schema.js";
-import { isCheckId } from "../core/check-ids.js";
+import { type CheckId, isCheckId } from "../core/check-ids.js";
 import { summarizeChecks } from "../core/summarize.js";
 import type { CheckResult, Finding, RunSummary } from "../core/types.js";
 import type { CheckExecutionResult } from "../checks/adapter.js";
@@ -44,6 +44,36 @@ function applySeverity(
   };
 }
 
+function filePolicyFor(
+  policy: Readonly<ResolvedCheckPolicy>,
+  checkId: CheckId,
+  policyForFile: FilePolicyResolver,
+  file: string,
+): Readonly<ResolvedCheckPolicy> | undefined {
+  const excluded =
+    (policyForFile.pathExclusionsForFile?.(checkId, file, "target").length ??
+      0) > 0;
+  if (excluded) return undefined;
+  return checkId === "duplication"
+    ? policy
+    : policyForFile(checkId, file, "target");
+}
+
+function findingPolicyLookup(
+  policy: Readonly<ResolvedCheckPolicy>,
+  checkId: CheckId | undefined,
+  policyForFile: FilePolicyResolver | undefined,
+): (file: string | undefined) => Readonly<ResolvedCheckPolicy> | undefined {
+  if (policyForFile === undefined || checkId === undefined) return () => policy;
+  const byFile = new Map<string, Readonly<ResolvedCheckPolicy> | undefined>();
+  return (file) => {
+    if (file === undefined) return policy;
+    if (!byFile.has(file))
+      byFile.set(file, filePolicyFor(policy, checkId, policyForFile, file));
+    return byFile.get(file);
+  };
+}
+
 export function displayResultForPolicy(
   result: CheckResult,
   policy: Readonly<ResolvedCheckPolicy> | null,
@@ -59,30 +89,15 @@ export function displayResultForPolicy(
   const checkId = isCheckId(sanitizedResult.checkId)
     ? sanitizedResult.checkId
     : undefined;
+  const policyFor = findingPolicyLookup(policy, checkId, policyForFile);
   return {
     ...sanitizedResult,
     findings: sanitizedResult.findings
       .filter((finding) => finding.attribution.staged)
       .flatMap((finding) => {
-        const fileTarget =
-          policyForFile !== undefined &&
-          checkId !== undefined &&
-          finding.location?.file !== undefined
-            ? { resolve: policyForFile, checkId, file: finding.location.file }
-            : undefined;
-        const pathExcluded =
-          fileTarget !== undefined &&
-          (fileTarget.resolve.pathExclusionsForFile?.(
-            fileTarget.checkId,
-            fileTarget.file,
-            "target",
-          ).length ?? 0) > 0;
-        if (pathExcluded) return [];
-        const filePolicy =
-          fileTarget !== undefined && fileTarget.checkId !== "duplication"
-            ? fileTarget.resolve(fileTarget.checkId, fileTarget.file, "target")
-            : policy;
-        if (filePolicy.severity === "off") return [];
+        const filePolicy = policyFor(finding.location?.file);
+        if (filePolicy === undefined || filePolicy.severity === "off")
+          return [];
         const applied = applySeverity(finding, filePolicy);
         return applied === undefined ? [] : [applied];
       }),
