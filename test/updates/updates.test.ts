@@ -223,6 +223,20 @@ describe("cached CLI notification", () => {
       "pnpm add --save-dev --workspace-root zedbee@latest",
     );
   });
+  it("adds the workspace-root check flag for a Yarn 1 workspace root", async () => {
+    const { root } = await createGitRepository();
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({
+        packageManager: "yarn@1.22.22",
+        workspaces: ["packages/*"],
+        devDependencies: { zedbee: "^0.1.0" },
+      }),
+    );
+    expect(await updateCommand(root)).toContain(
+      "yarn add --dev --ignore-workspace-root-check zedbee@latest",
+    );
+  });
 });
 
 describe("background refresh", () => {

@@ -69,6 +69,19 @@ const COMMANDS = {
   bun: "bun add --dev zedbee@latest",
 } as const;
 
+function installCommand(
+  manager: keyof typeof COMMANDS,
+  classicYarn: boolean,
+  workspaceRoot: boolean,
+): string {
+  if (!workspaceRoot) return COMMANDS[manager];
+  if (manager === "pnpm")
+    return "pnpm add --save-dev --workspace-root zedbee@latest";
+  if (manager === "yarn" && classicYarn)
+    return "yarn add --dev --ignore-workspace-root-check zedbee@latest";
+  return COMMANDS[manager];
+}
+
 /** Resolve the declared dependency's owner only when an update is displayed. */
 export async function updateCommand(cwd: string): Promise<string> {
   try {
@@ -97,15 +110,12 @@ export async function updateCommand(cwd: string): Promise<string> {
     const paths = new Set(
       registry.entries().map(({ repositoryPath }) => repositoryPath),
     );
-    const { manager, workspaceRoot } = projectInstallManager(
+    const { manager, classicYarn, workspaceRoot } = projectInstallManager(
       project,
       projects,
       paths,
     );
-    const command =
-      manager === "pnpm" && workspaceRoot
-        ? "pnpm add --save-dev --workspace-root zedbee@latest"
-        : COMMANDS[manager];
+    const command = installCommand(manager, classicYarn, workspaceRoot);
     return `In repository directory ${JSON.stringify(project.relativeRoot)}: ${command}`;
   } catch {
     return "Update your existing installation of zedbee using the package manager that installed it (project owner unavailable).";
